@@ -52,25 +52,28 @@ cargo publish --dry-run -p altium-cli
 cargo doc --workspace --no-deps --open
 ```
 
-## CI/CD Workflows
+## Documentation
 
-| Workflow                      | What                                                   | When              |
-| ----------------------------- | ------------------------------------------------------ | ----------------- |
-| .github/workflows/publish.yml | Publishes all three crates to crates.io                | Tag push (v*.*.*) |
-| .github/workflows/release.yml | Builds cross-platform binaries, creates GitHub Release | Tag push (v*.*.*) |
+| File | What |
+|------|------|
+| [SKILL.md](SKILL.md) | Full CLI command reference for AI agents |
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/commands/](docs/commands/) | Detailed command reference by group |
 
-**Publishing workflow data flow:**
-1. Tag push triggers both workflows
-2. Checkout code
-3. Publish derive → poll crates.io until available (5min timeout)
-4. Publish format → poll crates.io until available (5min timeout)
-5. Publish cli
+## CI/CD Workflow
 
-**Release workflow data flow:**
-1. Build matrix: Linux x86_64, macOS x86_64, Windows x86_64
-2. `cargo build --release -p altium-cli` on each platform
-3. Generate SHA256 checksums
-4. Upload binaries + checksums to GitHub Release
+Single workflow handles test, build, release, and publish:
+
+| Workflow                      | What                                                   | When           |
+| ----------------------------- | ------------------------------------------------------ | -------------- |
+| .github/workflows/release.yml | Test → Build → GitHub Release → Publish to crates.io   | Tag push (v*) |
+
+**Workflow data flow:**
+1. Tag push triggers workflow
+2. Test: Run `cargo test --workspace`
+3. Build matrix: Linux x86_64, macOS x86_64/aarch64, Windows x86_64
+4. Create GitHub Release with binaries
+5. Publish derive → wait for propagation → publish format → wait → publish cli
 
 ## Installation
 
