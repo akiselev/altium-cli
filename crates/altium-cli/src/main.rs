@@ -3,6 +3,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::commands::{intlib::IntLibCommands, pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, prjpcb::PrjPcbCommands, schdoc::SchDocCommands, schlib::SchLibCommands};
+
 #[derive(Parser)]
 #[command(name = "altium-cli")]
 #[command(version, about = "Command-line tool for Altium Designer files", long_about = None)]
@@ -29,7 +31,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Inspect file structure and contents
+    /// Inspect file structure and contents (quick overview)
     Inspect {
         /// Path to Altium file (.SchLib, .PcbLib, .SchDoc, .PcbDoc)
         path: PathBuf,
@@ -85,6 +87,48 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Schematic document operations (analysis, BOM, netlist, etc.)
+    #[command(name = "schdoc")]
+    SchDoc {
+        #[command(subcommand)]
+        command: SchDocCommands,
+    },
+
+    /// Schematic library operations (browse, search, components)
+    #[command(name = "schlib")]
+    SchLib {
+        #[command(subcommand)]
+        command: SchLibCommands,
+    },
+
+    /// PCB document operations (rules, layers, components, tracks)
+    #[command(name = "pcbdoc")]
+    PcbDoc {
+        #[command(subcommand)]
+        command: PcbDocCommands,
+    },
+
+    /// PCB footprint library operations (browse, measure, footprints)
+    #[command(name = "pcblib")]
+    PcbLib {
+        #[command(subcommand)]
+        command: PcbLibCommands,
+    },
+
+    /// PCB project operations (documents, BOM, netlist, sync)
+    #[command(name = "prjpcb")]
+    PrjPcb {
+        #[command(subcommand)]
+        command: PrjPcbCommands,
+    },
+
+    /// Integrated library operations (components, symbols, footprints)
+    #[command(name = "intlib")]
+    IntLib {
+        #[command(subcommand)]
+        command: IntLibCommands,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell)
@@ -118,6 +162,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output,
         } => {
             crate::commands::edit::run(&path, &operation, format, output.as_deref())?;
+        }
+        Commands::SchDoc { command } => {
+            crate::commands::schdoc::run(&command, format)?;
+        }
+        Commands::SchLib { command } => {
+            crate::commands::schlib::run(&command, format)?;
+        }
+        Commands::PcbDoc { command } => {
+            crate::commands::pcbdoc::run(&command, format)?;
+        }
+        Commands::PcbLib { command } => {
+            crate::commands::pcblib::run(&command, format)?;
+        }
+        Commands::PrjPcb { command } => {
+            crate::commands::prjpcb::run(&command, format)?;
+        }
+        Commands::IntLib { command } => {
+            crate::commands::intlib::run(&command, format)?;
         }
         Commands::Completions { shell } => {
             use clap::CommandFactory;
