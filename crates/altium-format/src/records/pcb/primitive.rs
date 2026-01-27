@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use crate::error::Result;
 use crate::traits::{FromBinary, ToBinary};
 use crate::types::{Coord, CoordPoint, CoordRect, Layer};
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 /// PCB primitive object IDs.
 ///

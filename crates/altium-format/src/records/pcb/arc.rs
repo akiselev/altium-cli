@@ -1,6 +1,6 @@
 //! PCB Arc record.
 
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 use super::primitive::PcbPrimitiveCommon;
 use crate::types::{Coord, CoordPoint, CoordRect, Layer};

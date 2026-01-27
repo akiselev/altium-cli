@@ -1,15 +1,15 @@
 [package]
-name = "altium-derive"
+name = "altium-format-derive"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 
 
-description = "Proc-macro derives for the altium crate."
+description = "Proc-macro derives for the altium-format crate."
 license = "GPL-3.0-only"
 repository = "https://github.com/akiselev/altium-cli"
 homepage = "https://github.com/akiselev/altium-cli"
-documentation = "https://docs.rs/altium-derive"
+documentation = "https://docs.rs/altium-format-derive"
 readme = "README.md"
 authors = ["Alexander Kiselev <alex@akiselev.com>"]
 keywords = ["altium", "eda", "proc-macro"]

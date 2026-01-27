@@ -1,16 +1,16 @@
-# altium-derive
+# altium-format-derive
 
 Procedural macro crate for automatic serialization code generation in altium-format.
 
 ## File Index
 
-| File | What | When |
-|---|---|---|
-| lib.rs | AltiumRecord, AltiumBase, AltiumEnum macros | Entry point for all derive macros |
-| record.rs | AltiumRecord implementation | Deriving FromParams/ToParams/FromBinary/ToBinary |
-| base.rs | AltiumBase implementation | Generating HasXxxBase composition traits |
-| enum_derive.rs | AltiumEnum implementation | Deriving integer enum conversions |
-| attrs.rs | Attribute parsing utilities | Extracting #[altium(...)] metadata |
+| File           | What                                        | When                                             |
+| -------------- | ------------------------------------------- | ------------------------------------------------ |
+| lib.rs         | AltiumRecord, AltiumBase, AltiumEnum macros | Entry point for all derive macros                |
+| record.rs      | AltiumRecord implementation                 | Deriving FromParams/ToParams/FromBinary/ToBinary |
+| base.rs        | AltiumBase implementation                   | Generating HasXxxBase composition traits         |
+| enum_derive.rs | AltiumEnum implementation                   | Deriving integer enum conversions                |
+| attrs.rs       | Attribute parsing utilities                 | Extracting #[altium(...)] metadata               |
 
 ## Macros
 

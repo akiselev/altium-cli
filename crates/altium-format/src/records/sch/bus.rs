@@ -7,7 +7,7 @@
 use crate::error::Result;
 use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 

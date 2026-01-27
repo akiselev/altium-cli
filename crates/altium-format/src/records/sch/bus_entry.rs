@@ -8,7 +8,7 @@ use crate::traits::{FromParams, ToParams};
 use crate::types::{
     Coord, CoordRect, ParameterCollection, UnknownFields, coord_to_dxp_frac, dxp_frac_to_coord,
 };
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 

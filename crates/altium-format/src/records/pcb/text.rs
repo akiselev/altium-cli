@@ -2,7 +2,7 @@
 
 use std::io::Read;
 
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 use super::primitive::{
     PcbPrimitiveCommon, PcbRectangularBase, PcbTextJustification, PcbTextKind, PcbTextStrokeFont,

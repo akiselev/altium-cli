@@ -146,7 +146,7 @@ let component = builder.build_deterministic(&mut ());
 
 This workspace contains three crates:
 
-- **[altium-derive](crates/altium-derive/README.md)** - Procedural macros for deriving serialization traits
+- **[altium-format-derive](crates/altium-format-derive/README.md)** - Procedural macros for deriving serialization traits
 - **[altium-format](crates/altium-format/README.md)** - Core library for reading and writing Altium files
 - **[altium-cli](crates/altium-cli/README.md)** - Command-line tool for inspecting and editing files
 

@@ -1,6 +1,6 @@
 //! PCB Fill record.
 
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 use super::primitive::PcbRectangularBase;
 use crate::types::{Coord, CoordRect};

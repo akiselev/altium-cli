@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use crate::types::{Coord, CoordRect, UnknownFields};
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 use super::{LineWidth, PinConglomerateFlags, PinElectricalType, PinSymbol, SchGraphicalBase};
 

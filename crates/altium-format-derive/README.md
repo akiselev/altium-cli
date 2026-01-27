@@ -1,4 +1,4 @@
-# altium-derive
+# altium-format-derive
 
 Procedural macros for the `altium-format` crate.
 
@@ -31,7 +31,7 @@ Generates `FromParams`, `ToParams`, `FromBinary`, and `ToBinary` trait implement
 **Example:**
 
 ```rust
-use altium_derive::AltiumRecord;
+use altium_format_derive::AltiumRecord;
 
 #[derive(AltiumRecord)]
 #[altium(record_id = 2, format = "params")]
@@ -61,7 +61,7 @@ Generates `HasXxxBase` traits for composition-based inheritance patterns.
 **Example:**
 
 ```rust
-use altium_derive::AltiumBase;
+use altium_format_derive::AltiumBase;
 
 #[derive(AltiumBase)]
 #[altium(base_name = "SchPrimitiveBase")]
@@ -93,7 +93,7 @@ Generates integer conversion traits for enum types.
 **Example:**
 
 ```rust
-use altium_derive::AltiumEnum;
+use altium_format_derive::AltiumEnum;
 
 #[derive(AltiumEnum)]
 #[altium(repr = "i32")]
@@ -115,7 +115,7 @@ This crate is automatically used when you depend on `altium-format`. You typical
 
 ```toml
 [dependencies]
-altium-format = "0.1.0"  # Includes altium-derive
+altium-format = "0.1.0"  # Includes altium-format-derive
 ```
 
 For detailed documentation, see [altium-format](../altium-format/CLAUDE.md).

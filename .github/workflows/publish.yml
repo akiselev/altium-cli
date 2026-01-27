@@ -7,7 +7,7 @@ on:
 
 jobs:
   publish-derive:
-    name: Publish altium-derive
+    name: Publish altium-format-derive
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,8 +15,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish altium-derive
-        run: cargo publish -p altium-derive
+      - name: Publish altium-format-derive
+        run: cargo publish -p altium-format-derive
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -33,14 +33,14 @@ jobs:
       - name: Wait for derive crate propagation
         run: |
           for i in {1..60}; do
-            if cargo search altium-derive --limit 1 | grep -q altium-derive; then
-              echo "altium-derive found on crates.io after $i attempts"
+            if cargo search altium-format-derive --limit 1 | grep -q altium-format-derive; then
+              echo "altium-format-derive found on crates.io after $i attempts"
               exit 0
             fi
-            echo "Waiting for altium-derive propagation (attempt $i/60)..."
+            echo "Waiting for altium-format-derive propagation (attempt $i/60)..."
             sleep 5
           done
-          echo "ERROR: altium-derive not found on crates.io after 5 minutes"
+          echo "ERROR: altium-format-derive not found on crates.io after 5 minutes"
           exit 1
 
       - name: Publish altium-format

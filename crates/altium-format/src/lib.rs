@@ -24,7 +24,7 @@
 //! Record types can be defined using derive macros for automatic serialization:
 //!
 //! ```ignore
-//! use altium_derive::AltiumRecord;
+//! use altium_format_derive::AltiumRecord;
 //!
 //! #[derive(AltiumRecord)]
 //! #[altium(record_id = 2, format = "params")]
@@ -118,4 +118,4 @@ pub use types::{
 };
 
 // Re-export derive macros
-pub use altium_derive::{AltiumBase, AltiumEnum, AltiumRecord};
+pub use altium_format_derive::{AltiumBase, AltiumEnum, AltiumRecord};

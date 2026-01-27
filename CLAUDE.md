@@ -4,18 +4,18 @@ Rust workspace for reading, writing, and querying Altium Designer files.
 
 ## Workspace Structure
 
-| Crate | What | When |
-|---|---|---|
-| [altium-derive](crates/altium-derive/CLAUDE.md) | Procedural macros for serialization code generation | Implementing new record types |
-| [altium-format](crates/altium-format/CLAUDE.md) | Core library for Altium file parsing and manipulation | Using library API, extending file format support |
-| [altium-cli](crates/altium-cli/CLAUDE.md) | Command-line tool for file inspection and manipulation | Building/using CLI tool |
+| Crate                                                         | What                                                   | When                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------ |
+| [altium-format-derive](crates/altium-format-derive/CLAUDE.md) | Procedural macros for serialization code generation    | Implementing new record types                    |
+| [altium-format](crates/altium-format/CLAUDE.md)               | Core library for Altium file parsing and manipulation  | Using library API, extending file format support |
+| [altium-cli](crates/altium-cli/CLAUDE.md)                     | Command-line tool for file inspection and manipulation | Building/using CLI tool                          |
 
 ## Architecture
 
 Three-crate dependency graph ensures clean separation:
 
 ```
-altium-derive (proc macros, no runtime deps)
+altium-format-derive (proc macros, no runtime deps)
      ↓
 altium-format (core library: parsing, querying, editing)
      ↓
@@ -35,7 +35,7 @@ cargo build --workspace
 # Build specific crate
 cargo build -p altium-cli
 cargo build -p altium-format
-cargo build -p altium-derive
+cargo build -p altium-format-derive
 
 # Run all tests
 cargo test --workspace
@@ -44,7 +44,7 @@ cargo test --workspace
 cargo run -p altium-cli -- --help
 
 # Verify publishability
-cargo publish --dry-run -p altium-derive
+cargo publish --dry-run -p altium-format-derive
 cargo publish --dry-run -p altium-format
 cargo publish --dry-run -p altium-cli
 
@@ -54,9 +54,9 @@ cargo doc --workspace --no-deps --open
 
 ## CI/CD Workflows
 
-| Workflow | What | When |
-|---|---|---|
-| .github/workflows/publish.yml | Publishes all three crates to crates.io | Tag push (v*.*.*) |
+| Workflow                      | What                                                   | When              |
+| ----------------------------- | ------------------------------------------------------ | ----------------- |
+| .github/workflows/publish.yml | Publishes all three crates to crates.io                | Tag push (v*.*.*) |
 | .github/workflows/release.yml | Builds cross-platform binaries, creates GitHub Release | Tag push (v*.*.*) |
 
 **Publishing workflow data flow:**

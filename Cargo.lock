@@ -35,19 +35,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "altium-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "altium-format"
 version = "0.1.0"
 dependencies = [
- "altium-derive",
+ "altium-format-derive",
  "bitflags 2.10.0",
  "byteorder",
  "cfb",
@@ -63,6 +54,15 @@ dependencies = [
  "serde_json",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "altium-format-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
