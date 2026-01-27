@@ -15,20 +15,15 @@ Rust library and CLI tool for reading, writing, and querying Altium Designer fil
 
 ## Features
 
-- **Read/Write Altium Files**: Support for `.SchLib`, `.SchDoc`, `.PcbLib`, `.PcbDoc` formats
-- **Three-Layer API**: Choose your abstraction level
-  - CFB-level access for reverse engineering
-  - Generic dynamic API when schema varies
-  - Strongly-typed API with derive macros for known record types
+- **Read/Write Altium Files**: Support for `.SchLib`, `.SchDoc`, `.PcbLib`, `.PcbDoc`, `.PrjPcb`, `.IntLib`
+- **Comprehensive CLI**: 100+ commands for analysis, editing, and project management
 - **CSS-Like Query Language**: Find components, nets, and pins using intuitive selectors
 - **Non-Destructive Editing**: Preserves unknown fields for safe round-trip modifications
-- **Agent-Friendly CLI**: JSON output and stable schemas for scripting and automation
+- **Agent-Friendly**: JSON output and stable schemas for scripting and AI automation
 
 ## Installation
 
 ### CLI Tool
-
-Install the command-line tool via cargo:
 
 ```bash
 cargo install altium-cli
@@ -36,62 +31,121 @@ cargo install altium-cli
 
 ### Library
 
-Add the library to your Rust project:
-
 ```bash
 cargo add altium-format
 ```
 
-Or add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-altium-format = "0.1.0"
-```
-
 ## Quick Start
 
-### Command Line
-
-Inspect file structure:
+### Inspect Files
 
 ```bash
 altium-cli inspect components.SchLib
-altium-cli inspect footprints.PcbLib
+altium-cli inspect design.PcbDoc --json
 ```
 
-Query components using selectors:
+### Query Components
 
 ```bash
-# Find components by designator pattern
-altium-cli query file.SchLib "R*"
+# Find by designator pattern
+altium-cli query design.SchDoc "R*"
 
-# Find components by part number
-altium-cli query file.SchLib "$LM358"
+# Find by part number
+altium-cli query design.SchDoc "$LM358"
 
 # CSS-like queries
-altium-cli query file.SchLib "Component[Designator=R1]"
+altium-cli query design.SchDoc "component[part*=MCU]"
 ```
 
-Edit schematics:
+### Schematic Analysis
 
 ```bash
-# Move component (coordinates in mils)
-altium-cli edit design.SchDoc -c "move U1 1000 2000" -o output.SchDoc
-
-# Delete component
-altium-cli edit design.SchDoc -c "delete R3" -o output.SchDoc
+altium-cli schdoc overview design.SchDoc
+altium-cli schdoc bom design.SchDoc
+altium-cli schdoc netlist design.SchDoc
+altium-cli schdoc power-map design.SchDoc
+altium-cli schdoc components design.SchDoc
 ```
 
-Output as JSON for scripting:
+### PCB Analysis
 
 ```bash
-altium-cli inspect library.SchLib --json | jq '.components[0].name'
+altium-cli pcbdoc overview design.PcbDoc
+altium-cli pcbdoc rules design.PcbDoc
+altium-cli pcbdoc components design.PcbDoc --layer top
+altium-cli pcbdoc nets design.PcbDoc
+altium-cli pcbdoc layers design.PcbDoc
 ```
 
-### Library Usage
+### Project Management
 
-Read a schematic library:
+```bash
+altium-cli prjpcb overview project.PrjPcb
+altium-cli prjpcb bom project.PrjPcb --grouped
+altium-cli prjpcb netlist project.PrjPcb
+altium-cli prjpcb validate project.PrjPcb --check-files
+altium-cli prjpcb diff-sch-pcb project.PrjPcb
+```
+
+### Library Browsing
+
+```bash
+# Schematic libraries
+altium-cli schlib list components.SchLib
+altium-cli schlib search components.SchLib "op amp"
+altium-cli schlib component components.SchLib LM358
+
+# PCB libraries
+altium-cli pcblib list footprints.PcbLib
+altium-cli pcblib measure footprints.PcbLib SOIC-8
+altium-cli pcblib render-ascii footprints.PcbLib SOIC-8
+
+# Integrated libraries
+altium-cli intlib list library.IntLib
+altium-cli intlib search library.IntLib "LM358"
+altium-cli intlib extract-schlib library.IntLib -o symbols.SchLib
+```
+
+### Editing
+
+```bash
+# Schematic editing
+altium-cli edit design.SchDoc -c "move U1 1000 2000"
+altium-cli edit design.SchDoc -c "delete R3"
+altium-cli edit design.SchDoc -c "add-wire 100,100,200,200"
+
+# Library creation
+altium-cli schlib create new.SchLib
+altium-cli schlib add-component lib.SchLib MyPart
+altium-cli schlib gen-ic lib.SchLib IC1 --pins "VCC,GND,IN,OUT"
+
+altium-cli pcblib create new.PcbLib
+altium-cli pcblib gen-chip lib.PcbLib 0603
+altium-cli pcblib add-dual-row lib.PcbLib SOIC-8 8 --pitch 50 --span 300
+
+# PCB editing
+altium-cli pcbdoc add-track design.PcbDoc 0 0 100 100 --net VCC
+altium-cli pcbdoc add-via design.PcbDoc 500 500 --net VCC
+altium-cli pcbdoc add-rule design.PcbDoc clearance --value 10
+```
+
+## Command Groups
+
+| Group     | Purpose                     | Example                                        |
+| --------- | --------------------------- | ---------------------------------------------- |
+| `inspect` | Quick file overview         | `altium-cli inspect file.SchLib`               |
+| `query`   | Find records with selectors | `altium-cli query file.SchDoc "R*"`            |
+| `edit`    | Modify schematics           | `altium-cli edit file.SchDoc -c "move U1 0 0"` |
+| `schdoc`  | Schematic document analysis | `altium-cli schdoc bom design.SchDoc`          |
+| `schlib`  | Schematic library ops       | `altium-cli schlib list lib.SchLib`            |
+| `pcbdoc`  | PCB document analysis/edit  | `altium-cli pcbdoc rules design.PcbDoc`        |
+| `pcblib`  | PCB library ops             | `altium-cli pcblib measure lib.PcbLib FP`      |
+| `prjpcb`  | Project management          | `altium-cli prjpcb bom project.PrjPcb`         |
+| `intlib`  | Integrated library access   | `altium-cli intlib search lib.IntLib "LM"`     |
+
+See [docs/](docs/) for detailed command reference.
+
+## Library Usage
 
 ```rust
 use altium_format::io::SchLib;
@@ -110,105 +164,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Query records programmatically:
-
-```rust
-use altium_format::query::query_records;
-use altium_format::io::SchLib;
-
-let lib = SchLib::open(file)?;
-let resistors = query_records(&lib.records, "Component[Designator^=R]")?;
-
-for comp in resistors {
-    println!("Found resistor: {}", comp.designator);
-}
-```
-
-Create footprints with the builder API:
-
-```rust
-use altium_format::footprint::FootprintBuilder;
-use altium_format::records::pcb::PcbPadShape;
-
-let mut builder = FootprintBuilder::new("SOIC-8");
-builder.add_dual_row_smd(
-    4,      // pads per side
-    1.27,   // pitch (mm)
-    5.3,    // row spacing (mm)
-    1.5,    // pad width (mm)
-    0.6,    // pad height (mm)
-    PcbPadShape::Rectangular,
-);
-let component = builder.build_deterministic(&mut ());
-```
-
 ## Crates
 
-This workspace contains three crates:
+| Crate                                                | Purpose                             |
+| ---------------------------------------------------- | ----------------------------------- |
+| [altium-format-derive](crates/altium-format-derive/) | Procedural macros for serialization |
+| [altium-format](crates/altium-format/)               | Core library for Altium file I/O    |
+| [altium-cli](crates/altium-cli/)                     | Command-line tool                   |
 
-- **[altium-format-derive](crates/altium-format-derive/README.md)** - Procedural macros for deriving serialization traits
-- **[altium-format](crates/altium-format/README.md)** - Core library for reading and writing Altium files
-- **[altium-cli](crates/altium-cli/README.md)** - Command-line tool for inspecting and editing files
+## Supported File Types
 
-See individual README files for detailed documentation.
-
-## Building
-
-Build all crates in the workspace:
-
-```bash
-cargo build --workspace
-```
-
-Run tests:
-
-```bash
-cargo test --workspace
-```
-
-Build the CLI binary:
-
-```bash
-cargo build --release -p altium-cli
-```
-
-The compiled binary will be at `target/release/altium-cli`.
-
-Generate documentation:
-
-```bash
-cargo doc --workspace --no-deps --open
-```
-
-## Architecture
-
-The library uses a trait-based design with three abstraction layers:
-
-1. **CFB Layer**: Raw access to OLE compound document structure
-2. **Generic Layer**: Dynamic parameter access without type knowledge
-3. **Typed Layer**: Full deserialization with strongly-typed records
-
-This allows you to choose the right level of abstraction for your use case, from low-level reverse engineering to high-level programmatic manipulation.
+| Extension | Type               | Read | Write | Query |
+| --------- | ------------------ | ---- | ----- | ----- |
+| `.SchLib` | Schematic Library  | Yes  | Yes   | Yes   |
+| `.SchDoc` | Schematic Document | Yes  | Yes   | Yes   |
+| `.PcbLib` | PCB Library        | Yes  | Yes   | Yes   |
+| `.PcbDoc` | PCB Document       | Yes  | Yes   | Yes   |
+| `.PrjPcb` | PCB Project        | Yes  | Yes   | -     |
+| `.IntLib` | Integrated Library | Yes  | -     | Yes   |
 
 ## Coordinate System
 
-Altium uses fixed-point coordinates where **10,000 internal units = 1 mil = 0.001 inch**. All coordinate operations use the `Coord` newtype wrapper:
+Altium uses fixed-point coordinates: **10,000 internal units = 1 mil = 0.001 inch**
 
-```rust
-use altium_format::types::Coord;
+All CLI coordinates are in mils.
 
-let coord = Coord::from_mils(10);  // 100,000 internal units
-let mm_coord = Coord::from_mm(2.54);  // 1,000,000 internal units (1 inch)
+## Building
+
+```bash
+# Build all crates
+cargo build --workspace
+
+# Run tests
+cargo test --workspace
+
+# Build release binary
+cargo build --release -p altium-cli
 ```
-
-## Contributing
-
-Contributions are welcome. This project uses:
-
-- Rust 1.85+ (edition 2024)
-- Property-based testing for trait contracts
-- Golden file tests for format stability
-- Roundtrip tests for lossless serialization
 
 ## License
 
