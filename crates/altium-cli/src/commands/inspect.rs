@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-use crate::cli::output::{self, TextFormat};
-use crate::io::{PcbLib, SchLib};
+use crate::output::{self, TextFormat};
+use altium_format::io::{PcbLib, SchLib};
 
 #[derive(Serialize)]
 struct InspectResult {

@@ -10,10 +10,10 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::cli::output::{self, TextFormat};
-use crate::edit::EditSession;
-use crate::records::sch::{PortIoType, PowerObjectStyle, TextOrientations};
-use crate::types::{Coord, CoordPoint, Unit};
+use crate::output::{self, TextFormat};
+use altium_format::edit::EditSession;
+use altium_format::records::sch::{PortIoType, PowerObjectStyle, TextOrientations};
+use altium_format::types::{Coord, CoordPoint, Unit};
 
 /// Result of an edit operation.
 #[derive(Serialize)]
@@ -105,13 +105,10 @@ pub fn run(
     format: &str,
     output_file: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse the operation string into an EditOperation
     let op = parse_operation(operation)?;
 
-    // Execute the operation
     let result = execute_operation(path, op, output_file)?;
 
-    // Output the result
     output::print(&result, format)?;
 
     if !result.success {
@@ -247,14 +244,12 @@ fn parse_operation(operation: &str) -> Result<EditOperation, Box<dyn std::error:
 fn parse_coordinate(s: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let s = s.trim();
 
-    // Try parsing with unit suffix first
     if let Ok((coord, unit)) = Unit::parse_with_unit(s) {
         if unit != Unit::DxpDefault {
             return Ok(coord.to_mils());
         }
     }
 
-    // Plain number - interpret as mils
     s.parse::<f64>()
         .map_err(|_| {
             format!(
@@ -651,9 +646,8 @@ fn parse_point_spec(
     spec: &str,
     session: &EditSession,
 ) -> Result<CoordPoint, Box<dyn std::error::Error>> {
-    use crate::records::sch::SchRecord;
+    use altium_format::records::sch::SchRecord;
 
-    // Try parsing as coordinates first (x,y format)
     if let Some((x_str, y_str)) = spec.split_once(',') {
         let x: f64 = x_str.trim().parse().map_err(|_| {
             format!(
@@ -670,7 +664,6 @@ fn parse_point_spec(
         return Ok(CoordPoint::from_mils(x, y));
     }
 
-    // Try parsing as port reference (:PortName format)
     if let Some(port_name) = spec.strip_prefix(':') {
         for record in &session.doc.primitives {
             if let SchRecord::Port(port) = record {
@@ -685,7 +678,6 @@ fn parse_point_spec(
         return Err(format!("Port not found: '{}'", port_name).into());
     }
 
-    // Try parsing as net label reference (%NetLabel format)
     if let Some(label_name) = spec.strip_prefix('%') {
         for record in &session.doc.primitives {
             if let SchRecord::NetLabel(label) = record {
@@ -700,7 +692,6 @@ fn parse_point_spec(
         return Err(format!("Net label not found: '{}'", label_name).into());
     }
 
-    // Try parsing as power port reference (@PowerPort format)
     if let Some(power_name) = spec.strip_prefix('@') {
         for record in &session.doc.primitives {
             if let SchRecord::PowerObject(power) = record {
@@ -715,7 +706,6 @@ fn parse_point_spec(
         return Err(format!("Power port not found: '{}'", power_name).into());
     }
 
-    // Try parsing as Component.Pin reference
     if let Some((component, pin)) = spec.split_once('.') {
         let components = session
             .layout()

@@ -9,7 +9,7 @@ license = "GPL-3.0-only"
 repository = "https://github.com/akiselev/altium-cli"
 homepage = "https://github.com/akiselev/altium-cli"
 documentation = "https://docs.rs/altium-format"
-readme = "../../README.md"
+readme = "README.md"
 authors = ["Alexander Kiselev <alex@akiselev.com>"]
 keywords = ["altium", "eda", "pcb", "schematic", "cfb"]
 categories = ["parser-implementations"]
@@ -22,17 +22,11 @@ include = [
     "Cargo.toml",
 ]
 
-[[bin]]
-name = "altium-cli"
-path = "src/bin/altium-cli.rs"
-
 [dependencies]
 altium-derive = { version = "0.1.0", path = "../altium-derive" }
 bitflags = "2.10.0"
 byteorder = "1.5.0"
 cfb = "0.12.1"
-clap = { version = "4", features = ["derive", "env"] }
-clap_complete = "4"
 encoding_rs = "0.8.35"
 flate2 = "1.1.5"
 geo = "0.28"

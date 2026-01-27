@@ -1,0 +1,77 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish-derive:
+    name: Publish altium-derive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish altium-derive
+        run: cargo publish -p altium-derive
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-format:
+    name: Publish altium-format
+    runs-on: ubuntu-latest
+    needs: [publish-derive]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Wait for derive crate propagation
+        run: |
+          for i in {1..60}; do
+            if cargo search altium-derive --limit 1 | grep -q altium-derive; then
+              echo "altium-derive found on crates.io after $i attempts"
+              exit 0
+            fi
+            echo "Waiting for altium-derive propagation (attempt $i/60)..."
+            sleep 5
+          done
+          echo "ERROR: altium-derive not found on crates.io after 5 minutes"
+          exit 1
+
+      - name: Publish altium-format
+        run: cargo publish -p altium-format
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-cli:
+    name: Publish altium-cli
+    runs-on: ubuntu-latest
+    needs: [publish-format]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Wait for format crate propagation
+        run: |
+          for i in {1..60}; do
+            if cargo search altium-format --limit 1 | grep -q altium-format; then
+              echo "altium-format found on crates.io after $i attempts"
+              exit 0
+            fi
+            echo "Waiting for altium-format propagation (attempt $i/60)..."
+            sleep 5
+          done
+          echo "ERROR: altium-format not found on crates.io after 5 minutes"
+          exit 1
+
+      - name: Publish altium-cli
+        run: cargo publish -p altium-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

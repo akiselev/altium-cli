@@ -4,11 +4,17 @@ use serde::Serialize;
 use serde_json::Value;
 
 /// Format text output with labeled sections.
+///
+/// Implement this trait for types that need human-readable text representation
+/// distinct from JSON serialization (e.g., multi-line formatted output with labels).
 pub trait TextFormat {
     fn format_text(&self) -> String;
 }
 
-/// Print result in specified format.
+/// Print result in specified format (text, json, json-pretty).
+///
+/// Routes to TextFormat::format_text() for "text", serde_json for json formats.
+/// Returns error if format string is unrecognized.
 pub fn print<T: Serialize + TextFormat>(
     data: &T,
     format: &str,
@@ -32,7 +38,11 @@ pub fn print<T: Serialize + TextFormat>(
     Ok(())
 }
 
-/// Helper function to format JSON value as text (for cases without TextFormat impl).
+/// Format JSON value as text (fallback for types lacking TextFormat impl).
+///
+/// Recursively traverses JSON structure, printing key-value pairs with indentation.
+/// Used when --json is not specified but type has no TextFormat implementation.
+#[allow(dead_code)]
 pub fn print_json_as_text(value: &Value) {
     match value {
         Value::Object(map) => {

@@ -24,6 +24,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "altium-cli"
+version = "0.1.0"
+dependencies = [
+ "altium-format",
+ "clap",
+ "clap_complete",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "altium-derive"
 version = "0.1.0"
 dependencies = [
@@ -40,8 +51,6 @@ dependencies = [
  "bitflags 2.10.0",
  "byteorder",
  "cfb",
- "clap",
- "clap_complete",
  "encoding_rs",
  "flate2",
  "geo",

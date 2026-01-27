@@ -85,8 +85,6 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    // Note: Export command deferred - requires format conversion infrastructure
-    // that is not yet implemented (SVG rendering, CSV export, etc.)
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell)
@@ -94,10 +92,13 @@ enum Commands {
     },
 }
 
+/// Parse CLI arguments and dispatch to command handlers.
+///
+/// Handles global flags (--json, --pretty, --verbose, --quiet) and routes
+/// subcommands to their respective implementations.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // Determine output format
     let format = if cli.pretty || cli.json {
         if cli.pretty { "json-pretty" } else { "json" }
     } else {
@@ -106,17 +107,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Inspect { path } => {
-            altium_format::cli::commands::inspect::run(&path, format, cli.verbose)?;
+            crate::commands::inspect::run(&path, format, cli.verbose)?;
         }
         Commands::Query { path, selector } => {
-            altium_format::cli::commands::query::run(&path, &selector, format)?;
+            crate::commands::query::run(&path, &selector, format)?;
         }
         Commands::Edit {
             path,
             operation,
             output,
         } => {
-            altium_format::cli::commands::edit::run(&path, &operation, format, output.as_deref())?;
+            crate::commands::edit::run(&path, &operation, format, output.as_deref())?;
         }
         Commands::Completions { shell } => {
             use clap::CommandFactory;
@@ -141,3 +142,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+/// CLI command implementations.
+mod commands;
+
+/// Output formatting utilities.
+mod output;

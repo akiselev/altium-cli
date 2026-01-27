@@ -63,12 +63,6 @@ Standalone library for reading/writing Altium Designer files (.SchLib, .PcbLib, 
 | query/selector.rs | CSS-like selector parsing | Component[Designator=R1] queries |
 | query/pattern.rs | Pattern matching | Attribute filters |
 | query/engine.rs | Query execution | Finding records |
-| **CLI** | | |
-| bin/altium-cli.rs | CLI entry point | Running altium-cli |
-| cli/commands/inspect.rs | Inspect command (file overview) | `altium-cli inspect` |
-| cli/commands/query.rs | Query command (selector-based) | `altium-cli query` |
-| cli/commands/export.rs | Export command (format conversion) | `altium-cli export` |
-| cli/output.rs | JSON/table formatting | Formatting output |
 | **Tree Structures** | | |
 | tree/node.rs | RecordTree, hierarchical storage | Component/pin relationships |
 | tree/walker.rs | BreadthFirstWalker | Traversing hierarchies |
@@ -89,9 +83,6 @@ Standalone library for reading/writing Altium Designer files (.SchLib, .PcbLib, 
 # Build library
 cargo build -p altium-format
 
-# Build CLI
-cargo build --bin altium-cli
-
 # Run tests
 cargo test -p altium-format
 
@@ -99,15 +90,26 @@ cargo test -p altium-format
 cargo doc -p altium-format --open
 ```
 
-## CLI Usage
+## Library Usage
 
-```bash
-# Inspect file structure
-altium-cli inspect components.SchLib
+```rust
+use altium_format::io::SchLib;
+use std::fs::File;
+use std::io::BufReader;
 
-# Query with selector
-altium-cli query components.SchLib "Component[Designator=R1]"
+// Open schematic library
+let file = File::open("components.SchLib")?;
+let lib = SchLib::open(BufReader::new(file))?;
 
-# Export to JSON
-altium-cli export components.SchLib --format json -o output.json
+// Iterate components
+for component in lib.components() {
+    println!("Designator: {}", component.designator);
+}
+
+// Query with CSS-like selectors
+use altium_format::query::selector::Selector;
+let selector = Selector::parse("Component[Designator=R1]")?;
+let matches = selector.find(&lib)?;
 ```
+
+For CLI usage, see [altium-cli](../altium-cli/CLAUDE.md).

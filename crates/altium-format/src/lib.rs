@@ -89,7 +89,6 @@
 //! ```
 
 pub mod api;
-pub mod cli;
 pub mod dump;
 pub mod edit;
 pub mod error;

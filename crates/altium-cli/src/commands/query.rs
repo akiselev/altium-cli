@@ -13,14 +13,14 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::cli::output::{self, TextFormat};
-use crate::io::{SchDoc, SchLib};
-use crate::query::{
+use crate::output::{self, TextFormat};
+use altium_format::io::{SchDoc, SchLib};
+use altium_format::query::{
     QueryMatch as SchqlMatch, QueryResult as SchqlResult, RecordQueryMatch,
     query_records_with_doc_name, query_schdoc,
 };
-use crate::records::sch::SchRecord;
-use crate::tree::RecordTree;
+use altium_format::records::sch::SchRecord;
+use altium_format::tree::RecordTree;
 
 /// Result structure for query command output.
 #[derive(Serialize)]
@@ -124,7 +124,6 @@ fn run_schdoc_query(
     let file = File::open(path)?;
     let doc = SchDoc::open(BufReader::new(file))?;
 
-    // Determine query language and execute
     let (matches, language) = if is_schql_query(selector) {
         let result = query_schdoc(&doc, selector)?;
         let matches = convert_schql_matches(&result);
@@ -166,7 +165,6 @@ fn run_schlib_query(
     let file = File::open(path)?;
     let lib = SchLib::open(BufReader::new(file))?;
 
-    // For SchLib, we query across all components
     let mut all_matches = Vec::new();
 
     for component in lib.components.iter() {
@@ -201,7 +199,6 @@ fn run_schlib_query(
 fn is_schql_query(query: &str) -> bool {
     let trimmed = query.trim().to_lowercase();
 
-    // SchQL queries typically start with element types followed by selectors
     let schql_prefixes = [
         "component",
         "pin",
@@ -211,25 +208,20 @@ fn is_schql_query(query: &str) -> bool {
         "power",
         "junction",
         "label",
-        "#", // ID selector in SchQL
+        "#",
     ];
 
-    // Check for SchQL-specific syntax patterns
     for prefix in schql_prefixes {
-        if trimmed.starts_with(prefix) {
-            // Check for SchQL operators: >, >>, ::, [, :
-            if trimmed.contains('[')
+        if trimmed.starts_with(prefix)
+            && (trimmed.contains('[')
                 || trimmed.contains(">")
                 || trimmed.contains("::")
-                || (trimmed.contains(':') && !trimmed.contains(":#"))
-            {
-                return true;
-            }
+                || (trimmed.contains(':') && !trimmed.contains(":#")))
+        {
+            return true;
         }
     }
 
-    // Record selector syntax uses different prefixes
-    // $, ~, @, # followed by pattern, or just designator patterns
     false
 }
 
@@ -409,7 +401,7 @@ fn convert_record_matches(
 fn record_to_output(
     record: &SchRecord,
     tree: &RecordTree<SchRecord>,
-    id: crate::tree::RecordId,
+    id: altium_format::tree::RecordId,
     component_context: Option<&str>,
 ) -> QueryMatchOutput {
     match record {
@@ -576,7 +568,7 @@ fn record_to_output(
 /// Get designator text for a component by looking up its Designator child.
 fn get_designator_for_component(
     tree: &RecordTree<SchRecord>,
-    component_id: crate::tree::RecordId,
+    component_id: altium_format::tree::RecordId,
 ) -> Option<String> {
     for (_child_id, child) in tree.children(component_id) {
         if let SchRecord::Designator(d) = child {
