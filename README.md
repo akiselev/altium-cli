@@ -2,6 +2,17 @@
 
 Rust library and CLI tool for reading, writing, and querying Altium Designer files.
 
+```
+╔═══════════════════════════════════════════════════════════╗
+║      WARNING: EXPERIMENTAL - WORK IN PROGRESS             ║
+║  Breaking changes expected. Use at your own risk.         ║
+║  This project depends on vibe-reverse engineering Altium  ║
+║  binary files. BACKUP YOUR FILES IN VERSION CONTROL       ║
+║  BEFORE USING THIS CLI. The format crate makes a best     ║
+║  attempt at nondestructive editing but there will be bugs ║
+╚═══════════════════════════════════════════════════════════╝
+```
+
 ## Features
 
 - **Read/Write Altium Files**: Support for `.SchLib`, `.SchDoc`, `.PcbLib`, `.PcbDoc` formats
