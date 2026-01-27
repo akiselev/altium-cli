@@ -1,0 +1,47 @@
+[package]
+name = "altium-format"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+description = "Core altium-cli library for reading and writing Altium Designer files."
+license = "GPL-3.0-only"
+repository = "https://github.com/akiselev/altium-cli"
+homepage = "https://github.com/akiselev/altium-cli"
+documentation = "https://docs.rs/altium-format"
+readme = "../../README.md"
+authors = ["Alexander Kiselev <alex@akiselev.com>"]
+keywords = ["altium", "eda", "pcb", "schematic", "cfb"]
+categories = ["parser-implementations"]
+
+# Include template files in the package
+include = [
+    "src/**/*",
+    "data/*.PcbDoc",
+    "data/*.PrjPcb",
+    "Cargo.toml",
+]
+
+[[bin]]
+name = "altium-cli"
+path = "src/bin/altium-cli.rs"
+
+[dependencies]
+altium-derive = { version = "0.1.0", path = "../altium-derive" }
+bitflags = "2.10.0"
+byteorder = "1.5.0"
+cfb = "0.12.1"
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+encoding_rs = "0.8.35"
+flate2 = "1.1.5"
+geo = "0.28"
+indexmap = "2.13.0"
+log = "0.4.29"
+regex = "1.11.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+png = "0.17"
+resvg = "0.44"
+thiserror = "2.0.17"
+uuid = { version = "1.19", features = ["v4"] }
