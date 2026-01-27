@@ -93,7 +93,24 @@ altium-format = "0.1.0"
 altium-cli inspect components.SchLib
 
 # Query components
-altium-cli query design.SchDoc "Component[Designator=R1]"
+altium-cli query design.SchDoc "R*"
+
+# Schematic analysis
+altium-cli schdoc bom design.SchDoc
+altium-cli schdoc netlist design.SchDoc
+
+# PCB analysis
+altium-cli pcbdoc rules design.PcbDoc
+altium-cli pcbdoc components design.PcbDoc
+
+# Project management
+altium-cli prjpcb overview project.PrjPcb
+altium-cli prjpcb bom project.PrjPcb --grouped
+
+# Library browsing
+altium-cli schlib list components.SchLib
+altium-cli pcblib measure footprints.PcbLib SOIC-8
+altium-cli intlib search library.IntLib "LM358"
 
 # Edit schematic
 altium-cli edit design.SchDoc -c "move U1 1000 2000" -o output.SchDoc
