@@ -11,6 +11,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::output::{self, TextFormat};
+use altium_format::edit::types::Orientation;
 use altium_format::edit::EditSession;
 use altium_format::records::sch::{PortIoType, PowerObjectStyle, TextOrientations};
 use altium_format::types::{Coord, CoordPoint, Unit};
@@ -96,6 +97,14 @@ pub enum EditOperation {
     RouteWire { from: String, to: String },
     /// Validate the schematic.
     Validate,
+    /// Add component from library.
+    AddComponent {
+        library: String,
+        component: String,
+        x: f64,
+        y: f64,
+        designator: Option<String>,
+    },
 }
 
 /// Run the edit command.
@@ -236,6 +245,27 @@ fn parse_operation(operation: &str) -> Result<EditOperation, Box<dyn std::error:
             })
         }
         "validate" => Ok(EditOperation::Validate),
+        "add-component" => {
+            if parts.len() < 5 {
+                return Err(
+                    "add-component requires: <library> <component> <x> <y> [designator]".into(),
+                );
+            }
+            let x = parse_coordinate(parts[3])?;
+            let y = parse_coordinate(parts[4])?;
+            let designator = if parts.len() >= 6 {
+                Some(parts[5].to_string())
+            } else {
+                None
+            };
+            Ok(EditOperation::AddComponent {
+                library: parts[1].to_string(),
+                component: parts[2].to_string(),
+                x,
+                y,
+                designator,
+            })
+        }
         _ => Err(format!("Unknown operation: {}", parts[0]).into()),
     }
 }
@@ -309,6 +339,21 @@ fn execute_operation(
         } => execute_add_port(path, &name, x, y, &io_type, output_path),
         EditOperation::RouteWire { from, to } => execute_route_wire(path, &from, &to, output_path),
         EditOperation::Validate => execute_validate(path),
+        EditOperation::AddComponent {
+            library,
+            component,
+            x,
+            y,
+            designator,
+        } => execute_add_component(
+            path,
+            &library,
+            &component,
+            x,
+            y,
+            designator.as_deref(),
+            output_path,
+        ),
     }
 }
 
@@ -632,6 +677,42 @@ fn execute_validate(path: &Path) -> Result<EditResult, Box<dyn std::error::Error
             error: Some(error_descriptions.join("; ")),
         })
     }
+}
+
+fn execute_add_component(
+    path: &Path,
+    library: &str,
+    component: &str,
+    x: f64,
+    y: f64,
+    designator: Option<&str>,
+    output_path: &Path,
+) -> Result<EditResult, Box<dyn std::error::Error>> {
+    let mut session = EditSession::open(path)?;
+    let location = CoordPoint::from_mils(x, y);
+
+    // Load the library
+    session.load_library(library)?;
+
+    // Add the component
+    session.add_component(component, location, Orientation::Normal, designator)?;
+    session.save(output_path)?;
+
+    let des_desc = designator
+        .map(|d| format!(" as {}", d))
+        .unwrap_or_default();
+
+    Ok(EditResult {
+        success: true,
+        file: path.display().to_string(),
+        operation: "add-component".to_string(),
+        description: format!(
+            "Added component '{}' from '{}'{}at ({:.0}, {:.0}) mils",
+            component, library, des_desc, x, y
+        ),
+        output_path: Some(output_path.display().to_string()),
+        error: None,
+    })
 }
 
 /// Parse a point specification for routing targets.

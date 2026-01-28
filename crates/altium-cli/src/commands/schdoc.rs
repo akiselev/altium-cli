@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::output::{self, TextFormat};
-use altium_format::ops::schdoc;
+use altium_format::ops::{schdoc, schdoc_edit};
 
 #[derive(Subcommand)]
 pub enum SchDocCommands {
@@ -192,6 +192,231 @@ pub enum SchDocCommands {
         #[arg(long)]
         template: Option<PathBuf>,
     },
+
+    /// Add component from library
+    AddComponent {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Library path
+        #[arg(short, long)]
+        library: PathBuf,
+
+        /// Component name
+        #[arg(short, long)]
+        component: String,
+
+        /// X position
+        #[arg(short, long)]
+        x: String,
+
+        /// Y position
+        #[arg(short, long)]
+        y: String,
+
+        /// Designator
+        #[arg(short, long)]
+        designator: Option<String>,
+    },
+
+    /// Move component to new location
+    MoveComponent {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Component designator
+        designator: String,
+
+        /// X position
+        x: String,
+
+        /// Y position
+        y: String,
+    },
+
+    /// Delete component by designator
+    DeleteComponent {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Component designator
+        designator: String,
+    },
+
+    /// Add wire path
+    AddWire {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Vertices as comma-separated values
+        vertices: String,
+    },
+
+    /// Delete wire by index
+    DeleteWire {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Wire index
+        index: usize,
+    },
+
+    /// Add net label
+    AddNetLabel {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Net label text
+        name: String,
+
+        /// X position
+        x: String,
+
+        /// Y position
+        y: String,
+    },
+
+    /// Add power port
+    AddPower {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Power net name
+        name: String,
+
+        /// X position
+        x: String,
+
+        /// Y position
+        y: String,
+
+        /// Style (bar, arrow, wave, ground, etc.)
+        style: String,
+
+        /// Orientation (up, down, left, right)
+        orientation: String,
+    },
+
+    /// Add junction at location
+    AddJunction {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// X position
+        x: String,
+
+        /// Y position
+        y: String,
+    },
+
+    /// Auto-add junctions where wires cross
+    AddMissingJunctions {
+        /// Path to SchDoc file
+        path: PathBuf,
+    },
+
+    /// Add port
+    AddPort {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Port name
+        name: String,
+
+        /// X position
+        x: String,
+
+        /// Y position
+        y: String,
+
+        /// I/O type (input, output, bidirectional, unspecified)
+        io_type: String,
+    },
+
+    /// Route wire between two points
+    RouteWire {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// From point or pin
+        from: String,
+
+        /// To point or pin
+        to: String,
+    },
+
+    /// Connect two component pins with wire
+    ConnectPins {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// From component designator
+        from_comp: String,
+
+        /// From pin name
+        from_pin: String,
+
+        /// To component designator
+        to_comp: String,
+
+        /// To pin name
+        to_pin: String,
+    },
+
+    /// Validate schematic connectivity
+    Validate {
+        /// Path to SchDoc file
+        path: PathBuf,
+    },
+
+    /// Suggest placement location for component
+    SuggestPlacement {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Library path
+        #[arg(short, long)]
+        library: PathBuf,
+
+        /// Component name
+        #[arg(short, long)]
+        component: String,
+    },
+
+    /// Find unconnected pins
+    FindUnconnected {
+        /// Path to SchDoc file
+        path: PathBuf,
+    },
+
+    /// Find missing junctions where wires cross
+    FindMissingJunctions {
+        /// Path to SchDoc file
+        path: PathBuf,
+    },
+
+    /// Show netlist with connectivity details
+    ShowNetlist {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Filter by net name
+        #[arg(short, long)]
+        filter: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Search component library
+    SearchLibrary {
+        /// Library path
+        library: PathBuf,
+
+        /// Search pattern
+        pattern: String,
+    },
 }
 
 pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -282,6 +507,97 @@ pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error:
         }
         SchDocCommands::Create { path, template } => {
             schdoc::cmd_create(path, template.clone())?;
+        }
+        SchDocCommands::AddComponent {
+            path,
+            library,
+            component,
+            x,
+            y,
+            designator,
+        } => {
+            schdoc_edit::cmd_add_component(path, library, component, x, y, designator.as_deref(), 0, None)?;
+        }
+        SchDocCommands::MoveComponent { path, designator, x, y } => {
+            schdoc_edit::cmd_move_component(path, designator, x, y, None)?;
+        }
+        SchDocCommands::DeleteComponent { path, designator } => {
+            schdoc_edit::cmd_delete_component(path, designator, None)?;
+        }
+        SchDocCommands::AddWire { path, vertices } => {
+            schdoc_edit::cmd_add_wire(path, vertices, None)?;
+        }
+        SchDocCommands::DeleteWire { path, index } => {
+            schdoc_edit::cmd_delete_wire(path, *index, None)?;
+        }
+        SchDocCommands::AddNetLabel { path, name, x, y } => {
+            schdoc_edit::cmd_add_net_label(path, name, x, y, None)?;
+        }
+        SchDocCommands::AddPower {
+            path,
+            name,
+            x,
+            y,
+            style,
+            orientation,
+        } => {
+            schdoc_edit::cmd_add_power(path, name, x, y, style, orientation, None)?;
+        }
+        SchDocCommands::AddJunction { path, x, y } => {
+            schdoc_edit::cmd_add_junction(path, x, y, None)?;
+        }
+        SchDocCommands::AddMissingJunctions { path } => {
+            schdoc_edit::cmd_add_missing_junctions(path, None)?;
+        }
+        SchDocCommands::AddPort {
+            path,
+            name,
+            x,
+            y,
+            io_type,
+        } => {
+            schdoc_edit::cmd_add_port(path, name, x, y, io_type, None)?;
+        }
+        SchDocCommands::RouteWire { path, from, to } => {
+            schdoc_edit::cmd_route_wire(path, from, to, None)?;
+        }
+        SchDocCommands::ConnectPins {
+            path,
+            from_comp,
+            from_pin,
+            to_comp,
+            to_pin,
+        } => {
+            schdoc_edit::cmd_connect_pins(path, from_comp, from_pin, to_comp, to_pin, None)?;
+        }
+        SchDocCommands::Validate { path } => {
+            let result = schdoc_edit::cmd_validate(path)?;
+            output::print(&TextWrapper(result), format)?;
+        }
+        SchDocCommands::SuggestPlacement {
+            path,
+            library,
+            component,
+        } => {
+            schdoc_edit::cmd_suggest_placement(path, library, component, None, format == "json")?;
+        }
+        SchDocCommands::FindUnconnected { path } => {
+            let result = schdoc_edit::cmd_find_unconnected(path)?;
+            output::print(&TextWrapper(result), format)?;
+        }
+        SchDocCommands::FindMissingJunctions { path } => {
+            let result = schdoc_edit::cmd_find_missing_junctions(path)?;
+            output::print(&TextWrapper(result), format)?;
+        }
+        SchDocCommands::ShowNetlist { path, filter, json } => {
+            schdoc_edit::cmd_show_netlist(path, filter.as_deref(), *json).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        }
+        SchDocCommands::SearchLibrary {
+            library,
+            pattern,
+        } => {
+            let result = schdoc_edit::cmd_search_library(library, pattern)?;
+            output::print(&TextWrapper(result), format)?;
         }
     }
     Ok(())
