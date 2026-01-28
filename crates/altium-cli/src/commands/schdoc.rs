@@ -182,6 +182,16 @@ pub enum SchDocCommands {
         #[arg(long)]
         pretty: bool,
     },
+
+    /// Create new schematic document
+    Create {
+        /// Path to new SchDoc file
+        path: PathBuf,
+
+        /// Optional template file
+        #[arg(long)]
+        template: Option<PathBuf>,
+    },
 }
 
 pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -269,6 +279,9 @@ pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error:
         SchDocCommands::Json { path, full, pretty } => {
             // cmd_json prints directly
             schdoc::cmd_json(path, *full, *pretty).map_err(|e| e.to_string())?;
+        }
+        SchDocCommands::Create { path, template } => {
+            schdoc::cmd_create(path, template.clone())?;
         }
     }
     Ok(())

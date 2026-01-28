@@ -42,6 +42,40 @@ fn open_schdoc_boxed(path: &Path) -> Result<SchDoc, Box<dyn std::error::Error>> 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CREATION COMMANDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Embedded blank SchDoc template.
+const BLANK_SCHDOC_TEMPLATE: &[u8] = include_bytes!("../../data/blank/Sheet1.SchDoc");
+
+/// Create a new empty SchDoc file.
+pub fn cmd_create(path: &Path, template: Option<PathBuf>) -> Result<(), String> {
+    if path.exists() {
+        return Err(format!("File already exists: {}", path.display()));
+    }
+
+    match template {
+        Some(template_path) => {
+            std::fs::copy(&template_path, path)
+                .map_err(|e| format!("Error copying template: {}", e))?;
+            println!("Created SchDoc from template: {}", path.display());
+            println!("  Template: {}", template_path.display());
+        }
+        None => {
+            std::fs::write(path, BLANK_SCHDOC_TEMPLATE)
+                .map_err(|e| format!("Error creating file: {}", e))?;
+            println!("Created empty SchDoc: {}", path.display());
+        }
+    }
+
+    let doc = open_schdoc_boxed(path)
+        .map_err(|e| format!("Error verifying SchDoc: {}", e))?;
+    println!("  Records: {}", doc.primitives.len());
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HIGH-LEVEL COMMANDS
 // ═══════════════════════════════════════════════════════════════════════════
 

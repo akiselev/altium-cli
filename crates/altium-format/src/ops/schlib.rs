@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -579,16 +579,22 @@ pub fn cmd_json(path: &Path) -> Result<SchLibComponentList, Box<dyn std::error::
 // CREATION COMMAND IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Embedded blank SchLib template.
+const BLANK_SCHLIB_TEMPLATE: &[u8] = include_bytes!("../../data/blank/Schlib1.SchLib");
+
 /// Create a new empty SchLib file.
 pub fn cmd_create(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     if path.exists() {
         return Err(format!("File already exists: {}", path.display()).into());
     }
 
-    let lib = SchLib::default();
-    lib.save_to_file(path)?;
+    std::fs::write(path, BLANK_SCHLIB_TEMPLATE)?;
 
     Ok(format!("Created empty SchLib: {}", path.display()))
+}
+
+fn load_blank_schlib() -> Result<SchLib, Box<dyn std::error::Error>> {
+    Ok(SchLib::open(Cursor::new(BLANK_SCHLIB_TEMPLATE))?)
 }
 
 /// Open or create a SchLib file.
@@ -596,7 +602,7 @@ fn open_or_create_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Erro
     if path.exists() {
         open_schlib(path)
     } else {
-        Ok(SchLib::default())
+        load_blank_schlib()
     }
 }
 

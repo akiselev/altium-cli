@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
 
 use png;
@@ -1321,6 +1321,9 @@ fn print_all_pads_json(
 // CREATION/EDITING COMMAND IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Embedded blank PcbLib template.
+const BLANK_PCBLIB_TEMPLATE: &[u8] = include_bytes!("../../data/blank/PcbLib1.PcbLib");
+
 use crate::footprint::{ChipSpec, IpcDensity};
 use crate::records::pcb::{PcbArc, PcbComponent, PcbFlags, PcbPrimitiveCommon, PcbTrack};
 use crate::types::{Coord, CoordPoint};
@@ -1331,12 +1334,15 @@ pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("File already exists: {}", path.display()).into());
     }
 
-    let lib = PcbLib::default();
-    lib.save_to_file(path)
-        .map_err(|e| format!("Error saving file: {:?}", e))?;
+    std::fs::write(path, BLANK_PCBLIB_TEMPLATE)
+        .map_err(|e| format!("Error creating file: {}", e))?;
 
     println!("Created empty PcbLib: {}", path.display());
     Ok(())
+}
+
+fn load_blank_pcblib() -> Result<PcbLib, Box<dyn std::error::Error>> {
+    Ok(PcbLib::open(Cursor::new(BLANK_PCBLIB_TEMPLATE))?)
 }
 
 /// Add a new footprint to a library.
@@ -1730,7 +1736,7 @@ fn open_or_create_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Erro
     if path.exists() {
         open_pcblib(path)
     } else {
-        Ok(PcbLib::default())
+        load_blank_pcblib()
     }
 }
 

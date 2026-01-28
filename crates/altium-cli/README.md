@@ -50,6 +50,22 @@ altium-cli edit path/to/design.SchDoc -c "move U1 1000 2000" -o output.SchDoc
 altium-cli edit path/to/design.SchDoc -c "delete R3" -o output.SchDoc
 ```
 
+### Create Files
+
+```bash
+# Create a blank schematic document
+altium-cli schdoc create path/to/new.SchDoc
+
+# Create a SchDoc from a template
+altium-cli schdoc create path/to/new.SchDoc --template path/to/template.SchDoc
+
+# Create a blank schematic library
+altium-cli schlib create path/to/new.SchLib
+
+# Create a blank PCB footprint library
+altium-cli pcblib create path/to/new.PcbLib
+```
+
 ### Output Formats
 
 ```bash
