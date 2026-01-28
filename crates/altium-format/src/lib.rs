@@ -94,6 +94,7 @@ pub mod edit;
 pub mod error;
 pub mod footprint;
 pub mod format;
+pub mod import;
 pub mod io;
 pub mod ops;
 pub mod query;

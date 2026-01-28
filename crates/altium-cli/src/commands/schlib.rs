@@ -276,6 +276,15 @@ pub enum SchLibCommands {
         #[arg(short, long)]
         json: Option<String>,
     },
+
+    /// Generate a complete SchLib from a YAML/JSON/TOML definition file
+    GenerateFrom {
+        /// Path to import definition file (.yml, .yaml, .json, .toml)
+        input: PathBuf,
+
+        /// Path to output SchLib file
+        output: PathBuf,
+    },
 }
 
 pub fn run(cmd: &SchLibCommands, format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -444,6 +453,23 @@ pub fn run(cmd: &SchLibCommands, format: &str) -> Result<(), Box<dyn std::error:
         SchLibCommands::AddJson { path, file, json } => {
             let result = schlib::cmd_add_json(path, file.clone(), json.clone())?;
             println!("{}", result);
+        }
+        SchLibCommands::GenerateFrom { input, output } => {
+            use altium_format::import::{parse_import_file, ImportFile};
+            let import_file = parse_import_file(input)?;
+            match import_file {
+                ImportFile::SchLib(import) => {
+                    let result =
+                        altium_format::import::schlib::generate_schlib(output, &import)?;
+                    println!("{}", result);
+                }
+                _ => {
+                    return Err(format!(
+                        "Import file does not have format: schlib. Check the 'format' field."
+                    )
+                    .into());
+                }
+            }
         }
     }
     Ok(())

@@ -598,7 +598,7 @@ fn load_blank_schlib() -> Result<SchLib, Box<dyn std::error::Error>> {
 }
 
 /// Open or create a SchLib file.
-fn open_or_create_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Error>> {
+pub fn open_or_create_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Error>> {
     if path.exists() {
         open_schlib(path)
     } else {
@@ -607,12 +607,12 @@ fn open_or_create_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Erro
 }
 
 /// Save a SchLib file.
-fn save_schlib(path: &Path, lib: &SchLib) -> Result<(), Box<dyn std::error::Error>> {
+pub fn save_schlib(path: &Path, lib: &SchLib) -> Result<(), Box<dyn std::error::Error>> {
     Ok(lib.save_to_file(path)?)
 }
 
 /// Parse a hex color string to Win32 COLORREF (BGR format).
-fn parse_color(hex: &str) -> Result<i32, Box<dyn std::error::Error>> {
+pub fn parse_color(hex: &str) -> Result<i32, Box<dyn std::error::Error>> {
     // Remove leading # if present
     let hex = hex.trim_start_matches('#');
 
@@ -636,7 +636,7 @@ fn parse_color(hex: &str) -> Result<i32, Box<dyn std::error::Error>> {
 }
 
 /// Parse electrical type string to PinElectricalType.
-fn parse_electrical_type(s: &str) -> Result<PinElectricalType, Box<dyn std::error::Error>> {
+pub fn parse_electrical_type(s: &str) -> Result<PinElectricalType, Box<dyn std::error::Error>> {
     match s.to_lowercase().as_str() {
         "input" | "in" => Ok(PinElectricalType::Input),
         "output" | "out" => Ok(PinElectricalType::Output),
@@ -655,7 +655,7 @@ fn parse_electrical_type(s: &str) -> Result<PinElectricalType, Box<dyn std::erro
 }
 
 /// Parse pin orientation to conglomerate flags.
-fn parse_pin_orientation(s: &str) -> Result<PinConglomerateFlags, Box<dyn std::error::Error>> {
+pub fn parse_pin_orientation(s: &str) -> Result<PinConglomerateFlags, Box<dyn std::error::Error>> {
     match s.to_lowercase().as_str() {
         "right" => Ok(PinConglomerateFlags::empty()), // Pin pointing right (default)
         "left" => Ok(PinConglomerateFlags::FLIPPED),  // Pin pointing left
@@ -666,12 +666,12 @@ fn parse_pin_orientation(s: &str) -> Result<PinConglomerateFlags, Box<dyn std::e
 }
 
 /// Convert mils to raw coordinate value.
-fn mils_to_raw(mils: i32) -> i32 {
+pub fn mils_to_raw(mils: i32) -> i32 {
     mils * 10000
 }
 
 /// Convert mils (f64) to raw coordinate value.
-fn mils_f64_to_raw(mils: f64) -> i32 {
+pub fn mils_f64_to_raw(mils: f64) -> i32 {
     (mils * 10000.0).round() as i32
 }
 
@@ -690,7 +690,7 @@ fn parse_unit_value_to_mils(s: &str) -> Result<f64, Box<dyn std::error::Error>> 
 
 /// Parse a value with optional unit suffix, defaulting to mils for plain numbers.
 /// Handles: "100mil", "2.54mm", "0.1in", "100" (interpreted as mils)
-fn parse_unit_value_or_mil(s: &str) -> Result<f64, Box<dyn std::error::Error>> {
+pub fn parse_unit_value_or_mil(s: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let s = s.trim();
 
     // Try parsing with unit suffix first
@@ -2057,7 +2057,7 @@ pub fn cmd_add_json(
 }
 
 /// Parse text orientation string.
-fn parse_text_orientation(s: &str) -> Result<TextOrientations, Box<dyn std::error::Error>> {
+pub fn parse_text_orientation(s: &str) -> Result<TextOrientations, Box<dyn std::error::Error>> {
     match s.to_lowercase().as_str() {
         "horizontal" | "0" => Ok(TextOrientations::NONE),
         "vertical_up" | "90" | "up" => Ok(TextOrientations::ROTATED),
@@ -2068,7 +2068,7 @@ fn parse_text_orientation(s: &str) -> Result<TextOrientations, Box<dyn std::erro
 }
 
 /// Parse text justification string.
-fn parse_text_justification(s: &str) -> Result<TextJustification, Box<dyn std::error::Error>> {
+pub fn parse_text_justification(s: &str) -> Result<TextJustification, Box<dyn std::error::Error>> {
     match s.to_lowercase().replace('_', "").as_str() {
         "bottomleft" | "bl" => Ok(TextJustification::BOTTOM_LEFT),
         "bottomcenter" | "bc" => Ok(TextJustification::BOTTOM_CENTER),

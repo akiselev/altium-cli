@@ -469,6 +469,15 @@ pub enum PcbLibCommands {
         #[arg(long, default_value = "0mm")]
         skip_center: String,
     },
+
+    /// Generate a complete PcbLib from a YAML/JSON/TOML definition file
+    GenerateFrom {
+        /// Path to import definition file (.yml, .yaml, .json, .toml)
+        input: PathBuf,
+
+        /// Path to output PcbLib file
+        output: PathBuf,
+    },
 }
 
 pub fn run(cmd: &PcbLibCommands, format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -725,6 +734,23 @@ pub fn run(cmd: &PcbLibCommands, format: &str) -> Result<(), Box<dyn std::error:
                 shape,
                 skip_center,
             )?;
+        }
+        PcbLibCommands::GenerateFrom { input, output } => {
+            use altium_format::import::{parse_import_file, ImportFile};
+            let import_file = parse_import_file(input)?;
+            match import_file {
+                ImportFile::PcbLib(import) => {
+                    let result =
+                        altium_format::import::pcblib::generate_pcblib(output, &import)?;
+                    println!("{}", result);
+                }
+                _ => {
+                    return Err(format!(
+                        "Import file does not have format: pcblib. Check the 'format' field."
+                    )
+                    .into());
+                }
+            }
         }
     }
     Ok(())

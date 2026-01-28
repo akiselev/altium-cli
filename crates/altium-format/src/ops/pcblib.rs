@@ -1547,7 +1547,7 @@ pub fn cmd_gen_chip(
     Ok(())
 }
 
-fn parse_density(s: &str) -> Result<IpcDensity, Box<dyn std::error::Error>> {
+pub fn parse_density(s: &str) -> Result<IpcDensity, Box<dyn std::error::Error>> {
     match s.to_lowercase().as_str() {
         "most" | "a" | "dense" => Ok(IpcDensity::MostDense),
         "nominal" | "b" | "normal" => Ok(IpcDensity::Nominal),
@@ -1732,7 +1732,7 @@ pub fn cmd_render_ascii(
 
 // Helper functions
 
-fn open_or_create_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
+pub fn open_or_create_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
     if path.exists() {
         open_pcblib(path)
     } else {
@@ -1740,7 +1740,7 @@ fn open_or_create_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Erro
     }
 }
 
-fn save_pcblib(path: &Path, lib: &PcbLib) -> Result<(), Box<dyn std::error::Error>> {
+pub fn save_pcblib(path: &Path, lib: &PcbLib) -> Result<(), Box<dyn std::error::Error>> {
     Ok(lib.save_to_file(path)?)
 }
 
@@ -2365,7 +2365,7 @@ fn parse_pcb_layer(s: &str) -> Result<Layer, String> {
     }
 }
 
-fn parse_pad_shape(s: &str) -> Result<PcbPadShape, String> {
+pub fn parse_pad_shape(s: &str) -> Result<PcbPadShape, String> {
     match s.to_lowercase().as_str() {
         "round" => Ok(PcbPadShape::Round),
         "rectangular" | "rect" => Ok(PcbPadShape::Rectangular),
@@ -2391,7 +2391,7 @@ fn parse_unit_value(s: &str) -> Result<f64, String> {
 
 /// Parse a value with optional unit suffix, defaulting to mm for plain numbers.
 /// Handles: "0.5mm", "50mil", "0.05in", "0.5" (interpreted as mm)
-fn parse_unit_value_or_mm(s: &str) -> Result<f64, String> {
+pub fn parse_unit_value_or_mm(s: &str) -> Result<f64, String> {
     let s = s.trim();
 
     // Try parsing with unit suffix first

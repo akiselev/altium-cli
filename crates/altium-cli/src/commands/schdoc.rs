@@ -453,6 +453,19 @@ pub enum SchDocCommands {
         /// Search pattern
         pattern: String,
     },
+
+    /// Generate a complete SchDoc from a YAML/JSON/TOML definition file
+    GenerateFrom {
+        /// Path to import definition file (.yml, .yaml, .json, .toml)
+        input: PathBuf,
+
+        /// Path to output SchDoc file
+        output: PathBuf,
+
+        /// Path to SchLib library file for component symbols
+        #[arg(short, long)]
+        library: Option<PathBuf>,
+    },
 }
 
 pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -659,6 +672,29 @@ pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error:
         } => {
             let result = schdoc_edit::cmd_search_library(library, pattern)?;
             output::print(&TextWrapper(result), format)?;
+        }
+        SchDocCommands::GenerateFrom {
+            input,
+            output,
+            library,
+        } => {
+            use altium_format::import::{parse_import_file, ImportFile};
+            let import_file = parse_import_file(input)?;
+            match import_file {
+                ImportFile::SchDoc(import) => {
+                    let lib_path = library.as_deref();
+                    let result = altium_format::import::schdoc::generate_schdoc(
+                        output, &import, lib_path,
+                    )?;
+                    println!("{}", result);
+                }
+                _ => {
+                    return Err(format!(
+                        "Import file does not have format: schdoc. Check the 'format' field."
+                    )
+                    .into());
+                }
+            }
         }
     }
     Ok(())
