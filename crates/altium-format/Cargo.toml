@@ -1,6 +1,6 @@
 [package]
 name = "altium-format"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.85"
 
@@ -15,7 +15,13 @@ keywords = ["altium", "eda", "pcb", "schematic", "cfb"]
 categories = ["parser-implementations"]
 
 # Include template files in the package
-include = ["src/**/*", "data/*.PcbDoc", "data/*.PrjPcb", "Cargo.toml"]
+include = [
+    "src/**/*",
+    "data/*.PcbDoc",
+    "data/*.PrjPcb",
+    "data/blank/*",
+    "Cargo.toml",
+]
 
 [dependencies]
 altium-format-derive = { version = "0.1.0", path = "../altium-format-derive" }
