@@ -60,7 +60,7 @@ impl PcbLib {
 
     /// Save the PcbLib to a file.
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
-        let mut cf = CompoundFile::create(writer)
+        let mut cf = CompoundFile::create_with_version(cfb::Version::V3, writer)
             .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
 
         // Write FileHeader
