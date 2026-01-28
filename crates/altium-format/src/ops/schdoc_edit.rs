@@ -851,3 +851,296 @@ pub fn cmd_list_library(
         components,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::schlib::{cmd_create as schlib_create, cmd_gen_ic};
+    use std::path::PathBuf;
+
+    fn temp_path(ext: &str) -> PathBuf {
+        let id = uuid::Uuid::new_v4();
+        std::env::temp_dir().join(format!("test_{}.{}", id, ext))
+    }
+
+    /// Helper: create a SchLib with a simple 3-pin IC.
+    fn create_test_library() -> PathBuf {
+        let lib_path = temp_path("SchLib");
+        schlib_create(&lib_path).unwrap();
+        cmd_gen_ic(
+            &lib_path,
+            "LDO_3PIN",
+            "1:VIN:power:left,2:VOUT:power:right,3:GND:power:bottom",
+            Some("Test LDO".to_string()),
+            "600mil",
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+        cmd_gen_ic(
+            &lib_path,
+            "IC_4PIN",
+            "1:VCC:power:top,2:IN:input:left,3:OUT:output:right,4:GND:power:bottom",
+            Some("Test IC".to_string()),
+            "400mil",
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+        lib_path
+    }
+
+    /// E2E: Create schematic, add component, verify designator survives save/reload.
+    #[test]
+    fn test_add_component_designator_roundtrip() {
+        let lib_path = create_test_library();
+        let sch_path = temp_path("SchDoc");
+
+        // Create empty SchDoc
+        crate::ops::schdoc::cmd_create(&sch_path, None).unwrap();
+
+        // Add component with explicit designator
+        cmd_add_component(
+            &sch_path,
+            &lib_path,
+            "LDO_3PIN",
+            "1000",
+            "2000",
+            Some("U1"),
+            0,
+            None,
+        )
+        .unwrap();
+
+        // Reload and check designator
+        let doc = crate::io::SchDoc::open_file(&sch_path).unwrap();
+
+        // Must have exactly 1 component
+        let components: Vec<_> = doc
+            .primitives
+            .iter()
+            .filter(|r| matches!(r, SchRecord::Component(_)))
+            .collect();
+        assert_eq!(components.len(), 1, "Expected 1 component");
+
+        // Must have exactly 1 Designator record (not Parameter)
+        let designators: Vec<_> = doc
+            .primitives
+            .iter()
+            .filter(|r| matches!(r, SchRecord::Designator(_)))
+            .collect();
+        assert_eq!(
+            designators.len(),
+            1,
+            "Expected 1 Designator record, found {}. \
+             Designator may be serializing as Parameter (RECORD=41 vs 34).",
+            designators.len()
+        );
+
+        if let SchRecord::Designator(d) = &designators[0] {
+            assert_eq!(d.text(), "U1", "Designator text must be U1");
+        }
+
+        std::fs::remove_file(&sch_path).ok();
+        std::fs::remove_file(&lib_path).ok();
+    }
+
+    /// E2E: Multiple components get distinct designators.
+    #[test]
+    fn test_multiple_components_distinct_designators() {
+        let lib_path = create_test_library();
+        let sch_path = temp_path("SchDoc");
+
+        crate::ops::schdoc::cmd_create(&sch_path, None).unwrap();
+
+        cmd_add_component(
+            &sch_path, &lib_path, "LDO_3PIN", "1000", "2000",
+            Some("U1"), 0, None,
+        ).unwrap();
+        cmd_add_component(
+            &sch_path, &lib_path, "IC_4PIN", "3000", "2000",
+            Some("U2"), 0, None,
+        ).unwrap();
+        cmd_add_component(
+            &sch_path, &lib_path, "LDO_3PIN", "5000", "2000",
+            Some("U3"), 0, None,
+        ).unwrap();
+
+        let doc = crate::io::SchDoc::open_file(&sch_path).unwrap();
+
+        let designators: Vec<String> = doc
+            .primitives
+            .iter()
+            .filter_map(|r| {
+                if let SchRecord::Designator(d) = r {
+                    Some(d.text().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(designators.len(), 3, "Expected 3 designators");
+        assert!(designators.contains(&"U1".to_string()));
+        assert!(designators.contains(&"U2".to_string()));
+        assert!(designators.contains(&"U3".to_string()));
+
+        std::fs::remove_file(&sch_path).ok();
+        std::fs::remove_file(&lib_path).ok();
+    }
+
+    /// E2E: Components with top/bottom pins have correct pin count after placement.
+    #[test]
+    fn test_placed_component_preserves_all_pins() {
+        let lib_path = create_test_library();
+        let sch_path = temp_path("SchDoc");
+
+        crate::ops::schdoc::cmd_create(&sch_path, None).unwrap();
+
+        // IC_4PIN has pins on all 4 sides
+        cmd_add_component(
+            &sch_path, &lib_path, "IC_4PIN", "2000", "2000",
+            Some("U1"), 0, None,
+        ).unwrap();
+
+        let doc = crate::io::SchDoc::open_file(&sch_path).unwrap();
+
+        // Count pins owned by the component (owner_index = component index)
+        let comp_index = doc
+            .primitives
+            .iter()
+            .position(|r| matches!(r, SchRecord::Component(_)))
+            .unwrap();
+
+        let pin_count = doc
+            .primitives
+            .iter()
+            .filter(|r| {
+                if let SchRecord::Pin(p) = r {
+                    p.graphical.base.owner_index == comp_index as i32
+                } else {
+                    false
+                }
+            })
+            .count();
+
+        assert_eq!(
+            pin_count, 4,
+            "IC_4PIN has 4 pins (top/bottom/left/right), but only {} survived placement",
+            pin_count
+        );
+
+        std::fs::remove_file(&sch_path).ok();
+        std::fs::remove_file(&lib_path).ok();
+    }
+
+    /// E2E: Power ports and net labels survive save/reload.
+    #[test]
+    fn test_power_and_netlabel_roundtrip() {
+        let sch_path = temp_path("SchDoc");
+        crate::ops::schdoc::cmd_create(&sch_path, None).unwrap();
+
+        // Add power ports
+        cmd_add_power(
+            &sch_path, "3V3", "1000", "2000", "bar", "up", None,
+        ).unwrap();
+        cmd_add_power(
+            &sch_path, "GND", "1000", "1000", "ground", "down", None,
+        ).unwrap();
+
+        // Add net label
+        cmd_add_net_label(
+            &sch_path, "SDA", "2000", "2000", None,
+        ).unwrap();
+
+        let doc = crate::io::SchDoc::open_file(&sch_path).unwrap();
+
+        let power_count = doc
+            .primitives
+            .iter()
+            .filter(|r| matches!(r, SchRecord::PowerObject(_)))
+            .count();
+        assert_eq!(power_count, 2, "Expected 2 power ports");
+
+        let net_labels: Vec<_> = doc
+            .primitives
+            .iter()
+            .filter_map(|r| {
+                if let SchRecord::NetLabel(nl) = r {
+                    Some(nl.label.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(net_labels.len(), 1);
+        assert_eq!(net_labels[0], "SDA");
+
+        std::fs::remove_file(&sch_path).ok();
+    }
+
+    /// E2E: Full workflow — library creation, component placement, designator lookup.
+    #[test]
+    fn test_full_schematic_capture_workflow() {
+        let lib_path = create_test_library();
+        let sch_path = temp_path("SchDoc");
+
+        // Step 1: Create schematic
+        crate::ops::schdoc::cmd_create(&sch_path, None).unwrap();
+
+        // Step 2: Place components
+        cmd_add_component(
+            &sch_path, &lib_path, "LDO_3PIN", "1000", "3000",
+            Some("U1"), 0, None,
+        ).unwrap();
+        cmd_add_component(
+            &sch_path, &lib_path, "IC_4PIN", "3000", "3000",
+            Some("U2"), 0, None,
+        ).unwrap();
+
+        // Step 3: Add power ports
+        cmd_add_power(
+            &sch_path, "3V3", "2000", "4000", "bar", "up", None,
+        ).unwrap();
+        cmd_add_power(
+            &sch_path, "GND", "2000", "2000", "ground", "down", None,
+        ).unwrap();
+
+        // Step 4: Add net labels
+        cmd_add_net_label(
+            &sch_path, "VIN_3V3", "500", "3000", None,
+        ).unwrap();
+
+        // Step 5: Validate — reload and verify structure
+        let doc = crate::io::SchDoc::open_file(&sch_path).unwrap();
+
+        let comp_count = doc.primitives.iter()
+            .filter(|r| matches!(r, SchRecord::Component(_))).count();
+        let des_count = doc.primitives.iter()
+            .filter(|r| matches!(r, SchRecord::Designator(_))).count();
+        let power_count = doc.primitives.iter()
+            .filter(|r| matches!(r, SchRecord::PowerObject(_))).count();
+        let net_count = doc.primitives.iter()
+            .filter(|r| matches!(r, SchRecord::NetLabel(_))).count();
+
+        assert_eq!(comp_count, 2, "2 components");
+        assert_eq!(des_count, 2, "2 designators (one per component)");
+        assert_eq!(power_count, 2, "2 power ports");
+        assert_eq!(net_count, 1, "1 net label");
+
+        // Verify no Designator records were misclassified as Parameter
+        let misclassified = doc.primitives.iter()
+            .filter(|r| {
+                if let SchRecord::Parameter(p) = r {
+                    p.name == "Designator"
+                } else {
+                    false
+                }
+            })
+            .count();
+        assert_eq!(misclassified, 0, "No designators should be misclassified as Parameter");
+
+        std::fs::remove_file(&sch_path).ok();
+        std::fs::remove_file(&lib_path).ok();
+    }
+}

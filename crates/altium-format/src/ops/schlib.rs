@@ -1145,15 +1145,27 @@ pub fn cmd_gen_ic(
     // Parse pin definitions
     let pin_defs = parse_pin_defs(pins_str)?;
 
-    // Separate left and right pins
+    // Separate pins by side
     let left_pins: Vec<_> = pin_defs.iter().filter(|p| p.side == "left").collect();
     let right_pins: Vec<_> = pin_defs.iter().filter(|p| p.side == "right").collect();
+    let top_pins: Vec<_> = pin_defs.iter().filter(|p| p.side == "top").collect();
+    let bottom_pins: Vec<_> = pin_defs.iter().filter(|p| p.side == "bottom").collect();
 
-    // Calculate body height based on pin count
+    // Calculate body dimensions based on pin count
     let left_count = left_pins.len();
     let right_count = right_pins.len();
-    let max_pins = left_count.max(right_count);
-    let body_height_mils = (max_pins + 1) as f64 * pin_spacing_mils;
+    let top_count = top_pins.len();
+    let bottom_count = bottom_pins.len();
+    let max_vertical_pins = left_count.max(right_count);
+    let max_horizontal_pins = top_count.max(bottom_count);
+    let body_height_mils = (max_vertical_pins + 1) as f64 * pin_spacing_mils;
+    // Widen body if top/bottom pins need more space
+    let min_width_for_tb = if max_horizontal_pins > 0 {
+        (max_horizontal_pins + 1) as f64 * pin_spacing_mils
+    } else {
+        0.0
+    };
+    let width_mils = width_mils.max(min_width_for_tb);
 
     // Create component
     let component = SchComponent {
@@ -1233,6 +1245,55 @@ pub fn cmd_gen_ic(
         primitives.push(SchRecord::Pin(pin));
     }
 
+    // Add top pins (pointing down into body)
+    for (i, pin_def) in top_pins.iter().enumerate() {
+        let x_mils = (i + 1) as f64 * pin_spacing_mils;
+
+        let mut graphical = SchGraphicalBase::default();
+        graphical.base.owner_part_id = Some(1);
+        graphical.location_x = mils_f64_to_raw(x_mils);
+        graphical.location_y = mils_f64_to_raw(body_height_mils + pin_length_mils);
+        graphical.color = 0x000080;
+
+        let pin = SchPin {
+            graphical,
+            designator: pin_def.designator.clone(),
+            name: pin_def.name.clone(),
+            electrical: pin_def.electrical,
+            pin_conglomerate: PinConglomerateFlags::DISPLAY_NAME_VISIBLE
+                | PinConglomerateFlags::DESIGNATOR_VISIBLE
+                | PinConglomerateFlags::ROTATED,
+            pin_length: mils_f64_to_raw(pin_length_mils),
+            ..Default::default()
+        };
+        primitives.push(SchRecord::Pin(pin));
+    }
+
+    // Add bottom pins (pointing up into body)
+    for (i, pin_def) in bottom_pins.iter().enumerate() {
+        let x_mils = (i + 1) as f64 * pin_spacing_mils;
+
+        let mut graphical = SchGraphicalBase::default();
+        graphical.base.owner_part_id = Some(1);
+        graphical.location_x = mils_f64_to_raw(x_mils);
+        graphical.location_y = mils_f64_to_raw(-pin_length_mils);
+        graphical.color = 0x000080;
+
+        let pin = SchPin {
+            graphical,
+            designator: pin_def.designator.clone(),
+            name: pin_def.name.clone(),
+            electrical: pin_def.electrical,
+            pin_conglomerate: PinConglomerateFlags::DISPLAY_NAME_VISIBLE
+                | PinConglomerateFlags::DESIGNATOR_VISIBLE
+                | PinConglomerateFlags::ROTATED
+                | PinConglomerateFlags::FLIPPED,
+            pin_length: mils_f64_to_raw(pin_length_mils),
+            ..Default::default()
+        };
+        primitives.push(SchRecord::Pin(pin));
+    }
+
     let lib_component = SchLibComponent {
         component,
         primitives,
@@ -1242,11 +1303,13 @@ pub fn cmd_gen_ic(
     save_schlib(path, &lib)?;
 
     Ok(format!(
-        "Generated IC symbol '{}' with {} pins ({} left, {} right)",
+        "Generated IC symbol '{}' with {} pins ({} left, {} right, {} top, {} bottom)",
         name,
         pin_defs.len(),
         left_count,
-        right_count
+        right_count,
+        top_count,
+        bottom_count,
     ))
 }
 
@@ -2017,5 +2080,206 @@ fn parse_text_justification(s: &str) -> Result<TextJustification, Box<dyn std::e
         "topcenter" | "tc" => Ok(TextJustification::TOP_CENTER),
         "topright" | "tr" => Ok(TextJustification::TOP_RIGHT),
         _ => Err(format!("Unknown justification: {}. Use: bottom_left, bottom_center, bottom_right, center_left, center, center_right, top_left, top_center, top_right", s).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_schlib() -> PathBuf {
+        let id = uuid::Uuid::new_v4();
+        std::env::temp_dir().join(format!("test_{}.SchLib", id))
+    }
+
+    /// Regression: gen-ic must place pins on all four sides (left, right, top, bottom).
+    /// Previously, top and bottom pins were silently dropped.
+    #[test]
+    fn test_gen_ic_all_four_sides() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        let result = cmd_gen_ic(
+            &path,
+            "TEST_4SIDE",
+            "1:VCC:power:top,2:GND:power:bottom,3:IN:input:left,4:OUT:output:right",
+            Some("4-side test".to_string()),
+            "600mil",
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+
+        assert!(result.contains("4 pins"), "Expected 4 pins, got: {}", result);
+        assert!(result.contains("1 left"), "Expected 1 left pin: {}", result);
+        assert!(result.contains("1 right"), "Expected 1 right pin: {}", result);
+        assert!(result.contains("1 top"), "Expected 1 top pin: {}", result);
+        assert!(result.contains("1 bottom"), "Expected 1 bottom pin: {}", result);
+
+        // Verify all 4 pins are in the library
+        let lib = open_or_create_schlib(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "TEST_4SIDE")
+            .expect("Component must exist");
+
+        let pin_count = comp
+            .primitives
+            .iter()
+            .filter(|r| matches!(r, SchRecord::Pin(_)))
+            .count();
+        assert_eq!(pin_count, 4, "All 4 pins must be saved, got {}", pin_count);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Regression: gen-ic with only top/bottom pins must not produce 0-pin component.
+    #[test]
+    fn test_gen_ic_only_top_bottom() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        let result = cmd_gen_ic(
+            &path,
+            "PWR_2PIN",
+            "1:VCC:power:top,2:GND:power:bottom",
+            None,
+            "400mil",
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+
+        assert!(result.contains("2 pins"), "Expected 2 pins, got: {}", result);
+        assert!(result.contains("1 top"), "Expected 1 top: {}", result);
+        assert!(result.contains("1 bottom"), "Expected 1 bottom: {}", result);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// gen-ic with many pins per side places all of them.
+    #[test]
+    fn test_gen_ic_multi_pin_sides() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        // 3 left, 4 right, 2 top, 2 bottom = 11 pins
+        let pins = [
+            "1:A:io:left", "2:B:io:left", "3:C:io:left",
+            "4:D:io:right", "5:E:io:right", "6:F:io:right", "7:G:io:right",
+            "8:VCC:power:top", "9:VCC2:power:top",
+            "10:GND:power:bottom", "11:GND2:power:bottom",
+        ]
+        .join(",");
+
+        let result = cmd_gen_ic(
+            &path,
+            "MULTI_PIN",
+            &pins,
+            None,
+            "800mil",
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+
+        assert!(result.contains("11 pins"), "Expected 11 pins, got: {}", result);
+        assert!(result.contains("3 left"), "Got: {}", result);
+        assert!(result.contains("4 right"), "Got: {}", result);
+        assert!(result.contains("2 top"), "Got: {}", result);
+        assert!(result.contains("2 bottom"), "Got: {}", result);
+
+        // Verify pin count in library
+        let lib = open_or_create_schlib(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "MULTI_PIN")
+            .unwrap();
+        let pin_count = comp
+            .primitives
+            .iter()
+            .filter(|r| matches!(r, SchRecord::Pin(_)))
+            .count();
+        assert_eq!(pin_count, 11);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// gen-ic body width auto-expands when top/bottom pins need more space.
+    #[test]
+    fn test_gen_ic_body_widens_for_top_bottom() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        // 5 top pins at 100mil spacing need 600mil. Requested width is 400mil.
+        // Body should expand to accommodate.
+        let pins = "1:A:io:top,2:B:io:top,3:C:io:top,4:D:io:top,5:E:io:top,6:IN:input:left";
+
+        cmd_gen_ic(
+            &path,
+            "WIDE_TOP",
+            pins,
+            None,
+            "400mil",  // narrower than needed
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+
+        let lib = open_or_create_schlib(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "WIDE_TOP")
+            .unwrap();
+
+        // Find the rectangle (body)
+        let rect = comp.primitives.iter().find_map(|r| {
+            if let SchRecord::Rectangle(rect) = r {
+                Some(rect)
+            } else {
+                None
+            }
+        }).expect("Must have body rectangle");
+
+        // Body width = corner_x (origin is 0). Must be >= 600mil (5+1 * 100mil spacing)
+        let body_width_mils = rect.corner_x as f64 / 10000.0;
+        assert!(
+            body_width_mils >= 600.0,
+            "Body width should expand to at least 600mil for 5 top pins, got {}mil",
+            body_width_mils
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Pin electrical type parsing rejects invalid values with clear error.
+    #[test]
+    fn test_gen_ic_invalid_pin_type() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        let result = cmd_gen_ic(
+            &path,
+            "BAD",
+            "1:VCC:W:left",  // "W" is not valid, must be "power"
+            None,
+            "400mil",
+            "200mil",
+            "100mil",
+        );
+
+        assert!(result.is_err(), "Invalid pin type should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Unknown electrical type"),
+            "Error should mention electrical type, got: {}",
+            err
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 }

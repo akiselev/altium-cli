@@ -274,13 +274,6 @@ fn generate_to_params(
 ) -> syn::Result<TokenStream> {
     let mut field_writes = Vec::new();
 
-    // Add RECORD parameter if record_id is set
-    if let Some(record_id) = container_attrs.record_id {
-        field_writes.push(quote! {
-            params.add_int("RECORD", #record_id);
-        });
-    }
-
     for (field_name, _field_type, attrs) in fields {
         if attrs.skip || attrs.unknown {
             continue;
@@ -360,6 +353,16 @@ fn generate_to_params(
         quote! {}
     };
 
+    // Write RECORD AFTER all fields (including flattened children) so the
+    // parent's record_id always wins over any flattened child's record_id.
+    let record_write = if let Some(record_id) = container_attrs.record_id {
+        quote! {
+            params.add_int("RECORD", #record_id);
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         impl crate::traits::ToParams for #name {
             fn to_params(&self) -> crate::types::ParameterCollection {
@@ -371,6 +374,7 @@ fn generate_to_params(
             fn append_to_params(&self, params: &mut crate::types::ParameterCollection) {
                 #(#field_writes)*
                 #unknown_handling
+                #record_write
             }
         }
     })

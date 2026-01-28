@@ -101,3 +101,175 @@ fn test_polymorphic_access_via_schrecord() {
         assert_eq!(c.get_property("LIBREFERENCE"), Some("RESISTOR".to_string()));
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Regression tests for bugs found during HydroFlow schematic capture
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Regression: SchDesignator must serialize with RECORD=34, not RECORD=41.
+///
+/// SchDesignator flattens SchParameter (record_id=41). The derive macro's
+/// append_to_params must write the parent's RECORD *after* flattened fields
+/// so the parent's record_id wins.
+#[test]
+fn test_designator_roundtrip_record_id() {
+    use crate::records::sch::designator::SchDesignator;
+    use crate::records::sch::{SchRecord, SchParameter, SchLabel, SchGraphicalBase, SchPrimitiveBase};
+    use crate::traits::ToParams;
+
+    // Build a designator for "U1"
+    let label = SchLabel {
+        graphical: SchGraphicalBase {
+            base: SchPrimitiveBase {
+                owner_index: 0,
+                ..Default::default()
+            },
+            location_x: 100,
+            location_y: 200,
+            ..Default::default()
+        },
+        text: "U1".to_string(),
+        font_id: 1,
+        ..Default::default()
+    };
+
+    let param = SchParameter {
+        label,
+        name: "Designator".to_string(),
+        read_only_state: 1,
+        ..Default::default()
+    };
+
+    let designator = SchDesignator {
+        param,
+        ..Default::default()
+    };
+
+    // Serialize to params
+    let params = designator.to_params();
+
+    // CRITICAL: RECORD must be 34 (Designator), NOT 41 (Parameter)
+    let record_id = params.get("RECORD").expect("RECORD param must exist").as_int_or(-1);
+    assert_eq!(
+        record_id, 34,
+        "SchDesignator must serialize as RECORD=34, got RECORD={}. \
+         The derive macro flatten is likely overwriting parent record_id with child's.",
+        record_id
+    );
+
+    // Roundtrip: parse back from params
+    let parsed = SchRecord::from_params(&params).expect("Must parse back");
+    match &parsed {
+        SchRecord::Designator(d) => {
+            assert_eq!(d.text(), "U1", "Designator text must survive roundtrip");
+            assert_eq!(d.param.name, "Designator");
+        }
+        SchRecord::Parameter(_) => {
+            panic!(
+                "SchDesignator was parsed back as Parameter (RECORD=41). \
+                 The flatten overwrite bug is present."
+            );
+        }
+        other => {
+            panic!("Expected Designator, got {:?}", other.record_type_name());
+        }
+    }
+}
+
+/// Regression: SchDesignator records must survive SchDoc save/load roundtrip.
+#[test]
+fn test_designator_survives_schdoc_roundtrip() {
+    use crate::io::SchDoc;
+    use crate::records::sch::designator::SchDesignator;
+    use crate::records::sch::{SchRecord, SchParameter, SchLabel, SchGraphicalBase, SchPrimitiveBase};
+    use std::io::Cursor;
+
+    let mut doc = SchDoc::default();
+
+    // Add a component
+    let comp = SchComponent {
+        lib_reference: "TEST_IC".to_string(),
+        part_count: 1,
+        display_mode_count: 1,
+        current_part_id: 1,
+        ..Default::default()
+    };
+    doc.primitives.push(SchRecord::Component(comp));
+
+    // Add a designator as child of component (index 0)
+    let label = SchLabel {
+        graphical: SchGraphicalBase {
+            base: SchPrimitiveBase {
+                owner_index: 0,
+                ..Default::default()
+            },
+            location_x: 100,
+            location_y: 200,
+            ..Default::default()
+        },
+        text: "U1".to_string(),
+        font_id: 1,
+        ..Default::default()
+    };
+    let param = SchParameter {
+        label,
+        name: "Designator".to_string(),
+        read_only_state: 1,
+        ..Default::default()
+    };
+    doc.primitives.push(SchRecord::Designator(SchDesignator {
+        param,
+        ..Default::default()
+    }));
+
+    // Save to buffer
+    let mut buffer = Cursor::new(Vec::new());
+    doc.save(&mut buffer).expect("Save must succeed");
+
+    // Reload from buffer
+    buffer.set_position(0);
+    let loaded = SchDoc::open(buffer).expect("Load must succeed");
+
+    // Find designator records
+    let designators: Vec<_> = loaded
+        .primitives
+        .iter()
+        .filter(|r| matches!(r, SchRecord::Designator(_)))
+        .collect();
+
+    assert_eq!(
+        designators.len(),
+        1,
+        "Expected 1 Designator record after roundtrip, found {}. \
+         Records might be deserializing as Parameter instead.",
+        designators.len()
+    );
+
+    if let SchRecord::Designator(d) = &designators[0] {
+        assert_eq!(d.text(), "U1");
+        assert_eq!(d.param.label.graphical.base.owner_index, 0);
+    }
+
+    // Also verify no false-positive Parameters that are actually designators
+    let parameters: Vec<_> = loaded
+        .primitives
+        .iter()
+        .filter_map(|r| {
+            if let SchRecord::Parameter(p) = r {
+                Some(p)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let misclassified = parameters
+        .iter()
+        .filter(|p| p.name == "Designator")
+        .count();
+    assert_eq!(
+        misclassified, 0,
+        "Found {} Parameter records named 'Designator' — these should be SchRecord::Designator",
+        misclassified
+    );
+}
