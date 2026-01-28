@@ -790,6 +790,69 @@ impl EditSession {
         Ok(index)
     }
 
+    /// Smart-wire a pin: create a wire stub from the pin endpoint and attach a net label or power port.
+    ///
+    /// Returns (wire_index, label_or_power_index).
+    pub fn smart_wire_pin(
+        &mut self,
+        component: &str,
+        pin: &str,
+        net_name: &str,
+        power_style: Option<PowerObjectStyle>,
+        wire_length_mils: f64,
+    ) -> Result<(usize, usize)> {
+        use super::types::Direction;
+
+        // Find the pin location and direction
+        let components = self.layout.get_placed_components(&self.doc.primitives);
+        let comp = components
+            .iter()
+            .find(|c| c.designator == component)
+            .ok_or_else(|| AltiumError::Parse(format!("Component not found: {}", component)))?;
+
+        let pin_loc = comp
+            .pin_locations
+            .iter()
+            .find(|p| p.designator == pin || p.name == pin)
+            .ok_or_else(|| {
+                AltiumError::Parse(format!("Pin not found: {}.{}", component, pin))
+            })?;
+
+        let endpoint = pin_loc.location;
+        let direction = pin_loc.direction;
+
+        // Calculate wire end point: extend from pin endpoint in pin's direction
+        let (dx, dy) = direction.unit_vector();
+        let wire_length_raw = (wire_length_mils * 10000.0) as i32;
+        let wire_end = CoordPoint::from_raw(
+            endpoint.x.to_raw() + dx * wire_length_raw,
+            endpoint.y.to_raw() + dy * wire_length_raw,
+        );
+
+        // Add wire stub from pin endpoint to wire end
+        let wire_idx = self.add_wire(&[endpoint, wire_end])?;
+
+        // Add net label or power port at wire end
+        let label_idx = if let Some(style) = power_style {
+            // Determine power port orientation based on pin direction
+            // Power port connection point is at its origin, with the symbol extending
+            // in the orientation direction. We want the symbol to point AWAY from the wire.
+            let orient = match direction {
+                Direction::Up => TextOrientations::NONE,           // Symbol points up
+                Direction::Down => TextOrientations::FLIPPED,      // Symbol points down
+                Direction::Left => TextOrientations::ROTATED,      // Symbol points left
+                Direction::Right => {
+                    TextOrientations::ROTATED | TextOrientations::FLIPPED
+                }
+            };
+            self.add_power_port(net_name, wire_end, style, orient)?
+        } else {
+            self.add_net_label(net_name, wire_end)?
+        };
+
+        Ok((wire_idx, label_idx))
+    }
+
     /// Add a junction at a location.
     pub fn add_junction(&mut self, location: CoordPoint) -> Result<usize> {
         let snapped = self.layout.snap_to_grid(location);

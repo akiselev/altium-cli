@@ -363,6 +363,42 @@ pub enum SchDocCommands {
         to_pin: String,
     },
 
+    /// Auto-wire a pin with a net label or power port
+    SmartWire {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Component designator (e.g., U1)
+        component: String,
+
+        /// Pin designator or name
+        pin: String,
+
+        /// Net name for the label or power port
+        net: String,
+
+        /// Create a power port instead of a net label
+        #[arg(long)]
+        power: Option<String>,
+
+        /// Wire stub length in mils (default: 200)
+        #[arg(long, default_value = "200")]
+        wire_length: f64,
+    },
+
+    /// Batch auto-wire pins from a mapping string
+    SmartWireBatch {
+        /// Path to SchDoc file
+        path: PathBuf,
+
+        /// Pin mappings: "COMP.PIN=NET,COMP.PIN=NET:power_style,..."
+        mappings: String,
+
+        /// Wire stub length in mils (default: 200)
+        #[arg(long, default_value = "200")]
+        wire_length: f64,
+    },
+
     /// Validate schematic connectivity
     Validate {
         /// Path to SchDoc file
@@ -569,6 +605,31 @@ pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error:
             to_pin,
         } => {
             schdoc_edit::cmd_connect_pins(path, from_comp, from_pin, to_comp, to_pin, None)?;
+        }
+        SchDocCommands::SmartWire {
+            path,
+            component,
+            pin,
+            net,
+            power,
+            wire_length,
+        } => {
+            schdoc_edit::cmd_smart_wire(
+                path,
+                component,
+                pin,
+                net,
+                power.as_deref(),
+                *wire_length,
+                None,
+            )?;
+        }
+        SchDocCommands::SmartWireBatch {
+            path,
+            mappings,
+            wire_length,
+        } => {
+            schdoc_edit::cmd_smart_wire_batch(path, mappings, *wire_length, None)?;
         }
         SchDocCommands::Validate { path } => {
             let result = schdoc_edit::cmd_validate(path)?;

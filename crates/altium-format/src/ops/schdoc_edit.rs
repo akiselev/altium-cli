@@ -533,6 +533,127 @@ pub fn cmd_add_net_label(
     Ok(())
 }
 
+/// Smart-wire: create a wire stub from a pin and attach a net label or power port.
+pub fn cmd_smart_wire(
+    path: &Path,
+    component: &str,
+    pin: &str,
+    net: &str,
+    power_style: Option<&str>,
+    wire_length_mils: f64,
+    output: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut session = EditSession::open(path)?;
+
+    let style = match power_style {
+        Some(s) => {
+            let parsed = match s.to_lowercase().as_str() {
+                "bar" | "power_bar" => PowerObjectStyle::Bar,
+                "arrow" => PowerObjectStyle::Arrow,
+                "wave" => PowerObjectStyle::Wave,
+                "ground" | "gnd" => PowerObjectStyle::Ground,
+                "power_ground" | "pgnd" => PowerObjectStyle::PowerGround,
+                "signal_ground" | "sgnd" => PowerObjectStyle::SignalGround,
+                "earth_ground" | "earth" => PowerObjectStyle::EarthGround,
+                "circle" => PowerObjectStyle::Circle,
+                _ => {
+                    return Err(format!(
+                        "Unknown power style: {}. Use: bar, arrow, wave, ground, power_ground, signal_ground, earth_ground, circle",
+                        s
+                    ).into());
+                }
+            };
+            Some(parsed)
+        }
+        None => None,
+    };
+
+    let (wire_idx, label_idx) = session.smart_wire_pin(
+        component,
+        pin,
+        net,
+        style,
+        wire_length_mils,
+    )?;
+
+    let output_path = output.as_deref().unwrap_or(path);
+    session.save(output_path)?;
+
+    let kind = if power_style.is_some() { "power port" } else { "net label" };
+    println!(
+        "Smart-wired {}.{} -> {} '{}' (wire #{}, {} #{})",
+        component, pin, kind, net, wire_idx, kind, label_idx
+    );
+    println!("Saved to: {}", output_path.display());
+
+    Ok(())
+}
+
+/// Batch smart-wire: wire multiple pins from a mapping string.
+///
+/// Format: "COMP.PIN=NET,COMP.PIN=NET:power_style,..."
+/// Examples: "U1.3=VCC:bar,U1.4=GND:ground,U1.5=SDA,U1.6=SCL"
+pub fn cmd_smart_wire_batch(
+    path: &Path,
+    mappings: &str,
+    wire_length_mils: f64,
+    output: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut session = EditSession::open(path)?;
+
+    let mut count = 0;
+    for mapping in mappings.split(',') {
+        let mapping = mapping.trim();
+        if mapping.is_empty() {
+            continue;
+        }
+
+        // Parse "COMP.PIN=NET" or "COMP.PIN=NET:power_style"
+        let (pin_spec, net_spec) = mapping
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid mapping '{}': expected COMP.PIN=NET", mapping))?;
+
+        let (component, pin) = pin_spec
+            .split_once('.')
+            .ok_or_else(|| format!("Invalid pin spec '{}': expected COMP.PIN", pin_spec))?;
+
+        let (net, power_style) = if let Some((n, s)) = net_spec.split_once(':') {
+            let parsed = match s.to_lowercase().as_str() {
+                "bar" | "power_bar" => PowerObjectStyle::Bar,
+                "arrow" => PowerObjectStyle::Arrow,
+                "wave" => PowerObjectStyle::Wave,
+                "ground" | "gnd" => PowerObjectStyle::Ground,
+                "power_ground" | "pgnd" => PowerObjectStyle::PowerGround,
+                "signal_ground" | "sgnd" => PowerObjectStyle::SignalGround,
+                "earth_ground" | "earth" => PowerObjectStyle::EarthGround,
+                "circle" => PowerObjectStyle::Circle,
+                _ => {
+                    return Err(format!(
+                        "Unknown power style '{}' in mapping '{}'. Use: bar, arrow, wave, ground, power_ground, signal_ground, earth_ground, circle",
+                        s, mapping
+                    ).into());
+                }
+            };
+            (n, Some(parsed))
+        } else {
+            (net_spec, None)
+        };
+
+        session.smart_wire_pin(component, pin, net, power_style, wire_length_mils)?;
+        count += 1;
+
+        let kind = if power_style.is_some() { "power" } else { "net" };
+        println!("  {}.{} -> {} '{}'", component, pin, kind, net);
+    }
+
+    let output_path = output.as_deref().unwrap_or(path);
+    session.save(output_path)?;
+
+    println!("Smart-wired {} pins. Saved to: {}", count, output_path.display());
+
+    Ok(())
+}
+
 /// Add a power port.
 pub fn cmd_add_power(
     path: &Path,
