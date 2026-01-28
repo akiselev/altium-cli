@@ -11,6 +11,7 @@
 pub mod layout;
 pub mod library;
 pub mod netlist;
+pub mod patterns;
 pub mod pcb_placement;
 pub mod pcb_session;
 pub mod routing;

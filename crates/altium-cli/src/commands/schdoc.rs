@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::output::{self, TextFormat};
-use altium_format::ops::{schdoc, schdoc_edit};
+use altium_format::ops::{schdoc, schdoc_edit, schdoc_patterns};
 
 #[derive(Subcommand)]
 pub enum SchDocCommands {
@@ -453,6 +453,358 @@ pub enum SchDocCommands {
         /// Search pattern
         pattern: String,
     },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PATTERN COMMANDS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// List all available schematic patterns
+    PatternList,
+
+    /// Add bypass/decoupling capacitor on a power pin
+    PatternBypassCap {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator (e.g., U1)
+        component: String,
+        /// Pin name or designator (e.g., VCC)
+        pin: String,
+        /// Capacitor value (documentation only, e.g., "100nF")
+        #[arg(long, default_value = "100nF")]
+        value: String,
+        /// Ground net name
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+    },
+
+    /// Add pull-up resistor to power rail
+    PatternPullUp {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// Pin name or designator
+        pin: String,
+        /// Resistor value (e.g., "10K")
+        #[arg(long, default_value = "10K")]
+        value: String,
+        /// Power net name
+        #[arg(long, default_value = "VCC")]
+        power: String,
+    },
+
+    /// Add pull-down resistor to ground
+    PatternPullDown {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// Pin name or designator
+        pin: String,
+        /// Resistor value (e.g., "10K")
+        #[arg(long, default_value = "10K")]
+        value: String,
+        /// Ground net name
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+    },
+
+    /// Add test point with net label stub
+    PatternTestPoint {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// Pin name or designator
+        pin: String,
+        /// Test point label
+        label: String,
+    },
+
+    /// Add series resistor between two pins
+    PatternSeriesResistor {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Source component.pin (e.g., U1.OUT)
+        from: String,
+        /// Destination component.pin (e.g., U2.IN)
+        to: String,
+        /// Resistor value (e.g., "33R")
+        #[arg(long, default_value = "33R")]
+        value: String,
+    },
+
+    /// Add voltage divider
+    PatternVoltageDivider {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// High-side net name
+        high_net: String,
+        /// Low-side net name (ground)
+        low_net: String,
+        /// Top resistor value
+        r_top: String,
+        /// Bottom resistor value
+        r_bottom: String,
+        /// Output net name
+        output_net: String,
+        /// X position
+        x: String,
+        /// Y position
+        y: String,
+    },
+
+    /// Add ferrite bead filter with bypass caps
+    PatternFerriteFilter {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Input power net
+        input_net: String,
+        /// Output power net
+        output_net: String,
+        /// Ground net
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+        /// X position
+        x: String,
+        /// Y position
+        y: String,
+    },
+
+    /// Add bulk decoupling capacitor
+    PatternBulkDecoupling {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Power net name
+        power_net: String,
+        /// Ground net name
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+        /// X position
+        x: String,
+        /// Y position
+        y: String,
+    },
+
+    /// Add series termination resistor (high-speed digital)
+    PatternSeriesTermination {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Driver component designator
+        component: String,
+        /// Driver output pin
+        pin: String,
+        /// Net name for terminated signal
+        net: String,
+        /// Resistor value (e.g., "33R")
+        #[arg(long, default_value = "33R")]
+        value: String,
+    },
+
+    /// Add AC coupling capacitor between pins
+    PatternAcCoupling {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Source component.pin
+        from: String,
+        /// Destination component.pin
+        to: String,
+        /// Capacitor value (e.g., "100nF")
+        #[arg(long, default_value = "100nF")]
+        value: String,
+    },
+
+    /// Add differential pair termination resistor
+    PatternDiffPairTerm {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// Positive pin
+        pin_p: String,
+        /// Negative pin
+        pin_n: String,
+        /// Resistor value (e.g., "100R")
+        #[arg(long, default_value = "100R")]
+        value: String,
+    },
+
+    /// Add RC low-pass filter
+    PatternRcLowpass {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Input component designator
+        component: String,
+        /// Input pin
+        pin: String,
+        /// Output net name
+        output_net: String,
+        /// Resistor value
+        r_value: String,
+        /// Capacitor value
+        c_value: String,
+        /// Ground net
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+    },
+
+    /// Add feedback voltage divider (for regulators)
+    PatternFeedbackDivider {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Output net name (regulator output)
+        output_net: String,
+        /// Feedback component designator
+        fb_component: String,
+        /// Feedback pin
+        fb_pin: String,
+        /// Top resistor value
+        r_top: String,
+        /// Bottom resistor value
+        r_bottom: String,
+        /// Ground net
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+    },
+
+    /// Add RC snubber across pins
+    PatternSnubber {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// First pin
+        pin_a: String,
+        /// Second pin
+        pin_b: String,
+        /// Resistor value
+        r_value: String,
+        /// Capacitor value
+        c_value: String,
+    },
+
+    /// Add DC blocking capacitor (RF)
+    PatternDcBlock {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Source component designator
+        component: String,
+        /// Source pin
+        pin: String,
+        /// Output net name
+        to_net: String,
+        /// Capacitor value
+        #[arg(long, default_value = "100pF")]
+        value: String,
+    },
+
+    /// Add pi attenuator network (RF)
+    PatternPiAttenuator {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Input net name
+        input_net: String,
+        /// Output net name
+        output_net: String,
+        /// Series resistor value
+        r_series: String,
+        /// Shunt resistor value
+        r_shunt: String,
+        /// Ground net
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+        /// X position
+        x: String,
+        /// Y position
+        y: String,
+    },
+
+    /// Add ESD protection diode pair
+    PatternEsdClamp {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Signal component designator
+        component: String,
+        /// Signal pin
+        pin: String,
+        /// VCC net name
+        #[arg(long, default_value = "VCC")]
+        vcc: String,
+        /// GND net name
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+    },
+
+    /// Add TVS diode on power rail
+    PatternTvsDiode {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Power net name
+        power_net: String,
+        /// Ground net name
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+        /// X position
+        x: String,
+        /// Y position
+        y: String,
+    },
+
+    /// Add I2C pull-up resistors
+    PatternI2cPullups {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// SDA component.pin (e.g., U1.SDA)
+        sda: String,
+        /// SCL component.pin (e.g., U1.SCL)
+        scl: String,
+        /// VCC net name
+        #[arg(long, default_value = "VCC")]
+        vcc: String,
+        /// Resistor value
+        #[arg(long, default_value = "4.7K")]
+        value: String,
+    },
+
+    /// Add crystal oscillator load capacitors
+    PatternCrystalLoadCaps {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// XTAL_IN pin
+        xtal_in: String,
+        /// XTAL_OUT pin
+        xtal_out: String,
+        /// Capacitor value
+        #[arg(long, default_value = "22pF")]
+        value: String,
+        /// Ground net
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+    },
+
+    /// Add RC reset circuit with pull-up
+    PatternResetCircuit {
+        /// Path to SchDoc file
+        path: PathBuf,
+        /// Component designator
+        component: String,
+        /// Reset pin
+        pin: String,
+        /// VCC net name
+        #[arg(long, default_value = "VCC")]
+        vcc: String,
+        /// GND net name
+        #[arg(long, default_value = "GND")]
+        gnd: String,
+        /// Resistor value
+        #[arg(long, default_value = "10K")]
+        r_value: String,
+        /// Capacitor value
+        #[arg(long, default_value = "100nF")]
+        c_value: String,
+    },
 }
 
 pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -659,6 +1011,86 @@ pub fn run(cmd: &SchDocCommands, format: &str) -> Result<(), Box<dyn std::error:
         } => {
             let result = schdoc_edit::cmd_search_library(library, pattern)?;
             output::print(&TextWrapper(result), format)?;
+        }
+
+        // Pattern commands
+        SchDocCommands::PatternList => {
+            schdoc_patterns::cmd_list_patterns()?;
+        }
+        SchDocCommands::PatternBypassCap { path, component, pin, value, gnd } => {
+            schdoc_patterns::cmd_bypass_cap(path, component, pin, value, gnd, None)?;
+        }
+        SchDocCommands::PatternPullUp { path, component, pin, value, power } => {
+            schdoc_patterns::cmd_pull_up(path, component, pin, value, power, None)?;
+        }
+        SchDocCommands::PatternPullDown { path, component, pin, value, gnd } => {
+            schdoc_patterns::cmd_pull_down(path, component, pin, value, gnd, None)?;
+        }
+        SchDocCommands::PatternTestPoint { path, component, pin, label } => {
+            schdoc_patterns::cmd_test_point(path, component, pin, label, None)?;
+        }
+        SchDocCommands::PatternSeriesResistor { path, from, to, value } => {
+            let (from_comp, from_pin) = from.split_once('.')
+                .ok_or_else(|| "Expected 'from' as Component.Pin (e.g., U1.OUT)".to_string())?;
+            let (to_comp, to_pin) = to.split_once('.')
+                .ok_or_else(|| "Expected 'to' as Component.Pin (e.g., U2.IN)".to_string())?;
+            schdoc_patterns::cmd_series_resistor(path, from_comp, from_pin, to_comp, to_pin, value, None)?;
+        }
+        SchDocCommands::PatternVoltageDivider { path, high_net, low_net, r_top, r_bottom, output_net, x, y } => {
+            schdoc_patterns::cmd_voltage_divider(path, high_net, low_net, r_top, r_bottom, output_net, x, y, None)?;
+        }
+        SchDocCommands::PatternFerriteFilter { path, input_net, output_net, gnd, x, y } => {
+            schdoc_patterns::cmd_ferrite_filter(path, input_net, output_net, gnd, x, y, None)?;
+        }
+        SchDocCommands::PatternBulkDecoupling { path, power_net, gnd, x, y } => {
+            schdoc_patterns::cmd_bulk_decoupling(path, power_net, gnd, x, y, None)?;
+        }
+        SchDocCommands::PatternSeriesTermination { path, component, pin, net, value } => {
+            schdoc_patterns::cmd_series_termination(path, component, pin, value, net, None)?;
+        }
+        SchDocCommands::PatternAcCoupling { path, from, to, value } => {
+            let (from_comp, from_pin) = from.split_once('.')
+                .ok_or_else(|| "Expected 'from' as Component.Pin".to_string())?;
+            let (to_comp, to_pin) = to.split_once('.')
+                .ok_or_else(|| "Expected 'to' as Component.Pin".to_string())?;
+            schdoc_patterns::cmd_ac_coupling(path, from_comp, from_pin, to_comp, to_pin, value, None)?;
+        }
+        SchDocCommands::PatternDiffPairTerm { path, component, pin_p, pin_n, value } => {
+            schdoc_patterns::cmd_diff_pair_termination(path, component, pin_p, pin_n, value, None)?;
+        }
+        SchDocCommands::PatternRcLowpass { path, component, pin, output_net, r_value, c_value, gnd } => {
+            schdoc_patterns::cmd_rc_lowpass(path, component, pin, output_net, r_value, c_value, gnd, None)?;
+        }
+        SchDocCommands::PatternFeedbackDivider { path, output_net, fb_component, fb_pin, r_top, r_bottom, gnd } => {
+            schdoc_patterns::cmd_feedback_divider(path, output_net, fb_component, fb_pin, r_top, r_bottom, gnd, None)?;
+        }
+        SchDocCommands::PatternSnubber { path, component, pin_a, pin_b, r_value, c_value } => {
+            schdoc_patterns::cmd_snubber(path, component, pin_a, pin_b, r_value, c_value, None)?;
+        }
+        SchDocCommands::PatternDcBlock { path, component, pin, to_net, value } => {
+            schdoc_patterns::cmd_dc_block(path, component, pin, to_net, value, None)?;
+        }
+        SchDocCommands::PatternPiAttenuator { path, input_net, output_net, r_series, r_shunt, gnd, x, y } => {
+            schdoc_patterns::cmd_pi_attenuator(path, input_net, output_net, r_series, r_shunt, gnd, x, y, None)?;
+        }
+        SchDocCommands::PatternEsdClamp { path, component, pin, vcc, gnd } => {
+            schdoc_patterns::cmd_esd_clamp(path, component, pin, vcc, gnd, None)?;
+        }
+        SchDocCommands::PatternTvsDiode { path, power_net, gnd, x, y } => {
+            schdoc_patterns::cmd_tvs_diode(path, power_net, gnd, x, y, None)?;
+        }
+        SchDocCommands::PatternI2cPullups { path, sda, scl, vcc, value } => {
+            let (sda_comp, sda_pin) = sda.split_once('.')
+                .ok_or_else(|| "Expected 'sda' as Component.Pin (e.g., U1.SDA)".to_string())?;
+            let (scl_comp, scl_pin) = scl.split_once('.')
+                .ok_or_else(|| "Expected 'scl' as Component.Pin (e.g., U1.SCL)".to_string())?;
+            schdoc_patterns::cmd_i2c_pullups(path, sda_comp, sda_pin, scl_comp, scl_pin, vcc, value, None)?;
+        }
+        SchDocCommands::PatternCrystalLoadCaps { path, component, xtal_in, xtal_out, value, gnd } => {
+            schdoc_patterns::cmd_crystal_load_caps(path, component, xtal_in, xtal_out, value, gnd, None)?;
+        }
+        SchDocCommands::PatternResetCircuit { path, component, pin, vcc, gnd, r_value, c_value } => {
+            schdoc_patterns::cmd_reset_circuit(path, component, pin, vcc, gnd, r_value, c_value, None)?;
         }
     }
     Ok(())

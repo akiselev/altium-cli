@@ -139,6 +139,16 @@ impl Direction {
         }
     }
 
+    /// Get the unit vector as f64 for this direction.
+    pub fn unit_vector_f64(&self) -> (f64, f64) {
+        match self {
+            Direction::Up => (0.0, 1.0),
+            Direction::Down => (0.0, -1.0),
+            Direction::Left => (-1.0, 0.0),
+            Direction::Right => (1.0, 0.0),
+        }
+    }
+
     /// Get the opposite direction.
     pub fn opposite(&self) -> Direction {
         match self {

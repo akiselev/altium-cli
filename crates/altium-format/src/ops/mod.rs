@@ -15,6 +15,7 @@ pub mod prjpcb;
 pub mod queries;
 pub mod schdoc;
 pub mod schdoc_edit;
+pub mod schdoc_patterns;
 pub mod schlib;
 pub mod transforms;
 pub mod util;
