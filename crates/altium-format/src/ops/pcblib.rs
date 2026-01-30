@@ -2383,10 +2383,25 @@ fn parse_pad_shape(s: &str) -> Result<PcbPadShape, String> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Parse a value with unit suffix (e.g., "0.5mm", "50mil", "0.05in").
+/// Plain numbers without a unit suffix are treated as mm (not DxpDefault).
 fn parse_unit_value(s: &str) -> Result<f64, String> {
-    let (coord, _unit) =
-        Unit::parse_with_unit(s).map_err(|e| format!("Invalid value '{}': {:?}", s, e))?;
-    Ok(coord.to_mms())
+    let s = s.trim();
+
+    match Unit::parse_with_unit(s) {
+        Ok((coord, unit)) => {
+            if unit == Unit::DxpDefault {
+                // Bare number without unit — treat as mm, not DxpDefault (10 mils).
+                // Users of CLI commands expect mm as the default unit.
+                let value: f64 = s.parse().map_err(|_| {
+                    format!("Invalid value '{}': expected number with optional unit", s)
+                })?;
+                Ok(value)
+            } else {
+                Ok(coord.to_mms())
+            }
+        }
+        Err(e) => Err(format!("Invalid value '{}': {:?}", s, e)),
+    }
 }
 
 /// Parse a value with optional unit suffix, defaulting to mm for plain numbers.

@@ -22,8 +22,9 @@ use crate::ops::categorization::categorize_component;
 use crate::ops::output::*;
 use crate::records::sch::{
     LineWidth, PinConglomerateFlags, PinElectricalType, PinSymbol, SchArc, SchComponent,
-    SchEllipse, SchGraphicalBase, SchLabel, SchLine, SchPin, SchPolygon, SchPolyline, SchRecord,
-    SchRectangle, TextJustification, TextOrientations,
+    SchDesignator, SchEllipse, SchGraphicalBase, SchImplementationList, SchLabel, SchLine,
+    SchParameter, SchPin, SchPolygon, SchPolyline, SchPrimitiveBase, SchRecord, SchRectangle,
+    TextJustification, TextOrientations,
 };
 use crate::types::Unit;
 
@@ -675,6 +676,53 @@ fn mils_f64_to_raw(mils: f64) -> i32 {
     (mils * 10000.0).round() as i32
 }
 
+/// Infer component designator prefix from name and description.
+fn infer_designator_prefix(name: &str, description: &str) -> String {
+    let name_lower = name.to_lowercase();
+    let desc_lower = description.to_lowercase();
+
+    // Check name prefix first for single-letter components
+    if name_lower.starts_with('c') && !name_lower.starts_with("conn") {
+        "C?".to_string()
+    } else if name_lower.starts_with('r') {
+        "R?".to_string()
+    } else if name_lower.starts_with('l') && !desc_lower.contains("led") {
+        "L?".to_string()
+    } else if name_lower.starts_with('d') {
+        "D?".to_string()
+    } else if name_lower.starts_with('j') || name_lower.starts_with("conn") {
+        "J?".to_string()
+    } else if name_lower.starts_with('k') {
+        "K?".to_string()
+    } else if name_lower.starts_with('q') {
+        "Q?".to_string()
+    } else if desc_lower.contains("capacitor") {
+        "C?".to_string()
+    } else if desc_lower.contains("resistor") {
+        "R?".to_string()
+    } else if desc_lower.contains("led") {
+        "LED?".to_string()
+    } else if desc_lower.contains("inductor") {
+        "L?".to_string()
+    } else if desc_lower.contains("diode") {
+        "D?".to_string()
+    } else if desc_lower.contains("connector")
+        || desc_lower.contains("jst")
+        || desc_lower.contains("usb")
+        || desc_lower.contains("bnc")
+        || desc_lower.contains("jack")
+        || desc_lower.contains("header")
+    {
+        "J?".to_string()
+    } else if desc_lower.contains("relay") {
+        "K?".to_string()
+    } else if desc_lower.contains("mosfet") || desc_lower.contains("transistor") {
+        "Q?".to_string()
+    } else {
+        "U?".to_string()
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // UNIT PARSING HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -818,17 +866,46 @@ pub fn cmd_add_component(
     // Create the component record
     let component = SchComponent {
         lib_reference: name.to_string(),
-        component_description: description.unwrap_or_default(),
+        component_description: description.clone().unwrap_or_default(),
         part_count: 1,
         display_mode_count: 1,
         current_part_id: 1,
         ..Default::default()
     };
 
-    // Create SchLibComponent with the component record as first primitive
+    let mut primitives = vec![SchRecord::Component(component.clone())];
+
+    // Create designator record (RECORD=34)
+    let designator_text = infer_designator_prefix(name, &description.clone().unwrap_or_default());
+    let designator = SchDesignator {
+        param: SchParameter {
+            label: SchLabel {
+                text: designator_text,
+                font_id: 1,
+                ..Default::default()
+            },
+            name: "Designator".to_string(),
+            read_only_state: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    primitives.push(SchRecord::Designator(designator));
+
+    // Create empty implementation list (RECORD=44)
+    let impl_list = SchImplementationList {
+        base: SchPrimitiveBase {
+            owner_index: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    primitives.push(SchRecord::ImplementationList(impl_list));
+
+    // Create SchLibComponent
     let lib_component = SchLibComponent {
         component: component.clone(),
-        primitives: vec![SchRecord::Component(component)],
+        primitives,
     };
 
     lib.components.push(lib_component);
@@ -1170,7 +1247,7 @@ pub fn cmd_gen_ic(
     // Create component
     let component = SchComponent {
         lib_reference: name.to_string(),
-        component_description: description.unwrap_or_default(),
+        component_description: description.clone().unwrap_or_default(),
         part_count: 1,
         display_mode_count: 1,
         current_part_id: 1,
@@ -1178,6 +1255,33 @@ pub fn cmd_gen_ic(
     };
 
     let mut primitives = vec![SchRecord::Component(component.clone())];
+
+    // Create designator record (RECORD=34)
+    let designator_text = infer_designator_prefix(name, &description.clone().unwrap_or_default());
+    let designator = SchDesignator {
+        param: SchParameter {
+            label: SchLabel {
+                text: designator_text,
+                font_id: 1,
+                ..Default::default()
+            },
+            name: "Designator".to_string(),
+            read_only_state: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    primitives.push(SchRecord::Designator(designator));
+
+    // Create empty implementation list (RECORD=44)
+    let impl_list = SchImplementationList {
+        base: SchPrimitiveBase {
+            owner_index: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    primitives.push(SchRecord::ImplementationList(impl_list));
 
     // Add body rectangle
     let mut rect_graphical = SchGraphicalBase::default();
@@ -1796,6 +1900,33 @@ pub fn cmd_add_json(
     // Start with the component record as first primitive
     let mut primitives = vec![SchRecord::Component(component.clone())];
 
+    // Create designator record (RECORD=34)
+    let designator_text = infer_designator_prefix(&component_def.name, &component_def.description);
+    let designator = SchDesignator {
+        param: SchParameter {
+            label: SchLabel {
+                text: designator_text,
+                font_id: 1,
+                ..Default::default()
+            },
+            name: "Designator".to_string(),
+            read_only_state: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    primitives.push(SchRecord::Designator(designator));
+
+    // Create empty implementation list (RECORD=44)
+    let impl_list = SchImplementationList {
+        base: SchPrimitiveBase {
+            owner_index: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    primitives.push(SchRecord::ImplementationList(impl_list));
+
     // Add rectangles
     for rect in &component_def.rectangles {
         let fill_color_val = parse_color(&rect.fill_color)?;
@@ -2111,11 +2242,23 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.contains("4 pins"), "Expected 4 pins, got: {}", result);
+        assert!(
+            result.contains("4 pins"),
+            "Expected 4 pins, got: {}",
+            result
+        );
         assert!(result.contains("1 left"), "Expected 1 left pin: {}", result);
-        assert!(result.contains("1 right"), "Expected 1 right pin: {}", result);
+        assert!(
+            result.contains("1 right"),
+            "Expected 1 right pin: {}",
+            result
+        );
         assert!(result.contains("1 top"), "Expected 1 top pin: {}", result);
-        assert!(result.contains("1 bottom"), "Expected 1 bottom pin: {}", result);
+        assert!(
+            result.contains("1 bottom"),
+            "Expected 1 bottom pin: {}",
+            result
+        );
 
         // Verify all 4 pins are in the library
         let lib = open_or_create_schlib(&path).unwrap();
@@ -2152,7 +2295,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.contains("2 pins"), "Expected 2 pins, got: {}", result);
+        assert!(
+            result.contains("2 pins"),
+            "Expected 2 pins, got: {}",
+            result
+        );
         assert!(result.contains("1 top"), "Expected 1 top: {}", result);
         assert!(result.contains("1 bottom"), "Expected 1 bottom: {}", result);
 
@@ -2167,10 +2314,17 @@ mod tests {
 
         // 3 left, 4 right, 2 top, 2 bottom = 11 pins
         let pins = [
-            "1:A:io:left", "2:B:io:left", "3:C:io:left",
-            "4:D:io:right", "5:E:io:right", "6:F:io:right", "7:G:io:right",
-            "8:VCC:power:top", "9:VCC2:power:top",
-            "10:GND:power:bottom", "11:GND2:power:bottom",
+            "1:A:io:left",
+            "2:B:io:left",
+            "3:C:io:left",
+            "4:D:io:right",
+            "5:E:io:right",
+            "6:F:io:right",
+            "7:G:io:right",
+            "8:VCC:power:top",
+            "9:VCC2:power:top",
+            "10:GND:power:bottom",
+            "11:GND2:power:bottom",
         ]
         .join(",");
 
@@ -2185,7 +2339,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.contains("11 pins"), "Expected 11 pins, got: {}", result);
+        assert!(
+            result.contains("11 pins"),
+            "Expected 11 pins, got: {}",
+            result
+        );
         assert!(result.contains("3 left"), "Got: {}", result);
         assert!(result.contains("4 right"), "Got: {}", result);
         assert!(result.contains("2 top"), "Got: {}", result);
@@ -2219,13 +2377,8 @@ mod tests {
         let pins = "1:A:io:top,2:B:io:top,3:C:io:top,4:D:io:top,5:E:io:top,6:IN:input:left";
 
         cmd_gen_ic(
-            &path,
-            "WIDE_TOP",
-            pins,
-            None,
-            "400mil",  // narrower than needed
-            "200mil",
-            "100mil",
+            &path, "WIDE_TOP", pins, None, "400mil", // narrower than needed
+            "200mil", "100mil",
         )
         .unwrap();
 
@@ -2237,13 +2390,17 @@ mod tests {
             .unwrap();
 
         // Find the rectangle (body)
-        let rect = comp.primitives.iter().find_map(|r| {
-            if let SchRecord::Rectangle(rect) = r {
-                Some(rect)
-            } else {
-                None
-            }
-        }).expect("Must have body rectangle");
+        let rect = comp
+            .primitives
+            .iter()
+            .find_map(|r| {
+                if let SchRecord::Rectangle(rect) = r {
+                    Some(rect)
+                } else {
+                    None
+                }
+            })
+            .expect("Must have body rectangle");
 
         // Body width = corner_x (origin is 0). Must be >= 600mil (5+1 * 100mil spacing)
         let body_width_mils = rect.corner_x as f64 / 10000.0;
@@ -2265,7 +2422,7 @@ mod tests {
         let result = cmd_gen_ic(
             &path,
             "BAD",
-            "1:VCC:W:left",  // "W" is not valid, must be "power"
+            "1:VCC:W:left", // "W" is not valid, must be "power"
             None,
             "400mil",
             "200mil",
@@ -2278,6 +2435,199 @@ mod tests {
             err.contains("Unknown electrical type"),
             "Error should mention electrical type, got: {}",
             err
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Bug 7 & 8: Components must have Designator and ImplementationList records.
+    #[test]
+    fn test_component_has_required_records() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        // Test add-component
+        cmd_add_component(&path, "TestCap", Some("100nF Capacitor".to_string())).unwrap();
+
+        let lib = open_or_create_schlib(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "TestCap")
+            .expect("Component must exist");
+
+        // Verify Designator record exists
+        let has_designator = comp
+            .primitives
+            .iter()
+            .any(|r| matches!(r, SchRecord::Designator(_)));
+        assert!(
+            has_designator,
+            "Component must have Designator record (Bug 7)"
+        );
+
+        // Verify ImplementationList record exists
+        let has_impl_list = comp
+            .primitives
+            .iter()
+            .any(|r| matches!(r, SchRecord::ImplementationList(_)));
+        assert!(
+            has_impl_list,
+            "Component must have ImplementationList record (Bug 8)"
+        );
+
+        // Verify designator text is correct (should be C? for capacitor)
+        let designator = comp.primitives.iter().find_map(|r| {
+            if let SchRecord::Designator(d) = r {
+                Some(d)
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            designator.unwrap().param.label.text,
+            "C?",
+            "Capacitor should have C? designator"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Bug 7 & 8: gen-ic components must have Designator and ImplementationList records.
+    #[test]
+    fn test_gen_ic_has_required_records() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        cmd_gen_ic(
+            &path,
+            "TestIC",
+            "1:VCC:power:left,2:GND:power:right",
+            Some("Test integrated circuit".to_string()),
+            "400mil",
+            "200mil",
+            "100mil",
+        )
+        .unwrap();
+
+        let lib = open_or_create_schlib(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "TestIC")
+            .expect("Component must exist");
+
+        // Verify Designator record exists
+        let has_designator = comp
+            .primitives
+            .iter()
+            .any(|r| matches!(r, SchRecord::Designator(_)));
+        assert!(has_designator, "IC must have Designator record (Bug 7)");
+
+        // Verify ImplementationList record exists
+        let has_impl_list = comp
+            .primitives
+            .iter()
+            .any(|r| matches!(r, SchRecord::ImplementationList(_)));
+        assert!(
+            has_impl_list,
+            "IC must have ImplementationList record (Bug 8)"
+        );
+
+        // Verify designator text is U? (default)
+        let designator = comp.primitives.iter().find_map(|r| {
+            if let SchRecord::Designator(d) = r {
+                Some(d)
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            designator.unwrap().param.label.text,
+            "U?",
+            "IC should have U? designator"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Test designator prefix inference logic.
+    #[test]
+    fn test_designator_prefix_inference() {
+        assert_eq!(infer_designator_prefix("CAP100", "100nF Capacitor"), "C?");
+        assert_eq!(infer_designator_prefix("R1", "1k Resistor"), "R?");
+        assert_eq!(infer_designator_prefix("LED1", "Red LED"), "LED?");
+        assert_eq!(infer_designator_prefix("L1", "10uH Inductor"), "L?");
+        assert_eq!(infer_designator_prefix("D1", "Schottky Diode"), "D?");
+        assert_eq!(
+            infer_designator_prefix("USB1", "USB Type-C Connector"),
+            "J?"
+        );
+        assert_eq!(infer_designator_prefix("K1", "5V Relay"), "K?");
+        assert_eq!(infer_designator_prefix("Q1", "N-Channel MOSFET"), "Q?");
+        assert_eq!(infer_designator_prefix("U1", "Microcontroller"), "U?");
+        assert_eq!(infer_designator_prefix("CONN1", "JST connector"), "J?");
+    }
+
+    /// Bug 7 & 8: add-json components must have Designator and ImplementationList records.
+    #[test]
+    fn test_add_json_has_required_records() {
+        let path = temp_schlib();
+        cmd_create(&path).unwrap();
+
+        let json = r#"{
+            "name": "RES1",
+            "description": "1k Resistor",
+            "pins": [
+                {"designator": "1", "name": "1", "x": 0, "y": 0, "electrical": "passive"},
+                {"designator": "2", "name": "2", "x": 400, "y": 0, "electrical": "passive"}
+            ],
+            "rectangles": [
+                {"x1": 100, "y1": -50, "x2": 300, "y2": 50, "filled": true}
+            ]
+        }"#;
+
+        cmd_add_json(&path, None, Some(json.to_string())).unwrap();
+
+        let lib = open_or_create_schlib(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "RES1")
+            .expect("Component must exist");
+
+        // Verify Designator record exists
+        let has_designator = comp
+            .primitives
+            .iter()
+            .any(|r| matches!(r, SchRecord::Designator(_)));
+        assert!(
+            has_designator,
+            "JSON component must have Designator record (Bug 7)"
+        );
+
+        // Verify ImplementationList record exists
+        let has_impl_list = comp
+            .primitives
+            .iter()
+            .any(|r| matches!(r, SchRecord::ImplementationList(_)));
+        assert!(
+            has_impl_list,
+            "JSON component must have ImplementationList record (Bug 8)"
+        );
+
+        // Verify designator text is R? (resistor)
+        let designator = comp.primitives.iter().find_map(|r| {
+            if let SchRecord::Designator(d) = r {
+                Some(d)
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            designator.unwrap().param.label.text,
+            "R?",
+            "Resistor should have R? designator"
         );
 
         std::fs::remove_file(&path).ok();

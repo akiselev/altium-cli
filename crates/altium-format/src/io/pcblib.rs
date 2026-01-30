@@ -93,37 +93,48 @@ impl PcbLib {
         data.write_i32::<LittleEndian>(version.len() as i32)?;
         write_pascal_short_string(&mut data, version)?;
 
-        // Additional required fields (observed in Altium files)
-        // Float value (appears to be version-related)
-        data.write_f64::<LittleEndian>(5.0)?;
-
-        // Token string "DVLTOKCO" (required marker)
-        write_pascal_short_string(&mut data, "DVLTOKCO")?;
-
-        let stream = cf
+        let mut stream = cf
             .create_stream("/FileHeader")
             .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut stream = stream;
         stream.write_all(&data)?;
 
         Ok(())
     }
 
+    /// Get the storage name for a component. Uses pattern name directly unless
+    /// it's too long or contains characters invalid for CFB storage names.
+    fn storage_name_for(pattern: &str) -> String {
+        if pattern.len() > 31 || pattern.contains('/') {
+            let mut name = pattern.replace('/', "_");
+            if name.len() > 31 {
+                name.truncate(31);
+            }
+            name
+        } else {
+            pattern.to_string()
+        }
+    }
+
     /// Write the SectionKeys stream.
-    /// Maps pattern names to PCBComponent_N storage names.
+    /// Only maps pattern names that need sanitization (>31 chars or contain '/').
     fn write_section_keys<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        // Always write section keys to map pattern names to PCBComponent_N
-        if self.components.is_empty() {
+        // Collect entries that need sanitization
+        let entries: Vec<_> = self
+            .components
+            .iter()
+            .filter(|comp| comp.pattern.len() > 31 || comp.pattern.contains('/'))
+            .map(|comp| (comp.pattern.clone(), Self::storage_name_for(&comp.pattern)))
+            .collect();
+
+        if entries.is_empty() {
             return Ok(());
         }
 
         let mut data = Vec::new();
-        data.write_i32::<LittleEndian>(self.components.len() as i32)?;
+        data.write_i32::<LittleEndian>(entries.len() as i32)?;
 
-        for (i, comp) in self.components.iter().enumerate() {
-            let storage_name = format!("PCBComponent_{}", i + 1);
-            crate::io::writer::write_pascal_string(&mut data, &comp.pattern)?;
+        for (pattern, storage_name) in entries {
+            crate::io::writer::write_pascal_string(&mut data, &pattern)?;
             write_string_block(&mut data, &storage_name)?;
         }
 
@@ -155,9 +166,9 @@ impl PcbLib {
         // Write FileVersionInfo
         self.write_file_version_info(cf)?;
 
-        // Write each footprint using PCBComponent_N naming
-        for (i, comp) in self.components.iter().enumerate() {
-            let storage_name = format!("PCBComponent_{}", i + 1);
+        // Write each footprint using actual pattern name
+        for comp in &self.components {
+            let storage_name = Self::storage_name_for(&comp.pattern);
             self.write_footprint(cf, comp, &storage_name)?;
         }
 
@@ -190,9 +201,9 @@ impl PcbLib {
         // Write footprint count
         data.write_u32::<LittleEndian>(self.components.len() as u32)?;
 
-        // Write footprint storage names (PCBComponent_N format)
-        for i in 0..self.components.len() {
-            let storage_name = format!("PCBComponent_{}", i + 1);
+        // Write footprint storage names (using actual pattern names)
+        for comp in &self.components {
+            let storage_name = Self::storage_name_for(&comp.pattern);
             write_string_block(&mut data, &storage_name)?;
         }
 
@@ -210,7 +221,7 @@ impl PcbLib {
 
         // Essential parameters that Altium requires
         params.add("KIND", "Protel_Advanced_PCB_Library");
-        params.add("VERSION", "1.0");
+        params.add("VERSION", "3.00");
 
         // Board configuration (minimal required)
         params.add("BOARDVERSION", "5.01");
@@ -244,6 +255,34 @@ impl PcbLib {
         params.add("EGRANGE", "8mil");
         params.add("OGSNAPENABLED", "TRUE");
         params.add("GRIDSNAPENABLED", "TRUE");
+
+        // Layer stack (required by Altium)
+        params.add("TOPTYPE", "3");
+        params.add("TOPCONST", "3.99");
+        params.add("TOPHEIGHT", "0.48mil");
+        params.add("TOPMATERIAL", "Solder Resist");
+        params.add("BOTTOMTYPE", "3");
+        params.add("BOTTOMCONST", "3.99");
+        params.add("BOTTOMHEIGHT", "0.48mil");
+        params.add("BOTTOMMATERIAL", "Solder Resist");
+        params.add("LAYERSTACKSTYLE", "0");
+        params.add("SHOWTOPDIELECTRIC", "FALSE");
+        params.add("SHOWBOTTOMDIELECTRIC", "FALSE");
+        params.add("LAYER1NAME", "Top Layer");
+        params.add("LAYER1PREV", "0");
+        params.add("LAYER1NEXT", "32");
+        params.add("LAYER1MECHENABLED", "TRUE");
+        params.add("LAYER1COPTHICK", "1.378mil");
+        params.add("LAYER1DIELTYPE", "0");
+        params.add("LAYER1DIELCONST", "4.2");
+        params.add("LAYER1DIELHEIGHT", "36.998mil");
+        params.add("LAYER1DIELMATERIAL", "FR-4");
+        params.add("LAYER32NAME", "Bottom Layer");
+        params.add("LAYER32PREV", "1");
+        params.add("LAYER32NEXT", "0");
+        params.add("LAYER32MECHENABLED", "TRUE");
+        params.add("LAYER32COPTHICK", "1.378mil");
+        params.add("LAYER32DIELTYPE", "0");
 
         params
     }
@@ -350,8 +389,8 @@ impl PcbLib {
 
             // Build TOC entries for each component
             let mut toc_data = Vec::new();
-            for (i, comp) in self.components.iter().enumerate() {
-                let storage_name = format!("PCBComponent_{}", i + 1);
+            for comp in &self.components {
+                let storage_name = Self::storage_name_for(&comp.pattern);
                 let pad_count = comp
                     .primitives
                     .iter()
@@ -391,10 +430,12 @@ impl PcbLib {
             .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
         header.write_u32::<LittleEndian>(1)?;
 
-        // FileVersionInfo data - minimal version info
+        // FileVersionInfo data
         let mut params = ParameterCollection::new();
-        params.add("VERSIONNUMBER", "1.0");
-        params.add("REVISIONDATE", "2024-01-01");
+        params.add("COUNT", "1");
+        params.add("VER0", "Altium Limited Protel PCB Component Library");
+        params.add("FWDMSG0", "The PCB Library file forward compatibility is not guaranteed.");
+        params.add("BKMSG0", "The PCB Library file backward compatibility is not guaranteed.");
 
         let mut block = Vec::new();
         write_parameters(&mut block, &params)?;
