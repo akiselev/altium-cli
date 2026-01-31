@@ -2008,6 +2008,9 @@ pub struct SchImplementationJson {
     /// Pin mappings (schematic pin -> implementation pin)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pin_mappings: Vec<SchPinMappingJson>,
+    /// Parameters owned by this implementation (e.g., Spice Prefix, Type, Tech)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<SchParameterJson>,
 }
 
 /// JSON schema for a pin mapping in an implementation.
@@ -2125,6 +2128,7 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
     let mut impl_records: Vec<SchImplementation> = Vec::new();
     let mut mdl_entries: Vec<(usize, usize)> = Vec::new(); // (mdl_idx, owner_impl_idx)
     let mut md_entries: Vec<(usize, usize)> = Vec::new(); // (md_idx, owner_mdl_idx)
+    let mut impl_params_entries: Vec<(usize, usize)> = Vec::new(); // (impl_params_idx, owner_impl_idx)
 
     // First pass: identify implementation hierarchy
     for (idx, record) in comp.primitives.iter().enumerate() {
@@ -2139,11 +2143,18 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
             SchRecord::MapDefiner(md) => {
                 md_entries.push((idx, md.base.owner_index as usize));
             }
+            SchRecord::ImplementationParameters(ip) => {
+                impl_params_entries.push((idx, ip.base.owner_index as usize));
+            }
             _ => {}
         }
     }
 
-    // Second pass: convert primitives
+    // Build set of ImplementationParameters indices for ownership detection
+    let impl_params_idx_set: std::collections::HashSet<usize> =
+        impl_params_entries.iter().map(|(idx, _)| *idx).collect();
+
+    // Second pass: convert primitives (skip implementation-owned parameters)
     for (_idx, record) in comp.primitives.iter().enumerate() {
         match record {
             SchRecord::Component(_) => {
@@ -2243,16 +2254,21 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
                 });
             }
             SchRecord::Parameter(param) => {
-                parameters.push(SchParameterJson {
-                    name: param.name.clone(),
-                    value: param.label.text.clone(),
-                    x: raw_to_coord_value(param.label.graphical.location_x),
-                    y: raw_to_coord_value(param.label.graphical.location_y),
-                    font_id: param.label.font_id,
-                    hidden: param.label.is_hidden,
-                    read_only_state: param.read_only_state,
-                    orientation: text_orientation_to_string(param.label.orientation),
-                });
+                // Skip parameters owned by ImplementationParameters — they'll be
+                // collected in the third pass and attached to their implementation
+                let owner = param.label.graphical.base.owner_index as usize;
+                if !impl_params_idx_set.contains(&owner) {
+                    parameters.push(SchParameterJson {
+                        name: param.name.clone(),
+                        value: param.label.text.clone(),
+                        x: raw_to_coord_value(param.label.graphical.location_x),
+                        y: raw_to_coord_value(param.label.graphical.location_y),
+                        font_id: param.label.font_id,
+                        hidden: param.label.is_hidden,
+                        read_only_state: param.read_only_state,
+                        orientation: text_orientation_to_string(param.label.orientation),
+                    });
+                }
             }
             SchRecord::Bezier(bezier) => {
                 beziers.push(SchBezierJson {
@@ -2277,10 +2293,11 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
         }
     }
 
-    // Third pass: build implementations with pin mappings (in order)
+    // Third pass: build implementations with pin mappings and owned parameters (in order)
     for (i, impl_rec) in impl_records.iter().enumerate() {
         let impl_idx = impl_indices[i];
         let mut pin_mappings = Vec::new();
+        let mut impl_owned_params = Vec::new();
 
         // Find associated MapDefinerList(s) owned by this implementation
         for &(mdl_idx, mdl_owner) in &mdl_entries {
@@ -2300,6 +2317,30 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
             }
         }
 
+        // Find ImplementationParameters owned by this implementation, then
+        // collect RECORD=41 parameters owned by those ImplementationParameters
+        for &(ip_idx, ip_owner) in &impl_params_entries {
+            if ip_owner == impl_idx {
+                // Find parameters owned by this ImplementationParameters
+                for record in &comp.primitives {
+                    if let SchRecord::Parameter(param) = record {
+                        if param.label.graphical.base.owner_index as usize == ip_idx {
+                            impl_owned_params.push(SchParameterJson {
+                                name: param.name.clone(),
+                                value: param.label.text.clone(),
+                                x: raw_to_coord_value(param.label.graphical.location_x),
+                                y: raw_to_coord_value(param.label.graphical.location_y),
+                                font_id: param.label.font_id,
+                                hidden: param.label.is_hidden,
+                                read_only_state: param.read_only_state,
+                                orientation: text_orientation_to_string(param.label.orientation),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         implementations.push(SchImplementationJson {
             model_name: impl_rec.model_name.clone(),
             model_type: impl_rec.model_type.clone(),
@@ -2308,6 +2349,7 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
             data_files: impl_rec.data_files.clone(),
             data_file_entities: impl_rec.data_file_entities.clone(),
             pin_mappings,
+            parameters: impl_owned_params,
         });
     }
 
@@ -2837,6 +2879,7 @@ pub fn cmd_add_json(
             }
 
             // ImplementationParameters (always present, owned by Implementation)
+            let impl_params_idx = primitives.len();
             let impl_params = SchImplementationParameters {
                 base: SchPrimitiveBase {
                     owner_index: impl_idx as i32,
@@ -2845,6 +2888,33 @@ pub fn cmd_add_json(
                 ..Default::default()
             };
             primitives.push(SchRecord::ImplementationParameters(impl_params));
+
+            // Parameters owned by this implementation's ImplementationParameters
+            for param_json in &impl_json.parameters {
+                let orientation = parse_text_orientation(&param_json.orientation)
+                    .unwrap_or_default();
+                let mut graphical = SchGraphicalBase::default();
+                graphical.base.owner_index = impl_params_idx as i32;
+                graphical.base.owner_part_id = Some(-1);
+                graphical.color = 8388608; // Dark red (standard for parameters)
+                graphical.location_x = param_json.x.to_raw();
+                graphical.location_y = param_json.y.to_raw();
+
+                let param = SchParameter {
+                    label: SchLabel {
+                        text: param_json.value.clone(),
+                        font_id: param_json.font_id,
+                        is_hidden: param_json.hidden,
+                        orientation,
+                        graphical,
+                        ..Default::default()
+                    },
+                    name: param_json.name.clone(),
+                    read_only_state: param_json.read_only_state,
+                    ..Default::default()
+                };
+                primitives.push(SchRecord::Parameter(param));
+            }
         }
 
         // Group 7: Remaining visible parameters

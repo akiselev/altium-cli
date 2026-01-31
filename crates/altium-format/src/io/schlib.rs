@@ -160,21 +160,8 @@ impl SchLib {
             header_params.add(key, value.as_str());
         }
 
-        // Count total components including aliases
-        let mut total_comp_count = self.components.len() as i32;
-        for comp in &self.components {
-            if !comp.component.alias_list.is_empty() {
-                // Count aliases (pipe-separated)
-                let alias_count = comp
-                    .component
-                    .alias_list
-                    .split('|')
-                    .filter(|s| !s.is_empty())
-                    .count();
-                total_comp_count += alias_count as i32;
-            }
-        }
-        header_params.add_int("COMPCOUNT", total_comp_count);
+        // COMPCOUNT is the number of actual components (aliases are not counted)
+        header_params.add_int("COMPCOUNT", self.components.len() as i32);
 
         // Write indexed LIBREF/PARTCOUNT/COMPDESCR entries for each component
         for (i, comp) in self.components.iter().enumerate() {
