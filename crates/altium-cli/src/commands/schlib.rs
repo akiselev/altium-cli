@@ -273,8 +273,8 @@ pub enum SchLibCommands {
         file: Option<String>,
 
         /// JSON string
-        #[arg(short, long)]
-        json: Option<String>,
+        #[arg(long)]
+        json_string: Option<String>,
     },
 }
 
@@ -441,8 +441,8 @@ pub fn run(cmd: &SchLibCommands, format: &str) -> Result<(), Box<dyn std::error:
             )?;
             println!("{}", result);
         }
-        SchLibCommands::AddJson { path, file, json } => {
-            let result = schlib::cmd_add_json(path, file.clone(), json.clone())?;
+        SchLibCommands::AddJson { path, file, json_string } => {
+            let result = schlib::cmd_add_json(path, file.clone(), json_string.clone())?;
             println!("{}", result);
         }
     }

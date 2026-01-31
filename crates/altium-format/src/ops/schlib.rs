@@ -22,9 +22,9 @@ use crate::ops::categorization::categorize_component;
 use crate::ops::output::*;
 use crate::records::sch::{
     LineWidth, PinConglomerateFlags, PinElectricalType, PinSymbol, SchArc, SchComponent,
-    SchDesignator, SchEllipse, SchGraphicalBase, SchImplementationList, SchLabel, SchLine,
-    SchParameter, SchPin, SchPolygon, SchPolyline, SchPrimitiveBase, SchRecord, SchRectangle,
-    TextJustification, TextOrientations,
+    SchDesignator, SchEllipse, SchGraphicalBase, SchImplementation, SchImplementationList,
+    SchLabel, SchLine, SchMapDefiner, SchMapDefinerList, SchParameter, SchPin, SchPolygon,
+    SchPolyline, SchPrimitiveBase, SchRecord, SchRectangle, TextJustification, TextOrientations,
 };
 use crate::types::Unit;
 
@@ -571,9 +571,21 @@ pub fn cmd_primitives(
     })
 }
 
-/// Export as JSON - returns component list (let presentation layer handle JSON serialization).
-pub fn cmd_json(path: &Path) -> Result<SchLibComponentList, Box<dyn std::error::Error>> {
-    cmd_list(path)
+/// Export as JSON - returns full library export with round-trip support.
+pub fn cmd_json(path: &Path) -> Result<SchLibExport, Box<dyn std::error::Error>> {
+    let lib = open_schlib(path)?;
+    let components: Vec<SchComponentJson> = lib.iter().map(component_to_json).collect();
+    let header: HashMap<String, String> = lib
+        .header_params
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
+        .collect();
+    Ok(SchLibExport {
+        source: Some(path.display().to_string()),
+        component_count: components.len(),
+        header,
+        components,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1600,6 +1612,86 @@ pub fn cmd_render_ascii(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// REVERSE CONVERSION HELPERS (for JSON export)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Convert raw coordinate value (10000 units/mil) back to mils.
+fn raw_to_coord_value(raw: i32) -> CoordValue {
+    CoordValue(raw as f64 / 10000.0)
+}
+
+/// Convert Win32 COLORREF (0x00BBGGRR) to "RRGGBB" hex string.
+fn color_to_hex(color: i32) -> String {
+    let r = (color & 0xFF) as u8;
+    let g = ((color >> 8) & 0xFF) as u8;
+    let b = ((color >> 16) & 0xFF) as u8;
+    format!("{:02X}{:02X}{:02X}", r, g, b)
+}
+
+/// Convert PinConglomerateFlags to orientation string.
+fn pin_orientation_to_string(flags: PinConglomerateFlags) -> String {
+    let rotated = flags.contains(PinConglomerateFlags::ROTATED);
+    let flipped = flags.contains(PinConglomerateFlags::FLIPPED);
+    match (rotated, flipped) {
+        (false, false) => "right".to_string(),
+        (false, true) => "left".to_string(),
+        (true, false) => "up".to_string(),
+        (true, true) => "down".to_string(),
+    }
+}
+
+/// Convert PinElectricalType to JSON-friendly string.
+fn electrical_type_to_json(et: &PinElectricalType) -> String {
+    match et {
+        PinElectricalType::Input => "input".to_string(),
+        PinElectricalType::InputOutput => "io".to_string(),
+        PinElectricalType::Output => "output".to_string(),
+        PinElectricalType::OpenCollector => "oc".to_string(),
+        PinElectricalType::Passive => "passive".to_string(),
+        PinElectricalType::HiZ => "hiz".to_string(),
+        PinElectricalType::OpenEmitter => "oe".to_string(),
+        PinElectricalType::Power => "power".to_string(),
+    }
+}
+
+/// Convert TextOrientations flags to JSON string.
+fn text_orientation_to_string(orient: TextOrientations) -> String {
+    let rotated = orient.contains(TextOrientations::ROTATED);
+    let flipped = orient.contains(TextOrientations::FLIPPED);
+    match (rotated, flipped) {
+        (false, false) => "horizontal".to_string(),
+        (true, false) => "vertical_up".to_string(),
+        (true, true) => "vertical_down".to_string(),
+        (false, true) => "180".to_string(),
+    }
+}
+
+/// Convert TextJustification to JSON string.
+fn text_justification_to_string(just: TextJustification) -> String {
+    if just == TextJustification::BOTTOM_LEFT {
+        "bottom_left"
+    } else if just == TextJustification::BOTTOM_CENTER {
+        "bottom_center"
+    } else if just == TextJustification::BOTTOM_RIGHT {
+        "bottom_right"
+    } else if just == TextJustification::MIDDLE_LEFT {
+        "center_left"
+    } else if just == TextJustification::MIDDLE_CENTER {
+        "center"
+    } else if just == TextJustification::MIDDLE_RIGHT {
+        "center_right"
+    } else if just == TextJustification::TOP_LEFT {
+        "top_left"
+    } else if just == TextJustification::TOP_CENTER {
+        "top_center"
+    } else if just == TextJustification::TOP_RIGHT {
+        "top_right"
+    } else {
+        "bottom_left"
+    }.to_string()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // JSON INPUT STRUCTURES (for LLM tool calling and structured output)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1808,6 +1900,86 @@ pub struct SchEllipseJson {
     pub border_color: String,
 }
 
+/// JSON schema for a designator in a schematic component.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchDesignatorJson {
+    /// Designator text (e.g., "U?", "R?")
+    pub text: String,
+    /// X position (mils)
+    #[serde(default)]
+    pub x: CoordValue,
+    /// Y position (mils)
+    #[serde(default)]
+    pub y: CoordValue,
+    /// Font ID
+    #[serde(default = "default_font_id")]
+    pub font_id: i32,
+    /// Whether hidden
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+/// JSON schema for a parameter in a schematic component.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchParameterJson {
+    /// Parameter name (e.g., "Comment", "Value")
+    pub name: String,
+    /// Parameter value
+    #[serde(default)]
+    pub value: String,
+    /// X position (mils)
+    #[serde(default)]
+    pub x: CoordValue,
+    /// Y position (mils)
+    #[serde(default)]
+    pub y: CoordValue,
+    /// Font ID
+    #[serde(default = "default_font_id")]
+    pub font_id: i32,
+    /// Whether hidden
+    #[serde(default)]
+    pub hidden: bool,
+    /// Read-only state
+    #[serde(default)]
+    pub read_only_state: i32,
+    /// Text orientation
+    #[serde(default = "default_label_orientation")]
+    pub orientation: String,
+}
+
+/// JSON schema for an implementation (model reference) in a schematic component.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchImplementationJson {
+    /// Model name (e.g., footprint name)
+    pub model_name: String,
+    /// Model type (e.g., "PCBLIB", "SIM", "SI", "PCB3DLib")
+    pub model_type: String,
+    /// Description
+    #[serde(default)]
+    pub description: String,
+    /// Whether this is the current/active implementation
+    #[serde(default)]
+    pub is_current: bool,
+    /// Data file references
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_files: Vec<String>,
+    /// Pin mappings (schematic pin -> implementation pin)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pin_mappings: Vec<SchPinMappingJson>,
+}
+
+/// JSON schema for a pin mapping in an implementation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchPinMappingJson {
+    /// Schematic pin designator
+    pub schematic_pin: String,
+    /// Implementation (footprint) pin designators
+    pub implementation_pins: Vec<String>,
+    /// Whether this is a trivial (identity) mapping
+    #[serde(default)]
+    pub is_trivial: bool,
+}
+
 /// JSON schema for a complete schematic component definition.
 /// This is the top-level structure for the add-json command.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1844,10 +2016,250 @@ pub struct SchComponentJson {
     /// List of ellipses
     #[serde(default)]
     pub ellipses: Vec<SchEllipseJson>,
+    /// Designator definition (optional - inferred from name if not provided)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designator: Option<SchDesignatorJson>,
+    /// Component parameters (Comment, Value, etc.)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<SchParameterJson>,
+    /// Implementation references (footprints, simulation models)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub implementations: Vec<SchImplementationJson>,
+    /// Number of display modes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_mode_count: Option<i32>,
+    /// Unique ID for cross-document tracking
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unique_id: String,
 }
 
 fn default_part_count() -> i32 {
     1
+}
+
+/// File-level export of a schematic library for round-trip JSON support.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchLibExport {
+    /// Source file path (informational)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Number of components
+    pub component_count: usize,
+    /// Raw FileHeader parameters (fonts, grid, sheet settings).
+    /// Keys are Altium parameter names (e.g. "FONTIDCOUNT", "SNAPGRIDSIZE").
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub header: HashMap<String, String>,
+    /// Full component definitions
+    pub components: Vec<SchComponentJson>,
+}
+
+/// Convert a SchLibComponent to SchComponentJson for export.
+fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
+    let mut pins = Vec::new();
+    let mut rectangles = Vec::new();
+    let mut lines = Vec::new();
+    let mut polygons = Vec::new();
+    let mut labels = Vec::new();
+    let mut arcs = Vec::new();
+    let mut polylines = Vec::new();
+    let mut ellipses = Vec::new();
+    let mut designator: Option<SchDesignatorJson> = None;
+    let mut parameters = Vec::new();
+    let mut implementations = Vec::new();
+
+    // Build ordered lists of implementation hierarchy (preserves insertion order)
+    let mut impl_indices: Vec<usize> = Vec::new();
+    let mut impl_records: Vec<SchImplementation> = Vec::new();
+    let mut mdl_entries: Vec<(usize, usize)> = Vec::new(); // (mdl_idx, owner_impl_idx)
+    let mut md_entries: Vec<(usize, usize)> = Vec::new(); // (md_idx, owner_mdl_idx)
+
+    // First pass: identify implementation hierarchy
+    for (idx, record) in comp.primitives.iter().enumerate() {
+        match record {
+            SchRecord::Implementation(impl_rec) => {
+                impl_indices.push(idx);
+                impl_records.push(impl_rec.clone());
+            }
+            SchRecord::MapDefinerList(mdl) => {
+                mdl_entries.push((idx, mdl.base.owner_index as usize));
+            }
+            SchRecord::MapDefiner(md) => {
+                md_entries.push((idx, md.base.owner_index as usize));
+            }
+            _ => {}
+        }
+    }
+
+    // Second pass: convert primitives
+    for (_idx, record) in comp.primitives.iter().enumerate() {
+        match record {
+            SchRecord::Component(_) => {
+                // Metadata captured at top level
+            }
+            SchRecord::Pin(pin) => {
+                pins.push(SchPinJson {
+                    designator: pin.designator.clone(),
+                    name: pin.name.clone(),
+                    x: raw_to_coord_value(pin.graphical.location_x),
+                    y: raw_to_coord_value(pin.graphical.location_y),
+                    length: raw_to_coord_value(pin.pin_length),
+                    electrical: electrical_type_to_json(&pin.electrical),
+                    orientation: pin_orientation_to_string(pin.pin_conglomerate),
+                    hidden: pin.pin_conglomerate.contains(PinConglomerateFlags::HIDE),
+                    description: pin.description.clone(),
+                });
+            }
+            SchRecord::Rectangle(rect) => {
+                rectangles.push(SchRectangleJson {
+                    x1: raw_to_coord_value(rect.graphical.location_x),
+                    y1: raw_to_coord_value(rect.graphical.location_y),
+                    x2: raw_to_coord_value(rect.corner_x),
+                    y2: raw_to_coord_value(rect.corner_y),
+                    filled: rect.is_solid,
+                    fill_color: color_to_hex(rect.graphical.area_color),
+                    border_color: color_to_hex(rect.graphical.color),
+                });
+            }
+            SchRecord::Line(line) => {
+                lines.push(SchLineJson {
+                    x1: raw_to_coord_value(line.graphical.location_x),
+                    y1: raw_to_coord_value(line.graphical.location_y),
+                    x2: raw_to_coord_value(line.corner_x),
+                    y2: raw_to_coord_value(line.corner_y),
+                    color: color_to_hex(line.graphical.color),
+                });
+            }
+            SchRecord::Polygon(poly) => {
+                polygons.push(SchPolygonJson {
+                    vertices: poly.vertices.iter().map(|(x, y)| {
+                        [raw_to_coord_value(*x), raw_to_coord_value(*y)]
+                    }).collect(),
+                    filled: poly.is_solid,
+                    fill_color: color_to_hex(poly.graphical.area_color),
+                    border_color: color_to_hex(poly.graphical.color),
+                });
+            }
+            SchRecord::Label(label) => {
+                labels.push(SchLabelJson {
+                    x: raw_to_coord_value(label.graphical.location_x),
+                    y: raw_to_coord_value(label.graphical.location_y),
+                    text: label.text.clone(),
+                    orientation: text_orientation_to_string(label.orientation),
+                    justification: text_justification_to_string(label.justification),
+                    color: color_to_hex(label.graphical.color),
+                    font_id: label.font_id,
+                    hidden: label.is_hidden,
+                });
+            }
+            SchRecord::Arc(arc) => {
+                arcs.push(SchArcJson {
+                    x: raw_to_coord_value(arc.graphical.location_x),
+                    y: raw_to_coord_value(arc.graphical.location_y),
+                    radius: raw_to_coord_value(arc.radius),
+                    start_angle: arc.start_angle,
+                    end_angle: arc.end_angle,
+                    color: color_to_hex(arc.graphical.color),
+                });
+            }
+            SchRecord::Polyline(polyline) => {
+                polylines.push(SchPolylineJson {
+                    vertices: polyline.vertices.iter().map(|(x, y)| {
+                        [raw_to_coord_value(*x), raw_to_coord_value(*y)]
+                    }).collect(),
+                    color: color_to_hex(polyline.graphical.color),
+                });
+            }
+            SchRecord::Ellipse(ellipse) => {
+                ellipses.push(SchEllipseJson {
+                    x: raw_to_coord_value(ellipse.graphical.location_x),
+                    y: raw_to_coord_value(ellipse.graphical.location_y),
+                    radius_x: raw_to_coord_value(ellipse.radius_x),
+                    radius_y: raw_to_coord_value(ellipse.radius_y),
+                    filled: ellipse.is_solid,
+                    fill_color: color_to_hex(ellipse.graphical.area_color),
+                    border_color: color_to_hex(ellipse.graphical.color),
+                });
+            }
+            SchRecord::Designator(des) => {
+                designator = Some(SchDesignatorJson {
+                    text: des.param.label.text.clone(),
+                    x: raw_to_coord_value(des.param.label.graphical.location_x),
+                    y: raw_to_coord_value(des.param.label.graphical.location_y),
+                    font_id: des.param.label.font_id,
+                    hidden: des.param.label.is_hidden,
+                });
+            }
+            SchRecord::Parameter(param) => {
+                parameters.push(SchParameterJson {
+                    name: param.name.clone(),
+                    value: param.label.text.clone(),
+                    x: raw_to_coord_value(param.label.graphical.location_x),
+                    y: raw_to_coord_value(param.label.graphical.location_y),
+                    font_id: param.label.font_id,
+                    hidden: param.label.is_hidden,
+                    read_only_state: param.read_only_state,
+                    orientation: text_orientation_to_string(param.label.orientation),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Third pass: build implementations with pin mappings (in order)
+    for (i, impl_rec) in impl_records.iter().enumerate() {
+        let impl_idx = impl_indices[i];
+        let mut pin_mappings = Vec::new();
+
+        // Find associated MapDefinerList(s) owned by this implementation
+        for &(mdl_idx, mdl_owner) in &mdl_entries {
+            if mdl_owner == impl_idx {
+                // Find MapDefiner records owned by this MapDefinerList
+                for &(md_idx, md_owner) in &md_entries {
+                    if md_owner == mdl_idx {
+                        if let SchRecord::MapDefiner(md) = &comp.primitives[md_idx] {
+                            pin_mappings.push(SchPinMappingJson {
+                                schematic_pin: md.designator_interface.clone(),
+                                implementation_pins: md.designator_implementation.clone(),
+                                is_trivial: md.is_trivial,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        implementations.push(SchImplementationJson {
+            model_name: impl_rec.model_name.clone(),
+            model_type: impl_rec.model_type.clone(),
+            description: impl_rec.description.clone(),
+            is_current: impl_rec.is_current,
+            data_files: impl_rec.data_files.clone(),
+            pin_mappings,
+        });
+    }
+
+    SchComponentJson {
+        name: comp.component.lib_reference.clone(),
+        description: comp.component.component_description.clone(),
+        part_count: comp.component.part_count,
+        pins,
+        rectangles,
+        lines,
+        polygons,
+        labels,
+        arcs,
+        polylines,
+        ellipses,
+        designator,
+        parameters,
+        implementations,
+        display_mode_count: if comp.component.display_mode_count != 1 {
+            Some(comp.component.display_mode_count)
+        } else {
+            None
+        },
+        unique_id: comp.component.unique_id.clone(),
+    }
 }
 
 /// Add a complete component from JSON input.
@@ -1872,319 +2284,417 @@ pub fn cmd_add_json(
         }
     };
 
-    // Parse JSON
-    let component_def: SchComponentJson = serde_json::from_str(&json_content)?;
+    // Parse JSON - try bulk export first, then single component
+    let parsed_export = serde_json::from_str::<SchLibExport>(&json_content).ok();
+    let (is_bulk, component_defs): (bool, Vec<SchComponentJson>) =
+        if let Some(ref export) = parsed_export {
+            (true, export.components.clone())
+        } else {
+            (false, vec![serde_json::from_str::<SchComponentJson>(&json_content)?])
+        };
 
     // Open or create library
     let mut lib = open_or_create_schlib(path)?;
 
-    // Check if component already exists
-    if lib
-        .components
-        .iter()
-        .any(|c| c.component.lib_reference == component_def.name)
-    {
-        return Err(format!("Component '{}' already exists", component_def.name).into());
+    // For bulk import, remove default components from blank template
+    // (the blank template has a "Component_1" placeholder)
+    if is_bulk {
+        let import_names: std::collections::HashSet<&str> =
+            component_defs.iter().map(|c| c.name.as_str()).collect();
+        lib.components.retain(|c| import_names.contains(c.component.lib_reference.as_str()));
+
+        // Restore header metadata from export (replace template defaults)
+        if let Some(ref export) = parsed_export {
+            if !export.header.is_empty() {
+                lib.header_params = crate::types::ParameterCollection::new();
+                for (k, v) in &export.header {
+                    lib.header_params.add(k, v);
+                }
+            }
+        }
     }
 
-    // Create component record
-    let component = SchComponent {
-        lib_reference: component_def.name.clone(),
-        component_description: component_def.description.clone(),
-        part_count: component_def.part_count,
-        display_mode_count: 1,
-        current_part_id: 1,
-        ..Default::default()
-    };
+    let mut added_components = Vec::new();
 
-    // Start with the component record as first primitive
-    let mut primitives = vec![SchRecord::Component(component.clone())];
+    for component_def in component_defs {
+        // Check if component already exists
+        if lib
+            .components
+            .iter()
+            .any(|c| c.component.lib_reference == component_def.name)
+        {
+            return Err(format!("Component '{}' already exists", component_def.name).into());
+        }
 
-    // Create designator record (RECORD=34)
-    let designator_text = infer_designator_prefix(&component_def.name, &component_def.description);
-    let designator = SchDesignator {
-        param: SchParameter {
-            label: SchLabel {
-                text: designator_text,
-                font_id: 1,
+        // Create component record
+        let component = SchComponent {
+            lib_reference: component_def.name.clone(),
+            component_description: component_def.description.clone(),
+            part_count: component_def.part_count,
+            display_mode_count: component_def.display_mode_count.unwrap_or(1),
+            current_part_id: 1,
+            unique_id: component_def.unique_id.clone(),
+            ..Default::default()
+        };
+
+        // Start with the component record as first primitive
+        let mut primitives = vec![SchRecord::Component(component.clone())];
+
+        // Create designator record (RECORD=34)
+        if let Some(des_json) = &component_def.designator {
+            let mut graphical = SchGraphicalBase::default();
+            graphical.location_x = des_json.x.to_raw();
+            graphical.location_y = des_json.y.to_raw();
+
+            let designator = SchDesignator {
+                param: SchParameter {
+                    label: SchLabel {
+                        text: des_json.text.clone(),
+                        font_id: des_json.font_id,
+                        is_hidden: des_json.hidden,
+                        graphical,
+                        ..Default::default()
+                    },
+                    name: "Designator".to_string(),
+                    read_only_state: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Designator(designator));
+        } else {
+            let designator_text = infer_designator_prefix(&component_def.name, &component_def.description);
+            let designator = SchDesignator {
+                param: SchParameter {
+                    label: SchLabel {
+                        text: designator_text,
+                        font_id: 1,
+                        ..Default::default()
+                    },
+                    name: "Designator".to_string(),
+                    read_only_state: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Designator(designator));
+        }
+
+        // Create parameters
+        for param_json in &component_def.parameters {
+            let orientation = parse_text_orientation(&param_json.orientation)?;
+            let mut graphical = SchGraphicalBase::default();
+            graphical.location_x = param_json.x.to_raw();
+            graphical.location_y = param_json.y.to_raw();
+
+            let param = SchParameter {
+                label: SchLabel {
+                    text: param_json.value.clone(),
+                    font_id: param_json.font_id,
+                    is_hidden: param_json.hidden,
+                    orientation,
+                    graphical,
+                    ..Default::default()
+                },
+                name: param_json.name.clone(),
+                read_only_state: param_json.read_only_state,
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Parameter(param));
+        }
+
+        // Create implementation list (RECORD=44)
+        let impl_list_idx = primitives.len();
+        let impl_list = SchImplementationList {
+            base: SchPrimitiveBase {
+                owner_index: 0,
                 ..Default::default()
             },
-            name: "Designator".to_string(),
-            read_only_state: 1,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    primitives.push(SchRecord::Designator(designator));
-
-    // Create empty implementation list (RECORD=44)
-    let impl_list = SchImplementationList {
-        base: SchPrimitiveBase {
-            owner_index: 0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    primitives.push(SchRecord::ImplementationList(impl_list));
-
-    // Add rectangles
-    for rect in &component_def.rectangles {
-        let fill_color_val = parse_color(&rect.fill_color)?;
-        let border_color_val = parse_color(&rect.border_color)?;
-
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = rect.x1.to_raw();
-        graphical.location_y = rect.y1.to_raw();
-        graphical.color = border_color_val;
-        graphical.area_color = fill_color_val;
-
-        let sch_rect = SchRectangle {
-            graphical,
-            corner_x: rect.x2.to_raw(),
-            corner_y: rect.y2.to_raw(),
-            line_width: LineWidth::Small,
-            is_solid: rect.filled,
-            transparent: !rect.filled,
             ..Default::default()
         };
-        primitives.push(SchRecord::Rectangle(sch_rect));
-    }
+        primitives.push(SchRecord::ImplementationList(impl_list));
 
-    // Add lines
-    for line in &component_def.lines {
-        let color_val = parse_color(&line.color)?;
+        // Create implementations
+        for impl_json in &component_def.implementations {
+            let impl_idx = primitives.len();
+            let implementation = SchImplementation {
+                base: SchPrimitiveBase {
+                    owner_index: impl_list_idx as i32,
+                    ..Default::default()
+                },
+                description: impl_json.description.clone(),
+                model_name: impl_json.model_name.clone(),
+                model_type: impl_json.model_type.clone(),
+                is_current: impl_json.is_current,
+                data_files: impl_json.data_files.clone(),
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Implementation(implementation));
 
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = line.x1.to_raw();
-        graphical.location_y = line.y1.to_raw();
-        graphical.color = color_val;
+            // Create MapDefinerList for this implementation
+            if !impl_json.pin_mappings.is_empty() {
+                let mdl_idx = primitives.len();
+                let map_definer_list = SchMapDefinerList {
+                    base: SchPrimitiveBase {
+                        owner_index: impl_idx as i32,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                primitives.push(SchRecord::MapDefinerList(map_definer_list));
 
-        let sch_line = SchLine {
-            graphical,
-            corner_x: line.x2.to_raw(),
-            corner_y: line.y2.to_raw(),
-            line_width: LineWidth::Small,
-            ..Default::default()
-        };
-        primitives.push(SchRecord::Line(sch_line));
-    }
-
-    // Add polygons
-    for polygon in &component_def.polygons {
-        if polygon.vertices.len() < 3 {
-            return Err("Polygon must have at least 3 vertices".into());
+                // Create MapDefiner records
+                for mapping_json in &impl_json.pin_mappings {
+                    let map_definer = SchMapDefiner {
+                        base: SchPrimitiveBase {
+                            owner_index: mdl_idx as i32,
+                            ..Default::default()
+                        },
+                        designator_interface: mapping_json.schematic_pin.clone(),
+                        designator_implementation: mapping_json.implementation_pins.clone(),
+                        is_trivial: mapping_json.is_trivial,
+                        ..Default::default()
+                    };
+                    primitives.push(SchRecord::MapDefiner(map_definer));
+                }
+            }
         }
 
-        let fill_color_val = parse_color(&polygon.fill_color)?;
-        let border_color_val = parse_color(&polygon.border_color)?;
+        // Add rectangles
+        for rect in &component_def.rectangles {
+            let fill_color_val = parse_color(&rect.fill_color)?;
+            let border_color_val = parse_color(&rect.border_color)?;
 
-        let vertices: Vec<(i32, i32)> = polygon
-            .vertices
-            .iter()
-            .map(|v| (v[0].to_raw(), v[1].to_raw()))
-            .collect();
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = rect.x1.to_raw();
+            graphical.location_y = rect.y1.to_raw();
+            graphical.color = border_color_val;
+            graphical.area_color = fill_color_val;
 
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = vertices[0].0;
-        graphical.location_y = vertices[0].1;
-        graphical.color = border_color_val;
-        graphical.area_color = fill_color_val;
-
-        let sch_polygon = SchPolygon {
-            graphical,
-            vertices,
-            line_width: LineWidth::Small,
-            is_solid: polygon.filled,
-            transparent: !polygon.filled,
-            ..Default::default()
-        };
-        primitives.push(SchRecord::Polygon(sch_polygon));
-    }
-
-    // Add labels (text)
-    for label in &component_def.labels {
-        let color_val = parse_color(&label.color)?;
-        let orientation = parse_text_orientation(&label.orientation)?;
-        let justification = parse_text_justification(&label.justification)?;
-
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = label.x.to_raw();
-        graphical.location_y = label.y.to_raw();
-        graphical.color = color_val;
-
-        let sch_label = SchLabel {
-            graphical,
-            text: label.text.clone(),
-            orientation,
-            justification,
-            font_id: label.font_id,
-            is_hidden: label.hidden,
-            ..Default::default()
-        };
-        primitives.push(SchRecord::Label(sch_label));
-    }
-
-    // Add arcs
-    for arc in &component_def.arcs {
-        let color_val = parse_color(&arc.color)?;
-
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = arc.x.to_raw();
-        graphical.location_y = arc.y.to_raw();
-        graphical.color = color_val;
-
-        let sch_arc = SchArc {
-            graphical,
-            radius: arc.radius.to_raw(),
-            secondary_radius: arc.radius.to_raw(), // Same as radius for circular arcs
-            start_angle: arc.start_angle,
-            end_angle: arc.end_angle,
-            line_width: LineWidth::Small,
-            ..Default::default()
-        };
-        primitives.push(SchRecord::Arc(sch_arc));
-    }
-
-    // Add polylines
-    for polyline in &component_def.polylines {
-        if polyline.vertices.len() < 2 {
-            return Err("Polyline must have at least 2 vertices".into());
+            let sch_rect = SchRectangle {
+                graphical,
+                corner_x: rect.x2.to_raw(),
+                corner_y: rect.y2.to_raw(),
+                line_width: LineWidth::Small,
+                is_solid: rect.filled,
+                transparent: !rect.filled,
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Rectangle(sch_rect));
         }
 
-        let color_val = parse_color(&polyline.color)?;
+        // Add lines
+        for line in &component_def.lines {
+            let color_val = parse_color(&line.color)?;
 
-        let vertices: Vec<(i32, i32)> = polyline
-            .vertices
-            .iter()
-            .map(|v| (v[0].to_raw(), v[1].to_raw()))
-            .collect();
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = line.x1.to_raw();
+            graphical.location_y = line.y1.to_raw();
+            graphical.color = color_val;
 
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = vertices[0].0;
-        graphical.location_y = vertices[0].1;
-        graphical.color = color_val;
-
-        let sch_polyline = SchPolyline {
-            graphical,
-            vertices,
-            line_width: LineWidth::Small,
-            ..Default::default()
+            let sch_line = SchLine {
+                graphical,
+                corner_x: line.x2.to_raw(),
+                corner_y: line.y2.to_raw(),
+                line_width: LineWidth::Small,
+                ..Default::default()
         };
-        primitives.push(SchRecord::Polyline(sch_polyline));
+            primitives.push(SchRecord::Line(sch_line));
     }
 
-    // Add ellipses
-    for ellipse in &component_def.ellipses {
-        let fill_color_val = parse_color(&ellipse.fill_color)?;
-        let border_color_val = parse_color(&ellipse.border_color)?;
-
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = ellipse.x.to_raw();
-        graphical.location_y = ellipse.y.to_raw();
-        graphical.color = border_color_val;
-        graphical.area_color = fill_color_val;
-
-        let sch_ellipse = SchEllipse {
-            graphical,
-            radius_x: ellipse.radius_x.to_raw(),
-            radius_y: ellipse.radius_y.to_raw(),
-            is_solid: ellipse.filled,
-            transparent: !ellipse.filled,
-            line_width: LineWidth::Small,
-            ..Default::default()
-        };
-        primitives.push(SchRecord::Ellipse(sch_ellipse));
-    }
-
-    // Add pins
-    for pin_def in &component_def.pins {
-        let electrical_type = parse_electrical_type(&pin_def.electrical)?;
-        let mut conglomerate = parse_pin_orientation(&pin_def.orientation)?;
-
-        conglomerate |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
-        conglomerate |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
-
-        if pin_def.hidden {
-            conglomerate |= PinConglomerateFlags::HIDE;
+        // Add polygons
+        for polygon in &component_def.polygons {
+            if polygon.vertices.len() < 3 {
+                return Err("Polygon must have at least 3 vertices".into());
         }
 
-        let mut graphical = SchGraphicalBase::default();
-        graphical.base.owner_part_id = Some(1);
-        graphical.location_x = pin_def.x.to_raw();
-        graphical.location_y = pin_def.y.to_raw();
-        graphical.color = 0x000080;
+            let fill_color_val = parse_color(&polygon.fill_color)?;
+            let border_color_val = parse_color(&polygon.border_color)?;
 
-        let pin = SchPin {
-            graphical,
-            designator: pin_def.designator.clone(),
-            name: pin_def.name.clone(),
-            electrical: electrical_type,
-            pin_conglomerate: conglomerate,
-            pin_length: pin_def.length.to_raw(),
-            description: pin_def.description.clone(),
-            symbol_inner_edge: PinSymbol::None,
-            symbol_outer_edge: PinSymbol::None,
-            symbol_inside: PinSymbol::None,
-            symbol_outside: PinSymbol::None,
-            ..Default::default()
+            let vertices: Vec<(i32, i32)> = polygon
+                .vertices
+                .iter()
+                .map(|v| (v[0].to_raw(), v[1].to_raw()))
+                .collect();
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = vertices[0].0;
+            graphical.location_y = vertices[0].1;
+            graphical.color = border_color_val;
+            graphical.area_color = fill_color_val;
+
+            let sch_polygon = SchPolygon {
+                graphical,
+                vertices,
+                line_width: LineWidth::Small,
+                is_solid: polygon.filled,
+                transparent: !polygon.filled,
+                ..Default::default()
         };
-        primitives.push(SchRecord::Pin(pin));
+            primitives.push(SchRecord::Polygon(sch_polygon));
     }
 
-    let pin_count = component_def.pins.len();
-    let rect_count = component_def.rectangles.len();
-    let line_count = component_def.lines.len();
-    let polygon_count = component_def.polygons.len();
-    let label_count = component_def.labels.len();
-    let arc_count = component_def.arcs.len();
-    let polyline_count = component_def.polylines.len();
-    let ellipse_count = component_def.ellipses.len();
+        // Add labels (text)
+        for label in &component_def.labels {
+            let color_val = parse_color(&label.color)?;
+            let orientation = parse_text_orientation(&label.orientation)?;
+            let justification = parse_text_justification(&label.justification)?;
 
-    let lib_component = SchLibComponent {
-        component,
-        primitives,
-    };
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = label.x.to_raw();
+            graphical.location_y = label.y.to_raw();
+            graphical.color = color_val;
 
-    lib.components.push(lib_component);
+            let sch_label = SchLabel {
+                graphical,
+                text: label.text.clone(),
+                orientation,
+                justification,
+                font_id: label.font_id,
+                is_hidden: label.hidden,
+                ..Default::default()
+        };
+            primitives.push(SchRecord::Label(sch_label));
+    }
+
+        // Add arcs
+        for arc in &component_def.arcs {
+            let color_val = parse_color(&arc.color)?;
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = arc.x.to_raw();
+            graphical.location_y = arc.y.to_raw();
+            graphical.color = color_val;
+
+            let sch_arc = SchArc {
+                graphical,
+                radius: arc.radius.to_raw(),
+                secondary_radius: arc.radius.to_raw(), // Same as radius for circular arcs
+                start_angle: arc.start_angle,
+                end_angle: arc.end_angle,
+                line_width: LineWidth::Small,
+                ..Default::default()
+        };
+            primitives.push(SchRecord::Arc(sch_arc));
+    }
+
+        // Add polylines
+        for polyline in &component_def.polylines {
+            if polyline.vertices.len() < 2 {
+                return Err("Polyline must have at least 2 vertices".into());
+        }
+
+            let color_val = parse_color(&polyline.color)?;
+
+            let vertices: Vec<(i32, i32)> = polyline
+                .vertices
+                .iter()
+                .map(|v| (v[0].to_raw(), v[1].to_raw()))
+                .collect();
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = vertices[0].0;
+            graphical.location_y = vertices[0].1;
+            graphical.color = color_val;
+
+            let sch_polyline = SchPolyline {
+                graphical,
+                vertices,
+                line_width: LineWidth::Small,
+                ..Default::default()
+        };
+            primitives.push(SchRecord::Polyline(sch_polyline));
+    }
+
+        // Add ellipses
+        for ellipse in &component_def.ellipses {
+            let fill_color_val = parse_color(&ellipse.fill_color)?;
+            let border_color_val = parse_color(&ellipse.border_color)?;
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = ellipse.x.to_raw();
+            graphical.location_y = ellipse.y.to_raw();
+            graphical.color = border_color_val;
+            graphical.area_color = fill_color_val;
+
+            let sch_ellipse = SchEllipse {
+                graphical,
+                radius_x: ellipse.radius_x.to_raw(),
+                radius_y: ellipse.radius_y.to_raw(),
+                is_solid: ellipse.filled,
+                transparent: !ellipse.filled,
+                line_width: LineWidth::Small,
+                ..Default::default()
+        };
+            primitives.push(SchRecord::Ellipse(sch_ellipse));
+    }
+
+        // Add pins
+        for pin_def in &component_def.pins {
+            let electrical_type = parse_electrical_type(&pin_def.electrical)?;
+            let mut conglomerate = parse_pin_orientation(&pin_def.orientation)?;
+
+            conglomerate |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
+            conglomerate |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
+
+            if pin_def.hidden {
+                conglomerate |= PinConglomerateFlags::HIDE;
+        }
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = pin_def.x.to_raw();
+            graphical.location_y = pin_def.y.to_raw();
+            graphical.color = 0x000080;
+
+            let pin = SchPin {
+                graphical,
+                designator: pin_def.designator.clone(),
+                name: pin_def.name.clone(),
+                electrical: electrical_type,
+                pin_conglomerate: conglomerate,
+                pin_length: pin_def.length.to_raw(),
+                description: pin_def.description.clone(),
+                symbol_inner_edge: PinSymbol::None,
+                symbol_outer_edge: PinSymbol::None,
+                symbol_inside: PinSymbol::None,
+                symbol_outside: PinSymbol::None,
+                ..Default::default()
+        };
+            primitives.push(SchRecord::Pin(pin));
+    }
+
+        let lib_component = SchLibComponent {
+            component,
+            primitives,
+        };
+
+        lib.components.push(lib_component);
+        added_components.push(component_def.name.clone());
+    }
+
     save_schlib(path, &lib)?;
 
-    // Build summary of added primitives
-    let mut parts = vec![format!("{} pins", pin_count)];
-    if rect_count > 0 {
-        parts.push(format!("{} rectangles", rect_count));
+    if added_components.len() == 1 {
+        Ok(format!(
+            "Added component '{}' to {}",
+            added_components[0],
+            path.display()
+        ))
+    } else {
+        Ok(format!(
+            "Added {} components to {}",
+            added_components.len(),
+            path.display()
+        ))
     }
-    if line_count > 0 {
-        parts.push(format!("{} lines", line_count));
-    }
-    if polygon_count > 0 {
-        parts.push(format!("{} polygons", polygon_count));
-    }
-    if label_count > 0 {
-        parts.push(format!("{} labels", label_count));
-    }
-    if arc_count > 0 {
-        parts.push(format!("{} arcs", arc_count));
-    }
-    if polyline_count > 0 {
-        parts.push(format!("{} polylines", polyline_count));
-    }
-    if ellipse_count > 0 {
-        parts.push(format!("{} ellipses", ellipse_count));
-    }
-
-    Ok(format!(
-        "Added component '{}' with {} to {}",
-        component_def.name,
-        parts.join(", "),
-        path.display()
-    ))
 }
 
 /// Parse text orientation string.

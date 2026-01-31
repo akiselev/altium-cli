@@ -28,6 +28,10 @@ pub struct SchLib {
     section_keys: HashMap<String, String>,
     /// Components in the library.
     pub components: Vec<SchLibComponent>,
+    /// Raw FileHeader parameters (fonts, grid, sheet settings).
+    /// Preserved for round-trip fidelity. Excludes HEADER, WEIGHT,
+    /// COMPCOUNT, LIBREF*, PARTCOUNT* (which are regenerated on save).
+    pub header_params: ParameterCollection,
 }
 
 /// A component in the schematic library.
@@ -135,6 +139,11 @@ impl SchLib {
             "Protel for Windows - Schematic Library Editor Binary File Version 5.0",
         );
         header_params.add_int("WEIGHT", self.components.len() as i32);
+
+        // Merge in stored metadata parameters (fonts, grid, sheet settings)
+        for (key, value) in self.header_params.iter() {
+            header_params.add(key, value.as_str());
+        }
 
         let mut header_block = Vec::new();
         write_parameters(&mut header_block, &header_params)?;
@@ -384,8 +393,33 @@ impl SchLib {
         Ok(())
     }
 
+    /// Keys that are regenerated on save and should not be stored in header_params.
+    const REGENERATED_HEADER_KEYS: &[&str] = &["HEADER", "WEIGHT", "COMPCOUNT"];
+
+    /// Indexed key prefixes for component-index data (regenerated on save).
+    /// These are followed by a numeric suffix (e.g., LIBREF0, PARTCOUNT1, COMPDESCR12).
+    /// Font keys (FONTNAME*, SIZE*) are metadata and are preserved.
+    const COMPONENT_INDEX_PREFIXES: &[&str] = &[
+        "LIBREF",
+        "PARTCOUNT",
+        "COMPDESCR",
+        "ALIASCOUNT",
+        "COMP9ALIAS",
+        "PINNUMBER",
+    ];
+
+    /// Check if a parameter key is a component-index key that should be skipped.
+    fn is_component_index_key(key: &str) -> bool {
+        for prefix in Self::COMPONENT_INDEX_PREFIXES {
+            if key.starts_with(prefix) && key[prefix.len()..].parse::<i32>().is_ok() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Read file header to get component list.
-    fn read_file_header<R: Read + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<Vec<String>> {
+    fn read_file_header<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<Vec<String>> {
         let stream_path = "/FileHeader";
         let mut stream = cf.open_stream(stream_path).map_err(|e| {
             AltiumError::Io(std::io::Error::new(
@@ -403,6 +437,18 @@ impl SchLib {
 
         let mut cursor = Cursor::new(&data);
         let params = read_parameters_block(&mut cursor)?;
+
+        // Store metadata parameters (everything except regenerated keys and component index)
+        for (key, value) in params.iter() {
+            let upper = key.to_uppercase();
+            if Self::REGENERATED_HEADER_KEYS.contains(&upper.as_str()) {
+                continue;
+            }
+            if Self::is_component_index_key(&upper) {
+                continue;
+            }
+            self.header_params.add(key, value.as_str());
+        }
 
         let mut ref_names = Vec::new();
 
