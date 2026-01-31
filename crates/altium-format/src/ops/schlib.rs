@@ -2079,6 +2079,9 @@ pub struct SchComponentJson {
     /// Unique ID for cross-document tracking
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub unique_id: String,
+    /// Alias names for this component (alternative names that redirect to this component)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 fn default_part_count() -> i32 {
@@ -2331,6 +2334,16 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
             None
         },
         unique_id: comp.component.unique_id.clone(),
+        aliases: if comp.component.alias_list.is_empty() {
+            Vec::new()
+        } else {
+            comp.component
+                .alias_list
+                .split('|')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        },
     }
 }
 
@@ -2406,6 +2419,11 @@ pub fn cmd_add_json(
             display_mode_count: component_def.display_mode_count.unwrap_or(1),
             current_part_id: 1,
             unique_id: component_def.unique_id.clone(),
+            alias_list: if component_def.aliases.is_empty() {
+                String::new()
+            } else {
+                component_def.aliases.join("|")
+            },
             ..Default::default()
         };
 
@@ -3350,6 +3368,81 @@ mod tests {
             "Missing MapDefinerList after save/reload, got: {:?}", record_types);
         assert!(record_types.contains(&"ImplementationParameters"),
             "Missing ImplementationParameters after save/reload, got: {:?}", record_types);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_alias_round_trip_via_json() {
+        use crate::io::SchLib;
+
+        let json = r#"{
+            "name": "PIC10F220T-I/OT",
+            "description": "PIC MCU",
+            "part_count": 1,
+            "pins": [
+                {"designator": "1", "name": "VDD", "x": 10, "y": 0, "length": 10, "electrical": "passive", "orientation": "right"}
+            ],
+            "aliases": ["PIC10F220"]
+        }"#;
+
+        let path = std::env::temp_dir().join(format!(
+            "test_alias_{}.SchLib",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        // Create library, add component with alias
+        let lib = SchLib::default();
+        let comp_def: SchComponentJson = serde_json::from_str(json).unwrap();
+        assert_eq!(comp_def.aliases, vec!["PIC10F220"]);
+
+        // Use cmd_add_json by saving empty lib first
+        lib.save_to_file(&path).unwrap();
+        drop(lib);
+
+        let result = cmd_add_json(&path, None, Some(json.to_string()));
+        assert!(result.is_ok(), "add-json failed: {:?}", result.err());
+
+        // Reload and verify alias_list is preserved
+        let lib = SchLib::open_file(&path).unwrap();
+        let comp = lib
+            .components
+            .iter()
+            .find(|c| c.component.lib_reference == "PIC10F220T-I/OT")
+            .expect("Component not found after reload");
+        assert_eq!(
+            comp.component.alias_list, "PIC10F220",
+            "alias_list not preserved"
+        );
+
+        // Verify the component name with '/' is readable (section key escaping works)
+        assert!(
+            !lib.components.is_empty(),
+            "No components loaded - slash escaping may be broken"
+        );
+
+        // Verify Redirection stream exists by re-reading the CFB
+        let file = std::fs::File::open(&path).unwrap();
+        let cf = cfb::CompoundFile::open(file).unwrap();
+        assert!(
+            cf.entry("/PIC10F220/Redirection").is_ok(),
+            "Redirection stream not found for alias"
+        );
+
+        // Verify JSON export includes the alias
+        let exported = cmd_json(&path).unwrap();
+        let comp_json = exported
+            .components
+            .iter()
+            .find(|c| c.name == "PIC10F220T-I/OT")
+            .expect("Component not in export");
+        assert!(
+            comp_json.aliases.contains(&"PIC10F220".to_string()),
+            "alias not found in JSON export"
+        );
 
         std::fs::remove_file(&path).ok();
     }

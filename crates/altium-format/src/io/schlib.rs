@@ -96,6 +96,9 @@ impl SchLib {
             self.write_component(&mut cf, comp)?;
         }
 
+        // Write Redirection streams for component aliases
+        self.write_alias_redirections(&mut cf)?;
+
         cf.flush()
             .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
 
@@ -265,6 +268,52 @@ impl SchLib {
         Ok(())
     }
 
+    /// Write Redirection streams for component aliases.
+    ///
+    /// When a component has an ALIASLIST, each alias gets its own OLE storage
+    /// containing a `Redirection` stream that points to the real component name.
+    /// The format is a length-prefixed record: `|SECTIONNAME=<real_name>\0`.
+    fn write_alias_redirections<F: Read + Write + Seek>(
+        &self,
+        cf: &mut CompoundFile<F>,
+    ) -> Result<()> {
+        for comp in &self.components {
+            if comp.component.alias_list.is_empty() {
+                continue;
+            }
+
+            let aliases: Vec<&str> = comp
+                .component
+                .alias_list
+                .split('|')
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            for alias in aliases {
+                let storage_path = format!("/{}", alias);
+                cf.create_storage(&storage_path)
+                    .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
+
+                // Build the redirection record: |SECTIONNAME=<real_name>\0
+                let record_content =
+                    format!("|SECTIONNAME={}\0", comp.component.lib_reference);
+                let record_bytes = record_content.as_bytes();
+
+                let mut data = Vec::new();
+                data.write_i32::<LittleEndian>(record_bytes.len() as i32)?;
+                data.write_all(record_bytes)?;
+
+                let redirect_path = format!("{}/Redirection", storage_path);
+                let mut stream = cf
+                    .create_stream(&redirect_path)
+                    .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
+                stream.write_all(&data)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check if a component name needs a section key alias.
     fn needs_section_key(name: &str) -> bool {
         name.len() > 31 || name.contains('/')
@@ -398,11 +447,22 @@ impl SchLib {
     }
 
     /// Get section key from reference name.
+    ///
+    /// If a SectionKeys mapping exists, use it. Otherwise, if the name
+    /// contains '/' (which is invalid in OLE/CFB storage paths), fall back
+    /// to the same escaping used when writing: replace '/' with '_' and
+    /// truncate to 31 characters.
     fn get_section_key(&self, ref_name: &str) -> String {
         self.section_keys
             .get(ref_name)
             .cloned()
-            .unwrap_or_else(|| ref_name.to_string())
+            .unwrap_or_else(|| {
+                if Self::needs_section_key(ref_name) {
+                    Self::get_section_key_for(ref_name)
+                } else {
+                    ref_name.to_string()
+                }
+            })
     }
 
     /// Read section keys stream.
