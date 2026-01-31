@@ -27,15 +27,15 @@ pub struct SchEllipticalArc {
     pub secondary_radius: i32,
 
     /// Start angle in degrees.
-    #[altium(param = "STARTANGLE", default)]
+    #[altium(param = "STARTANGLE", default, skip_default)]
     pub start_angle: f64,
 
     /// End angle in degrees.
-    #[altium(param = "ENDANGLE", default)]
+    #[altium(param = "ENDANGLE", default, skip_default)]
     pub end_angle: f64,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Unknown parameters (preserved for non-destructive editing).
@@ -97,15 +97,15 @@ pub struct SchArc {
     pub secondary_radius: i32,
 
     /// Start angle in degrees.
-    #[altium(param = "STARTANGLE", default)]
+    #[altium(param = "STARTANGLE", default, skip_default)]
     pub start_angle: f64,
 
     /// End angle in degrees.
-    #[altium(param = "ENDANGLE", default)]
+    #[altium(param = "ENDANGLE", default, skip_default)]
     pub end_angle: f64,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Unknown parameters (preserved for non-destructive editing).

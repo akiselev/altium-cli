@@ -78,6 +78,8 @@ pub struct SchImplementation {
     pub model_type: String,
     /// Data file references.
     pub data_files: Vec<String>,
+    /// Data file entity names (model names for each data file).
+    pub data_file_entities: Vec<String>,
     /// Whether this is the current implementation.
     pub is_current: bool,
     /// Unknown parameters (preserved for non-destructive editing).
@@ -108,16 +110,22 @@ impl SchPrimitive for SchImplementation {
             .unwrap_or(0);
 
         let mut data_files = Vec::new();
-        for i in 1..=data_file_count {
+        let mut data_file_entities = Vec::new();
+        for i in 0..data_file_count {
             if let Some(file) = params.get(&format!("MODELDATAFILEKIND{}", i)) {
                 data_files.push(file.as_str().to_string());
+            }
+            if let Some(entity) = params.get(&format!("MODELDATAFILEENTITY{}", i)) {
+                data_file_entities.push(entity.as_str().to_string());
             }
         }
 
         // Build prefixes for unknown field filtering
-        let indexed_prefixes: Vec<String> = (1..=data_file_count)
-            .map(|i| format!("MODELDATAFILEKIND{}", i))
-            .collect();
+        let mut indexed_prefixes: Vec<String> = Vec::new();
+        for i in 0..data_file_count {
+            indexed_prefixes.push(format!("MODELDATAFILEKIND{}", i));
+            indexed_prefixes.push(format!("MODELDATAFILEENTITY{}", i));
+        }
         let prefix_refs: Vec<&str> = indexed_prefixes.iter().map(|s| s.as_str()).collect();
 
         // Combine known keys with indexed prefixes
@@ -139,6 +147,7 @@ impl SchPrimitive for SchImplementation {
                 .map(|v| v.as_str().to_string())
                 .unwrap_or_default(),
             data_files,
+            data_file_entities,
             is_current: params
                 .get("ISCURRENT")
                 .map(|v| v.as_bool_or(false))
@@ -151,12 +160,17 @@ impl SchPrimitive for SchImplementation {
         let mut params = ParameterCollection::new();
         params.add_int("RECORD", Self::RECORD_ID);
         self.base.export_to_params(&mut params);
-        params.add("DESCRIPTION", &self.description);
+        if !self.description.is_empty() {
+            params.add("DESCRIPTION", &self.description);
+        }
         params.add("MODELNAME", &self.model_name);
         params.add("MODELTYPE", &self.model_type);
         params.add_int("DATAFILECOUNT", self.data_files.len() as i32);
         for (i, file) in self.data_files.iter().enumerate() {
-            params.add(&format!("MODELDATAFILEKIND{}", i + 1), file);
+            if let Some(entity) = self.data_file_entities.get(i) {
+                params.add(&format!("MODELDATAFILEENTITY{}", i), entity);
+            }
+            params.add(&format!("MODELDATAFILEKIND{}", i), file);
         }
         params.add_bool("ISCURRENT", self.is_current);
 

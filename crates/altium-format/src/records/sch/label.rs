@@ -16,11 +16,11 @@ pub struct SchLabel {
     pub graphical: SchGraphicalBase,
 
     /// Text orientation.
-    #[altium(param = "ORIENTATION", default)]
+    #[altium(param = "ORIENTATION", default, skip_default)]
     pub orientation: TextOrientations,
 
     /// Text justification.
-    #[altium(param = "JUSTIFICATION", default)]
+    #[altium(param = "JUSTIFICATION", default, skip_default)]
     pub justification: TextJustification,
 
     /// Font ID (references fonts in the document).
@@ -32,11 +32,11 @@ pub struct SchLabel {
     pub text: String,
 
     /// Whether the text is mirrored.
-    #[altium(param = "ISMIRRORED", default)]
+    #[altium(param = "ISMIRRORED", default, skip_default)]
     pub is_mirrored: bool,
 
     /// Whether the label is hidden.
-    #[altium(param = "ISHIDDEN", default)]
+    #[altium(param = "ISHIDDEN", default, skip_default)]
     pub is_hidden: bool,
 
     /// Unknown parameters (preserved for non-destructive editing).

@@ -24,15 +24,15 @@ pub struct SchRectangle {
     pub corner_y: i32,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Whether the rectangle is solid (filled).
-    #[altium(param = "ISSOLID", default)]
+    #[altium(param = "ISSOLID", default, skip_default)]
     pub is_solid: bool,
 
     /// Whether the fill is transparent.
-    #[altium(param = "TRANSPARENT", default)]
+    #[altium(param = "TRANSPARENT", default, skip_default)]
     pub transparent: bool,
 
     /// Unknown parameters (preserved for non-destructive editing).

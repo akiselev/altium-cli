@@ -132,32 +132,81 @@ def _decode_text(data: bytes) -> str:
         return text.decode("latin-1", errors="replace")
 
 
-def _split_params(text: str) -> list[str]:
-    """Split decoded text into individual |KEY=VALUE lines for readable diffs."""
-    lines: list[str] = []
+def _parse_records(text: str) -> list[list[str]]:
+    """Parse decoded text into a list of records, each a list of |KEY=VALUE properties.
+
+    Altium text streams consist of null-separated (now newline-separated after
+    decode) record blocks.  Each block is a pipe-delimited parameter string
+    like ``|RECORD=1|NAME=foo|X=100``.
+
+    Returns a list of records, where each record is a list of ``|KEY=VALUE``
+    strings (one per property).
+    """
+    records: list[list[str]] = []
     for raw_line in text.splitlines():
-        # Split on | but keep it as a prefix for readability
-        parts = raw_line.split("|")
-        for part in parts:
+        props: list[str] = []
+        for part in raw_line.split("|"):
             stripped = part.strip()
             if stripped:
-                lines.append(f"|{stripped}")
+                props.append(f"|{stripped}")
+        if props:
+            records.append(props)
+    return records
+
+
+def _sort_record(props: list[str]) -> list[str]:
+    """Sort properties within a single record for order-independent comparison.
+
+    Keeps |RECORD=… first (if present) as a natural key, then sorts the rest
+    alphabetically by the full |KEY=VALUE string.
+    """
+    head: list[str] = []
+    rest: list[str] = []
+    for p in props:
+        # Properties that act as record identifiers stay pinned at the top
+        upper = p.upper()
+        if upper.startswith("|RECORD=") or upper.startswith("|HEADER="):
+            head.append(p)
+        else:
+            rest.append(p)
+    return head + sorted(rest)
+
+
+def _records_to_lines(records: list[list[str]], *, sorted_props: bool) -> list[str]:
+    """Flatten records into a line list suitable for difflib.
+
+    Inserts a blank-line separator between records so the unified diff
+    shows record boundaries clearly.
+    """
+    lines: list[str] = []
+    for i, props in enumerate(records):
+        if i > 0:
+            lines.append("")  # record separator
+        ordered = _sort_record(props) if sorted_props else props
+        lines.extend(ordered)
     return lines
 
 
-def _format_text_diff(path: str, data_a: bytes, data_b: bytes) -> list[str]:
-    """Return unified diff lines for a text stream."""
-    lines_a = _split_params(_decode_text(data_a))
-    lines_b = _split_params(_decode_text(data_b))
-    diff = list(
-        difflib.unified_diff(
-            lines_a,
-            lines_b,
-            fromfile=f"a/{path}",
-            tofile=f"b/{path}",
-            lineterm="",
-        )
-    )
+def _detect_order_only_records(
+    records_a: list[list[str]], records_b: list[list[str]]
+) -> list[int]:
+    """Return indices of record pairs that differ only in property order.
+
+    Compares positionally: record i in A vs record i in B.  Only checks
+    the overlapping range (min of the two lengths).
+    """
+    order_only: list[int] = []
+    for i in range(min(len(records_a), len(records_b))):
+        props_a = records_a[i]
+        props_b = records_b[i]
+        # Same properties when sorted, but different when unsorted
+        if props_a != props_b and _sort_record(props_a) == _sort_record(props_b):
+            order_only.append(i)
+    return order_only
+
+
+def _colorize_diff(diff: list[str]) -> list[str]:
+    """Apply terminal colors to unified diff lines."""
     colored: list[str] = []
     for line in diff:
         if line.startswith("---") or line.startswith("+++"):
@@ -171,6 +220,52 @@ def _format_text_diff(path: str, data_a: bytes, data_b: bytes) -> list[str]:
         else:
             colored.append(line)
     return colored
+
+
+def _format_text_diff(path: str, data_a: bytes, data_b: bytes) -> list[str]:
+    """Return unified diff lines for a text stream.
+
+    Properties within each record are sorted before comparison so that
+    reordering alone does not produce diff hunks.  If any records differ
+    only in order, a note is emitted before the diff.
+    """
+    records_a = _parse_records(_decode_text(data_a))
+    records_b = _parse_records(_decode_text(data_b))
+
+    # Detect records that differ only in property order
+    order_only = _detect_order_only_records(records_a, records_b)
+
+    # Diff using sorted properties so pure reorders are suppressed
+    lines_a = _records_to_lines(records_a, sorted_props=True)
+    lines_b = _records_to_lines(records_b, sorted_props=True)
+
+    diff = list(
+        difflib.unified_diff(
+            lines_a,
+            lines_b,
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm="",
+        )
+    )
+
+    output: list[str] = []
+
+    # Note order-only differences (not shown in the diff itself)
+    if order_only:
+        n = len(order_only)
+        indices = ", ".join(str(i) for i in order_only[:10])
+        suffix = f", ... ({n} total)" if n > 10 else ""
+        output.append(
+            _color(
+                f"  note: {n} record(s) differ only in property order "
+                f"(record indices: {indices}{suffix})",
+                DIM,
+            )
+        )
+
+    output.extend(_colorize_diff(diff))
+    return output
 
 
 def _hex_line(offset: int, data: bytes) -> str:

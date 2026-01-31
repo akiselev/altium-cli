@@ -16,11 +16,11 @@ pub struct SchPolygon {
     pub graphical: SchGraphicalBase,
 
     /// Whether the polygon is solid (filled).
-    #[altium(param = "ISSOLID", default)]
+    #[altium(param = "ISSOLID", default, skip_default)]
     pub is_solid: bool,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Vertices as (x, y) raw coord pairs.
@@ -33,7 +33,7 @@ pub struct SchPolygon {
     pub vertices: Vec<(i32, i32)>,
 
     /// Whether the fill is transparent.
-    #[altium(param = "TRANSPARENT", default)]
+    #[altium(param = "TRANSPARENT", default, skip_default)]
     pub transparent: bool,
 
     /// Unknown parameters (preserved for non-destructive editing).

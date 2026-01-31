@@ -101,6 +101,8 @@ pub struct FieldAttrs {
     pub nested: bool,
     /// Color parameter (Win32 COLORREF)
     pub color: bool,
+    /// Skip emitting field when value equals Default::default()
+    pub skip_default: bool,
     /// Indexed coordinate points (Vec<(i32, i32)>)
     pub indexed_coords: bool,
     /// X prefix for indexed coords (e.g., "X" for X1, X2, ...)
@@ -175,6 +177,8 @@ impl FieldAttrs {
                     result.nested = true;
                 } else if meta.path.is_ident("color") {
                     result.color = true;
+                } else if meta.path.is_ident("skip_default") {
+                    result.skip_default = true;
                 } else if meta.path.is_ident("indexed_coords") {
                     result.indexed_coords = true;
                 } else if meta.path.is_ident("prefix_x") {

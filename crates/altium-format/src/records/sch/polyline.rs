@@ -16,15 +16,15 @@ pub struct SchPolyline {
     pub graphical: SchGraphicalBase,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Line style.
-    #[altium(param = "LINESTYLE", default)]
+    #[altium(param = "LINESTYLE", default, skip_default)]
     pub line_style: LineStyle,
 
     /// Whether it's solid (filled - mainly for polygon compatibility).
-    #[altium(param = "ISSOLID", default)]
+    #[altium(param = "ISSOLID", default, skip_default)]
     pub is_solid: bool,
 
     /// Vertices as (x, y) raw coord pairs.

@@ -13,7 +13,7 @@ use crate::io::reader::{
     decode_windows_1252, read_parameters_block, read_pascal_short_string, read_string_block,
 };
 use crate::io::writer::{
-    write_block, write_parameters, write_pascal_short_string, write_string_block,
+    write_block, write_parameters, write_pascal_short_string,
 };
 use crate::records::sch::{
     PinConglomerateFlags, PinElectricalType, PinSymbol, SchComponent, SchGraphicalBase, SchPin,
@@ -128,34 +128,93 @@ impl SchLib {
         Ok(())
     }
 
-    /// Write the FileHeader stream.
+    /// Write the FileHeader stream in Altium's indexed parameter format.
+    ///
+    /// The original format stores all component data as indexed parameters within
+    /// a single parameter block, rather than using separate binary component count
+    /// and string blocks.
     fn write_file_header<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
         let mut data = Vec::new();
 
-        // Write header parameters
+        // Build header parameters
         let mut header_params = ParameterCollection::new();
         header_params.add(
             "HEADER",
             "Protel for Windows - Schematic Library Editor Binary File Version 5.0",
         );
-        header_params.add_int("WEIGHT", self.components.len() as i32);
+
+        // Calculate WEIGHT as total primitive count across all components
+        let total_primitives: usize = self.components.iter().map(|c| c.primitives.len()).sum();
+        header_params.add_int("WEIGHT", total_primitives as i32);
 
         // Merge in stored metadata parameters (fonts, grid, sheet settings)
         for (key, value) in self.header_params.iter() {
+            let upper = key.to_uppercase();
+            // Skip keys we regenerate
+            if upper == "WEIGHT" || upper == "HEADER" {
+                continue;
+            }
             header_params.add(key, value.as_str());
+        }
+
+        // Count total components including aliases
+        let mut total_comp_count = self.components.len() as i32;
+        for comp in &self.components {
+            if !comp.component.alias_list.is_empty() {
+                // Count aliases (pipe-separated)
+                let alias_count = comp
+                    .component
+                    .alias_list
+                    .split('|')
+                    .filter(|s| !s.is_empty())
+                    .count();
+                total_comp_count += alias_count as i32;
+            }
+        }
+        header_params.add_int("COMPCOUNT", total_comp_count);
+
+        // Write indexed LIBREF/PARTCOUNT/COMPDESCR entries for each component
+        for (i, comp) in self.components.iter().enumerate() {
+            header_params.add(
+                &format!("LIBREF{}", i),
+                &comp.component.lib_reference,
+            );
+            header_params.add_int(
+                &format!("PARTCOUNT{}", i),
+                comp.component.part_count + 1,
+            );
+            if !comp.component.component_description.is_empty() {
+                header_params.add(
+                    &format!("COMPDESCR{}", i),
+                    &comp.component.component_description,
+                );
+            }
+            // Write alias entries
+            if !comp.component.alias_list.is_empty() {
+                let aliases: Vec<&str> = comp
+                    .component
+                    .alias_list
+                    .split('|')
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !aliases.is_empty() {
+                    header_params.add_int(
+                        &format!("ALIASCOUNT{}", i),
+                        aliases.len() as i32,
+                    );
+                    for (j, alias) in aliases.iter().enumerate() {
+                        header_params.add(
+                            &format!("COMP{}ALIAS{}", i, j),
+                            alias,
+                        );
+                    }
+                }
+            }
         }
 
         let mut header_block = Vec::new();
         write_parameters(&mut header_block, &header_params)?;
         write_block(&mut data, &header_block, 0)?;
-
-        // Write component count
-        data.write_i32::<LittleEndian>(self.components.len() as i32)?;
-
-        // Write component names
-        for comp in &self.components {
-            write_string_block(&mut data, &comp.component.lib_reference)?;
-        }
 
         let stream = cf
             .create_stream("/FileHeader")
@@ -404,7 +463,6 @@ impl SchLib {
         "PARTCOUNT",
         "COMPDESCR",
         "ALIASCOUNT",
-        "COMP9ALIAS",
         "PINNUMBER",
     ];
 
@@ -413,6 +471,17 @@ impl SchLib {
         for prefix in Self::COMPONENT_INDEX_PREFIXES {
             if key.starts_with(prefix) && key[prefix.len()..].parse::<i32>().is_ok() {
                 return true;
+            }
+        }
+        // Handle COMP<N>ALIAS<M> pattern (e.g., COMP9ALIAS0)
+        if key.starts_with("COMP") {
+            let rest = &key[4..];
+            if let Some(alias_pos) = rest.find("ALIAS") {
+                let comp_num = &rest[..alias_pos];
+                let alias_num = &rest[alias_pos + 5..];
+                if comp_num.parse::<i32>().is_ok() && alias_num.parse::<i32>().is_ok() {
+                    return true;
+                }
             }
         }
         false

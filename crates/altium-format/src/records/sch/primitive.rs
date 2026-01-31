@@ -89,14 +89,20 @@ impl SchPrimitiveBase {
     /// Export base fields to parameters.
     pub fn export_to_params(&self, params: &mut ParameterCollection) {
         params.add_int("OWNERINDEX", self.owner_index);
-        params.add_bool("ISNOTACCESIBLE", self.is_not_accessible);
+        // Only emit ISNOTACCESIBLE when true (Altium omits when false)
+        if self.is_not_accessible {
+            params.add_bool("ISNOTACCESIBLE", true);
+        }
         if let Some(part_id) = self.owner_part_id {
             params.add_int("OWNERPARTID", part_id);
         }
         if let Some(display_mode) = self.owner_part_display_mode {
             params.add_int("OWNERPARTDISPLAYMODE", display_mode);
         }
-        params.add_bool("GRAPHICALLYLOCKED", self.graphically_locked);
+        // Only emit GRAPHICALLYLOCKED when true (Altium omits when false)
+        if self.graphically_locked {
+            params.add_bool("GRAPHICALLYLOCKED", true);
+        }
     }
 
     /// Get the owner index.
@@ -217,12 +223,24 @@ impl SchGraphicalBase {
 
         let (x, x_frac) = coord_to_dxp_frac(self.location_x);
         let (y, y_frac) = coord_to_dxp_frac(self.location_y);
-        params.add_int("LOCATION.X", x);
-        params.add_int("LOCATION.X_FRAC", x_frac);
-        params.add_int("LOCATION.Y", y);
-        params.add_int("LOCATION.Y_FRAC", y_frac);
+        // Only emit location when non-zero (Altium omits zero locations)
+        if x != 0 {
+            params.add_int("LOCATION.X", x);
+        }
+        if x_frac != 0 {
+            params.add_int("LOCATION.X_FRAC", x_frac);
+        }
+        if y != 0 {
+            params.add_int("LOCATION.Y", y);
+        }
+        if y_frac != 0 {
+            params.add_int("LOCATION.Y_FRAC", y_frac);
+        }
         params.add_int("COLOR", self.color);
-        params.add_int("AREACOLOR", self.area_color);
+        // Only emit AREACOLOR when non-zero
+        if self.area_color != 0 {
+            params.add_int("AREACOLOR", self.area_color);
+        }
     }
 
     /// Get the owner index (delegates to base).

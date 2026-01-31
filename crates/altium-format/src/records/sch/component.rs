@@ -115,7 +115,7 @@ impl Default for SchComponent {
             target_filename: "*".to_string(),     // Altium placeholder
             override_colors: false,
             designator_locked: false,
-            part_id_locked: true, // Part ID locked by default
+            part_id_locked: false, // Part ID unlocked by default in library context
             component_kind: 0,
             alias_list: String::new(),
             orientation: TextOrientations::NONE,
@@ -258,24 +258,47 @@ impl SchPrimitive for SchComponent {
         params.add_int("RECORD", Self::RECORD_ID);
         self.graphical.export_to_params(&mut params);
         params.add("LIBREFERENCE", &self.lib_reference);
-        params.add("COMPONENTDESCRIPTION", &self.component_description);
+        if !self.component_description.is_empty() {
+            params.add("COMPONENTDESCRIPTION", &self.component_description);
+        }
         params.add_int("PARTCOUNT", self.part_count + 1);
         params.add_int("DISPLAYMODECOUNT", self.display_mode_count);
-        params.add_int("ORIENTATION", self.orientation.to_int());
+        // Only emit ORIENTATION when non-zero
+        if self.orientation.to_int() != 0 {
+            params.add_int("ORIENTATION", self.orientation.to_int());
+        }
         params.add_int("CURRENTPARTID", self.current_part_id);
-        params.add_bool("SHOWHIDDENPINS", self.show_hidden_pins);
+        // Only emit SHOWHIDDENPINS when true (Altium omits false)
+        if self.show_hidden_pins {
+            params.add_bool("SHOWHIDDENPINS", true);
+        }
         params.add("LIBRARYPATH", &self.library_path);
         params.add("SOURCELIBRARYNAME", &self.source_library_name);
         params.add("SHEETPARTFILENAME", &self.sheet_part_filename);
         params.add("TARGETFILENAME", &self.target_filename);
         params.add("UNIQUEID", &self.unique_id);
-        params.add_int("DISPLAYMODE", self.display_mode);
-        params.add_bool("OVERIDECOLORS", self.override_colors);
-        params.add_bool("DESIGNATORLOCKED", self.designator_locked);
+        // Only emit DISPLAYMODE when non-zero
+        if self.display_mode != 0 {
+            params.add_int("DISPLAYMODE", self.display_mode);
+        }
+        // Only emit OVERIDECOLORS when true
+        if self.override_colors {
+            params.add_bool("OVERIDECOLORS", true);
+        }
+        // Only emit DESIGNATORLOCKED when true
+        if self.designator_locked {
+            params.add_bool("DESIGNATORLOCKED", true);
+        }
         params.add_bool("PARTIDLOCKED", self.part_id_locked);
-        params.add("ALIASLIST", &self.alias_list);
+        // Only emit ALIASLIST when non-empty
+        if !self.alias_list.is_empty() {
+            params.add("ALIASLIST", &self.alias_list);
+        }
         params.add("DESIGNITEMID", &self.lib_reference);
-        params.add_int("COMPONENTKIND", self.component_kind);
+        // Only emit COMPONENTKIND when non-zero
+        if self.component_kind != 0 {
+            params.add_int("COMPONENTKIND", self.component_kind);
+        }
 
         // Merge unknown parameters back
         self.unknown_params.merge_into_params(&mut params);

@@ -24,7 +24,7 @@ pub struct SchLine {
     pub corner_y: i32,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Unknown parameters (preserved for non-destructive editing).

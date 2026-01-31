@@ -20,7 +20,7 @@ pub struct SchParameter {
     pub name: String,
 
     /// Whether to read-only autoposition.
-    #[altium(param = "READONLYSTATE", default)]
+    #[altium(param = "READONLYSTATE", default, skip_default)]
     pub read_only_state: i32,
 
     /// Unknown parameters (preserved for non-destructive editing).

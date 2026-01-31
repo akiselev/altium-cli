@@ -21,10 +21,11 @@ use crate::io::{SchLib, SchLibComponent};
 use crate::ops::categorization::categorize_component;
 use crate::ops::output::*;
 use crate::records::sch::{
-    LineWidth, PinConglomerateFlags, PinElectricalType, PinSymbol, SchArc, SchComponent,
-    SchDesignator, SchEllipse, SchGraphicalBase, SchImplementation, SchImplementationList,
-    SchLabel, SchLine, SchMapDefiner, SchMapDefinerList, SchParameter, SchPin, SchPolygon,
-    SchPolyline, SchPrimitiveBase, SchRecord, SchRectangle, TextJustification, TextOrientations,
+    LineWidth, PinConglomerateFlags, PinElectricalType, PinSymbol, SchArc, SchBezier,
+    SchComponent, SchDesignator, SchEllipse, SchEllipticalArc, SchGraphicalBase,
+    SchImplementation, SchImplementationList, SchImplementationParameters, SchLabel, SchLine,
+    SchMapDefiner, SchMapDefinerList, SchParameter, SchPin, SchPolygon, SchPolyline,
+    SchPrimitiveBase, SchRecord, SchRectangle, TextJustification, TextOrientations,
 };
 use crate::types::Unit;
 
@@ -615,7 +616,11 @@ fn open_or_create_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Erro
     if path.exists() {
         open_schlib(path)
     } else {
-        load_blank_schlib()
+        let mut lib = load_blank_schlib()?;
+        // Strip the template's placeholder component so the blank template is truly empty
+        lib.components
+            .retain(|c| c.component.lib_reference != "Component_1");
+        Ok(lib)
     }
 }
 
@@ -1900,6 +1905,40 @@ pub struct SchEllipseJson {
     pub border_color: String,
 }
 
+/// JSON schema for a bezier curve in a schematic component.
+/// Vertices accept numbers (mils) or strings with units.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchBezierJson {
+    /// Control points as array of [x, y] pairs: numbers (mils) or strings with units
+    pub vertices: Vec<[CoordValue; 2]>,
+    /// Line color in hex (RRGGBB)
+    #[serde(default = "default_border_color")]
+    pub color: String,
+}
+
+/// JSON schema for an elliptical arc in a schematic component.
+/// Coordinates accept numbers (mils) or strings with units.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SchEllipticalArcJson {
+    /// Center X: number (mils) or string with unit
+    pub x: CoordValue,
+    /// Center Y: number (mils) or string with unit
+    pub y: CoordValue,
+    /// Primary radius: number (mils) or string with unit
+    pub radius: CoordValue,
+    /// Secondary radius: number (mils) or string with unit
+    pub secondary_radius: CoordValue,
+    /// Start angle in degrees (0 = right, 90 = up)
+    #[serde(default)]
+    pub start_angle: f64,
+    /// End angle in degrees
+    #[serde(default = "default_end_angle")]
+    pub end_angle: f64,
+    /// Line color in hex (RRGGBB)
+    #[serde(default = "default_border_color")]
+    pub color: String,
+}
+
 /// JSON schema for a designator in a schematic component.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SchDesignatorJson {
@@ -1963,6 +2002,9 @@ pub struct SchImplementationJson {
     /// Data file references
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data_files: Vec<String>,
+    /// Data file entity names (model names referenced by each data file)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_file_entities: Vec<String>,
     /// Pin mappings (schematic pin -> implementation pin)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pin_mappings: Vec<SchPinMappingJson>,
@@ -2016,6 +2058,12 @@ pub struct SchComponentJson {
     /// List of ellipses
     #[serde(default)]
     pub ellipses: Vec<SchEllipseJson>,
+    /// List of bezier curves
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub beziers: Vec<SchBezierJson>,
+    /// List of elliptical arcs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elliptical_arcs: Vec<SchEllipticalArcJson>,
     /// Designator definition (optional - inferred from name if not provided)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub designator: Option<SchDesignatorJson>,
@@ -2063,6 +2111,8 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
     let mut arcs = Vec::new();
     let mut polylines = Vec::new();
     let mut ellipses = Vec::new();
+    let mut beziers = Vec::new();
+    let mut elliptical_arcs = Vec::new();
     let mut designator: Option<SchDesignatorJson> = None;
     let mut parameters = Vec::new();
     let mut implementations = Vec::new();
@@ -2201,6 +2251,25 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
                     orientation: text_orientation_to_string(param.label.orientation),
                 });
             }
+            SchRecord::Bezier(bezier) => {
+                beziers.push(SchBezierJson {
+                    vertices: bezier.vertices.iter().map(|(x, y)| {
+                        [raw_to_coord_value(*x), raw_to_coord_value(*y)]
+                    }).collect(),
+                    color: color_to_hex(bezier.graphical.color),
+                });
+            }
+            SchRecord::EllipticalArc(earc) => {
+                elliptical_arcs.push(SchEllipticalArcJson {
+                    x: raw_to_coord_value(earc.graphical.location_x),
+                    y: raw_to_coord_value(earc.graphical.location_y),
+                    radius: raw_to_coord_value(earc.radius),
+                    secondary_radius: raw_to_coord_value(earc.secondary_radius),
+                    start_angle: earc.start_angle,
+                    end_angle: earc.end_angle,
+                    color: color_to_hex(earc.graphical.color),
+                });
+            }
             _ => {}
         }
     }
@@ -2234,6 +2303,7 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
             description: impl_rec.description.clone(),
             is_current: impl_rec.is_current,
             data_files: impl_rec.data_files.clone(),
+            data_file_entities: impl_rec.data_file_entities.clone(),
             pin_mappings,
         });
     }
@@ -2250,6 +2320,8 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
         arcs,
         polylines,
         ellipses,
+        beziers,
+        elliptical_arcs,
         designator,
         parameters,
         implementations,
@@ -2337,53 +2409,24 @@ pub fn cmd_add_json(
             ..Default::default()
         };
 
+        // Build primitives in groups, then assemble in Altium-native order:
+        // Component(1) → hidden Params(41) → Pins → drawing Primitives →
+        // Designator(34) → Comment(41) → ImplementationList(44) →
+        // [Implementation(45) → MapDefinerList(46) → MapDefiner(47)... → ImplParams(48)]* →
+        // remaining Parameters(41)
+
         // Start with the component record as first primitive
         let mut primitives = vec![SchRecord::Component(component.clone())];
 
-        // Create designator record (RECORD=34)
-        if let Some(des_json) = &component_def.designator {
-            let mut graphical = SchGraphicalBase::default();
-            graphical.location_x = des_json.x.to_raw();
-            graphical.location_y = des_json.y.to_raw();
-
-            let designator = SchDesignator {
-                param: SchParameter {
-                    label: SchLabel {
-                        text: des_json.text.clone(),
-                        font_id: des_json.font_id,
-                        is_hidden: des_json.hidden,
-                        graphical,
-                        ..Default::default()
-                    },
-                    name: "Designator".to_string(),
-                    read_only_state: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            primitives.push(SchRecord::Designator(designator));
-        } else {
-            let designator_text = infer_designator_prefix(&component_def.name, &component_def.description);
-            let designator = SchDesignator {
-                param: SchParameter {
-                    label: SchLabel {
-                        text: designator_text,
-                        font_id: 1,
-                        ..Default::default()
-                    },
-                    name: "Designator".to_string(),
-                    read_only_state: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            primitives.push(SchRecord::Designator(designator));
-        }
-
-        // Create parameters
+        // Group 1: Hidden parameters (those that are hidden and not Comment/Designator)
+        let mut hidden_params = Vec::new();
+        let mut comment_param = None;
+        let mut visible_params = Vec::new();
         for param_json in &component_def.parameters {
             let orientation = parse_text_orientation(&param_json.orientation)?;
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(-1);
+            graphical.color = 8388608; // Dark red (standard for parameters)
             graphical.location_x = param_json.x.to_raw();
             graphical.location_y = param_json.y.to_raw();
 
@@ -2400,67 +2443,52 @@ pub fn cmd_add_json(
                 read_only_state: param_json.read_only_state,
                 ..Default::default()
             };
-            primitives.push(SchRecord::Parameter(param));
-        }
-
-        // Create implementation list (RECORD=44)
-        let impl_list_idx = primitives.len();
-        let impl_list = SchImplementationList {
-            base: SchPrimitiveBase {
-                owner_index: 0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        primitives.push(SchRecord::ImplementationList(impl_list));
-
-        // Create implementations
-        for impl_json in &component_def.implementations {
-            let impl_idx = primitives.len();
-            let implementation = SchImplementation {
-                base: SchPrimitiveBase {
-                    owner_index: impl_list_idx as i32,
-                    ..Default::default()
-                },
-                description: impl_json.description.clone(),
-                model_name: impl_json.model_name.clone(),
-                model_type: impl_json.model_type.clone(),
-                is_current: impl_json.is_current,
-                data_files: impl_json.data_files.clone(),
-                ..Default::default()
-            };
-            primitives.push(SchRecord::Implementation(implementation));
-
-            // Create MapDefinerList for this implementation
-            if !impl_json.pin_mappings.is_empty() {
-                let mdl_idx = primitives.len();
-                let map_definer_list = SchMapDefinerList {
-                    base: SchPrimitiveBase {
-                        owner_index: impl_idx as i32,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-                primitives.push(SchRecord::MapDefinerList(map_definer_list));
-
-                // Create MapDefiner records
-                for mapping_json in &impl_json.pin_mappings {
-                    let map_definer = SchMapDefiner {
-                        base: SchPrimitiveBase {
-                            owner_index: mdl_idx as i32,
-                            ..Default::default()
-                        },
-                        designator_interface: mapping_json.schematic_pin.clone(),
-                        designator_implementation: mapping_json.implementation_pins.clone(),
-                        is_trivial: mapping_json.is_trivial,
-                        ..Default::default()
-                    };
-                    primitives.push(SchRecord::MapDefiner(map_definer));
-                }
+            if param_json.name == "Comment" {
+                comment_param = Some(SchRecord::Parameter(param));
+            } else if param_json.hidden {
+                hidden_params.push(SchRecord::Parameter(param));
+            } else {
+                visible_params.push(SchRecord::Parameter(param));
             }
         }
 
-        // Add rectangles
+        // Add hidden parameters first (after Component)
+        primitives.extend(hidden_params);
+
+        // Group 2: Pins
+        for pin_def in &component_def.pins {
+            let electrical_type = parse_electrical_type(&pin_def.electrical)?;
+            let mut conglomerate = parse_pin_orientation(&pin_def.orientation)?;
+
+            conglomerate |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
+            conglomerate |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
+
+            if pin_def.hidden {
+                conglomerate |= PinConglomerateFlags::HIDE;
+            }
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = pin_def.x.to_raw();
+            graphical.location_y = pin_def.y.to_raw();
+            let pin = SchPin {
+                graphical,
+                designator: pin_def.designator.clone(),
+                name: pin_def.name.clone(),
+                electrical: electrical_type,
+                pin_conglomerate: conglomerate,
+                pin_length: pin_def.length.to_raw(),
+                description: pin_def.description.clone(),
+                symbol_inner_edge: PinSymbol::None,
+                symbol_outer_edge: PinSymbol::None,
+                symbol_inside: PinSymbol::None,
+                symbol_outside: PinSymbol::None,
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Pin(pin));
+        }
+
+        // Group 3: Drawing primitives (rectangles, lines, polygons, arcs, polylines, beziers, elliptical arcs, ellipses, labels)
         for rect in &component_def.rectangles {
             let fill_color_val = parse_color(&rect.fill_color)?;
             let border_color_val = parse_color(&rect.border_color)?;
@@ -2636,40 +2664,173 @@ pub fn cmd_add_json(
             primitives.push(SchRecord::Ellipse(sch_ellipse));
     }
 
-        // Add pins
-        for pin_def in &component_def.pins {
-            let electrical_type = parse_electrical_type(&pin_def.electrical)?;
-            let mut conglomerate = parse_pin_orientation(&pin_def.orientation)?;
+        // Add bezier curves
+        for bezier in &component_def.beziers {
+            if bezier.vertices.len() < 4 {
+                return Err("Bezier must have at least 4 control points".into());
+            }
 
-            conglomerate |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
-            conglomerate |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
+            let color_val = parse_color(&bezier.color)?;
 
-            if pin_def.hidden {
-                conglomerate |= PinConglomerateFlags::HIDE;
-        }
+            let vertices: Vec<(i32, i32)> = bezier
+                .vertices
+                .iter()
+                .map(|v| (v[0].to_raw(), v[1].to_raw()))
+                .collect();
 
             let mut graphical = SchGraphicalBase::default();
             graphical.base.owner_part_id = Some(1);
-            graphical.location_x = pin_def.x.to_raw();
-            graphical.location_y = pin_def.y.to_raw();
-            graphical.color = 0x000080;
+            graphical.location_x = vertices[0].0;
+            graphical.location_y = vertices[0].1;
+            graphical.color = color_val;
 
-            let pin = SchPin {
+            let sch_bezier = SchBezier {
                 graphical,
-                designator: pin_def.designator.clone(),
-                name: pin_def.name.clone(),
-                electrical: electrical_type,
-                pin_conglomerate: conglomerate,
-                pin_length: pin_def.length.to_raw(),
-                description: pin_def.description.clone(),
-                symbol_inner_edge: PinSymbol::None,
-                symbol_outer_edge: PinSymbol::None,
-                symbol_inside: PinSymbol::None,
-                symbol_outside: PinSymbol::None,
+                vertices,
                 ..Default::default()
+            };
+            primitives.push(SchRecord::Bezier(sch_bezier));
+        }
+
+        // Add elliptical arcs
+        for earc in &component_def.elliptical_arcs {
+            let color_val = parse_color(&earc.color)?;
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = earc.x.to_raw();
+            graphical.location_y = earc.y.to_raw();
+            graphical.color = color_val;
+
+            let sch_earc = SchEllipticalArc {
+                graphical,
+                radius: earc.radius.to_raw(),
+                secondary_radius: earc.secondary_radius.to_raw(),
+                start_angle: earc.start_angle,
+                end_angle: earc.end_angle,
+                ..Default::default()
+            };
+            primitives.push(SchRecord::EllipticalArc(sch_earc));
+        }
+
+        // Group 4: Designator (RECORD=34)
+        if let Some(des_json) = &component_def.designator {
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(-1);
+            graphical.color = 8388608; // Dark red (standard for designators)
+            graphical.location_x = des_json.x.to_raw();
+            graphical.location_y = des_json.y.to_raw();
+
+            let designator = SchDesignator {
+                param: SchParameter {
+                    label: SchLabel {
+                        text: des_json.text.clone(),
+                        font_id: des_json.font_id,
+                        is_hidden: des_json.hidden,
+                        graphical,
+                        ..Default::default()
+                    },
+                    name: "Designator".to_string(),
+                    read_only_state: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Designator(designator));
+        } else {
+            let designator_text = infer_designator_prefix(&component_def.name, &component_def.description);
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_part_id = Some(-1);
+            graphical.color = 8388608;
+            let designator = SchDesignator {
+                param: SchParameter {
+                    label: SchLabel {
+                        text: designator_text,
+                        font_id: 1,
+                        graphical,
+                        ..Default::default()
+                    },
+                    name: "Designator".to_string(),
+                    read_only_state: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Designator(designator));
+        }
+
+        // Group 5: Comment parameter (if present)
+        if let Some(comment) = comment_param {
+            primitives.push(comment);
+        }
+
+        // Group 6: Implementation hierarchy
+        let impl_list_idx = primitives.len();
+        let impl_list = SchImplementationList {
+            base: SchPrimitiveBase {
+                owner_index: 0,
+                ..Default::default()
+            },
+            ..Default::default()
         };
-            primitives.push(SchRecord::Pin(pin));
-    }
+        primitives.push(SchRecord::ImplementationList(impl_list));
+
+        for impl_json in &component_def.implementations {
+            let impl_idx = primitives.len();
+            let implementation = SchImplementation {
+                base: SchPrimitiveBase {
+                    owner_index: impl_list_idx as i32,
+                    ..Default::default()
+                },
+                description: impl_json.description.clone(),
+                model_name: impl_json.model_name.clone(),
+                model_type: impl_json.model_type.clone(),
+                is_current: impl_json.is_current,
+                data_files: impl_json.data_files.clone(),
+                data_file_entities: impl_json.data_file_entities.clone(),
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Implementation(implementation));
+
+            // MapDefinerList (always present)
+            let mdl_idx = primitives.len();
+            let map_definer_list = SchMapDefinerList {
+                base: SchPrimitiveBase {
+                    owner_index: impl_idx as i32,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            primitives.push(SchRecord::MapDefinerList(map_definer_list));
+
+            // MapDefiner records
+            for mapping_json in &impl_json.pin_mappings {
+                let map_definer = SchMapDefiner {
+                    base: SchPrimitiveBase {
+                        owner_index: mdl_idx as i32,
+                        ..Default::default()
+                    },
+                    designator_interface: mapping_json.schematic_pin.clone(),
+                    designator_implementation: mapping_json.implementation_pins.clone(),
+                    is_trivial: mapping_json.is_trivial,
+                    ..Default::default()
+                };
+                primitives.push(SchRecord::MapDefiner(map_definer));
+            }
+
+            // ImplementationParameters (always present)
+            let impl_params = SchImplementationParameters {
+                base: SchPrimitiveBase {
+                    owner_index: mdl_idx as i32,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            primitives.push(SchRecord::ImplementationParameters(impl_params));
+        }
+
+        // Group 7: Remaining visible parameters
+        primitives.extend(visible_params);
 
         let lib_component = SchLibComponent {
             component,

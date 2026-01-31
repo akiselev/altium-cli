@@ -17,7 +17,7 @@ pub struct SchBezier {
     pub graphical: SchGraphicalBase,
 
     /// Line width.
-    #[altium(param = "LINEWIDTH", default)]
+    #[altium(param = "LINEWIDTH", default, skip_default)]
     pub line_width: LineWidth,
 
     /// Control points as (x, y) raw coord pairs.

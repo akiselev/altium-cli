@@ -333,6 +333,18 @@ fn generate_to_params(
                         params.add(#param_key, &crate::traits::ToParamList::to_param_list(&self.#field_name));
                     }
                 }
+            } else if attrs.skip_default {
+                // Only emit when value differs from Default::default()
+                quote! {
+                    {
+                        let default_val: Self = Default::default();
+                        let current_str = crate::traits::ToParamValue::to_param_value(&self.#field_name);
+                        let default_str = crate::traits::ToParamValue::to_param_value(&default_val.#field_name);
+                        if current_str != default_str {
+                            params.add(#param_key, &current_str);
+                        }
+                    }
+                }
             } else {
                 quote! {
                     params.add(#param_key, &crate::traits::ToParamValue::to_param_value(&self.#field_name));
