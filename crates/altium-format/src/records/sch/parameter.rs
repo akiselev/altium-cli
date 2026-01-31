@@ -19,6 +19,10 @@ pub struct SchParameter {
     #[altium(param = "NAME", default)]
     pub name: String,
 
+    /// Unique ID for this parameter (used for change-tracking).
+    #[altium(param = "UNIQUEID", default, skip_default)]
+    pub unique_id: String,
+
     /// Whether to read-only autoposition.
     #[altium(param = "READONLYSTATE", default, skip_default)]
     pub read_only_state: i32,
@@ -67,7 +71,14 @@ impl SchPrimitive for SchParameter {
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        let mut params = self.to_params();
+        // Altium writes ISHIDDEN=T twice on hidden parameters (once from the label
+        // flatten and once as a parameter-level property). Reproduce this quirk for
+        // binary compatibility.
+        if self.label.is_hidden {
+            params.add_raw_suffix("|ISHIDDEN=T");
+        }
+        params
     }
 
     fn owner_index(&self) -> i32 {

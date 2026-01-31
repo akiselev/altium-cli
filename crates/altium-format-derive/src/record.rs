@@ -310,11 +310,27 @@ fn generate_to_params(
         if let Some(param_key) = &attrs.param {
             let write_expr = if let Some(frac_key) = &attrs.frac {
                 // Integer with fractional part
-                quote! {
-                    {
-                        let (int_val, frac_val) = crate::types::coord_to_dxp_frac(self.#field_name);
-                        params.add_int(#param_key, int_val);
-                        params.add_int(#frac_key, frac_val);
+                if attrs.skip_default {
+                    // Skip when raw value equals default (0 for i32 coords)
+                    quote! {
+                        {
+                            let default_val: Self = Default::default();
+                            if self.#field_name != default_val.#field_name {
+                                let (int_val, frac_val) = crate::types::coord_to_dxp_frac(self.#field_name);
+                                params.add_int(#param_key, int_val);
+                                if frac_val != 0 {
+                                    params.add_int(#frac_key, frac_val);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        {
+                            let (int_val, frac_val) = crate::types::coord_to_dxp_frac(self.#field_name);
+                            params.add_int(#param_key, int_val);
+                            params.add_int(#frac_key, frac_val);
+                        }
                     }
                 }
             } else if attrs.optional {

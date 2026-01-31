@@ -146,9 +146,20 @@ impl SchLib {
             "Protel for Windows - Schematic Library Editor Binary File Version 5.0",
         );
 
-        // Calculate WEIGHT as total primitive count across all components
+        // Calculate WEIGHT as total primitive count across all components + alias count
         let total_primitives: usize = self.components.iter().map(|c| c.primitives.len()).sum();
-        header_params.add_int("WEIGHT", total_primitives as i32);
+        let alias_count: usize = self
+            .components
+            .iter()
+            .map(|c| {
+                c.component
+                    .alias_list
+                    .split('|')
+                    .filter(|s| !s.is_empty())
+                    .count()
+            })
+            .sum();
+        header_params.add_int("WEIGHT", (total_primitives + alias_count) as i32);
 
         // Merge in stored metadata parameters (fonts, grid, sheet settings)
         for (key, value) in self.header_params.iter() {

@@ -1984,6 +1984,9 @@ pub struct SchParameterJson {
     /// Text orientation
     #[serde(default = "default_label_orientation")]
     pub orientation: String,
+    /// Unique ID for this parameter (used for change-tracking)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unique_id: String,
 }
 
 /// JSON schema for an implementation (model reference) in a schematic component.
@@ -2267,6 +2270,7 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
                         hidden: param.label.is_hidden,
                         read_only_state: param.read_only_state,
                         orientation: text_orientation_to_string(param.label.orientation),
+                        unique_id: param.unique_id.clone(),
                     });
                 }
             }
@@ -2334,6 +2338,7 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
                                 hidden: param.label.is_hidden,
                                 read_only_state: param.read_only_state,
                                 orientation: text_orientation_to_string(param.label.orientation),
+                                unique_id: param.unique_id.clone(),
                             });
                         }
                     }
@@ -2500,6 +2505,7 @@ pub fn cmd_add_json(
                     ..Default::default()
                 },
                 name: param_json.name.clone(),
+                unique_id: param_json.unique_id.clone(),
                 read_only_state: param_json.read_only_state,
                 ..Default::default()
             };
@@ -2528,6 +2534,7 @@ pub fn cmd_add_json(
             }
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = pin_def.x.to_raw();
             graphical.location_y = pin_def.y.to_raw();
@@ -2554,6 +2561,7 @@ pub fn cmd_add_json(
             let border_color_val = parse_color(&rect.border_color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = rect.x1.to_raw();
             graphical.location_y = rect.y1.to_raw();
@@ -2577,6 +2585,7 @@ pub fn cmd_add_json(
             let color_val = parse_color(&line.color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = line.x1.to_raw();
             graphical.location_y = line.y1.to_raw();
@@ -2586,7 +2595,6 @@ pub fn cmd_add_json(
                 graphical,
                 corner_x: line.x2.to_raw(),
                 corner_y: line.y2.to_raw(),
-                line_width: LineWidth::Small,
                 ..Default::default()
         };
             primitives.push(SchRecord::Line(sch_line));
@@ -2608,6 +2616,7 @@ pub fn cmd_add_json(
                 .collect();
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = vertices[0].0;
             graphical.location_y = vertices[0].1;
@@ -2632,6 +2641,7 @@ pub fn cmd_add_json(
             let justification = parse_text_justification(&label.justification)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = label.x.to_raw();
             graphical.location_y = label.y.to_raw();
@@ -2654,6 +2664,7 @@ pub fn cmd_add_json(
             let color_val = parse_color(&arc.color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = arc.x.to_raw();
             graphical.location_y = arc.y.to_raw();
@@ -2662,7 +2673,7 @@ pub fn cmd_add_json(
             let sch_arc = SchArc {
                 graphical,
                 radius: arc.radius.to_raw(),
-                secondary_radius: arc.radius.to_raw(), // Same as radius for circular arcs
+                secondary_radius: 0, // 0 = omit SECONDARYRADIUS (Altium default: same as RADIUS)
                 start_angle: arc.start_angle,
                 end_angle: arc.end_angle,
                 line_width: LineWidth::Small,
@@ -2686,6 +2697,7 @@ pub fn cmd_add_json(
                 .collect();
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = vertices[0].0;
             graphical.location_y = vertices[0].1;
@@ -2706,6 +2718,7 @@ pub fn cmd_add_json(
             let border_color_val = parse_color(&ellipse.border_color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = ellipse.x.to_raw();
             graphical.location_y = ellipse.y.to_raw();
@@ -2739,6 +2752,7 @@ pub fn cmd_add_json(
                 .collect();
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = vertices[0].0;
             graphical.location_y = vertices[0].1;
@@ -2757,6 +2771,7 @@ pub fn cmd_add_json(
             let color_val = parse_color(&earc.color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = earc.x.to_raw();
             graphical.location_y = earc.y.to_raw();
@@ -2773,7 +2788,10 @@ pub fn cmd_add_json(
             primitives.push(SchRecord::EllipticalArc(sch_earc));
         }
 
-        // Group 4: Designator (RECORD=34)
+        // Group 4: Visible parameters (like Value) — before Designator in Altium order
+        primitives.extend(visible_params);
+
+        // Group 5: Designator (RECORD=34)
         if let Some(des_json) = &component_def.designator {
             let mut graphical = SchGraphicalBase::default();
             graphical.base.owner_part_id = Some(-1);
@@ -2819,12 +2837,12 @@ pub fn cmd_add_json(
             primitives.push(SchRecord::Designator(designator));
         }
 
-        // Group 5: Comment parameter (if present)
+        // Group 6: Comment parameter (if present)
         if let Some(comment) = comment_param {
             primitives.push(comment);
         }
 
-        // Group 6: Implementation hierarchy
+        // Group 7: Implementation hierarchy
         let impl_list_idx = primitives.len();
         let impl_list = SchImplementationList {
             base: SchPrimitiveBase {
@@ -2910,15 +2928,13 @@ pub fn cmd_add_json(
                         ..Default::default()
                     },
                     name: param_json.name.clone(),
+                    unique_id: param_json.unique_id.clone(),
                     read_only_state: param_json.read_only_state,
                     ..Default::default()
                 };
                 primitives.push(SchRecord::Parameter(param));
             }
         }
-
-        // Group 7: Remaining visible parameters
-        primitives.extend(visible_params);
 
         let lib_component = SchLibComponent {
             component,

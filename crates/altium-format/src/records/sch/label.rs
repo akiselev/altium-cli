@@ -28,7 +28,7 @@ pub struct SchLabel {
     pub font_id: i32,
 
     /// Label text.
-    #[altium(param = "TEXT", default)]
+    #[altium(param = "TEXT", default, skip_default)]
     pub text: String,
 
     /// Whether the text is mirrored.

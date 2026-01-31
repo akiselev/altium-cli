@@ -20,7 +20,6 @@ const KNOWN_KEYS: &[&str] = &[
     "COLOR",
     "AREACOLOR",
     "LIBREFERENCE",
-    "DESIGNITEMID",
     "COMPONENTDESCRIPTION",
     "UNIQUEID",
     "CURRENTPARTID",
@@ -272,9 +271,14 @@ impl SchPrimitive for SchComponent {
         if self.show_hidden_pins {
             params.add_bool("SHOWHIDDENPINS", true);
         }
-        params.add("LIBRARYPATH", &self.library_path);
+        // Only emit LIBRARYPATH/SHEETPARTFILENAME when not the default placeholder
+        if self.library_path != "*" {
+            params.add("LIBRARYPATH", &self.library_path);
+        }
         params.add("SOURCELIBRARYNAME", &self.source_library_name);
-        params.add("SHEETPARTFILENAME", &self.sheet_part_filename);
+        if self.sheet_part_filename != "*" {
+            params.add("SHEETPARTFILENAME", &self.sheet_part_filename);
+        }
         params.add("TARGETFILENAME", &self.target_filename);
         params.add("UNIQUEID", &self.unique_id);
         // Only emit DISPLAYMODE when non-zero
@@ -289,12 +293,13 @@ impl SchPrimitive for SchComponent {
         if self.designator_locked {
             params.add_bool("DESIGNATORLOCKED", true);
         }
-        params.add_bool("PARTIDLOCKED", self.part_id_locked);
+        // PARTIDLOCKED must always be emitted (add_bool skips false values)
+        params.add("PARTIDLOCKED", if self.part_id_locked { "T" } else { "F" });
         // Only emit ALIASLIST when non-empty
         if !self.alias_list.is_empty() {
             params.add("ALIASLIST", &self.alias_list);
         }
-        params.add("DESIGNITEMID", &self.lib_reference);
+        // DESIGNITEMID is preserved via unknown_params when present in the original
         // Only emit COMPONENTKIND when non-zero
         if self.component_kind != 0 {
             params.add_int("COMPONENTKIND", self.component_kind);

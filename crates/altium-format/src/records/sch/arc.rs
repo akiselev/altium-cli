@@ -92,8 +92,8 @@ pub struct SchArc {
     #[altium(param = "RADIUS", frac = "RADIUS_FRAC")]
     pub radius: i32,
 
-    /// Secondary radius (for elliptical arcs).
-    #[altium(param = "SECONDARYRADIUS", frac = "SECONDARYRADIUS_FRAC")]
+    /// Secondary radius (for elliptical arcs, omitted when equal to radius).
+    #[altium(param = "SECONDARYRADIUS", frac = "SECONDARYRADIUS_FRAC", skip_default)]
     pub secondary_radius: i32,
 
     /// Start angle in degrees.

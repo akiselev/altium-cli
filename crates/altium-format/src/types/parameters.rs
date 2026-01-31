@@ -201,6 +201,8 @@ pub struct ParameterCollection {
     parameters: IndexMap<String, String>,
     /// Whether to use long boolean format ("TRUE"/"FALSE" vs "T"/"F").
     use_long_booleans: bool,
+    /// Raw suffix appended after normal params (for duplicate keys like ISHIDDEN).
+    raw_suffix: Option<String>,
 }
 
 impl ParameterCollection {
@@ -222,6 +224,7 @@ impl ParameterCollection {
             keys: Vec::new(),
             parameters: IndexMap::new(),
             use_long_booleans: false,
+            raw_suffix: None,
         };
         collection.parse_data(data);
         collection
@@ -392,6 +395,15 @@ impl ParameterCollection {
         self.use_long_booleans = value;
     }
 
+    /// Appends a raw pipe-delimited suffix (for duplicate keys that can't be
+    /// represented in the key-value map, e.g. Altium's duplicate ISHIDDEN=T).
+    pub fn add_raw_suffix(&mut self, suffix: &str) {
+        match &mut self.raw_suffix {
+            Some(existing) => existing.push_str(suffix),
+            None => self.raw_suffix = Some(suffix.to_string()),
+        }
+    }
+
     /// Converts the collection back to a parameter string.
     pub fn to_param_string(&self) -> String {
         let separator = ENTRY_SEPARATORS.get(self.level).copied().unwrap_or('|');
@@ -402,6 +414,10 @@ impl ParameterCollection {
             result.push_str(key);
             result.push(KEY_VALUE_SEPARATOR);
             result.push_str(&value.data);
+        }
+
+        if let Some(suffix) = &self.raw_suffix {
+            result.push_str(suffix);
         }
 
         result
