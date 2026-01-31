@@ -2818,10 +2818,10 @@ pub fn cmd_add_json(
                 primitives.push(SchRecord::MapDefiner(map_definer));
             }
 
-            // ImplementationParameters (always present)
+            // ImplementationParameters (always present, owned by Implementation)
             let impl_params = SchImplementationParameters {
                 base: SchPrimitiveBase {
-                    owner_index: mdl_idx as i32,
+                    owner_index: impl_idx as i32,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -3303,4 +3303,55 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
     }
+
+    /// Test that MapDefinerList and ImplementationParameters records survive save/reload.
+    #[test]
+    fn test_implementation_child_records_persist_to_file() {
+        let path = std::env::temp_dir().join(format!("test_impl_persist_{}.SchLib", uuid::Uuid::new_v4()));
+
+        // Create library and add component with implementations
+        cmd_create(&path).unwrap();
+
+        let json = r#"{
+            "name": "TestImpl",
+            "pins": [
+                {"designator": "1", "name": "VCC", "x": 0, "y": 0, "length": 10, "electrical": "passive"}
+            ],
+            "rectangles": [{"x1": -10, "y1": -10, "x2": 10, "y2": 10}],
+            "implementations": [
+                {
+                    "model_name": "SOIC-8",
+                    "model_type": "PCBLIB",
+                    "description": "Test footprint",
+                    "is_current": true
+                }
+            ]
+        }"#;
+
+        cmd_add_json(&path, None, Some(json.to_string())).unwrap();
+
+        // Re-read from file (this forces reading from the saved binary)
+        let lib = open_schlib(&path).unwrap();
+        let comp = lib.components.iter()
+            .find(|c| c.component.lib_reference == "TestImpl")
+            .expect("TestImpl not found");
+
+        let record_types: Vec<&str> = comp.primitives.iter()
+            .map(|r| r.record_type_name())
+            .collect();
+
+        eprintln!("Persisted record types: {:?}", record_types);
+
+        assert!(record_types.contains(&"ImplementationList"),
+            "Missing ImplementationList after save/reload, got: {:?}", record_types);
+        assert!(record_types.contains(&"Implementation"),
+            "Missing Implementation after save/reload, got: {:?}", record_types);
+        assert!(record_types.contains(&"MapDefinerList"),
+            "Missing MapDefinerList after save/reload, got: {:?}", record_types);
+        assert!(record_types.contains(&"ImplementationParameters"),
+            "Missing ImplementationParameters after save/reload, got: {:?}", record_types);
+
+        std::fs::remove_file(&path).ok();
+    }
 }
+
