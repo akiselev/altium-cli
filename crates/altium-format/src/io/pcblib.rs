@@ -31,6 +31,15 @@ pub struct PcbLib {
     pub unique_id: String,
     /// Components (footprints) in the library.
     pub components: Vec<PcbComponent>,
+    /// Library parameters from Library/Data stream (board config, layer settings, grid settings).
+    /// When present, these are written back verbatim instead of using build_library_parameters().
+    pub library_parameters: Option<ParameterCollection>,
+    /// FileHeader version string (e.g., "PCB 6.0 Binary Library File").
+    pub file_header_version: String,
+    /// FileHeader optional field 1 (version-related float string).
+    pub file_header_field1: String,
+    /// FileHeader optional field 2 (token/marker string, e.g., "DVLTOKCO").
+    pub file_header_field2: String,
 }
 
 impl PcbLib {
@@ -89,9 +98,23 @@ impl PcbLib {
         let mut data = Vec::new();
 
         // Version text block
-        let version = "PCB 6.0 Binary Library File";
+        let version = if self.file_header_version.is_empty() {
+            "PCB 6.0 Binary Library File"
+        } else {
+            &self.file_header_version
+        };
         data.write_i32::<LittleEndian>(version.len() as i32)?;
         write_pascal_short_string(&mut data, version)?;
+
+        // Write optional extended fields if they were present in the original file
+        if !self.file_header_field1.is_empty()
+            || !self.file_header_field2.is_empty()
+            || !self.unique_id.is_empty()
+        {
+            write_pascal_short_string(&mut data, &self.file_header_field1)?;
+            write_pascal_short_string(&mut data, &self.file_header_field2)?;
+            write_pascal_short_string(&mut data, &self.unique_id)?;
+        }
 
         let mut stream = cf
             .create_stream("/FileHeader")
@@ -192,8 +215,12 @@ impl PcbLib {
     fn write_library_data<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
         let mut data = Vec::new();
 
-        // Build minimal required library parameters
-        let params = Self::build_library_parameters();
+        // Use preserved library parameters if available, otherwise build defaults
+        let params = if let Some(ref preserved) = self.library_parameters {
+            preserved.clone()
+        } else {
+            Self::build_library_parameters()
+        };
         let mut params_block = Vec::new();
         write_parameters(&mut params_block, &params)?;
         write_block(&mut data, &params_block, 0)?;
@@ -664,7 +691,8 @@ impl PcbLib {
 
         // Read version text block (length prefix then Pascal string)
         let _version_len = cursor.read_i32::<LittleEndian>()?;
-        let _version_text = read_pascal_short_string(&mut cursor)?;
+        let version_text = read_pascal_short_string(&mut cursor)?;
+        self.file_header_version = version_text;
 
         // Try to read additional fields (optional, vary by Altium version).
         // These fields may not exist in older file versions, so EOF is acceptable.
@@ -675,6 +703,7 @@ impl PcbLib {
             if !field1.is_empty() {
                 log::trace!("FileHeader optional field 1: {:?}", field1);
             }
+            self.file_header_field1 = field1;
 
             // Second optional field: appears to be a token/marker string (e.g., "DVLTOKCO").
             // EOF here indicates file format without this marker.
@@ -682,6 +711,7 @@ impl PcbLib {
             if !field2.is_empty() {
                 log::trace!("FileHeader optional field 2: {:?}", field2);
             }
+            self.file_header_field2 = field2;
 
             // Third optional field: unique ID string for the library.
             // Empty is valid for libraries without assigned unique ID.
@@ -763,8 +793,9 @@ impl PcbLib {
 
         let mut cursor = Cursor::new(&data);
 
-        // Read library header parameters
-        let _header_params = read_parameters_block(&mut cursor)?;
+        // Read library header parameters and preserve for round-trip
+        let header_params = read_parameters_block(&mut cursor)?;
+        self.library_parameters = Some(header_params);
 
         // Read footprint count and list
         let footprint_count = cursor.read_u32::<LittleEndian>()?;

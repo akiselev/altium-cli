@@ -12,6 +12,7 @@ use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
 use png;
 use resvg;
 use serde::{Deserialize, Serialize};
@@ -22,8 +23,13 @@ use crate::footprint::{
     AsciiOptions, FootprintBuilder, PadRowDirection, SvgOptions, render_ascii, render_svg,
 };
 use crate::io::PcbLib;
-use crate::records::pcb::{PcbPad, PcbPadShape, PcbRecord, PcbText};
-use crate::types::{Layer, Unit};
+use crate::records::pcb::{
+    PcbArc, PcbComponent, PcbComponentBody, PcbFill, PcbFlags, PcbObjectId, PcbPad,
+    PcbPadHoleShape, PcbPadShape, PcbPrimitiveCommon, PcbRecord, PcbRectangularBase, PcbRegion,
+    PcbStackMode, PcbText, PcbTextJustification, PcbTextKind, PcbTextStrokeFont, PcbTrack,
+    PcbVia,
+};
+use crate::types::{Coord, CoordPoint, Layer, MaskExpansion, ParameterCollection, Unit};
 
 use super::util::alphanumeric_sort;
 use crate::ops::output::*;
@@ -692,52 +698,34 @@ pub fn cmd_holes(path: &Path) -> Result<PcbLibHoleAnalysis, Box<dyn std::error::
 }
 
 /// Export as JSON.
-pub fn cmd_json(path: &Path, full: bool) -> Result<PcbLibJson, Box<dyn std::error::Error>> {
+pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let lib = open_pcblib(path)?;
 
-    let footprints: Vec<FootprintJsonData> = lib
-        .iter()
-        .map(|comp| {
-            let pads = if full {
-                Some(
-                    comp.pads()
-                        .map(|pad| {
-                            let size = pad.size_top();
-                            PadJsonData {
-                                designator: pad.designator.clone(),
-                                shape: pad_shape_name(pad.shape_top()).to_string(),
-                                size_x: fmt_coord_val(&size.x),
-                                size_y: fmt_coord_val(&size.y),
-                                hole_size: if pad.has_hole() {
-                                    Some(fmt_coord_val(&pad.hole_size))
-                                } else {
-                                    None
-                                },
-                                layer: layer_name(&pad.common.layer),
-                            }
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            };
+    if full {
+        let export = cmd_json_full(&lib, path);
+        Ok(serde_json::to_value(&export)?)
+    } else {
+        let footprints: Vec<FootprintJsonData> = lib
+            .iter()
+            .map(|comp| {
+                FootprintJsonData {
+                    name: comp.pattern.clone(),
+                    description: comp.description.clone(),
+                    pad_count: comp.pad_count(),
+                    primitive_count: comp.primitive_count(),
+                    pads: None,
+                }
+            })
+            .collect();
 
-            FootprintJsonData {
-                name: comp.pattern.clone(),
-                description: comp.description.clone(),
-                pad_count: comp.pad_count(),
-                primitive_count: comp.primitive_count(),
-                pads,
-            }
-        })
-        .collect();
-
-    Ok(PcbLibJson {
-        file: path.display().to_string(),
-        footprint_count: lib.components.len(),
-        unique_id: lib.unique_id.clone(),
-        footprints,
-    })
+        let result = PcbLibJson {
+            file: path.display().to_string(),
+            footprint_count: lib.components.len(),
+            unique_id: lib.unique_id.clone(),
+            footprints,
+        };
+        Ok(serde_json::to_value(&result)?)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1325,8 +1313,6 @@ fn print_all_pads_json(
 const BLANK_PCBLIB_TEMPLATE: &[u8] = include_bytes!("../../data/blank/PcbLib1.PcbLib");
 
 use crate::footprint::{ChipSpec, IpcDensity};
-use crate::records::pcb::{PcbArc, PcbComponent, PcbFlags, PcbPrimitiveCommon, PcbTrack};
-use crate::types::{Coord, CoordPoint};
 
 /// Create a new empty PcbLib file.
 pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -2071,7 +2057,27 @@ pub fn cmd_add_json(
         }
     };
 
-    // Parse JSON
+    // Try full export format first
+    if let Ok(export) = serde_json::from_str::<PcbLibExport>(&json_content) {
+        return cmd_add_json_full_export(path, &export);
+    }
+
+    // Try single full footprint
+    if let Ok(full_fp) = serde_json::from_str::<PcbFootprintFullJson>(&json_content) {
+        let mut lib = open_or_create_pcblib(path)?;
+        if lib.components.iter().any(|c| c.pattern == full_fp.name) {
+            return Err(format!("Footprint '{}' already exists", full_fp.name).into());
+        }
+        let component = footprint_from_full_json(&full_fp)
+            .map_err(|e| format!("Error converting footprint: {}", e))?;
+        let name = component.pattern.clone();
+        lib.components.push(component);
+        save_pcblib(path, &lib)?;
+        println!("Added full footprint '{}' to {}", name, path.display());
+        return Ok(());
+    }
+
+    // Parse JSON as FootprintJson (fall back)
     let footprint_def: FootprintJson =
         serde_json::from_str(&json_content).map_err(|e| format!("Invalid JSON: {}", e))?;
 
@@ -2750,5 +2756,686 @@ pub fn cmd_add_pad_grid(
         );
     }
 
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FULL JSON EXPORT/IMPORT (binary-compatible round-trip)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Full PcbLib export (top-level, like SchLibExport).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcbLibExport {
+    pub source: Option<String>,
+    pub unique_id: String,
+    pub footprint_count: usize,
+    pub library_parameters: HashMap<String, String>,
+    pub file_header_version: String,
+    pub file_header_field1: String,
+    pub file_header_field2: String,
+    pub footprints: Vec<PcbFootprintFullJson>,
+}
+
+/// Full footprint JSON with all primitives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcbFootprintFullJson {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    pub height: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub item_guid: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub revision_guid: String,
+    pub primitives: Vec<PcbPrimitiveJson>,
+}
+
+/// Common fields for all PCB primitives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcbCommonJson {
+    pub layer: u8,
+    pub flags: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_id: Option<String>,
+}
+
+/// Tagged enum for all PCB primitive types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum PcbPrimitiveJson {
+    Arc {
+        common: PcbCommonJson,
+        location: [i64; 2],
+        radius: i64,
+        start_angle: f64,
+        end_angle: f64,
+        width: i64,
+    },
+    Pad {
+        common: PcbCommonJson,
+        designator: String,
+        location: [i64; 2],
+        rotation: f64,
+        is_plated: bool,
+        jumper_id: i16,
+        stack_mode: u8,
+        hole_size: i64,
+        hole_shape: u8,
+        hole_rotation: f64,
+        hole_slot_length: i64,
+        paste_mask_expansion: PcbMaskExpansionJson,
+        solder_mask_expansion: PcbMaskExpansionJson,
+        size_layers: Vec<[i64; 2]>,
+        shape_layers: Vec<u8>,
+        corner_radius_percentage: Vec<u8>,
+        offsets_from_hole_center: Vec<[i64; 2]>,
+    },
+    Via {
+        common: PcbCommonJson,
+        location: [i64; 2],
+        hole_size: i64,
+        from_layer: u8,
+        to_layer: u8,
+        thermal_relief_air_gap_width: i64,
+        thermal_relief_conductors: u8,
+        thermal_relief_conductors_width: i64,
+        solder_mask_expansion: PcbMaskExpansionJson,
+        diameter_stack_mode: u8,
+        diameters: Vec<i64>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        unknown_trailer: String,
+    },
+    Track {
+        common: PcbCommonJson,
+        start: [i64; 2],
+        end: [i64; 2],
+        width: i64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        unknown_trailer: String,
+    },
+    Text {
+        common: PcbCommonJson,
+        corner1: [i64; 2],
+        corner2: [i64; 2],
+        rotation: f64,
+        mirrored: bool,
+        text_kind: u8,
+        stroke_font: i16,
+        stroke_width: i64,
+        font_bold: bool,
+        font_italic: bool,
+        font_name: String,
+        barcode_lr_margin: i64,
+        barcode_tb_margin: i64,
+        font_inverted: bool,
+        font_inverted_border: i64,
+        font_inverted_rect: bool,
+        font_inverted_rect_width: i64,
+        font_inverted_rect_height: i64,
+        font_inverted_rect_justification: u8,
+        font_inverted_rect_text_offset: i64,
+        text: String,
+        wide_strings_index: i32,
+    },
+    Fill {
+        common: PcbCommonJson,
+        corner1: [i64; 2],
+        corner2: [i64; 2],
+        rotation: f64,
+    },
+    Region {
+        common: PcbCommonJson,
+        parameters: HashMap<String, String>,
+        outline: Vec<[i64; 2]>,
+    },
+    ComponentBody {
+        common: PcbCommonJson,
+        parameters: HashMap<String, String>,
+        outline: Vec<[i64; 2]>,
+    },
+    Unknown {
+        object_id: u8,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        raw_data: String,
+    },
+}
+
+/// Mask expansion mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcbMaskExpansionJson {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<i64>,
+}
+
+fn common_to_json(common: &PcbPrimitiveCommon) -> PcbCommonJson {
+    PcbCommonJson {
+        layer: common.layer.0,
+        flags: common.flags.bits(),
+        unique_id: common.unique_id.clone(),
+    }
+}
+
+fn common_from_json(json: &PcbCommonJson) -> PcbPrimitiveCommon {
+    PcbPrimitiveCommon {
+        layer: Layer::new(json.layer),
+        flags: PcbFlags::from_bits_truncate(json.flags),
+        unique_id: json.unique_id.clone(),
+    }
+}
+
+fn mask_expansion_to_json(me: &MaskExpansion) -> PcbMaskExpansionJson {
+    match me {
+        MaskExpansion::Auto => PcbMaskExpansionJson {
+            mode: "auto".to_string(),
+            value: None,
+        },
+        MaskExpansion::Manual(c) => PcbMaskExpansionJson {
+            mode: "manual".to_string(),
+            value: Some(c.to_raw() as i64),
+        },
+    }
+}
+
+fn mask_expansion_from_json(json: &PcbMaskExpansionJson) -> MaskExpansion {
+    if json.mode == "auto" {
+        MaskExpansion::Auto
+    } else {
+        MaskExpansion::Manual(Coord::from_raw(json.value.unwrap_or(0) as i32))
+    }
+}
+
+fn vec_to_coord_array(v: &[[i64; 2]]) -> [CoordPoint; 32] {
+    let mut arr = [CoordPoint::default(); 32];
+    for (i, pt) in v.iter().enumerate().take(32) {
+        arr[i] = CoordPoint::new(Coord::from_raw(pt[0] as i32), Coord::from_raw(pt[1] as i32));
+    }
+    arr
+}
+
+fn vec_to_shape_array(v: &[u8]) -> [PcbPadShape; 32] {
+    let mut arr = [PcbPadShape::default(); 32];
+    for (i, &s) in v.iter().enumerate().take(32) {
+        arr[i] = PcbPadShape::from_byte(s);
+    }
+    arr
+}
+
+fn vec_to_u8_array(v: &[u8]) -> [u8; 32] {
+    let mut arr = [0u8; 32];
+    for (i, &val) in v.iter().enumerate().take(32) {
+        arr[i] = val;
+    }
+    arr
+}
+
+fn vec_to_coord_diameter_array(v: &[i64]) -> [Coord; 32] {
+    let mut arr = [Coord::default(); 32];
+    for (i, &d) in v.iter().enumerate().take(32) {
+        arr[i] = Coord::from_raw(d as i32);
+    }
+    arr
+}
+
+fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
+    match record {
+        PcbRecord::Arc(arc) => PcbPrimitiveJson::Arc {
+            common: common_to_json(&arc.common),
+            location: [arc.location.x.to_raw() as i64, arc.location.y.to_raw() as i64],
+            radius: arc.radius.to_raw() as i64,
+            start_angle: arc.start_angle,
+            end_angle: arc.end_angle,
+            width: arc.width.to_raw() as i64,
+        },
+        PcbRecord::Pad(pad) => PcbPrimitiveJson::Pad {
+            common: common_to_json(&pad.common),
+            designator: pad.designator.clone(),
+            location: [pad.location.x.to_raw() as i64, pad.location.y.to_raw() as i64],
+            rotation: pad.rotation,
+            is_plated: pad.is_plated,
+            jumper_id: pad.jumper_id,
+            stack_mode: pad.stack_mode.to_byte(),
+            hole_size: pad.hole_size.to_raw() as i64,
+            hole_shape: pad.hole_shape.to_byte(),
+            hole_rotation: pad.hole_rotation,
+            hole_slot_length: pad.hole_slot_length.to_raw() as i64,
+            paste_mask_expansion: mask_expansion_to_json(&pad.paste_mask_expansion),
+            solder_mask_expansion: mask_expansion_to_json(&pad.solder_mask_expansion),
+            size_layers: pad
+                .size_layers
+                .iter()
+                .map(|cp| [cp.x.to_raw() as i64, cp.y.to_raw() as i64])
+                .collect(),
+            shape_layers: pad.shape_layers.iter().map(|s| s.to_byte()).collect(),
+            corner_radius_percentage: pad.corner_radius_percentage.to_vec(),
+            offsets_from_hole_center: pad
+                .offsets_from_hole_center
+                .iter()
+                .map(|cp| [cp.x.to_raw() as i64, cp.y.to_raw() as i64])
+                .collect(),
+        },
+        PcbRecord::Via(via) => PcbPrimitiveJson::Via {
+            common: common_to_json(&via.common),
+            location: [via.location.x.to_raw() as i64, via.location.y.to_raw() as i64],
+            hole_size: via.hole_size.to_raw() as i64,
+            from_layer: via.from_layer.0,
+            to_layer: via.to_layer.0,
+            thermal_relief_air_gap_width: via.thermal_relief_air_gap_width.to_raw() as i64,
+            thermal_relief_conductors: via.thermal_relief_conductors,
+            thermal_relief_conductors_width: via.thermal_relief_conductors_width.to_raw() as i64,
+            solder_mask_expansion: mask_expansion_to_json(&via.solder_mask_expansion),
+            diameter_stack_mode: via.diameter_stack_mode.to_byte(),
+            diameters: via.diameters.iter().map(|d| d.to_raw() as i64).collect(),
+            unknown_trailer: base64::engine::general_purpose::STANDARD.encode(&via.unknown),
+        },
+        PcbRecord::Track(t) => PcbPrimitiveJson::Track {
+            common: common_to_json(&t.common),
+            start: [t.start.x.to_raw() as i64, t.start.y.to_raw() as i64],
+            end: [t.end.x.to_raw() as i64, t.end.y.to_raw() as i64],
+            width: t.width.to_raw() as i64,
+            unknown_trailer: base64::engine::general_purpose::STANDARD.encode(&t.unknown),
+        },
+        PcbRecord::Text(text) => PcbPrimitiveJson::Text {
+            common: common_to_json(&text.base.common),
+            corner1: [
+                text.base.corner1.x.to_raw() as i64,
+                text.base.corner1.y.to_raw() as i64,
+            ],
+            corner2: [
+                text.base.corner2.x.to_raw() as i64,
+                text.base.corner2.y.to_raw() as i64,
+            ],
+            rotation: text.base.rotation,
+            mirrored: text.mirrored,
+            text_kind: text.text_kind.to_byte(),
+            stroke_font: text.stroke_font.to_i16(),
+            stroke_width: text.stroke_width.to_raw() as i64,
+            font_bold: text.font_bold,
+            font_italic: text.font_italic,
+            font_name: text.font_name.clone(),
+            barcode_lr_margin: text.barcode_lr_margin.to_raw() as i64,
+            barcode_tb_margin: text.barcode_tb_margin.to_raw() as i64,
+            font_inverted: text.font_inverted,
+            font_inverted_border: text.font_inverted_border.to_raw() as i64,
+            font_inverted_rect: text.font_inverted_rect,
+            font_inverted_rect_width: text.font_inverted_rect_width.to_raw() as i64,
+            font_inverted_rect_height: text.font_inverted_rect_height.to_raw() as i64,
+            font_inverted_rect_justification: text.font_inverted_rect_justification.to_byte(),
+            font_inverted_rect_text_offset: text.font_inverted_rect_text_offset.to_raw() as i64,
+            text: text.text.clone(),
+            wide_strings_index: text.wide_strings_index,
+        },
+        PcbRecord::Fill(fill) => PcbPrimitiveJson::Fill {
+            common: common_to_json(&fill.base.common),
+            corner1: [
+                fill.base.corner1.x.to_raw() as i64,
+                fill.base.corner1.y.to_raw() as i64,
+            ],
+            corner2: [
+                fill.base.corner2.x.to_raw() as i64,
+                fill.base.corner2.y.to_raw() as i64,
+            ],
+            rotation: fill.base.rotation,
+        },
+        PcbRecord::Region(region) => {
+            let param_map: HashMap<String, String> = region
+                .parameters
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
+                .collect();
+            PcbPrimitiveJson::Region {
+                common: common_to_json(&region.common),
+                parameters: param_map,
+                outline: region
+                    .outline
+                    .iter()
+                    .map(|pt| [pt.x.to_raw() as i64, pt.y.to_raw() as i64])
+                    .collect(),
+            }
+        }
+        PcbRecord::ComponentBody(body) => {
+            let mut param_map = HashMap::new();
+            if !body.model_id.is_empty() {
+                param_map.insert("MODELID".to_string(), body.model_id.clone());
+            }
+            if !body.name.is_empty() {
+                param_map.insert("NAME".to_string(), body.name.clone());
+            }
+            PcbPrimitiveJson::ComponentBody {
+                common: common_to_json(&body.common),
+                parameters: param_map,
+                outline: body
+                    .outline
+                    .iter()
+                    .map(|pt| [pt.x.to_raw() as i64, pt.y.to_raw() as i64])
+                    .collect(),
+            }
+        }
+        PcbRecord::Polygon(_) => PcbPrimitiveJson::Unknown {
+            object_id: PcbObjectId::Polygon.to_byte(),
+            raw_data: String::new(),
+        },
+        PcbRecord::Unknown { object_id, raw_data } => PcbPrimitiveJson::Unknown {
+            object_id: object_id.to_byte(),
+            raw_data: base64::engine::general_purpose::STANDARD.encode(raw_data),
+        },
+    }
+}
+
+fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
+    match json {
+        PcbPrimitiveJson::Arc {
+            common,
+            location,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+        } => Ok(PcbRecord::Arc(PcbArc {
+            common: common_from_json(common),
+            location: CoordPoint::new(
+                Coord::from_raw(location[0] as i32),
+                Coord::from_raw(location[1] as i32),
+            ),
+            radius: Coord::from_raw(*radius as i32),
+            start_angle: *start_angle,
+            end_angle: *end_angle,
+            width: Coord::from_raw(*width as i32),
+        })),
+        PcbPrimitiveJson::Pad {
+            common,
+            designator,
+            location,
+            rotation,
+            is_plated,
+            jumper_id,
+            stack_mode,
+            hole_size,
+            hole_shape,
+            hole_rotation,
+            hole_slot_length,
+            paste_mask_expansion,
+            solder_mask_expansion,
+            size_layers,
+            shape_layers,
+            corner_radius_percentage,
+            offsets_from_hole_center,
+        } => Ok(PcbRecord::Pad(Box::new(PcbPad {
+            common: common_from_json(common),
+            designator: designator.clone(),
+            location: CoordPoint::new(
+                Coord::from_raw(location[0] as i32),
+                Coord::from_raw(location[1] as i32),
+            ),
+            rotation: *rotation,
+            is_plated: *is_plated,
+            jumper_id: *jumper_id,
+            stack_mode: PcbStackMode::from_byte(*stack_mode),
+            hole_size: Coord::from_raw(*hole_size as i32),
+            hole_shape: PcbPadHoleShape::from_byte(*hole_shape),
+            hole_rotation: *hole_rotation,
+            hole_slot_length: Coord::from_raw(*hole_slot_length as i32),
+            paste_mask_expansion: mask_expansion_from_json(paste_mask_expansion),
+            solder_mask_expansion: mask_expansion_from_json(solder_mask_expansion),
+            size_layers: vec_to_coord_array(size_layers),
+            shape_layers: vec_to_shape_array(shape_layers),
+            corner_radius_percentage: vec_to_u8_array(corner_radius_percentage),
+            offsets_from_hole_center: vec_to_coord_array(offsets_from_hole_center),
+        }))),
+        PcbPrimitiveJson::Via {
+            common,
+            location,
+            hole_size,
+            from_layer,
+            to_layer,
+            thermal_relief_air_gap_width,
+            thermal_relief_conductors,
+            thermal_relief_conductors_width,
+            solder_mask_expansion,
+            diameter_stack_mode,
+            diameters,
+            unknown_trailer,
+        } => Ok(PcbRecord::Via(PcbVia {
+            common: common_from_json(common),
+            location: CoordPoint::new(
+                Coord::from_raw(location[0] as i32),
+                Coord::from_raw(location[1] as i32),
+            ),
+            hole_size: Coord::from_raw(*hole_size as i32),
+            from_layer: Layer::new(*from_layer),
+            to_layer: Layer::new(*to_layer),
+            thermal_relief_air_gap_width: Coord::from_raw(*thermal_relief_air_gap_width as i32),
+            thermal_relief_conductors: *thermal_relief_conductors,
+            thermal_relief_conductors_width: Coord::from_raw(*thermal_relief_conductors_width as i32),
+            solder_mask_expansion: mask_expansion_from_json(solder_mask_expansion),
+            diameter_stack_mode: PcbStackMode::from_byte(*diameter_stack_mode),
+            diameters: vec_to_coord_diameter_array(diameters),
+            unknown: base64::engine::general_purpose::STANDARD
+                .decode(unknown_trailer)
+                .unwrap_or_default(),
+        })),
+        PcbPrimitiveJson::Track {
+            common,
+            start,
+            end,
+            width,
+            unknown_trailer,
+        } => Ok(PcbRecord::Track(PcbTrack {
+            common: common_from_json(common),
+            start: CoordPoint::new(Coord::from_raw(start[0] as i32), Coord::from_raw(start[1] as i32)),
+            end: CoordPoint::new(Coord::from_raw(end[0] as i32), Coord::from_raw(end[1] as i32)),
+            width: Coord::from_raw(*width as i32),
+            unknown: base64::engine::general_purpose::STANDARD
+                .decode(unknown_trailer)
+                .unwrap_or_default(),
+        })),
+        PcbPrimitiveJson::Text {
+            common,
+            corner1,
+            corner2,
+            rotation,
+            mirrored,
+            text_kind,
+            stroke_font,
+            stroke_width,
+            font_bold,
+            font_italic,
+            font_name,
+            barcode_lr_margin,
+            barcode_tb_margin,
+            font_inverted,
+            font_inverted_border,
+            font_inverted_rect,
+            font_inverted_rect_width,
+            font_inverted_rect_height,
+            font_inverted_rect_justification,
+            font_inverted_rect_text_offset,
+            text,
+            wide_strings_index,
+        } => Ok(PcbRecord::Text(PcbText {
+            base: PcbRectangularBase {
+                common: common_from_json(common),
+                corner1: CoordPoint::new(
+                    Coord::from_raw(corner1[0] as i32),
+                    Coord::from_raw(corner1[1] as i32),
+                ),
+                corner2: CoordPoint::new(
+                    Coord::from_raw(corner2[0] as i32),
+                    Coord::from_raw(corner2[1] as i32),
+                ),
+                rotation: *rotation,
+            },
+            mirrored: *mirrored,
+            text_kind: PcbTextKind::from_byte(*text_kind),
+            stroke_font: PcbTextStrokeFont::from_i16(*stroke_font),
+            stroke_width: Coord::from_raw(*stroke_width as i32),
+            font_bold: *font_bold,
+            font_italic: *font_italic,
+            font_name: font_name.clone(),
+            barcode_lr_margin: Coord::from_raw(*barcode_lr_margin as i32),
+            barcode_tb_margin: Coord::from_raw(*barcode_tb_margin as i32),
+            font_inverted: *font_inverted,
+            font_inverted_border: Coord::from_raw(*font_inverted_border as i32),
+            font_inverted_rect: *font_inverted_rect,
+            font_inverted_rect_width: Coord::from_raw(*font_inverted_rect_width as i32),
+            font_inverted_rect_height: Coord::from_raw(*font_inverted_rect_height as i32),
+            font_inverted_rect_justification: PcbTextJustification::from_byte(
+                *font_inverted_rect_justification,
+            ),
+            font_inverted_rect_text_offset: Coord::from_raw(*font_inverted_rect_text_offset as i32),
+            text: text.clone(),
+            wide_strings_index: *wide_strings_index,
+        })),
+        PcbPrimitiveJson::Fill {
+            common,
+            corner1,
+            corner2,
+            rotation,
+        } => Ok(PcbRecord::Fill(PcbFill {
+            base: PcbRectangularBase {
+                common: common_from_json(common),
+                corner1: CoordPoint::new(
+                    Coord::from_raw(corner1[0] as i32),
+                    Coord::from_raw(corner1[1] as i32),
+                ),
+                corner2: CoordPoint::new(
+                    Coord::from_raw(corner2[0] as i32),
+                    Coord::from_raw(corner2[1] as i32),
+                ),
+                rotation: *rotation,
+            },
+        })),
+        PcbPrimitiveJson::Region {
+            common,
+            parameters,
+            outline,
+        } => {
+            let mut params = ParameterCollection::new();
+            for (k, v) in parameters {
+                params.add(k, v);
+            }
+            let region = PcbRegion {
+                common: common_from_json(common),
+                parameters: params,
+                outline: outline
+                    .iter()
+                    .map(|pt| CoordPoint::new(Coord::from_raw(pt[0] as i32), Coord::from_raw(pt[1] as i32)))
+                    .collect(),
+            };
+            Ok(PcbRecord::Region(region))
+        }
+        PcbPrimitiveJson::ComponentBody {
+            common,
+            parameters,
+            outline,
+        } => {
+            let body = PcbComponentBody {
+                common: common_from_json(common),
+                outline: outline
+                    .iter()
+                    .map(|pt| CoordPoint::new(Coord::from_raw(pt[0] as i32), Coord::from_raw(pt[1] as i32)))
+                    .collect(),
+                model_id: parameters.get("MODELID").cloned().unwrap_or_default(),
+                name: parameters.get("NAME").cloned().unwrap_or_default(),
+                ..Default::default()
+            };
+            Ok(PcbRecord::ComponentBody(Box::new(body)))
+        }
+        PcbPrimitiveJson::Unknown {
+            object_id,
+            raw_data,
+        } => Ok(PcbRecord::Unknown {
+            object_id: PcbObjectId::from_byte(*object_id),
+            raw_data: base64::engine::general_purpose::STANDARD
+                .decode(raw_data)
+                .unwrap_or_default(),
+        }),
+    }
+}
+
+fn footprint_to_full_json(comp: &PcbComponent) -> PcbFootprintFullJson {
+    PcbFootprintFullJson {
+        name: comp.pattern.clone(),
+        description: comp.description.clone(),
+        height: comp.height.to_raw() as i64,
+        item_guid: comp.item_guid.clone(),
+        revision_guid: comp.revision_guid.clone(),
+        primitives: comp.primitives.iter().map(primitive_to_json).collect(),
+    }
+}
+
+fn footprint_from_full_json(json: &PcbFootprintFullJson) -> Result<PcbComponent, String> {
+    let mut primitives = Vec::new();
+    for (i, prim_json) in json.primitives.iter().enumerate() {
+        match primitive_from_json(prim_json) {
+            Ok(prim) => primitives.push(prim),
+            Err(e) => return Err(format!("Error converting primitive {}: {}", i, e)),
+        }
+    }
+
+    Ok(PcbComponent {
+        pattern: json.name.clone(),
+        description: json.description.clone(),
+        height: Coord::from_raw(json.height as i32),
+        item_guid: json.item_guid.clone(),
+        revision_guid: json.revision_guid.clone(),
+        primitives,
+    })
+}
+
+fn cmd_json_full(lib: &PcbLib, path: &Path) -> PcbLibExport {
+    let footprints = lib.iter().map(footprint_to_full_json).collect();
+    let library_parameters: HashMap<String, String> = lib
+        .library_parameters
+        .as_ref()
+        .map(|p| {
+            p.iter()
+                .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    PcbLibExport {
+        source: Some(path.display().to_string()),
+        unique_id: lib.unique_id.clone(),
+        footprint_count: lib.components.len(),
+        library_parameters,
+        file_header_version: lib.file_header_version.clone(),
+        file_header_field1: lib.file_header_field1.clone(),
+        file_header_field2: lib.file_header_field2.clone(),
+        footprints,
+    }
+}
+
+fn cmd_add_json_full_export(
+    path: &Path,
+    export: &PcbLibExport,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut lib = open_or_create_pcblib(path)?;
+
+    lib.unique_id = export.unique_id.clone();
+    lib.file_header_version = export.file_header_version.clone();
+    lib.file_header_field1 = export.file_header_field1.clone();
+    lib.file_header_field2 = export.file_header_field2.clone();
+
+    if !export.library_parameters.is_empty() {
+        let mut params = ParameterCollection::new();
+        for (k, v) in &export.library_parameters {
+            params.add(k, v);
+        }
+        lib.library_parameters = Some(params);
+    }
+
+    lib.components.clear();
+
+    let mut added = 0;
+    for fp_json in &export.footprints {
+        let component = footprint_from_full_json(fp_json)
+            .map_err(|e| format!("Error converting footprint '{}': {}", fp_json.name, e))?;
+        lib.components.push(component);
+        added += 1;
+    }
+
+    save_pcblib(path, &lib)?;
+    println!("Imported {} footprints to {}", added, path.display());
     Ok(())
 }

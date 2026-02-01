@@ -302,8 +302,8 @@ pub enum PcbLibCommands {
         file: Option<String>,
 
         /// JSON string
-        #[arg(short, long)]
-        json: Option<String>,
+        #[arg(long = "input")]
+        input_json: Option<String>,
     },
 
     /// Add row of pads to footprint
@@ -625,8 +625,8 @@ pub fn run(cmd: &PcbLibCommands, format: &str) -> Result<(), Box<dyn std::error:
         } => {
             pcblib::cmd_render_png(path, footprint, output.clone(), *scale, *width)?;
         }
-        PcbLibCommands::AddJson { path, file, json } => {
-            pcblib::cmd_add_json(path, file.clone(), json.clone())?;
+        PcbLibCommands::AddJson { path, file, input_json } => {
+            pcblib::cmd_add_json(path, file.clone(), input_json.clone())?;
         }
         PcbLibCommands::AddPadRow {
             path,
