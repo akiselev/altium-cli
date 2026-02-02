@@ -214,6 +214,7 @@ impl SchSerializer for BinarySerializer {
     impl_enum_binary!(export_text_vertical_anchor, import_text_vertical_anchor, TextVertAnchor, |v| TextVertAnchor::from_u8(v).unwrap_or_default());
     impl_enum_binary!(export_parameter_kind, import_parameter_kind, ParameterType, |v| ParameterType::from_u8(v).unwrap_or_default());
     impl_enum_binary!(export_parameter_read_only_state, import_parameter_read_only_state, ParameterReadOnlyState, |v| ParameterReadOnlyState::from_u8(v).unwrap_or_default());
+    impl_enum_binary!(export_parameter_set_style, import_parameter_set_style, ParameterSetStyle, |v| ParameterSetStyle::from_u8(v).unwrap_or_default());
 
     fn export_boolean_with_default(&mut self, value: bool, name: &str) -> Result<()> {
         self.export_boolean(value, name)

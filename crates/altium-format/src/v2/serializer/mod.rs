@@ -114,6 +114,8 @@ pub trait SchSerializer {
     fn import_parameter_kind(&mut self, name: &str) -> Result<ParameterType>;
     fn export_parameter_read_only_state(&mut self, value: ParameterReadOnlyState, name: &str) -> Result<()>;
     fn import_parameter_read_only_state(&mut self, name: &str) -> Result<ParameterReadOnlyState>;
+    fn export_parameter_set_style(&mut self, value: ParameterSetStyle, name: &str) -> Result<()>;
+    fn import_parameter_set_style(&mut self, name: &str) -> Result<ParameterSetStyle>;
 
     // --- Boolean with default ---
     fn export_boolean_with_default(&mut self, value: bool, name: &str) -> Result<()>;

@@ -956,6 +956,827 @@ pub fn import_image(s: &mut dyn SchSerializer, img: &mut ImageData) -> Result<()
 }
 
 // ============================================================================
+// EllipticalArc (RECORD=8)
+// ============================================================================
+
+pub fn export_elliptical_arc(s: &mut dyn SchSerializer, ea: &EllipticalArcData) -> Result<()> {
+    export_graphical_object(s, &ea.graphical)?;
+    s.export_coord(ea.location_x, "Location.X")?;
+    s.export_coord(ea.location_y, "Location.Y")?;
+    s.export_coord(ea.radius, "Radius")?;
+    s.export_coord(ea.secondary_radius, "SecondaryRadius")?;
+    s.export_size(ea.line_width, "LineWidth")?;
+    s.export_angle(ea.start_angle, "StartAngle")?;
+    s.export_angle(ea.end_angle, "EndAngle")?;
+    s.export_color(ea.color, "Color")?;
+    s.export_dynamic_string(&ea.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_elliptical_arc(s: &mut dyn SchSerializer, ea: &mut EllipticalArcData) -> Result<()> {
+    import_graphical_object(s, &mut ea.graphical)?;
+    ea.location_x = s.import_coord("Location.X")?;
+    ea.location_y = s.import_coord("Location.Y")?;
+    ea.radius = s.import_coord("Radius")?;
+    ea.secondary_radius = s.import_coord("SecondaryRadius")?;
+    ea.line_width = s.import_size("LineWidth")?;
+    ea.start_angle = s.import_angle("StartAngle")?;
+    ea.end_angle = s.import_angle("EndAngle")?;
+    ea.color = s.import_color("Color")?;
+    ea.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// Pie (RECORD=9)
+// ============================================================================
+
+pub fn export_pie(s: &mut dyn SchSerializer, pie: &PieData) -> Result<()> {
+    export_graphical_object(s, &pie.graphical)?;
+    s.export_coord(pie.location_x, "Location.X")?;
+    s.export_coord(pie.location_y, "Location.Y")?;
+    s.export_coord(pie.radius, "Radius")?;
+    s.export_size(pie.line_width, "LineWidth")?;
+    s.export_angle(pie.start_angle, "StartAngle")?;
+    s.export_angle(pie.end_angle, "EndAngle")?;
+    s.export_color(pie.color, "Color")?;
+    s.export_color(pie.area_color, "AreaColor")?;
+    s.export_boolean(pie.is_solid, "IsSolid")?;
+    Ok(())
+}
+
+pub fn import_pie(s: &mut dyn SchSerializer, pie: &mut PieData) -> Result<()> {
+    import_graphical_object(s, &mut pie.graphical)?;
+    pie.location_x = s.import_coord("Location.X")?;
+    pie.location_y = s.import_coord("Location.Y")?;
+    pie.radius = s.import_coord("Radius")?;
+    pie.line_width = s.import_size("LineWidth")?;
+    pie.start_angle = s.import_angle("StartAngle")?;
+    pie.end_angle = s.import_angle("EndAngle")?;
+    pie.color = s.import_color("Color")?;
+    pie.area_color = s.import_color("AreaColor")?;
+    pie.is_solid = s.import_boolean("IsSolid")?;
+    Ok(())
+}
+
+// ============================================================================
+// Note (RECORD=2)
+// ============================================================================
+
+pub fn export_note(s: &mut dyn SchSerializer, n: &NoteData) -> Result<()> {
+    export_graphical_object(s, &n.graphical)?;
+    s.export_coord(n.location_x, "Location.X")?;
+    s.export_coord(n.location_y, "Location.Y")?;
+    s.export_coord(n.corner_x, "Corner.X")?;
+    s.export_coord(n.corner_y, "Corner.Y")?;
+    s.export_size(n.line_width, "LineWidth")?;
+    s.export_color(n.color, "Color")?;
+    s.export_color(n.area_color, "AreaColor")?;
+    s.export_color(n.text_color, "TextColor")?;
+    s.export_font_id(n.font_id, "FontID")?;
+    s.export_boolean(n.is_solid, "IsSolid")?;
+    s.export_boolean(n.show_border, "ShowBorder")?;
+    s.export_horizontal_align(n.alignment, "Alignment")?;
+    s.export_boolean(n.word_wrap, "WordWrap")?;
+    s.export_boolean(n.clip_to_rect, "ClipToRect")?;
+    s.export_text(&n.text, "Text")?;
+    s.export_coord(n.text_margin, "TextMargin")?;
+    s.export_boolean(n.collapsed, "Collapsed")?;
+    s.export_dynamic_string(&n.author, "Author")?;
+    s.export_dynamic_string(&n.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_note(s: &mut dyn SchSerializer, n: &mut NoteData) -> Result<()> {
+    import_graphical_object(s, &mut n.graphical)?;
+    n.location_x = s.import_coord("Location.X")?;
+    n.location_y = s.import_coord("Location.Y")?;
+    n.corner_x = s.import_coord("Corner.X")?;
+    n.corner_y = s.import_coord("Corner.Y")?;
+    n.line_width = s.import_size("LineWidth")?;
+    n.color = s.import_color("Color")?;
+    n.area_color = s.import_color("AreaColor")?;
+    n.text_color = s.import_color("TextColor")?;
+    n.font_id = s.import_font_id("FontID")?;
+    n.is_solid = s.import_boolean("IsSolid")?;
+    n.show_border = s.import_boolean("ShowBorder")?;
+    n.alignment = s.import_horizontal_align("Alignment")?;
+    n.word_wrap = s.import_boolean("WordWrap")?;
+    n.clip_to_rect = s.import_boolean("ClipToRect")?;
+    n.text = s.import_text("Text")?;
+    n.text_margin = s.import_coord("TextMargin")?;
+    n.collapsed = s.import_boolean("Collapsed")?;
+    n.author = s.import_dynamic_string("Author")?;
+    n.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// TextFrame (RECORD=13)
+// ============================================================================
+
+pub fn export_text_frame(s: &mut dyn SchSerializer, tf: &TextFrameData) -> Result<()> {
+    export_graphical_object(s, &tf.graphical)?;
+    s.export_coord(tf.location_x, "Location.X")?;
+    s.export_coord(tf.location_y, "Location.Y")?;
+    s.export_coord(tf.corner_x, "Corner.X")?;
+    s.export_coord(tf.corner_y, "Corner.Y")?;
+    s.export_size(tf.line_width, "LineWidth")?;
+    s.export_color(tf.color, "Color")?;
+    s.export_color(tf.area_color, "AreaColor")?;
+    s.export_color(tf.text_color, "TextColor")?;
+    s.export_font_id(tf.font_id, "FontID")?;
+    s.export_boolean(tf.is_solid, "IsSolid")?;
+    s.export_boolean(tf.show_border, "ShowBorder")?;
+    s.export_horizontal_align(tf.alignment, "Alignment")?;
+    s.export_boolean(tf.word_wrap, "WordWrap")?;
+    s.export_boolean(tf.clip_to_rect, "ClipToRect")?;
+    s.export_text(&tf.text, "Text")?;
+    s.export_coord(tf.text_margin, "TextMargin")?;
+    s.export_dynamic_string(&tf.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_text_frame(s: &mut dyn SchSerializer, tf: &mut TextFrameData) -> Result<()> {
+    import_graphical_object(s, &mut tf.graphical)?;
+    tf.location_x = s.import_coord("Location.X")?;
+    tf.location_y = s.import_coord("Location.Y")?;
+    tf.corner_x = s.import_coord("Corner.X")?;
+    tf.corner_y = s.import_coord("Corner.Y")?;
+    tf.line_width = s.import_size("LineWidth")?;
+    tf.color = s.import_color("Color")?;
+    tf.area_color = s.import_color("AreaColor")?;
+    tf.text_color = s.import_color("TextColor")?;
+    tf.font_id = s.import_font_id("FontID")?;
+    tf.is_solid = s.import_boolean("IsSolid")?;
+    tf.show_border = s.import_boolean("ShowBorder")?;
+    tf.alignment = s.import_horizontal_align("Alignment")?;
+    tf.word_wrap = s.import_boolean("WordWrap")?;
+    tf.clip_to_rect = s.import_boolean("ClipToRect")?;
+    tf.text = s.import_text("Text")?;
+    tf.text_margin = s.import_coord("TextMargin")?;
+    tf.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// BusEntry (RECORD=7)
+// ============================================================================
+
+pub fn export_bus_entry(s: &mut dyn SchSerializer, be: &BusEntryData) -> Result<()> {
+    export_graphical_object(s, &be.graphical)?;
+    s.export_dynamic_string(&be.unique_id, "UniqueID")?;
+    s.export_coord(be.location_x, "Location.X")?;
+    s.export_coord(be.location_y, "Location.Y")?;
+    s.export_coord(be.corner_x, "Corner.X")?;
+    s.export_coord(be.corner_y, "Corner.Y")?;
+    s.export_size(be.line_width, "LineWidth")?;
+    s.export_color(be.color, "Color")?;
+    Ok(())
+}
+
+pub fn import_bus_entry(s: &mut dyn SchSerializer, be: &mut BusEntryData) -> Result<()> {
+    import_graphical_object(s, &mut be.graphical)?;
+    be.location_x = s.import_coord("Location.X")?;
+    be.location_y = s.import_coord("Location.Y")?;
+    be.corner_x = s.import_coord("Corner.X")?;
+    be.corner_y = s.import_coord("Corner.Y")?;
+    be.line_width = s.import_size("LineWidth")?;
+    be.color = s.import_color("Color")?;
+    be.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// Rectangular entry container / Basic entry object helpers
+// ============================================================================
+
+pub fn export_rectangular_entry_container(s: &mut dyn SchSerializer, c: &RectangularEntryContainerBase) -> Result<()> {
+    export_graphical_object(s, &c.graphical)?;
+    s.export_coord(c.location_x, "Location.X")?;
+    s.export_coord(c.location_y, "Location.Y")?;
+    s.export_coord(c.x_size, "XSize")?;
+    s.export_coord(c.y_size, "YSize")?;
+    s.export_size(c.line_width, "LineWidth")?;
+    s.export_color(c.color, "Color")?;
+    s.export_color(c.area_color, "AreaColor")?;
+    Ok(())
+}
+
+pub fn import_rectangular_entry_container(s: &mut dyn SchSerializer, c: &mut RectangularEntryContainerBase) -> Result<()> {
+    import_graphical_object(s, &mut c.graphical)?;
+    c.location_x = s.import_coord("Location.X")?;
+    c.location_y = s.import_coord("Location.Y")?;
+    c.x_size = s.import_coord("XSize")?;
+    c.y_size = s.import_coord("YSize")?;
+    c.line_width = s.import_size("LineWidth")?;
+    c.color = s.import_color("Color")?;
+    c.area_color = s.import_color("AreaColor")?;
+    Ok(())
+}
+
+pub fn export_basic_entry_object(s: &mut dyn SchSerializer, e: &BasicEntryObjectBase) -> Result<()> {
+    export_graphical_object(s, &e.graphical)?;
+    s.export_left_right_side(e.side, "Side")?;
+    s.export_coord(e.distance_from_top, "DistanceFromTop")?;
+    s.export_color(e.color, "Color")?;
+    s.export_color(e.area_color, "AreaColor")?;
+    s.export_color(e.text_color, "TextColor")?;
+    s.export_font_id(e.text_font_id, "TextFontID")?;
+    s.export_dynamic_string(&e.text_style, "TextStyle")?;
+    s.export_dynamic_string(&e.name, "Name")?;
+    s.export_dynamic_string(&e.harness_type, "HarnessType")?;
+    s.export_dynamic_string(&e.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_basic_entry_object(s: &mut dyn SchSerializer, e: &mut BasicEntryObjectBase) -> Result<()> {
+    import_graphical_object(s, &mut e.graphical)?;
+    e.side = s.import_left_right_side("Side")?;
+    e.distance_from_top = s.import_coord("DistanceFromTop")?;
+    e.color = s.import_color("Color")?;
+    e.area_color = s.import_color("AreaColor")?;
+    e.text_color = s.import_color("TextColor")?;
+    e.text_font_id = s.import_font_id("TextFontID")?;
+    e.text_style = s.import_dynamic_string("TextStyle")?;
+    e.name = s.import_dynamic_string("Name")?;
+    e.harness_type = s.import_dynamic_string("HarnessType")?;
+    e.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// SheetSymbol (RECORD=15)
+// ============================================================================
+
+pub fn export_sheet_symbol(s: &mut dyn SchSerializer, ss: &SheetSymbolData) -> Result<()> {
+    export_rectangular_entry_container(s, &ss.container)?;
+    s.export_boolean(ss.is_solid, "IsSolid")?;
+    s.export_boolean(ss.show_hidden_fields, "ShowHiddenFields")?;
+    s.export_string(&ss.unique_id, "UniqueID")?;
+    s.export_dynamic_string(&ss.symbol_type, "SymbolType")?;
+    s.export_dynamic_string(&ss.design_item_id, "DesignItemId")?;
+    s.export_dynamic_string(&ss.source_library_name, "SourceLibraryName")?;
+    s.export_dynamic_string(&ss.vault_guid, "VaultGUID")?;
+    s.export_dynamic_string(&ss.item_guid, "ItemGUID")?;
+    s.export_dynamic_string(&ss.revision_guid, "RevisionGUID")?;
+    s.export_dynamic_string(&ss.revision_name, "RevisionName")?;
+    Ok(())
+}
+
+pub fn import_sheet_symbol(s: &mut dyn SchSerializer, ss: &mut SheetSymbolData) -> Result<()> {
+    import_rectangular_entry_container(s, &mut ss.container)?;
+    ss.is_solid = s.import_boolean("IsSolid")?;
+    ss.show_hidden_fields = s.import_boolean("ShowHiddenFields")?;
+    ss.unique_id = s.import_string("UniqueID")?;
+    ss.symbol_type = s.import_dynamic_string("SymbolType")?;
+    ss.design_item_id = s.import_dynamic_string("DesignItemId")?;
+    ss.source_library_name = s.import_dynamic_string("SourceLibraryName")?;
+    ss.vault_guid = s.import_dynamic_string("VaultGUID")?;
+    ss.item_guid = s.import_dynamic_string("ItemGUID")?;
+    ss.revision_guid = s.import_dynamic_string("RevisionGUID")?;
+    ss.revision_name = s.import_dynamic_string("RevisionName")?;
+    Ok(())
+}
+
+// ============================================================================
+// SheetEntry (RECORD=16)
+// ============================================================================
+
+pub fn export_sheet_entry(s: &mut dyn SchSerializer, se: &SheetEntryData) -> Result<()> {
+    export_basic_entry_object(s, &se.entry)?;
+    s.export_port_io(se.io_type, "IOType")?;
+    s.export_port_arrow_style(se.style, "Style")?;
+    s.export_dynamic_string(&se.arrow_kind, "ArrowKind")?;
+    Ok(())
+}
+
+pub fn import_sheet_entry(s: &mut dyn SchSerializer, se: &mut SheetEntryData) -> Result<()> {
+    import_basic_entry_object(s, &mut se.entry)?;
+    se.io_type = s.import_port_io("IOType")?;
+    se.style = s.import_port_arrow_style("Style")?;
+    se.arrow_kind = s.import_dynamic_string("ArrowKind")?;
+    Ok(())
+}
+
+// ============================================================================
+// Probe (RECORD=3)
+// ============================================================================
+
+pub fn export_probe(s: &mut dyn SchSerializer, p: &ProbeData) -> Result<()> {
+    export_graphical_object(s, &p.graphical)?;
+    s.export_coord(p.location_x, "Location.X")?;
+    s.export_coord(p.location_y, "Location.Y")?;
+    s.export_color(p.color, "Color")?;
+    s.export_rotation_by90(p.orientation, "Orientation")?;
+    s.export_dynamic_string(&p.name, "Name")?;
+    s.export_dynamic_string(&p.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_probe(s: &mut dyn SchSerializer, p: &mut ProbeData) -> Result<()> {
+    import_graphical_object(s, &mut p.graphical)?;
+    p.location_x = s.import_coord("Location.X")?;
+    p.location_y = s.import_coord("Location.Y")?;
+    p.color = s.import_color("Color")?;
+    p.orientation = s.import_rotation_by90("Orientation")?;
+    p.name = s.import_dynamic_string("Name")?;
+    p.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// NoERC (RECORD=24)
+// ============================================================================
+
+pub fn export_no_erc(s: &mut dyn SchSerializer, n: &NoERCData) -> Result<()> {
+    export_graphical_object(s, &n.graphical)?;
+    s.export_coord(n.location_x, "Location.X")?;
+    s.export_coord(n.location_y, "Location.Y")?;
+    s.export_color(n.color, "Color")?;
+    s.export_rotation_by90(n.orientation, "Orientation")?;
+    s.export_no_erc_symbol(n.symbol, "Symbol")?;
+    s.export_boolean_with_default(n.is_active, "IsActive")?;
+    s.export_boolean_with_default(n.suppress_all, "SuppressAll")?;
+    s.export_dynamic_string(&n.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_no_erc(s: &mut dyn SchSerializer, n: &mut NoERCData) -> Result<()> {
+    import_graphical_object(s, &mut n.graphical)?;
+    n.location_x = s.import_coord("Location.X")?;
+    n.location_y = s.import_coord("Location.Y")?;
+    n.color = s.import_color("Color")?;
+    n.orientation = s.import_rotation_by90("Orientation")?;
+    n.symbol = s.import_no_erc_symbol("Symbol")?;
+    n.is_active = s.import_boolean_with_default("IsActive", true)?;
+    n.suppress_all = s.import_boolean_with_default("SuppressAll", true)?;
+    n.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// RoundRectangle (RECORD=10)
+// ============================================================================
+
+pub fn export_round_rectangle(s: &mut dyn SchSerializer, rr: &RoundRectangleData) -> Result<()> {
+    export_graphical_object(s, &rr.graphical)?;
+    s.export_coord(rr.location_x, "Location.X")?;
+    s.export_coord(rr.location_y, "Location.Y")?;
+    s.export_coord(rr.corner_x, "Corner.X")?;
+    s.export_coord(rr.corner_y, "Corner.Y")?;
+    s.export_coord(rr.corner_x_radius, "CornerXRadius")?;
+    s.export_coord(rr.corner_y_radius, "CornerYRadius")?;
+    s.export_size(rr.line_width, "LineWidth")?;
+    s.export_color(rr.color, "Color")?;
+    s.export_color(rr.area_color, "AreaColor")?;
+    s.export_boolean(rr.is_solid, "IsSolid")?;
+    s.export_dynamic_string(&rr.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_round_rectangle(s: &mut dyn SchSerializer, rr: &mut RoundRectangleData) -> Result<()> {
+    import_graphical_object(s, &mut rr.graphical)?;
+    rr.location_x = s.import_coord("Location.X")?;
+    rr.location_y = s.import_coord("Location.Y")?;
+    rr.corner_x = s.import_coord("Corner.X")?;
+    rr.corner_y = s.import_coord("Corner.Y")?;
+    rr.corner_x_radius = s.import_coord("CornerXRadius")?;
+    rr.corner_y_radius = s.import_coord("CornerYRadius")?;
+    rr.line_width = s.import_size("LineWidth")?;
+    rr.color = s.import_color("Color")?;
+    rr.area_color = s.import_color("AreaColor")?;
+    rr.is_solid = s.import_boolean("IsSolid")?;
+    rr.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// CompileMask (RECORD=28)
+// ============================================================================
+
+pub fn export_compile_mask(s: &mut dyn SchSerializer, cm: &CompileMaskData) -> Result<()> {
+    export_graphical_object(s, &cm.graphical)?;
+    s.export_dynamic_string(&cm.unique_id, "UniqueID")?;
+    s.export_coord(cm.location_x, "Location.X")?;
+    s.export_coord(cm.location_y, "Location.Y")?;
+    s.export_coord(cm.corner_x, "Corner.X")?;
+    s.export_coord(cm.corner_y, "Corner.Y")?;
+    s.export_color(cm.color, "Color")?;
+    s.export_color(cm.area_color, "AreaColor")?;
+    s.export_boolean(cm.collapsed, "Collapsed")?;
+    s.export_size(cm.line_width, "LineWidth")?;
+    Ok(())
+}
+
+pub fn import_compile_mask(s: &mut dyn SchSerializer, cm: &mut CompileMaskData) -> Result<()> {
+    import_graphical_object(s, &mut cm.graphical)?;
+    cm.location_x = s.import_coord("Location.X")?;
+    cm.location_y = s.import_coord("Location.Y")?;
+    cm.corner_x = s.import_coord("Corner.X")?;
+    cm.corner_y = s.import_coord("Corner.Y")?;
+    cm.color = s.import_color("Color")?;
+    cm.area_color = s.import_color("AreaColor")?;
+    cm.collapsed = s.import_boolean("Collapsed")?;
+    cm.unique_id = s.import_dynamic_string("UniqueID")?;
+    cm.line_width = s.import_size("LineWidth")?;
+    Ok(())
+}
+
+// ============================================================================
+// Blanket (RECORD=29)
+// ============================================================================
+
+pub fn export_blanket(s: &mut dyn SchSerializer, b: &BlanketData) -> Result<()> {
+    export_graphical_object(s, &b.graphical)?;
+    s.export_coord(b.location_x, "Location.X")?;
+    s.export_coord(b.location_y, "Location.Y")?;
+    s.export_coord(b.corner_x, "Corner.X")?;
+    s.export_coord(b.corner_y, "Corner.Y")?;
+    s.export_size(b.line_width, "LineWidth")?;
+    s.export_color(b.color, "Color")?;
+    s.export_color(b.area_color, "AreaColor")?;
+    s.export_boolean(b.collapsed, "Collapsed")?;
+    // Export clamped line_style for backward compat, then extended via ASCII-only
+    let clamped = if (b.line_style as u8) > (LineStyle::DashDotted as u8) {
+        LineStyle::Solid
+    } else {
+        b.line_style
+    };
+    s.export_line_style(clamped, "LineStyle")?;
+    export_vertices(s, &b.vertices)?;
+    // LineStyleExt — ASCII-only byte for extended line styles
+    s.export_ascii_only_byte(b.line_style as u8, "LineStyleExt")?;
+    s.export_dynamic_string(&b.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_blanket(s: &mut dyn SchSerializer, b: &mut BlanketData) -> Result<()> {
+    import_graphical_object(s, &mut b.graphical)?;
+    b.location_x = s.import_coord("Location.X")?;
+    b.location_y = s.import_coord("Location.Y")?;
+    b.corner_x = s.import_coord("Corner.X")?;
+    b.corner_y = s.import_coord("Corner.Y")?;
+    b.line_width = s.import_size("LineWidth")?;
+    b.color = s.import_color("Color")?;
+    b.area_color = s.import_color("AreaColor")?;
+    b.collapsed = s.import_boolean("Collapsed")?;
+    b.line_style = s.import_line_style("LineStyle")?;
+    b.unique_id = s.import_dynamic_string("UniqueID")?;
+    b.vertices = import_vertices(s)?;
+    // LineStyleExt overrides if present and larger
+    let ext = s.import_ascii_only_byte("LineStyleExt")?;
+    if ext > b.line_style as u8 {
+        b.line_style = LineStyle::from_u8(ext).unwrap_or(b.line_style);
+    }
+    Ok(())
+}
+
+// ============================================================================
+// SignalHarness (RECORD=33)
+// ============================================================================
+
+pub fn export_signal_harness(s: &mut dyn SchSerializer, sh: &SignalHarnessData) -> Result<()> {
+    export_graphical_object(s, &sh.graphical)?;
+    s.export_size(sh.line_width, "LineWidth")?;
+    s.export_color(sh.color, "Color")?;
+    s.export_color(sh.underline_color, "UnderlineColor")?;
+    export_vertices(s, &sh.vertices)?;
+    s.export_dynamic_string(&sh.unique_id, "UniqueID")?;
+    s.export_dynamic_string(&sh.assigned_interface, "AssignedInterface")?;
+    s.export_dynamic_string(&sh.assigned_interface_signal, "AssignedInterfaceSignal")?;
+    Ok(())
+}
+
+pub fn import_signal_harness(s: &mut dyn SchSerializer, sh: &mut SignalHarnessData) -> Result<()> {
+    import_graphical_object(s, &mut sh.graphical)?;
+    sh.line_width = s.import_size("LineWidth")?;
+    sh.color = s.import_color("Color")?;
+    sh.underline_color = s.import_color("UnderlineColor")?;
+    sh.vertices = import_vertices(s)?;
+    sh.unique_id = s.import_dynamic_string("UniqueID")?;
+    sh.assigned_interface = s.import_dynamic_string("AssignedInterface")?;
+    sh.assigned_interface_signal = s.import_dynamic_string("AssignedInterfaceSignal")?;
+    Ok(())
+}
+
+// ============================================================================
+// Symbol (RECORD=34)
+// ============================================================================
+
+pub fn export_symbol(s: &mut dyn SchSerializer, sym: &SymbolData) -> Result<()> {
+    export_graphical_object(s, &sym.graphical)?;
+    s.export_ieee_symbol(sym.symbol, "Symbol")?;
+    s.export_coord(sym.location_x, "Location.X")?;
+    s.export_coord(sym.location_y, "Location.Y")?;
+    s.export_coord(sym.scale_factor, "ScaleFactor")?;
+    s.export_rotation_by90(sym.orientation, "Orientation")?;
+    s.export_size(sym.line_width, "LineWidth")?;
+    s.export_color(sym.color, "Color")?;
+    s.export_boolean(sym.is_mirrored, "Mirror")?;
+    Ok(())
+}
+
+pub fn import_symbol(s: &mut dyn SchSerializer, sym: &mut SymbolData) -> Result<()> {
+    import_graphical_object(s, &mut sym.graphical)?;
+    sym.symbol = s.import_ieee_symbol("Symbol")?;
+    sym.location_x = s.import_coord("Location.X")?;
+    sym.location_y = s.import_coord("Location.Y")?;
+    sym.scale_factor = s.import_coord("ScaleFactor")?;
+    sym.orientation = s.import_rotation_by90("Orientation")?;
+    sym.line_width = s.import_size("LineWidth")?;
+    sym.color = s.import_color("Color")?;
+    sym.is_mirrored = s.import_boolean("Mirror")?;
+    Ok(())
+}
+
+// ============================================================================
+// Implementation (RECORD=46)
+// ============================================================================
+
+pub fn export_implementation(s: &mut dyn SchSerializer, imp: &ImplementationData) -> Result<()> {
+    export_data_object(s, &imp.base)?;
+    s.export_dynamic_string(&imp.description, "Description")?;
+    s.export_boolean(imp.use_component_library, "UseComponentLibrary")?;
+    s.export_string(&imp.model_name, "ModelName")?;
+    s.export_string(&imp.model_type, "ModelType")?;
+    s.export_short_int(imp.datafile_links.len() as i32, "DatafileCount")?;
+    s.export_dynamic_string(&imp.model_vault_guid, "ModelVaultGUID")?;
+    s.export_dynamic_string(&imp.model_item_guid, "ModelItemGUID")?;
+    s.export_dynamic_string(&imp.model_revision_guid, "ModelRevisionGUID")?;
+    for (i, (location, entity, kind)) in imp.datafile_links.iter().enumerate() {
+        let idx = i.to_string();
+        s.export_dynamic_string(location, &format!("ModelDatafile{}", idx))?;
+        s.export_dynamic_string(entity, &format!("ModelDatafileEntity{}", idx))?;
+        s.export_dynamic_string(kind, &format!("ModelDatafileKind{}", idx))?;
+    }
+    s.export_boolean(imp.is_current, "IsCurrent")?;
+    s.export_boolean(imp.use_component_library, "DatalinksLocked")?;
+    s.export_boolean(imp.use_component_library, "DatabaseDatalinksLocked")?;
+    s.export_boolean(imp.integrated_model, "IntegratedModel")?;
+    s.export_boolean(imp.database_model, "DatabaseModel")?;
+    s.export_dynamic_string(&imp.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_implementation(s: &mut dyn SchSerializer, imp: &mut ImplementationData) -> Result<()> {
+    import_data_object(s, &mut imp.base)?;
+    imp.description = s.import_dynamic_string("Description")?;
+    let use_comp_lib = s.import_boolean("UseComponentLibrary")?;
+    imp.model_name = s.import_string("ModelName")?;
+    imp.model_type = s.import_string("ModelType")?;
+    imp.is_current = s.import_boolean("IsCurrent")?;
+    let datalinks_locked = s.import_boolean("DatalinksLocked")?;
+    let db_datalinks_locked = s.import_boolean("DatabaseDatalinksLocked")?;
+    imp.use_component_library = use_comp_lib || datalinks_locked || db_datalinks_locked;
+    imp.integrated_model = s.import_boolean("IntegratedModel")?;
+    imp.database_model = s.import_boolean("DatabaseModel")?;
+    imp.model_vault_guid = s.import_dynamic_string("ModelVaultGUID")?;
+    imp.model_item_guid = s.import_dynamic_string("ModelItemGUID")?;
+    imp.model_revision_guid = s.import_dynamic_string("ModelRevisionGUID")?;
+    imp.unique_id = s.import_dynamic_string("UniqueID")?;
+    let count = s.import_short_int("DatafileCount")?;
+    imp.datafile_links.clear();
+    for i in 0..count {
+        let idx = i.to_string();
+        let location = s.import_dynamic_string(&format!("ModelDatafile{}", idx))?;
+        let entity = s.import_dynamic_string(&format!("ModelDatafileEntity{}", idx))?;
+        let kind = s.import_dynamic_string(&format!("ModelDatafileKind{}", idx))?;
+        imp.datafile_links.push((location, entity, kind));
+    }
+    Ok(())
+}
+
+// ============================================================================
+// ImplementationList (RECORD=47) — just graphical object wrapper
+// ============================================================================
+
+pub fn export_implementation_list(s: &mut dyn SchSerializer, il: &ImplementationListData) -> Result<()> {
+    export_graphical_object(s, &il.graphical)
+}
+
+pub fn import_implementation_list(s: &mut dyn SchSerializer, il: &mut ImplementationListData) -> Result<()> {
+    import_graphical_object(s, &mut il.graphical)
+}
+
+// ============================================================================
+// ParameterList (RECORD=29) — just graphical object wrapper
+// ============================================================================
+
+pub fn export_parameter_list(s: &mut dyn SchSerializer, pl: &ParameterListData) -> Result<()> {
+    export_graphical_object(s, &pl.graphical)
+}
+
+pub fn import_parameter_list(s: &mut dyn SchSerializer, pl: &mut ParameterListData) -> Result<()> {
+    import_graphical_object(s, &mut pl.graphical)
+}
+
+// ============================================================================
+// ParameterSet (RECORD=28)
+// ============================================================================
+
+pub fn export_parameter_set(s: &mut dyn SchSerializer, ps: &ParameterSetData) -> Result<()> {
+    export_graphical_object(s, &ps.graphical)?;
+    s.export_coord(ps.location_x, "Location.X")?;
+    s.export_coord(ps.location_y, "Location.Y")?;
+    s.export_color(ps.color, "Color")?;
+    s.export_rotation_by90(ps.orientation, "Orientation")?;
+    s.export_dynamic_string(&ps.name, "Name")?;
+    s.export_parameter_set_style(ps.style, "Style")?;
+    s.export_dynamic_string(&ps.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_parameter_set(s: &mut dyn SchSerializer, ps: &mut ParameterSetData) -> Result<()> {
+    import_graphical_object(s, &mut ps.graphical)?;
+    ps.location_x = s.import_coord("Location.X")?;
+    ps.location_y = s.import_coord("Location.Y")?;
+    ps.color = s.import_color("Color")?;
+    ps.orientation = s.import_rotation_by90("Orientation")?;
+    ps.name = s.import_dynamic_string("Name")?;
+    ps.style = s.import_parameter_set_style("Style")?;
+    ps.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// MapDefiner (RECORD=44)
+// ============================================================================
+
+pub fn export_map_definer(s: &mut dyn SchSerializer, md: &MapDefinerData) -> Result<()> {
+    export_data_object(s, &md.base)?;
+    s.export_string(&md.designator_interface, "DesIntf")?;
+    s.export_long_int(md.implementation_designators.len() as i32, "DesImpCount")?;
+    for (i, des) in md.implementation_designators.iter().enumerate() {
+        s.export_string(des, &format!("DesImp{}", i))?;
+    }
+    Ok(())
+}
+
+pub fn import_map_definer(s: &mut dyn SchSerializer, md: &mut MapDefinerData) -> Result<()> {
+    import_data_object(s, &mut md.base)?;
+    md.designator_interface = s.import_dynamic_string("DesIntf")?;
+    let count = s.import_long_int("DesImpCount")?;
+    md.implementation_designators.clear();
+    for i in 0..count {
+        let des = s.import_string(&format!("DesImp{}", i))?;
+        md.implementation_designators.push(des);
+    }
+    Ok(())
+}
+
+// ============================================================================
+// ImplementationMap (RECORD=45) — just data object wrapper
+// ============================================================================
+
+pub fn export_implementation_map(s: &mut dyn SchSerializer, im: &ImplementationMapData) -> Result<()> {
+    export_data_object(s, &im.base)
+}
+
+pub fn import_implementation_map(s: &mut dyn SchSerializer, im: &mut ImplementationMapData) -> Result<()> {
+    import_data_object(s, &mut im.base)
+}
+
+// ============================================================================
+// Template (RECORD=42)
+// ============================================================================
+
+pub fn export_template(s: &mut dyn SchSerializer, t: &TemplateData) -> Result<()> {
+    export_graphical_object(s, &t.graphical)?;
+    s.export_string(&t.file_name, "FileName")?;
+    Ok(())
+}
+
+pub fn import_template(s: &mut dyn SchSerializer, t: &mut TemplateData) -> Result<()> {
+    import_graphical_object(s, &mut t.graphical)?;
+    t.file_name = s.import_string("FileName")?;
+    Ok(())
+}
+
+// ============================================================================
+// HarnessConnectorType (RECORD=55)
+// ============================================================================
+
+pub fn export_harness_connector_type(s: &mut dyn SchSerializer, h: &HarnessConnectorTypeData) -> Result<()> {
+    export_graphical_object(s, &h.graphical)?;
+    s.export_coord(h.location_x, "Location.X")?;
+    s.export_coord(h.location_y, "Location.Y")?;
+    s.export_rotation_by90(h.orientation, "Orientation")?;
+    s.export_text_justification(h.justification, "Justification")?;
+    s.export_color(h.color, "Color")?;
+    s.export_font_id(h.font_id, "FontID")?;
+    s.export_boolean(h.is_hidden, "IsHidden")?;
+    s.export_dynamic_string(&h.text, "Text")?;
+    s.export_boolean(h.is_mirrored, "IsMirrored")?;
+    s.export_boolean(!h.auto_position, "NotAutoPosition")?;
+    s.export_text_horizontal_anchor(h.text_horz_anchor, "TextHorzAnchor")?;
+    s.export_text_vertical_anchor(h.text_vert_anchor, "TextVertAnchor")?;
+    s.export_dynamic_string(&h.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_harness_connector_type(s: &mut dyn SchSerializer, h: &mut HarnessConnectorTypeData) -> Result<()> {
+    import_graphical_object(s, &mut h.graphical)?;
+    h.location_x = s.import_coord("Location.X")?;
+    h.location_y = s.import_coord("Location.Y")?;
+    h.orientation = s.import_rotation_by90("Orientation")?;
+    h.justification = s.import_text_justification("Justification")?;
+    h.color = s.import_color("Color")?;
+    h.font_id = s.import_font_id("FontID")?;
+    h.is_hidden = s.import_boolean("IsHidden")?;
+    h.text = s.import_dynamic_string("Text")?;
+    h.is_mirrored = s.import_boolean("IsMirrored")?;
+    let not_auto = s.import_boolean("NotAutoPosition")?;
+    h.auto_position = !not_auto;
+    h.text_horz_anchor = s.import_text_horizontal_anchor("TextHorzAnchor")?;
+    h.text_vert_anchor = s.import_text_vertical_anchor("TextVertAnchor")?;
+    h.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// SheetName (RECORD=30)
+// ============================================================================
+
+pub fn export_sheet_name(s: &mut dyn SchSerializer, sn: &SheetNameData) -> Result<()> {
+    export_graphical_object(s, &sn.graphical)?;
+    s.export_coord(sn.location_x, "Location.X")?;
+    s.export_coord(sn.location_y, "Location.Y")?;
+    s.export_rotation_by90(sn.orientation, "Orientation")?;
+    s.export_text_justification(sn.justification, "Justification")?;
+    s.export_color(sn.color, "Color")?;
+    s.export_font_id(sn.font_id, "FontID")?;
+    s.export_boolean(sn.is_hidden, "IsHidden")?;
+    s.export_dynamic_string(&sn.text, "Text")?;
+    s.export_boolean(sn.is_mirrored, "IsMirrored")?;
+    s.export_boolean(!sn.auto_position, "NotAutoPosition")?;
+    s.export_text_horizontal_anchor(sn.text_horz_anchor, "TextHorzAnchor")?;
+    s.export_text_vertical_anchor(sn.text_vert_anchor, "TextVertAnchor")?;
+    s.export_dynamic_string(&sn.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_sheet_name(s: &mut dyn SchSerializer, sn: &mut SheetNameData) -> Result<()> {
+    import_graphical_object(s, &mut sn.graphical)?;
+    sn.location_x = s.import_coord("Location.X")?;
+    sn.location_y = s.import_coord("Location.Y")?;
+    sn.orientation = s.import_rotation_by90("Orientation")?;
+    sn.justification = s.import_text_justification("Justification")?;
+    sn.color = s.import_color("Color")?;
+    sn.font_id = s.import_font_id("FontID")?;
+    sn.is_hidden = s.import_boolean("IsHidden")?;
+    sn.text = s.import_dynamic_string("Text")?;
+    sn.is_mirrored = s.import_boolean("IsMirrored")?;
+    let not_auto = s.import_boolean("NotAutoPosition")?;
+    sn.auto_position = !not_auto;
+    sn.text_horz_anchor = s.import_text_horizontal_anchor("TextHorzAnchor")?;
+    sn.text_vert_anchor = s.import_text_vertical_anchor("TextVertAnchor")?;
+    sn.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
+// SheetFileName (RECORD=31)
+// ============================================================================
+
+pub fn export_sheet_file_name(s: &mut dyn SchSerializer, sf: &SheetFileNameData) -> Result<()> {
+    export_graphical_object(s, &sf.graphical)?;
+    s.export_coord(sf.location_x, "Location.X")?;
+    s.export_coord(sf.location_y, "Location.Y")?;
+    s.export_rotation_by90(sf.orientation, "Orientation")?;
+    s.export_text_justification(sf.justification, "Justification")?;
+    s.export_color(sf.color, "Color")?;
+    s.export_font_id(sf.font_id, "FontID")?;
+    s.export_boolean(sf.is_hidden, "IsHidden")?;
+    s.export_dynamic_string(&sf.text, "Text")?;
+    s.export_boolean(sf.is_mirrored, "IsMirrored")?;
+    s.export_boolean(!sf.auto_position, "NotAutoPosition")?;
+    s.export_text_horizontal_anchor(sf.text_horz_anchor, "TextHorzAnchor")?;
+    s.export_text_vertical_anchor(sf.text_vert_anchor, "TextVertAnchor")?;
+    s.export_dynamic_string(&sf.unique_id, "UniqueID")?;
+    Ok(())
+}
+
+pub fn import_sheet_file_name(s: &mut dyn SchSerializer, sf: &mut SheetFileNameData) -> Result<()> {
+    import_graphical_object(s, &mut sf.graphical)?;
+    sf.location_x = s.import_coord("Location.X")?;
+    sf.location_y = s.import_coord("Location.Y")?;
+    sf.orientation = s.import_rotation_by90("Orientation")?;
+    sf.justification = s.import_text_justification("Justification")?;
+    sf.color = s.import_color("Color")?;
+    sf.font_id = s.import_font_id("FontID")?;
+    sf.is_hidden = s.import_boolean("IsHidden")?;
+    sf.text = s.import_dynamic_string("Text")?;
+    sf.is_mirrored = s.import_boolean("IsMirrored")?;
+    let not_auto = s.import_boolean("NotAutoPosition")?;
+    sf.auto_position = !not_auto;
+    sf.text_horz_anchor = s.import_text_horizontal_anchor("TextHorzAnchor")?;
+    sf.text_vert_anchor = s.import_text_vertical_anchor("TextVertAnchor")?;
+    sf.unique_id = s.import_dynamic_string("UniqueID")?;
+    Ok(())
+}
+
+// ============================================================================
 // Vertex helpers
 // ============================================================================
 
@@ -1136,5 +1957,133 @@ mod tests {
         assert!(p2.allow_library_synchronize);
         assert!(!p2.allow_database_synchronize);
         assert!(p2.auto_position);
+    }
+
+    #[test]
+    fn note_round_trip_ascii() {
+        let mut n = NoteData::default();
+        n.location_x = 100_000;
+        n.location_y = 200_000;
+        n.corner_x = 500_000;
+        n.corner_y = 400_000;
+        n.text = "Hello World".to_string();
+        n.author = "Test".to_string();
+        n.font_id = 2;
+        n.is_solid = true;
+        n.word_wrap = true;
+
+        let mut w = AsciiSerializer::new_writer();
+        export_note(&mut w, &n).unwrap();
+        let params = w.to_param_string();
+
+        let mut r = AsciiSerializer::from_params(&params);
+        let mut n2 = NoteData::default();
+        import_note(&mut r, &mut n2).unwrap();
+
+        assert_eq!(n2.location_x, 100_000);
+        assert_eq!(n2.corner_x, 500_000);
+        assert_eq!(n2.text, "Hello World");
+        assert_eq!(n2.author, "Test");
+        assert_eq!(n2.font_id, 2);
+        assert!(n2.is_solid);
+        assert!(n2.word_wrap);
+    }
+
+    #[test]
+    fn sheet_symbol_round_trip_ascii() {
+        let mut ss = SheetSymbolData::default();
+        ss.container.location_x = 100_000;
+        ss.container.location_y = 200_000;
+        ss.container.x_size = 300_000;
+        ss.container.y_size = 400_000;
+        ss.is_solid = true;
+        ss.unique_id = "ABC".to_string();
+        ss.design_item_id = "Test.SchDoc".to_string();
+
+        let mut w = AsciiSerializer::new_writer();
+        export_sheet_symbol(&mut w, &ss).unwrap();
+        let params = w.to_param_string();
+
+        let mut r = AsciiSerializer::from_params(&params);
+        let mut ss2 = SheetSymbolData::default();
+        import_sheet_symbol(&mut r, &mut ss2).unwrap();
+
+        assert_eq!(ss2.container.location_x, 100_000);
+        assert_eq!(ss2.container.x_size, 300_000);
+        assert!(ss2.is_solid);
+        assert_eq!(ss2.unique_id, "ABC");
+        assert_eq!(ss2.design_item_id, "Test.SchDoc");
+    }
+
+    #[test]
+    fn implementation_round_trip_ascii() {
+        let mut imp = ImplementationData::default();
+        imp.description = "Footprint".to_string();
+        imp.model_name = "SOIC8".to_string();
+        imp.model_type = "PCBLIB".to_string();
+        imp.is_current = true;
+        imp.use_component_library = true;
+        imp.datafile_links.push(("lib.PcbLib".to_string(), "SOIC8".to_string(), "PCBLib".to_string()));
+
+        let mut w = AsciiSerializer::new_writer();
+        export_implementation(&mut w, &imp).unwrap();
+        let params = w.to_param_string();
+
+        let mut r = AsciiSerializer::from_params(&params);
+        let mut imp2 = ImplementationData::default();
+        import_implementation(&mut r, &mut imp2).unwrap();
+
+        assert_eq!(imp2.description, "Footprint");
+        assert_eq!(imp2.model_name, "SOIC8");
+        assert_eq!(imp2.model_type, "PCBLIB");
+        assert!(imp2.is_current);
+        assert!(imp2.use_component_library);
+        assert_eq!(imp2.datafile_links.len(), 1);
+        assert_eq!(imp2.datafile_links[0].0, "lib.PcbLib");
+    }
+
+    #[test]
+    fn sheet_name_inverted_auto_position() {
+        let mut sn = SheetNameData::default();
+        sn.auto_position = true;
+        sn.text = "Sheet1".to_string();
+
+        let mut w = AsciiSerializer::new_writer();
+        export_sheet_name(&mut w, &sn).unwrap();
+        let params = w.to_param_string();
+
+        // auto_position=true means NotAutoPosition=F (which is omitted by ASCII)
+        assert!(!params.contains("NotAutoPosition=T"));
+
+        let mut r = AsciiSerializer::from_params(&params);
+        let mut sn2 = SheetNameData::default();
+        import_sheet_name(&mut r, &mut sn2).unwrap();
+
+        assert!(sn2.auto_position);
+        assert_eq!(sn2.text, "Sheet1");
+    }
+
+    #[test]
+    fn blanket_round_trip_with_vertices() {
+        let mut b = BlanketData::default();
+        b.location_x = 100_000;
+        b.location_y = 200_000;
+        b.corner_x = 500_000;
+        b.corner_y = 400_000;
+        b.collapsed = true;
+        b.vertices = vec![(100_000, 200_000), (300_000, 400_000), (500_000, 200_000)];
+
+        let mut w = AsciiSerializer::new_writer();
+        export_blanket(&mut w, &b).unwrap();
+        let params = w.to_param_string();
+
+        let mut r = AsciiSerializer::from_params(&params);
+        let mut b2 = BlanketData::default();
+        import_blanket(&mut r, &mut b2).unwrap();
+
+        assert_eq!(b2.location_x, 100_000);
+        assert!(b2.collapsed);
+        assert_eq!(b2.vertices.len(), 3);
+        assert_eq!(b2.vertices[1], (300_000, 400_000));
     }
 }

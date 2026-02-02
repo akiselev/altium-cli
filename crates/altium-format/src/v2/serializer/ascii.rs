@@ -495,6 +495,15 @@ impl SchSerializer for AsciiSerializer {
         Ok(ParameterReadOnlyState::from_u8(v).unwrap_or_default())
     }
 
+    fn export_parameter_set_style(&mut self, value: ParameterSetStyle, name: &str) -> Result<()> {
+        self.export_byte(value as u8, name)
+    }
+
+    fn import_parameter_set_style(&mut self, name: &str) -> Result<ParameterSetStyle> {
+        let v = self.import_byte(name)?;
+        Ok(ParameterSetStyle::from_u8(v).unwrap_or_default())
+    }
+
     fn export_boolean_with_default(&mut self, value: bool, name: &str) -> Result<()> {
         // With-default always writes, even if false
         self.params.insert(name.to_string(), if value { "T".to_string() } else { "F".to_string() });
