@@ -27,6 +27,7 @@
 //! 3. Child records (pins, parameters, etc.)
 //! 4. `RECORD(0)` end marker
 
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write, Cursor, Seek};
 
 use crate::error::{AltiumError, Result};
@@ -36,27 +37,32 @@ use crate::v2::serializer::SchSerializer;
 use crate::v2::serializer::ascii::AsciiSerializer;
 
 /// A parsed SchLib library.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SchLibV2 {
     /// Library header info.
     pub header: SchLibHeader,
     /// Components in the library.
     pub components: Vec<SchLibComponent>,
-    /// Section key mappings.
+    /// Section key mappings (rebuilt on write, not needed for JSON).
+    #[serde(skip)]
     pub section_keys: SectionKeyList,
 }
 
 /// SchLib file header.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SchLibHeader {
     pub header_text: String,
     pub weight: i32,
     pub minor_version: i32,
     pub unique_id: String,
+    /// Raw FileHeader bytes for lossless roundtrip.
+    /// When present, `write()` uses these directly instead of rebuilding.
+    #[serde(skip)]
+    pub raw: Option<Vec<u8>>,
 }
 
 /// A component entry from the FileHeader.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SchLibComponentEntry {
     pub lib_ref: String,
     pub description: String,
@@ -65,7 +71,7 @@ pub struct SchLibComponentEntry {
 }
 
 /// A complete component with its records.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SchLibComponent {
     /// Component entry from FileHeader.
     pub entry: SchLibComponentEntry,
@@ -75,14 +81,17 @@ pub struct SchLibComponent {
 }
 
 /// A single record within a component.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SchLibRecord {
     /// Object ID / record type.
     pub record_id: u8,
     /// Extended record ID (when record_id == 254).
     pub record_id_ex: Option<i32>,
-    /// Raw parameter string for this record.
+    /// Decoded parameter string (lossy for binary records).
     pub params: String,
+    /// Raw record bytes for lossless roundtrip.
+    #[serde(skip)]
+    pub raw: Vec<u8>,
 }
 
 impl SchLibV2 {
@@ -101,7 +110,8 @@ impl SchLibV2 {
 
         // 3. Read Data streams for each component
         for i in 0..lib.components.len() {
-            let section_key = lib.section_keys.get_key(&lib.components[i].entry.lib_ref).to_string();
+            let safe_name = sanitize_cfb_name(&lib.components[i].entry.lib_ref);
+            let section_key = lib.section_keys.get_key(&safe_name).to_string();
             let data_path = format!("/{}/{}", section_key, consts::STREAM_DATA);
 
             if let Ok(mut stream) = cfb.open_stream(&data_path) {
@@ -120,29 +130,38 @@ impl SchLibV2 {
         let mut cfb = cfb::CompoundFile::create(writer)
             .map_err(|e| AltiumError::Parse(format!("Failed to create CFB: {}", e)))?;
 
-        // 1. Build section keys
+        // 1. Build section keys (using sanitized names for CFB paths)
         let mut section_keys = SectionKeyList::new();
         for comp in &self.components {
-            section_keys.add_key(&comp.entry.lib_ref, 30);
+            let safe = sanitize_cfb_name(&comp.entry.lib_ref);
+            section_keys.add_key(&safe, 30);
             for alias in &comp.entry.aliases {
-                section_keys.add_key(alias, 30);
+                let safe_alias = sanitize_cfb_name(alias);
+                section_keys.add_key(&safe_alias, 30);
             }
         }
 
-        // 2. Write FileHeader
-        write_file_header(&mut cfb, &self.header, &self.components)?;
+        // 2. Write FileHeader (use raw bytes for lossless roundtrip if available)
+        if let Some(raw) = &self.header.raw {
+            let mut stream = cfb.create_stream("/FileHeader")
+                .map_err(|e| AltiumError::Parse(format!("Failed to create FileHeader: {}", e)))?;
+            stream.write_all(raw).map_err(AltiumError::Io)?;
+        } else {
+            write_file_header(&mut cfb, &self.header, &self.components)?;
+        }
 
         // 3. Write SectionKeys
         write_section_keys(&mut cfb, &section_keys)?;
 
         // 4. Write Data stream for each component
         for comp in &self.components {
-            let section_key = section_keys.get_key(&comp.entry.lib_ref).to_string();
+            let safe_name = sanitize_cfb_name(&comp.entry.lib_ref);
+            let section_key = section_keys.get_key(&safe_name).to_string();
 
             // Create storage for this component
             let storage_path = format!("/{}", section_key);
             cfb.create_storage(&storage_path)
-                .map_err(|e| AltiumError::Parse(format!("Failed to create storage: {}", e)))?;
+                .map_err(|e| AltiumError::Parse(format!("Failed to create storage '{}': {}", storage_path, e)))?;
 
             // Write Data stream
             let data_path = format!("/{}/{}", section_key, consts::STREAM_DATA);
@@ -153,7 +172,8 @@ impl SchLibV2 {
 
             // Write alias redirections
             for alias in &comp.entry.aliases {
-                let alias_key = section_keys.get_key(alias).to_string();
+                let safe_alias = sanitize_cfb_name(alias);
+                let alias_key = section_keys.get_key(&safe_alias).to_string();
                 let alias_storage = format!("/{}", alias_key);
                 cfb.create_storage(&alias_storage)
                     .map_err(|e| AltiumError::Parse(format!("Failed to create alias storage: {}", e)))?;
@@ -186,6 +206,16 @@ impl SchLibV2 {
 }
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/// Sanitize a component name for use as a CFB storage name.
+/// Altium replaces `/` with `_` since `/` is a path separator in CFB.
+fn sanitize_cfb_name(name: &str) -> String {
+    name.replace('/', "_")
+}
+
+// ============================================================================
 // FileHeader read/write
 // ============================================================================
 
@@ -207,6 +237,7 @@ fn read_file_header<F: Read + Seek>(
         weight: ser.import_long_int("Weight")?,
         minor_version: ser.import_long_int("MinorVersion")?,
         unique_id: ser.import_string("UniqueID")?,
+        raw: Some(data.clone()),
     };
 
     let comp_count = ser.import_long_int("CompCount")?;
@@ -324,65 +355,111 @@ fn write_section_keys<F: Read + Write + Seek>(
 // Data stream parse/build
 // ============================================================================
 
+/// Size flag mask: low 24 bits are the actual length, high byte is flags.
+/// Bit 24 (0x01000000) set = binary mode record.
+const SIZE_FLAG_MASK: u32 = 0x00FFFFFF;
+
 /// Parse a Data stream into individual records.
 ///
-/// The Data stream format:
-/// - Length-prefixed records: each record is `[u32 length][param_bytes]`
-/// - The param bytes are pipe-delimited `|RECORD=N|...|` strings
+/// Each record is framed as `[u32 size_with_flags][data]`.
+/// - If bit 24 of the size is clear: text mode (ASCII `|KEY=VALUE|` params)
+/// - If bit 24 of the size is set: binary mode (sequential typed fields)
+///
+/// The actual data length is `size & 0x00FFFFFF`.
 fn parse_data_stream(data: &[u8]) -> Result<Vec<SchLibRecord>> {
     let mut records = Vec::new();
     let mut cursor = Cursor::new(data);
-    let len = data.len() as u64;
+    let total_len = data.len() as u64;
 
-    while cursor.position() < len {
-        // Read record length (4 bytes LE)
+    while cursor.position() < total_len {
+        // Read the u32 size field (includes mode flag in high byte)
         let mut len_buf = [0u8; 4];
         if cursor.read_exact(&mut len_buf).is_err() {
             break;
         }
-        let record_len = u32::from_le_bytes(len_buf) as usize;
+        let size_raw = u32::from_le_bytes(len_buf);
+        let is_binary = (size_raw & !SIZE_FLAG_MASK) != 0;
+        let record_len = (size_raw & SIZE_FLAG_MASK) as usize;
 
         if record_len == 0 {
             continue;
         }
 
-        // Read record data
+        if cursor.position() as usize + record_len > data.len() {
+            break;
+        }
+
         let mut record_data = vec![0u8; record_len];
         if cursor.read_exact(&mut record_data).is_err() {
             break;
         }
 
-        // Parse as ASCII params
-        let param_str = String::from_utf8_lossy(&record_data).to_string();
-        let mut ser = AsciiSerializer::from_params(&param_str);
+        if is_binary {
+            // Binary record — store with original size field for lossless roundtrip
+            let mut full_raw = Vec::with_capacity(4 + record_len);
+            full_raw.extend_from_slice(&len_buf);
+            full_raw.extend_from_slice(&record_data);
 
-        // Extract record ID
-        let record_id = ser.import_instruction("RECORD").unwrap_or(0);
-        let record_id_ex = if record_id == 254 {
-            Some(ser.import_instruction_ex("RECORDEX").unwrap_or(0))
+            // First 4 bytes of data are typically the record type as i32
+            let record_type = if record_data.len() >= 4 {
+                u32::from_le_bytes([record_data[0], record_data[1], record_data[2], record_data[3]]) as u8
+            } else {
+                0
+            };
+
+            records.push(SchLibRecord {
+                record_id: record_type,
+                record_id_ex: None,
+                params: String::new(),
+                raw: full_raw,
+            });
         } else {
-            None
-        };
+            // Text record — parse as ASCII params
+            let param_str = String::from_utf8_lossy(&record_data).to_string();
+            let mut ser = AsciiSerializer::from_params(&param_str);
 
-        records.push(SchLibRecord {
-            record_id,
-            record_id_ex,
-            params: param_str,
-        });
+            let record_id = ser.import_instruction("RECORD").unwrap_or(0);
+            let record_id_ex = if record_id == 254 {
+                Some(ser.import_instruction_ex("RECORDEX").unwrap_or(0))
+            } else {
+                None
+            };
+
+            records.push(SchLibRecord {
+                record_id,
+                record_id_ex,
+                params: param_str,
+                raw: record_data,
+            });
+        }
     }
 
     Ok(records)
 }
 
 /// Build a Data stream from records.
+///
+/// Binary records: raw contains `[u32 size_with_flag][data]` — written verbatim.
+/// Text records: raw contains just `[data]` — prepend `[u32 size]` before writing.
 fn build_data_stream(records: &[SchLibRecord]) -> Result<Vec<u8>> {
     let mut output = Vec::new();
 
     for record in records {
-        let param_bytes = record.params.as_bytes();
-        let len = param_bytes.len() as u32;
-        output.extend_from_slice(&len.to_le_bytes());
-        output.extend_from_slice(param_bytes);
+        if record.params.is_empty() && !record.raw.is_empty() {
+            // Binary record — raw includes the size+flag header
+            output.extend_from_slice(&record.raw);
+        } else if !record.raw.is_empty() {
+            // Text record with raw bytes — prepend u32 size (no flag bit)
+            let len = record.raw.len() as u32;
+            output.extend_from_slice(&len.to_le_bytes());
+            output.extend_from_slice(&record.raw);
+        } else {
+            // Text record without raw — fall back to params string
+            let bytes = record.params.as_bytes();
+            let len = bytes.len() as u32;
+            output.extend_from_slice(&len.to_le_bytes());
+            output.extend_from_slice(bytes);
+        }
     }
 
     Ok(output)
@@ -419,11 +496,13 @@ mod tests {
                 record_id: 1,
                 record_id_ex: None,
                 params: "|RECORD=1|LibReference=LM358|PartCount=2|".to_string(),
+                raw: Vec::new(),
             },
             SchLibRecord {
                 record_id: 2,
                 record_id_ex: None,
                 params: "|RECORD=2|OwnerIndex=0|Name=VCC|".to_string(),
+                raw: Vec::new(),
             },
         ];
 
@@ -452,6 +531,7 @@ mod tests {
             record_id: 2,
             record_id_ex: None,
             params: "|RECORD=2|".to_string(),
+            raw: Vec::new(),
         };
         assert_eq!(rec.effective_record_id(), 2);
 
@@ -460,6 +540,7 @@ mod tests {
             record_id: 254,
             record_id_ex: Some(300),
             params: "|RECORD=254|RECORDEX=300|".to_string(),
+            raw: Vec::new(),
         };
         assert_eq!(rec_ex.effective_record_id(), 300);
     }
@@ -473,6 +554,7 @@ mod tests {
             weight: 3,
             minor_version: 9,
             unique_id: "TEST123".to_string(),
+            raw: None,
         };
 
         lib.components.push(SchLibComponent {
@@ -487,11 +569,13 @@ mod tests {
                     record_id: 1,
                     record_id_ex: None,
                     params: "|RECORD=1|LibReference=R1|PartCount=1|".to_string(),
+                    raw: Vec::new(),
                 },
                 SchLibRecord {
                     record_id: 2,
                     record_id_ex: None,
                     params: "|RECORD=2|OwnerIndex=0|Name=1|Designator=1|".to_string(),
+                    raw: Vec::new(),
                 },
             ],
         });

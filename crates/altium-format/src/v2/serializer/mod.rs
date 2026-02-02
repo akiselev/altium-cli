@@ -42,6 +42,8 @@ pub trait SchSerializer {
     fn import_short_int(&mut self, name: &str) -> Result<i32>;
     fn export_long_int(&mut self, value: i32, name: &str) -> Result<()>;
     fn import_long_int(&mut self, name: &str) -> Result<i32>;
+    fn export_long(&mut self, value: i64, name: &str) -> Result<()>;
+    fn import_long(&mut self, name: &str) -> Result<i64>;
 
     // --- Coord ---
     fn export_coord(&mut self, value: i32, name: &str) -> Result<()>;

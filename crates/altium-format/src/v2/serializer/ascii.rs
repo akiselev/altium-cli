@@ -35,14 +35,15 @@ impl AsciiSerializer {
     /// Creates a reader from a pipe-delimited parameter string.
     pub fn from_params(param_string: &str) -> Self {
         let mut params = IndexMap::new();
-        // Parse |KEY=VALUE| format
-        for segment in param_string.split('|') {
-            let segment = segment.trim();
+        // Strip null terminators and parse |KEY=VALUE| format
+        let clean = param_string.trim_end_matches('\0');
+        for segment in clean.split('|') {
+            let segment = segment.trim().trim_end_matches('\0');
             if segment.is_empty() {
                 continue;
             }
             if let Some((key, value)) = segment.split_once('=') {
-                params.insert(key.to_string(), value.to_string());
+                params.insert(key.to_string(), value.trim_end_matches('\0').to_string());
             }
         }
         AsciiSerializer {
@@ -78,14 +79,20 @@ impl AsciiSerializer {
     }
 
     fn get_param(&self, name: &str) -> Option<&str> {
-        self.params.get(name).map(|s| s.as_str())
+        // Try exact match first (fast path)
+        if let Some(v) = self.params.get(name) {
+            return Some(v.as_str());
+        }
+        // Fall back to case-insensitive search (Altium keys are case-insensitive)
+        let lower = name.to_ascii_lowercase();
+        self.params
+            .iter()
+            .find(|(k, _)| k.to_ascii_lowercase() == lower)
+            .map(|(_, v)| v.as_str())
     }
 
     fn get_param_or_default<'a>(&'a self, name: &str, default: &'a str) -> &'a str {
-        self.params
-            .get(name)
-            .map(|s| s.as_str())
-            .unwrap_or(default)
+        self.get_param(name).unwrap_or(default)
     }
 
     fn parse_int(&self, name: &str) -> Result<i32> {
@@ -204,6 +211,23 @@ impl SchSerializer for AsciiSerializer {
 
     fn import_long_int(&mut self, name: &str) -> Result<i32> {
         self.parse_int(name)
+    }
+
+    // --- Long (i64) ---
+    fn export_long(&mut self, value: i64, name: &str) -> Result<()> {
+        if value != 0 {
+            self.set_param(name, value.to_string());
+        }
+        Ok(())
+    }
+
+    fn import_long(&mut self, name: &str) -> Result<i64> {
+        match self.get_param(name) {
+            Some(s) => s
+                .parse::<i64>()
+                .map_err(|_| AltiumError::Parse(format!("Invalid i64 for {}: {:?}", name, s))),
+            None => Ok(0),
+        }
     }
 
     // --- Coord ---

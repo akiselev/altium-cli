@@ -120,6 +120,12 @@ impl SchSerializer for BinarySerializer {
     fn import_long_int(&mut self, _name: &str) -> Result<i32> {
         self.cursor.read_i32::<LittleEndian>().map_err(AltiumError::Io)
     }
+    fn export_long(&mut self, value: i64, _name: &str) -> Result<()> {
+        self.cursor.write_i64::<LittleEndian>(value).map_err(AltiumError::Io)
+    }
+    fn import_long(&mut self, _name: &str) -> Result<i64> {
+        self.cursor.read_i64::<LittleEndian>().map_err(AltiumError::Io)
+    }
 
     fn export_coord(&mut self, value: i32, _name: &str) -> Result<()> {
         let whole = (value / 100_000) as i16;

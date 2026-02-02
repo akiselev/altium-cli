@@ -24,6 +24,7 @@ pub mod consts;
 pub mod coord;
 pub mod fields;
 pub mod io;
+pub mod pcb;
 pub mod serializer;
 pub mod types;
 
