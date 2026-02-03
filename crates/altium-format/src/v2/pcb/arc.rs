@@ -1,4 +1,4 @@
-//! PCB Arc binary record (60 bytes in AD26).
+//! PCB Arc binary record (47-60 bytes depending on file format).
 //!
 //! Ghidra: FUN_01857610 + FUN_0185dda0.
 //!
@@ -12,17 +12,17 @@
 //!  33      8    end_angle (f64, degrees)
 //!  41      4    width (i32)
 //!  45      2    subpoly_index (u16)
-//!  47     13    Trailing (user_routed, union_index, layer_enum, keepout)
+//!  47     0-13  Trailing (user_routed, union_index, layer_enum, [keepout])
 //! ```
-//! Total: 60 bytes. Arc has 13 trailing bytes (no extra bool).
+//! PcbDoc AD26: 60 bytes (13 trailing). PcbLib: may be shorter.
 
 use serde::{Deserialize, Serialize};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 use super::coord::PcbCoord;
 use super::primitive::{PcbCommonHeader, PcbTrailingFields};
 
-/// PCB Arc record (60 bytes).
+/// PCB Arc record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PcbArc {
     pub header: PcbCommonHeader,
@@ -37,14 +37,21 @@ pub struct PcbArc {
 }
 
 impl PcbArc {
-    pub const SIZE: usize = 60;
+    const MIN_SIZE: usize = 47; // 13 header + 34 type-specific
 
-    pub fn read_from(r: &mut impl Read) -> io::Result<Self> {
-        let header = PcbCommonHeader::read_from(r)?;
+    /// Parse from a block data slice (after type byte + u32 len consumed).
+    pub fn from_block(block: &[u8]) -> io::Result<Self> {
+        if block.len() < Self::MIN_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("arc block too short: {} < {}", block.len(), Self::MIN_SIZE),
+            ));
+        }
 
-        let mut buf = [0u8; 34]; // 4+4+4+8+8+4+2 = 34
-        r.read_exact(&mut buf)?;
+        let mut cursor = std::io::Cursor::new(&block[..13]);
+        let header = PcbCommonHeader::read_from(&mut cursor)?;
 
+        let buf = &block[13..47];
         let center_x = PcbCoord::from_raw(i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]));
         let center_y = PcbCoord::from_raw(i32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]));
         let radius = PcbCoord::from_raw(i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]));
@@ -53,8 +60,7 @@ impl PcbArc {
         let width = PcbCoord::from_raw(i32::from_le_bytes([buf[28], buf[29], buf[30], buf[31]]));
         let subpoly_index = u16::from_le_bytes([buf[32], buf[33]]);
 
-        // Trailing fields are present in AD26+ but may be absent in older files
-        let trailing = PcbTrailingFields::read_13(r).unwrap_or_default();
+        let trailing = PcbTrailingFields::from_remaining(&block[47..], false);
 
         Ok(Self {
             header,
@@ -67,6 +73,13 @@ impl PcbArc {
             subpoly_index,
             trailing,
         })
+    }
+
+    /// Legacy: parse from a reader.
+    pub fn read_from(r: &mut impl std::io::Read) -> io::Result<Self> {
+        let mut data = Vec::new();
+        r.read_to_end(&mut data)?;
+        Self::from_block(&data)
     }
 
     pub fn write_to(&self, w: &mut impl Write) -> io::Result<()> {
@@ -86,10 +99,9 @@ impl PcbArc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     #[test]
-    fn round_trip() {
+    fn round_trip_60() {
         let arc = PcbArc {
             header: PcbCommonHeader::default(),
             center_x: PcbCoord::from_mils(500.0),
@@ -99,19 +111,38 @@ mod tests {
             end_angle: 90.0,
             width: PcbCoord::from_mils(10.0),
             subpoly_index: 0xFFFF,
-            trailing: PcbTrailingFields::default(),
+            trailing: PcbTrailingFields {
+                keepout_restrictions: Some(0),
+                ..Default::default()
+            },
         };
         let mut buf = Vec::new();
         arc.write_to(&mut buf).unwrap();
-        assert_eq!(buf.len(), PcbArc::SIZE);
+        assert_eq!(buf.len(), 60);
 
-        let parsed = PcbArc::read_from(&mut Cursor::new(&buf)).unwrap();
+        let parsed = PcbArc::from_block(&buf).unwrap();
         assert_eq!(arc, parsed);
     }
 
     #[test]
-    fn size_check() {
-        // 13 header + 34 type-specific + 13 trailing = 60
-        assert_eq!(PcbCommonHeader::SIZE + 34 + 13, PcbArc::SIZE);
+    fn round_trip_short() {
+        // PcbLib: no keepout
+        let arc = PcbArc {
+            header: PcbCommonHeader::default(),
+            center_x: PcbCoord::from_mils(500.0),
+            center_y: PcbCoord::from_mils(500.0),
+            radius: PcbCoord::from_mils(100.0),
+            start_angle: 0.0,
+            end_angle: 90.0,
+            width: PcbCoord::from_mils(10.0),
+            subpoly_index: 0xFFFF,
+            trailing: PcbTrailingFields::default(), // no keepout
+        };
+        let mut buf = Vec::new();
+        arc.write_to(&mut buf).unwrap();
+        assert_eq!(buf.len(), 56); // 47 + 9 (no keepout)
+
+        let parsed = PcbArc::from_block(&buf).unwrap();
+        assert_eq!(arc, parsed);
     }
 }

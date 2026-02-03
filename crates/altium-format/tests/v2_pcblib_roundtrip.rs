@@ -161,7 +161,7 @@ fn json_roundtrip_synthiam_pcblib() {
 
         // Deep comparison: pad fields (skipping raw_core which is #[serde(skip)])
         for (j, (op, rp)) in orig_fp.pads.iter().zip(rest_fp.pads.iter()).enumerate() {
-            assert_eq!(op.name, rp.name, "footprint {} pad {} name mismatch", i, j);
+            assert_eq!(op.name(), rp.name(), "footprint {} pad {} name mismatch", i, j);
             assert_eq!(
                 op.core.position_x, rp.core.position_x,
                 "footprint {} pad {} position_x mismatch",

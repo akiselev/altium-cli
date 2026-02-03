@@ -16,28 +16,20 @@ use std::io::{self, Read, Write};
 use super::coord::PcbCoord;
 use super::primitive::PcbCommonHeader;
 
-/// Read a length-prefixed string block (u32 len + data).
-fn read_string_block(r: &mut impl Read) -> io::Result<String> {
+/// Read a length-prefixed raw block (u32 len + data), preserving exact bytes.
+fn read_raw_block(r: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf)?;
     let len = u32::from_le_bytes(len_buf) as usize;
-    if len == 0 {
-        return Ok(String::new());
-    }
     let mut data = vec![0u8; len];
     r.read_exact(&mut data)?;
-    // Trim trailing null if present
-    if data.last() == Some(&0) {
-        data.pop();
-    }
-    Ok(String::from_utf8_lossy(&data).into_owned())
+    Ok(data)
 }
 
-/// Write a length-prefixed string block (u32 len + data).
-fn write_string_block(w: &mut impl Write, s: &str) -> io::Result<()> {
-    let bytes = s.as_bytes();
-    w.write_all(&(bytes.len() as u32).to_le_bytes())?;
-    w.write_all(bytes)?;
+/// Write a length-prefixed raw block (u32 len + data).
+fn write_raw_block(w: &mut impl Write, data: &[u8]) -> io::Result<()> {
+    w.write_all(&(data.len() as u32).to_le_bytes())?;
+    w.write_all(data)?;
     Ok(())
 }
 
@@ -191,56 +183,83 @@ impl PcbPadCore {
     }
 
     /// Serialize back to bytes (returns the full subrecord 5 data).
+    ///
+    /// Patches typed field values into stored data, preserving undecoded
+    /// bytes at their original offsets and maintaining exact record size.
     pub fn to_bytes(&self) -> Vec<u8> {
-        // For round-trip, return raw if available and same size
-        if !self.raw_core.is_empty() {
-            return self.raw_core.clone();
+        let mut buf = if !self.raw_core.is_empty() {
+            self.raw_core.clone()
+        } else {
+            let mut b = vec![0u8; 172];
+            b[171] = 1; // constant byte at offset 171
+            b
+        };
+
+        // Patch all typed fields into known offsets
+        {
+            let mut cursor = std::io::Cursor::new(&mut buf[..13]);
+            let _ = self.header.write_to(&mut cursor);
         }
-        // Otherwise build minimal 172-byte record
-        let mut buf = vec![0u8; 172];
-        let mut cursor = std::io::Cursor::new(&mut buf[..]);
-        let _ = self.header.write_to(&mut cursor);
-        // Write remaining fields at known offsets
-        buf[13..17].copy_from_slice(&self.position_x.to_raw().to_le_bytes());
-        buf[17..21].copy_from_slice(&self.position_y.to_raw().to_le_bytes());
-        buf[21..25].copy_from_slice(&self.top_size_x.to_raw().to_le_bytes());
-        buf[25..29].copy_from_slice(&self.top_size_y.to_raw().to_le_bytes());
-        buf[29..33].copy_from_slice(&self.mid_size_x.to_raw().to_le_bytes());
-        buf[33..37].copy_from_slice(&self.mid_size_y.to_raw().to_le_bytes());
-        buf[37..41].copy_from_slice(&self.bot_size_x.to_raw().to_le_bytes());
-        buf[41..45].copy_from_slice(&self.bot_size_y.to_raw().to_le_bytes());
-        buf[45..49].copy_from_slice(&self.hole_size.to_raw().to_le_bytes());
-        buf[49] = self.top_shape;
-        buf[50] = self.mid_shape;
-        buf[51] = self.bot_shape;
-        buf[52..60].copy_from_slice(&self.rotation.to_le_bytes());
-        buf[60] = self.is_plated as u8;
-        buf[62] = self.pad_mode;
-        buf[67] = self.thermal_connect_mode;
-        buf[68..72].copy_from_slice(&self.thermal_relief_air_gap.to_raw().to_le_bytes());
-        buf[72..74].copy_from_slice(&self.thermal_relief_spoke_count.to_le_bytes());
-        buf[74..78].copy_from_slice(&self.thermal_relief_spoke_width.to_raw().to_le_bytes());
-        buf[86..90].copy_from_slice(&self.paste_mask_expansion.to_raw().to_le_bytes());
-        buf[90..94].copy_from_slice(&self.solder_mask_expansion.to_raw().to_le_bytes());
-        buf[94..96].copy_from_slice(&self.pad_layer_bitmask.to_le_bytes());
-        buf[100] = self.paste_mask_expansion_mode;
-        buf[101] = self.solder_mask_expansion_mode;
-        buf[105] = self.user_routed as u8;
-        buf[106..110].copy_from_slice(&self.union_index.to_le_bytes());
-        buf[114..118].copy_from_slice(&self.layer_enum.to_le_bytes());
-        buf[126..142].copy_from_slice(&self.jumper_guid1);
-        buf[142..158].copy_from_slice(&self.jumper_guid2);
-        buf[171] = 1; // constant byte at offset 171
+        if buf.len() >= 49 {
+            buf[13..17].copy_from_slice(&self.position_x.to_raw().to_le_bytes());
+            buf[17..21].copy_from_slice(&self.position_y.to_raw().to_le_bytes());
+            buf[21..25].copy_from_slice(&self.top_size_x.to_raw().to_le_bytes());
+            buf[25..29].copy_from_slice(&self.top_size_y.to_raw().to_le_bytes());
+            buf[29..33].copy_from_slice(&self.mid_size_x.to_raw().to_le_bytes());
+            buf[33..37].copy_from_slice(&self.mid_size_y.to_raw().to_le_bytes());
+            buf[37..41].copy_from_slice(&self.bot_size_x.to_raw().to_le_bytes());
+            buf[41..45].copy_from_slice(&self.bot_size_y.to_raw().to_le_bytes());
+            buf[45..49].copy_from_slice(&self.hole_size.to_raw().to_le_bytes());
+        }
+        if buf.len() >= 60 {
+            buf[49] = self.top_shape;
+            buf[50] = self.mid_shape;
+            buf[51] = self.bot_shape;
+            buf[52..60].copy_from_slice(&self.rotation.to_le_bytes());
+        }
+        if buf.len() > 60 { buf[60] = self.is_plated as u8; }
+        if buf.len() > 62 { buf[62] = self.pad_mode; }
+        if buf.len() > 67 { buf[67] = self.thermal_connect_mode; }
+        if buf.len() >= 78 {
+            buf[68..72].copy_from_slice(&self.thermal_relief_air_gap.to_raw().to_le_bytes());
+            buf[72..74].copy_from_slice(&self.thermal_relief_spoke_count.to_le_bytes());
+            buf[74..78].copy_from_slice(&self.thermal_relief_spoke_width.to_raw().to_le_bytes());
+        }
+        if buf.len() >= 96 {
+            buf[86..90].copy_from_slice(&self.paste_mask_expansion.to_raw().to_le_bytes());
+            buf[90..94].copy_from_slice(&self.solder_mask_expansion.to_raw().to_le_bytes());
+            buf[94..96].copy_from_slice(&self.pad_layer_bitmask.to_le_bytes());
+        }
+        if buf.len() > 101 {
+            buf[100] = self.paste_mask_expansion_mode;
+            buf[101] = self.solder_mask_expansion_mode;
+        }
+        if buf.len() > 105 { buf[105] = self.user_routed as u8; }
+        if buf.len() >= 110 {
+            buf[106..110].copy_from_slice(&self.union_index.to_le_bytes());
+        }
+        if buf.len() >= 118 {
+            buf[114..118].copy_from_slice(&self.layer_enum.to_le_bytes());
+        }
+        if buf.len() >= 142 {
+            buf[126..142].copy_from_slice(&self.jumper_guid1);
+        }
+        if buf.len() >= 158 {
+            buf[142..158].copy_from_slice(&self.jumper_guid2);
+        }
         buf
     }
 }
 
-/// Per-layer stack data (subrecord 6, 596/628/651 bytes).
+/// Per-layer stack data (subrecord 6, variable size: 0/596/628/651 bytes).
 ///
 /// From KiCad APAD6_SIZE_AND_SHAPE.
+/// In PcbLib, this subrecord may be empty or shorter than 596 bytes.
+/// Typed fields are extracted when data is large enough; all data
+/// is stored to preserve the exact size and undecoded bytes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PcbPadStackData {
-    /// Inner X sizes per layer (29 layers).
+    /// Inner X sizes per layer (29 layers). Only valid when data.len() >= 596.
     pub inner_size_x: [i32; 29],
     /// Inner Y sizes per layer (29 layers).
     pub inner_size_y: [i32; 29],
@@ -260,8 +279,10 @@ pub struct PcbPadStackData {
     pub alt_shape: [u8; 32],
     /// Corner radius % per layer (32 layers).
     pub corner_radius: [u8; 32],
-    /// Raw bytes beyond offset 596 (for round-trip fidelity).
-    pub extra: Vec<u8>,
+    /// Full subrecord data — typed fields are extracted from this.
+    /// Preserved for exact-size serialization and undecoded byte fidelity.
+    #[serde(skip)]
+    data: Vec<u8>,
 }
 
 impl Default for PcbPadStackData {
@@ -277,81 +298,61 @@ impl Default for PcbPadStackData {
             hole_offset_y: [0; 32],
             alt_shape: [0; 32],
             corner_radius: [0; 32],
-            extra: Vec::new(),
+            data: Vec::new(),
         }
     }
 }
 
 impl PcbPadStackData {
-    pub fn from_bytes(data: &[u8]) -> io::Result<Self> {
-        if data.is_empty() {
-            return Ok(Self::default());
-        }
-        if data.len() < 596 {
-            // Older files may have shorter or no stack data
-            return Ok(Self::default());
+    pub fn from_bytes(input: &[u8]) -> io::Result<Self> {
+        let mut result = Self {
+            data: input.to_vec(),
+            ..Self::default()
+        };
+
+        if input.len() < 596 {
+            return Ok(result);
         }
 
         let rd = |off: usize| -> i32 {
-            i32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+            i32::from_le_bytes([input[off], input[off + 1], input[off + 2], input[off + 3]])
         };
 
-        let mut inner_size_x = [0i32; 29];
-        let mut inner_size_y = [0i32; 29];
-        let mut inner_shape = [0u8; 29];
         for i in 0..29 {
-            inner_size_x[i] = rd(i * 4);
-            inner_size_y[i] = rd(116 + i * 4);
-            inner_shape[i] = data[232 + i];
+            result.inner_size_x[i] = rd(i * 4);
+            result.inner_size_y[i] = rd(116 + i * 4);
+            result.inner_shape[i] = input[232 + i];
         }
 
-        let hole_shape = data[262];
-        let slot_size = rd(263);
-        let slot_rotation = f64::from_le_bytes(data[267..275].try_into().unwrap());
+        result.hole_shape = input[262];
+        result.slot_size = rd(263);
+        result.slot_rotation = f64::from_le_bytes(input[267..275].try_into().unwrap());
 
-        let mut hole_offset_x = [0i32; 32];
-        let mut hole_offset_y = [0i32; 32];
         for i in 0..32 {
-            hole_offset_x[i] = rd(275 + i * 4);
-            hole_offset_y[i] = rd(403 + i * 4);
+            result.hole_offset_x[i] = rd(275 + i * 4);
+            result.hole_offset_y[i] = rd(403 + i * 4);
         }
 
-        let mut alt_shape = [0u8; 32];
-        alt_shape.copy_from_slice(&data[532..564]);
+        result.alt_shape.copy_from_slice(&input[532..564]);
+        result.corner_radius.copy_from_slice(&input[564..596]);
 
-        let mut corner_radius = [0u8; 32];
-        corner_radius.copy_from_slice(&data[564..596]);
-
-        let extra = if data.len() > 596 {
-            data[596..].to_vec()
-        } else {
-            Vec::new()
-        };
-
-        Ok(Self {
-            inner_size_x,
-            inner_size_y,
-            inner_shape,
-            hole_shape,
-            slot_size,
-            slot_rotation,
-            hole_offset_x,
-            hole_offset_y,
-            alt_shape,
-            corner_radius,
-            extra,
-        })
+        Ok(result)
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![0u8; 596 + self.extra.len()];
+        if self.data.len() < 596 {
+            // Short or empty stack data — return exact original bytes
+            return self.data.clone();
+        }
+
+        // Patch typed fields into copy of full data
+        let mut buf = self.data.clone();
 
         for i in 0..29 {
             buf[i * 4..i * 4 + 4].copy_from_slice(&self.inner_size_x[i].to_le_bytes());
             buf[116 + i * 4..116 + i * 4 + 4].copy_from_slice(&self.inner_size_y[i].to_le_bytes());
             buf[232 + i] = self.inner_shape[i];
         }
-        // byte 261 is skip
         buf[262] = self.hole_shape;
         buf[263..267].copy_from_slice(&self.slot_size.to_le_bytes());
         buf[267..275].copy_from_slice(&self.slot_rotation.to_le_bytes());
@@ -360,13 +361,8 @@ impl PcbPadStackData {
             buf[275 + i * 4..275 + i * 4 + 4].copy_from_slice(&self.hole_offset_x[i].to_le_bytes());
             buf[403 + i * 4..403 + i * 4 + 4].copy_from_slice(&self.hole_offset_y[i].to_le_bytes());
         }
-        // byte 531 is skip
         buf[532..564].copy_from_slice(&self.alt_shape);
         buf[564..596].copy_from_slice(&self.corner_radius);
-
-        if !self.extra.is_empty() {
-            buf[596..].copy_from_slice(&self.extra);
-        }
 
         buf
     }
@@ -375,14 +371,14 @@ impl PcbPadStackData {
 /// Complete PCB Pad record with all 6 subrecords.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PcbPad {
-    /// Subrecord 1: pad name (e.g., "1", "A1").
-    pub name: String,
-    /// Subrecord 2: unknown string (often empty).
-    pub unknown_str2: String,
-    /// Subrecord 3: unknown string (often `|&|0`).
-    pub unknown_str3: String,
-    /// Subrecord 4: unknown string (often empty).
-    pub unknown_str4: String,
+    /// Subrecord 1: pad name raw bytes. Use `name()` for clean string.
+    pub name_bytes: Vec<u8>,
+    /// Subrecord 2: raw bytes (often empty or single null byte).
+    pub unknown_block2: Vec<u8>,
+    /// Subrecord 3: raw bytes (often `|&|0`).
+    pub unknown_block3: Vec<u8>,
+    /// Subrecord 4: raw bytes (often empty or single null byte).
+    pub unknown_block4: Vec<u8>,
     /// Subrecord 5: main pad data (172 bytes).
     pub core: PcbPadCore,
     /// Subrecord 6: per-layer stack data (596+ bytes).
@@ -390,12 +386,21 @@ pub struct PcbPad {
 }
 
 impl PcbPad {
+    /// Get the pad name as a clean string (trimming trailing null).
+    pub fn name(&self) -> String {
+        let mut s = String::from_utf8_lossy(&self.name_bytes).into_owned();
+        while s.ends_with('\0') {
+            s.pop();
+        }
+        s
+    }
+
     /// Read all 6 subrecords from stream (after type byte has been consumed).
     pub fn read_from(r: &mut impl Read) -> io::Result<Self> {
-        let name = read_string_block(r)?;
-        let unknown_str2 = read_string_block(r)?;
-        let unknown_str3 = read_string_block(r)?;
-        let unknown_str4 = read_string_block(r)?;
+        let name_bytes = read_raw_block(r)?;
+        let unknown_block2 = read_raw_block(r)?;
+        let unknown_block3 = read_raw_block(r)?;
+        let unknown_block4 = read_raw_block(r)?;
 
         let core_data = read_binary_block(r)?;
         let core = PcbPadCore::from_bytes(&core_data)?;
@@ -404,10 +409,10 @@ impl PcbPad {
         let stack = PcbPadStackData::from_bytes(&stack_data)?;
 
         Ok(Self {
-            name,
-            unknown_str2,
-            unknown_str3,
-            unknown_str4,
+            name_bytes,
+            unknown_block2,
+            unknown_block3,
+            unknown_block4,
             core,
             stack,
         })
@@ -415,10 +420,10 @@ impl PcbPad {
 
     /// Write all 6 subrecords to stream (caller writes type byte).
     pub fn write_to(&self, w: &mut impl Write) -> io::Result<()> {
-        write_string_block(w, &self.name)?;
-        write_string_block(w, &self.unknown_str2)?;
-        write_string_block(w, &self.unknown_str3)?;
-        write_string_block(w, &self.unknown_str4)?;
+        write_raw_block(w, &self.name_bytes)?;
+        write_raw_block(w, &self.unknown_block2)?;
+        write_raw_block(w, &self.unknown_block3)?;
+        write_raw_block(w, &self.unknown_block4)?;
 
         let core_bytes = self.core.to_bytes();
         w.write_all(&(core_bytes.len() as u32).to_le_bytes())?;
@@ -429,5 +434,56 @@ impl PcbPad {
         w.write_all(&stack_bytes)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_core_mutation_changes_output() {
+        // Build a 172-byte raw core with known values
+        let mut data = vec![0u8; 172];
+        data[13..17].copy_from_slice(&1000i32.to_le_bytes()); // position_x
+        data[171] = 1; // constant byte
+        let core = PcbPadCore::from_bytes(&data).unwrap();
+        let original = core.to_bytes();
+        assert_eq!(original, data, "unchanged core must roundtrip exactly");
+
+        // Mutate position_x
+        let mut mutated_core = core.clone();
+        mutated_core.position_x = PcbCoord::from_raw(9999);
+        let mutated = mutated_core.to_bytes();
+        assert_ne!(original[13..17], mutated[13..17],
+            "mutating position_x must change bytes at offset 13");
+        // Other bytes unchanged
+        assert_eq!(original[17..], mutated[17..]);
+    }
+
+    #[test]
+    fn pad_stack_mutation_changes_output() {
+        let mut data = vec![0u8; 596];
+        // Set inner_size_x[0] at offset 0
+        data[0..4].copy_from_slice(&500i32.to_le_bytes());
+        // Set hole_shape at offset 262
+        data[262] = 1;
+        let stack = PcbPadStackData::from_bytes(&data).unwrap();
+        let original = stack.to_bytes();
+        assert_eq!(original, data, "unchanged stack must roundtrip exactly");
+
+        // Mutate inner_size_x[0]
+        let mut mutated_stack = stack.clone();
+        mutated_stack.inner_size_x[0] = 9999;
+        let mutated = mutated_stack.to_bytes();
+        assert_ne!(original[0..4], mutated[0..4],
+            "mutating inner_size_x[0] must change bytes at offset 0");
+
+        // Mutate hole_shape
+        let mut mutated_stack2 = stack.clone();
+        mutated_stack2.hole_shape = 2;
+        let mutated2 = mutated_stack2.to_bytes();
+        assert_ne!(original[262], mutated2[262],
+            "mutating hole_shape must change byte at offset 262");
     }
 }

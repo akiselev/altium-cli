@@ -101,6 +101,7 @@ pub mod records;
 pub mod traits;
 pub mod tree;
 pub mod types;
+pub mod v2;
 
 pub use error::{AltiumError, Result};
 pub use query::{

@@ -155,8 +155,8 @@ impl PcbCommonHeader {
 
 /// Trailing fields shared by simple primitives (Track, Arc, Fill).
 ///
-/// Track has 14 trailing bytes (extra bool at offset N+5).
-/// Arc and Fill have 13 trailing bytes.
+/// In PcbDoc (AD26): Track has 14 bytes, Arc/Fill have 13 bytes.
+/// In PcbLib: records may be shorter — `keepout_restrictions` may be absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PcbTrailingFields {
     pub user_routed: bool,
@@ -164,37 +164,77 @@ pub struct PcbTrailingFields {
     /// Track-only extra boolean (at offset 40 in Track records). `None` for Arc/Fill.
     pub track_bool: Option<bool>,
     pub layer_enum: i32,
-    pub keepout_restrictions: i32,
+    /// Keepout restrictions. `None` if trailing data was too short (PcbLib).
+    pub keepout_restrictions: Option<i32>,
 }
 
 impl PcbTrailingFields {
-    /// Read 13 trailing bytes (Arc/Fill pattern).
+    /// Read trailing fields from a byte slice (after type-specific data).
+    ///
+    /// `has_track_bool`: true for Track records (extra bool between union_index and layer_enum).
+    ///
+    /// Reads adaptively based on available bytes:
+    /// - 0 bytes: all defaults
+    /// - 1 byte: user_routed only
+    /// - 5 bytes: + union_index
+    /// - 6 bytes (Track): + track_bool
+    /// - 9/10 bytes: + layer_enum
+    /// - 13/14 bytes: + keepout_restrictions
+    pub fn from_remaining(data: &[u8], has_track_bool: bool) -> Self {
+        let mut tf = Self::default();
+        let len = data.len();
+        if len == 0 {
+            return tf;
+        }
+
+        tf.user_routed = data[0] != 0;
+        if len < 5 {
+            return tf;
+        }
+        tf.union_index = i32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+
+        let mut offset = 5;
+        if has_track_bool {
+            if len <= offset {
+                return tf;
+            }
+            tf.track_bool = Some(data[offset] != 0);
+            offset += 1;
+        }
+
+        if len < offset + 4 {
+            return tf;
+        }
+        tf.layer_enum = i32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+        ]);
+        offset += 4;
+
+        if len < offset + 4 {
+            return tf;
+        }
+        tf.keepout_restrictions = Some(i32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+        ]));
+
+        tf
+    }
+
+    /// Read 13 trailing bytes (Arc/Fill pattern, PcbDoc AD26).
     pub fn read_13(r: &mut impl Read) -> io::Result<Self> {
         let mut buf = [0u8; 13];
         r.read_exact(&mut buf)?;
-        Ok(Self {
-            user_routed: buf[0] != 0,
-            union_index: i32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]),
-            track_bool: None,
-            layer_enum: i32::from_le_bytes([buf[5], buf[6], buf[7], buf[8]]),
-            keepout_restrictions: i32::from_le_bytes([buf[9], buf[10], buf[11], buf[12]]),
-        })
+        Ok(Self::from_remaining(&buf, false))
     }
 
-    /// Read 14 trailing bytes (Track pattern — extra bool at offset 5).
+    /// Read 14 trailing bytes (Track pattern, PcbDoc AD26).
     pub fn read_14(r: &mut impl Read) -> io::Result<Self> {
         let mut buf = [0u8; 14];
         r.read_exact(&mut buf)?;
-        Ok(Self {
-            user_routed: buf[0] != 0,
-            union_index: i32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]),
-            track_bool: Some(buf[5] != 0),
-            layer_enum: i32::from_le_bytes([buf[6], buf[7], buf[8], buf[9]]),
-            keepout_restrictions: i32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]),
-        })
+        Ok(Self::from_remaining(&buf, true))
     }
 
-    /// Write trailing bytes (13 for Arc/Fill, 14 for Track).
+    /// Write trailing bytes. Size depends on which fields are present.
     pub fn write_to(&self, w: &mut impl Write) -> io::Result<()> {
         w.write_all(&[self.user_routed as u8])?;
         w.write_all(&self.union_index.to_le_bytes())?;
@@ -202,13 +242,22 @@ impl PcbTrailingFields {
             w.write_all(&[tb as u8])?;
         }
         w.write_all(&self.layer_enum.to_le_bytes())?;
-        w.write_all(&self.keepout_restrictions.to_le_bytes())?;
+        if let Some(keepout) = self.keepout_restrictions {
+            w.write_all(&keepout.to_le_bytes())?;
+        }
         Ok(())
     }
 
-    /// Byte size of trailing fields (13 for Arc/Fill, 14 for Track).
+    /// Byte size of trailing fields as written.
     pub fn size(&self) -> usize {
-        if self.track_bool.is_some() { 14 } else { 13 }
+        let mut n = 1 + 4 + 4; // user_routed + union_index + layer_enum
+        if self.track_bool.is_some() {
+            n += 1;
+        }
+        if self.keepout_restrictions.is_some() {
+            n += 4;
+        }
+        n
     }
 }
 
@@ -254,7 +303,7 @@ mod tests {
             union_index: 7,
             track_bool: None,
             layer_enum: 100,
-            keepout_restrictions: 0,
+            keepout_restrictions: Some(0),
         };
         let mut buf = Vec::new();
         tf.write_to(&mut buf).unwrap();
@@ -271,13 +320,49 @@ mod tests {
             union_index: -1,
             track_bool: Some(true),
             layer_enum: 50,
-            keepout_restrictions: 3,
+            keepout_restrictions: Some(3),
         };
         let mut buf = Vec::new();
         tf.write_to(&mut buf).unwrap();
         assert_eq!(buf.len(), 14);
 
         let parsed = PcbTrailingFields::read_14(&mut Cursor::new(&buf)).unwrap();
+        assert_eq!(tf, parsed);
+    }
+
+    #[test]
+    fn trailing_10_round_trip() {
+        // PcbLib Track: 10 trailing bytes (no keepout)
+        let tf = PcbTrailingFields {
+            user_routed: true,
+            union_index: 0,
+            track_bool: Some(false),
+            layer_enum: 1,
+            keepout_restrictions: None,
+        };
+        let mut buf = Vec::new();
+        tf.write_to(&mut buf).unwrap();
+        assert_eq!(buf.len(), 10);
+
+        let parsed = PcbTrailingFields::from_remaining(&buf, true);
+        assert_eq!(tf, parsed);
+    }
+
+    #[test]
+    fn trailing_9_round_trip() {
+        // PcbLib Arc/Fill: 9 trailing bytes (no keepout)
+        let tf = PcbTrailingFields {
+            user_routed: false,
+            union_index: 5,
+            track_bool: None,
+            layer_enum: 2,
+            keepout_restrictions: None,
+        };
+        let mut buf = Vec::new();
+        tf.write_to(&mut buf).unwrap();
+        assert_eq!(buf.len(), 9);
+
+        let parsed = PcbTrailingFields::from_remaining(&buf, false);
         assert_eq!(tf, parsed);
     }
 }
