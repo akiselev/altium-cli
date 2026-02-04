@@ -6,6 +6,12 @@
 //! - Net assignment and management
 //! - Grid snapping and board bounds awareness
 //! - Undo/redo support
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PcbDoc, PcbRecord, PcbPad, PcbTrack, etc.).
+//! TODO: Migrate to v2 types when PcbDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::path::Path;
 

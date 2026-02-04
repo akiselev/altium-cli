@@ -5,6 +5,12 @@
 //!
 //! These measurements are designed to help LLM agents verify the correctness
 //! of generated PCB footprints by checking dimensions against datasheets.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PcbComponent, PcbPad, PcbRecord).
+//! TODO: Migrate to v2 PCB types when fully available.
+
+#![allow(deprecated)]
 
 use geo::{Coord as GeoCoord, EuclideanDistance, Line, Point, Polygon, Rect, point};
 

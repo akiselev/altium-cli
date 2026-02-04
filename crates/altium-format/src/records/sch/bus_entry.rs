@@ -2,9 +2,10 @@
 //!
 //! A bus entry is a short diagonal line that connects a wire to a bus.
 //! It typically appears as a small angled segment at 45 degrees.
+//!
+//! **DEPRECATED**: Use `v2::fields::BusEntryData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{
     Coord, CoordRect, ParameterCollection, UnknownFields, coord_to_dxp_frac, dxp_frac_to_coord,
 };
@@ -16,6 +17,9 @@ use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 ///
 /// A bus entry connects a wire to a bus with a short diagonal line segment.
 /// The Location point is on the bus, and the Corner point is where the wire connects.
+///
+/// **DEPRECATED**: Use `v2::fields::BusEntryData` instead.
+#[deprecated(note = "Use v2::fields::BusEntryData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 37, format = "params")]
 pub struct SchBusEntry {
@@ -113,6 +117,7 @@ impl SchBusEntry {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchBusEntry {
     const RECORD_ID: i32 = 37;
 
@@ -127,12 +132,18 @@ impl SchPrimitive for SchBusEntry {
         "BusEntry"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchBusEntry::import_from_params is deprecated. \
+            Use v2::fields::BusEntryData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchBusEntry::export_to_params is deprecated. \
+            Use v2::fields::BusEntryData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

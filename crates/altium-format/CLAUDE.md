@@ -6,42 +6,41 @@ Standalone library for reading/writing Altium Designer files (.SchLib, .PcbLib, 
 
 | File/Directory | What | When |
 |---|---|---|
-| **Core Types** | | |
-| types/coord.rs | Coord type (10,000 units = 1 mil), CoordPoint, CoordRect | Reading/writing coordinates |
-| types/unit.rs | Unit conversions (mil, mm, inch) | Converting between measurement systems |
-| types/layer.rs | PCB layer enumeration | Working with PCB layers |
-| types/color.rs | Altium color type | Rendering graphics |
-| types/parameters.rs | ParameterCollection, ParameterValue | Parsing parameter-based records |
-| types/mask_expansion.rs | MaskExpansion enum (Auto \| Manual(Coord)) | Pad/via mask expansion |
-| **Serialization Traits** | | |
-| traits/params.rs | FromParams, ToParams | Parameter-based serialization |
-| traits/binary.rs | FromBinary, ToBinary | Binary record serialization |
-| traits/conversion.rs | FromParamValue, ToParamValue | Individual parameter conversion |
-| traits/mod.rs | SchPrimitive, PcbPrimitive, AltiumRecord | Polymorphic record access |
-| **Records** | | |
-| records/sch/primitive.rs | SchRecord enum, SchPrimitive trait impls | Dispatching schematic operations |
-| records/sch/pin.rs | SchPin struct | Working with schematic pins |
-| records/sch/component.rs | SchComponent struct | Schematic component metadata |
-| records/sch/*.rs | 30 schematic record types | Type-specific operations |
-| records/pcb/primitive.rs | PcbRecord enum, PcbPrimitive trait impls | Dispatching PCB operations |
-| records/pcb/pad.rs | PcbPad struct | PCB pad primitives |
-| records/pcb/component.rs | PcbComponent struct | PCB component metadata |
-| records/pcb/*.rs | 15 PCB record types | Type-specific operations |
-| **File I/O** | | |
-| io/reader.rs | Block reading, decompression | Reading binary streams |
-| io/writer.rs | Block writing, compression | Writing binary streams |
-| io/schlib.rs | SchLib struct, open/save | SchLib file access |
-| io/schdoc.rs | SchDoc struct, open/save | SchDoc file access |
-| io/pcblib.rs | PcbLib struct, open/save | PcbLib file access |
-| **Binary Format** | | |
-| format/constants.rs | SIZE_FLAG_MASK, BLOCK_FLAG_BINARY, CFB_COMPRESSED_TAG | Magic number constants |
-| format/record_ids.rs | SchRecordId enum | Schematic record type IDs |
-| **API Layers** | | |
-| api/cfb.rs | Layer 1: CFB (OLE compound document) access | Reverse engineering, low-level access |
-| api/generic/record.rs | Layer 2: GenericRecord (dynamic access) | Schema-less queries |
-| api/generic/value.rs | Dynamic Value type | Accessing unknown parameters |
-| api/typed/accessor.rs | Layer 3: TypedAccessor | Strongly-typed editing |
-| api/document.rs | AltiumDocument unified entry point | Opening any Altium file |
+| **V2 Core (Primary API)** | | |
+| v2/mod.rs | V2 module root, re-exports PinData, ComponentData, TypedRecord | Accessing v2 types |
+| v2/coord.rs | V2Coord (100K units/mil), V2Point | Schematic coordinates |
+| v2/types.rs | ObjectId, PinElectrical, RotationBy90, enums | Type discriminants |
+| v2/consts.rs | Parameter name constants from FileFormatConsts.cs | Serialization keys |
+| **V2 Field Structs** | | |
+| v2/fields/mod.rs | TypedRecord enum, DataObjectBase, GraphicalObjectBase | Runtime dispatch |
+| v2/fields/pin.rs | PinData struct | Schematic pin access |
+| v2/fields/component.rs | ComponentData struct | Component metadata |
+| v2/fields/parameter.rs | ParameterData struct | Component parameters |
+| v2/fields/primitives.rs | ArcData, LineData, RectangleData, etc. | Drawing primitives |
+| v2/fields/schematic.rs | WireData, BusData, JunctionData, NetLabelData, etc. | Connectivity |
+| v2/fields/sheet.rs | SheetData, SheetSymbolData, SheetEntryData | Hierarchy |
+| v2/fields/implementation.rs | ImplementationData, ImplementationListData | Footprint links |
+| **V2 Serializer** | | |
+| v2/serializer/mod.rs | SchSerializer trait (export/import methods) | Encoding interface |
+| v2/serializer/ascii.rs | AsciiSerializer: `\|KEY=VALUE\|` format | Mode 0 encoding |
+| v2/serializer/binary.rs | BinarySerializer: sequential typed fields | Mode 1 encoding |
+| v2/serializer/format_v5/mod.rs | export_pin, import_pin, export_component, etc. | Record serialization |
+| **V2 Schematic I/O** | | |
+| v2/io/mod.rs | SchLib/SchDoc I/O module | File access |
+| v2/io/schlib.rs | SchLibV2::open(), SchLibV2::write() | SchLib files |
+| v2/io/schdoc.rs | SchDocV2::open(), SchDocV2::write() | SchDoc files |
+| v2/io/section_keys.rs | Section key generation (30 char limit) | CFB storage paths |
+| **V2 PCB** | | |
+| v2/pcb/mod.rs | PCB module root, re-exports PcbCoord, PcbObjectId | PCB types |
+| v2/pcb/coord.rs | PcbCoord (10K units/mil), PcbPoint | PCB coordinates |
+| v2/pcb/enums.rs | PcbObjectId, PcbPadShape, PcbLayer, etc. | PCB discriminants |
+| v2/pcb/pad.rs | PcbPadV2 struct | PCB pad records |
+| v2/pcb/track.rs | PcbTrackV2 struct | PCB track records |
+| v2/pcb/via.rs | PcbViaV2 struct | PCB via records |
+| v2/pcb/component.rs | PcbComponentV2 struct | PCB component records |
+| v2/pcb/io/pcblib.rs | PcbLibV2::open(), PcbLibV2::write() | PcbLib files |
+| v2/pcb/io/pcbdoc.rs | PcbDocV2::open(), PcbDocV2::write() | PcbDoc files |
+| v2/pcb/io/streams.rs | Binary stream reading/writing | PCB binary format |
 | **Operations** | | |
 | ops/categorization.rs | categorize_component() shared logic | Component type detection |
 | ops/queries/components.rs | components_by_category() | Grouping components |
@@ -53,14 +52,17 @@ Standalone library for reading/writing Altium Designer files (.SchLib, .PcbLib, 
 | ops/pcbdoc.rs | PCB document operations | PcbDoc queries |
 | ops/pcblib.rs | PCB library operations | PcbLib queries |
 | ops/output.rs | JSON serialization structures | CLI/API output |
+| **Legacy Types (types/)** | | |
+| types/coord.rs | Coord type (shared utilities) | Unit conversions |
+| types/unit.rs | Unit conversions (mil, mm, inch) | Measurement systems |
+| types/layer.rs | PCB layer enumeration | Layer access |
+| types/color.rs | Altium color type | Rendering |
+| types/parameters.rs | ParameterCollection, ParameterValue | Parameter parsing |
 | **Edit Sessions** | | |
 | edit/session.rs | EditSession state machine | Non-destructive editing |
 | edit/library.rs | Library editing operations | Adding/removing components |
-| **Footprint Generation** | | |
-| footprint/builder.rs | FootprintBuilder API | Programmatic footprint creation |
-| footprint/package.rs | Package type helpers (SOIC, QFN, BGA) | Standard footprints |
 | **Query Language** | | |
-| query/selector.rs | CSS-like selector parsing | Component[Designator=R1] queries |
+| query/selector.rs | CSS-like selector parsing | Component queries |
 | query/pattern.rs | Pattern matching | Attribute filters |
 | query/engine.rs | Query execution | Finding records |
 | **Tree Structures** | | |
@@ -71,11 +73,10 @@ Standalone library for reading/writing Altium Designer files (.SchLib, .PcbLib, 
 
 | Pattern | Where | Why |
 |---|---|---|
-| Trait polymorphism | SchPrimitive, PcbPrimitive | Eliminate 85+ match statements |
-| Three-layer API | api/ | Choose abstraction level (CFB/generic/typed) |
-| State types | MaskExpansion | Type system prevents invalid states |
+| Typed field structs | v2/fields/ | Direct field access without enum dispatch |
+| Separate coordinate types | V2Coord, PcbCoord | Different scales prevent silent precision bugs |
+| Serializer trait | v2/serializer/ | ASCII/Binary encoding abstracted from data |
 | Query operations | ops/queries/ | Reusable logic for CLI and programmatic use |
-| Property-based testing | traits/tests.rs | Verify trait contracts across 30+ types |
 
 ## Build Commands
 
@@ -93,23 +94,19 @@ cargo doc -p altium-format --open
 ## Library Usage
 
 ```rust
-use altium_format::io::SchLib;
-use std::fs::File;
-use std::io::BufReader;
+use altium_format::v2::io::schlib::SchLibV2;
+use altium_format::v2::{PinData, ComponentData};
 
 // Open schematic library
-let file = File::open("components.SchLib")?;
-let lib = SchLib::open(BufReader::new(file))?;
+let lib = SchLibV2::open_file("components.SchLib")?;
 
-// Iterate components
-for component in lib.components() {
-    println!("Designator: {}", component.designator);
+// Iterate components with typed access
+for comp in &lib.components {
+    println!("Component: {}", comp.entry.lib_ref);
+    for pin in comp.pins() {
+        println!("  Pin: {} ({})", pin.name, pin.designator);
+    }
 }
-
-// Query with CSS-like selectors
-use altium_format::query::selector::Selector;
-let selector = Selector::parse("Component[Designator=R1]")?;
-let matches = selector.find(&lib)?;
 ```
 
 For CLI usage, see [altium-cli](../altium-cli/CLAUDE.md).

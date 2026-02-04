@@ -1,6 +1,12 @@
 //! PCB record types for Altium PCB library files.
 //!
 //! PCB records use binary format with object IDs.
+//!
+//! **DEPRECATED**: V1 PCB record types are being replaced by v2 implementations.
+//! V1 has coordinate scale issues and field type mismatches. Migration map:
+//! - PCB records: `v2::pcb` (PcbPadV2, PcbTrackV2, PcbViaV2, etc.)
+
+#![allow(deprecated)]
 
 mod arc;
 mod board;

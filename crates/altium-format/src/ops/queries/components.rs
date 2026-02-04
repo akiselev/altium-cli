@@ -2,6 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Kiselev <alex@akiselev.com>
 //
 //! Component query operations.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchDoc, SchRecord, SchComponent).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use crate::io::SchDoc;
 use crate::ops::categorization::categorize_component;

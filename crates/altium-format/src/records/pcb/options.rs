@@ -2,10 +2,15 @@
 //!
 //! These records store various configuration options for PCB design tools
 //! such as the placer, DRC checker, and pin swap settings.
+//!
+//! **DEPRECATED**: Use v2::pcb options types with `v2::pcb::io` instead.
 
 use crate::types::{Coord, ParameterCollection};
 
 /// Advanced placer options for component placement.
+///
+/// **DEPRECATED**: Use v2::pcb options types instead.
+#[deprecated(note = "Use v2::pcb options types")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbAdvancedPlacerOptions {
     /// Large component clearance.

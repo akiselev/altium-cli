@@ -1,13 +1,17 @@
 //! SchImage - Schematic image (Record 30).
+//!
+//! **DEPRECATED**: Use `v2::fields::ImageData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{SchGraphicalBase, SchPrimitive};
 
 /// Schematic image primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::ImageData` instead.
+#[deprecated(note = "Use v2::fields::ImageData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 30, format = "params")]
 pub struct SchImage {
@@ -40,6 +44,7 @@ pub struct SchImage {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchImage {
     const RECORD_ID: i32 = 30;
 
@@ -54,12 +59,18 @@ impl SchPrimitive for SchImage {
         "Image"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchImage::import_from_params is deprecated. \
+            Use v2::fields::ImageData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchImage::export_to_params is deprecated. \
+            Use v2::fields::ImageData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

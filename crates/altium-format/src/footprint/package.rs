@@ -1,4 +1,10 @@
 //! Package type definitions and IPC land pattern calculations.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PcbPadShape) via FootprintBuilder.
+//! TODO: Migrate to v2 PCB types when fully available.
+
+#![allow(deprecated)]
 
 use super::FootprintBuilder;
 use crate::records::pcb::PcbPadShape;

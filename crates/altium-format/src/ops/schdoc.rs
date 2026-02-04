@@ -4,6 +4,11 @@
 //! Schematic document operations.
 //!
 //! High-level operations for exploring and editing Altium schematic documents (.SchDoc files).
+//!
+//! This module uses the v2 API for parsing SchDoc files which provides:
+//! - Strongly-typed record access via `TypedRecord` enum
+//! - Proper coordinate handling (100K units/mil)
+//! - Typed accessors like `components()`, `wires()`, `net_labels()`, `power_objects()`
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -15,31 +20,150 @@ use serde_json;
 
 use crate::ops::categorization::categorize_component;
 use crate::ops::output::*;
-use crate::ops::queries::power::{power_map, separate_power_and_ground};
-use crate::ops::util::{
-    alphanumeric_sort, count_record_types, get_component_designator, record_type_name,
-    sheet_size_name,
-};
+use crate::ops::util::alphanumeric_sort;
 
 use crate::dump::{fmt_coord, fmt_point};
-use crate::io::SchDoc;
-use crate::records::sch::{
-    PinElectricalType, PortIoType, PowerObjectStyle, SchComponent, SchNetLabel, SchPort,
-    SchPowerObject, SchRecord, SchWire,
+use crate::v2::io::schdoc::SchDocV2;
+use crate::v2::fields::{
+    TypedRecord, ComponentData, PinData, WireData, NetLabelData, PortData,
+    PowerData,
 };
-use crate::tree::{RecordId, RecordTree};
+use crate::v2::types::{PinElectrical, PortIO, PowerObjectStyle};
 
 /// Open schematic document with String error type (for old-style functions).
-fn open_schdoc(path: &Path) -> Result<SchDoc, String> {
+fn open_schdoc(path: &Path) -> Result<SchDocV2, String> {
     let file = File::open(path).map_err(|e| format!("Error opening file: {}", e))?;
-    SchDoc::open(BufReader::new(file)).map_err(|e| format!("Error parsing SchDoc: {:?}", e))
+    SchDocV2::open(BufReader::new(file)).map_err(|e| format!("Error parsing SchDoc: {:?}", e))
 }
 
 /// Open schematic document with Box<dyn Error> error type (for refactored functions).
-fn open_schdoc_boxed(path: &Path) -> Result<SchDoc, Box<dyn std::error::Error>> {
+fn open_schdoc_boxed(path: &Path) -> Result<SchDocV2, Box<dyn std::error::Error>> {
     let file = File::open(path)?;
-    Ok(SchDoc::open(BufReader::new(file))?)
+    Ok(SchDocV2::open(BufReader::new(file))?)
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V2 HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get sheet size name from v2 SheetStyle enum.
+fn sheet_size_name_v2(style: u8) -> &'static str {
+    match style {
+        0 => "A4",
+        1 => "A3",
+        2 => "A2",
+        3 => "A1",
+        4 => "A0",
+        5 => "A",
+        6 => "B",
+        7 => "C",
+        8 => "D",
+        9 => "E",
+        10 => "Letter",
+        11 => "Legal",
+        12 => "Tabloid",
+        13 => "OrCAD A",
+        14 => "OrCAD B",
+        15 => "OrCAD C",
+        16 => "OrCAD D",
+        17 => "OrCAD E",
+        _ => "Custom",
+    }
+}
+
+/// Get the name of a v2 record type.
+fn record_type_name_v2(record: &TypedRecord) -> &'static str {
+    match record {
+        TypedRecord::Component(_) => "Component",
+        TypedRecord::Pin(_) => "Pin",
+        TypedRecord::Symbol(_) => "Symbol",
+        TypedRecord::Label(_) => "Label",
+        TypedRecord::Bezier(_) => "Bezier",
+        TypedRecord::Polyline(_) => "Polyline",
+        TypedRecord::Polygon(_) => "Polygon",
+        TypedRecord::Ellipse(_) => "Ellipse",
+        TypedRecord::Pie(_) => "Pie",
+        TypedRecord::EllipticalArc(_) => "EllipticalArc",
+        TypedRecord::Arc(_) => "Arc",
+        TypedRecord::Line(_) => "Line",
+        TypedRecord::Rectangle(_) => "Rectangle",
+        TypedRecord::PowerObject(_) => "PowerObject",
+        TypedRecord::Port(_) => "Port",
+        TypedRecord::NoERC(_) => "NoERC",
+        TypedRecord::NetLabel(_) => "NetLabel",
+        TypedRecord::Bus(_) => "Bus",
+        TypedRecord::Wire(_) => "Wire",
+        TypedRecord::TextFrame(_) => "TextFrame",
+        TypedRecord::Junction(_) => "Junction",
+        TypedRecord::Image(_) => "Image",
+        TypedRecord::Sheet(_) => "Sheet",
+        TypedRecord::Designator(_) => "Designator",
+        TypedRecord::BusEntry(_) => "BusEntry",
+        TypedRecord::Parameter(_) => "Parameter",
+        TypedRecord::ImplementationList(_) => "ImplementationList",
+        TypedRecord::Implementation(_) => "Implementation",
+        TypedRecord::SheetSymbol(_) => "SheetSymbol",
+        TypedRecord::SheetEntry(_) => "SheetEntry",
+        TypedRecord::SheetName(_) => "SheetName",
+        TypedRecord::SheetFileName(_) => "SheetFileName",
+        TypedRecord::RoundRectangle(_) => "RoundRectangle",
+        TypedRecord::Note(_) => "Note",
+        TypedRecord::Blanket(_) => "Blanket",
+        TypedRecord::Unknown(_) => "Unknown",
+    }
+}
+
+/// Count record types in a v2 document.
+fn count_record_types_v2(doc: &SchDocV2) -> HashMap<&'static str, usize> {
+    let mut counts: HashMap<&'static str, usize> = HashMap::new();
+    for record in doc.typed_records() {
+        let name = record_type_name_v2(record);
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// Get the designator for a component by finding its Designator child in v2 records.
+fn get_component_designator_v2(records: &[TypedRecord], component_index: usize) -> Option<String> {
+    for record in records {
+        if let TypedRecord::Designator(d) = record {
+            if d.param.graphical.base.owner_index == component_index as i32 {
+                return Some(d.param.text.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Get component pins for netlist building from v2 records.
+fn get_component_pins_v2(records: &[TypedRecord], comp_index: usize) -> Vec<(String, String, i32, i32)> {
+    let mut pins = Vec::new();
+    for record in records {
+        if let TypedRecord::Pin(p) = record {
+            if p.owner_index == comp_index as i32 {
+                // Calculate corner (endpoint) from location + orientation + length
+                let (corner_x, corner_y) = calculate_pin_corner(p);
+                pins.push((p.designator.clone(), p.name.clone(), corner_x, corner_y));
+            }
+        }
+    }
+    pins
+}
+
+/// Calculate pin corner (endpoint) from pin data.
+fn calculate_pin_corner(pin: &PinData) -> (i32, i32) {
+    use crate::v2::types::RotationBy90;
+
+    let len = pin.pin_length;
+    match pin.orientation {
+        RotationBy90::Rotate0 => (pin.location_x + len, pin.location_y),   // Right
+        RotationBy90::Rotate90 => (pin.location_x, pin.location_y + len),  // Up
+        RotationBy90::Rotate180 => (pin.location_x - len, pin.location_y), // Left
+        RotationBy90::Rotate270 => (pin.location_x, pin.location_y - len), // Down
+    }
+}
+
+// NOTE: build_component_list removed - no longer used after V2 migration
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CREATION COMMANDS
@@ -70,7 +194,7 @@ pub fn cmd_create(path: &Path, template: Option<PathBuf>) -> Result<(), String> 
 
     let doc = open_schdoc_boxed(path)
         .map_err(|e| format!("Error verifying SchDoc: {}", e))?;
-    println!("  Records: {}", doc.primitives.len());
+    println!("  Records: {}", doc.records.len());
 
     Ok(())
 }
@@ -82,26 +206,25 @@ pub fn cmd_create(path: &Path, template: Option<PathBuf>) -> Result<(), String> 
 /// Complete design overview.
 pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::Error>> {
     let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
-    let counts = count_record_types(&doc);
+    let records = doc.typed_records();
+    let counts = count_record_types_v2(&doc);
 
     let sheet_size = doc
-        .sheet_header()
-        .map(|h| sheet_size_name(h.sheet_size).to_string())
+        .sheet()
+        .map(|h| sheet_size_name_v2(h.sheet_style).to_string())
         .unwrap_or_else(|| "Unknown".to_string());
 
     // Collect components by category
     let mut categories: HashMap<&'static str, Vec<(String, String, String)>> = HashMap::new();
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(c) = record {
-            let des = get_component_designator(&tree, id).unwrap_or_else(|| "<none>".to_string());
-            let category = categorize_component(&c.lib_reference, &c.component_description);
-            categories.entry(category).or_default().push((
-                des,
-                c.lib_reference.clone(),
-                c.component_description.clone(),
-            ));
-        }
+    for (idx, c) in doc.components().enumerate() {
+        let comp_idx = records.iter().position(|r| matches!(r, TypedRecord::Component(comp) if std::ptr::eq(comp, c))).unwrap_or(idx);
+        let des = get_component_designator_v2(records, comp_idx).unwrap_or_else(|| "<none>".to_string());
+        let category = categorize_component(&c.lib_reference, &c.component_description);
+        categories.entry(category).or_default().push((
+            des,
+            c.lib_reference.clone(),
+            c.component_description.clone(),
+        ));
     }
 
     // Convert to output format
@@ -143,9 +266,9 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
         }
     }
 
-    // Collect power nets using extracted query functions
-    let power_nets = power_map(&doc);
-    let (rails, grounds) = separate_power_and_ground(power_nets);
+    // Collect power nets using v2 accessors
+    let power_nets = power_map_v2(&doc);
+    let (rails, grounds) = separate_power_and_ground_v2(power_nets);
 
     let power_architecture = PowerArchitecture {
         power_rails: rails,
@@ -153,37 +276,33 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
     };
 
     // Collect interface ports
-    let ports: Vec<_> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::Port(p) = r {
-                Some(p)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let ports: Vec<_> = doc.typed_records().iter().filter_map(|r| {
+        if let TypedRecord::Port(p) = r {
+            Some(p)
+        } else {
+            None
+        }
+    }).collect();
 
     let interfaces = if !ports.is_empty() {
         let inputs: Vec<String> = ports
             .iter()
-            .filter(|p| matches!(p.io_type, PortIoType::Input))
+            .filter(|p| matches!(p.io_type, PortIO::Input))
             .map(|p| p.name.clone())
             .collect();
         let outputs: Vec<String> = ports
             .iter()
-            .filter(|p| matches!(p.io_type, PortIoType::Output))
+            .filter(|p| matches!(p.io_type, PortIO::Output))
             .map(|p| p.name.clone())
             .collect();
         let bidirectional: Vec<String> = ports
             .iter()
-            .filter(|p| matches!(p.io_type, PortIoType::Bidirectional))
+            .filter(|p| matches!(p.io_type, PortIO::Bidirectional))
             .map(|p| p.name.clone())
             .collect();
         let unspecified: Vec<String> = ports
             .iter()
-            .filter(|p| matches!(p.io_type, PortIoType::Unspecified))
+            .filter(|p| matches!(p.io_type, PortIO::Unspecified))
             .map(|p| p.name.clone())
             .collect();
 
@@ -199,10 +318,8 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
 
     // Collect key signals
     let mut net_labels: HashMap<String, usize> = HashMap::new();
-    for record in &doc.primitives {
-        if let SchRecord::NetLabel(nl) = record {
-            *net_labels.entry(nl.label.text.clone()).or_insert(0) += 1;
-        }
+    for nl in doc.net_labels() {
+        *net_labels.entry(nl.text.clone()).or_insert(0) += 1;
     }
 
     let data_buses: Vec<String> = net_labels
@@ -260,16 +377,44 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
     })
 }
 
+/// Build power map from v2 document.
+fn power_map_v2(doc: &SchDocV2) -> HashMap<String, usize> {
+    let mut power_nets: HashMap<String, usize> = HashMap::new();
+    for p in doc.power_objects() {
+        *power_nets.entry(p.text.clone()).or_insert(0) += 1;
+    }
+    power_nets
+}
+
+/// Separate power nets into rails and grounds.
+fn separate_power_and_ground_v2(power_nets: HashMap<String, usize>) -> (Vec<(String, usize)>, Vec<(String, usize)>) {
+    let mut rails = Vec::new();
+    let mut grounds = Vec::new();
+
+    for (name, count) in power_nets {
+        let upper = name.to_uppercase();
+        if upper.contains("GND") || upper.contains("VSS") || upper.contains("GROUND") {
+            grounds.push((name, count));
+        } else {
+            rails.push((name, count));
+        }
+    }
+
+    rails.sort_by(|a, b| a.0.cmp(&b.0));
+    grounds.sort_by(|a, b| a.0.cmp(&b.0));
+    (rails, grounds)
+}
+
 /// Bill of materials.
 pub fn cmd_bom(path: &Path) -> Result<SchDocBom, Box<dyn std::error::Error>> {
     let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let records = doc.typed_records();
 
     // Group by library reference
     let mut bom: HashMap<String, Vec<(String, String)>> = HashMap::new();
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(c) = record {
-            let des = get_component_designator(&tree, id).unwrap_or_else(|| "<none>".to_string());
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(c) = record {
+            let des = get_component_designator_v2(records, idx).unwrap_or_else(|| "<none>".to_string());
             bom.entry(c.lib_reference.clone())
                 .or_default()
                 .push((des, c.component_description.clone()));
@@ -324,33 +469,57 @@ pub fn cmd_netlist(
     use crate::edit::netlist::{ConnectionKind, NetlistBuilder};
 
     let doc = open_schdoc(path)?;
+    let records = doc.typed_records();
 
-    // Use the NetlistBuilder for proper wire-tracing connectivity
-    let builder = NetlistBuilder::new();
-    let netlist = builder.build(&doc.primitives);
-
-    // Convert netlist to output format
-    let mut nets: HashMap<String, Vec<String>> = HashMap::new();
-
-    for net in &netlist.nets {
-        // Collect pin connections for this net
-        let mut connections = Vec::new();
-        for conn in &net.connections {
-            if let ConnectionKind::Pin {
-                ref component,
-                ref pin,
-                ref pin_name,
-            } = conn.kind
-            {
-                if !component.is_empty() {
-                    let display_name = if pin_name.is_empty() { pin } else { pin_name };
-                    connections.push(format!("{}.{} ({})", component, pin, display_name));
-                }
+    // Build component designator lookup and pin locations
+    let mut pin_locations: HashMap<(i32, i32), Vec<(String, String, String)>> = HashMap::new();
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(_) = record {
+            let des = get_component_designator_v2(records, idx).unwrap_or_else(|| format!("?{}", idx));
+            for (pin_des, pin_name, corner_x, corner_y) in get_component_pins_v2(records, idx) {
+                pin_locations
+                    .entry((corner_x, corner_y))
+                    .or_default()
+                    .push((des.clone(), pin_des, pin_name));
             }
         }
+    }
 
-        if !connections.is_empty() {
-            nets.insert(net.name.clone(), connections);
+    // Build net name to location mapping
+    let mut net_at_location: HashMap<(i32, i32), String> = HashMap::new();
+    for record in records {
+        match record {
+            TypedRecord::NetLabel(nl) => {
+                net_at_location.insert(
+                    (nl.location_x, nl.location_y),
+                    nl.text.clone(),
+                );
+            }
+            TypedRecord::PowerObject(p) => {
+                net_at_location.insert(
+                    (p.location_x, p.location_y),
+                    p.text.clone(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Group connections by net name
+    let mut nets: HashMap<String, Vec<String>> = HashMap::new();
+    let proximity_threshold = 100000; // 10 mils
+
+    for ((net_x, net_y), net_name) in &net_at_location {
+        for ((pin_x, pin_y), pins) in &pin_locations {
+            if (net_x - pin_x).abs() < proximity_threshold
+                && (net_y - pin_y).abs() < proximity_threshold
+            {
+                for (comp_des, pin_des, pin_name) in pins {
+                    nets.entry(net_name.clone())
+                        .or_default()
+                        .push(format!("{}.{} ({})", comp_des, pin_des, pin_name));
+                }
+            }
         }
     }
 
@@ -388,42 +557,43 @@ pub fn cmd_netlist(
 /// Power distribution map.
 pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerMap, Box<dyn std::error::Error>> {
     let doc = open_schdoc_boxed(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let records = doc.typed_records();
 
     // Build component info
-    let mut comp_info: HashMap<RecordId, (String, String)> = HashMap::new();
-    let mut power_pins: HashMap<RecordId, Vec<(String, String)>> = HashMap::new(); // comp_id -> [(pin_des, pin_name)]
+    let mut comp_info: HashMap<usize, (String, String)> = HashMap::new();
+    let mut power_pins: HashMap<usize, Vec<(String, String)>> = HashMap::new(); // comp_idx -> [(pin_des, pin_name)]
 
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(c) = record {
-            let des =
-                get_component_designator(&tree, id).unwrap_or_else(|| format!("?{}", id.index()));
-            comp_info.insert(id, (des.clone(), c.lib_reference.clone()));
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(c) = record {
+            let des = get_component_designator_v2(records, idx).unwrap_or_else(|| format!("?{}", idx));
+            comp_info.insert(idx, (des.clone(), c.lib_reference.clone()));
 
-            // Find power pins
-            for (_, child) in tree.children(id) {
-                if let SchRecord::Pin(p) = child {
-                    let name_upper = p.name.to_uppercase();
-                    if name_upper.contains("VCC")
-                        || name_upper.contains("VDD")
-                        || name_upper.contains("GND")
-                        || name_upper.contains("VSS")
-                        || name_upper.contains("AVCC")
-                        || name_upper.contains("AVDD")
-                        || name_upper.contains("AGND")
-                        || name_upper.contains("DVCC")
-                        || name_upper.contains("DVDD")
-                        || name_upper.contains("DGND")
-                        || name_upper.contains("VIN")
-                        || name_upper.contains("VOUT")
-                        || name_upper.contains("PWR")
-                        || name_upper.contains("POWER")
-                        || format!("{:?}", p.electrical).contains("Power")
-                    {
-                        power_pins
-                            .entry(id)
-                            .or_default()
-                            .push((p.designator.clone(), p.name.clone()));
+            // Find power pins owned by this component
+            for pin_record in records {
+                if let TypedRecord::Pin(p) = pin_record {
+                    if p.owner_index == idx as i32 {
+                        let name_upper = p.name.to_uppercase();
+                        if name_upper.contains("VCC")
+                            || name_upper.contains("VDD")
+                            || name_upper.contains("GND")
+                            || name_upper.contains("VSS")
+                            || name_upper.contains("AVCC")
+                            || name_upper.contains("AVDD")
+                            || name_upper.contains("AGND")
+                            || name_upper.contains("DVCC")
+                            || name_upper.contains("DVDD")
+                            || name_upper.contains("DGND")
+                            || name_upper.contains("VIN")
+                            || name_upper.contains("VOUT")
+                            || name_upper.contains("PWR")
+                            || name_upper.contains("POWER")
+                            || matches!(p.electrical, PinElectrical::Power)
+                        {
+                            power_pins
+                                .entry(idx)
+                                .or_default()
+                                .push((p.designator.clone(), p.name.clone()));
+                        }
                     }
                 }
             }
@@ -432,13 +602,11 @@ pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerMap, Box<dyn std::error::
 
     // Get power symbols and their nets
     let mut power_nets: HashMap<String, Vec<(i32, i32)>> = HashMap::new();
-    for record in &doc.primitives {
-        if let SchRecord::PowerObject(p) = record {
-            power_nets
-                .entry(p.text.clone())
-                .or_default()
-                .push((p.graphical.location_x, p.graphical.location_y));
-        }
+    for p in doc.power_objects() {
+        power_nets
+            .entry(p.text.clone())
+            .or_default()
+            .push((p.location_x, p.location_y));
     }
 
     // Separate into power rails and grounds
@@ -464,8 +632,8 @@ pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerMap, Box<dyn std::error::
         .map(|(net_name, locations)| {
             // Find components with power pins near these locations
             let mut consumers = Vec::new();
-            for (comp_id, pins) in &power_pins {
-                if let Some((des, _lib_ref)) = comp_info.get(comp_id) {
+            for (comp_idx, pins) in &power_pins {
+                if let Some((des, _lib_ref)) = comp_info.get(comp_idx) {
                     for (_pin_des, pin_name) in pins {
                         if pin_name.to_uppercase().contains(&net_name.to_uppercase())
                             || (net_name.contains("3V3") && pin_name.contains("3V3"))
@@ -501,8 +669,8 @@ pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerMap, Box<dyn std::error::
     // Build powered components
     let mut powered_components: Vec<_> = power_pins
         .iter()
-        .filter_map(|(id, pins)| {
-            comp_info.get(id).map(|(des, lib_ref)| PoweredComponent {
+        .filter_map(|(idx, pins)| {
+            comp_info.get(idx).map(|(des, lib_ref)| PoweredComponent {
                 designator: des.clone(),
                 lib_reference: lib_ref.clone(),
                 power_pin_count: pins.len(),
@@ -522,13 +690,13 @@ pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerMap, Box<dyn std::error::
 /// Block diagram - shows major ICs as functional blocks.
 pub fn cmd_blocks(path: &Path, show_all: bool) -> Result<SchDocBlocks, Box<dyn std::error::Error>> {
     let doc = open_schdoc_boxed(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let records = doc.typed_records();
 
     let mut blocks: Vec<BlockInfo> = Vec::new();
 
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(c) = record {
-            let des = get_component_designator(&tree, id).unwrap_or_else(|| "<none>".to_string());
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(c) = record {
+            let des = get_component_designator_v2(records, idx).unwrap_or_else(|| "<none>".to_string());
             let category = categorize_component(&c.lib_reference, &c.component_description);
 
             // Skip passives unless show_all is set
@@ -544,26 +712,28 @@ pub fn cmd_blocks(path: &Path, show_all: bool) -> Result<SchDocBlocks, Box<dyn s
             let mut output_pins = Vec::new();
             let mut bidir_pins = Vec::new();
 
-            // Categorize pins
-            for (_, child) in tree.children(id) {
-                if let SchRecord::Pin(p) = child {
-                    if p.is_hidden() {
-                        continue;
-                    }
-                    let pin_info = if p.name.is_empty() {
-                        p.designator.clone()
-                    } else if p.name.len() > 15 {
-                        format!("{}...", &p.name[..12])
-                    } else {
-                        p.name.clone()
-                    };
+            // Categorize pins owned by this component
+            for pin_record in records {
+                if let TypedRecord::Pin(p) = pin_record {
+                    if p.owner_index == idx as i32 {
+                        if p.is_hidden {
+                            continue;
+                        }
+                        let pin_info = if p.name.is_empty() {
+                            p.designator.clone()
+                        } else if p.name.len() > 15 {
+                            format!("{}...", &p.name[..12])
+                        } else {
+                            p.name.clone()
+                        };
 
-                    match p.electrical {
-                        PinElectricalType::Power => power_pins.push(pin_info),
-                        PinElectricalType::Input => input_pins.push(pin_info),
-                        PinElectricalType::Output => output_pins.push(pin_info),
-                        PinElectricalType::InputOutput => bidir_pins.push(pin_info),
-                        _ => bidir_pins.push(pin_info), // Passive, etc.
+                        match p.electrical {
+                            PinElectrical::Power => power_pins.push(pin_info),
+                            PinElectrical::Input => input_pins.push(pin_info),
+                            PinElectrical::Output => output_pins.push(pin_info),
+                            PinElectrical::IO => bidir_pins.push(pin_info),
+                            _ => bidir_pins.push(pin_info), // Passive, etc.
+                        }
                     }
                 }
             }
@@ -647,20 +817,16 @@ pub fn cmd_project(paths: &[PathBuf]) -> Result<SchDocProjectAnalysis, Box<dyn s
             .unwrap_or("unknown")
             .to_string();
 
-        let component_count = doc
-            .primitives
-            .iter()
-            .filter(|r| matches!(r, SchRecord::Component(_)))
-            .count();
+        let component_count = doc.components().count();
 
         let mut ports: Vec<(String, String)> = Vec::new();
-        for record in &doc.primitives {
-            if let SchRecord::Port(p) = record {
+        for record in doc.typed_records() {
+            if let TypedRecord::Port(p) = record {
                 let io = match p.io_type {
-                    PortIoType::Input => "IN",
-                    PortIoType::Output => "OUT",
-                    PortIoType::Bidirectional => "BIDIR",
-                    PortIoType::Unspecified => "BUS",
+                    PortIO::Input => "IN",
+                    PortIO::Output => "OUT",
+                    PortIO::Bidirectional => "BIDIR",
+                    PortIO::Unspecified => "BUS",
                 };
                 ports.push((p.name.clone(), io.to_string()));
                 all_ports
@@ -671,29 +837,15 @@ pub fn cmd_project(paths: &[PathBuf]) -> Result<SchDocProjectAnalysis, Box<dyn s
         }
 
         let mut power_nets: Vec<String> = doc
-            .primitives
-            .iter()
-            .filter_map(|r| {
-                if let SchRecord::PowerObject(p) = r {
-                    Some(p.text.clone())
-                } else {
-                    None
-                }
-            })
+            .power_objects()
+            .map(|p| p.text.clone())
             .collect();
         power_nets.sort();
         power_nets.dedup();
 
         let mut unique_nets: Vec<String> = doc
-            .primitives
-            .iter()
-            .filter_map(|r| {
-                if let SchRecord::NetLabel(nl) = r {
-                    Some(nl.label.text.clone())
-                } else {
-                    None
-                }
-            })
+            .net_labels()
+            .map(|nl| nl.text.clone())
             .collect();
         unique_nets.sort();
         unique_nets.dedup();
@@ -749,29 +901,16 @@ pub fn cmd_signal_flow(
     signal: &str,
 ) -> Result<SchDocSignalFlow, Box<dyn std::error::Error>> {
     let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let records = doc.typed_records();
 
     // Find all net labels matching the signal
     let matching_nets: Vec<_> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::NetLabel(nl) = r {
-                if nl.label.text.eq_ignore_ascii_case(signal)
-                    || nl
-                        .label
-                        .text
-                        .to_uppercase()
-                        .contains(&signal.to_uppercase())
-                {
-                    Some((
-                        nl.label.text.clone(),
-                        nl.label.graphical.location_x,
-                        nl.label.graphical.location_y,
-                    ))
-                } else {
-                    None
-                }
+        .net_labels()
+        .filter_map(|nl| {
+            if nl.text.eq_ignore_ascii_case(signal)
+                || nl.text.to_uppercase().contains(&signal.to_uppercase())
+            {
+                Some((nl.text.clone(), nl.location_x, nl.location_y))
             } else {
                 None
             }
@@ -780,21 +919,12 @@ pub fn cmd_signal_flow(
 
     // Also check power objects
     let matching_power: Vec<_> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::PowerObject(p) = r {
-                if p.text.eq_ignore_ascii_case(signal)
-                    || p.text.to_uppercase().contains(&signal.to_uppercase())
-                {
-                    Some((
-                        p.text.clone(),
-                        p.graphical.location_x,
-                        p.graphical.location_y,
-                    ))
-                } else {
-                    None
-                }
+        .power_objects()
+        .filter_map(|p| {
+            if p.text.eq_ignore_ascii_case(signal)
+                || p.text.to_uppercase().contains(&signal.to_uppercase())
+            {
+                Some((p.text.clone(), p.location_x, p.location_y))
             } else {
                 None
             }
@@ -802,11 +932,10 @@ pub fn cmd_signal_flow(
         .collect();
 
     // Also check ports
-    let matching_ports: Vec<_> = doc
-        .primitives
+    let matching_ports: Vec<_> = records
         .iter()
         .filter_map(|r| {
-            if let SchRecord::Port(p) = r {
+            if let TypedRecord::Port(p) = r {
                 if p.name.eq_ignore_ascii_case(signal)
                     || p.name.to_uppercase().contains(&signal.to_uppercase())
                 {
@@ -851,19 +980,22 @@ pub fn cmd_signal_flow(
     let signal_upper = signal.to_uppercase();
     let mut destinations = Vec::new();
 
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(_c) = record {
-            let des = get_component_designator(&tree, id).unwrap_or_default();
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(_c) = record {
+            let des = get_component_designator_v2(records, idx).unwrap_or_default();
 
-            for (_, child) in tree.children(id) {
-                if let SchRecord::Pin(p) = child {
-                    if p.name.to_uppercase().contains(&signal_upper)
-                        || p.designator.to_uppercase().contains(&signal_upper)
-                    {
-                        destinations.push(format!(
-                            "{}.{} ({}) - {:?}",
-                            des, p.designator, p.name, p.electrical
-                        ));
+            // Find pins owned by this component
+            for pin_record in records {
+                if let TypedRecord::Pin(p) = pin_record {
+                    if p.owner_index == idx as i32 {
+                        if p.name.to_uppercase().contains(&signal_upper)
+                            || p.designator.to_uppercase().contains(&signal_upper)
+                        {
+                            destinations.push(format!(
+                                "{}.{} ({}) - {:?}",
+                                des, p.designator, p.name, p.electrical
+                            ));
+                        }
                     }
                 }
             }
@@ -896,11 +1028,11 @@ pub fn cmd_signal_flow(
 
 /// Show document overview.
 pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
-    let counts = count_record_types(&doc);
+    let doc = open_schdoc_boxed(path)?;
+    let counts = count_record_types_v2(&doc);
 
     // Sheet info
-    let sheet_info = doc.sheet_header().map(|header| {
+    let sheet_info = doc.sheet().map(|header| {
         let custom_dimensions = if header.custom_x > 0 || header.custom_y > 0 {
             Some((
                 fmt_coord(header.custom_x * 10000),
@@ -910,16 +1042,16 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
             None
         };
         SheetInfoDetails {
-            size: sheet_size_name(header.sheet_size).to_string(),
-            size_style: header.sheet_size,
+            size: sheet_size_name_v2(header.sheet_style).to_string(),
+            size_style: header.sheet_style as i32,
             custom_dimensions,
-            fonts_defined: header.font_id_count,
+            fonts_defined: header.font_id_count as i32,
         }
     });
 
     // Primitive summary
     let primitive_summary = PrimitiveSummary {
-        total_primitives: doc.primitives.len(),
+        total_primitives: doc.typed_records().len(),
         components: counts.get("Component").copied().unwrap_or(0),
         wires: counts.get("Wire").copied().unwrap_or(0),
         net_labels: counts.get("NetLabel").copied().unwrap_or(0),
@@ -931,30 +1063,16 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
 
     // Collect unique net names
     let mut net_names: Vec<String> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::NetLabel(nl) = r {
-                Some(nl.label.text.clone())
-            } else {
-                None
-            }
-        })
+        .net_labels()
+        .map(|nl| nl.text.clone())
         .collect();
     net_names.sort();
     net_names.dedup();
 
     // Collect unique power nets
     let mut power_nets: Vec<String> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::PowerObject(p) = r {
-                Some(p.text.clone())
-            } else {
-                None
-            }
-        })
+        .power_objects()
+        .map(|p| p.text.clone())
         .collect();
     power_nets.sort();
     power_nets.dedup();
@@ -970,8 +1088,8 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
 
 /// Show detailed record statistics.
 pub fn cmd_stats(path: &Path) -> Result<SchDocStats, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
-    let counts = count_record_types(&doc);
+    let doc = open_schdoc_boxed(path)?;
+    let counts = count_record_types_v2(&doc);
 
     let mut record_types: Vec<(String, usize)> = counts
         .into_iter()
@@ -981,7 +1099,7 @@ pub fn cmd_stats(path: &Path) -> Result<SchDocStats, Box<dyn std::error::Error>>
 
     Ok(SchDocStats {
         path: path.display().to_string(),
-        total_primitives: doc.primitives.len(),
+        total_primitives: doc.typed_records().len(),
         record_types,
     })
 }
@@ -991,14 +1109,15 @@ pub fn cmd_components(
     path: &Path,
     verbose: bool,
 ) -> Result<SchDocComponentList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let doc = open_schdoc_boxed(path)?;
+    let records = doc.typed_records();
 
-    let mut component_data: Vec<(RecordId, &SchComponent, Option<String>)> = Vec::new();
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(c) = record {
-            let designator = get_component_designator(&tree, id);
-            component_data.push((id, c, designator));
+    // Build component list with indices and designators
+    let mut component_data: Vec<(usize, &ComponentData, Option<String>)> = Vec::new();
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(c) = record {
+            let designator = get_component_designator_v2(records, idx);
+            component_data.push((idx, c, designator));
         }
     }
 
@@ -1011,9 +1130,18 @@ pub fn cmd_components(
 
     let components = component_data
         .iter()
-        .map(|(id, comp, designator)| {
+        .map(|(idx, comp, designator)| {
             let child_count = if verbose {
-                Some(tree.child_count(*id))
+                // Count children by matching owner_index
+                let count = records.iter().filter(|r| {
+                    match r {
+                        TypedRecord::Pin(p) => p.owner_index == *idx as i32,
+                        TypedRecord::Parameter(p) => p.graphical.base.owner_index == *idx as i32,
+                        TypedRecord::Designator(d) => d.param.graphical.base.owner_index == *idx as i32,
+                        _ => false,
+                    }
+                }).count();
+                Some(count)
             } else {
                 None
             };
@@ -1021,8 +1149,8 @@ pub fn cmd_components(
                 designator: designator.clone().unwrap_or_else(|| "<none>".to_string()),
                 lib_reference: comp.lib_reference.clone(),
                 description: comp.component_description.clone(),
-                location: fmt_point(comp.graphical.location_x, comp.graphical.location_y),
-                parts: comp.part_count,
+                location: fmt_point(comp.location_x, comp.location_y),
+                parts: comp.part_count as i32,
                 child_count,
             }
         })
@@ -1041,77 +1169,87 @@ pub fn cmd_component(
     designator: &str,
     show_children: bool,
 ) -> Result<SchDocComponentDetail, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let doc = open_schdoc_boxed(path)?;
+    let records = doc.typed_records();
 
     // Find component by designator or index
-    let component_id = if let Ok(index) = designator.parse::<usize>() {
-        // Numeric index
-        let mut comp_idx = 0;
-        let mut found_id = None;
-        for (id, record) in tree.iter() {
-            if matches!(record, SchRecord::Component(_)) {
-                if comp_idx == index {
-                    found_id = Some(id);
+    let (comp_idx, comp) = if let Ok(index) = designator.parse::<usize>() {
+        // Numeric index - find Nth component
+        let mut comp_count = 0;
+        let mut found = None;
+        for (idx, record) in records.iter().enumerate() {
+            if let TypedRecord::Component(c) = record {
+                if comp_count == index {
+                    found = Some((idx, c));
                     break;
                 }
-                comp_idx += 1;
+                comp_count += 1;
             }
         }
-        found_id.ok_or_else(|| format!("Component index {} not found", index))?
+        found.ok_or_else(|| format!("Component index {} not found", index))?
     } else {
         // Find by designator
-        let mut found_id = None;
-        for (id, record) in tree.iter() {
-            if matches!(record, SchRecord::Component(_)) {
-                if let Some(des) = get_component_designator(&tree, id) {
+        let mut found = None;
+        for (idx, record) in records.iter().enumerate() {
+            if let TypedRecord::Component(c) = record {
+                if let Some(des) = get_component_designator_v2(records, idx) {
                     if des.eq_ignore_ascii_case(designator) {
-                        found_id = Some(id);
+                        found = Some((idx, c));
                         break;
                     }
                 }
             }
         }
-        found_id.ok_or_else(|| format!("Component '{}' not found", designator))?
+        found.ok_or_else(|| format!("Component '{}' not found", designator))?
     };
 
-    let comp = match tree.get(component_id) {
-        Some(SchRecord::Component(c)) => c,
-        _ => return Err("Invalid component".into()),
-    };
+    let actual_designator = get_component_designator_v2(records, comp_idx);
 
-    let actual_designator = get_component_designator(&tree, component_id);
-
-    // Count and categorize children
-    let children: Vec<_> = tree.children(component_id).collect();
+    // Collect children by owner_index
     let mut pin_infos = Vec::new();
     let mut param_infos = Vec::new();
     let mut designator_infos = Vec::new();
     let mut graphics_count = 0;
+    let mut child_count = 0;
 
-    for (_id, child) in &children {
-        match child {
-            SchRecord::Pin(p) => {
-                pin_infos.push(SchDocPinInfo {
-                    designator: p.designator.clone(),
-                    name: p.name.clone(),
-                    electrical_type: format!("{:?}", p.electrical),
-                    hidden: p.is_hidden(),
-                });
+    for record in records {
+        let owner = match record {
+            TypedRecord::Pin(p) => Some(p.owner_index),
+            TypedRecord::Parameter(p) => Some(p.graphical.base.owner_index),
+            TypedRecord::Designator(d) => Some(d.param.graphical.base.owner_index),
+            TypedRecord::Line(l) => Some(l.graphical.base.owner_index),
+            TypedRecord::Rectangle(r) => Some(r.graphical.base.owner_index),
+            TypedRecord::Arc(a) => Some(a.graphical.base.owner_index),
+            TypedRecord::Polyline(p) => Some(p.graphical.base.owner_index),
+            TypedRecord::Polygon(p) => Some(p.graphical.base.owner_index),
+            _ => None,
+        };
+
+        if owner == Some(comp_idx as i32) {
+            child_count += 1;
+            match record {
+                TypedRecord::Pin(p) => {
+                    pin_infos.push(SchDocPinInfo {
+                        designator: p.designator.clone(),
+                        name: p.name.clone(),
+                        electrical_type: format!("{:?}", p.electrical),
+                        hidden: p.is_hidden,
+                    });
+                }
+                TypedRecord::Parameter(p) => {
+                    param_infos.push(SchDocParameter {
+                        name: p.name.clone(),
+                        value: p.text.clone(),
+                    });
+                }
+                TypedRecord::Designator(d) => {
+                    designator_infos.push(SchDocDesignator {
+                        name: d.param.name.clone(),
+                        value: d.param.text.clone(),
+                    });
+                }
+                _ => graphics_count += 1,
             }
-            SchRecord::Parameter(p) => {
-                param_infos.push(SchDocParameter {
-                    name: p.name.clone(),
-                    value: p.label.text.clone(),
-                });
-            }
-            SchRecord::Designator(d) => {
-                designator_infos.push(SchDocDesignator {
-                    name: d.param.name.clone(),
-                    value: d.param.label.text.clone(),
-                });
-            }
-            _ => graphics_count += 1,
         }
     }
 
@@ -1119,12 +1257,12 @@ pub fn cmd_component(
         designator: actual_designator.unwrap_or_else(|| "<none>".to_string()),
         lib_reference: comp.lib_reference.clone(),
         description: comp.component_description.clone(),
-        location: fmt_point(comp.graphical.location_x, comp.graphical.location_y),
-        parts: comp.part_count,
-        display_modes: comp.display_mode_count,
-        current_part: comp.current_part_id,
+        location: fmt_point(comp.location_x, comp.location_y),
+        parts: comp.part_count as i32,
+        display_modes: comp.display_mode_count as i32,
+        current_part: comp.current_part_id as i32,
         unique_id: comp.unique_id.clone(),
-        child_primitive_count: children.len(),
+        child_primitive_count: child_count,
         pins: pin_infos,
         parameters: param_infos,
         designators: designator_infos,
@@ -1141,20 +1279,9 @@ pub fn cmd_wires(
     path: &Path,
     limit: Option<usize>,
 ) -> Result<SchDocWireList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let doc = open_schdoc_boxed(path)?;
 
-    let wires: Vec<&SchWire> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::Wire(w) = r {
-                Some(w)
-            } else {
-                None
-            }
-        })
-        .collect();
-
+    let wires: Vec<&WireData> = doc.wires().collect();
     let display_count = limit.unwrap_or(wires.len()).min(wires.len());
 
     let wire_infos: Vec<WireInfo> = wires
@@ -1197,24 +1324,14 @@ pub fn cmd_nets(
     path: &Path,
     group: bool,
 ) -> Result<SchDocNetLabelList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let doc = open_schdoc_boxed(path)?;
 
-    let net_labels: Vec<&SchNetLabel> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::NetLabel(nl) = r {
-                Some(nl)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let net_labels: Vec<&NetLabelData> = doc.net_labels().collect();
 
     let (grouped, individual) = if group {
-        let mut grouped_map: HashMap<&str, Vec<&SchNetLabel>> = HashMap::new();
+        let mut grouped_map: HashMap<&str, Vec<&NetLabelData>> = HashMap::new();
         for nl in &net_labels {
-            grouped_map.entry(&nl.label.text).or_default().push(nl);
+            grouped_map.entry(&nl.text).or_default().push(nl);
         }
 
         let mut sorted: Vec<_> = grouped_map.iter().collect();
@@ -1230,8 +1347,8 @@ pub fn cmd_nets(
         let individual_result: Vec<NetLabelInfo> = net_labels
             .iter()
             .map(|nl| NetLabelInfo {
-                net_name: nl.label.text.clone(),
-                location: fmt_point(nl.label.graphical.location_x, nl.label.graphical.location_y),
+                net_name: nl.text.clone(),
+                location: fmt_point(nl.location_x, nl.location_y),
             })
             .collect();
 
@@ -1249,33 +1366,25 @@ pub fn cmd_nets(
 
 /// List all ports.
 pub fn cmd_ports(path: &Path) -> Result<SchDocPortList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let doc = open_schdoc_boxed(path)?;
 
-    let ports: Vec<&SchPort> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::Port(p) = r {
-                Some(p)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let ports: Vec<&PortData> = doc.typed_records().iter().filter_map(|r| {
+        if let TypedRecord::Port(p) = r { Some(p) } else { None }
+    }).collect();
 
     let port_infos: Vec<PortInfo> = ports
         .iter()
         .map(|port| {
             let io_type = match port.io_type {
-                PortIoType::Unspecified => "Unspec",
-                PortIoType::Output => "Output",
-                PortIoType::Input => "Input",
-                PortIoType::Bidirectional => "Bidir",
+                PortIO::Unspecified => "Unspec",
+                PortIO::Output => "Output",
+                PortIO::Input => "Input",
+                PortIO::Bidirectional => "Bidir",
             };
             PortInfo {
                 name: port.name.clone(),
                 io_type: io_type.to_string(),
-                location: fmt_point(port.graphical.location_x, port.graphical.location_y),
+                location: fmt_point(port.location_x, port.location_y),
             }
         })
         .collect();
@@ -1289,22 +1398,12 @@ pub fn cmd_ports(path: &Path) -> Result<SchDocPortList, Box<dyn std::error::Erro
 
 /// List all power objects.
 pub fn cmd_power(path: &Path, group: bool) -> Result<SchDocPowerList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let doc = open_schdoc_boxed(path)?;
 
-    let power_objects: Vec<&SchPowerObject> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::PowerObject(p) = r {
-                Some(p)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let power_objects: Vec<&PowerData> = doc.power_objects().collect();
 
     let (grouped, individual) = if group {
-        let mut grouped_map: HashMap<&str, Vec<&SchPowerObject>> = HashMap::new();
+        let mut grouped_map: HashMap<&str, Vec<&PowerData>> = HashMap::new();
         for p in &power_objects {
             grouped_map.entry(&p.text).or_default().push(p);
         }
@@ -1323,19 +1422,22 @@ pub fn cmd_power(path: &Path, group: bool) -> Result<SchDocPowerList, Box<dyn st
             .iter()
             .map(|p| {
                 let style = match p.style {
+                    PowerObjectStyle::Circle => "Circle",
                     PowerObjectStyle::Arrow => "Arrow",
                     PowerObjectStyle::Bar => "Bar",
                     PowerObjectStyle::Wave => "Wave",
-                    PowerObjectStyle::Ground => "Ground",
-                    PowerObjectStyle::PowerGround => "PowerGnd",
-                    PowerObjectStyle::SignalGround => "SignalGnd",
-                    PowerObjectStyle::EarthGround => "EarthGnd",
-                    PowerObjectStyle::Circle => "Circle",
+                    PowerObjectStyle::GndPower => "PowerGnd",
+                    PowerObjectStyle::GndSignal => "SignalGnd",
+                    PowerObjectStyle::GndEarth => "EarthGnd",
+                    PowerObjectStyle::GOSTArrow => "GOSTArrow",
+                    PowerObjectStyle::GOSTGndPower => "GOSTGndPower",
+                    PowerObjectStyle::GOSTGndEarth => "GOSTGndEarth",
+                    PowerObjectStyle::GOSTBar => "GOSTBar",
                 };
                 PowerObjectInfo {
                     net: p.text.clone(),
                     style: style.to_string(),
-                    location: fmt_point(p.graphical.location_x, p.graphical.location_y),
+                    location: fmt_point(p.location_x, p.location_y),
                 }
             })
             .collect();
@@ -1358,38 +1460,50 @@ pub fn cmd_pins(
     component_filter: Option<String>,
     _unconnected: bool,
 ) -> Result<SchDocPinList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let doc = open_schdoc_boxed(path)?;
+    let records = doc.typed_records();
 
     let mut pin_details = Vec::new();
     let total_pins: usize;
 
+    // Build component index -> designator map
+    let mut comp_map: HashMap<i32, String> = HashMap::new();
+    for (idx, record) in records.iter().enumerate() {
+        if let TypedRecord::Component(_) = record {
+            if let Some(des) = get_component_designator_v2(records, idx) {
+                comp_map.insert(idx as i32, des);
+            }
+        }
+    }
+
     // If filtering by component, find the component first
     if let Some(ref comp_des) = component_filter {
-        // Find by iterating
-        let mut found_component = None;
-        for (id, record) in tree.iter() {
-            if matches!(record, SchRecord::Component(_)) {
-                if let Some(des) = get_component_designator(&tree, id) {
+        // Find component index by designator
+        let mut found_comp_idx = None;
+        for (idx, record) in records.iter().enumerate() {
+            if let TypedRecord::Component(_) = record {
+                if let Some(des) = get_component_designator_v2(records, idx) {
                     if des.eq_ignore_ascii_case(comp_des) {
-                        found_component = Some(id);
+                        found_comp_idx = Some(idx as i32);
                         break;
                     }
                 }
             }
         }
 
-        if let Some(comp_id) = found_component {
-            let des = get_component_designator(&tree, comp_id).unwrap_or_default();
+        if let Some(comp_idx) = found_comp_idx {
+            let des = comp_map.get(&comp_idx).cloned().unwrap_or_default();
 
-            let pins: Vec<_> = tree
-                .children(comp_id)
-                .filter_map(|(_, r)| {
-                    if let SchRecord::Pin(p) = r {
-                        Some(p)
-                    } else {
-                        None
+            // Collect pins belonging to this component
+            let pins: Vec<&PinData> = records
+                .iter()
+                .filter_map(|r| {
+                    if let TypedRecord::Pin(p) = r {
+                        if p.owner_index == comp_idx {
+                            return Some(p);
+                        }
                     }
+                    None
                 })
                 .collect();
 
@@ -1401,37 +1515,24 @@ pub fn cmd_pins(
                     designator: pin.designator.clone(),
                     name: pin.name.clone(),
                     electrical_type: format!("{:?}", pin.electrical),
-                    location: fmt_point(0, 0), // Pins don't have absolute location
+                    location: fmt_point(pin.location_x, pin.location_y),
                 });
             }
         } else {
             return Err(format!("Component '{}' not found", comp_des).into());
         }
     } else {
-        // All pins - need to build component map
-        let mut comp_map: HashMap<RecordId, String> = HashMap::new();
-        for (id, record) in tree.iter() {
-            if let SchRecord::Component(_) = record {
-                if let Some(des) = get_component_designator(&tree, id) {
-                    comp_map.insert(id, des);
-                }
-            }
-        }
-
-        // Collect all pins with their parent component
-        for (id, record) in tree.iter() {
-            if let SchRecord::Pin(p) = record {
-                // Find parent component
-                if let Some(parent_id) = tree.parent_id(id) {
-                    let comp_des = comp_map.get(&parent_id).cloned().unwrap_or_default();
-                    pin_details.push(SchDocPinDetail {
-                        component: comp_des,
-                        designator: p.designator.clone(),
-                        name: p.name.clone(),
-                        electrical_type: format!("{:?}", p.electrical),
-                        location: fmt_point(0, 0),
-                    });
-                }
+        // All pins with their parent component
+        for record in records {
+            if let TypedRecord::Pin(p) = record {
+                let comp_des = comp_map.get(&p.owner_index).cloned().unwrap_or_default();
+                pin_details.push(SchDocPinDetail {
+                    component: comp_des,
+                    designator: p.designator.clone(),
+                    name: p.name.clone(),
+                    electrical_type: format!("{:?}", p.electrical),
+                    location: fmt_point(p.location_x, p.location_y),
+                });
             }
         }
 
@@ -1452,17 +1553,26 @@ pub fn cmd_hierarchy(
     max_depth: Option<usize>,
     from_designator: Option<String>,
 ) -> Result<SchDocHierarchy, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let doc = open_schdoc_boxed(path)?;
+    let records = doc.typed_records();
 
-    let start_ids: Vec<RecordId> = if let Some(ref des) = from_designator {
+    // Build parent-child relationship map from owner_index
+    let mut children_map: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (idx, record) in records.iter().enumerate() {
+        let owner = get_owner_index_v2(record);
+        if owner >= 0 {
+            children_map.entry(owner).or_default().push(idx);
+        }
+    }
+
+    let start_indices: Vec<usize> = if let Some(ref des) = from_designator {
         // Start from specific component
         let mut found = Vec::new();
-        for (id, record) in tree.iter() {
-            if matches!(record, SchRecord::Component(_)) {
-                if let Some(comp_des) = get_component_designator(&tree, id) {
+        for (idx, record) in records.iter().enumerate() {
+            if let TypedRecord::Component(_) = record {
+                if let Some(comp_des) = get_component_designator_v2(records, idx) {
                     if comp_des.eq_ignore_ascii_case(des) {
-                        found.push(id);
+                        found.push(idx);
                         break;
                     }
                 }
@@ -1473,14 +1583,19 @@ pub fn cmd_hierarchy(
         }
         found
     } else {
-        // Start from roots
-        tree.roots().map(|(id, _)| id).collect()
+        // Start from root records (owner_index < 0 or -1)
+        records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| get_owner_index_v2(r) < 0)
+            .map(|(idx, _)| idx)
+            .collect()
     };
 
     let max_d = max_depth.unwrap_or(10);
-    let hierarchy_nodes: Vec<HierarchyNode> = start_ids
+    let hierarchy_nodes: Vec<HierarchyNode> = start_indices
         .into_iter()
-        .map(|id| build_hierarchy_node(&tree, id, 0, max_d))
+        .map(|idx| build_hierarchy_node_v2(records, &children_map, idx, 0, max_d))
         .collect();
 
     Ok(SchDocHierarchy {
@@ -1489,68 +1604,85 @@ pub fn cmd_hierarchy(
     })
 }
 
-/// Helper function to build hierarchy node recursively.
-fn build_hierarchy_node(
-    tree: &RecordTree<SchRecord>,
-    id: RecordId,
+/// Get owner_index from a v2 record.
+fn get_owner_index_v2(record: &TypedRecord) -> i32 {
+    match record {
+        TypedRecord::Pin(p) => p.owner_index,
+        TypedRecord::Parameter(p) => p.graphical.base.owner_index,
+        TypedRecord::Designator(d) => d.param.graphical.base.owner_index,
+        TypedRecord::Line(l) => l.graphical.base.owner_index,
+        TypedRecord::Rectangle(r) => r.graphical.base.owner_index,
+        TypedRecord::Arc(a) => a.graphical.base.owner_index,
+        TypedRecord::Polyline(p) => p.graphical.base.owner_index,
+        TypedRecord::Polygon(p) => p.graphical.base.owner_index,
+        TypedRecord::Ellipse(e) => e.graphical.base.owner_index,
+        TypedRecord::Bezier(b) => b.graphical.base.owner_index,
+        TypedRecord::Label(l) => l.graphical.base.owner_index,
+        TypedRecord::Symbol(s) => s.graphical.base.owner_index,
+        TypedRecord::Implementation(i) => i.base.owner_index,
+        TypedRecord::ImplementationList(i) => i.graphical.base.owner_index,
+        _ => -1, // Root-level records
+    }
+}
+
+/// Helper function to build hierarchy node recursively for v2.
+fn build_hierarchy_node_v2(
+    records: &[TypedRecord],
+    children_map: &HashMap<i32, Vec<usize>>,
+    idx: usize,
     depth: usize,
     max_depth: usize,
 ) -> HierarchyNode {
     if depth <= max_depth {
-        let record = match tree.get(id) {
-            Some(r) => r,
-            None => {
-                return HierarchyNode {
-                    node_type: "error".to_string(),
-                    unique_id: "Invalid ID".to_string(),
-                    description: String::new(),
-                    children: Vec::new(),
-                };
-            }
-        };
+        let record = &records[idx];
 
         // Format the node
         let (node_type, identifier, description) = match record {
-            SchRecord::Component(c) => {
-                let des = get_component_designator(tree, id).unwrap_or_default();
+            TypedRecord::Component(c) => {
+                let des = get_component_designator_v2(records, idx).unwrap_or_default();
                 ("component".to_string(), des, c.lib_reference.clone())
             }
-            SchRecord::Pin(p) => ("pin".to_string(), p.designator.clone(), p.name.clone()),
-            SchRecord::Parameter(p) => (
+            TypedRecord::Pin(p) => ("pin".to_string(), p.designator.clone(), p.name.clone()),
+            TypedRecord::Parameter(p) => (
                 "parameter".to_string(),
                 p.name.clone(),
-                p.label.text.clone(),
+                p.text.clone(),
             ),
-            SchRecord::Designator(d) => (
+            TypedRecord::Designator(d) => (
                 "designator".to_string(),
                 d.param.name.clone(),
-                d.param.label.text.clone(),
+                d.param.text.clone(),
             ),
-            SchRecord::NetLabel(nl) => {
-                ("netlabel".to_string(), nl.label.text.clone(), String::new())
+            TypedRecord::NetLabel(nl) => {
+                ("netlabel".to_string(), nl.text.clone(), String::new())
             }
-            SchRecord::Port(p) => (
+            TypedRecord::Port(p) => (
                 "port".to_string(),
                 p.name.clone(),
                 format!("{:?}", p.io_type),
             ),
-            SchRecord::PowerObject(p) => (
+            TypedRecord::PowerObject(p) => (
                 "power".to_string(),
                 p.text.clone(),
                 format!("{:?}", p.style),
             ),
             _ => (
-                record_type_name(record).to_string(),
-                format!("[{}]", id.index()),
+                record_type_name_v2(record).to_string(),
+                format!("[{}]", idx),
                 String::new(),
             ),
         };
 
         // Build child hierarchy recursively
-        let children: Vec<_> = tree
-            .children(id)
-            .map(|(child_id, _)| build_hierarchy_node(tree, child_id, depth + 1, max_depth))
-            .collect();
+        let children: Vec<_> = children_map
+            .get(&(idx as i32))
+            .map(|child_indices| {
+                child_indices
+                    .iter()
+                    .map(|&child_idx| build_hierarchy_node_v2(records, children_map, child_idx, depth + 1, max_depth))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         HierarchyNode {
             node_type,
@@ -1572,7 +1704,7 @@ fn build_hierarchy_node(
 /// Search for text.
 pub fn cmd_search(path: &Path, query: &str, limit: Option<usize>) -> Result<(), String> {
     let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
+    let records = doc.typed_records();
 
     let query_lower = query.to_lowercase();
     let max_results = limit.unwrap_or(50);
@@ -1581,38 +1713,38 @@ pub fn cmd_search(path: &Path, query: &str, limit: Option<usize>) -> Result<(), 
     println!("Query: \"{}\"", query);
     println!("═══════════════════════════════════════════════════════════════");
 
-    let mut results = Vec::new();
+    let mut results: Vec<(usize, &TypedRecord)> = Vec::new();
 
-    for (id, record) in tree.iter() {
+    for (idx, record) in records.iter().enumerate() {
         let matches = match record {
-            SchRecord::Component(c) => {
+            TypedRecord::Component(c) => {
                 c.lib_reference.to_lowercase().contains(&query_lower)
                     || c.component_description
                         .to_lowercase()
                         .contains(&query_lower)
             }
-            SchRecord::Pin(p) => {
+            TypedRecord::Pin(p) => {
                 p.name.to_lowercase().contains(&query_lower)
                     || p.designator.to_lowercase().contains(&query_lower)
             }
-            SchRecord::NetLabel(nl) => nl.label.text.to_lowercase().contains(&query_lower),
-            SchRecord::Port(p) => p.name.to_lowercase().contains(&query_lower),
-            SchRecord::PowerObject(p) => p.text.to_lowercase().contains(&query_lower),
-            SchRecord::Label(l) => l.text.to_lowercase().contains(&query_lower),
-            SchRecord::TextFrame(tf) => tf.text.to_lowercase().contains(&query_lower),
-            SchRecord::Parameter(p) => {
+            TypedRecord::NetLabel(nl) => nl.text.to_lowercase().contains(&query_lower),
+            TypedRecord::Port(p) => p.name.to_lowercase().contains(&query_lower),
+            TypedRecord::PowerObject(p) => p.text.to_lowercase().contains(&query_lower),
+            TypedRecord::Label(l) => l.text.to_lowercase().contains(&query_lower),
+            TypedRecord::TextFrame(tf) => tf.text.to_lowercase().contains(&query_lower),
+            TypedRecord::Parameter(p) => {
                 p.name.to_lowercase().contains(&query_lower)
-                    || p.label.text.to_lowercase().contains(&query_lower)
+                    || p.text.to_lowercase().contains(&query_lower)
             }
-            SchRecord::Designator(d) => {
+            TypedRecord::Designator(d) => {
                 d.param.name.to_lowercase().contains(&query_lower)
-                    || d.param.label.text.to_lowercase().contains(&query_lower)
+                    || d.param.text.to_lowercase().contains(&query_lower)
             }
             _ => false,
         };
 
         if matches {
-            results.push((id, record));
+            results.push((idx, record));
             if results.len() >= max_results {
                 break;
             }
@@ -1621,18 +1753,18 @@ pub fn cmd_search(path: &Path, query: &str, limit: Option<usize>) -> Result<(), 
 
     println!("\nFound {} results:\n", results.len());
 
-    for (id, record) in &results {
+    for (idx, record) in &results {
         let desc = match record {
-            SchRecord::Component(c) => {
-                let des = get_component_designator(&tree, *id).unwrap_or_default();
+            TypedRecord::Component(c) => {
+                let des = get_component_designator_v2(records, *idx).unwrap_or_default();
                 format!("Component {} - {}", des, c.lib_reference)
             }
-            SchRecord::Pin(p) => format!("Pin {} - {}", p.designator, p.name),
-            SchRecord::NetLabel(nl) => format!("NetLabel: {}", nl.label.text),
-            SchRecord::Port(p) => format!("Port: {}", p.name),
-            SchRecord::PowerObject(p) => format!("Power: {}", p.text),
-            SchRecord::Label(l) => format!("Label: {}", l.text),
-            SchRecord::TextFrame(tf) => {
+            TypedRecord::Pin(p) => format!("Pin {} - {}", p.designator, p.name),
+            TypedRecord::NetLabel(nl) => format!("NetLabel: {}", nl.text),
+            TypedRecord::Port(p) => format!("Port: {}", p.name),
+            TypedRecord::PowerObject(p) => format!("Power: {}", p.text),
+            TypedRecord::Label(l) => format!("Label: {}", l.text),
+            TypedRecord::TextFrame(tf) => {
                 let text = if tf.text.len() > 40 {
                     format!("{}...", &tf.text[..40])
                 } else {
@@ -1640,13 +1772,13 @@ pub fn cmd_search(path: &Path, query: &str, limit: Option<usize>) -> Result<(), 
                 };
                 format!("TextFrame: {}", text)
             }
-            SchRecord::Parameter(p) => format!("Parameter: {} = {}", p.name, p.label.text),
-            SchRecord::Designator(d) => {
-                format!("Designator: {} = {}", d.param.name, d.param.label.text)
+            TypedRecord::Parameter(p) => format!("Parameter: {} = {}", p.name, p.text),
+            TypedRecord::Designator(d) => {
+                format!("Designator: {} = {}", d.param.name, d.param.text)
             }
-            _ => record_type_name(record).to_string(),
+            _ => record_type_name_v2(record).to_string(),
         };
-        println!("  [{}] {}", id.index(), desc);
+        println!("  [{}] {}", idx, desc);
     }
 
     if results.len() >= max_results {
@@ -1658,19 +1790,12 @@ pub fn cmd_search(path: &Path, query: &str, limit: Option<usize>) -> Result<(), 
 
 /// List junctions.
 pub fn cmd_junctions(path: &Path) -> Result<SchDocJunctionList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let doc = open_schdoc_boxed(path)?;
 
     let junctions: Vec<JunctionInfo> = doc
-        .primitives
-        .iter()
-        .filter_map(|r| {
-            if let SchRecord::Junction(j) = r {
-                Some(JunctionInfo {
-                    location: fmt_point(j.graphical.location_x, j.graphical.location_y),
-                })
-            } else {
-                None
-            }
+        .junctions()
+        .map(|j| JunctionInfo {
+            location: fmt_point(j.location_x, j.location_y),
         })
         .collect();
 
@@ -1762,18 +1887,18 @@ struct JsonPower {
 /// Export as JSON.
 pub fn cmd_json(path: &Path, full: bool, pretty: bool) -> Result<(), String> {
     let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
-    let counts = count_record_types(&doc);
+    let records = doc.typed_records();
+    let counts = count_record_types_v2(&doc);
 
     // Build sheet info
-    let sheet = doc.sheet_header().map(|h| JsonSheet {
-        size: sheet_size_name(h.sheet_size).to_string(),
-        fonts: h.font_id_count,
+    let sheet = doc.sheet().map(|h| JsonSheet {
+        size: sheet_size_name_v2(h.sheet_style).to_string(),
+        fonts: h.font_id_count as i32,
     });
 
     // Build summary
     let summary = JsonSummary {
-        total_primitives: doc.primitives.len(),
+        total_primitives: records.len(),
         components: counts.get("Component").copied().unwrap_or(0),
         wires: counts.get("Wire").copied().unwrap_or(0),
         net_labels: counts.get("NetLabel").copied().unwrap_or(0),
@@ -1787,27 +1912,28 @@ pub fn cmd_json(path: &Path, full: bool, pretty: bool) -> Result<(), String> {
     let (components, nets, ports, power) = if full {
         // Components with their pins and parameters
         let mut components = Vec::new();
-        for (id, record) in tree.iter() {
-            if let SchRecord::Component(c) = record {
-                let des = get_component_designator(&tree, id).unwrap_or_default();
+        for (idx, record) in records.iter().enumerate() {
+            if let TypedRecord::Component(c) = record {
+                let des = get_component_designator_v2(records, idx).unwrap_or_default();
 
+                // Collect pins and parameters by owner_index
                 let mut pins = Vec::new();
                 let mut params = Vec::new();
 
-                for (_, child) in tree.children(id) {
+                for child in records {
                     match child {
-                        SchRecord::Pin(p) => {
+                        TypedRecord::Pin(p) if p.owner_index == idx as i32 => {
                             pins.push(JsonPin {
                                 designator: p.designator.clone(),
                                 name: p.name.clone(),
                                 electrical: format!("{:?}", p.electrical),
-                                hidden: p.is_hidden(),
+                                hidden: p.is_hidden,
                             });
                         }
-                        SchRecord::Parameter(p) => {
+                        TypedRecord::Parameter(p) if p.graphical.base.owner_index == idx as i32 => {
                             params.push(JsonParameter {
                                 name: p.name.clone(),
-                                value: p.label.text.clone(),
+                                value: p.text.clone(),
                             });
                         }
                         _ => {}
@@ -1818,7 +1944,7 @@ pub fn cmd_json(path: &Path, full: bool, pretty: bool) -> Result<(), String> {
                     designator: des,
                     lib_reference: c.lib_reference.clone(),
                     description: c.component_description.clone(),
-                    location: fmt_point(c.graphical.location_x, c.graphical.location_y),
+                    location: fmt_point(c.location_x, c.location_y),
                     pins,
                     parameters: params,
                 });
@@ -1827,54 +1953,33 @@ pub fn cmd_json(path: &Path, full: bool, pretty: bool) -> Result<(), String> {
 
         // Net labels
         let nets: Vec<JsonNet> = doc
-            .primitives
-            .iter()
-            .filter_map(|r| {
-                if let SchRecord::NetLabel(nl) = r {
-                    Some(JsonNet {
-                        name: nl.label.text.clone(),
-                        location: fmt_point(
-                            nl.label.graphical.location_x,
-                            nl.label.graphical.location_y,
-                        ),
-                    })
-                } else {
-                    None
-                }
+            .net_labels()
+            .map(|nl| JsonNet {
+                name: nl.text.clone(),
+                location: fmt_point(nl.location_x, nl.location_y),
             })
             .collect();
 
         // Ports
-        let ports: Vec<JsonPort> = doc
-            .primitives
-            .iter()
-            .filter_map(|r| {
-                if let SchRecord::Port(p) = r {
-                    Some(JsonPort {
-                        name: p.name.clone(),
-                        io_type: format!("{:?}", p.io_type),
-                        location: fmt_point(p.graphical.location_x, p.graphical.location_y),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let ports: Vec<JsonPort> = doc.typed_records().iter().filter_map(|r| {
+            if let TypedRecord::Port(p) = r {
+                Some(JsonPort {
+                    name: p.name.clone(),
+                    io_type: format!("{:?}", p.io_type),
+                    location: fmt_point(p.location_x, p.location_y),
+                })
+            } else {
+                None
+            }
+        }).collect();
 
         // Power objects
         let power: Vec<JsonPower> = doc
-            .primitives
-            .iter()
-            .filter_map(|r| {
-                if let SchRecord::PowerObject(p) = r {
-                    Some(JsonPower {
-                        net: p.text.clone(),
-                        style: format!("{:?}", p.style),
-                        location: fmt_point(p.graphical.location_x, p.graphical.location_y),
-                    })
-                } else {
-                    None
-                }
+            .power_objects()
+            .map(|p| JsonPower {
+                net: p.text.clone(),
+                style: format!("{:?}", p.style),
+                location: fmt_point(p.location_x, p.location_y),
             })
             .collect();
 

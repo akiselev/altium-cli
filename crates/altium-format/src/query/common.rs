@@ -2,6 +2,12 @@
 //!
 //! This module contains common definitions used by both the record selector
 //! system and the SchQL system, reducing code duplication.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PinElectricalType).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use super::pattern::Pattern;
 use crate::records::sch::PinElectricalType;

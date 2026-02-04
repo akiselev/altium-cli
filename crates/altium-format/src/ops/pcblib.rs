@@ -4,39 +4,30 @@
 //! PCB footprint library operations.
 //!
 //! High-level operations for exploring and manipulating Altium PCB footprint library (.PcbLib) files.
+//!
+//! **V2 Migration**: This module uses the v2 PCB types which have the correct coordinate scale
+//! (10K units/mil) and properly-reversed-engineered binary formats.
 
 // cmd_* functions mix presentation and business logic; separation punted until usage patterns clarify abstraction boundaries (premature abstraction risk)
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Cursor};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use base64::Engine;
-use png;
-use resvg;
 use serde::{Deserialize, Serialize};
-use serde_json;
 
-use crate::dump::fmt_coord_val;
-use crate::footprint::{
-    AsciiOptions, FootprintBuilder, PadRowDirection, SvgOptions, render_ascii, render_svg,
-};
-use crate::io::PcbLib;
-use crate::records::pcb::{
-    DimensionKind, PcbArc, PcbComponent, PcbComponentBody, PcbCoordinate, PcbDimension, PcbFill,
-    PcbFlags, PcbObjectId, PcbPad, PcbPadHoleShape, PcbPadShape, PcbPrimitiveCommon, PcbRecord,
-    PcbRectangularBase, PcbRegion, PcbStackMode, PcbText, PcbTextJustification, PcbTextKind,
-    PcbTextStrokeFont, PcbTrack, PcbVia,
-};
-use crate::types::{Coord, CoordPoint, Layer, MaskExpansion, ParameterCollection, Unit};
+// V2 PCB types - correct coordinate scale (10K units/mil)
+use crate::v2::pcb::io::pcblib::{PcbLib, PcbLibFootprint};
+use crate::v2::pcb::PcbCoord;
+use crate::v2::pcb::pad::PcbPad;
 
 use super::util::alphanumeric_sort;
 use crate::ops::output::*;
 
 fn open_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
     let file = File::open(path)?;
-    Ok(PcbLib::open(BufReader::new(file))?)
+    Ok(PcbLib::open(BufReader::new(file)).map_err(|e| e.to_string())?)
 }
 
 /// Categorize a footprint by its pattern name.
@@ -169,42 +160,42 @@ fn categorize_footprint(pattern: &str, description: &str) -> &'static str {
     "Other"
 }
 
-/// Get pad shape name.
-fn pad_shape_name(shape: PcbPadShape) -> &'static str {
-    shape.name()
-}
-
-/// Get record type name.
-fn record_type_name(record: &PcbRecord) -> &'static str {
-    match record {
-        PcbRecord::Arc(_) => "Arc",
-        PcbRecord::Pad(_) => "Pad",
-        PcbRecord::Via(_) => "Via",
-        PcbRecord::Track(_) => "Track",
-        PcbRecord::Text(_) => "Text",
-        PcbRecord::Fill(_) => "Fill",
-        PcbRecord::Region(_) => "Region",
-        PcbRecord::ComponentBody(_) => "ComponentBody",
-        PcbRecord::Polygon(_) => "Polygon",
-        PcbRecord::Dimension(_) => "Dimension",
-        PcbRecord::Coordinate(_) => "Coordinate",
-        PcbRecord::Unknown { .. } => "Unknown",
+/// Get pad shape name from v2 shape byte.
+fn pad_shape_name(shape: u8) -> &'static str {
+    match shape {
+        1 => "Round",
+        2 => "Rectangular",
+        3 => "Octagonal",
+        4 => "Rounded Rect",
+        _ => "Unknown",
     }
 }
 
-/// Format layer name.
-fn layer_name(layer: &Layer) -> String {
-    match layer.to_byte() {
+/// Format layer name from v2 layer byte.
+fn layer_name(layer: u8) -> String {
+    match layer {
         1 => "Top".to_string(),
         32 => "Bottom".to_string(),
         74 => "Multi".to_string(),
-        _ => format!("L{}", layer.to_byte()),
+        _ => format!("L{}", layer),
     }
+}
+
+/// Format a PcbCoord value for display.
+fn fmt_pcb_coord(coord: &PcbCoord) -> String {
+    format!("{:.3}mm", coord.to_mms())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HIGH-LEVEL COMMANDS
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Helper to get footprint description from parameters.
+fn get_footprint_description(fp: &PcbLibFootprint) -> String {
+    fp.parameters.get("DESCRIPTION")
+        .cloned()
+        .unwrap_or_default()
+}
 
 /// Complete library overview.
 pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::Error>> {
@@ -215,15 +206,16 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     // ─────────────────────────────────────────────────────────────────────────
     let mut categories: HashMap<&'static str, Vec<FootprintSummaryExt>> = HashMap::new();
 
-    for comp in lib.iter() {
-        let category = categorize_footprint(&comp.pattern, &comp.description);
+    for fp in &lib.footprints {
+        let description = get_footprint_description(fp);
+        let category = categorize_footprint(&fp.name, &description);
         categories
             .entry(category)
             .or_default()
             .push(FootprintSummaryExt {
-                name: comp.pattern.clone(),
-                description: comp.description.clone(),
-                pad_count: comp.pad_count(),
+                name: fp.name.clone(),
+                description,
+                pad_count: fp.pads.len(),
             });
     }
 
@@ -274,16 +266,17 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     let mut th_pads = 0;
     let mut pad_shapes: HashMap<&'static str, usize> = HashMap::new();
 
-    for comp in lib.iter() {
-        for pad in comp.pads() {
+    for fp in &lib.footprints {
+        for pad in &fp.pads {
             total_pads += 1;
-            if pad.has_hole() {
+            // V2 pad: has_hole if hole_size > 0
+            if pad.core.hole_size.to_raw() > 0 {
                 th_pads += 1;
             } else {
                 smd_pads += 1;
             }
             *pad_shapes
-                .entry(pad_shape_name(pad.shape_top()))
+                .entry(pad_shape_name(pad.core.top_shape))
                 .or_insert(0) += 1;
         }
     }
@@ -298,10 +291,10 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     // 3. COMMON HOLE SIZES
     // ─────────────────────────────────────────────────────────────────────────
     let mut hole_sizes: HashMap<String, usize> = HashMap::new();
-    for comp in lib.iter() {
-        for pad in comp.pads() {
-            if pad.has_hole() && pad.hole_size.to_raw() > 0 {
-                let size_str = fmt_coord_val(&pad.hole_size);
+    for fp in &lib.footprints {
+        for pad in &fp.pads {
+            if pad.core.hole_size.to_raw() > 0 {
+                let size_str = fmt_pcb_coord(&pad.core.hole_size);
                 *hole_sizes.entry(size_str).or_insert(0) += 1;
             }
         }
@@ -313,23 +306,24 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     // ─────────────────────────────────────────────────────────────────────────
     // 4. LARGEST FOOTPRINTS
     // ─────────────────────────────────────────────────────────────────────────
-    let mut by_pads: Vec<_> = lib.iter().collect();
-    by_pads.sort_by_key(|b| std::cmp::Reverse(b.pad_count()));
+    let mut by_pads: Vec<_> = lib.footprints.iter().collect();
+    by_pads.sort_by_key(|fp| std::cmp::Reverse(fp.pads.len()));
 
     let largest_footprints = by_pads
         .iter()
         .take(10)
-        .map(|comp| FootprintSummaryExt {
-            name: comp.pattern.clone(),
-            description: comp.description.clone(),
-            pad_count: comp.pad_count(),
+        .map(|fp| FootprintSummaryExt {
+            name: fp.name.clone(),
+            description: get_footprint_description(fp),
+            pad_count: fp.pads.len(),
         })
         .collect();
 
+    // V2 PcbLib doesn't have a unique_id field at library level - use empty string
     Ok(PcbLibOverview {
         path: path.display().to_string(),
-        total_footprints: lib.components.len(),
-        unique_id: lib.unique_id.clone(),
+        total_footprints: lib.footprints.len(),
+        unique_id: String::new(),
         footprints_by_category,
         pad_statistics: PadStatistics {
             total_pads,
@@ -347,17 +341,18 @@ pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::
     let lib = open_pcblib(path)?;
 
     let footprints = lib
+        .footprints
         .iter()
-        .map(|comp| FootprintSummaryExt {
-            name: comp.pattern.clone(),
-            description: comp.description.clone(),
-            pad_count: comp.pad_count(),
+        .map(|fp| FootprintSummaryExt {
+            name: fp.name.clone(),
+            description: get_footprint_description(fp),
+            pad_count: fp.pads.len(),
         })
         .collect();
 
     Ok(PcbLibFootprintList {
         path: path.display().to_string(),
-        total_footprints: lib.components.len(),
+        total_footprints: lib.footprints.len(),
         footprints,
     })
 }
@@ -373,10 +368,11 @@ pub fn cmd_search(
     let has_wildcard = query.contains('*');
 
     let matches: Vec<_> = lib
+        .footprints
         .iter()
-        .filter(|comp| {
-            let name = comp.pattern.to_lowercase();
-            let desc = comp.description.to_lowercase();
+        .filter(|fp| {
+            let name = fp.name.to_lowercase();
+            let desc = get_footprint_description(fp).to_lowercase();
 
             if has_wildcard {
                 let pattern = query_lower.replace('*', "");
@@ -385,10 +381,10 @@ pub fn cmd_search(
                 name.contains(&query_lower) || desc.contains(&query_lower)
             }
         })
-        .map(|comp| FootprintSummaryExt {
-            name: comp.pattern.clone(),
-            description: comp.description.clone(),
-            pad_count: comp.pad_count(),
+        .map(|fp| FootprintSummaryExt {
+            name: fp.name.clone(),
+            description: get_footprint_description(fp),
+            pad_count: fp.pads.len(),
         })
         .collect();
 
@@ -411,12 +407,30 @@ pub fn cmd_info(path: &Path) -> Result<PcbLibInfo, Box<dyn std::error::Error>> {
     let mut primitive_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut total_primitives = 0;
 
-    for comp in lib.iter() {
-        for prim in &comp.primitives {
-            let name = record_type_name(prim);
-            *primitive_counts.entry(name).or_insert(0) += 1;
-            total_primitives += 1;
-        }
+    for fp in &lib.footprints {
+        // V2 stores primitives in separate typed vectors
+        let track_count = fp.tracks.len();
+        let arc_count = fp.arcs.len();
+        let fill_count = fp.fills.len();
+        let pad_count = fp.pads.len();
+        let via_count = fp.vias.len();
+        let text_count = fp.texts.len();
+        let region_count = fp.regions.len();
+        let body_count = fp.component_bodies.len();
+        let raw_count = fp.raw_primitives.len();
+
+        if track_count > 0 { *primitive_counts.entry("Track").or_insert(0) += track_count; }
+        if arc_count > 0 { *primitive_counts.entry("Arc").or_insert(0) += arc_count; }
+        if fill_count > 0 { *primitive_counts.entry("Fill").or_insert(0) += fill_count; }
+        if pad_count > 0 { *primitive_counts.entry("Pad").or_insert(0) += pad_count; }
+        if via_count > 0 { *primitive_counts.entry("Via").or_insert(0) += via_count; }
+        if text_count > 0 { *primitive_counts.entry("Text").or_insert(0) += text_count; }
+        if region_count > 0 { *primitive_counts.entry("Region").or_insert(0) += region_count; }
+        if body_count > 0 { *primitive_counts.entry("ComponentBody").or_insert(0) += body_count; }
+        if raw_count > 0 { *primitive_counts.entry("Unknown").or_insert(0) += raw_count; }
+
+        total_primitives += track_count + arc_count + fill_count + pad_count
+            + via_count + text_count + region_count + body_count + raw_count;
     }
 
     let mut primitive_types: Vec<_> = primitive_counts
@@ -427,11 +441,54 @@ pub fn cmd_info(path: &Path) -> Result<PcbLibInfo, Box<dyn std::error::Error>> {
 
     Ok(PcbLibInfo {
         path: path.display().to_string(),
-        footprint_count: lib.components.len(),
-        unique_id: lib.unique_id.clone(),
+        footprint_count: lib.footprints.len(),
+        unique_id: String::new(),
         total_primitives,
         primitive_types,
     })
+}
+
+/// Helper to compute total primitive count for a footprint.
+fn footprint_primitive_count(fp: &PcbLibFootprint) -> usize {
+    fp.tracks.len() + fp.arcs.len() + fp.fills.len() + fp.pads.len()
+        + fp.vias.len() + fp.texts.len() + fp.regions.len()
+        + fp.component_bodies.len() + fp.raw_primitives.len()
+}
+
+/// Helper to calculate bounding box from footprint primitives.
+fn calculate_footprint_bounds(fp: &PcbLibFootprint) -> (PcbCoord, PcbCoord, PcbCoord, PcbCoord) {
+    let mut min_x = PcbCoord::MAX;
+    let mut max_x = PcbCoord::from_raw(i32::MIN);
+    let mut min_y = PcbCoord::MAX;
+    let mut max_y = PcbCoord::from_raw(i32::MIN);
+
+    for pad in &fp.pads {
+        let x = pad.core.position_x;
+        let y = pad.core.position_y;
+        let half_w = PcbCoord::from_raw(pad.core.top_size_x.to_raw() / 2);
+        let half_h = PcbCoord::from_raw(pad.core.top_size_y.to_raw() / 2);
+        min_x = min_x.min(x - half_w);
+        max_x = max_x.max(x + half_w);
+        min_y = min_y.min(y - half_h);
+        max_y = max_y.max(y + half_h);
+    }
+
+    for track in &fp.tracks {
+        min_x = min_x.min(track.start_x.min(track.end_x));
+        max_x = max_x.max(track.start_x.max(track.end_x));
+        min_y = min_y.min(track.start_y.min(track.end_y));
+        max_y = max_y.max(track.start_y.max(track.end_y));
+    }
+
+    for arc in &fp.arcs {
+        let r = arc.radius;
+        min_x = min_x.min(arc.center_x - r);
+        max_x = max_x.max(arc.center_x + r);
+        min_y = min_y.min(arc.center_y - r);
+        max_y = max_y.max(arc.center_y + r);
+    }
+
+    (min_x, max_x, min_y, max_y)
 }
 
 /// Footprint details.
@@ -443,43 +500,57 @@ pub fn cmd_footprint(
     let lib = open_pcblib(path)?;
 
     let name_lower = name.to_lowercase();
-    let comp = lib
+    let fp = lib
+        .footprints
         .iter()
-        .find(|c| c.pattern.to_lowercase() == name_lower)
+        .find(|f| f.name.to_lowercase() == name_lower)
         .ok_or_else(|| format!("Footprint '{}' not found", name))?;
 
     // Bounds
-    let bounds = comp.calculate_bounds();
+    let (min_x, max_x, min_y, max_y) = calculate_footprint_bounds(fp);
 
-    // List pads
-    let mut pads: Vec<&PcbPad> = comp.pads().collect();
-    pads.sort_by(|a, b| alphanumeric_sort(&a.designator, &b.designator));
+    // List pads - need to extract designators from subrecord data
+    let mut pads: Vec<(&PcbPad, String)> = fp.pads.iter()
+        .map(|pad| {
+            // V2 pad has name in sub1 (designator)
+            let designator = pad.name();
+            (pad, designator)
+        })
+        .collect();
+    pads.sort_by(|a, b| alphanumeric_sort(&a.1, &b.1));
 
     let pad_details = pads
         .iter()
-        .map(|pad| {
-            let size = pad.size_top();
-            let size_str = format!("{}x{}", fmt_coord_val(&size.x), fmt_coord_val(&size.y));
-            let hole_str = if pad.has_hole() {
-                Some(fmt_coord_val(&pad.hole_size))
+        .map(|(pad, designator)| {
+            let size_str = format!("{}x{}",
+                fmt_pcb_coord(&pad.core.top_size_x),
+                fmt_pcb_coord(&pad.core.top_size_y));
+            let hole_str = if pad.core.hole_size.to_raw() > 0 {
+                Some(fmt_pcb_coord(&pad.core.hole_size))
             } else {
                 None
             };
             PadDetail {
-                designator: pad.designator.clone(),
-                shape: pad_shape_name(pad.shape_top()).to_string(),
+                designator: designator.clone(),
+                shape: pad_shape_name(pad.core.top_shape).to_string(),
                 size: size_str,
                 hole: hole_str,
-                layer: layer_name(&pad.common.layer),
+                layer: layer_name(pad.core.header.layer),
             }
         })
         .collect();
 
     let primitive_counts = if show_primitives {
         let mut prim_counts: HashMap<&'static str, usize> = HashMap::new();
-        for prim in &comp.primitives {
-            *prim_counts.entry(record_type_name(prim)).or_insert(0) += 1;
-        }
+        if !fp.tracks.is_empty() { prim_counts.insert("Track", fp.tracks.len()); }
+        if !fp.arcs.is_empty() { prim_counts.insert("Arc", fp.arcs.len()); }
+        if !fp.fills.is_empty() { prim_counts.insert("Fill", fp.fills.len()); }
+        if !fp.pads.is_empty() { prim_counts.insert("Pad", fp.pads.len()); }
+        if !fp.vias.is_empty() { prim_counts.insert("Via", fp.vias.len()); }
+        if !fp.texts.is_empty() { prim_counts.insert("Text", fp.texts.len()); }
+        if !fp.regions.is_empty() { prim_counts.insert("Region", fp.regions.len()); }
+        if !fp.component_bodies.is_empty() { prim_counts.insert("ComponentBody", fp.component_bodies.len()); }
+        if !fp.raw_primitives.is_empty() { prim_counts.insert("Unknown", fp.raw_primitives.len()); }
         let mut counts: Vec<_> = prim_counts
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
@@ -490,19 +561,22 @@ pub fn cmd_footprint(
         None
     };
 
+    // Get height from parameters if available
+    let height_str = fp.parameters.get("HEIGHT")
+        .and_then(|h| h.parse::<i32>().ok())
+        .filter(|&h| h > 0)
+        .map(|h| fmt_pcb_coord(&PcbCoord::from_raw(h)))
+        .unwrap_or_default();
+
     Ok(PcbLibFootprintDetail {
-        pattern: comp.pattern.clone(),
-        description: comp.description.clone(),
-        height: if comp.height.to_raw() > 0 {
-            fmt_coord_val(&comp.height)
-        } else {
-            String::new()
-        },
-        pad_count: comp.pad_count(),
-        total_primitives: comp.primitive_count(),
+        pattern: fp.name.clone(),
+        description: get_footprint_description(fp),
+        height: height_str,
+        pad_count: fp.pads.len(),
+        total_primitives: footprint_primitive_count(fp),
         bounding_box: BoundingBox {
-            width: fmt_coord_val(&bounds.width()),
-            height: fmt_coord_val(&bounds.height()),
+            width: fmt_pcb_coord(&(max_x - min_x)),
+            height: fmt_pcb_coord(&(max_y - min_y)),
         },
         pads: pad_details,
         primitive_counts,
@@ -521,27 +595,28 @@ pub fn cmd_pads(
 
     let mut all_pads: Vec<PadWithFootprint> = Vec::new();
 
-    for comp in lib.iter() {
+    for fp in &lib.footprints {
         if let Some(ref filter) = filter_lower {
-            if !comp.pattern.to_lowercase().contains(filter) {
+            if !fp.name.to_lowercase().contains(filter) {
                 continue;
             }
         }
 
-        for pad in comp.pads() {
-            let size = pad.size_top();
-            let size_str = format!("{}x{}", fmt_coord_val(&size.x), fmt_coord_val(&size.y));
-            let hole_str = if pad.has_hole() {
-                Some(fmt_coord_val(&pad.hole_size))
+        for pad in &fp.pads {
+            let size_str = format!("{}x{}",
+                fmt_pcb_coord(&pad.core.top_size_x),
+                fmt_pcb_coord(&pad.core.top_size_y));
+            let hole_str = if pad.core.hole_size.to_raw() > 0 {
+                Some(fmt_pcb_coord(&pad.core.hole_size))
             } else {
                 None
             };
             all_pads.push(PadWithFootprint {
-                footprint_name: comp.pattern.clone(),
-                designator: pad.designator.clone(),
+                footprint_name: fp.name.clone(),
+                designator: pad.name(),
                 size: size_str,
                 hole: hole_str,
-                shape: pad_shape_name(pad.shape_top()).to_string(),
+                shape: pad_shape_name(pad.core.top_shape).to_string(),
             });
         }
     }
@@ -587,71 +662,100 @@ pub fn cmd_primitives(
     let lib = open_pcblib(path)?;
 
     let name_lower = name.to_lowercase();
-    let comp = lib
+    let fp = lib
+        .footprints
         .iter()
-        .find(|c| c.pattern.to_lowercase() == name_lower)
+        .find(|f| f.name.to_lowercase() == name_lower)
         .ok_or_else(|| format!("Footprint '{}' not found", name))?;
 
-    let primitives = comp
-        .primitives
-        .iter()
-        .map(|prim| match prim {
-            PcbRecord::Pad(p) => {
-                let size = p.size_top();
-                let hole = if p.has_hole() {
-                    Some(fmt_coord_val(&p.hole_size))
-                } else {
-                    None
-                };
-                PrimitiveDetail::Pad {
-                    designator: p.designator.clone(),
-                    shape: pad_shape_name(p.shape_top()).to_string(),
-                    size: format!("{}x{}", fmt_coord_val(&size.x), fmt_coord_val(&size.y)),
-                    hole,
-                }
-            }
-            PcbRecord::Track(t) => PrimitiveDetail::Track {
-                start_x: fmt_coord_val(&t.start.x),
-                start_y: fmt_coord_val(&t.start.y),
-                end_x: fmt_coord_val(&t.end.x),
-                end_y: fmt_coord_val(&t.end.y),
-                width: fmt_coord_val(&t.width),
-            },
-            PcbRecord::Arc(a) => PrimitiveDetail::Arc {
-                center_x: fmt_coord_val(&a.location.x),
-                center_y: fmt_coord_val(&a.location.y),
-                radius: fmt_coord_val(&a.radius),
-                start_angle: a.start_angle,
-                end_angle: a.end_angle,
-            },
-            PcbRecord::Text(t) => PrimitiveDetail::Text {
-                text: t.text.clone(),
-                x: fmt_coord_val(&t.base.corner1.x),
-                y: fmt_coord_val(&t.base.corner1.y),
-            },
-            PcbRecord::Fill(f) => PrimitiveDetail::Fill {
-                x1: fmt_coord_val(&f.base.corner1.x),
-                y1: fmt_coord_val(&f.base.corner1.y),
-                x2: fmt_coord_val(&f.base.corner2.x),
-                y2: fmt_coord_val(&f.base.corner2.y),
-            },
-            PcbRecord::Region(r) => PrimitiveDetail::Region {
-                vertex_count: r.outline.len(),
-                layer: layer_name(&r.common.layer),
-            },
-            PcbRecord::ComponentBody(b) => PrimitiveDetail::ComponentBody {
-                vertex_count: b.outline.len(),
-                height: fmt_coord_val(&b.overall_height),
-            },
-            _ => PrimitiveDetail::Other {
-                primitive_type: record_type_name(prim).to_string(),
-            },
-        })
-        .collect();
+    // V2 stores primitives in separate typed vectors
+    // Build list following primitive_order if available, otherwise group by type
+    let mut primitives: Vec<PrimitiveDetail> = Vec::new();
+
+    // Add pads
+    for pad in &fp.pads {
+        let hole = if pad.core.hole_size.to_raw() > 0 {
+            Some(fmt_pcb_coord(&pad.core.hole_size))
+        } else {
+            None
+        };
+        primitives.push(PrimitiveDetail::Pad {
+            designator: pad.name(),
+            shape: pad_shape_name(pad.core.top_shape).to_string(),
+            size: format!("{}x{}",
+                fmt_pcb_coord(&pad.core.top_size_x),
+                fmt_pcb_coord(&pad.core.top_size_y)),
+            hole,
+        });
+    }
+
+    // Add tracks
+    for track in &fp.tracks {
+        primitives.push(PrimitiveDetail::Track {
+            start_x: fmt_pcb_coord(&track.start_x),
+            start_y: fmt_pcb_coord(&track.start_y),
+            end_x: fmt_pcb_coord(&track.end_x),
+            end_y: fmt_pcb_coord(&track.end_y),
+            width: fmt_pcb_coord(&track.width),
+        });
+    }
+
+    // Add arcs
+    for arc in &fp.arcs {
+        primitives.push(PrimitiveDetail::Arc {
+            center_x: fmt_pcb_coord(&arc.center_x),
+            center_y: fmt_pcb_coord(&arc.center_y),
+            radius: fmt_pcb_coord(&arc.radius),
+            start_angle: arc.start_angle,
+            end_angle: arc.end_angle,
+        });
+    }
+
+    // Add texts
+    for text in &fp.texts {
+        primitives.push(PrimitiveDetail::Text {
+            text: text.text.clone(),
+            x: fmt_pcb_coord(&text.position_x),
+            y: fmt_pcb_coord(&text.position_y),
+        });
+    }
+
+    // Add fills
+    for fill in &fp.fills {
+        primitives.push(PrimitiveDetail::Fill {
+            x1: fmt_pcb_coord(&fill.corner1_x),
+            y1: fmt_pcb_coord(&fill.corner1_y),
+            x2: fmt_pcb_coord(&fill.corner2_x),
+            y2: fmt_pcb_coord(&fill.corner2_y),
+        });
+    }
+
+    // Add regions
+    for region in &fp.regions {
+        primitives.push(PrimitiveDetail::Region {
+            vertex_count: region.outline.len(),
+            layer: layer_name(region.header.layer),
+        });
+    }
+
+    // Add component bodies
+    for body in &fp.component_bodies {
+        primitives.push(PrimitiveDetail::ComponentBody {
+            vertex_count: body.outline.len(),
+            height: String::new(), // V2 region doesn't have explicit height
+        });
+    }
+
+    // Add unknown/raw primitives
+    for _ in &fp.raw_primitives {
+        primitives.push(PrimitiveDetail::Other {
+            primitive_type: "Unknown".to_string(),
+        });
+    }
 
     Ok(PcbLibPrimitiveList {
-        footprint_name: comp.pattern.clone(),
-        total_primitives: comp.primitive_count(),
+        footprint_name: fp.name.clone(),
+        total_primitives: footprint_primitive_count(fp),
         primitives,
     })
 }
@@ -662,14 +766,14 @@ pub fn cmd_holes(path: &Path) -> Result<PcbLibHoleAnalysis, Box<dyn std::error::
 
     let mut hole_sizes: HashMap<String, Vec<String>> = HashMap::new();
 
-    for comp in lib.iter() {
-        for pad in comp.pads() {
-            if pad.has_hole() && pad.hole_size.to_raw() > 0 {
-                let size_str = fmt_coord_val(&pad.hole_size);
+    for fp in &lib.footprints {
+        for pad in &fp.pads {
+            if pad.core.hole_size.to_raw() > 0 {
+                let size_str = fmt_pcb_coord(&pad.core.hole_size);
                 hole_sizes
                     .entry(size_str)
                     .or_default()
-                    .push(comp.pattern.clone());
+                    .push(fp.name.clone());
             }
         }
     }
@@ -701,609 +805,58 @@ pub fn cmd_holes(path: &Path) -> Result<PcbLibHoleAnalysis, Box<dyn std::error::
 
 /// Export as JSON.
 pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    if full {
+        // Full export uses v1 types - stubbed until M7
+        return Err("cmd_json --full is stubbed - requires M7 (footprint module migration to V2)".into());
+    }
+
     let lib = open_pcblib(path)?;
 
-    if full {
-        let export = cmd_json_full(&lib, path);
-        Ok(serde_json::to_value(&export)?)
-    } else {
-        let footprints: Vec<FootprintJsonData> = lib
-            .iter()
-            .map(|comp| FootprintJsonData {
-                name: comp.pattern.clone(),
-                description: comp.description.clone(),
-                pad_count: comp.pad_count(),
-                primitive_count: comp.primitive_count(),
+    let footprints: Vec<FootprintJsonData> = lib
+        .footprints
+        .iter()
+        .map(|fp| {
+            FootprintJsonData {
+                name: fp.name.clone(),
+                description: get_footprint_description(fp),
+                pad_count: fp.pads.len(),
+                primitive_count: footprint_primitive_count(fp),
                 pads: None,
-            })
-            .collect();
+            }
+        })
+        .collect();
 
-        let result = PcbLibJson {
-            file: path.display().to_string(),
-            footprint_count: lib.components.len(),
-            unique_id: lib.unique_id.clone(),
-            footprints,
-        };
-        Ok(serde_json::to_value(&result)?)
-    }
+    let result = PcbLibJson {
+        file: path.display().to_string(),
+        footprint_count: lib.footprints.len(),
+        unique_id: String::new(),
+        footprints,
+    };
+    Ok(serde_json::to_value(&result)?)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MEASUREMENT COMMAND IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-use crate::footprint::{
-    Measurement, analyze_pitch, generate_report, measure_dimensions, measure_pad,
-    measure_pad_distance, minimum_pad_clearance, pad_to_silkscreen_clearance,
-};
-
 /// Measure distances and dimensions in a footprint.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_measure(
-    path: &Path,
-    name: &str,
-    measure_type: &str,
-    pad1: Option<String>,
-    pad2: Option<String>,
-    pad: Option<String>,
-    output_json: bool,
+    _path: &Path,
+    _name: &str,
+    _measure_type: &str,
+    _pad1: Option<String>,
+    _pad2: Option<String>,
+    _pad: Option<String>,
+    _output_json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
-
-    let name_lower = name.to_lowercase();
-    let component = lib
-        .iter()
-        .find(|c| c.pattern.to_lowercase() == name_lower || matches_pattern(&c.pattern, name))
-        .ok_or_else(|| format!("Footprint '{}' not found", name))?;
-
-    match measure_type.to_lowercase().as_str() {
-        "all" | "report" | "summary" => {
-            let report = generate_report(component);
-
-            if output_json {
-                print_measurement_report_json(&report)?;
-            } else {
-                print_measurement_report(&report);
-            }
-        }
-        "distance" | "dist" => {
-            let p1 = pad1.ok_or("--pad1 required for distance measurement")?;
-            let p2 = pad2.ok_or("--pad2 required for distance measurement")?;
-
-            let dist = measure_pad_distance(component, &p1, &p2).ok_or_else(|| {
-                format!("Could not measure distance between pads {} and {}", p1, p2)
-            })?;
-
-            if output_json {
-                print_distance_json(&dist)?;
-            } else {
-                println!("Distance: {} to {}", dist.pad1, dist.pad2);
-                println!("  Center-to-center: {}", dist.center_to_center.display());
-                println!("  Edge-to-edge:     {}", dist.edge_to_edge.display());
-            }
-        }
-        "pitch" => {
-            let pitches = analyze_pitch(component);
-
-            if output_json {
-                print_pitch_json(&pitches)?;
-            } else if pitches.is_empty() {
-                println!("No regular pitch detected (footprint may have irregular pad spacing)");
-            } else {
-                println!("Pitch Analysis for: {}", component.pattern);
-                println!("═══════════════════════════════════════════════════════════════");
-                for pitch_info in &pitches {
-                    println!(
-                        "\n{} pitch: {}",
-                        pitch_info.direction,
-                        pitch_info.pitch.display()
-                    );
-                    println!("  {} pad pairs with this spacing", pitch_info.count);
-                    for (p1, p2, dist) in pitch_info.pad_pairs.iter().take(5) {
-                        println!("    {} ↔ {}: {}", p1, p2, dist.display());
-                    }
-                    if pitch_info.pad_pairs.len() > 5 {
-                        println!("    ... and {} more pairs", pitch_info.pad_pairs.len() - 5);
-                    }
-                }
-            }
-        }
-        "dimensions" | "dims" | "bounds" => {
-            let dims = measure_dimensions(component);
-
-            if output_json {
-                print_dimensions_json(&dims)?;
-            } else {
-                println!("Dimensions for: {}", component.pattern);
-                println!("═══════════════════════════════════════════════════════════════");
-                println!("  Width:  {}", dims.width.display());
-                println!("  Height: {}", dims.height.display());
-                println!(
-                    "  X range: {} to {}",
-                    dims.min_x.display(),
-                    dims.max_x.display()
-                );
-                println!(
-                    "  Y range: {} to {}",
-                    dims.min_y.display(),
-                    dims.max_y.display()
-                );
-            }
-        }
-        "clearance" | "clear" => {
-            let pad_clear = minimum_pad_clearance(component);
-            let silk_clear = pad_to_silkscreen_clearance(component);
-
-            if output_json {
-                print_clearance_json(pad_clear.as_ref(), silk_clear.as_ref())?;
-            } else {
-                println!("Clearance Analysis for: {}", component.pattern);
-                println!("═══════════════════════════════════════════════════════════════");
-
-                if let Some(pc) = pad_clear {
-                    println!("\nMinimum pad-to-pad clearance: {}", pc.clearance.display());
-                    println!("  Location: {}", pc.location);
-                } else {
-                    println!("\nNo pad-to-pad clearance (single pad or overlapping pads)");
-                }
-
-                if let Some(sc) = silk_clear {
-                    println!("\nPad-to-silkscreen clearance: {}", sc.clearance.display());
-                    println!("  Location: {}", sc.location);
-                } else {
-                    println!("\nNo silkscreen elements found");
-                }
-            }
-        }
-        "pad" => {
-            let des = pad.ok_or("--pad required for pad measurement")?;
-            let info =
-                measure_pad(component, &des).ok_or_else(|| format!("Pad '{}' not found", des))?;
-
-            if output_json {
-                print_pad_json(&info)?;
-            } else {
-                println!("Pad {} info:", info.designator);
-                println!("═══════════════════════════════════════════════════════════════");
-                println!("  Position: ({}, {})", info.x.display(), info.y.display());
-                println!(
-                    "  Size:     {} x {}",
-                    info.width.display(),
-                    info.height.display()
-                );
-                println!("  Shape:    {}", info.shape);
-                if let Some(hole) = &info.hole {
-                    println!("  Hole:     {}", hole.display());
-                } else {
-                    println!("  Type:     SMD");
-                }
-            }
-        }
-        "pads" => {
-            let report = generate_report(component);
-
-            if output_json {
-                print_all_pads_json(&report.pads)?;
-            } else {
-                println!("All Pads for: {}", component.pattern);
-                println!("═══════════════════════════════════════════════════════════════");
-                println!(
-                    "\n{:<6} {:>10} {:>10} {:>10} {:>10} {:>10} Shape",
-                    "Pad", "X (mm)", "Y (mm)", "W (mm)", "H (mm)", "Hole"
-                );
-                println!(
-                    "{:-<6} {:->10} {:->10} {:->10} {:->10} {:->10} {:-<12}",
-                    "", "", "", "", "", "", ""
-                );
-
-                for pad_info in &report.pads {
-                    let hole_str = pad_info
-                        .hole
-                        .as_ref()
-                        .map(|h| format!("{:.3}", h.mm))
-                        .unwrap_or_else(|| "-".to_string());
-
-                    println!(
-                        "{:<6} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10} {}",
-                        pad_info.designator,
-                        pad_info.x.mm,
-                        pad_info.y.mm,
-                        pad_info.width.mm,
-                        pad_info.height.mm,
-                        hole_str,
-                        pad_info.shape
-                    );
-                }
-            }
-        }
-        _ => {
-            return Err(format!(
-                "Unknown measurement type: '{}'. Use: all, distance, pitch, dimensions, clearance, pad, pads",
-                measure_type
-            ).into());
-        }
-    }
-
-    Ok(())
+    Err("cmd_measure is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
-/// Print full measurement report in human-readable format.
-fn print_measurement_report(report: &crate::footprint::MeasurementReport) {
-    println!("╔═══════════════════════════════════════════════════════════════╗");
-    println!("║                  FOOTPRINT MEASUREMENT REPORT                  ║");
-    println!("╚═══════════════════════════════════════════════════════════════╝");
-    println!("\nFootprint: {}", report.name);
+// NOTE: Measurement print functions removed - require M7 (footprint module migration)
 
-    // Dimensions
-    println!("\n┌─────────────────────────────────────────────────────────────────┐");
-    println!("│ DIMENSIONS                                                       │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
-    println!("  Width:  {}", report.dimensions.width.display());
-    println!("  Height: {}", report.dimensions.height.display());
-
-    if let Some(span) = &report.row_span {
-        println!("  Row span: {}", span.display());
-    }
-
-    // Pads summary
-    println!("\n┌─────────────────────────────────────────────────────────────────┐");
-    println!(
-        "│ PADS ({} total)                                                   │",
-        report.pads.len()
-    );
-    println!("└─────────────────────────────────────────────────────────────────┘");
-
-    println!(
-        "\n{:<6} {:>10} {:>10} {:>10} {:>10} Shape",
-        "Pad", "X (mm)", "Y (mm)", "W (mm)", "H (mm)"
-    );
-    println!(
-        "{:-<6} {:->10} {:->10} {:->10} {:->10} {:-<12}",
-        "", "", "", "", "", ""
-    );
-
-    for pad in &report.pads {
-        println!(
-            "{:<6} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {}",
-            pad.designator, pad.x.mm, pad.y.mm, pad.width.mm, pad.height.mm, pad.shape
-        );
-    }
-
-    // Pitch analysis
-    if !report.pitch.is_empty() {
-        println!("\n┌─────────────────────────────────────────────────────────────────┐");
-        println!("│ PITCH ANALYSIS                                                   │");
-        println!("└─────────────────────────────────────────────────────────────────┘");
-
-        for pitch_info in &report.pitch {
-            println!(
-                "\n  {} pitch: {}",
-                pitch_info.direction,
-                pitch_info.pitch.display()
-            );
-            println!("    {} adjacent pad pairs", pitch_info.count);
-        }
-    }
-
-    // Clearances
-    println!("\n┌─────────────────────────────────────────────────────────────────┐");
-    println!("│ CLEARANCES                                                       │");
-    println!("└─────────────────────────────────────────────────────────────────┘");
-
-    if let Some(pc) = &report.min_pad_clearance {
-        println!("\n  Minimum pad-to-pad gap: {}", pc.clearance.display());
-        println!("    {}", pc.location);
-    }
-
-    if let Some(sc) = &report.silkscreen_clearance {
-        println!("\n  Pad-to-silkscreen: {}", sc.clearance.display());
-        println!("    {}", sc.location);
-    }
-}
-
-// JSON output helpers
-
-fn print_measurement_report_json(
-    report: &crate::footprint::MeasurementReport,
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct MeasurementJson {
-        mm: f64,
-        mils: f64,
-    }
-
-    impl From<&Measurement> for MeasurementJson {
-        fn from(m: &Measurement) -> Self {
-            MeasurementJson {
-                mm: m.mm,
-                mils: m.mils,
-            }
-        }
-    }
-
-    #[derive(Serialize)]
-    struct PadInfoJson {
-        designator: String,
-        x_mm: f64,
-        y_mm: f64,
-        width_mm: f64,
-        height_mm: f64,
-        hole_mm: Option<f64>,
-        shape: String,
-    }
-
-    #[derive(Serialize)]
-    struct PitchJson {
-        pitch: MeasurementJson,
-        direction: String,
-        count: usize,
-    }
-
-    #[derive(Serialize)]
-    struct ClearanceJson {
-        feature1: String,
-        feature2: String,
-        clearance: MeasurementJson,
-        location: String,
-    }
-
-    #[derive(Serialize)]
-    struct ReportJson {
-        name: String,
-        dimensions: DimensionsJson,
-        pads: Vec<PadInfoJson>,
-        pitch: Vec<PitchJson>,
-        min_pad_clearance: Option<ClearanceJson>,
-        silkscreen_clearance: Option<ClearanceJson>,
-        row_span: Option<MeasurementJson>,
-    }
-
-    #[derive(Serialize)]
-    struct DimensionsJson {
-        width: MeasurementJson,
-        height: MeasurementJson,
-        min_x: MeasurementJson,
-        max_x: MeasurementJson,
-        min_y: MeasurementJson,
-        max_y: MeasurementJson,
-    }
-
-    let output = ReportJson {
-        name: report.name.clone(),
-        dimensions: DimensionsJson {
-            width: (&report.dimensions.width).into(),
-            height: (&report.dimensions.height).into(),
-            min_x: (&report.dimensions.min_x).into(),
-            max_x: (&report.dimensions.max_x).into(),
-            min_y: (&report.dimensions.min_y).into(),
-            max_y: (&report.dimensions.max_y).into(),
-        },
-        pads: report
-            .pads
-            .iter()
-            .map(|p| PadInfoJson {
-                designator: p.designator.clone(),
-                x_mm: p.x.mm,
-                y_mm: p.y.mm,
-                width_mm: p.width.mm,
-                height_mm: p.height.mm,
-                hole_mm: p.hole.as_ref().map(|h| h.mm),
-                shape: p.shape.clone(),
-            })
-            .collect(),
-        pitch: report
-            .pitch
-            .iter()
-            .map(|p| PitchJson {
-                pitch: (&p.pitch).into(),
-                direction: p.direction.clone(),
-                count: p.count,
-            })
-            .collect(),
-        min_pad_clearance: report.min_pad_clearance.as_ref().map(|c| ClearanceJson {
-            feature1: c.feature1.clone(),
-            feature2: c.feature2.clone(),
-            clearance: (&c.clearance).into(),
-            location: c.location.clone(),
-        }),
-        silkscreen_clearance: report.silkscreen_clearance.as_ref().map(|c| ClearanceJson {
-            feature1: c.feature1.clone(),
-            feature2: c.feature2.clone(),
-            clearance: (&c.clearance).into(),
-            location: c.location.clone(),
-        }),
-        row_span: report.row_span.as_ref().map(|s| s.into()),
-    };
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn print_distance_json(
-    dist: &crate::footprint::PadDistance,
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct DistanceJson {
-        pad1: String,
-        pad2: String,
-        center_to_center_mm: f64,
-        center_to_center_mils: f64,
-        edge_to_edge_mm: f64,
-        edge_to_edge_mils: f64,
-    }
-
-    let output = DistanceJson {
-        pad1: dist.pad1.clone(),
-        pad2: dist.pad2.clone(),
-        center_to_center_mm: dist.center_to_center.mm,
-        center_to_center_mils: dist.center_to_center.mils,
-        edge_to_edge_mm: dist.edge_to_edge.mm,
-        edge_to_edge_mils: dist.edge_to_edge.mils,
-    };
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn print_pitch_json(
-    pitches: &[crate::footprint::PitchAnalysis],
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct PitchJson {
-        direction: String,
-        pitch_mm: f64,
-        pitch_mils: f64,
-        pad_pair_count: usize,
-    }
-
-    let output: Vec<PitchJson> = pitches
-        .iter()
-        .map(|p| PitchJson {
-            direction: p.direction.clone(),
-            pitch_mm: p.pitch.mm,
-            pitch_mils: p.pitch.mils,
-            pad_pair_count: p.count,
-        })
-        .collect();
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn print_dimensions_json(
-    dims: &crate::footprint::FootprintDimensions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct DimsJson {
-        width_mm: f64,
-        width_mils: f64,
-        height_mm: f64,
-        height_mils: f64,
-        min_x_mm: f64,
-        max_x_mm: f64,
-        min_y_mm: f64,
-        max_y_mm: f64,
-    }
-
-    let output = DimsJson {
-        width_mm: dims.width.mm,
-        width_mils: dims.width.mils,
-        height_mm: dims.height.mm,
-        height_mils: dims.height.mils,
-        min_x_mm: dims.min_x.mm,
-        max_x_mm: dims.max_x.mm,
-        min_y_mm: dims.min_y.mm,
-        max_y_mm: dims.max_y.mm,
-    };
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn print_clearance_json(
-    pad_clear: Option<&crate::footprint::ClearanceResult>,
-    silk_clear: Option<&crate::footprint::ClearanceResult>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct ClearanceJson {
-        feature1: String,
-        feature2: String,
-        clearance_mm: f64,
-        clearance_mils: f64,
-        location: String,
-    }
-
-    #[derive(Serialize)]
-    struct Output {
-        pad_to_pad: Option<ClearanceJson>,
-        pad_to_silkscreen: Option<ClearanceJson>,
-    }
-
-    let output = Output {
-        pad_to_pad: pad_clear.map(|c| ClearanceJson {
-            feature1: c.feature1.clone(),
-            feature2: c.feature2.clone(),
-            clearance_mm: c.clearance.mm,
-            clearance_mils: c.clearance.mils,
-            location: c.location.clone(),
-        }),
-        pad_to_silkscreen: silk_clear.map(|c| ClearanceJson {
-            feature1: c.feature1.clone(),
-            feature2: c.feature2.clone(),
-            clearance_mm: c.clearance.mm,
-            clearance_mils: c.clearance.mils,
-            location: c.location.clone(),
-        }),
-    };
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn print_pad_json(info: &crate::footprint::PadInfo) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct PadJson {
-        designator: String,
-        x_mm: f64,
-        y_mm: f64,
-        width_mm: f64,
-        height_mm: f64,
-        hole_mm: Option<f64>,
-        shape: String,
-        is_smd: bool,
-    }
-
-    let output = PadJson {
-        designator: info.designator.clone(),
-        x_mm: info.x.mm,
-        y_mm: info.y.mm,
-        width_mm: info.width.mm,
-        height_mm: info.height.mm,
-        hole_mm: info.hole.as_ref().map(|h| h.mm),
-        shape: info.shape.clone(),
-        is_smd: info.hole.is_none(),
-    };
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
-
-fn print_all_pads_json(
-    pads: &[crate::footprint::PadInfo],
-) -> Result<(), Box<dyn std::error::Error>> {
-    #[derive(Serialize)]
-    struct PadJson {
-        designator: String,
-        x_mm: f64,
-        y_mm: f64,
-        width_mm: f64,
-        height_mm: f64,
-        hole_mm: Option<f64>,
-        shape: String,
-    }
-
-    let output: Vec<PadJson> = pads
-        .iter()
-        .map(|p| PadJson {
-            designator: p.designator.clone(),
-            x_mm: p.x.mm,
-            y_mm: p.y.mm,
-            width_mm: p.width.mm,
-            height_mm: p.height.mm,
-            hole_mm: p.hole.as_ref().map(|h| h.mm),
-            shape: p.shape.clone(),
-        })
-        .collect();
-
-    let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    println!("{}", json);
-    Ok(())
-}
+// NOTE: JSON output helpers for measurement functions removed - require M7 (footprint module migration)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CREATION/EDITING COMMAND IMPLEMENTATIONS
@@ -1312,7 +865,7 @@ fn print_all_pads_json(
 /// Embedded blank PcbLib template.
 const BLANK_PCBLIB_TEMPLATE: &[u8] = include_bytes!("../../data/blank/PcbLib1.PcbLib");
 
-use crate::footprint::{ChipSpec, IpcDensity};
+// NOTE: crate::footprint imports removed - they were used by stubbed commands (M7)
 
 /// Create a new empty PcbLib file.
 pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -1327,441 +880,123 @@ pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_blank_pcblib() -> Result<PcbLib, Box<dyn std::error::Error>> {
-    Ok(PcbLib::open(Cursor::new(BLANK_PCBLIB_TEMPLATE))?)
-}
+// NOTE: load_blank_pcblib removed - used by stubbed footprint creation commands (M7)
 
 /// Add a new footprint to a library.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_add_footprint(
-    path: &Path,
-    name: &str,
-    description: Option<String>,
+    _path: &Path,
+    _name: &str,
+    _description: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_or_create_pcblib(path)?;
-
-    // Check if footprint already exists
-    if lib.components.iter().any(|c| c.pattern == name) {
-        return Err(format!("Footprint '{}' already exists", name).into());
-    }
-
-    let mut det = ();
-    let mut component = PcbComponent::new_deterministic(name, &mut det);
-    if let Some(desc) = description {
-        component.set_description(desc);
-    }
-
-    lib.components.push(component);
-    save_pcblib(path, &lib)?;
-
-    println!("Added footprint '{}' to {}", name, path.display());
-    Ok(())
+    Err("cmd_add_footprint is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Add a pad to a footprint.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_add_pad(
-    path: &Path,
-    footprint: &str,
-    designator: &str,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    shape_str: &str,
-    hole: f64,
+    _path: &Path,
+    _footprint: &str,
+    _designator: &str,
+    _x: f64,
+    _y: f64,
+    _width: f64,
+    _height: f64,
+    _shape_str: &str,
+    _hole: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    // Parse shape
-    let shape = match shape_str.to_lowercase().as_str() {
-        "round" => PcbPadShape::Round,
-        "rectangular" | "rect" => PcbPadShape::Rectangular,
-        "rounded_rect" | "roundedrect" => PcbPadShape::RoundedRectangle,
-        "octagonal" | "oct" => PcbPadShape::Octagonal,
-        _ => return Err(format!("Unknown pad shape: {}", shape_str).into()),
-    };
-
-    // Create pad using FootprintBuilder helper
-    let mut builder = FootprintBuilder::new(footprint);
-    if hole > 0.0 {
-        builder.add_th_pad(designator, x, y, width.max(height), hole, shape);
-    } else {
-        builder.add_smd_pad(designator, x, y, width, height, shape);
-    }
-
-    // Extract the pad from the built component
-    let mut det = ();
-    let temp = builder.build_deterministic(&mut det);
-    if let Some(PcbRecord::Pad(pad)) = temp.primitives.into_iter().next() {
-        component.add_primitive(PcbRecord::Pad(pad));
-    }
-
-    save_pcblib(path, &lib)?;
-    println!(
-        "Added pad '{}' to footprint '{}' at ({}, {}) mm",
-        designator, footprint, x, y
-    );
-    Ok(())
+    Err("cmd_add_pad is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Add a silkscreen line to a footprint.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_add_silkscreen(
-    path: &Path,
-    footprint: &str,
-    x1: f64,
-    y1: f64,
-    x2: f64,
-    y2: f64,
-    width: f64,
+    _path: &Path,
+    _footprint: &str,
+    _x1: f64,
+    _y1: f64,
+    _x2: f64,
+    _y2: f64,
+    _width: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    let track = PcbTrack {
-        common: PcbPrimitiveCommon {
-            layer: Layer::TOP_OVERLAY,
-            flags: PcbFlags::UNLOCKED | PcbFlags::UNKNOWN8,
-            unique_id: None,
-        },
-        start: CoordPoint::from_mms(x1, y1),
-        end: CoordPoint::from_mms(x2, y2),
-        width: Coord::from_mms(width),
-        unknown: vec![0u8; 16],
-    };
-
-    component.add_primitive(PcbRecord::Track(track));
-    save_pcblib(path, &lib)?;
-
-    println!("Added silkscreen line to footprint '{}'", footprint);
-    Ok(())
+    Err("cmd_add_silkscreen is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Add a silkscreen arc to a footprint.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_add_arc(
-    path: &Path,
-    footprint: &str,
-    x: f64,
-    y: f64,
-    radius: f64,
-    start_angle: f64,
-    end_angle: f64,
-    width: f64,
+    _path: &Path,
+    _footprint: &str,
+    _x: f64,
+    _y: f64,
+    _radius: f64,
+    _start_angle: f64,
+    _end_angle: f64,
+    _width: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    let arc = PcbArc {
-        common: PcbPrimitiveCommon {
-            layer: Layer::TOP_OVERLAY,
-            flags: PcbFlags::UNLOCKED | PcbFlags::UNKNOWN8,
-            unique_id: None,
-        },
-        location: CoordPoint::from_mms(x, y),
-        radius: Coord::from_mms(radius),
-        start_angle,
-        end_angle,
-        width: Coord::from_mms(width),
-    };
-
-    component.add_primitive(PcbRecord::Arc(arc));
-    save_pcblib(path, &lib)?;
-
-    println!(
-        "Added silkscreen arc to footprint '{}' (center: ({}, {}) mm, radius: {} mm, {:.0}° to {:.0}°)",
-        footprint, x, y, radius, start_angle, end_angle
-    );
-    Ok(())
+    Err("cmd_add_arc is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Generate a standard chip/passive footprint.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_gen_chip(
-    path: &Path,
-    size: &str,
-    density_str: &str,
+    _path: &Path,
+    _size: &str,
+    _density_str: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_or_create_pcblib(path)?;
-
-    let spec = match size.to_uppercase().as_str() {
-        "0201" => ChipSpec::chip_0201(),
-        "0402" => ChipSpec::chip_0402(),
-        "0603" => ChipSpec::chip_0603(),
-        "0805" => ChipSpec::chip_0805(),
-        "1206" => ChipSpec::chip_1206(),
-        _ => {
-            return Err(format!(
-                "Unknown chip size: {}. Supported: 0201, 0402, 0603, 0805, 1206",
-                size
-            )
-            .into());
-        }
-    };
-
-    let density = parse_density(density_str)?;
-    let mut det = ();
-    let component = spec.to_footprint(density).build_deterministic(&mut det);
-    let name = component.pattern.clone();
-
-    // Check if already exists
-    if lib.components.iter().any(|c| c.pattern == name) {
-        return Err(format!("Footprint '{}' already exists", name).into());
-    }
-
-    lib.components.push(component);
-    save_pcblib(path, &lib)?;
-
-    println!(
-        "Generated chip footprint '{}' with {} density",
-        name, density_str
-    );
-    Ok(())
+    Err("cmd_gen_chip is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
-fn parse_density(s: &str) -> Result<IpcDensity, Box<dyn std::error::Error>> {
-    match s.to_lowercase().as_str() {
-        "most" | "a" | "dense" => Ok(IpcDensity::MostDense),
-        "nominal" | "b" | "normal" => Ok(IpcDensity::Nominal),
-        "least" | "c" | "loose" => Ok(IpcDensity::LeastDense),
-        _ => Err(format!("Unknown density: {}. Use: most, nominal, least", s).into()),
-    }
-}
-
+/// Render footprint to SVG.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_render_svg(
-    path: &Path,
-    name: &str,
-    output: Option<PathBuf>,
-    scale: f64,
-    light: bool,
-    no_grid: bool,
-    no_designators: bool,
+    _path: &Path,
+    _name: &str,
+    _output: Option<PathBuf>,
+    _scale: f64,
+    _light: bool,
+    _no_grid: bool,
+    _no_designators: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs;
-
-    let lib = open_pcblib(path)?;
-
-    // Find the footprint
-    let name_lower = name.to_lowercase();
-    let component = lib
-        .iter()
-        .find(|c| c.pattern.to_lowercase() == name_lower || matches_pattern(&c.pattern, name))
-        .ok_or_else(|| format!("Footprint '{}' not found", name))?;
-
-    // Build options
-    let mut options = if light {
-        SvgOptions::light()
-    } else {
-        SvgOptions::default()
-    };
-    options.scale = scale;
-    options.show_grid = !no_grid;
-    options.show_designators = !no_designators;
-
-    // Render to SVG
-    let svg = render_svg(component, &options);
-
-    // Determine output path
-    let output_path = output.unwrap_or_else(|| {
-        PathBuf::from(format!(
-            "{}.svg",
-            component.pattern.replace(['/', '\\', ' '], "_")
-        ))
-    });
-
-    // Write to file
-    fs::write(&output_path, &svg).map_err(|e| format!("Error writing SVG: {}", e))?;
-
-    println!(
-        "Rendered footprint '{}' to {}",
-        component.pattern,
-        output_path.display()
-    );
-    println!("  Size: {} bytes", svg.len());
-    println!("  Theme: {}", if light { "light" } else { "dark" });
-    println!("  Scale: {} px/mil", scale);
-
-    Ok(())
+    Err("cmd_render_svg is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
+/// Render footprint to PNG.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_render_png(
-    path: &Path,
-    name: &str,
-    output: Option<PathBuf>,
-    scale: f64,
-    target_width: Option<u32>,
+    _path: &Path,
+    _name: &str,
+    _output: Option<PathBuf>,
+    _scale: f64,
+    _target_width: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs::File;
-    use std::io::BufWriter;
-
-    let lib = open_pcblib(path)?;
-
-    // Find the footprint
-    let name_lower = name.to_lowercase();
-    let component = lib
-        .iter()
-        .find(|c| c.pattern.to_lowercase() == name_lower || matches_pattern(&c.pattern, name))
-        .ok_or_else(|| format!("Footprint '{}' not found", name))?;
-
-    // Use Altium-style colors (dark background, colored layers)
-    let options = SvgOptions {
-        scale,
-        show_grid: false, // No grid for PNG
-        show_designators: true,
-        ..Default::default()
-    };
-
-    // Render to SVG first
-    let svg_data = render_svg(component, &options);
-
-    // Parse SVG and render to PNG using resvg
-    let tree = resvg::usvg::Tree::from_str(&svg_data, &resvg::usvg::Options::default())
-        .map_err(|e| format!("Error parsing SVG: {}", e))?;
-
-    // Calculate dimensions
-    let svg_size = tree.size();
-    let (width, height) = if let Some(w) = target_width {
-        let h = (w as f32 * svg_size.height() / svg_size.width()) as u32;
-        (w, h)
-    } else {
-        (svg_size.width() as u32, svg_size.height() as u32)
-    };
-
-    // Create pixmap and render
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| "Failed to create pixmap".to_string())?;
-
-    // Fill with dark background
-    pixmap.fill(resvg::tiny_skia::Color::from_rgba8(30, 30, 30, 255));
-
-    // Render SVG onto pixmap
-    let scale_x = width as f32 / svg_size.width();
-    let scale_y = height as f32 / svg_size.height();
-    let transform = resvg::tiny_skia::Transform::from_scale(scale_x, scale_y);
-
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-    // Determine output path
-    let output_path = output.unwrap_or_else(|| {
-        PathBuf::from(format!(
-            "{}.png",
-            component.pattern.replace(['/', '\\', ' '], "_")
-        ))
-    });
-
-    // Write PNG
-    let file = File::create(&output_path).map_err(|e| format!("Error creating file: {}", e))?;
-    let writer = BufWriter::new(file);
-    let mut encoder = png::Encoder::new(writer, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-
-    let mut png_writer = encoder
-        .write_header()
-        .map_err(|e| format!("Error writing PNG header: {}", e))?;
-    png_writer
-        .write_image_data(pixmap.data())
-        .map_err(|e| format!("Error writing PNG data: {}", e))?;
-
-    println!(
-        "Rendered footprint '{}' to {}",
-        component.pattern,
-        output_path.display()
-    );
-    println!("  Size: {}x{} pixels", width, height);
-
-    Ok(())
+    Err("cmd_render_png is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
+/// Render footprint to ASCII art.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_render_ascii(
-    path: &Path,
-    name: &str,
-    max_width: usize,
-    max_height: usize,
+    _path: &Path,
+    _name: &str,
+    _max_width: usize,
+    _max_height: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
-
-    // Find the footprint
-    let name_lower = name.to_lowercase();
-    let component = lib
-        .iter()
-        .find(|c| c.pattern.to_lowercase() == name_lower || matches_pattern(&c.pattern, name))
-        .ok_or_else(|| format!("Footprint '{}' not found", name))?;
-
-    // Build options
-    let options = AsciiOptions {
-        max_width,
-        max_height,
-        ..Default::default()
-    };
-
-    // Render and print
-    let ascii = render_ascii(component, &options);
-    println!("{}", ascii);
-
-    Ok(())
+    Err("cmd_render_ascii is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 // Helper functions
 
-/// Open an existing PcbLib or create a new blank one if the file doesn't exist.
-pub fn open_or_create(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
-    open_or_create_pcblib(path)
-}
-
-fn open_or_create_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
-    if path.exists() {
-        open_pcblib(path)
-    } else {
-        load_blank_pcblib()
-    }
-}
-
-fn save_pcblib(path: &Path, lib: &PcbLib) -> Result<(), Box<dyn std::error::Error>> {
-    Ok(lib.save_to_file(path)?)
-}
-
-/// Simple wildcard pattern matching (supports * and ?).
-fn matches_pattern(text: &str, pattern: &str) -> bool {
-    let text = text.to_lowercase();
-    let pattern = pattern.to_lowercase();
-
-    fn matches(text: &[char], pattern: &[char]) -> bool {
-        match (text.first(), pattern.first()) {
-            (None, None) => true,
-            (None, Some('*')) => matches(text, &pattern[1..]),
-            (None, Some(_)) => false,
-            (Some(_), None) => false,
-            (Some(_), Some('*')) => {
-                // * can match zero or more characters
-                matches(text, &pattern[1..]) || matches(&text[1..], pattern)
-            }
-            (Some(_), Some('?')) => {
-                // ? matches exactly one character
-                matches(&text[1..], &pattern[1..])
-            }
-            (Some(t), Some(p)) => *t == *p && matches(&text[1..], &pattern[1..]),
-        }
-    }
-
-    let text_chars: Vec<char> = text.chars().collect();
-    let pattern_chars: Vec<char> = pattern.chars().collect();
-    matches(&text_chars, &pattern_chars)
-}
+// NOTE: open_or_create_pcblib, save_pcblib, and matches_pattern removed - used by stubbed commands (M7)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // JSON INPUT STRUCTURES (for LLM tool calling and structured output)
@@ -2036,732 +1271,92 @@ pub struct FootprintJson {
 }
 
 /// Add a complete footprint from JSON input.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 pub fn cmd_add_json(
-    path: &Path,
-    json_file: Option<String>,
-    json_str: Option<String>,
+    _path: &Path,
+    _json_file: Option<String>,
+    _json_str: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::{self, Read as IoRead};
-
-    // Read JSON from file, stdin, or command line
-    let json_content = match (json_file, json_str) {
-        (_, Some(s)) => s,
-        (Some(ref path), None) if path == "-" => {
-            let mut buffer = String::new();
-            io::stdin()
-                .read_to_string(&mut buffer)
-                .map_err(|e| format!("Error reading from stdin: {}", e))?;
-            buffer
-        }
-        (Some(ref file_path), None) => std::fs::read_to_string(file_path)
-            .map_err(|e| format!("Error reading file '{}': {}", file_path, e))?,
-        (None, None) => {
-            return Err("Must provide either --file <path> or --json <string>"
-                .to_string()
-                .into());
-        }
-    };
-
-    // Try full export format first
-    if let Ok(export) = serde_json::from_str::<PcbLibExport>(&json_content) {
-        return cmd_add_json_full_export(path, &export);
-    }
-
-    // Try single full footprint
-    if let Ok(full_fp) = serde_json::from_str::<PcbFootprintFullJson>(&json_content) {
-        let mut lib = open_or_create_pcblib(path)?;
-        if lib.components.iter().any(|c| c.pattern == full_fp.name) {
-            return Err(format!("Footprint '{}' already exists", full_fp.name).into());
-        }
-        let component = footprint_from_full_json(&full_fp)
-            .map_err(|e| format!("Error converting footprint: {}", e))?;
-        let name = component.pattern.clone();
-        lib.components.push(component);
-        save_pcblib(path, &lib)?;
-        println!("Added full footprint '{}' to {}", name, path.display());
-        return Ok(());
-    }
-
-    // Parse JSON as FootprintJson (fall back)
-    let footprint_def: FootprintJson =
-        serde_json::from_str(&json_content).map_err(|e| format!("Invalid JSON: {}", e))?;
-
-    // Open or create library
-    let mut lib = open_or_create_pcblib(path)?;
-
-    // Check if footprint already exists
-    if lib
-        .components
-        .iter()
-        .any(|c| c.pattern == footprint_def.name)
-    {
-        return Err(format!("Footprint '{}' already exists", footprint_def.name).into());
-    }
-
-    // Create footprint using FootprintBuilder
-    let mut builder = FootprintBuilder::new(&footprint_def.name);
-
-    if !footprint_def.description.is_empty() {
-        builder = builder.description(&footprint_def.description);
-    }
-
-    // ─── Process high-level constructs first (datasheet-style) ───
-
-    // Add pad rows
-    for row in &footprint_def.pad_rows {
-        let pitch_mm = parse_unit_value_or_mm(&row.pitch)?;
-        let pad_width_mm = parse_unit_value_or_mm(&row.pad_width)?;
-        let pad_height_mm = parse_unit_value_or_mm(&row.pad_height)?;
-        let x_mm = if row.x.is_empty() {
-            0.0
-        } else {
-            parse_unit_value_or_mm(&row.x)?
-        };
-        let y_mm = if row.y.is_empty() {
-            0.0
-        } else {
-            parse_unit_value_or_mm(&row.y)?
-        };
-        let hole_mm = if row.hole.is_empty() {
-            0.0
-        } else {
-            parse_unit_value_or_mm(&row.hole)?
-        };
-        let dir = PadRowDirection::try_parse(&row.direction)
-            .ok_or_else(|| format!("Invalid direction '{}' in pad_row", row.direction))?;
-        let shape = parse_pad_shape(&row.shape)?;
-
-        if hole_mm > 0.0 {
-            let pad_diameter = pad_width_mm.max(pad_height_mm);
-            if row.use_spacing {
-                let pad_along_row = match dir {
-                    PadRowDirection::Horizontal => pad_width_mm,
-                    PadRowDirection::Vertical => pad_height_mm,
-                };
-                let effective_pitch = pitch_mm + pad_along_row;
-                builder.add_th_pad_row(
-                    row.count,
-                    effective_pitch,
-                    pad_diameter,
-                    hole_mm,
-                    x_mm,
-                    y_mm,
-                    dir,
-                    row.start,
-                    shape,
-                );
-            } else {
-                builder.add_th_pad_row(
-                    row.count,
-                    pitch_mm,
-                    pad_diameter,
-                    hole_mm,
-                    x_mm,
-                    y_mm,
-                    dir,
-                    row.start,
-                    shape,
-                );
-            }
-        } else if row.use_spacing {
-            builder.add_pad_row_with_spacing(
-                row.count,
-                pitch_mm,
-                pad_width_mm,
-                pad_height_mm,
-                x_mm,
-                y_mm,
-                dir,
-                row.start,
-                shape,
-            );
-        } else {
-            builder.add_pad_row(
-                row.count,
-                pitch_mm,
-                pad_width_mm,
-                pad_height_mm,
-                x_mm,
-                y_mm,
-                dir,
-                row.start,
-                shape,
-            );
-        }
-    }
-
-    // Add dual rows
-    for dual in &footprint_def.dual_rows {
-        let pitch_mm = parse_unit_value_or_mm(&dual.pitch)?;
-        let row_spacing_mm = parse_unit_value_or_mm(&dual.row_spacing)?;
-        let shape = parse_pad_shape(&dual.shape)?;
-
-        if let Some(ref hole_str) = dual.hole {
-            // Through-hole
-            let hole_mm = parse_unit_value_or_mm(hole_str)?;
-            let pad_dia_mm = if let Some(ref d) = dual.pad_diameter {
-                parse_unit_value_or_mm(d)?
-            } else if let Some(ref w) = dual.pad_width {
-                parse_unit_value_or_mm(w)?
-            } else {
-                return Err("Through-hole dual_row requires pad_diameter or pad_width"
-                    .to_string()
-                    .into());
-            };
-            builder.add_dual_row_th(
-                dual.pads_per_side,
-                pitch_mm,
-                row_spacing_mm,
-                pad_dia_mm,
-                hole_mm,
-                shape,
-            );
-        } else {
-            // SMD
-            let pad_width_mm = dual
-                .pad_width
-                .as_ref()
-                .ok_or("SMD dual_row requires pad_width")?;
-            let pad_height_mm = dual
-                .pad_height
-                .as_ref()
-                .ok_or("SMD dual_row requires pad_height")?;
-            let pad_width_mm = parse_unit_value_or_mm(pad_width_mm)?;
-            let pad_height_mm = parse_unit_value_or_mm(pad_height_mm)?;
-            builder.add_dual_row_smd(
-                dual.pads_per_side,
-                pitch_mm,
-                row_spacing_mm,
-                pad_width_mm,
-                pad_height_mm,
-                shape,
-            );
-        }
-    }
-
-    // Add quad pads
-    for quad in &footprint_def.quad_pads {
-        let pitch_mm = parse_unit_value_or_mm(&quad.pitch)?;
-        let span_mm = parse_unit_value_or_mm(&quad.span)?;
-        let pad_width_mm = parse_unit_value_or_mm(&quad.pad_width)?;
-        let pad_height_mm = parse_unit_value_or_mm(&quad.pad_height)?;
-        let shape = parse_pad_shape(&quad.shape)?;
-        builder.add_quad_pads_smd(
-            quad.pads_per_side,
-            pitch_mm,
-            span_mm,
-            pad_width_mm,
-            pad_height_mm,
-            shape,
-        );
-    }
-
-    // Add pad grids
-    for grid in &footprint_def.pad_grids {
-        let pitch_mm = parse_unit_value_or_mm(&grid.pitch)?;
-        let pad_diameter_mm = parse_unit_value_or_mm(&grid.pad_diameter)?;
-        let skip_center_mm = if grid.skip_center.is_empty() {
-            0.0
-        } else {
-            parse_unit_value_or_mm(&grid.skip_center)?
-        };
-        let shape = parse_pad_shape(&grid.shape)?;
-        builder.add_pad_grid(
-            grid.rows,
-            grid.cols,
-            pitch_mm,
-            pad_diameter_mm,
-            shape,
-            skip_center_mm,
-        );
-    }
-
-    // ─── Process low-level primitives (individual pads, lines, etc.) ───
-
-    // Add individual pads
-    for pad in &footprint_def.pads {
-        let shape = parse_pad_shape(&pad.shape)?;
-
-        if pad.hole > 0.0 {
-            builder.add_th_pad(
-                &pad.designator,
-                pad.x,
-                pad.y,
-                pad.width.max(pad.height),
-                pad.hole,
-                shape,
-            );
-        } else {
-            builder.add_smd_pad(&pad.designator, pad.x, pad.y, pad.width, pad.height, shape);
-        }
-    }
-
-    // Add silkscreen lines
-    for line in &footprint_def.lines {
-        builder.add_silkscreen_line(line.x1, line.y1, line.x2, line.y2, line.width);
-    }
-
-    // Add arcs
-    for arc in &footprint_def.arcs {
-        builder.add_silkscreen_arc(
-            arc.x,
-            arc.y,
-            arc.radius,
-            arc.start_angle,
-            arc.end_angle,
-            arc.width,
-        );
-    }
-
-    let mut det = ();
-    let mut component = builder.build_deterministic(&mut det);
-
-    // Add text elements (not supported by FootprintBuilder, add directly)
-    for text_def in &footprint_def.texts {
-        let layer = parse_pcb_layer(&text_def.layer)?;
-
-        let text = PcbText::new(
-            text_def.x,
-            text_def.y,
-            &text_def.text,
-            text_def.height,
-            text_def.stroke_width,
-            text_def.rotation,
-            text_def.mirrored,
-            layer,
-        );
-        component.add_primitive(PcbRecord::Text(text));
-    }
-
-    let pad_count = component.pad_count();
-    let line_count = footprint_def.lines.len();
-    let arc_count = footprint_def.arcs.len();
-    let text_count = footprint_def.texts.len();
-
-    lib.components.push(component);
-    save_pcblib(path, &lib)?;
-
-    // Build summary of added primitives
-    let mut parts = vec![format!("{} pads", pad_count)];
-    if line_count > 0 {
-        parts.push(format!("{} lines", line_count));
-    }
-    if arc_count > 0 {
-        parts.push(format!("{} arcs", arc_count));
-    }
-    if text_count > 0 {
-        parts.push(format!("{} texts", text_count));
-    }
-
-    println!(
-        "Added footprint '{}' with {} to {}",
-        footprint_def.name,
-        parts.join(", "),
-        path.display()
-    );
-
-    Ok(())
+    Err("cmd_add_json is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
-fn parse_pcb_layer(s: &str) -> Result<Layer, String> {
-    match s.to_lowercase().replace('_', "").as_str() {
-        "topoverlay" | "silkscreen" | "top_overlay" => Ok(Layer::TOP_OVERLAY),
-        "bottomoverlay" | "bottom_overlay" => Ok(Layer::BOTTOM_OVERLAY),
-        "top" | "toplayer" => Ok(Layer::TOP_LAYER),
-        "bottom" | "bottomlayer" => Ok(Layer::BOTTOM_LAYER),
-        _ => Err(format!(
-            "Unknown layer: {}. Use: top_overlay, bottom_overlay, top, bottom",
-            s
-        )),
-    }
-}
-
-fn parse_pad_shape(s: &str) -> Result<PcbPadShape, String> {
-    match s.to_lowercase().as_str() {
-        "round" => Ok(PcbPadShape::Round),
-        "rectangular" | "rect" => Ok(PcbPadShape::Rectangular),
-        "rounded_rect" | "roundedrect" | "rounded_rectangle" => Ok(PcbPadShape::RoundedRectangle),
-        "octagonal" | "oct" => Ok(PcbPadShape::Octagonal),
-        _ => Err(format!(
-            "Unknown pad shape: {}. Use: round, rectangular, rounded_rect, octagonal",
-            s
-        )),
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HIGH-LEVEL PAD COMMANDS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Parse a value with unit suffix (e.g., "0.5mm", "50mil", "0.05in").
-/// Plain numbers without a unit suffix are treated as mm (not DxpDefault).
-fn parse_unit_value(s: &str) -> Result<f64, String> {
-    let s = s.trim();
-
-    match Unit::parse_with_unit(s) {
-        Ok((coord, unit)) => {
-            if unit == Unit::DxpDefault {
-                // Bare number without unit — treat as mm, not DxpDefault (10 mils).
-                // Users of CLI commands expect mm as the default unit.
-                let value: f64 = s.parse().map_err(|_| {
-                    format!("Invalid value '{}': expected number with optional unit", s)
-                })?;
-                Ok(value)
-            } else {
-                Ok(coord.to_mms())
-            }
-        }
-        Err(e) => Err(format!("Invalid value '{}': {:?}", s, e)),
-    }
-}
-
-/// Parse a value with optional unit suffix, defaulting to mm for plain numbers.
-/// Handles: "0.5mm", "50mil", "0.05in", "0.5" (interpreted as mm)
-fn parse_unit_value_or_mm(s: &str) -> Result<f64, String> {
-    let s = s.trim();
-
-    // Try parsing with unit suffix first
-    if let Ok((coord, _unit)) = Unit::parse_with_unit(s) {
-        return Ok(coord.to_mms());
-    }
-
-    // If no unit suffix, try as plain number (interpreted as mm)
-    s.parse::<f64>().map_err(|_| {
-        format!(
-            "Invalid value '{}': expected number with optional unit (e.g., '0.5mm', '50mil')",
-            s
-        )
-    })
-}
+// NOTE: parse_pcb_layer, parse_pad_shape, parse_unit_value, parse_unit_value_or_mm
+// removed - they were used by stubbed footprint creation commands (requires M7)
 
 /// Add a row of pads.
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_add_pad_row(
-    path: &Path,
-    footprint: &str,
-    count: usize,
-    pitch: &str,
-    pad_width: &str,
-    pad_height: &str,
-    direction: &str,
-    start: u32,
-    x: &str,
-    y: &str,
-    shape_str: &str,
-    hole: &str,
-    use_spacing: bool,
+    _path: &Path,
+    _footprint: &str,
+    _count: usize,
+    _pitch: &str,
+    _pad_width: &str,
+    _pad_height: &str,
+    _direction: &str,
+    _start: u32,
+    _x: &str,
+    _y: &str,
+    _shape_str: &str,
+    _hole: &str,
+    _use_spacing: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    // Parse all values with units
-    let pitch_mm = parse_unit_value(pitch)?;
-    let pad_width_mm = parse_unit_value(pad_width)?;
-    let pad_height_mm = parse_unit_value(pad_height)?;
-    let x_mm = parse_unit_value(x)?;
-    let y_mm = parse_unit_value(y)?;
-    let hole_mm = parse_unit_value(hole)?;
-
-    let dir = PadRowDirection::try_parse(direction).ok_or_else(|| {
-        format!(
-            "Invalid direction '{}'. Use: horizontal (h/x) or vertical (v/y)",
-            direction
-        )
-    })?;
-
-    let shape = parse_pad_shape(shape_str)?;
-
-    // Create pad row using FootprintBuilder
-    let mut builder = FootprintBuilder::new(footprint);
-
-    if hole_mm > 0.0 {
-        // Through-hole pads
-        let pad_diameter = pad_width_mm.max(pad_height_mm);
-        if use_spacing {
-            // Convert spacing to pitch
-            let pad_along_row = match dir {
-                PadRowDirection::Horizontal => pad_width_mm,
-                PadRowDirection::Vertical => pad_height_mm,
-            };
-            let effective_pitch = pitch_mm + pad_along_row;
-            builder.add_th_pad_row(
-                count,
-                effective_pitch,
-                pad_diameter,
-                hole_mm,
-                x_mm,
-                y_mm,
-                dir,
-                start,
-                shape,
-            );
-        } else {
-            builder.add_th_pad_row(
-                count,
-                pitch_mm,
-                pad_diameter,
-                hole_mm,
-                x_mm,
-                y_mm,
-                dir,
-                start,
-                shape,
-            );
-        }
-    } else {
-        // SMD pads
-        if use_spacing {
-            builder.add_pad_row_with_spacing(
-                count,
-                pitch_mm,
-                pad_width_mm,
-                pad_height_mm,
-                x_mm,
-                y_mm,
-                dir,
-                start,
-                shape,
-            );
-        } else {
-            builder.add_pad_row(
-                count,
-                pitch_mm,
-                pad_width_mm,
-                pad_height_mm,
-                x_mm,
-                y_mm,
-                dir,
-                start,
-                shape,
-            );
-        }
-    }
-
-    // Extract pads from the built component and add to existing footprint
-    let mut det = ();
-    let temp = builder.build_deterministic(&mut det);
-    for prim in temp.primitives {
-        component.add_primitive(prim);
-    }
-
-    save_pcblib(path, &lib)?;
-
-    let term = if use_spacing { "spacing" } else { "pitch" };
-    println!(
-        "Added {} pads to '{}' ({} {} {}, direction: {})",
-        count,
-        footprint,
-        pitch,
-        term,
-        if hole_mm > 0.0 { "through-hole" } else { "SMD" },
-        direction
-    );
-
-    Ok(())
+    Err("cmd_add_pad_row is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Add dual rows of pads (SOIC, DIP style).
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_add_dual_row(
-    path: &Path,
-    footprint: &str,
-    pads_per_side: usize,
-    pitch: &str,
-    row_spacing: &str,
-    pad_width: Option<&str>,
-    pad_height: Option<&str>,
-    pad_diameter: Option<&str>,
-    hole: Option<&str>,
-    shape_str: &str,
+    _path: &Path,
+    _footprint: &str,
+    _pads_per_side: usize,
+    _pitch: &str,
+    _row_spacing: &str,
+    _pad_width: Option<&str>,
+    _pad_height: Option<&str>,
+    _pad_diameter: Option<&str>,
+    _hole: Option<&str>,
+    _shape_str: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    let pitch_mm = parse_unit_value(pitch)?;
-    let row_spacing_mm = parse_unit_value(row_spacing)?;
-    let shape = parse_pad_shape(shape_str)?;
-
-    let mut builder = FootprintBuilder::new(footprint);
-
-    // Determine if through-hole or SMD based on hole parameter
-    if let Some(hole_str) = hole {
-        // Through-hole
-        let hole_mm = parse_unit_value(hole_str)?;
-        let pad_dia_mm = if let Some(d) = pad_diameter {
-            parse_unit_value(d)?
-        } else if let Some(w) = pad_width {
-            parse_unit_value(w)?
-        } else {
-            return Err("Through-hole pads require --pad-diameter or --pad-width"
-                .to_string()
-                .into());
-        };
-
-        builder.add_dual_row_th(
-            pads_per_side,
-            pitch_mm,
-            row_spacing_mm,
-            pad_dia_mm,
-            hole_mm,
-            shape,
-        );
-    } else {
-        // SMD
-        let pad_w = pad_width.ok_or("SMD pads require --pad-width")?;
-        let pad_h = pad_height.ok_or("SMD pads require --pad-height")?;
-        let pad_width_mm = parse_unit_value(pad_w)?;
-        let pad_height_mm = parse_unit_value(pad_h)?;
-
-        builder.add_dual_row_smd(
-            pads_per_side,
-            pitch_mm,
-            row_spacing_mm,
-            pad_width_mm,
-            pad_height_mm,
-            shape,
-        );
-    }
-
-    // Add pads to existing footprint
-    let mut det = ();
-    let temp = builder.build_deterministic(&mut det);
-    for prim in temp.primitives {
-        component.add_primitive(prim);
-    }
-
-    save_pcblib(path, &lib)?;
-
-    let total_pads = pads_per_side * 2;
-    let pad_type = if hole.is_some() {
-        "through-hole"
-    } else {
-        "SMD"
-    };
-    println!(
-        "Added dual row ({} {} pads, {} per side) to '{}' (pitch: {}, row spacing: {})",
-        total_pads, pad_type, pads_per_side, footprint, pitch, row_spacing
-    );
-
-    Ok(())
+    Err("cmd_add_dual_row is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Add quad arrangement of pads (QFP style).
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_add_quad_pads(
-    path: &Path,
-    footprint: &str,
-    pads_per_side: usize,
-    pitch: &str,
-    span: &str,
-    pad_width: &str,
-    pad_height: &str,
-    shape_str: &str,
+    _path: &Path,
+    _footprint: &str,
+    _pads_per_side: usize,
+    _pitch: &str,
+    _span: &str,
+    _pad_width: &str,
+    _pad_height: &str,
+    _shape_str: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    let pitch_mm = parse_unit_value(pitch)?;
-    let span_mm = parse_unit_value(span)?;
-    let pad_width_mm = parse_unit_value(pad_width)?;
-    let pad_height_mm = parse_unit_value(pad_height)?;
-    let shape = parse_pad_shape(shape_str)?;
-
-    let mut builder = FootprintBuilder::new(footprint);
-    builder.add_quad_pads_smd(
-        pads_per_side,
-        pitch_mm,
-        span_mm,
-        pad_width_mm,
-        pad_height_mm,
-        shape,
-    );
-
-    // Add pads to existing footprint
-    let mut det = ();
-    let temp = builder.build_deterministic(&mut det);
-    for prim in temp.primitives {
-        component.add_primitive(prim);
-    }
-
-    save_pcblib(path, &lib)?;
-
-    let total_pads = pads_per_side * 4;
-    println!(
-        "Added quad arrangement ({} SMD pads, {} per side) to '{}' (pitch: {}, span: {})",
-        total_pads, pads_per_side, footprint, pitch, span
-    );
-
-    Ok(())
+    Err("cmd_add_quad_pads is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 /// Add a grid of pads (BGA style).
+///
+/// **STUBBED**: Requires M7 (footprint module migration to V2).
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_add_pad_grid(
-    path: &Path,
-    footprint: &str,
-    rows: usize,
-    cols: usize,
-    pitch: &str,
-    pad_diameter: &str,
-    shape_str: &str,
-    skip_center: &str,
+    _path: &Path,
+    _footprint: &str,
+    _rows: usize,
+    _cols: usize,
+    _pitch: &str,
+    _pad_diameter: &str,
+    _shape_str: &str,
+    _skip_center: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-
-    let component = lib
-        .components
-        .iter_mut()
-        .find(|c| c.pattern == footprint)
-        .ok_or_else(|| format!("Footprint '{}' not found", footprint))?;
-
-    let pitch_mm = parse_unit_value(pitch)?;
-    let pad_diameter_mm = parse_unit_value(pad_diameter)?;
-    let skip_center_mm = parse_unit_value(skip_center)?;
-    let shape = parse_pad_shape(shape_str)?;
-
-    let mut builder = FootprintBuilder::new(footprint);
-    builder.add_pad_grid(rows, cols, pitch_mm, pad_diameter_mm, shape, skip_center_mm);
-
-    // Add pads to existing footprint
-    let mut det = ();
-    let temp = builder.build_deterministic(&mut det);
-    let pad_count = temp.primitives.len();
-    for prim in temp.primitives {
-        component.add_primitive(prim);
-    }
-
-    save_pcblib(path, &lib)?;
-
-    let max_pads = rows * cols;
-    let skipped = max_pads - pad_count;
-    if skipped > 0 {
-        println!(
-            "Added {}x{} grid ({} pads, {} skipped in center) to '{}' (pitch: {})",
-            rows, cols, pad_count, skipped, footprint, pitch
-        );
-    } else {
-        println!(
-            "Added {}x{} grid ({} pads) to '{}' (pitch: {})",
-            rows, cols, pad_count, footprint, pitch
-        );
-    }
-
-    Ok(())
+    Err("cmd_add_pad_grid is stubbed - requires M7 (footprint module migration to V2)".into())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2898,40 +1493,6 @@ pub enum PcbPrimitiveJson {
         parameters: HashMap<String, String>,
         outline: Vec<[i64; 2]>,
     },
-    Dimension {
-        dimension_kind: u8,
-        layer: u8,
-        x1: i64,
-        y1: i64,
-        x2: i64,
-        y2: i64,
-        height: i64,
-        angle: f64,
-        line_width: i64,
-        text_x: i64,
-        text_y: i64,
-        text_height: i64,
-        text_width: i64,
-        text_precision: i32,
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        text_format: String,
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        text_dimension_unit: String,
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        text_prefix: String,
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        text_suffix: String,
-        arrow_size: i64,
-        references_count: usize,
-    },
-    Coordinate {
-        layer: u8,
-        x: i64,
-        y: i64,
-        angle: f64,
-        text_height: i64,
-        text_width: i64,
-    },
     Unknown {
         object_id: u8,
         #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -2947,645 +1508,10 @@ pub struct PcbMaskExpansionJson {
     pub value: Option<i64>,
 }
 
-fn common_to_json(common: &PcbPrimitiveCommon) -> PcbCommonJson {
-    PcbCommonJson {
-        layer: common.layer.0,
-        flags: common.flags.bits(),
-        unique_id: common.unique_id.clone(),
-    }
-}
 
-fn common_from_json(json: &PcbCommonJson) -> PcbPrimitiveCommon {
-    PcbPrimitiveCommon {
-        layer: Layer::new(json.layer),
-        flags: PcbFlags::from_bits_truncate(json.flags),
-        unique_id: json.unique_id.clone(),
-    }
-}
+// NOTE: JSON conversion functions removed - they depend on v1 types and are used only by stubbed commands (M7)
+// Removed: common_to_json, common_from_json, mask_expansion_to_json, mask_expansion_from_json,
+// vec_to_coord_array, vec_to_shape_array, vec_to_u8_array, vec_to_coord_diameter_array,
+// primitive_to_json, primitive_from_json, footprint_to_full_json, footprint_from_full_json,
+// cmd_json_full, cmd_add_json_full_export
 
-fn mask_expansion_to_json(me: &MaskExpansion) -> PcbMaskExpansionJson {
-    match me {
-        MaskExpansion::Auto => PcbMaskExpansionJson {
-            mode: "auto".to_string(),
-            value: None,
-        },
-        MaskExpansion::Manual(c) => PcbMaskExpansionJson {
-            mode: "manual".to_string(),
-            value: Some(c.to_raw() as i64),
-        },
-    }
-}
-
-fn mask_expansion_from_json(json: &PcbMaskExpansionJson) -> MaskExpansion {
-    if json.mode == "auto" {
-        MaskExpansion::Auto
-    } else {
-        MaskExpansion::Manual(Coord::from_raw(json.value.unwrap_or(0) as i32))
-    }
-}
-
-fn vec_to_coord_array(v: &[[i64; 2]]) -> [CoordPoint; 32] {
-    let mut arr = [CoordPoint::default(); 32];
-    for (i, pt) in v.iter().enumerate().take(32) {
-        arr[i] = CoordPoint::new(Coord::from_raw(pt[0] as i32), Coord::from_raw(pt[1] as i32));
-    }
-    arr
-}
-
-fn vec_to_shape_array(v: &[u8]) -> [PcbPadShape; 32] {
-    let mut arr = [PcbPadShape::default(); 32];
-    for (i, &s) in v.iter().enumerate().take(32) {
-        arr[i] = PcbPadShape::from_byte(s);
-    }
-    arr
-}
-
-fn vec_to_u8_array(v: &[u8]) -> [u8; 32] {
-    let mut arr = [0u8; 32];
-    for (i, &val) in v.iter().enumerate().take(32) {
-        arr[i] = val;
-    }
-    arr
-}
-
-fn vec_to_coord_diameter_array(v: &[i64]) -> [Coord; 32] {
-    let mut arr = [Coord::default(); 32];
-    for (i, &d) in v.iter().enumerate().take(32) {
-        arr[i] = Coord::from_raw(d as i32);
-    }
-    arr
-}
-
-fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
-    match record {
-        PcbRecord::Arc(arc) => PcbPrimitiveJson::Arc {
-            common: common_to_json(&arc.common),
-            location: [
-                arc.location.x.to_raw() as i64,
-                arc.location.y.to_raw() as i64,
-            ],
-            radius: arc.radius.to_raw() as i64,
-            start_angle: arc.start_angle,
-            end_angle: arc.end_angle,
-            width: arc.width.to_raw() as i64,
-        },
-        PcbRecord::Pad(pad) => PcbPrimitiveJson::Pad {
-            common: common_to_json(&pad.common),
-            designator: pad.designator.clone(),
-            location: [
-                pad.location.x.to_raw() as i64,
-                pad.location.y.to_raw() as i64,
-            ],
-            rotation: pad.rotation,
-            is_plated: pad.is_plated,
-            jumper_id: pad.jumper_id,
-            stack_mode: pad.stack_mode.to_byte(),
-            hole_size: pad.hole_size.to_raw() as i64,
-            hole_shape: pad.hole_shape.to_byte(),
-            hole_rotation: pad.hole_rotation,
-            hole_slot_length: pad.hole_slot_length.to_raw() as i64,
-            paste_mask_expansion: mask_expansion_to_json(&pad.paste_mask_expansion),
-            solder_mask_expansion: mask_expansion_to_json(&pad.solder_mask_expansion),
-            size_layers: pad
-                .size_layers
-                .iter()
-                .map(|cp| [cp.x.to_raw() as i64, cp.y.to_raw() as i64])
-                .collect(),
-            shape_layers: pad.shape_layers.iter().map(|s| s.to_byte()).collect(),
-            corner_radius_percentage: pad.corner_radius_percentage.to_vec(),
-            offsets_from_hole_center: pad
-                .offsets_from_hole_center
-                .iter()
-                .map(|cp| [cp.x.to_raw() as i64, cp.y.to_raw() as i64])
-                .collect(),
-        },
-        PcbRecord::Via(via) => PcbPrimitiveJson::Via {
-            common: common_to_json(&via.common),
-            location: [
-                via.location.x.to_raw() as i64,
-                via.location.y.to_raw() as i64,
-            ],
-            hole_size: via.hole_size.to_raw() as i64,
-            from_layer: via.from_layer.0,
-            to_layer: via.to_layer.0,
-            thermal_relief_air_gap_width: via.thermal_relief_air_gap_width.to_raw() as i64,
-            thermal_relief_conductors: via.thermal_relief_conductors,
-            thermal_relief_conductors_width: via.thermal_relief_conductors_width.to_raw() as i64,
-            solder_mask_expansion: mask_expansion_to_json(&via.solder_mask_expansion),
-            diameter_stack_mode: via.diameter_stack_mode.to_byte(),
-            diameters: via.diameters.iter().map(|d| d.to_raw() as i64).collect(),
-            unknown_trailer: base64::engine::general_purpose::STANDARD.encode(&via.unknown),
-        },
-        PcbRecord::Track(t) => PcbPrimitiveJson::Track {
-            common: common_to_json(&t.common),
-            start: [t.start.x.to_raw() as i64, t.start.y.to_raw() as i64],
-            end: [t.end.x.to_raw() as i64, t.end.y.to_raw() as i64],
-            width: t.width.to_raw() as i64,
-            unknown_trailer: base64::engine::general_purpose::STANDARD.encode(&t.unknown),
-        },
-        PcbRecord::Text(text) => PcbPrimitiveJson::Text {
-            common: common_to_json(&text.base.common),
-            corner1: [
-                text.base.corner1.x.to_raw() as i64,
-                text.base.corner1.y.to_raw() as i64,
-            ],
-            corner2: [
-                text.base.corner2.x.to_raw() as i64,
-                text.base.corner2.y.to_raw() as i64,
-            ],
-            rotation: text.base.rotation,
-            mirrored: text.mirrored,
-            text_kind: text.text_kind.to_byte(),
-            stroke_font: text.stroke_font.to_i16(),
-            stroke_width: text.stroke_width.to_raw() as i64,
-            font_bold: text.font_bold,
-            font_italic: text.font_italic,
-            font_name: text.font_name.clone(),
-            barcode_lr_margin: text.barcode_lr_margin.to_raw() as i64,
-            barcode_tb_margin: text.barcode_tb_margin.to_raw() as i64,
-            font_inverted: text.font_inverted,
-            font_inverted_border: text.font_inverted_border.to_raw() as i64,
-            font_inverted_rect: text.font_inverted_rect,
-            font_inverted_rect_width: text.font_inverted_rect_width.to_raw() as i64,
-            font_inverted_rect_height: text.font_inverted_rect_height.to_raw() as i64,
-            font_inverted_rect_justification: text.font_inverted_rect_justification.to_byte(),
-            font_inverted_rect_text_offset: text.font_inverted_rect_text_offset.to_raw() as i64,
-            text: text.text.clone(),
-            wide_strings_index: text.wide_strings_index,
-        },
-        PcbRecord::Fill(fill) => PcbPrimitiveJson::Fill {
-            common: common_to_json(&fill.base.common),
-            corner1: [
-                fill.base.corner1.x.to_raw() as i64,
-                fill.base.corner1.y.to_raw() as i64,
-            ],
-            corner2: [
-                fill.base.corner2.x.to_raw() as i64,
-                fill.base.corner2.y.to_raw() as i64,
-            ],
-            rotation: fill.base.rotation,
-        },
-        PcbRecord::Region(region) => {
-            let param_map: HashMap<String, String> = region
-                .parameters
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
-                .collect();
-            PcbPrimitiveJson::Region {
-                common: common_to_json(&region.common),
-                parameters: param_map,
-                outline: region
-                    .outline
-                    .iter()
-                    .map(|pt| [pt.x.to_raw() as i64, pt.y.to_raw() as i64])
-                    .collect(),
-            }
-        }
-        PcbRecord::ComponentBody(body) => {
-            let mut param_map = HashMap::new();
-            if !body.model_id.is_empty() {
-                param_map.insert("MODELID".to_string(), body.model_id.clone());
-            }
-            if !body.name.is_empty() {
-                param_map.insert("NAME".to_string(), body.name.clone());
-            }
-            PcbPrimitiveJson::ComponentBody {
-                common: common_to_json(&body.common),
-                parameters: param_map,
-                outline: body
-                    .outline
-                    .iter()
-                    .map(|pt| [pt.x.to_raw() as i64, pt.y.to_raw() as i64])
-                    .collect(),
-            }
-        }
-        PcbRecord::Polygon(_) => PcbPrimitiveJson::Unknown {
-            object_id: PcbObjectId::Polygon.to_byte(),
-            raw_data: String::new(),
-        },
-        PcbRecord::Dimension(dim) => PcbPrimitiveJson::Dimension {
-            dimension_kind: dim.dimension_kind.to_byte(),
-            layer: dim.layer.0,
-            x1: dim.x1.to_raw() as i64,
-            y1: dim.y1.to_raw() as i64,
-            x2: dim.x2.to_raw() as i64,
-            y2: dim.y2.to_raw() as i64,
-            height: dim.height.to_raw() as i64,
-            angle: dim.angle,
-            line_width: dim.line_width.to_raw() as i64,
-            text_x: dim.text_x.to_raw() as i64,
-            text_y: dim.text_y.to_raw() as i64,
-            text_height: dim.text_height.to_raw() as i64,
-            text_width: dim.text_width.to_raw() as i64,
-            text_precision: dim.text_precision,
-            text_format: dim.text_format.clone(),
-            text_dimension_unit: dim.text_dimension_unit.clone(),
-            text_prefix: dim.text_prefix.clone(),
-            text_suffix: dim.text_suffix.clone(),
-            arrow_size: dim.arrow_size.to_raw() as i64,
-            references_count: dim.references.len(),
-        },
-        PcbRecord::Coordinate(coord) => PcbPrimitiveJson::Coordinate {
-            layer: coord.layer.0,
-            x: coord.x.to_raw() as i64,
-            y: coord.y.to_raw() as i64,
-            angle: coord.angle,
-            text_height: coord.text_height.to_raw() as i64,
-            text_width: coord.text_width.to_raw() as i64,
-        },
-        PcbRecord::Unknown {
-            object_id,
-            raw_data,
-        } => PcbPrimitiveJson::Unknown {
-            object_id: object_id.to_byte(),
-            raw_data: base64::engine::general_purpose::STANDARD.encode(raw_data),
-        },
-    }
-}
-
-fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
-    match json {
-        PcbPrimitiveJson::Arc {
-            common,
-            location,
-            radius,
-            start_angle,
-            end_angle,
-            width,
-        } => Ok(PcbRecord::Arc(PcbArc {
-            common: common_from_json(common),
-            location: CoordPoint::new(
-                Coord::from_raw(location[0] as i32),
-                Coord::from_raw(location[1] as i32),
-            ),
-            radius: Coord::from_raw(*radius as i32),
-            start_angle: *start_angle,
-            end_angle: *end_angle,
-            width: Coord::from_raw(*width as i32),
-        })),
-        PcbPrimitiveJson::Pad {
-            common,
-            designator,
-            location,
-            rotation,
-            is_plated,
-            jumper_id,
-            stack_mode,
-            hole_size,
-            hole_shape,
-            hole_rotation,
-            hole_slot_length,
-            paste_mask_expansion,
-            solder_mask_expansion,
-            size_layers,
-            shape_layers,
-            corner_radius_percentage,
-            offsets_from_hole_center,
-        } => Ok(PcbRecord::Pad(Box::new(PcbPad {
-            common: common_from_json(common),
-            designator: designator.clone(),
-            location: CoordPoint::new(
-                Coord::from_raw(location[0] as i32),
-                Coord::from_raw(location[1] as i32),
-            ),
-            rotation: *rotation,
-            is_plated: *is_plated,
-            jumper_id: *jumper_id,
-            stack_mode: PcbStackMode::from_byte(*stack_mode),
-            hole_size: Coord::from_raw(*hole_size as i32),
-            hole_shape: PcbPadHoleShape::from_byte(*hole_shape),
-            hole_rotation: *hole_rotation,
-            hole_slot_length: Coord::from_raw(*hole_slot_length as i32),
-            paste_mask_expansion: mask_expansion_from_json(paste_mask_expansion),
-            solder_mask_expansion: mask_expansion_from_json(solder_mask_expansion),
-            size_layers: vec_to_coord_array(size_layers),
-            shape_layers: vec_to_shape_array(shape_layers),
-            corner_radius_percentage: vec_to_u8_array(corner_radius_percentage),
-            offsets_from_hole_center: vec_to_coord_array(offsets_from_hole_center),
-        }))),
-        PcbPrimitiveJson::Via {
-            common,
-            location,
-            hole_size,
-            from_layer,
-            to_layer,
-            thermal_relief_air_gap_width,
-            thermal_relief_conductors,
-            thermal_relief_conductors_width,
-            solder_mask_expansion,
-            diameter_stack_mode,
-            diameters,
-            unknown_trailer,
-        } => Ok(PcbRecord::Via(PcbVia {
-            common: common_from_json(common),
-            location: CoordPoint::new(
-                Coord::from_raw(location[0] as i32),
-                Coord::from_raw(location[1] as i32),
-            ),
-            hole_size: Coord::from_raw(*hole_size as i32),
-            from_layer: Layer::new(*from_layer),
-            to_layer: Layer::new(*to_layer),
-            thermal_relief_air_gap_width: Coord::from_raw(*thermal_relief_air_gap_width as i32),
-            thermal_relief_conductors: *thermal_relief_conductors,
-            thermal_relief_conductors_width: Coord::from_raw(
-                *thermal_relief_conductors_width as i32,
-            ),
-            solder_mask_expansion: mask_expansion_from_json(solder_mask_expansion),
-            diameter_stack_mode: PcbStackMode::from_byte(*diameter_stack_mode),
-            diameters: vec_to_coord_diameter_array(diameters),
-            unknown: base64::engine::general_purpose::STANDARD
-                .decode(unknown_trailer)
-                .unwrap_or_default(),
-        })),
-        PcbPrimitiveJson::Track {
-            common,
-            start,
-            end,
-            width,
-            unknown_trailer,
-        } => Ok(PcbRecord::Track(PcbTrack {
-            common: common_from_json(common),
-            start: CoordPoint::new(
-                Coord::from_raw(start[0] as i32),
-                Coord::from_raw(start[1] as i32),
-            ),
-            end: CoordPoint::new(
-                Coord::from_raw(end[0] as i32),
-                Coord::from_raw(end[1] as i32),
-            ),
-            width: Coord::from_raw(*width as i32),
-            unknown: base64::engine::general_purpose::STANDARD
-                .decode(unknown_trailer)
-                .unwrap_or_default(),
-        })),
-        PcbPrimitiveJson::Text {
-            common,
-            corner1,
-            corner2,
-            rotation,
-            mirrored,
-            text_kind,
-            stroke_font,
-            stroke_width,
-            font_bold,
-            font_italic,
-            font_name,
-            barcode_lr_margin,
-            barcode_tb_margin,
-            font_inverted,
-            font_inverted_border,
-            font_inverted_rect,
-            font_inverted_rect_width,
-            font_inverted_rect_height,
-            font_inverted_rect_justification,
-            font_inverted_rect_text_offset,
-            text,
-            wide_strings_index,
-        } => Ok(PcbRecord::Text(PcbText {
-            base: PcbRectangularBase {
-                common: common_from_json(common),
-                corner1: CoordPoint::new(
-                    Coord::from_raw(corner1[0] as i32),
-                    Coord::from_raw(corner1[1] as i32),
-                ),
-                corner2: CoordPoint::new(
-                    Coord::from_raw(corner2[0] as i32),
-                    Coord::from_raw(corner2[1] as i32),
-                ),
-                rotation: *rotation,
-            },
-            mirrored: *mirrored,
-            text_kind: PcbTextKind::from_byte(*text_kind),
-            stroke_font: PcbTextStrokeFont::from_i16(*stroke_font),
-            stroke_width: Coord::from_raw(*stroke_width as i32),
-            font_bold: *font_bold,
-            font_italic: *font_italic,
-            font_name: font_name.clone(),
-            barcode_lr_margin: Coord::from_raw(*barcode_lr_margin as i32),
-            barcode_tb_margin: Coord::from_raw(*barcode_tb_margin as i32),
-            font_inverted: *font_inverted,
-            font_inverted_border: Coord::from_raw(*font_inverted_border as i32),
-            font_inverted_rect: *font_inverted_rect,
-            font_inverted_rect_width: Coord::from_raw(*font_inverted_rect_width as i32),
-            font_inverted_rect_height: Coord::from_raw(*font_inverted_rect_height as i32),
-            font_inverted_rect_justification: PcbTextJustification::from_byte(
-                *font_inverted_rect_justification,
-            ),
-            font_inverted_rect_text_offset: Coord::from_raw(*font_inverted_rect_text_offset as i32),
-            text: text.clone(),
-            wide_strings_index: *wide_strings_index,
-        })),
-        PcbPrimitiveJson::Fill {
-            common,
-            corner1,
-            corner2,
-            rotation,
-        } => Ok(PcbRecord::Fill(PcbFill {
-            base: PcbRectangularBase {
-                common: common_from_json(common),
-                corner1: CoordPoint::new(
-                    Coord::from_raw(corner1[0] as i32),
-                    Coord::from_raw(corner1[1] as i32),
-                ),
-                corner2: CoordPoint::new(
-                    Coord::from_raw(corner2[0] as i32),
-                    Coord::from_raw(corner2[1] as i32),
-                ),
-                rotation: *rotation,
-            },
-        })),
-        PcbPrimitiveJson::Region {
-            common,
-            parameters,
-            outline,
-        } => {
-            let mut params = ParameterCollection::new();
-            for (k, v) in parameters {
-                params.add(k, v);
-            }
-            let region = PcbRegion {
-                common: common_from_json(common),
-                parameters: params,
-                outline: outline
-                    .iter()
-                    .map(|pt| {
-                        CoordPoint::new(
-                            Coord::from_raw(pt[0] as i32),
-                            Coord::from_raw(pt[1] as i32),
-                        )
-                    })
-                    .collect(),
-            };
-            Ok(PcbRecord::Region(region))
-        }
-        PcbPrimitiveJson::ComponentBody {
-            common,
-            parameters,
-            outline,
-        } => {
-            let body = PcbComponentBody {
-                common: common_from_json(common),
-                outline: outline
-                    .iter()
-                    .map(|pt| {
-                        CoordPoint::new(
-                            Coord::from_raw(pt[0] as i32),
-                            Coord::from_raw(pt[1] as i32),
-                        )
-                    })
-                    .collect(),
-                model_id: parameters.get("MODELID").cloned().unwrap_or_default(),
-                name: parameters.get("NAME").cloned().unwrap_or_default(),
-                ..Default::default()
-            };
-            Ok(PcbRecord::ComponentBody(Box::new(body)))
-        }
-        PcbPrimitiveJson::Dimension {
-            dimension_kind,
-            layer,
-            x1,
-            y1,
-            x2,
-            y2,
-            height,
-            angle,
-            line_width,
-            text_x,
-            text_y,
-            text_height,
-            text_width,
-            text_precision,
-            ..
-        } => {
-            let mut dim = PcbDimension::default();
-            dim.dimension_kind = DimensionKind::from_byte(*dimension_kind);
-            dim.layer = Layer::new(*layer);
-            dim.x1 = Coord::from_raw(*x1 as i32);
-            dim.y1 = Coord::from_raw(*y1 as i32);
-            dim.x2 = Coord::from_raw(*x2 as i32);
-            dim.y2 = Coord::from_raw(*y2 as i32);
-            dim.height = Coord::from_raw(*height as i32);
-            dim.angle = *angle;
-            dim.line_width = Coord::from_raw(*line_width as i32);
-            dim.text_x = Coord::from_raw(*text_x as i32);
-            dim.text_y = Coord::from_raw(*text_y as i32);
-            dim.text_height = Coord::from_raw(*text_height as i32);
-            dim.text_width = Coord::from_raw(*text_width as i32);
-            dim.text_precision = *text_precision;
-            Ok(PcbRecord::Dimension(Box::new(dim)))
-        }
-        PcbPrimitiveJson::Coordinate {
-            layer,
-            x,
-            y,
-            angle,
-            text_height,
-            text_width,
-        } => {
-            let mut coord = PcbCoordinate::default();
-            coord.layer = Layer::new(*layer);
-            coord.x = Coord::from_raw(*x as i32);
-            coord.y = Coord::from_raw(*y as i32);
-            coord.angle = *angle;
-            coord.text_height = Coord::from_raw(*text_height as i32);
-            coord.text_width = Coord::from_raw(*text_width as i32);
-            Ok(PcbRecord::Coordinate(coord))
-        }
-        PcbPrimitiveJson::Unknown {
-            object_id,
-            raw_data,
-        } => Ok(PcbRecord::Unknown {
-            object_id: PcbObjectId::from_byte(*object_id),
-            raw_data: base64::engine::general_purpose::STANDARD
-                .decode(raw_data)
-                .unwrap_or_default(),
-        }),
-    }
-}
-
-fn footprint_to_full_json(comp: &PcbComponent) -> PcbFootprintFullJson {
-    PcbFootprintFullJson {
-        name: comp.pattern.clone(),
-        description: comp.description.clone(),
-        height: comp.height.to_raw() as i64,
-        item_guid: comp.item_guid.clone(),
-        revision_guid: comp.revision_guid.clone(),
-        primitives: comp.primitives.iter().map(primitive_to_json).collect(),
-    }
-}
-
-fn footprint_from_full_json(json: &PcbFootprintFullJson) -> Result<PcbComponent, String> {
-    let mut primitives = Vec::new();
-    for (i, prim_json) in json.primitives.iter().enumerate() {
-        match primitive_from_json(prim_json) {
-            Ok(prim) => primitives.push(prim),
-            Err(e) => return Err(format!("Error converting primitive {}: {}", i, e)),
-        }
-    }
-
-    Ok(PcbComponent {
-        pattern: json.name.clone(),
-        description: json.description.clone(),
-        height: Coord::from_raw(json.height as i32),
-        item_guid: json.item_guid.clone(),
-        revision_guid: json.revision_guid.clone(),
-        primitives,
-    })
-}
-
-fn cmd_json_full(lib: &PcbLib, path: &Path) -> PcbLibExport {
-    let footprints = lib.iter().map(footprint_to_full_json).collect();
-    let library_parameters: HashMap<String, String> = lib
-        .library_parameters
-        .as_ref()
-        .map(|p| {
-            p.iter()
-                .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-    PcbLibExport {
-        source: Some(path.display().to_string()),
-        unique_id: lib.unique_id.clone(),
-        footprint_count: lib.components.len(),
-        library_parameters,
-        file_header_version: lib.file_header_version.clone(),
-        file_header_field1: lib.file_header_field1.clone(),
-        file_header_field2: lib.file_header_field2.clone(),
-        footprints,
-    }
-}
-
-fn cmd_add_json_full_export(
-    path: &Path,
-    export: &PcbLibExport,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_or_create_pcblib(path)?;
-
-    lib.unique_id = export.unique_id.clone();
-    lib.file_header_version = export.file_header_version.clone();
-    lib.file_header_field1 = export.file_header_field1.clone();
-    lib.file_header_field2 = export.file_header_field2.clone();
-
-    if !export.library_parameters.is_empty() {
-        let mut params = ParameterCollection::new();
-        for (k, v) in &export.library_parameters {
-            params.add(k, v);
-        }
-        lib.library_parameters = Some(params);
-    }
-
-    lib.components.clear();
-
-    let mut added = 0;
-    for fp_json in &export.footprints {
-        let component = footprint_from_full_json(fp_json)
-            .map_err(|e| format!("Error converting footprint '{}': {}", fp_json.name, e))?;
-        lib.components.push(component);
-        added += 1;
-    }
-
-    save_pcblib(path, &lib)?;
-    println!("Imported {} footprints to {}", added, path.display());
-    Ok(())
-}

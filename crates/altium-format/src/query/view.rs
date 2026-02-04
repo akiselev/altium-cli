@@ -2,6 +2,12 @@
 //!
 //! This module provides a semantic representation of schematic documents,
 //! computing net connectivity from raw primitives.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchDoc, SchRecord, RecordTree<SchRecord>).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent query functionality.
+
+#![allow(deprecated)]
 
 use crate::io::schdoc::SchDoc;
 use crate::records::sch::*;

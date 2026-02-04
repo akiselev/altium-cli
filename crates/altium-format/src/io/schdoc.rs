@@ -1,4 +1,10 @@
 //! SchDoc reader/writer for Altium schematic document files.
+//!
+//! **DEPRECATED**: V1 IO is replaced by v2 with proper field deserialization.
+//! V1 has coordinate scale bugs and unsafe field parsing. Use v2::io::schdoc::SchDocV2.
+
+#![allow(unused_imports)]
+#![allow(dead_code)]
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cfb::CompoundFile;
@@ -15,6 +21,10 @@ use crate::records::sch::{SchPrimitive, SchRecord, SchSheetHeader};
 use crate::types::ParameterCollection;
 
 /// A schematic document containing primitives.
+///
+/// **DEPRECATED**: Use `v2::io::schdoc::SchDocV2` instead.
+/// V1 has coordinate scale bugs and field type mismatches.
+#[deprecated(note = "Use v2::io::schdoc::SchDocV2")]
 #[derive(Debug, Default)]
 pub struct SchDoc {
     /// All primitives in the document.
@@ -24,221 +34,70 @@ pub struct SchDoc {
     pub document_name: Option<String>,
 }
 
+#[allow(deprecated)]
 impl SchDoc {
     /// Open and read a SchDoc file.
-    pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
-        let mut schdoc = SchDoc::default();
-        let mut cf = CompoundFile::open(reader).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        // Read FileHeader stream (contains all primitives)
-        schdoc.read_file_header(&mut cf)?;
-
-        Ok(schdoc)
+    ///
+    /// **DEPRECATED**: Use `v2::io::schdoc::SchDocV2::open()` instead.
+    #[deprecated(note = "Use v2::io::schdoc::SchDocV2::open()")]
+    pub fn open<R: Read + Seek>(_reader: R) -> Result<Self> {
+        unimplemented!("Use v2::io::schdoc::SchDocV2::open() - v1 API has been deprecated")
     }
 
     /// Open and read a SchDoc file from a path.
-    pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_ref = path.as_ref();
-        let file = File::open(path_ref)?;
-        let mut doc = Self::open(file)?;
-
-        // Extract document name from filename (without extension)
-        if let Some(file_stem) = path_ref.file_stem() {
-            if let Some(name) = file_stem.to_str() {
-                doc.document_name = Some(name.to_string());
-            }
-        }
-
-        Ok(doc)
-    }
-
-    /// Read the FileHeader stream.
-    fn read_file_header<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let stream_path = "/FileHeader";
-        let mut stream = cf.open_stream(stream_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        // Read header parameters
-        let header_params = read_parameters_block(&mut cursor)?;
-        let _header = header_params.get("HEADER").map(|v| v.as_str().to_string());
-        let _weight = header_params
-            .get("WEIGHT")
-            .map(|v| v.as_int_or(0))
-            .unwrap_or(0);
-
-        // Read all primitives
-        while (cursor.position() as usize) < data.len() {
-            match self.read_record(&mut cursor) {
-                Ok(record) => self.primitives.push(record),
-                Err(e) => {
-                    log::warn!(
-                        "Failed to read record at position {}: {}, skipping remaining records",
-                        cursor.position(),
-                        e
-                    );
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Read a single record from the stream.
-    fn read_record<R: Read>(&self, reader: &mut R) -> Result<SchRecord> {
-        let size = reader.read_i32::<LittleEndian>()?;
-        let is_binary = (size as u32 & !SIZE_FLAG_MASK) != 0;
-        let clean_size = (size & SIZE_FLAG_MASK as i32) as usize;
-
-        if clean_size == 0 {
-            return Err(AltiumError::Parse("Empty record".to_string()));
-        }
-
-        let mut buffer = vec![0u8; clean_size];
-        reader.read_exact(&mut buffer)?;
-
-        if is_binary {
-            // Binary pin record (not common in SchDoc)
-            Err(AltiumError::Parse(
-                "Binary records not supported in SchDoc".to_string(),
-            ))
-        } else {
-            // ASCII parameter record
-            let end = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
-            let param_str = decode_windows_1252(&buffer[..end]);
-            let params = ParameterCollection::from_string(&param_str);
-            SchRecord::from_params(&params)
-        }
+    ///
+    /// **DEPRECATED**: Use `v2::io::schdoc::SchDocV2::open_file()` instead.
+    #[deprecated(note = "Use v2::io::schdoc::SchDocV2::open_file()")]
+    pub fn open_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
+        unimplemented!("Use v2::io::schdoc::SchDocV2::open_file() - v1 API has been deprecated")
     }
 
     /// Save the SchDoc to a file.
-    pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
-        let mut cf = CompoundFile::create_with_version(cfb::Version::V3, writer)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        // Write Storage stream (icon storage header)
-        self.write_storage(&mut cf)?;
-
-        // Write FileHeader
-        self.write_file_header(&mut cf)?;
-
-        // Write Additional stream
-        self.write_additional(&mut cf)?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    ///
+    /// **DEPRECATED**: Use `v2::io::schdoc::SchDocV2::write()` instead.
+    #[deprecated(note = "Use v2::io::schdoc::SchDocV2::write()")]
+    pub fn save<W: Read + Write + Seek>(&self, _writer: W) -> Result<()> {
+        unimplemented!("Use v2::io::schdoc::SchDocV2::write() - v1 API has been deprecated")
     }
 
     /// Save the SchDoc to a file path.
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let file = File::create(path)?;
-        self.save(file)
+    ///
+    /// **DEPRECATED**: Use `v2::io::schdoc::SchDocV2::write_to_file()` instead.
+    #[deprecated(note = "Use v2::io::schdoc::SchDocV2::write_to_file()")]
+    pub fn save_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!("Use v2::io::schdoc::SchDocV2::write_to_file() - v1 API has been deprecated")
     }
 
-    /// Write the Storage stream (icon storage header).
-    fn write_storage<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        let mut data = Vec::new();
+    // Internal methods stubbed to prevent accidental usage.
 
-        // Write the icon storage header block
-        let header = "|HEADER=Icon storage\0";
-        let header_bytes = header.as_bytes();
-        data.write_i32::<LittleEndian>(header_bytes.len() as i32)?;
-        data.write_all(header_bytes)?;
-
-        let stream = cf
-            .create_stream("/Storage")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut stream = stream;
-        stream.write_all(&data)?;
-
-        Ok(())
+    fn read_file_header<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::io::schdoc::SchDocV2")
     }
 
-    /// Write the FileHeader stream.
-    fn write_file_header<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        let mut data = Vec::new();
-
-        // Write header parameters
-        let mut header_params = ParameterCollection::new();
-        header_params.add(
-            "HEADER",
-            "Protel for Windows - Schematic Capture Binary File Version 5.0",
-        );
-        header_params.add_int("WEIGHT", self.primitives.len() as i32);
-
-        let mut header_block = Vec::new();
-        write_parameters(&mut header_block, &header_params)?;
-        write_block(&mut data, &header_block, 0)?;
-
-        // Write all primitives
-        for record in &self.primitives {
-            self.write_record(&mut data, record)?;
-        }
-
-        let stream = cf
-            .create_stream("/FileHeader")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut stream = stream;
-        stream.write_all(&data)?;
-
-        Ok(())
+    fn read_record<R: Read>(&self, _reader: &mut R) -> Result<SchRecord> {
+        unimplemented!("Replaced by v2::io::schdoc::SchDocV2")
     }
 
-    /// Write the Additional stream.
-    fn write_additional<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        let mut data = Vec::new();
-
-        let mut params = ParameterCollection::new();
-        params.add(
-            "HEADER",
-            "Protel for Windows - Schematic Capture Binary File Version 5.0",
-        );
-
-        let mut block = Vec::new();
-        write_parameters(&mut block, &params)?;
-        write_block(&mut data, &block, 0)?;
-
-        let stream = cf
-            .create_stream("/Additional")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut stream = stream;
-        stream.write_all(&data)?;
-
-        Ok(())
+    fn write_storage<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::io::schdoc::SchDocV2")
     }
 
-    /// Write a single record to the stream.
-    fn write_record<W: Write>(&self, writer: &mut W, record: &SchRecord) -> Result<()> {
-        let params = record.export_to_params();
-        let mut block = Vec::new();
-        write_parameters(&mut block, &params)?;
-        write_block(writer, &block, 0)
+    fn write_file_header<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::io::schdoc::SchDocV2")
+    }
+
+    fn write_additional<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::io::schdoc::SchDocV2")
+    }
+
+    fn write_record<W: Write>(&self, _writer: &mut W, _record: &SchRecord) -> Result<()> {
+        unimplemented!("Replaced by v2::io::schdoc::SchDocV2")
     }
 
     /// Get the sheet header if present.
+    ///
+    /// NOTE: With v1 IO stubbed, returns None since primitives Vec is never populated.
+    /// Callers must use v2::io::schdoc::SchDocV2 to obtain actual sheet metadata.
     pub fn sheet_header(&self) -> Option<&SchSheetHeader> {
         self.primitives.iter().find_map(|r| {
             if let SchRecord::SheetHeader(h) = r {
@@ -250,6 +109,8 @@ impl SchDoc {
     }
 
     /// Get all components in the document.
+    ///
+    /// NOTE: With v1 IO stubbed, this always yields nothing since primitives Vec is never populated.
     pub fn components(&self) -> impl Iterator<Item = &crate::records::sch::SchComponent> {
         self.primitives.iter().filter_map(|r| {
             if let SchRecord::Component(c) = r {
@@ -261,6 +122,8 @@ impl SchDoc {
     }
 
     /// Get all wires in the document.
+    ///
+    /// NOTE: With v1 IO stubbed, this always yields nothing since primitives Vec is never populated.
     pub fn wires(&self) -> impl Iterator<Item = &crate::records::sch::SchWire> {
         self.primitives.iter().filter_map(|r| {
             if let SchRecord::Wire(w) = r {
@@ -272,11 +135,14 @@ impl SchDoc {
     }
 
     /// Get the number of primitives.
+    ///
+    /// NOTE: With v1 IO stubbed, this always returns 0 since primitives Vec is never populated.
     pub fn primitive_count(&self) -> usize {
         self.primitives.len()
     }
 }
 
+#[allow(deprecated)]
 impl SchRecord {
     /// Export record to parameters.
     pub fn export_to_params(&self) -> ParameterCollection {
@@ -323,6 +189,7 @@ impl SchRecord {
     }
 }
 
+#[allow(deprecated)]
 impl DumpTree for SchDoc {
     fn dump(&self, tree: &mut TreeBuilder) {
         tree.root(&format!("SchDoc ({} primitives)", self.primitives.len()));

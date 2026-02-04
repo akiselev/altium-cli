@@ -2,6 +2,8 @@
 //!
 //! From-To records define explicit routing constraints between
 //! two pads/pins, specifying which pins should be connected.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbFromToV2` with `v2::pcb::io` instead.
 
 use crate::types::{Layer, ParameterCollection};
 
@@ -10,6 +12,9 @@ use crate::types::{Layer, ParameterCollection};
 /// A from-to specifies a routing constraint between two pins,
 /// indicating that they should be directly connected. This is
 /// used for xSignals and other advanced routing constraints.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbFromToV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbFromToV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbFromTo {
     /// Source pad/pin designator (e.g., "U1-A1").

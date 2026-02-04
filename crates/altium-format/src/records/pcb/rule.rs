@@ -2,6 +2,8 @@
 //!
 //! Design rules define constraints for PCB layout such as clearance,
 //! trace width, routing layers, etc.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbRuleV2` with `v2::pcb::io` instead.
 
 use std::fmt;
 use std::io::{Read, Write};
@@ -503,6 +505,9 @@ impl LayerKind {
 /// Design rules contain common metadata plus rule-specific parameters.
 /// The parameters are stored in a ParameterCollection to support
 /// all rule types and preserve unknown fields for round-tripping.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbRuleV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbRuleV2")]
 #[derive(Debug, Clone)]
 pub struct PcbRule {
     /// The kind of rule (Clearance, Width, etc.).

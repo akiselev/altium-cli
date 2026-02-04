@@ -1,4 +1,10 @@
 //! Footprint rendering to SVG and ASCII art.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PcbComponent, PcbPadShape, PcbRecord).
+//! TODO: Migrate to v2 PCB types when fully available.
+
+#![allow(deprecated)]
 
 use crate::records::pcb::{PcbComponent, PcbPadShape, PcbRecord};
 use crate::types::Layer;

@@ -2,6 +2,8 @@
 //!
 //! Connections represent the unrouted "ratsnest" lines between
 //! pads that need to be connected but aren't yet routed.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbConnectionV2` with `v2::pcb::io` instead.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
@@ -21,6 +23,9 @@ use crate::types::Coord;
 /// - Bytes 8-15: From point (X, Y as i32)
 /// - Bytes 16-23: To point (X, Y as i32)
 /// - Bytes 24-42: Component/pad indices and flags
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbConnectionV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbConnectionV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbConnection {
     /// Net index this connection belongs to.

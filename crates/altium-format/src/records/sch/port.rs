@@ -1,9 +1,11 @@
 //! SchPort - Schematic port object (Record 18).
 //!
 //! A port is a labelled connection point used to connect nets across sheets.
+//!
+//! **DEPRECATED**: Use `v2::fields::PortData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParamValue, FromParams, ToParamValue, ToParams};
+use crate::traits::{FromParamValue, ToParamValue};
 use crate::types::ParameterValue;
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
@@ -154,6 +156,9 @@ impl ToParamValue for PortAlignment {
 }
 
 /// Schematic port primitive - labelled connection point.
+///
+/// **DEPRECATED**: Use `v2::fields::PortData` instead.
+#[deprecated(note = "Use v2::fields::PortData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 18, format = "params")]
 pub struct SchPort {
@@ -206,6 +211,7 @@ pub struct SchPort {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchPort {
     const RECORD_ID: i32 = 18;
 
@@ -227,12 +233,18 @@ impl SchPrimitive for SchPort {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchPort::import_from_params is deprecated. \
+            Use v2::fields::PortData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchPort::export_to_params is deprecated. \
+            Use v2::fields::PortData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

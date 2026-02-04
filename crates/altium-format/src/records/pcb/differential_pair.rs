@@ -2,6 +2,8 @@
 //!
 //! Differential pairs define two nets that should be routed together
 //! with controlled impedance and matched lengths for high-speed signals.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbDifferentialPairV2` with `v2::pcb::io` instead.
 
 use crate::types::{Layer, ParameterCollection};
 
@@ -10,6 +12,9 @@ use crate::types::{Layer, ParameterCollection};
 /// A differential pair links two nets (positive and negative) that should
 /// be routed as a pair with controlled spacing and length matching.
 /// Common uses include USB, HDMI, PCIe, and other high-speed interfaces.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbDifferentialPairV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbDifferentialPairV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbDifferentialPair {
     /// Differential pair name (e.g., "USB.USB_D").

@@ -1,13 +1,17 @@
 //! SchPolyline - Schematic polyline (Record 6).
+//!
+//! **DEPRECATED**: Use `v2::fields::PolylineData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{LineStyle, LineWidth, SchGraphicalBase, SchPrimitive};
 
 /// Schematic polyline primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::PolylineData` instead.
+#[deprecated(note = "Use v2::fields::PolylineData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 6, format = "params")]
 pub struct SchPolyline {
@@ -64,6 +68,7 @@ impl<'a> PolygonView<'a> {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchPolyline {
     const RECORD_ID: i32 = 6;
 
@@ -78,12 +83,18 @@ impl SchPrimitive for SchPolyline {
         "Polyline"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchPolyline::import_from_params is deprecated. \
+            Use v2::fields::PolylineData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchPolyline::export_to_params is deprecated. \
+            Use v2::fields::PolylineData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

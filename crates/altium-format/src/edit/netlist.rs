@@ -1,4 +1,10 @@
 //! Netlist builder for analyzing and managing net connectivity.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchPin, SchRecord).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::collections::{HashMap, HashSet};
 

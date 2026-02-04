@@ -5,6 +5,12 @@
 //!
 //! Provides programmatic editing operations for Altium schematic documents.
 //! Supports adding, moving, and deleting components, wires, and other primitives.
+//!
+//! Note: This module uses V1 types (PortIoType, PowerObjectStyle, TextOrientations, SchRecord)
+//! through EditSession, which are deprecated. The edit session internally handles V1 types
+//! until the full V2 migration is complete.
+
+#![allow(deprecated)]
 
 use std::path::Path;
 

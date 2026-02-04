@@ -1,4 +1,10 @@
 //! Routing engine for automatic wire routing between pins.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchRecord).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};

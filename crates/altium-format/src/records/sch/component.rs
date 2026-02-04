@@ -1,4 +1,6 @@
 //! SchComponent - Schematic component (Record 1).
+//!
+//! **DEPRECATED**: Use `v2::fields::ComponentData` with `v2::serializer::format_v5` instead.
 
 use crate::error::{AltiumError, Result};
 use crate::types::{CoordRect, ParameterCollection, UnknownFields};
@@ -6,6 +8,8 @@ use crate::types::{CoordRect, ParameterCollection, UnknownFields};
 use super::{SchGraphicalBase, SchPrimitive, SchPrimitiveBase, TextOrientations};
 
 /// Known parameter keys for SchComponent (for unknown field filtering).
+/// NOTE: Unused after V1 import_from_params stubbed, retained for documentation.
+#[allow(dead_code)]
 const KNOWN_KEYS: &[&str] = &[
     "RECORD",
     "OWNERINDEX",
@@ -41,6 +45,10 @@ const KNOWN_KEYS: &[&str] = &[
 ];
 
 /// Schematic component - container for all primitives in a symbol.
+///
+/// **DEPRECATED**: Use `v2::fields::ComponentData` with `v2::serializer::format_v5::import_component()`
+/// and `v2::serializer::format_v5::export_component()` instead.
+#[deprecated(note = "Use v2::fields::ComponentData")]
 #[derive(Debug, Clone)]
 pub struct SchComponent {
     /// Graphical base (location, color).
@@ -148,6 +156,7 @@ impl SchComponent {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchComponent {
     const RECORD_ID: i32 = 1;
 
@@ -171,141 +180,18 @@ impl SchPrimitive for SchComponent {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        let graphical = SchGraphicalBase::import_from_params(params);
-
-        Ok(SchComponent {
-            graphical,
-            lib_reference: params
-                .get("LIBREFERENCE")
-                .map(|v| v.as_str().to_string())
-                .or_else(|| params.get("DESIGNITEMID").map(|v| v.as_str().to_string()))
-                .unwrap_or_default(),
-            component_description: params
-                .get("COMPONENTDESCRIPTION")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            unique_id: params
-                .get("UNIQUEID")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            current_part_id: params
-                .get("CURRENTPARTID")
-                .map(|v| v.as_int_or(1))
-                .unwrap_or(1),
-            // PARTCOUNT is stored as +1 in files
-            part_count: params
-                .get("PARTCOUNT")
-                .map(|v| v.as_int_or(2) - 1)
-                .unwrap_or(1),
-            display_mode_count: params
-                .get("DISPLAYMODECOUNT")
-                .map(|v| v.as_int_or(1))
-                .unwrap_or(1),
-            display_mode: params
-                .get("DISPLAYMODE")
-                .map(|v| v.as_int_or(0))
-                .unwrap_or(0),
-            show_hidden_pins: params
-                .get("SHOWHIDDENPINS")
-                .map(|v| v.as_bool_or(false))
-                .unwrap_or(false),
-            library_path: params
-                .get("LIBRARYPATH")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string()),
-            source_library_name: params
-                .get("SOURCELIBRARYNAME")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string()),
-            sheet_part_filename: params
-                .get("SHEETPARTFILENAME")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string()),
-            target_filename: params
-                .get("TARGETFILENAME")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string()),
-            override_colors: params
-                .get("OVERIDECOLORS")
-                .map(|v| v.as_bool_or(false))
-                .unwrap_or(false),
-            designator_locked: params
-                .get("DESIGNATORLOCKED")
-                .map(|v| v.as_bool_or(false))
-                .unwrap_or(false),
-            part_id_locked: params
-                .get("PARTIDLOCKED")
-                .map(|v| v.as_bool_or(true))
-                .unwrap_or(true),
-            component_kind: params
-                .get("COMPONENTKIND")
-                .map(|v| v.as_int_or(0))
-                .unwrap_or(0),
-            alias_list: params
-                .get("ALIASLIST")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            orientation: params
-                .get("ORIENTATION")
-                .map(|v| TextOrientations::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            unknown_params: UnknownFields::from_remaining_params(params, KNOWN_KEYS),
-        })
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchComponent::import_from_params is deprecated. \
+            Use v2::fields::ComponentData with v2::serializer::format_v5::import_component() instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        let mut params = ParameterCollection::new();
-        params.add_int("RECORD", Self::RECORD_ID);
-        self.graphical.export_to_params(&mut params);
-        params.add("LIBREFERENCE", &self.lib_reference);
-        if !self.component_description.is_empty() {
-            params.add("COMPONENTDESCRIPTION", &self.component_description);
-        }
-        params.add_int("PARTCOUNT", self.part_count + 1);
-        params.add_int("DISPLAYMODECOUNT", self.display_mode_count);
-        // Only emit ORIENTATION when non-zero
-        if self.orientation.to_int() != 0 {
-            params.add_int("ORIENTATION", self.orientation.to_int());
-        }
-        params.add_int("CURRENTPARTID", self.current_part_id);
-        // Only emit SHOWHIDDENPINS when true (Altium omits false)
-        if self.show_hidden_pins {
-            params.add_bool("SHOWHIDDENPINS", true);
-        }
-        params.add("LIBRARYPATH", &self.library_path);
-        params.add("SOURCELIBRARYNAME", &self.source_library_name);
-        params.add("SHEETPARTFILENAME", &self.sheet_part_filename);
-        params.add("TARGETFILENAME", &self.target_filename);
-        params.add("UNIQUEID", &self.unique_id);
-        // Only emit DISPLAYMODE when non-zero
-        if self.display_mode != 0 {
-            params.add_int("DISPLAYMODE", self.display_mode);
-        }
-        // Only emit OVERIDECOLORS when true
-        if self.override_colors {
-            params.add_bool("OVERIDECOLORS", true);
-        }
-        // Only emit DESIGNATORLOCKED when true
-        if self.designator_locked {
-            params.add_bool("DESIGNATORLOCKED", true);
-        }
-        // PARTIDLOCKED must always be emitted (add_bool skips false values)
-        params.add("PARTIDLOCKED", if self.part_id_locked { "T" } else { "F" });
-        // Only emit ALIASLIST when non-empty
-        if !self.alias_list.is_empty() {
-            params.add("ALIASLIST", &self.alias_list);
-        }
-        // DESIGNITEMID is preserved via unknown_params when present in the original
-        // Only emit COMPONENTKIND when non-zero
-        if self.component_kind != 0 {
-            params.add_int("COMPONENTKIND", self.component_kind);
-        }
-
-        // Merge unknown parameters back
-        self.unknown_params.merge_into_params(&mut params);
-
-        params
+        unimplemented!(
+            "V1 SchComponent::export_to_params is deprecated. \
+            Use v2::fields::ComponentData with v2::serializer::format_v5::export_component() instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

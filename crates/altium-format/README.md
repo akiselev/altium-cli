@@ -1,8 +1,10 @@
 # altium-format
 
-Rust library for reading and writing Altium Designer files with a trait-based API and agent-friendly CLI.
+Rust library for reading and writing Altium Designer files with typed field structs and agent-friendly CLI.
 
 ## Architecture
+
+The library uses a V2 architecture ported from decompiled C# Altium code, with properly reverse-engineered file format structures.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -13,22 +15,29 @@ Rust library for reading and writing Altium Designer files with a trait-based AP
 ┌─────────────────────────▼───────────────────────────────────┐
 │                    altium-format                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │   api/      │  │   ops/      │  │   edit/     │          │
-│  │ (3-layer)   │  │ (queries)   │  │ (sessions)  │          │
+│  │   ops/      │  │   query/    │  │   edit/     │          │
+│  │ (queries)   │  │ (selectors) │  │ (sessions)  │          │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘          │
 │         │                │                │                  │
 │  ┌──────▼────────────────▼────────────────▼──────┐          │
-│  │                  records/                      │          │
-│  │  SchPrimitive trait ◄── SchRecord variants    │          │
-│  │  PcbPrimitive trait ◄── PcbRecord variants    │          │
-│  └──────────────────────┬────────────────────────┘          │
-│                         │                                    │
-│  ┌──────────────────────▼────────────────────────┐          │
-│  │                   io/                          │          │
-│  │  reader.rs, writer.rs, schdoc.rs, pcbdoc.rs   │          │
-│  └──────────────────────┬────────────────────────┘          │
-│                         │                                    │
-│  ┌──────────────────────▼────────────────────────┐          │
+│  │                   v2/                          │          │
+│  │  ┌─────────────────────────────────────────┐  │          │
+│  │  │ v2/io/      SchLibV2, SchDocV2          │  │          │
+│  │  │             PcbLibV2, PcbDocV2          │  │          │
+│  │  └──────────────────┬──────────────────────┘  │          │
+│  │                     │                          │          │
+│  │  ┌──────────────────▼──────────────────────┐  │          │
+│  │  │ v2/serializer/  ASCII + Binary modes    │  │          │
+│  │  │                 export_*/import_*       │  │          │
+│  │  └──────────────────┬──────────────────────┘  │          │
+│  │                     │                          │          │
+│  │  ┌──────────────────▼──────────────────────┐  │          │
+│  │  │ v2/fields/      PinData, ComponentData  │  │          │
+│  │  │                 TypedRecord enum        │  │          │
+│  │  └─────────────────────────────────────────┘  │          │
+│  └────────────────────────────────────────────────┘          │
+│                                                              │
+│  ┌───────────────────────────────────────────────┐          │
 │  │                  types/                        │          │
 │  │  Coord, Color, Layer, ParameterCollection     │          │
 │  └───────────────────────────────────────────────┘          │
@@ -37,252 +46,245 @@ Rust library for reading and writing Altium Designer files with a trait-based AP
 
 ## Data Flow
 
+### Reading Files
+
 ```
-Altium File (.SchLib, .PcbDoc, etc.)
+CFB file (.SchLib, .PcbLib, .SchDoc, .PcbDoc)
          │
          ▼
-    cfb crate (OLE compound document)
-         │
+    v2/io/schlib.rs (or pcblib.rs, schdoc.rs, pcbdoc.rs)
+         │  - Opens CFB compound document
+         │  - Reads section keys for component paths
+         │  - Parses Data stream (ASCII or Binary mode)
          ▼
-    io/reader.rs (block parsing, decompression)
-         │
+    v2/serializer/format_v5/import_*
+         │  - Deserializes record fields
+         │  - Handles ASCII: |KEY=VALUE| params
+         │  - Handles Binary: sequential typed fields
          ▼
-    api/generic/ (ParameterCollection, Value)
-         │
-         ▼
-    FromParams/FromBinary traits
-         │
-         ▼
-    Typed records (SchComponent, PcbPad, etc.)
-         │
-         ▼
-    SchPrimitive/PcbPrimitive trait access
-         │
+    v2/fields/ (PinData, ComponentData, etc.)
+         │  - Typed field structs with proper scales
+         │  - Ready for ops/ queries
          ▼
     ops/ queries and transforms
          │
          ▼
-    CLI JSON output
+    CLI JSON output or API access
 ```
 
-## Core Abstractions
+### Writing Files
 
-### Three-Layer API
+```
+PinData, ComponentData, etc.
+         │
+         ▼
+    v2/serializer/format_v5/export_*
+         │  - Serializes to ASCII or Binary
+         │  - Handles extended data (PinFrac, PinWideText)
+         ▼
+    v2/io/schlib.rs (or pcblib.rs, etc.)
+         │  - Builds CFB section structure
+         │  - Generates section keys (30 char limit)
+         │  - Writes Data and extended streams
+         ▼
+    CFB file output
+```
 
-Users choose their abstraction level:
+## Coordinate Systems
 
-1. **Layer 1 (CFB)**: Raw access to compound file structure
-   - Use when: Reverse engineering unknown file types
-   - Example: `doc.cfb().streams()` lists all internal files
+Altium uses two distinct coordinate scales. Using the wrong scale causes silent precision bugs.
 
-2. **Layer 2 (Generic)**: Dynamic access without type knowledge
-   - Use when: Schema is unknown or varies
-   - Example: `record.get("LIBREFERENCE")` accesses any parameter
+### Schematic Coordinates (V2Coord)
 
-3. **Layer 3 (Typed)**: Full deserialization with derive macros
-   - Use when: Working with known record types
-   - Example: `component.lib_reference` provides type-safe access
-
-### Trait Hierarchy
-
-**SchPrimitive** and **PcbPrimitive** traits enable polymorphic dispatch:
-
-- `RECORD_ID` / `OBJECT_ID`: Type identifier constant
-- `owner_index()` / `set_owner_index()`: Hierarchy management
-- `location()`: Optional coordinate access
-- `record_type_name()`: Diagnostic type name
-- `get_property()`: Dynamic property lookup
-- `calculate_bounds()`: Bounding rectangle
-
-Implemented by 30 schematic types and 15 PCB types. Adding a new record type requires only implementing the trait, not updating scattered match statements.
-
-### State Types Over Boolean Pairs
-
-**MaskExpansion** replaces implicit state machines:
+- **Scale**: 100,000 internal units per mil
+- **Source**: Confirmed from decompiled `SchDataSerializerBinary.Export_Coord`
+- **Binary format**: Whole-mil `i16` in Data stream + fractional `i32` in PinFrac stream
+- **Usage**: All schematic files (.SchLib, .SchDoc)
 
 ```rust
-// Before: manual + value creates invalid states
-pub paste_mask_expansion_manual: bool,
-pub paste_mask_expansion: Coord,
+use altium_format::v2::V2Coord;
 
-// After: type system prevents invalid states
-pub paste_mask_expansion: MaskExpansion,  // Auto | Manual(Coord)
+let coord = V2Coord::from_mils(10.5);
+assert_eq!(coord.to_raw(), 1_050_000);  // 10.5 * 100,000
+
+// Binary split for storage
+let (whole, frac) = coord.to_binary_parts();
+assert_eq!(whole, 10);      // Stored in Data stream
+assert_eq!(frac, 50_000);   // Stored in PinFrac stream
 ```
 
-Validation happens at construction, not at use. Corrupted data from files returns `Result::Err` rather than panicking for recoverability.
+### PCB Coordinates (PcbCoord)
 
-## Coordinate System
+- **Scale**: 10,000 internal units per mil
+- **Source**: Confirmed from Altium SDK (`k1Mil = 10000`)
+- **Binary format**: Direct `i32` in binary records
+- **Usage**: All PCB files (.PcbLib, .PcbDoc)
 
-Altium uses fixed-point coordinates:
+```rust
+use altium_format::v2::pcb::PcbCoord;
 
-- **10,000 internal units = 1 mil = 0.001 inch**
-- All coordinate operations use `Coord` newtype wrapper
-- `Coord::from_mils(10)` = 100,000 internal units
-- `Coord::from_mm(2.54)` = 1,000,000 internal units (1 inch)
-
-Integer storage avoids floating-point precision issues. Extract raw value with `.to_raw()` for arithmetic.
-
-## Roundtrip Fidelity Invariants
-
-1. **FromParams + ToParams must be inverses**
-   - Property-based tests verify: `from_params(to_params(x)) == x`
-   - Unknown fields preserved in `UnknownFields`
-
-2. **FromBinary + ToBinary must be inverses**
-   - Binary format must match byte-for-byte
-   - Golden file tests lock format compatibility
-
-3. **OWNERINDEX consistency**
-   - Parent-child relationships encoded via OWNERINDEX
-   - Tree operations preserve hierarchy integrity
-   - Editing sessions track index mutations
-
-## Operations Design
-
-**ops/** modules provide pure query functions that return data, not formatted output:
-
-- `components_by_category()` returns `HashMap<Category, Vec<Component>>`
-- `net_connections()` returns `Vec<NetConnection>`
-- `power_map()` returns `HashMap<NetName, Count>`
-
-CLI commands compose these operations. Same logic powers programmatic API and command-line tools.
-
-## Deterministic UUID Context
-
-Standalone library uses `uuid::Uuid::new_v4()` for standard random UUIDs. Cadatomic fork replaces `()` parameter with `DeterminismContext` for event sourcing replay.
-
-Signature: `build_deterministic(&mut ())` accepts unit type; fork swaps in context type for deterministic generation.
-
-## Format Quirks
-
-### Display Mode Bounds
-
-`display_mode` indexes into array of `display_mode_count` elements. Out-of-bounds access causes undefined behavior when rendering symbol views.
-
-Validation: `set_display_mode()` returns `Result::Err` for invalid indices rather than panicking. Corrupted files should be recoverable.
-
-### Manual Flag Values
-
-Altium binary format uses flag value `2` (not `1`) for manual mode, `0` for auto mode. Observed from PCB1.PcbLib test files. `MaskExpansion` implementation uses `!= 0` check for robustness against format variations.
-
-### Parameter vs Binary Records
-
-- **Schematic records**: Parameter-based (key=value pairs)
-  - Format: `|RECORD=1|NAME=Test|X=100mil|`
-  - Trait: `FromParams`, `ToParams`
-
-- **PCB records**: Binary-based (fixed structs)
-  - Format: Block header + packed binary data
-  - Trait: `FromBinary`, `ToBinary`
-
-Different file types require different deserialization paths.
-
-## CLI Agent-Friendly Design
-
-**JSON-first output** for programmatic consumption:
-
-```bash
-altium-cli inspect library.SchLib | jq '.components[0].name'
+let coord = PcbCoord::from_mils(10.5);
+assert_eq!(coord.to_raw(), 105_000);  // 10.5 * 10,000
 ```
 
-**Selector queries** for filtering:
+## Type Hierarchy
 
-```bash
-altium-cli query library.SchLib "Component[Designator^=U]"  # ICs only
+### TypedRecord Enum
+
+Runtime dispatch for parsed schematic records:
+
+```rust
+use altium_format::v2::{TypedRecord, PinData, ComponentData};
+
+match record {
+    TypedRecord::Pin(pin) => println!("Pin: {}", pin.name),
+    TypedRecord::Component(comp) => println!("Component: {}", comp.lib_ref),
+    TypedRecord::Wire(wire) => println!("Wire from {:?}", wire.locations),
+    TypedRecord::Unknown(id) => println!("Unknown record type: {}", id),
+    // ... 30+ variants
+}
 ```
 
-**Stable schemas** locked by golden file tests. Breaking changes increment semver.
+### Base Structs
 
-## Build Instructions
+Shared fields across record types:
 
-### Library
+- **DataObjectBase**: `owner_index`, `is_not_accessible`, `index_in_sheet`
+- **GraphicalObjectBase**: extends DataObjectBase + `owner_part_id`, `owner_part_display_mode`
+- **RectangularEntryContainerBase**: location, size, colors for sheet symbols
+- **BasicEntryObjectBase**: side, distance, colors for sheet entries
 
-```bash
-cargo build -p altium-format
-cargo test -p altium-format
-cargo doc -p altium-format --open
+## Serialization Flow
+
+### SchSerializer Trait
+
+Abstracts ASCII vs Binary encoding:
+
+```rust
+pub trait SchSerializer {
+    fn export_coord(&mut self, value: i32, name: &str) -> Result<()>;
+    fn import_coord(&mut self, name: &str) -> Result<i32>;
+    fn export_string(&mut self, value: &str, name: &str) -> Result<()>;
+    fn import_string(&mut self, name: &str) -> Result<String>;
+    // ... 50+ methods for different types
+}
 ```
 
-### CLI Binary
+### ASCII Mode (Mode 0)
 
-```bash
-cargo build --bin altium-cli
-cargo install --path crates/altium-format
-altium-cli --help
+- Format: `|RECORD=2|LOCATION.X=100|NAME=VCC|...`
+- Coordinates as mil strings: `LOCATION.X=100` means 100 mils
+- Used in older files and some stream types
+
+### Binary Mode (Mode 1)
+
+- Sequential typed fields, no delimiters
+- Coordinates split: whole mils as `i16`, fractional in extended streams
+- Extended data streams: `PinFrac`, `PinWideText`, `PinTextData`, `PinSymbolLineWidth`
+
+## Key Invariants
+
+1. **PCB coordinates always use 10K units/mil** (PcbCoord type)
+2. **Sch coordinates always use 100K units/mil** (V2Coord type)
+3. **Section keys are max 30 chars** with collision avoidance suffix
+4. **Extended data streams required** for pins with fractional coordinates or wide text
+5. **OWNERINDEX consistency**: Parent-child relationships encoded via owner_index field
+
+## CFB Storage Structure
+
+Altium files are COM/OLE Compound Storage (CFB) containers:
+
 ```
-
-### Shell Completions
-
-```bash
-altium-cli completions bash > /usr/share/bash-completion/completions/altium-cli
+SchLib file:
+├── FileHeader              # Library metadata, component list
+├── SectionKeys             # Maps LIBREF to section path
+├── ComponentA/             # One folder per component
+│   ├── Data                # ASCII or Binary record stream
+│   ├── PinFrac             # Fractional coordinate parts
+│   ├── PinWideText         # Unicode text overflow
+│   ├── PinTextData         # Additional text data
+│   └── PinSymbolLineWidth  # Symbol line widths
+└── ComponentB/
+    └── ...
 ```
 
 ## Usage Examples
 
-### Reading a Library
+### Reading a SchLib
 
 ```rust
-use altium_format::io::SchLib;
-use std::fs::File;
-use std::io::BufReader;
+use altium_format::v2::io::schlib::SchLibV2;
 
-let file = File::open("resistors.SchLib")?;
-let lib = SchLib::open(BufReader::new(file))?;
+let lib = SchLibV2::open_file("components.SchLib")?;
 
-for component in &lib.components {
-    println!("{}: {} pins", component.name, component.pin_count());
+for comp in &lib.components {
+    println!("Component: {}", comp.entry.lib_ref);
+
+    // Typed pin access
+    for pin in comp.pins() {
+        println!("  Pin {}: {} ({:?})",
+            pin.designator,
+            pin.name,
+            pin.electrical_type
+        );
+    }
 }
 ```
 
-### Creating a Footprint
+### Reading a PcbLib
 
 ```rust
-use altium_format::footprint::FootprintBuilder;
-use altium_format::records::pcb::PcbPadShape;
+use altium_format::v2::pcb::io::pcblib::PcbLibV2;
 
-let mut builder = FootprintBuilder::new("SOIC-8");
-builder.add_dual_row_smd(
-    4,      // pads per side
-    1.27,   // pitch (mm)
-    5.3,    // row spacing (mm)
-    1.5,    // pad width (mm)
-    0.6,    // pad height (mm)
-    PcbPadShape::Rectangular,
-);
-let component = builder.build_deterministic(&mut ());
+let lib = PcbLibV2::open_file("footprints.PcbLib")?;
+
+for footprint in &lib.footprints {
+    println!("Footprint: {}", footprint.pattern_name);
+
+    for pad in &footprint.pads {
+        println!("  Pad {}: {:?} at ({}, {})",
+            pad.name,
+            pad.shape,
+            pad.x.to_mils(),
+            pad.y.to_mils()
+        );
+    }
+}
 ```
 
 ### Querying Components
 
 ```rust
 use altium_format::query::query_records;
-use altium_format::io::SchLib;
+use altium_format::v2::io::schlib::SchLibV2;
 
-let lib = SchLib::open(file)?;
-let resistors = query_records(&lib.records, "Component[Designator^=R]")?;
+let lib = SchLibV2::open_file("library.SchLib")?;
+let resistors = query_records(&lib, "Component[Designator^=R]")?;
 
 for comp in resistors {
-    println!("Found resistor: {}", comp.designator);
+    println!("Found resistor: {}", comp.entry.lib_ref);
 }
-```
-
-### Editing Sessions
-
-```rust
-use altium_format::edit::EditSession;
-
-let mut session = EditSession::new(lib);
-session.set_component_property("R1", "VALUE", "10k");
-session.commit()?;
-session.save("modified.SchLib")?;
 ```
 
 ## Testing Strategy
 
-1. **Property-based tests**: Verify trait contracts across all record types
+1. **Property-based tests**: Roundtrip (export then import = identity) for all record types
 2. **Real file integration**: Test with actual Altium libraries
-3. **Golden file tests**: Lock CLI output format for stability
-4. **Roundtrip tests**: Ensure serialization is lossless
+3. **CFB roundtrip tests**: `v2_schlib_cfb_roundtrip.rs`, `v2_pcblib_cfb_roundtrip.rs`
+4. **Golden file tests**: Lock CLI output format for stability
+
+## Build Instructions
+
+```bash
+# Build library
+cargo build -p altium-format
+
+# Run tests
+cargo test -p altium-format
+
+# Generate docs
+cargo doc -p altium-format --open
+```
 
 ## License
 

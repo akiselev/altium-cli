@@ -1,9 +1,10 @@
 //! SchDesignator - Component designator (Record 34).
 //!
 //! A designator is a specialized parameter that displays the component reference.
+//!
+//! **DEPRECATED**: Use `v2::fields::DesignatorData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -12,6 +13,9 @@ use super::{SchParameter, SchPrimitive};
 /// Schematic designator primitive - displays component reference designator.
 ///
 /// This is essentially a specialized SchParameter with record type 34.
+///
+/// **DEPRECATED**: Use `v2::fields::DesignatorData` instead.
+#[deprecated(note = "Use v2::fields::DesignatorData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 34, format = "params")]
 pub struct SchDesignator {
@@ -31,6 +35,7 @@ impl SchDesignator {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchDesignator {
     const RECORD_ID: i32 = 34;
 
@@ -53,17 +58,18 @@ impl SchPrimitive for SchDesignator {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        let mut result = Self::from_params(params)?;
-        // Designators typically have read-only state of 1
-        if result.param.read_only_state == 0 {
-            result.param.read_only_state = 1;
-        }
-        Ok(result)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchDesignator::import_from_params is deprecated. \
+            Use v2::fields::DesignatorData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchDesignator::export_to_params is deprecated. \
+            Use v2::fields::DesignatorData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

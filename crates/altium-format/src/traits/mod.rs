@@ -2,6 +2,18 @@
 //!
 //! This module defines the fundamental traits used by the derive macros to
 //! generate serialization code for Altium record types.
+//!
+//! # Migration Status
+//!
+//! The V1 record types that implement these traits are deprecated. For new code:
+//! - Use `v2::fields` typed structs (PinData, ComponentData, etc.)
+//! - Use `v2::serializer::format_v5` functions for serialization
+//! - Use `v2::io` types (SchLibV2, SchDocV2, PcbLibV2, PcbDocV2)
+//!
+//! These traits remain for:
+//! - Backwards compatibility with existing code
+//! - Support for modules still being migrated (edit/, query/, footprint/)
+//! - Derive macro support during transition period
 
 mod binary;
 mod conversion;

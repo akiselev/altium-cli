@@ -1,4 +1,7 @@
 //! Base primitive trait and SchRecord dispatch enum.
+//!
+//! **DEPRECATED**: V1 uses trait dispatch for record parsing; v2 uses typed field structs
+//! directly (PinData, ComponentData, etc.) for better type safety.
 
 use crate::error::Result;
 use crate::traits::{FromParams, ToParams};
@@ -8,6 +11,10 @@ use crate::types::{
 };
 
 /// Base trait for all schematic primitives.
+///
+/// **DEPRECATED**: V1 uses trait dispatch for record parsing; v2 uses typed field structs
+/// directly. Use `v2::fields` types (PinData, ComponentData, etc.) instead.
+#[deprecated(note = "Use v2::fields types directly (PinData, ComponentData, etc.)")]
 pub trait SchPrimitive: Sized {
     /// Record type ID for this primitive.
     const RECORD_ID: i32;
@@ -39,6 +46,9 @@ pub trait SchPrimitive: Sized {
 }
 
 /// Common fields shared by all schematic primitives.
+///
+/// **DEPRECATED**: Use `v2::fields::DataObjectBase` instead.
+#[deprecated(note = "Use v2::fields::DataObjectBase")]
 #[derive(Debug, Clone)]
 pub struct SchPrimitiveBase {
     /// Index of owner primitive in the component's primitive list.
@@ -141,6 +151,9 @@ impl ToParams for SchPrimitiveBase {
 }
 
 /// Common fields for graphical schematic objects (extends SchPrimitiveBase).
+///
+/// **DEPRECATED**: Use `v2::fields::GraphicalObjectBase` instead.
+#[deprecated(note = "Use v2::fields::GraphicalObjectBase")]
 #[derive(Debug, Clone, Default)]
 pub struct SchGraphicalBase {
     /// Base primitive fields.
@@ -281,6 +294,11 @@ impl ToParams for SchGraphicalBase {
 }
 
 /// Dispatch enum containing all schematic record types.
+///
+/// **DEPRECATED**: V1 uses enum dispatch for dynamic record parsing; v2 uses typed field
+/// structs directly for better type safety. Use `v2::io::SchLibV2` or `v2::io::SchDocV2`
+/// for parsing, which return typed records directly.
+#[deprecated(note = "Use v2 typed structs directly (PinData, ComponentData, etc.)")]
 #[derive(Debug, Clone)]
 pub enum SchRecord {
     Component(super::SchComponent),
@@ -323,58 +341,17 @@ pub enum SchRecord {
     },
 }
 
+#[allow(deprecated)]
 impl SchRecord {
     /// Create a record from parameters by dispatching on RECORD type.
-    pub fn from_params(params: &ParameterCollection) -> Result<Self> {
-        let record_id = params.get("RECORD").map(|v| v.as_int_or(-1)).unwrap_or(-1);
-
-        let record = match record_id {
-            1 => SchRecord::Component(super::SchComponent::import_from_params(params)?),
-            2 => SchRecord::Pin(super::SchPin::import_from_params(params)?),
-            3 => SchRecord::Symbol(super::SchSymbol::import_from_params(params)?),
-            4 => SchRecord::Label(super::SchLabel::import_from_params(params)?),
-            5 => SchRecord::Bezier(super::SchBezier::import_from_params(params)?),
-            6 => SchRecord::Polyline(super::SchPolyline::import_from_params(params)?),
-            7 => SchRecord::Polygon(super::SchPolygon::import_from_params(params)?),
-            8 => SchRecord::Ellipse(super::SchEllipse::import_from_params(params)?),
-            9 => SchRecord::Pie(super::SchPie::import_from_params(params)?),
-            11 => SchRecord::EllipticalArc(super::SchEllipticalArc::import_from_params(params)?),
-            12 => SchRecord::Arc(super::SchArc::import_from_params(params)?),
-            13 => SchRecord::Line(super::SchLine::import_from_params(params)?),
-            14 => SchRecord::Rectangle(super::SchRectangle::import_from_params(params)?),
-            17 => SchRecord::PowerObject(super::SchPowerObject::import_from_params(params)?),
-            18 => SchRecord::Port(super::SchPort::import_from_params(params)?),
-            22 => SchRecord::NoErc(super::SchNoErc::import_from_params(params)?),
-            25 => SchRecord::NetLabel(super::SchNetLabel::import_from_params(params)?),
-            26 => SchRecord::Bus(super::SchBus::import_from_params(params)?),
-            27 => SchRecord::Wire(super::SchWire::import_from_params(params)?),
-            28 => SchRecord::TextFrame(super::SchTextFrame::import_from_params(params)?),
-            29 => SchRecord::Junction(super::SchJunction::import_from_params(params)?),
-            30 => SchRecord::Image(super::SchImage::import_from_params(params)?),
-            31 => SchRecord::SheetHeader(super::SchSheetHeader::import_from_params(params)?),
-            34 => SchRecord::Designator(super::SchDesignator::import_from_params(params)?),
-            37 => SchRecord::BusEntry(super::SchBusEntry::import_from_params(params)?),
-            41 => SchRecord::Parameter(super::SchParameter::import_from_params(params)?),
-            43 => SchRecord::WarningSign(super::SchWarningSign::import_from_params(params)?),
-            44 => SchRecord::ImplementationList(super::SchImplementationList::import_from_params(
-                params,
-            )?),
-            45 => SchRecord::Implementation(super::SchImplementation::import_from_params(params)?),
-            46 => SchRecord::MapDefinerList(super::SchMapDefinerList::import_from_params(params)?),
-            47 => SchRecord::MapDefiner(super::SchMapDefiner::import_from_params(params)?),
-            48 => SchRecord::ImplementationParameters(
-                super::SchImplementationParameters::import_from_params(params)?,
-            ),
-            209 => {
-                SchRecord::TextFrameVariant(super::SchTextFrameVariant::import_from_params(params)?)
-            }
-            _ => SchRecord::Unknown {
-                record_id,
-                params: params.clone(),
-            },
-        };
-
-        Ok(record)
+    ///
+    /// **DEPRECATED**: Use `v2::io::SchLibV2` or `v2::io::SchDocV2` for parsing.
+    #[deprecated(note = "Use v2::io::SchLibV2 or v2::io::SchDocV2 for parsing")]
+    pub fn from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchRecord::from_params is deprecated. \
+            Use v2::io::SchLibV2::open() or v2::io::SchDocV2::open() for parsing files."
+        )
     }
 
     /// Get the record type ID.

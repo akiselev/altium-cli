@@ -4,6 +4,12 @@
 //! Project file operations.
 //!
 //! High-level operations for managing Altium project (.PrjPcb) files.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchDoc, SchRecord, RecordTree<SchRecord>).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;

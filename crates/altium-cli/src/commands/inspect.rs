@@ -1,4 +1,10 @@
 //! Inspect command implementation.
+//!
+//! Note: This module uses V1 types (SchLib, PcbLib) which are deprecated.
+//! The ops layer has been migrated to V2, but inspect uses direct file access
+//! which still requires V1 types until the full V2 migration is complete.
+
+#![allow(deprecated)]
 
 use serde::Serialize;
 use std::fs::File;

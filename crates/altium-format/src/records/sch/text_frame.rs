@@ -1,7 +1,8 @@
 //! SchTextFrame - Schematic text frame (Record 28) and variant (Record 209).
+//!
+//! **DEPRECATED**: Use `v2::fields::TextFrameData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -17,6 +18,9 @@ fn text_frame_bounds(location_x: i32, location_y: i32, corner_x: i32, corner_y: 
 }
 
 /// Schematic text frame primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::TextFrameData` instead.
+#[deprecated(note = "Use v2::fields::TextFrameData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 28, format = "params")]
 pub struct SchTextFrame {
@@ -85,6 +89,7 @@ pub struct SchTextFrame {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchTextFrame {
     const RECORD_ID: i32 = 28;
 
@@ -106,12 +111,18 @@ impl SchPrimitive for SchTextFrame {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchTextFrame::import_from_params is deprecated. \
+            Use v2::fields::TextFrameData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchTextFrame::export_to_params is deprecated. \
+            Use v2::fields::TextFrameData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {
@@ -129,6 +140,9 @@ impl SchPrimitive for SchTextFrame {
 }
 
 /// Schematic text frame variant (Record 209).
+///
+/// **DEPRECATED**: Use `v2::fields::TextFrameData` instead.
+#[deprecated(note = "Use v2::fields::TextFrameData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 209, format = "params")]
 pub struct SchTextFrameVariant {
@@ -197,6 +211,7 @@ pub struct SchTextFrameVariant {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchTextFrameVariant {
     const RECORD_ID: i32 = 209;
 
@@ -218,12 +233,18 @@ impl SchPrimitive for SchTextFrameVariant {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchTextFrameVariant::import_from_params is deprecated. \
+            Use v2::fields::TextFrameData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchTextFrameVariant::export_to_params is deprecated. \
+            Use v2::fields::TextFrameData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

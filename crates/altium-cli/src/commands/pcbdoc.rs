@@ -981,7 +981,10 @@ pub fn run(cmd: &PcbDocCommands, format: &str) -> Result<(), Box<dyn std::error:
             rotation,
             net,
         } => {
-            pcbdoc::cmd_add_fill(path, x1y1, x2y2, layer, *rotation, net.clone())?;
+            // Parse x1y1 and x2y2 as "x,y" into separate coordinates
+            let (x1, y1) = parse_coordinate_pair(x1y1)?;
+            let (x2, y2) = parse_coordinate_pair(x2y2)?;
+            pcbdoc::cmd_add_fill(path, layer, net.as_deref(), &x1, &y1, &x2, &y2, *rotation)?;
         }
         PcbDocCommands::Texts { path, layer } => {
             let result = pcbdoc::cmd_texts(path, layer.clone())?;
@@ -995,7 +998,9 @@ pub fn run(cmd: &PcbDocCommands, format: &str) -> Result<(), Box<dyn std::error:
             layer,
             rotation,
         } => {
-            pcbdoc::cmd_add_text(path, text, at, height.clone(), layer, *rotation)?;
+            // Parse "at" as "x,y" into separate coordinates
+            let (x, y) = parse_coordinate_pair(at)?;
+            pcbdoc::cmd_add_text(path, layer, text, &x, &y, height.clone(), *rotation, false)?;
         }
         PcbDocCommands::Regions { path, layer } => {
             let result = pcbdoc::cmd_regions(path, layer.clone())?;
@@ -1008,7 +1013,8 @@ pub fn run(cmd: &PcbDocCommands, format: &str) -> Result<(), Box<dyn std::error:
             keepout,
             net,
         } => {
-            pcbdoc::cmd_add_region(path, vertices, layer, *keepout, net.clone())?;
+            let kind = if *keepout { Some("keepout") } else { None };
+            pcbdoc::cmd_add_region(path, layer, net.as_deref(), vertices, kind)?;
         }
         PcbDocCommands::PlaceComponent {
             path,
@@ -1188,4 +1194,13 @@ fn format_value(value: &serde_json::Value, indent: usize) -> String {
         serde_json::Value::Bool(b) => format!("{}{}\n", prefix, b),
         serde_json::Value::Null => format!("{}null\n", prefix),
     }
+}
+
+/// Parse a coordinate pair string "x,y" into separate x and y strings.
+fn parse_coordinate_pair(s: &str) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 2 {
+        return Err(format!("Invalid coordinate pair '{}', expected format 'x,y'", s).into());
+    }
+    Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
 }

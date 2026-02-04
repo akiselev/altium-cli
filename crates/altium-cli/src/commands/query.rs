@@ -6,6 +6,11 @@
 //! Provides selector-based record querying using two query languages:
 //! - Record Selector syntax: `U1`, `R*`, `$LM358`, `~VCC`, `@10K`, `U1:VCC`
 //! - SchQL syntax: `component[part*=7805]`, `pin[type=input]`, `net:power`
+//!
+//! Note: This module uses V1 types (SchDoc, SchLib, SchRecord) which are deprecated.
+//! The query engine still operates on V1 types until the full V2 migration is complete.
+
+#![allow(deprecated)]
 
 use std::fs::File;
 use std::io::BufReader;

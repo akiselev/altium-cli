@@ -1,4 +1,10 @@
 //! Library integration for instantiating components from SchLib files.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchLib, SchLibComponent, SchDoc, SchRecord).
+//! TODO: Migrate to v2 types when SchLibV2/SchDocV2 provide equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::collections::HashMap;
 use std::path::Path;

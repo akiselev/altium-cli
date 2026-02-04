@@ -50,6 +50,12 @@
 //! let query = SchematicQuery::new(&view);
 //! let result = query.query("component[part*=7805] > pin[type=input]").unwrap();
 //! ```
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchDoc, SchRecord, RecordTree<SchRecord>).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent query functionality.
+
+#![allow(deprecated)]
 
 // =============================================================================
 // Shared Types (used by both systems)

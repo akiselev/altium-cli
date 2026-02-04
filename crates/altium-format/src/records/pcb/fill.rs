@@ -1,4 +1,6 @@
 //! PCB Fill record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbFillV2` with `v2::pcb::io` instead.
 
 use altium_format_derive::AltiumRecord;
 
@@ -6,6 +8,9 @@ use super::primitive::PcbRectangularBase;
 use crate::types::{Coord, CoordRect};
 
 /// PCB Fill (solid rectangle) primitive.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbFillV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbFillV2")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(format = "binary")]
 pub struct PcbFill {

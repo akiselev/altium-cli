@@ -1,4 +1,6 @@
 //! PCB Via record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbViaV2` with `v2::pcb::io` instead.
 
 use std::io::Read;
 
@@ -10,6 +12,9 @@ use crate::traits::FromBinary;
 use crate::types::{Coord, CoordPoint, CoordRect, Layer, MaskExpansion};
 
 /// PCB Via primitive.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbViaV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbViaV2")]
 #[derive(Debug, Clone)]
 pub struct PcbVia {
     /// Common primitive fields.

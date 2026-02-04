@@ -3,6 +3,12 @@
 //! The `SelectorEngine` executes parsed selectors against record collections,
 //! supporting all selector features including property filters, pseudo-selectors,
 //! and parent/child combinators.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchRecord, PinElectricalType, RecordTree<SchRecord>).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent query functionality.
+
+#![allow(deprecated)]
 
 use std::collections::HashMap;
 

@@ -5,6 +5,12 @@
 //! - Alignment with board edges and other components
 //! - Grid snapping
 //! - Connected route detection
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PcbDoc, PcbRecord).
+//! TODO: Migrate to v2 types when PcbDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::collections::HashSet;
 

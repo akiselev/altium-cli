@@ -2,6 +2,8 @@
 //!
 //! Classes group related objects (components, nets, pads, etc.) for
 //! design rules, visibility control, and organization.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbClassV2` with `v2::pcb::io` instead.
 
 use crate::types::ParameterCollection;
 
@@ -70,6 +72,9 @@ impl ClassKind {
 ///
 /// Classes are used to group related objects (nets, components, pads, etc.)
 /// for applying design rules, visibility settings, or organization.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbClassV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbClassV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbClass {
     /// Class name.

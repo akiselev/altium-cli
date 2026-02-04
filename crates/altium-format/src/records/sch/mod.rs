@@ -1,6 +1,17 @@
 //! Schematic record types.
 //!
+//! **DEPRECATED**: V1 record types are being replaced by v2 field structs.
+//! V1 suffers from coordinate scale bugs and field type mismatches. Migration map:
+//! - `SchPin` -> `v2::fields::PinData`
+//! - `SchComponent` -> `v2::fields::ComponentData`
+//! - `SchLabel` -> `v2::fields::LabelData`
+//! - `SchWire` -> `v2::fields::WireData`
+//! - `SchPrimitive` trait -> `v2::fields` typed structs directly
+//! - `SchRecord` enum -> `v2::fields` typed structs directly
+//!
 //! Contains all schematic primitive record types like pins, wires, rectangles, etc.
+
+#![allow(deprecated)]
 
 mod arc;
 mod bezier;

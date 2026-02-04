@@ -2,9 +2,10 @@
 //!
 //! A No ERC directive suppresses electrical rule check (ERC) violations
 //! at a specific location on the schematic.
+//!
+//! **DEPRECATED**: Use `v2::fields::NoErcData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -47,6 +48,9 @@ impl NoErcSymbol {
 ///
 /// Placed on the schematic to suppress ERC violations at a specific point,
 /// such as unconnected pins that are intentionally left floating.
+///
+/// **DEPRECATED**: Use `v2::fields::NoErcData` instead.
+#[deprecated(note = "Use v2::fields::NoErcData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 22, format = "params")]
 pub struct SchNoErc {
@@ -113,6 +117,7 @@ impl SchNoErc {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchNoErc {
     const RECORD_ID: i32 = 22;
 
@@ -127,12 +132,18 @@ impl SchPrimitive for SchNoErc {
         "NoErc"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchNoErc::import_from_params is deprecated. \
+            Use v2::fields::NoErcData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchNoErc::export_to_params is deprecated. \
+            Use v2::fields::NoErcData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

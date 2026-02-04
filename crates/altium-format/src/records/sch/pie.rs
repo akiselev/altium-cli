@@ -1,13 +1,17 @@
 //! SchPie - Schematic pie/wedge shape (Record 9).
+//!
+//! **DEPRECATED**: Use `v2::fields::PieData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 
 /// Schematic pie/wedge primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::PieData` instead.
+#[deprecated(note = "Use v2::fields::PieData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 9, format = "params")]
 pub struct SchPie {
@@ -44,6 +48,7 @@ pub struct SchPie {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchPie {
     const RECORD_ID: i32 = 9;
 
@@ -58,12 +63,18 @@ impl SchPrimitive for SchPie {
         "Pie"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchPie::import_from_params is deprecated. \
+            Use v2::fields::PieData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchPie::export_to_params is deprecated. \
+            Use v2::fields::PieData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

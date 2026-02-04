@@ -32,9 +32,22 @@ use std::io::{Read, Write, Cursor, Seek};
 
 use crate::error::{AltiumError, Result};
 use crate::v2::consts;
+use crate::v2::fields::{
+    TypedRecord, PinData, ComponentData, ParameterData, RectangleData, LineData,
+    ArcData, EllipseData, PolygonData, PolylineData, BezierData, EllipticalArcData,
+    PieData, RoundRectangleData, ImageData, DesignatorData, LabelData, SymbolData,
+    ImplementationData, ImplementationListData,
+};
 use crate::v2::io::section_keys::SectionKeyList;
 use crate::v2::serializer::SchSerializer;
 use crate::v2::serializer::ascii::AsciiSerializer;
+use crate::v2::serializer::format_v5::{
+    import_pin, import_component, import_parameter, import_rectangle, import_line,
+    import_arc, import_ellipse, import_polygon, import_polyline, import_bezier,
+    import_elliptical_arc, import_pie, import_round_rectangle, import_image,
+    import_designator, import_label, import_symbol, import_implementation,
+    import_implementation_list,
+};
 
 /// A parsed SchLib library.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -78,6 +91,10 @@ pub struct SchLibComponent {
     /// Raw serialized records (record_id, param_string pairs).
     /// Each record is stored as an ASCII parameter string.
     pub records: Vec<SchLibRecord>,
+    /// Typed/parsed records for strongly-typed access.
+    /// Populated during `open()` by parsing raw records via `import_*` functions.
+    #[serde(skip)]
+    pub typed_records: Vec<TypedRecord>,
 }
 
 /// A single record within a component.
@@ -119,6 +136,8 @@ impl SchLibV2 {
                 stream.read_to_end(&mut data)
                     .map_err(AltiumError::Io)?;
                 lib.components[i].records = parse_data_stream(&data)?;
+                // Parse raw records into typed records for strongly-typed access
+                lib.components[i].typed_records = parse_typed_records(&lib.components[i].records);
             }
         }
 
@@ -261,6 +280,7 @@ fn read_file_header<F: Read + Seek>(
                 aliases,
             },
             records: Vec::new(),
+            typed_records: Vec::new(),
         });
     }
 
@@ -479,6 +499,324 @@ impl SchLibRecord {
     pub fn to_serializer(&self) -> AsciiSerializer {
         AsciiSerializer::from_params(&self.params)
     }
+
+    /// Parse this raw record into a TypedRecord.
+    ///
+    /// Returns `TypedRecord::Unknown(record_id)` for unsupported record types.
+    pub fn to_typed(&self) -> TypedRecord {
+        parse_record_to_typed(self.record_id, &self.params)
+    }
+}
+
+impl SchLibComponent {
+    /// Get an iterator over all pins in this component.
+    pub fn pins(&self) -> impl Iterator<Item = &PinData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Pin(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// Get a mutable iterator over all pins in this component.
+    pub fn pins_mut(&mut self) -> impl Iterator<Item = &mut PinData> {
+        self.typed_records.iter_mut().filter_map(|r| match r {
+            TypedRecord::Pin(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// Get the component data record (first Component record).
+    pub fn component_data(&self) -> Option<&ComponentData> {
+        self.typed_records.iter().find_map(|r| match r {
+            TypedRecord::Component(c) => Some(c),
+            _ => None,
+        })
+    }
+
+    /// Get a mutable reference to the component data record.
+    pub fn component_data_mut(&mut self) -> Option<&mut ComponentData> {
+        self.typed_records.iter_mut().find_map(|r| match r {
+            TypedRecord::Component(c) => Some(c),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all parameters in this component.
+    pub fn parameters(&self) -> impl Iterator<Item = &ParameterData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Parameter(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all rectangles in this component.
+    pub fn rectangles(&self) -> impl Iterator<Item = &RectangleData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Rectangle(r) => Some(r),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all lines in this component.
+    pub fn lines(&self) -> impl Iterator<Item = &LineData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Line(l) => Some(l),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all arcs in this component.
+    pub fn arcs(&self) -> impl Iterator<Item = &ArcData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Arc(a) => Some(a),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all polygons in this component.
+    pub fn polygons(&self) -> impl Iterator<Item = &PolygonData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Polygon(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all polylines in this component.
+    pub fn polylines(&self) -> impl Iterator<Item = &PolylineData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Polyline(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// Get the implementation records for this component.
+    pub fn implementations(&self) -> impl Iterator<Item = &ImplementationData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Implementation(i) => Some(i),
+            _ => None,
+        })
+    }
+
+    /// Count the number of pins.
+    pub fn pin_count(&self) -> usize {
+        self.pins().count()
+    }
+
+    /// Get all typed records.
+    pub fn typed_records(&self) -> &[TypedRecord] {
+        &self.typed_records
+    }
+
+    /// Parse raw records into typed records.
+    ///
+    /// This is called automatically during `SchLibV2::open()`, but can be
+    /// called manually if records are modified.
+    pub fn parse_typed_records(&mut self) {
+        self.typed_records = self.records.iter().map(|r| r.to_typed()).collect();
+    }
+}
+
+/// Parse a raw record into a TypedRecord based on record_id.
+///
+/// Record IDs from `SchRecordId` in format/record_ids.rs:
+/// - 1: Component
+/// - 2: Pin
+/// - 3: Symbol
+/// - 4: Label
+/// - 5: Bezier
+/// - 6: Polyline
+/// - 7: Polygon
+/// - 8: Ellipse
+/// - 9: Pie
+/// - 10: RoundRectangle
+/// - 11: EllipticalArc
+/// - 12: Arc
+/// - 13: Line
+/// - 14: Rectangle
+/// - 17: PowerObject
+/// - 18: Port
+/// - 22: NoERC
+/// - 25: NetLabel
+/// - 26: Bus
+/// - 27: Wire
+/// - 28: TextFrame
+/// - 29: Junction
+/// - 30: Image
+/// - 31: Sheet
+/// - 34: Designator
+/// - 37: BusEntry
+/// - 41: Parameter
+/// - 44: ImplementationList
+/// - 45: Implementation
+fn parse_record_to_typed(record_id: u8, params: &str) -> TypedRecord {
+    // Skip empty/binary records
+    if params.is_empty() {
+        return TypedRecord::Unknown(record_id);
+    }
+
+    let mut ser = AsciiSerializer::from_params(params);
+
+    match record_id {
+        1 => {
+            let mut comp = ComponentData::default();
+            if import_component(&mut ser, &mut comp).is_ok() {
+                TypedRecord::Component(comp)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        2 => {
+            let mut pin = PinData::default();
+            if import_pin(&mut ser, &mut pin).is_ok() {
+                TypedRecord::Pin(pin)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        3 => {
+            let mut symbol = SymbolData::default();
+            if import_symbol(&mut ser, &mut symbol).is_ok() {
+                TypedRecord::Symbol(symbol)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        4 => {
+            let mut label = LabelData::default();
+            if import_label(&mut ser, &mut label).is_ok() {
+                TypedRecord::Label(label)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        5 => {
+            let mut bezier = BezierData::default();
+            if import_bezier(&mut ser, &mut bezier).is_ok() {
+                TypedRecord::Bezier(bezier)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        6 => {
+            let mut polyline = PolylineData::default();
+            if import_polyline(&mut ser, &mut polyline).is_ok() {
+                TypedRecord::Polyline(polyline)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        7 => {
+            let mut polygon = PolygonData::default();
+            if import_polygon(&mut ser, &mut polygon).is_ok() {
+                TypedRecord::Polygon(polygon)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        8 => {
+            let mut ellipse = EllipseData::default();
+            if import_ellipse(&mut ser, &mut ellipse).is_ok() {
+                TypedRecord::Ellipse(ellipse)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        9 => {
+            let mut pie = PieData::default();
+            if import_pie(&mut ser, &mut pie).is_ok() {
+                TypedRecord::Pie(pie)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        10 => {
+            let mut rr = RoundRectangleData::default();
+            if import_round_rectangle(&mut ser, &mut rr).is_ok() {
+                TypedRecord::RoundRectangle(rr)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        11 => {
+            let mut ea = EllipticalArcData::default();
+            if import_elliptical_arc(&mut ser, &mut ea).is_ok() {
+                TypedRecord::EllipticalArc(ea)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        12 => {
+            let mut arc = ArcData::default();
+            if import_arc(&mut ser, &mut arc).is_ok() {
+                TypedRecord::Arc(arc)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        13 => {
+            let mut line = LineData::default();
+            if import_line(&mut ser, &mut line).is_ok() {
+                TypedRecord::Line(line)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        14 => {
+            let mut rect = RectangleData::default();
+            if import_rectangle(&mut ser, &mut rect).is_ok() {
+                TypedRecord::Rectangle(rect)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        34 => {
+            let mut desig = DesignatorData::default();
+            if import_designator(&mut ser, &mut desig).is_ok() {
+                TypedRecord::Designator(desig)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        30 => {
+            let mut img = ImageData::default();
+            if import_image(&mut ser, &mut img).is_ok() {
+                TypedRecord::Image(img)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        41 => {
+            let mut param = ParameterData::default();
+            if import_parameter(&mut ser, &mut param).is_ok() {
+                TypedRecord::Parameter(param)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        44 => {
+            let mut impl_list = ImplementationListData::default();
+            if import_implementation_list(&mut ser, &mut impl_list).is_ok() {
+                TypedRecord::ImplementationList(impl_list)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        45 => {
+            let mut imp = ImplementationData::default();
+            if import_implementation(&mut ser, &mut imp).is_ok() {
+                TypedRecord::Implementation(imp)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        // TODO: Add more record types as needed (17=PowerObject, 18=Port, etc.)
+        _ => TypedRecord::Unknown(record_id),
+    }
+}
+
+/// Parse all raw records into typed records.
+fn parse_typed_records(records: &[SchLibRecord]) -> Vec<TypedRecord> {
+    records.iter().map(|r| r.to_typed()).collect()
 }
 
 // ============================================================================
@@ -578,10 +916,111 @@ mod tests {
                     raw: Vec::new(),
                 },
             ],
+            typed_records: vec![],
         });
 
         // Write to memory buffer
         let buf = Cursor::new(Vec::new());
         lib.write(buf).unwrap();
+    }
+
+    #[test]
+    fn typed_records_parsing() {
+        // Test parsing records into typed structs
+        // V2 coordinates: raw param value is in mils, multiplied by 100000 internally
+        // E.g., PinLength=2 means 2 mils = 200000 internal units
+        let records = vec![
+            SchLibRecord {
+                record_id: 1,
+                record_id_ex: None,
+                params: "|RECORD=1|LibReference=LM358|PartCount=2|DisplayModeCount=1|".to_string(),
+                raw: Vec::new(),
+            },
+            SchLibRecord {
+                record_id: 2,
+                record_id_ex: None,
+                // PinLength=2 mils, Location.X=1 mil, Location.Y=2 mils
+                params: "|RECORD=2|OwnerIndex=0|OwnerPartId=1|Name=VCC|Designator=1|PinLength=2|Location.X=1|Location.Y=2|PinConglomerate=25|".to_string(),
+                raw: Vec::new(),
+            },
+            SchLibRecord {
+                record_id: 14,
+                record_id_ex: None,
+                // Corner.X=1 mil, Corner.Y=1 mil
+                params: "|RECORD=14|Location.X=0|Location.Y=0|Corner.X=1|Corner.Y=1|IsSolid=T|".to_string(),
+                raw: Vec::new(),
+            },
+        ];
+
+        let typed = parse_typed_records(&records);
+        assert_eq!(typed.len(), 3);
+
+        // Check component
+        match &typed[0] {
+            TypedRecord::Component(c) => {
+                assert_eq!(c.lib_reference, "LM358");
+                assert_eq!(c.part_count, 2);
+            }
+            _ => panic!("Expected Component record"),
+        }
+
+        // Check pin - values are multiplied by 100000 internally
+        match &typed[1] {
+            TypedRecord::Pin(p) => {
+                assert_eq!(p.name, "VCC");
+                assert_eq!(p.designator, "1");
+                assert_eq!(p.pin_length, 200000);   // 2 * 100000
+                assert_eq!(p.location_x, 100000);   // 1 * 100000
+                assert_eq!(p.location_y, 200000);   // 2 * 100000
+            }
+            _ => panic!("Expected Pin record"),
+        }
+
+        // Check rectangle
+        match &typed[2] {
+            TypedRecord::Rectangle(r) => {
+                assert!(r.is_solid);
+                assert_eq!(r.corner_x, 100000);  // 1 * 100000
+                assert_eq!(r.corner_y, 100000);  // 1 * 100000
+            }
+            _ => panic!("Expected Rectangle record"),
+        }
+    }
+
+    #[test]
+    fn component_pin_accessors() {
+        let mut comp = SchLibComponent {
+            entry: SchLibComponentEntry {
+                lib_ref: "Test".to_string(),
+                description: "Test component".to_string(),
+                part_count: 1,
+                aliases: vec![],
+            },
+            records: vec![
+                SchLibRecord {
+                    record_id: 2,
+                    record_id_ex: None,
+                    params: "|RECORD=2|OwnerIndex=0|Name=PIN1|Designator=1|PinConglomerate=25|".to_string(),
+                    raw: Vec::new(),
+                },
+                SchLibRecord {
+                    record_id: 2,
+                    record_id_ex: None,
+                    params: "|RECORD=2|OwnerIndex=0|Name=PIN2|Designator=2|PinConglomerate=25|".to_string(),
+                    raw: Vec::new(),
+                },
+            ],
+            typed_records: vec![],
+        };
+
+        // Parse typed records
+        comp.parse_typed_records();
+
+        // Test pin count
+        assert_eq!(comp.pin_count(), 2);
+
+        // Test pin iterator
+        let pin_names: Vec<&str> = comp.pins().map(|p| p.name.as_str()).collect();
+        assert_eq!(pin_names, vec!["PIN1", "PIN2"]);
     }
 }

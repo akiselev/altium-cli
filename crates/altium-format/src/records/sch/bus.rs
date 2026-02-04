@@ -3,9 +3,10 @@
 //! A bus is a thick wire that carries multiple signals, typically named like
 //! "DATA[0..7]" or "ADDR[0..15]". Bus entries (RECORD=37) connect individual
 //! wires to the bus.
+//!
+//! **DEPRECATED**: Use `v2::fields::BusData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -15,6 +16,9 @@ use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 ///
 /// A bus is a bundle of related signals shown as a thick line. Individual
 /// signals connect to the bus via BusEntry primitives.
+///
+/// **DEPRECATED**: Use `v2::fields::BusData` instead.
+#[deprecated(note = "Use v2::fields::BusData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 26, format = "params")]
 pub struct SchBus {
@@ -99,6 +103,7 @@ impl SchBus {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchBus {
     const RECORD_ID: i32 = 26;
 
@@ -113,12 +118,18 @@ impl SchPrimitive for SchBus {
         "Bus"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchBus::import_from_params is deprecated. \
+            Use v2::fields::BusData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchBus::export_to_params is deprecated. \
+            Use v2::fields::BusData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

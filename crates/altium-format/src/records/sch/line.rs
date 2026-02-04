@@ -1,13 +1,17 @@
 //! SchLine - Schematic line (Record 13).
+//!
+//! **DEPRECATED**: Use `v2::fields::LineData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 
 /// Schematic line primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::LineData` instead.
+#[deprecated(note = "Use v2::fields::LineData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 13, format = "params")]
 pub struct SchLine {
@@ -32,6 +36,7 @@ pub struct SchLine {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchLine {
     const RECORD_ID: i32 = 13;
 
@@ -46,12 +51,18 @@ impl SchPrimitive for SchLine {
         "Line"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchLine::import_from_params is deprecated. \
+            Use v2::fields::LineData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchLine::export_to_params is deprecated. \
+            Use v2::fields::LineData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

@@ -1,4 +1,6 @@
 //! PCB Region record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbRegionV2` with `v2::pcb::io` instead.
 
 use std::io::Read;
 
@@ -10,6 +12,9 @@ use crate::traits::FromBinary;
 use crate::types::{CoordPoint, CoordRect, ParameterCollection};
 
 /// PCB Region primitive (polygon area).
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbRegionV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbRegionV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbRegion {
     /// Common primitive fields.

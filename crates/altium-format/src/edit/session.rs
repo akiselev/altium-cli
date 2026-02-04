@@ -1,4 +1,10 @@
 //! Edit session for tracking changes and managing schematic modifications.
+//!
+//! # V2 Migration Note
+//! This module heavily uses v1 types (SchDoc, SchRecord, SchWire, SchNetLabel, etc.).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent editing capabilities.
+
+#![allow(deprecated)]
 
 use std::path::Path;
 

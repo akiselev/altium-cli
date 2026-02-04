@@ -1,4 +1,10 @@
 //! Footprint builder for programmatic footprint creation.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (PcbComponent, PcbRecord, PcbPad, PcbTrack, etc.).
+//! TODO: Migrate to v2 PCB types when fully available.
+
+#![allow(deprecated)]
 
 use crate::records::pcb::{
     PcbArc, PcbComponent, PcbFlags, PcbPad, PcbPadHoleShape, PcbPadShape, PcbPrimitiveCommon,

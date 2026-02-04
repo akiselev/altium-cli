@@ -1,4 +1,6 @@
 //! PCB Text record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbTextV2` with `v2::pcb::io` instead.
 
 use std::io::Read;
 
@@ -107,6 +109,9 @@ struct PcbTextExtendedBinary {
 }
 
 /// PCB Text primitive.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbTextV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbTextV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbText {
     /// Base rectangular fields.

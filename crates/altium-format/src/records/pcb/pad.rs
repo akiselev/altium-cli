@@ -1,4 +1,6 @@
 //! PCB Pad record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbPadV2` with `v2::pcb::io` instead.
 
 use std::io::Read;
 
@@ -10,6 +12,9 @@ use crate::traits::FromBinary;
 use crate::types::{Coord, CoordPoint, CoordRect, Layer, MaskExpansion};
 
 /// PCB Pad primitive.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbPadV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbPadV2")]
 #[derive(Debug, Clone)]
 pub struct PcbPad {
     /// Common primitive fields.

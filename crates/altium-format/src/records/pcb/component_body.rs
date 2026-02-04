@@ -1,4 +1,6 @@
 //! PCB ComponentBody record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbComponentBodyV2` with `v2::pcb::io` instead.
 
 use std::io::Read;
 
@@ -10,6 +12,9 @@ use crate::traits::FromBinary;
 use crate::types::{Coord, CoordPoint, CoordRect, ParameterCollection};
 
 /// PCB Component Body primitive (3D model reference).
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbComponentBodyV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbComponentBodyV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbComponentBody {
     /// Common primitive fields.

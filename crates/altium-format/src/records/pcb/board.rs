@@ -2,6 +2,8 @@
 //!
 //! The board record contains global PCB settings, grid configuration,
 //! and the board outline definition.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbBoardV2` with `v2::pcb::io` instead.
 
 use crate::types::{Coord, Layer, ParameterCollection};
 
@@ -63,6 +65,9 @@ impl DesignatorDisplayMode {
 ///
 /// Contains global board settings including grid configuration,
 /// units, and the board outline polygon.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbBoardV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbBoardV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbBoard {
     /// Layer (typically TOP).

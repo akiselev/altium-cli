@@ -22,6 +22,20 @@ Command-line tool for inspecting and manipulating Altium Designer files.
 | **Output Formatting** | | |
 | src/output.rs | TextFormat trait, print() dispatcher, print_json_as_text() fallback | Formatting CLI output, adding new output types |
 
+## V2 Type Usage
+
+CLI commands use V2 types from altium-format:
+
+| V2 Type | CLI Usage |
+|---|---|
+| `SchLibV2` | `schlib` commands load libraries via `v2::io::schlib::SchLibV2::open_file()` |
+| `SchDocV2` | `schdoc` commands load documents via `v2::io::schdoc::SchDocV2::open_file()` |
+| `PcbLibV2` | `pcblib` commands load libraries via `v2::pcb::io::pcblib::PcbLibV2::open_file()` |
+| `PcbDocV2` | `pcbdoc` commands load documents via `v2::pcb::io::pcbdoc::PcbDocV2::open_file()` |
+| `PinData` | Pin listing, electrical type display |
+| `ComponentData` | Component metadata, parameters |
+| `TypedRecord` | Record enumeration, hierarchy traversal |
+
 ## Commands
 
 ### Quick Commands
@@ -299,10 +313,10 @@ impl TextFormat for ComponentInfo {
 - Handle file I/O paths and error reporting
 
 **What altium-cli does NOT do:**
-- Parse Altium file formats (delegates to altium-format)
+- Parse Altium file formats (delegates to altium-format v2 types)
 - Query language execution (delegates to altium-format::query)
 - Edit session logic (delegates to altium-format::edit)
-- Record type definitions (delegates to altium-format::records)
+- Record type definitions (delegates to altium-format::v2::fields)
 
 **Dependency rule:** CLI depends on library, library NEVER depends on CLI.
 
@@ -332,10 +346,11 @@ cargo build -p altium-cli && ./target/debug/altium-cli --help
 
 **Example:**
 ```rust
+use altium_format::v2::io::schlib::SchLibV2;
+
 pub fn run(path: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let file = File::open(path)?;  // Propagates IO errors
-    let lib = SchLib::open(BufReader::new(file))?;  // Propagates parse errors
-    output::print(&lib.components(), format)?;  // Propagates format errors
+    let lib = SchLibV2::open_file(path)?;  // V2 API
+    output::print(&lib.components(), format)?;
     Ok(())
 }
 ```

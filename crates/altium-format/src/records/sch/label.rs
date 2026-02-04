@@ -1,13 +1,17 @@
 //! SchLabel - Schematic label (Record 4).
+//!
+//! **DEPRECATED**: Use `v2::fields::LabelData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{SchGraphicalBase, SchPrimitive, TextJustification, TextOrientations};
 
 /// Schematic label primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::LabelData` instead.
+#[deprecated(note = "Use v2::fields::LabelData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 4, format = "params")]
 pub struct SchLabel {
@@ -51,6 +55,7 @@ impl SchLabel {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchLabel {
     const RECORD_ID: i32 = 4;
 
@@ -72,12 +77,18 @@ impl SchPrimitive for SchLabel {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchLabel::import_from_params is deprecated. \
+            Use v2::fields::LabelData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchLabel::export_to_params is deprecated. \
+            Use v2::fields::LabelData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

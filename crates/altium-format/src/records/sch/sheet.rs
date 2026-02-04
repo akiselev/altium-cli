@@ -1,13 +1,17 @@
 //! SchSheetHeader - Schematic sheet header (Record 31).
+//!
+//! **DEPRECATED**: Use `v2::fields::SheetHeaderData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{SchPrimitive, SchPrimitiveBase};
 
 /// Schematic sheet header primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::SheetHeaderData` instead.
+#[deprecated(note = "Use v2::fields::SheetHeaderData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 31, format = "params")]
 pub struct SchSheetHeader {
@@ -40,6 +44,7 @@ pub struct SchSheetHeader {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchSheetHeader {
     const RECORD_ID: i32 = 31;
 
@@ -47,12 +52,18 @@ impl SchPrimitive for SchSheetHeader {
         "SheetHeader"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchSheetHeader::import_from_params is deprecated. \
+            Use v2::fields::SheetHeaderData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchSheetHeader::export_to_params is deprecated. \
+            Use v2::fields::SheetHeaderData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

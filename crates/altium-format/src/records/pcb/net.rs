@@ -2,6 +2,8 @@
 //!
 //! Nets define electrical connectivity and routing properties
 //! for connected copper elements on the PCB.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbNetV2` with `v2::pcb::io` instead.
 
 use crate::types::{Color, Coord, Layer, ParameterCollection};
 
@@ -10,6 +12,9 @@ use crate::types::{Color, Coord, Layer, ParameterCollection};
 /// A net represents an electrical connection between multiple points
 /// on the PCB. It stores routing properties like track widths for
 /// different layers and visual display settings.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbNetV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbNetV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbNet {
     /// Net name.

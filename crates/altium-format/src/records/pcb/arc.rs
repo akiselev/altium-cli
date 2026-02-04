@@ -1,4 +1,6 @@
 //! PCB Arc record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbArcV2` with `v2::pcb::io` instead.
 
 use altium_format_derive::AltiumRecord;
 
@@ -6,6 +8,9 @@ use super::primitive::PcbPrimitiveCommon;
 use crate::types::{Coord, CoordPoint, CoordRect, Layer};
 
 /// PCB Arc primitive.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbArcV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbArcV2")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(format = "binary")]
 pub struct PcbArc {

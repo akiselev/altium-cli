@@ -1,9 +1,14 @@
 //! PCB Component (footprint) container.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbComponentV2` with `v2::pcb::io` instead.
 
 use super::{PcbPad, PcbRecord};
 use crate::types::{Coord, CoordRect, ParameterCollection};
 
 /// A PCB component (footprint) containing primitives.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbComponentV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbComponentV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbComponent {
     /// Footprint pattern name.

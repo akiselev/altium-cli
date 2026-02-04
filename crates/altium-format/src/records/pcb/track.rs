@@ -1,4 +1,6 @@
 //! PCB Track record.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbTrackV2` with `v2::pcb::io` instead.
 
 use altium_format_derive::AltiumRecord;
 
@@ -6,6 +8,9 @@ use super::primitive::PcbPrimitiveCommon;
 use crate::types::{Coord, CoordPoint, CoordRect, Layer};
 
 /// PCB Track (line segment) primitive.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbTrackV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbTrackV2")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(format = "binary")]
 pub struct PcbTrack {

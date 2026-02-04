@@ -1,4 +1,7 @@
 //! Base primitive types and enums for PCB records.
+//!
+//! **DEPRECATED**: V1 PCB record types are being replaced by v2 implementations.
+//! Migration map: `v2::pcb` module (PcbPadV2, PcbTrackV2, PcbViaV2, etc.)
 
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -1124,7 +1127,10 @@ impl PcbRectangularBase {
 
 /// Dispatch enum containing all PCB record types.
 ///
-/// Large variants (Pad, ComponentBody, Dimension) are boxed to reduce enum size on the stack.
+/// Large variants (Pad, ComponentBody) are boxed to reduce enum size on the stack.
+///
+/// **DEPRECATED**: Use `v2::pcb` module types directly (PcbPadV2, PcbTrackV2, etc.)
+#[deprecated(note = "Use v2::pcb module types directly")]
 #[derive(Debug, Clone)]
 pub enum PcbRecord {
     Arc(super::PcbArc),
@@ -1136,8 +1142,6 @@ pub enum PcbRecord {
     Region(super::PcbRegion),
     ComponentBody(Box<super::PcbComponentBody>),
     Polygon(super::PcbPolygon),
-    Dimension(Box<super::PcbDimension>),
-    Coordinate(super::PcbCoordinate),
     /// Unknown record type.
     Unknown {
         object_id: PcbObjectId,
@@ -1145,6 +1149,7 @@ pub enum PcbRecord {
     },
 }
 
+#[allow(deprecated)]
 impl PcbRecord {
     /// Get the object ID of this record.
     pub fn object_id(&self) -> PcbObjectId {
@@ -1158,8 +1163,6 @@ impl PcbRecord {
             PcbRecord::Region(_) => PcbObjectId::Region,
             PcbRecord::ComponentBody(_) => PcbObjectId::ComponentBody,
             PcbRecord::Polygon(_) => PcbObjectId::Polygon,
-            PcbRecord::Dimension(_) => PcbObjectId::Dimension,
-            PcbRecord::Coordinate(_) => PcbObjectId::Coordinate,
             PcbRecord::Unknown { object_id, .. } => *object_id,
         }
     }
@@ -1176,8 +1179,6 @@ impl PcbRecord {
             PcbRecord::Region(r) => r.common.layer,
             PcbRecord::ComponentBody(r) => r.common.layer,
             PcbRecord::Polygon(r) => r.layer,
-            PcbRecord::Dimension(r) => r.layer,
-            PcbRecord::Coordinate(r) => r.layer,
             PcbRecord::Unknown { .. } => Layer::default(),
         }
     }

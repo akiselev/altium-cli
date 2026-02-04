@@ -21,8 +21,26 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Cursor, Read, Seek, Write};
 
+use crate::v2::fields::{
+    TypedRecord, PinData, ComponentData, ParameterData, RectangleData, LineData,
+    ArcData, EllipseData, PolygonData, PolylineData, BezierData, EllipticalArcData,
+    PieData, RoundRectangleData, ImageData, DesignatorData, LabelData, SymbolData,
+    ImplementationData, ImplementationListData, WireData, BusData, JunctionData,
+    NetLabelData, PowerData, PortData, NoERCData, TextFrameData, BusEntryData,
+    SheetData, SheetSymbolData, SheetEntryData, SheetNameData, SheetFileNameData,
+};
 use crate::v2::serializer::SchSerializer;
 use crate::v2::serializer::ascii::AsciiSerializer;
+use crate::v2::serializer::format_v5::{
+    import_pin, import_component, import_parameter, import_rectangle, import_line,
+    import_arc, import_ellipse, import_polygon, import_polyline, import_bezier,
+    import_elliptical_arc, import_pie, import_round_rectangle, import_image,
+    import_designator, import_label, import_symbol, import_implementation,
+    import_implementation_list, import_wire, import_bus, import_junction,
+    import_net_label, import_power, import_port, import_no_erc, import_text_frame,
+    import_bus_entry, import_sheet, import_sheet_symbol, import_sheet_entry,
+    import_sheet_name, import_sheet_file_name,
+};
 
 /// A parsed SchDoc file.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -31,6 +49,10 @@ pub struct SchDocV2 {
     pub weight: i32,
     /// Parsed primitive records from the FileHeader stream.
     pub records: Vec<SchDocRecord>,
+    /// Typed/parsed records for strongly-typed access.
+    /// Populated during `open()` by parsing raw records via `import_*` functions.
+    #[serde(skip)]
+    pub typed_records: Vec<TypedRecord>,
     /// All raw CFB streams for lossless roundtrip.
     #[serde(skip)]
     pub raw_streams: Vec<(String, Vec<u8>)>,
@@ -66,6 +88,8 @@ impl SchDocV2 {
             let (weight, records) = parse_file_header(&fh_data);
             doc.weight = weight;
             doc.records = records;
+            // Parse raw records into typed records for strongly-typed access
+            doc.typed_records = parse_typed_records(&doc.records);
         }
 
         // Collect ALL streams for lossless roundtrip
@@ -89,6 +113,67 @@ impl SchDocV2 {
         }
 
         Ok(doc)
+    }
+
+    /// Get an iterator over all components in this document.
+    pub fn components(&self) -> impl Iterator<Item = &ComponentData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Component(c) => Some(c),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all wires in this document.
+    pub fn wires(&self) -> impl Iterator<Item = &WireData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Wire(w) => Some(w),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all net labels in this document.
+    pub fn net_labels(&self) -> impl Iterator<Item = &NetLabelData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::NetLabel(n) => Some(n),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all power objects in this document.
+    pub fn power_objects(&self) -> impl Iterator<Item = &PowerData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::PowerObject(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// Get an iterator over all junctions in this document.
+    pub fn junctions(&self) -> impl Iterator<Item = &JunctionData> {
+        self.typed_records.iter().filter_map(|r| match r {
+            TypedRecord::Junction(j) => Some(j),
+            _ => None,
+        })
+    }
+
+    /// Get the sheet header record if present.
+    pub fn sheet(&self) -> Option<&SheetData> {
+        self.typed_records.iter().find_map(|r| match r {
+            TypedRecord::Sheet(s) => Some(s),
+            _ => None,
+        })
+    }
+
+    /// Get all typed records.
+    pub fn typed_records(&self) -> &[TypedRecord] {
+        &self.typed_records
+    }
+
+    /// Parse raw records into typed records.
+    ///
+    /// This is called automatically during `open()`, but can be
+    /// called manually if records are modified.
+    pub fn parse_typed_records(&mut self) {
+        self.typed_records = parse_typed_records(&self.records);
     }
 
     /// Write a SchDoc to a CFB compound file, serializing from typed fields.
@@ -242,4 +327,308 @@ fn read_cfb_stream<F: Read + Seek>(cfb: &mut cfb::CompoundFile<F>, path: &str) -
     let mut data = Vec::new();
     stream.read_to_end(&mut data)?;
     Ok(data)
+}
+
+impl SchDocRecord {
+    /// Returns the effective record ID (using extended ID if present).
+    pub fn effective_record_id(&self) -> i32 {
+        if let Some(ex) = self.record_id_ex {
+            ex
+        } else {
+            self.record_id as i32
+        }
+    }
+
+    /// Parse this record's params into an AsciiSerializer for field access.
+    pub fn to_serializer(&self) -> AsciiSerializer {
+        AsciiSerializer::from_params(&self.params)
+    }
+
+    /// Parse this raw record into a TypedRecord.
+    pub fn to_typed(&self) -> TypedRecord {
+        parse_record_to_typed(self.record_id, &self.params)
+    }
+}
+
+/// Parse a raw record into a TypedRecord based on record_id.
+fn parse_record_to_typed(record_id: u8, params: &str) -> TypedRecord {
+    // Skip empty/binary records
+    if params.is_empty() {
+        return TypedRecord::Unknown(record_id);
+    }
+
+    let mut ser = AsciiSerializer::from_params(params);
+
+    match record_id {
+        1 => {
+            let mut comp = ComponentData::default();
+            if import_component(&mut ser, &mut comp).is_ok() {
+                TypedRecord::Component(comp)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        2 => {
+            let mut pin = PinData::default();
+            if import_pin(&mut ser, &mut pin).is_ok() {
+                TypedRecord::Pin(pin)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        3 => {
+            let mut symbol = SymbolData::default();
+            if import_symbol(&mut ser, &mut symbol).is_ok() {
+                TypedRecord::Symbol(symbol)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        4 => {
+            let mut label = LabelData::default();
+            if import_label(&mut ser, &mut label).is_ok() {
+                TypedRecord::Label(label)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        5 => {
+            let mut bezier = BezierData::default();
+            if import_bezier(&mut ser, &mut bezier).is_ok() {
+                TypedRecord::Bezier(bezier)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        6 => {
+            let mut polyline = PolylineData::default();
+            if import_polyline(&mut ser, &mut polyline).is_ok() {
+                TypedRecord::Polyline(polyline)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        7 => {
+            let mut polygon = PolygonData::default();
+            if import_polygon(&mut ser, &mut polygon).is_ok() {
+                TypedRecord::Polygon(polygon)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        8 => {
+            let mut ellipse = EllipseData::default();
+            if import_ellipse(&mut ser, &mut ellipse).is_ok() {
+                TypedRecord::Ellipse(ellipse)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        9 => {
+            let mut pie = PieData::default();
+            if import_pie(&mut ser, &mut pie).is_ok() {
+                TypedRecord::Pie(pie)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        10 => {
+            let mut rr = RoundRectangleData::default();
+            if import_round_rectangle(&mut ser, &mut rr).is_ok() {
+                TypedRecord::RoundRectangle(rr)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        11 => {
+            let mut ea = EllipticalArcData::default();
+            if import_elliptical_arc(&mut ser, &mut ea).is_ok() {
+                TypedRecord::EllipticalArc(ea)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        12 => {
+            let mut arc = ArcData::default();
+            if import_arc(&mut ser, &mut arc).is_ok() {
+                TypedRecord::Arc(arc)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        13 => {
+            let mut line = LineData::default();
+            if import_line(&mut ser, &mut line).is_ok() {
+                TypedRecord::Line(line)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        14 => {
+            let mut rect = RectangleData::default();
+            if import_rectangle(&mut ser, &mut rect).is_ok() {
+                TypedRecord::Rectangle(rect)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        17 => {
+            let mut power = PowerData::default();
+            if import_power(&mut ser, &mut power).is_ok() {
+                TypedRecord::PowerObject(power)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        18 => {
+            let mut port = PortData::default();
+            if import_port(&mut ser, &mut port).is_ok() {
+                TypedRecord::Port(port)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        22 => {
+            let mut noerc = NoERCData::default();
+            if import_no_erc(&mut ser, &mut noerc).is_ok() {
+                TypedRecord::NoERC(noerc)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        25 => {
+            let mut netlabel = NetLabelData::default();
+            if import_net_label(&mut ser, &mut netlabel).is_ok() {
+                TypedRecord::NetLabel(netlabel)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        26 => {
+            let mut bus = BusData::default();
+            if import_bus(&mut ser, &mut bus).is_ok() {
+                TypedRecord::Bus(bus)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        27 => {
+            let mut wire = WireData::default();
+            if import_wire(&mut ser, &mut wire).is_ok() {
+                TypedRecord::Wire(wire)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        28 => {
+            let mut tf = TextFrameData::default();
+            if import_text_frame(&mut ser, &mut tf).is_ok() {
+                TypedRecord::TextFrame(tf)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        29 => {
+            let mut junc = JunctionData::default();
+            if import_junction(&mut ser, &mut junc).is_ok() {
+                TypedRecord::Junction(junc)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        30 => {
+            let mut img = ImageData::default();
+            if import_image(&mut ser, &mut img).is_ok() {
+                TypedRecord::Image(img)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        31 => {
+            let mut sheet = SheetData::default();
+            if import_sheet(&mut ser, &mut sheet).is_ok() {
+                TypedRecord::Sheet(sheet)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        32 => {
+            let mut sn = SheetNameData::default();
+            if import_sheet_name(&mut ser, &mut sn).is_ok() {
+                TypedRecord::SheetName(sn)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        33 => {
+            let mut sfn = SheetFileNameData::default();
+            if import_sheet_file_name(&mut ser, &mut sfn).is_ok() {
+                TypedRecord::SheetFileName(sfn)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        34 => {
+            let mut desig = DesignatorData::default();
+            if import_designator(&mut ser, &mut desig).is_ok() {
+                TypedRecord::Designator(desig)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        37 => {
+            let mut be = BusEntryData::default();
+            if import_bus_entry(&mut ser, &mut be).is_ok() {
+                TypedRecord::BusEntry(be)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        39 => {
+            let mut ss = SheetSymbolData::default();
+            if import_sheet_symbol(&mut ser, &mut ss).is_ok() {
+                TypedRecord::SheetSymbol(ss)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        40 => {
+            let mut se = SheetEntryData::default();
+            if import_sheet_entry(&mut ser, &mut se).is_ok() {
+                TypedRecord::SheetEntry(se)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        41 => {
+            let mut param = ParameterData::default();
+            if import_parameter(&mut ser, &mut param).is_ok() {
+                TypedRecord::Parameter(param)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        44 => {
+            let mut impl_list = ImplementationListData::default();
+            if import_implementation_list(&mut ser, &mut impl_list).is_ok() {
+                TypedRecord::ImplementationList(impl_list)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        45 => {
+            let mut imp = ImplementationData::default();
+            if import_implementation(&mut ser, &mut imp).is_ok() {
+                TypedRecord::Implementation(imp)
+            } else {
+                TypedRecord::Unknown(record_id)
+            }
+        }
+        _ => TypedRecord::Unknown(record_id),
+    }
+}
+
+/// Parse all raw records into typed records.
+fn parse_typed_records(records: &[SchDocRecord]) -> Vec<TypedRecord> {
+    records.iter().map(|r| r.to_typed()).collect()
 }

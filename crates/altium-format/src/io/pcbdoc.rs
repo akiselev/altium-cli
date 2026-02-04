@@ -1,7 +1,13 @@
 //! PcbDoc reader/writer for Altium PCB document files.
 //!
+//! **DEPRECATED**: V1 IO is replaced by v2 with correct coordinate scale.
+//! V1 uses 1 unit/mil (incorrect); v2 uses 10K units/mil.
+//!
 //! Supports reading and writing of PCB documents including board data,
 //! components, primitives, nets, and design rules.
+
+#![allow(unused_imports)]
+#![allow(dead_code)]
 
 use cfb::CompoundFile;
 use std::fs::File;
@@ -21,6 +27,10 @@ use crate::traits::FromBinary;
 use crate::types::ParameterCollection;
 
 /// A PCB document containing board data.
+///
+/// **DEPRECATED**: Use `v2::pcb::io::pcbdoc::PcbDocV2` instead.
+/// V1 has coordinate scale bugs (uses 1 unit/mil instead of 10K units/mil).
+#[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
 #[derive(Debug, Default)]
 pub struct PcbDoc {
     /// Board header parameters.
@@ -44,6 +54,9 @@ pub struct PcbDoc {
 }
 
 /// A component placed on the board.
+///
+/// **DEPRECATED**: Use v2::pcb types instead.
+#[deprecated(note = "Use v2::pcb types")]
 #[derive(Debug, Default)]
 pub struct PcbDocComponent {
     /// Component designator (e.g., "R1", "U1").
@@ -58,523 +71,91 @@ pub struct PcbDocComponent {
     pub primitives: Vec<PcbRecord>,
 }
 
+#[allow(deprecated)]
 impl PcbDoc {
     /// Open and read a PcbDoc file.
-    pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
-        let mut pcbdoc = PcbDoc::default();
-        let mut cf = CompoundFile::open(reader).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        // Read board header/parameters
-        pcbdoc.read_board(&mut cf)?;
-
-        // Read components
-        pcbdoc.read_components(&mut cf)?;
-
-        // Read board primitives
-        pcbdoc.read_primitives(&mut cf)?;
-
-        // Read nets
-        pcbdoc.read_nets(&mut cf)?;
-
-        // Read design rules
-        pcbdoc.read_rules(&mut cf)?;
-
-        // Read classes
-        pcbdoc.read_classes(&mut cf)?;
-
-        // Read options
-        pcbdoc.read_options(&mut cf)?;
-
-        Ok(pcbdoc)
+    ///
+    /// **DEPRECATED**: Use `v2::pcb::io::pcbdoc::PcbDocV2::open()` instead.
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2::open()")]
+    pub fn open<R: Read + Seek>(_reader: R) -> Result<Self> {
+        unimplemented!("Use v2::pcb::io::pcbdoc::PcbDocV2::open() - v1 API has been deprecated")
     }
 
     /// Open and read a PcbDoc file from a path.
-    pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)?;
-        Self::open(file)
+    ///
+    /// **DEPRECATED**: Use `v2::pcb::io::pcbdoc::PcbDocV2::open_file()` instead.
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2::open_file()")]
+    pub fn open_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
+        unimplemented!(
+            "Use v2::pcb::io::pcbdoc::PcbDocV2::open_file() - v1 API has been deprecated"
+        )
     }
 
-    /// Read the Board storage.
-    fn read_board<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let data_path = "/Board6/Data";
-
-        if cf.entry(data_path).is_err() {
-            // Try alternate path
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        // Read board parameters
-        self.board_params = read_parameters_block(&mut cursor)?;
-
-        Ok(())
+    // Internal read methods stubbed
+    fn read_board<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read the Components storage.
-    fn read_components<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let data_path = "/Components6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        // Read components
-        while (cursor.position() as usize) < data.len() {
-            match self.read_component_record(&mut cursor) {
-                Ok(comp) => self.components.push(comp),
-                Err(_) => break,
-            }
-        }
-
-        Ok(())
+    fn read_components<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read a single component record.
-    fn read_component_record<R: Read>(&self, reader: &mut R) -> Result<PcbDocComponent> {
-        let params = read_parameters_block(reader)?;
-
-        Ok(PcbDocComponent {
-            // PcbDoc uses SOURCEDESIGNATOR for the placed component's designator
-            designator: params
-                .get("SOURCEDESIGNATOR")
-                .or_else(|| params.get("DESIGNATOR"))
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            pattern: params
-                .get("PATTERN")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            comment: params
-                .get("COMMENT")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            params,
-            primitives: Vec::new(),
-        })
+    fn read_component_record<R: Read>(&self, _reader: &mut R) -> Result<PcbDocComponent> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read board primitives (tracks, arcs, vias, etc.).
-    fn read_primitives<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use byteorder::ReadBytesExt;
-
-        // Try to read from various primitive storages
-        self.read_primitive_storage(cf, "/Tracks6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Track.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Track record ID (4), got {}",
-                    record_id
-                )));
-            }
-            let block = read_block(cursor)?;
-            let mut block_cursor = Cursor::new(&block);
-            <PcbTrack as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Track)
-        })?;
-
-        self.read_primitive_storage(cf, "/Arcs6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Arc.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Arc record ID (1), got {}",
-                    record_id
-                )));
-            }
-            let block = read_block(cursor)?;
-            let mut block_cursor = Cursor::new(&block);
-            <PcbArc as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Arc)
-        })?;
-
-        self.read_primitive_storage(cf, "/Vias6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Via.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Via record ID (3), got {}",
-                    record_id
-                )));
-            }
-            let block = read_block(cursor)?;
-            let mut block_cursor = Cursor::new(&block);
-            <PcbVia as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Via)
-        })?;
-
-        self.read_primitive_storage(cf, "/Fills6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Fill.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Fill record ID (6), got {}",
-                    record_id
-                )));
-            }
-            let block = read_block(cursor)?;
-            let mut block_cursor = Cursor::new(&block);
-            <PcbFill as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Fill)
-        })?;
-
-        self.read_primitive_storage(cf, "/Regions6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Region.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Region record ID (11), got {}",
-                    record_id
-                )));
-            }
-            let block = read_block(cursor)?;
-            let mut block_cursor = Cursor::new(&block);
-            <PcbRegion as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Region)
-        })?;
-
-        // Read polygons (copper pours)
-        // Note: Polygons6/Data uses parameter format without a record ID byte prefix.
-        // Each record is [i32 size][parameter_string] (same as Components6/Data).
-        self.read_primitive_storage(cf, "/Polygons6/Data", |cursor, _| {
-            let params = read_parameters_block(cursor)?;
-            Ok(PcbRecord::Polygon(PcbPolygon::from_params(&params)))
-        })?;
-
-        // Read texts
-        self.read_primitive_storage(cf, "/Texts6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Text.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Text record ID (5), got {}",
-                    record_id
-                )));
-            }
-            let block = read_block(cursor)?;
-            let mut block_cursor = Cursor::new(&block);
-            <PcbText as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Text)
-        })?;
-
-        // Read dimensions
-        // Dimensions6/Data uses a 2-byte header [u8 version][u8 flags] before each
-        // parameter block: [version][flags][i32 size][parameter_string]
-        self.read_primitive_storage(cf, "/Dimensions6/Data", |cursor, _| {
-            let _version = cursor.read_u8()?;
-            let _flags = cursor.read_u8()?;
-            let params = read_parameters_block(cursor)?;
-            Ok(PcbRecord::Dimension(Box::new(PcbDimension::from_params(
-                &params,
-            ))))
-        })?;
-
-        // Read coordinates
-        // Coordinates6/Data format: assumed to use the same 2-byte header as
-        // Dimensions6/Data ([u8 version][u8 flags][i32 size][parameter_string]).
-        // Not yet verified from real data (all test files have empty streams).
-        self.read_primitive_storage(cf, "/Coordinates6/Data", |cursor, _| {
-            let _version = cursor.read_u8()?;
-            let _flags = cursor.read_u8()?;
-            let params = read_parameters_block(cursor)?;
-            Ok(PcbRecord::Coordinate(PcbCoordinate::from_params(&params)))
-        })?;
-
-        Ok(())
+    fn read_primitives<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read a primitive storage stream.
     fn read_primitive_storage<R, F>(
         &mut self,
-        cf: &mut CompoundFile<R>,
-        path: &str,
-        reader_fn: F,
+        _cf: &mut CompoundFile<R>,
+        _path: &str,
+        _reader_fn: F,
     ) -> Result<()>
     where
         R: Read + Seek,
         F: Fn(&mut Cursor<&Vec<u8>>, usize) -> Result<PcbRecord>,
     {
-        if cf.entry(path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-        let mut index = 0;
-
-        while (cursor.position() as usize) < data.len() {
-            match reader_fn(&mut cursor, index) {
-                Ok(record) => self.primitives.push(record),
-                Err(_) => break,
-            }
-            index += 1;
-        }
-
-        Ok(())
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read the Nets storage.
-    fn read_nets<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let data_path = "/Nets6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        while (cursor.position() as usize) < data.len() {
-            match read_parameters_block(&mut cursor) {
-                Ok(params) => {
-                    if let Some(name) = params.get("NAME") {
-                        self.nets.push(name.as_str().to_string());
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-
-        Ok(())
+    fn read_nets<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read the Rules storage.
-    fn read_rules<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let data_path = "/Rules6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        while (cursor.position() as usize) < data.len() {
-            match PcbRule::read_from(&mut cursor) {
-                Ok(rule) => self.rules.push(rule),
-                Err(_) => break,
-            }
-        }
-
-        Ok(())
+    fn read_rules<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read the Classes storage.
-    fn read_classes<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let data_path = "/Classes6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        while (cursor.position() as usize) < data.len() {
-            match read_parameters_block(&mut cursor) {
-                Ok(params) => {
-                    let class = PcbClass::from_params(&params);
-                    self.classes.push(class);
-                }
-                Err(_) => break,
-            }
-        }
-
-        Ok(())
+    fn read_classes<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read various options streams.
-    fn read_options<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        // Read Advanced Placer Options
-        if let Ok(params) = Self::read_options_stream(cf, "/Advanced Placer Options6/Data") {
-            self.placer_options = Some(PcbAdvancedPlacerOptions::from_params(&params));
-        }
-
-        // Read DRC Options
-        if let Ok(params) = Self::read_options_stream(cf, "/Design Rule Checker Options6/Data") {
-            self.drc_options = Some(PcbDrcOptions::from_params(&params));
-        }
-
-        // Read Pin Swap Options
-        if let Ok(params) = Self::read_options_stream(cf, "/Pin Swap Options6/Data") {
-            self.pin_swap_options = Some(PcbPinSwapOptions::from_params(&params));
-        }
-
-        Ok(())
+    fn read_options<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Read a single options stream as parameters.
     fn read_options_stream<R: Read + Seek>(
-        cf: &mut CompoundFile<R>,
-        path: &str,
+        _cf: &mut CompoundFile<R>,
+        _path: &str,
     ) -> Result<ParameterCollection> {
-        if cf.entry(path).is_err() {
-            return Err(AltiumError::Parse(format!("Stream not found: {}", path)));
-        }
-
-        let mut stream = cf.open_stream(path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Err(AltiumError::Parse("Empty stream".to_string()));
-        }
-
-        let mut cursor = Cursor::new(&data);
-        read_parameters_block(&mut cursor)
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
     /// Save the PcbDoc to a file path.
     ///
-    /// This performs a read-modify-write operation: it reads the existing file,
-    /// updates the rules stream, and writes back to the same path.
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        // Read the existing file
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let mut cf = CompoundFile::open(file).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        // Write rules
-        self.write_rules(&mut cf)?;
-
-        // Write nets
-        self.write_nets(&mut cf)?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    /// **DEPRECATED**: Use v2 API instead.
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
+    pub fn save_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!(
+            "Use v2::pcb::io::pcbdoc::PcbDocV2::write_to_file() - v1 API has been deprecated"
+        )
     }
 
-    /// Write rules to the CFB file.
-    fn write_rules<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let data_path = "/Rules6/Data";
-
-        // Serialize all rules to a buffer
-        let mut buffer = Vec::new();
-        for rule in &self.rules {
-            rule.write_to(&mut buffer)?;
-        }
-
-        // Check if stream exists, create if needed
-        if cf.entry(data_path).is_err() {
-            // For now, just fail if the stream doesn't exist
-            // A full implementation would create the stream
-            return Err(AltiumError::Parse(
-                "Rules6/Data stream not found".to_string(),
-            ));
-        }
-
-        // Open and truncate the stream
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        // Seek to beginning and write
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-
-        // If new content is shorter, we need to truncate
-        // cfb crate's stream should handle this, but let's be safe
-        let new_len = buffer.len() as u64;
-        stream
-            .set_len(new_len)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_rules<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
     /// Write nets to the CFB file.
@@ -630,181 +211,28 @@ impl PcbDoc {
     }
 
     /// Save board parameters to a file path.
-    ///
-    /// This performs a read-modify-write operation: it reads the existing file,
-    /// updates the Board6/Data stream, and writes back.
-    pub fn save_board_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let mut cf = CompoundFile::open(file).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        self.write_board(&mut cf)?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
+    pub fn save_board_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!("Use v2::pcb::io::pcbdoc::PcbDocV2 - v1 API has been deprecated")
     }
 
-    /// Write board data to the CFB file.
-    fn write_board<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_parameters_block;
-
-        let data_path = "/Board6/Data";
-
-        // Check if stream exists
-        if cf.entry(data_path).is_err() {
-            return Err(AltiumError::Parse(
-                "Board6/Data stream not found".to_string(),
-            ));
-        }
-
-        // Serialize board params to a buffer
-        let mut buffer = Vec::new();
-        write_parameters_block(&mut buffer, &self.board_params)?;
-
-        // Open and write the stream
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-
-        let new_len = buffer.len() as u64;
-        stream
-            .set_len(new_len)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_board<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
     /// Save regions (keepouts/cutouts) to a file path.
-    ///
-    /// This performs a read-modify-write operation.
-    pub fn save_regions_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let mut cf = CompoundFile::open(file).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        let data_path = "/Regions6/Data";
-
-        // Check if stream exists
-        if cf.entry(data_path).is_err() {
-            return Err(AltiumError::Parse(
-                "Regions6/Data stream not found".to_string(),
-            ));
-        }
-
-        // Serialize all regions to a buffer
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Region(r) = prim {
-                let mut region_data = Vec::new();
-                r.write_to(&mut region_data)?;
-                write_block(&mut buffer, &region_data, 0)?;
-            }
-        }
-
-        // Open and write the stream
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-
-        let new_len = buffer.len() as u64;
-        stream
-            .set_len(new_len)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
+    pub fn save_regions_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!("Use v2::pcb::io::pcbdoc::PcbDocV2 - v1 API has been deprecated")
     }
 
     /// Save polygons (copper pours) to a file path.
-    ///
-    /// This performs a read-modify-write operation.
-    pub fn save_polygons_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let mut cf = CompoundFile::open(file).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        let data_path = "/Polygons6/Data";
-
-        // Check if stream exists
-        if cf.entry(data_path).is_err() {
-            return Err(AltiumError::Parse(
-                "Polygons6/Data stream not found".to_string(),
-            ));
-        }
-
-        // Serialize all polygons to a buffer
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Polygon(p) = prim {
-                let params = p.to_params();
-                write_parameters_block(&mut buffer, &params)?;
-            }
-        }
-
-        // Open and write the stream
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-
-        let new_len = buffer.len() as u64;
-        stream
-            .set_len(new_len)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
+    pub fn save_polygons_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!("Use v2::pcb::io::pcbdoc::PcbDocV2 - v1 API has been deprecated")
     }
+
+    // Simple accessor methods - kept functional but return empty/default values
 
     /// Get the number of components.
     pub fn component_count(&self) -> usize {
@@ -905,460 +333,58 @@ impl PcbDoc {
         self.components.iter_mut()
     }
 
-    /// Write components to the CFB file.
-    fn write_components<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_parameters_block;
-
-        let data_path = "/Components6/Data";
-
-        // Check if stream exists
-        if cf.entry(data_path).is_err() {
-            return Err(AltiumError::Parse(
-                "Components6/Data stream not found".to_string(),
-            ));
-        }
-
-        // Serialize all components to a buffer
-        let mut buffer = Vec::new();
-        for component in &self.components {
-            write_parameters_block(&mut buffer, &component.params)?;
-        }
-
-        // Open and truncate the stream
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        // Seek to beginning and write
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-
-        // Truncate to new length
-        let new_len = buffer.len() as u64;
-        stream
-            .set_len(new_len)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_components<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
     /// Save with component changes.
-    pub fn save_with_components<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        // Read the existing file
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let mut cf = CompoundFile::open(file).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        // Write rules
-        self.write_rules(&mut cf)?;
-
-        // Write components
-        self.write_components(&mut cf)?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
+    pub fn save_with_components<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!("Use v2::pcb::io::pcbdoc::PcbDocV2 - v1 API has been deprecated")
     }
 
     /// Save all primitives to a file path.
-    ///
-    /// This comprehensive save method writes all primitive types:
-    /// - Tracks
-    /// - Vias
-    /// - Arcs
-    /// - Fills
-    /// - Regions
-    /// - Polygons
-    /// - Dimensions
-    /// - Coordinates
-    /// - Components
-    /// - Rules
-    pub fn save_all_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let mut cf = CompoundFile::open(file).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-
-        // Write tracks
-        self.write_tracks(&mut cf)?;
-
-        // Write vias
-        self.write_vias(&mut cf)?;
-
-        // Write arcs
-        self.write_arcs(&mut cf)?;
-
-        // Write fills
-        self.write_fills(&mut cf)?;
-
-        // Write regions
-        self.write_regions_internal(&mut cf)?;
-
-        // Write polygons
-        self.write_polygons_internal(&mut cf)?;
-
-        // Write dimensions
-        self.write_dimensions(&mut cf)?;
-
-        // Write coordinates
-        self.write_coordinates(&mut cf)?;
-
-        // Write pads
-        self.write_pads(&mut cf)?;
-
-        // Write texts
-        self.write_texts(&mut cf)?;
-
-        // Write rules
-        self.write_rules(&mut cf)?;
-
-        // Write components
-        self.write_components(&mut cf)?;
-
-        // Write nets
-        self.write_nets(&mut cf)?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    #[deprecated(note = "Use v2::pcb::io::pcbdoc::PcbDocV2")]
+    pub fn save_all_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!("Use v2::pcb::io::pcbdoc::PcbDocV2 - v1 API has been deprecated")
     }
 
-    /// Write tracks to the CFB file.
-    fn write_tracks<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Tracks6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(()); // Stream doesn't exist, skip
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Track(track) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Track.to_byte())?;
-                // Write size and data
-                let mut track_data = Vec::new();
-                track.write_to(&mut track_data)?;
-                write_block(&mut buffer, &track_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_tracks<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write vias to the CFB file.
-    fn write_vias<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Vias6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Via(via) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Via.to_byte())?;
-                // Write size and data
-                let mut via_data = Vec::new();
-                via.write_to(&mut via_data)?;
-                write_block(&mut buffer, &via_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_vias<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write arcs to the CFB file.
-    fn write_arcs<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Arcs6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Arc(arc) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Arc.to_byte())?;
-                // Write size and data
-                let mut arc_data = Vec::new();
-                arc.write_to(&mut arc_data)?;
-                write_block(&mut buffer, &arc_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_arcs<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write fills to the CFB file.
-    fn write_fills<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Fills6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Fill(fill) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Fill.to_byte())?;
-                // Write size and data
-                let mut fill_data = Vec::new();
-                fill.write_to(&mut fill_data)?;
-                write_block(&mut buffer, &fill_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_fills<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write pads to the CFB file.
-    fn write_pads<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Pads6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Pad(pad) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Pad.to_byte())?;
-                // Write size and data
-                let mut pad_data = Vec::new();
-                pad.write_to(&mut pad_data)?;
-                write_block(&mut buffer, &pad_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_pads<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write texts to the CFB file.
-    fn write_texts<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Texts6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Text(text) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Text.to_byte())?;
-                // Write size and data
-                let mut text_data = Vec::new();
-                text.write_to(&mut text_data)?;
-                write_block(&mut buffer, &text_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    fn write_texts<R: Read + Write + Seek>(&self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write regions to the CFB file (internal method).
     fn write_regions_internal<R: Read + Write + Seek>(
         &self,
-        cf: &mut CompoundFile<R>,
+        _cf: &mut CompoundFile<R>,
     ) -> Result<()> {
-        use crate::io::writer::write_block;
-        use crate::traits::ToBinary;
-        use byteorder::WriteBytesExt;
-
-        let data_path = "/Regions6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Region(region) = prim {
-                // Write RecordID byte
-                buffer.write_u8(PcbObjectId::Region.to_byte())?;
-                // Write size and data
-                let mut region_data = Vec::new();
-                region.write_to(&mut region_data)?;
-                write_block(&mut buffer, &region_data, 0)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
-    /// Write polygons to the CFB file (internal method).
     fn write_polygons_internal<R: Read + Write + Seek>(
         &self,
-        cf: &mut CompoundFile<R>,
+        _cf: &mut CompoundFile<R>,
     ) -> Result<()> {
-        let data_path = "/Polygons6/Data";
-
-        if cf.entry(data_path).is_err() {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        for prim in &self.primitives {
-            if let PcbRecord::Polygon(polygon) = prim {
-                let params = polygon.to_params();
-                write_parameters_block(&mut buffer, &params)?;
-            }
-        }
-
-        let mut stream = cf.open_stream(data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        stream.seek(SeekFrom::Start(0))?;
-        stream.write_all(&buffer)?;
-        stream
-            .set_len(buffer.len() as u64)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+        unimplemented!("Replaced by v2::pcb::io::pcbdoc::PcbDocV2")
     }
 
     /// Write dimensions to the CFB file.
@@ -1658,6 +684,7 @@ impl PcbDoc {
     }
 }
 
+#[allow(deprecated)]
 impl PcbDocComponent {
     /// Get the X position of the component.
     pub fn x(&self) -> Option<crate::types::Coord> {
@@ -1732,6 +759,7 @@ impl PcbDocComponent {
     }
 }
 
+#[allow(deprecated)]
 impl DumpTree for PcbDoc {
     fn dump(&self, tree: &mut TreeBuilder) {
         tree.root(&format!(
@@ -1790,6 +818,7 @@ impl DumpTree for PcbDoc {
     }
 }
 
+#[allow(deprecated)]
 impl DumpTree for PcbDocComponent {
     fn dump(&self, tree: &mut TreeBuilder) {
         let mut props = vec![("designator", self.designator.clone())];
@@ -1800,156 +829,5 @@ impl DumpTree for PcbDocComponent {
             props.push(("comment", self.comment.clone()));
         }
         tree.add_leaf_with_params("Component", &props, Some(&self.params));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    #[test]
-    fn test_read_classes_and_options() {
-        let data = std::fs::read("data/PCB1.PcbDoc").expect("Failed to read file");
-        let pcbdoc = PcbDoc::open(Cursor::new(&data)).expect("Failed to parse PcbDoc");
-
-        // Should have classes
-        assert!(!pcbdoc.classes.is_empty(), "Should have parsed classes");
-        println!("Classes: {}", pcbdoc.classes.len());
-        for class in &pcbdoc.classes {
-            println!("  - {} ({:?})", class.name, class.kind);
-        }
-
-        // Should have placer options
-        assert!(
-            pcbdoc.placer_options.is_some(),
-            "Should have placer options"
-        );
-        let opts = pcbdoc.placer_options.as_ref().unwrap();
-        assert!(opts.use_rotation); // Default is true
-
-        // Should have DRC options
-        assert!(pcbdoc.drc_options.is_some(), "Should have DRC options");
-
-        // Should have pin swap options
-        assert!(
-            pcbdoc.pin_swap_options.is_some(),
-            "Should have pin swap options"
-        );
-
-        // Should have rules
-        assert!(!pcbdoc.rules.is_empty(), "Should have rules");
-        println!("Rules: {}", pcbdoc.rules.len());
-    }
-
-    #[test]
-    fn test_read_dimensions() {
-        let data = std::fs::read("data/Plumo-2D.PcbDoc").expect("Failed to read file");
-        let pcbdoc = PcbDoc::open(Cursor::new(&data)).expect("Failed to parse PcbDoc");
-
-        // Plumo-2D has 2 dimension annotations
-        assert_eq!(
-            pcbdoc.dimension_count(),
-            2,
-            "Should have 2 dimensions"
-        );
-
-        // Check first dimension
-        let dims: Vec<_> = pcbdoc.iter_dimensions().collect();
-        let dim0 = &dims[0];
-        assert_eq!(
-            dim0.dimension_kind,
-            crate::records::pcb::DimensionKind::Linear,
-            "First dimension should be Linear"
-        );
-        assert_eq!(dim0.references.len(), 2, "Should have 2 references");
-        assert_eq!(
-            dim0.references[0].object_string, "BoardOutline",
-            "Reference should be BoardOutline"
-        );
-        assert!(!dim0.font_name.is_empty(), "Should have font name");
-        assert_eq!(dim0.text_precision, 2, "Precision should be 2");
-
-        // Check second dimension
-        let dim1 = &dims[1];
-        assert_eq!(
-            dim1.dimension_kind,
-            crate::records::pcb::DimensionKind::Linear,
-            "Second dimension should be Linear"
-        );
-        assert_eq!(dim1.references.len(), 2, "Should have 2 references");
-    }
-
-    #[test]
-    fn test_read_polygons_from_plumo() {
-        let data = std::fs::read("data/Plumo-2D.PcbDoc").expect("Failed to read file");
-        let pcbdoc = PcbDoc::open(Cursor::new(&data)).expect("Failed to parse PcbDoc");
-
-        // Plumo-2D should have polygons (copper pours)
-        let polygon_count = pcbdoc.polygon_count();
-        assert!(
-            polygon_count > 0,
-            "Should have at least one polygon, got {}",
-            polygon_count
-        );
-
-        // Check that polygons have vertices
-        for polygon in pcbdoc.iter_polygons() {
-            assert!(
-                !polygon.vertices.is_empty(),
-                "Polygon should have vertices"
-            );
-        }
-    }
-
-    #[test]
-    fn test_dimension_roundtrip() {
-        use crate::records::pcb::DimensionKind;
-
-        // Create a dimension and verify parameter round-trip
-        let mut params = ParameterCollection::new();
-        params.add_int("OBJECTID", 13);
-        params.add_int("DIMENSIONKIND", 1);
-        params.add("LAYER", "MECHANICAL1");
-        params.add("DIMENSIONLAYER", "MECHANICAL1");
-        params.add("X1", "1000mil");
-        params.add("Y1", "2000mil");
-        params.add("X2", "3000mil");
-        params.add("Y2", "2000mil");
-        params.add_int("REFERENCES_COUNT", 1);
-        params.add_int("REFERENCE0PRIM", 0);
-        params.add_int("REFERENCE0OBJECTID", 25);
-        params.add("REFERENCE0OBJECTSTRING", "BoardOutline");
-        params.add("REFERENCE0POINTX", "1000mil");
-        params.add("REFERENCE0POINTY", "2000mil");
-        params.add_int("REFERENCE0ANCHOR", 3);
-        params.add("TEXTPOSITION", "Auto");
-        params.add_int("TEXTPRECISION", 2);
-        params.add("FONTNAME", "Arial");
-        params.add_bool("BOLD", false);
-        params.add_bool("ITALIC", false);
-
-        let dim = PcbDimension::from_params(&params);
-        assert_eq!(dim.dimension_kind, DimensionKind::Linear);
-        assert_eq!(dim.references.len(), 1);
-        assert_eq!(dim.references[0].object_string, "BoardOutline");
-        assert_eq!(dim.references[0].anchor, 3);
-        assert_eq!(dim.text_precision, 2);
-        assert_eq!(dim.font_name, "Arial");
-
-        // Round-trip
-        let params_out = dim.to_params();
-        assert_eq!(
-            params_out.get("DIMENSIONKIND").map(|v| v.as_int_or(0)),
-            Some(1)
-        );
-        assert_eq!(
-            params_out.get("REFERENCE0OBJECTSTRING").map(|v| v.as_str().to_string()),
-            Some("BoardOutline".to_string())
-        );
-        assert_eq!(
-            params_out.get("REFERENCES_COUNT").map(|v| v.as_int_or(0)),
-            Some(1)
-        );
     }
 }

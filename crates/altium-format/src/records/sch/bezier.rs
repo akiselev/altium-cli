@@ -1,7 +1,8 @@
 //! SchBezier - Schematic bezier curve (Record 5).
+//!
+//! **DEPRECATED**: Use `v2::fields::BezierData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -9,6 +10,9 @@ use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 
 /// Schematic bezier curve primitive.
 /// Vertices are interpreted as bezier control points.
+///
+/// **DEPRECATED**: Use `v2::fields::BezierData` instead.
+#[deprecated(note = "Use v2::fields::BezierData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 5, format = "params")]
 pub struct SchBezier {
@@ -57,6 +61,7 @@ impl<'a> BezierPolygonView<'a> {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchBezier {
     const RECORD_ID: i32 = 5;
 
@@ -71,12 +76,18 @@ impl SchPrimitive for SchBezier {
         "Bezier"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchBezier::import_from_params is deprecated. \
+            Use v2::fields::BezierData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchBezier::export_to_params is deprecated. \
+            Use v2::fields::BezierData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

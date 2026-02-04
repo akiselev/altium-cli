@@ -2,6 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Kiselev <alex@akiselev.com>
 //
 //! Power net analysis.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchDoc, SchRecord).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use crate::io::SchDoc;
 use crate::records::sch::SchRecord;

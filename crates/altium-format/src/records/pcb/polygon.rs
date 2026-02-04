@@ -2,6 +2,8 @@
 //!
 //! Polygons are copper pours that fill areas on PCB layers, typically
 //! used for power planes, ground planes, and shielding.
+//!
+//! **DEPRECATED**: Use `v2::pcb::PcbPolygonV2` with `v2::pcb::io` instead.
 
 use crate::types::{Coord, Layer, ParameterCollection};
 
@@ -134,6 +136,9 @@ pub struct PolygonVertex {
 ///
 /// Polygons are copper pours that fill areas on PCB layers. They automatically
 /// avoid pads, tracks, and other obstacles while maintaining clearance rules.
+///
+/// **DEPRECATED**: Use `v2::pcb::PcbPolygonV2` instead.
+#[deprecated(note = "Use v2::pcb::PcbPolygonV2")]
 #[derive(Debug, Clone, Default)]
 pub struct PcbPolygon {
     /// Layer the polygon is on.

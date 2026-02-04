@@ -1,13 +1,17 @@
 //! SchRectangle - Schematic rectangle (Record 14).
+//!
+//! **DEPRECATED**: Use `v2::fields::RectangleData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{LineWidth, SchGraphicalBase, SchPrimitive};
 
 /// Schematic rectangle primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::RectangleData` instead.
+#[deprecated(note = "Use v2::fields::RectangleData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 14, format = "params")]
 pub struct SchRectangle {
@@ -40,6 +44,7 @@ pub struct SchRectangle {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchRectangle {
     const RECORD_ID: i32 = 14;
 
@@ -54,12 +59,18 @@ impl SchPrimitive for SchRectangle {
         "Rectangle"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchRectangle::import_from_params is deprecated. \
+            Use v2::fields::RectangleData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchRectangle::export_to_params is deprecated. \
+            Use v2::fields::RectangleData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

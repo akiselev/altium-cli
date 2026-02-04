@@ -1,7 +1,8 @@
 //! SchWire - Schematic wire (Record 27).
+//!
+//! **DEPRECATED**: Use `v2::fields::WireData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{Coord, CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -9,6 +10,9 @@ use super::{LineStyle, LineWidth, SchGraphicalBase, SchPrimitive};
 
 /// Schematic wire primitive.
 /// Wires are the electrical connections in a schematic.
+///
+/// **DEPRECATED**: Use `v2::fields::WireData` instead.
+#[deprecated(note = "Use v2::fields::WireData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 27, format = "params")]
 pub struct SchWire {
@@ -72,6 +76,7 @@ impl<'a> WirePolygonView<'a> {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchWire {
     const RECORD_ID: i32 = 27;
 
@@ -86,12 +91,18 @@ impl SchPrimitive for SchWire {
         "Wire"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchWire::import_from_params is deprecated. \
+            Use v2::fields::WireData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchWire::export_to_params is deprecated. \
+            Use v2::fields::WireData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

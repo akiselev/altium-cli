@@ -1,13 +1,17 @@
 //! SchParameter - Schematic parameter (Record 41).
+//!
+//! **DEPRECATED**: Use `v2::fields::ParameterData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
 use super::{SchLabel, SchPrimitive};
 
 /// Schematic parameter primitive - named parameter text.
+///
+/// **DEPRECATED**: Use `v2::fields::ParameterData` instead.
+#[deprecated(note = "Use v2::fields::ParameterData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 41, format = "params")]
 pub struct SchParameter {
@@ -44,6 +48,7 @@ impl SchParameter {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchParameter {
     const RECORD_ID: i32 = 41;
 
@@ -66,19 +71,18 @@ impl SchPrimitive for SchParameter {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchParameter::import_from_params is deprecated. \
+            Use v2::fields::ParameterData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        let mut params = self.to_params();
-        // Altium writes ISHIDDEN=T twice on hidden parameters (once from the label
-        // flatten and once as a parameter-level property). Reproduce this quirk for
-        // binary compatibility.
-        if self.label.is_hidden {
-            params.add_raw_suffix("|ISHIDDEN=T");
-        }
-        params
+        unimplemented!(
+            "V1 SchParameter::export_to_params is deprecated. \
+            Use v2::fields::ParameterData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

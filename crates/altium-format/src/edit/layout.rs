@@ -1,4 +1,10 @@
 //! Layout engine for component placement and collision detection.
+//!
+//! # V2 Migration Note
+//! This module uses v1 types (SchComponent, SchPin, SchRecord, etc.).
+//! TODO: Migrate to v2 types when SchDocV2 provides equivalent functionality.
+
+#![allow(deprecated)]
 
 use std::collections::HashMap;
 

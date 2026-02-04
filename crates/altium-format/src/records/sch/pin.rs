@@ -1,14 +1,19 @@
 //! SchPin - Schematic pin (Record 2).
+//!
+//! **DEPRECATED**: Use `v2::fields::PinData` with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
 use crate::types::{Coord, CoordRect, ParameterCollection};
 
 use super::{
     LineWidth, PinConglomerateFlags, PinElectricalType, PinSymbol, SchGraphicalBase, SchPrimitive,
-    coord_to_dxp_frac, dxp_frac_to_coord,
 };
 
 /// Schematic pin primitive.
+///
+/// **DEPRECATED**: Use `v2::fields::PinData` with `v2::serializer::format_v5::import_pin()`
+/// and `v2::serializer::format_v5::export_pin()` instead.
+#[deprecated(note = "Use v2::fields::PinData")]
 #[derive(Debug, Clone)]
 pub struct SchPin {
     /// Graphical base (location, color).
@@ -133,6 +138,7 @@ impl SchPin {
     }
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchPin {
     const RECORD_ID: i32 = 2;
 
@@ -156,112 +162,18 @@ impl SchPrimitive for SchPin {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        let graphical = SchGraphicalBase::import_from_params(params);
-
-        let pin_length_int = params.get("PINLENGTH").map(|v| v.as_int_or(0)).unwrap_or(0);
-        let pin_length_frac = params
-            .get("PINLENGTH_FRAC")
-            .map(|v| v.as_int_or(0))
-            .unwrap_or(0);
-
-        Ok(SchPin {
-            graphical,
-            symbol_inner_edge: params
-                .get("SYMBOL_INNEREDGE")
-                .map(|v| PinSymbol::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            symbol_outer_edge: params
-                .get("SYMBOL_OUTEREDGE")
-                .map(|v| PinSymbol::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            symbol_inside: params
-                .get("SYMBOL_INSIDE")
-                .map(|v| PinSymbol::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            symbol_outside: params
-                .get("SYMBOL_OUTSIDE")
-                .map(|v| PinSymbol::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            symbol_line_width: params
-                .get("SYMBOL_LINEWIDTH")
-                .map(|v| LineWidth::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            description: params
-                .get("DESCRIPTION")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            formal_type: params
-                .get("FORMALTYPE")
-                .map(|v| v.as_int_or(0))
-                .unwrap_or(0),
-            electrical: params
-                .get("ELECTRICAL")
-                .map(|v| PinElectricalType::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            pin_conglomerate: params
-                .get("PINCONGLOMERATE")
-                .map(|v| PinConglomerateFlags::from_int(v.as_int_or(0)))
-                .unwrap_or_default(),
-            pin_length: dxp_frac_to_coord(pin_length_int, pin_length_frac),
-            name: params
-                .get("NAME")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            designator: params
-                .get("DESIGNATOR")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            swap_id_group: params
-                .get("SWAPIDGROUP")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            swap_id_part: params
-                .get("SWAPIDPART")
-                .map(|v| v.as_int_or(0))
-                .unwrap_or(0),
-            swap_id_sequence: params
-                .get("SWAPIDSEQUENCE")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            hidden_net_name: String::new(),
-            default_value: String::new(),
-            pin_propagation_delay: params
-                .get("PINPROPAGATIONDELAY")
-                .map(|v| v.as_double_or(0.0))
-                .unwrap_or(0.0),
-            unique_id: params
-                .get("UNIQUEID")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-        })
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchPin::import_from_params is deprecated. \
+            Use v2::fields::PinData with v2::serializer::format_v5::import_pin() instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        let mut params = ParameterCollection::new();
-        params.add_int("RECORD", Self::RECORD_ID);
-        self.graphical.export_to_params(&mut params);
-
-        params.add_int("SYMBOL_INNEREDGE", self.symbol_inner_edge.to_int());
-        params.add_int("SYMBOL_OUTEREDGE", self.symbol_outer_edge.to_int());
-        params.add_int("SYMBOL_INSIDE", self.symbol_inside.to_int());
-        params.add_int("SYMBOL_OUTSIDE", self.symbol_outside.to_int());
-        params.add_int("SYMBOL_LINEWIDTH", self.symbol_line_width.to_int());
-        params.add("DESCRIPTION", &self.description);
-        params.add_int("FORMALTYPE", self.formal_type);
-        params.add_int("ELECTRICAL", self.electrical.to_int());
-        params.add_int("PINCONGLOMERATE", self.pin_conglomerate.to_int());
-
-        let (length, length_frac) = coord_to_dxp_frac(self.pin_length);
-        params.add_int("PINLENGTH", length);
-        params.add_int("PINLENGTH_FRAC", length_frac);
-
-        params.add("NAME", &self.name);
-        params.add("DESIGNATOR", &self.designator);
-        params.add_int("SWAPIDPART", self.swap_id_part);
-        params.add_double("PINPROPAGATIONDELAY", self.pin_propagation_delay, 6);
-
-        params
+        unimplemented!(
+            "V1 SchPin::export_to_params is deprecated. \
+            Use v2::fields::PinData with v2::serializer::format_v5::export_pin() instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

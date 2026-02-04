@@ -1,9 +1,10 @@
 //! Implementation-related schematic records.
 //!
 //! These records handle component model implementations (footprints, simulation models, etc).
+//!
+//! **DEPRECATED**: Use `v2::fields::implementation` types with `v2::serializer::format_v5` instead.
 
 use crate::error::Result;
-use crate::traits::{FromParams, ToParams};
 use crate::types::{CoordRect, ParameterCollection, UnknownFields};
 use altium_format_derive::AltiumRecord;
 
@@ -12,6 +13,9 @@ use super::{SchPrimitive, SchPrimitiveBase};
 /// SchImplementationList (Record 44) - Container for implementation records.
 ///
 /// This is essentially a container/parent record for SchImplementation children.
+///
+/// **DEPRECATED**: Use `v2::fields::ImplementationListData` instead.
+#[deprecated(note = "Use v2::fields::ImplementationListData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 44, format = "params")]
 pub struct SchImplementationList {
@@ -24,6 +28,7 @@ pub struct SchImplementationList {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchImplementationList {
     const RECORD_ID: i32 = 44;
 
@@ -31,12 +36,18 @@ impl SchPrimitive for SchImplementationList {
         "ImplementationList"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchImplementationList::import_from_params is deprecated. \
+            Use v2::fields::ImplementationListData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchImplementationList::export_to_params is deprecated. \
+            Use v2::fields::ImplementationListData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {
@@ -49,6 +60,8 @@ impl SchPrimitive for SchImplementationList {
 }
 
 /// Known parameter keys for SchImplementation (for unknown field filtering).
+/// NOTE: Unused after V1 import_from_params stubbed, retained for documentation.
+#[allow(dead_code)]
 const IMPLEMENTATION_KNOWN_KEYS: &[&str] = &[
     "RECORD",
     "OWNERINDEX",
@@ -67,6 +80,9 @@ const IMPLEMENTATION_KNOWN_KEYS: &[&str] = &[
 /// SchImplementation (Record 45) - Component model implementation.
 ///
 /// Represents a model attached to a component (footprint, simulation model, etc).
+///
+/// **DEPRECATED**: Use `v2::fields::ImplementationData` instead.
+#[deprecated(note = "Use v2::fields::ImplementationData")]
 #[derive(Debug, Clone, Default)]
 pub struct SchImplementation {
     /// Base primitive fields.
@@ -87,6 +103,7 @@ pub struct SchImplementation {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchImplementation {
     const RECORD_ID: i32 = 45;
 
@@ -102,83 +119,18 @@ impl SchPrimitive for SchImplementation {
         }
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        let base = SchPrimitiveBase::import_from_params(params);
-
-        let data_file_count = params
-            .get("DATAFILECOUNT")
-            .map(|v| v.as_int_or(0))
-            .unwrap_or(0);
-
-        let mut data_files = Vec::new();
-        let mut data_file_entities = Vec::new();
-        for i in 0..data_file_count {
-            if let Some(file) = params.get(&format!("MODELDATAFILEKIND{}", i)) {
-                data_files.push(file.as_str().to_string());
-            }
-            if let Some(entity) = params.get(&format!("MODELDATAFILEENTITY{}", i)) {
-                data_file_entities.push(entity.as_str().to_string());
-            }
-        }
-
-        // Build prefixes for unknown field filtering
-        let mut indexed_prefixes: Vec<String> = Vec::new();
-        for i in 0..data_file_count {
-            indexed_prefixes.push(format!("MODELDATAFILEKIND{}", i));
-            indexed_prefixes.push(format!("MODELDATAFILEENTITY{}", i));
-        }
-        let prefix_refs: Vec<&str> = indexed_prefixes.iter().map(|s| s.as_str()).collect();
-
-        // Combine known keys with indexed prefixes
-        let mut all_known: Vec<&str> = IMPLEMENTATION_KNOWN_KEYS.to_vec();
-        all_known.extend(prefix_refs.iter());
-
-        Ok(SchImplementation {
-            base,
-            description: params
-                .get("DESCRIPTION")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            model_name: params
-                .get("MODELNAME")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            model_type: params
-                .get("MODELTYPE")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            data_files,
-            data_file_entities,
-            is_current: params
-                .get("ISCURRENT")
-                .map(|v| v.as_bool_or(false))
-                .unwrap_or(false),
-            unknown_params: UnknownFields::from_remaining_params(params, &all_known),
-        })
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchImplementation::import_from_params is deprecated. \
+            Use v2::fields::ImplementationData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        let mut params = ParameterCollection::new();
-        params.add_int("RECORD", Self::RECORD_ID);
-        self.base.export_to_params(&mut params);
-        if !self.description.is_empty() {
-            params.add("DESCRIPTION", &self.description);
-        }
-        params.add("MODELNAME", &self.model_name);
-        params.add("MODELTYPE", &self.model_type);
-        params.add_int("DATAFILECOUNT", self.data_files.len() as i32);
-        for (i, file) in self.data_files.iter().enumerate() {
-            if let Some(entity) = self.data_file_entities.get(i) {
-                params.add(&format!("MODELDATAFILEENTITY{}", i), entity);
-            }
-            params.add(&format!("MODELDATAFILEKIND{}", i), file);
-        }
-        params.add_bool("ISCURRENT", self.is_current);
-
-        // Merge unknown parameters back
-        self.unknown_params.merge_into_params(&mut params);
-
-        params
+        unimplemented!(
+            "V1 SchImplementation::export_to_params is deprecated. \
+            Use v2::fields::ImplementationData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {
@@ -191,6 +143,9 @@ impl SchPrimitive for SchImplementation {
 }
 
 /// SchMapDefinerList (Record 46) - Container for pin map definitions.
+///
+/// **DEPRECATED**: Use `v2::fields::MapDefinerListData` instead.
+#[deprecated(note = "Use v2::fields::MapDefinerListData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 46, format = "params")]
 pub struct SchMapDefinerList {
@@ -203,6 +158,7 @@ pub struct SchMapDefinerList {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchMapDefinerList {
     const RECORD_ID: i32 = 46;
 
@@ -210,12 +166,18 @@ impl SchPrimitive for SchMapDefinerList {
         "MapDefinerList"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchMapDefinerList::import_from_params is deprecated. \
+            Use v2::fields::MapDefinerListData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchMapDefinerList::export_to_params is deprecated. \
+            Use v2::fields::MapDefinerListData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {
@@ -228,6 +190,8 @@ impl SchPrimitive for SchMapDefinerList {
 }
 
 /// Known parameter keys for SchMapDefiner (for unknown field filtering).
+/// NOTE: Unused after V1 import_from_params stubbed, retained for documentation.
+#[allow(dead_code)]
 const MAP_DEFINER_KNOWN_KEYS: &[&str] = &[
     "RECORD",
     "OWNERINDEX",
@@ -244,6 +208,9 @@ const MAP_DEFINER_KNOWN_KEYS: &[&str] = &[
 /// SchMapDefiner (Record 47) - Pin map definition.
 ///
 /// Maps schematic pin designators to implementation (footprint) pin designators.
+///
+/// **DEPRECATED**: Use `v2::fields::MapDefinerData` instead.
+#[deprecated(note = "Use v2::fields::MapDefinerData")]
 #[derive(Debug, Clone, Default)]
 pub struct SchMapDefiner {
     /// Base primitive fields.
@@ -258,6 +225,7 @@ pub struct SchMapDefiner {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchMapDefiner {
     const RECORD_ID: i32 = 47;
 
@@ -265,60 +233,18 @@ impl SchPrimitive for SchMapDefiner {
         "MapDefiner"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        let base = SchPrimitiveBase::import_from_params(params);
-
-        let impl_count = params
-            .get("DESIMPCOUNT")
-            .map(|v| v.as_int_or(0))
-            .unwrap_or(0);
-
-        let mut implementations = Vec::new();
-        for i in 0..impl_count {
-            if let Some(des) = params.get(&format!("DESIMP{}", i)) {
-                implementations.push(des.as_str().to_string());
-            }
-        }
-
-        // Build prefixes for unknown field filtering (0-indexed)
-        let indexed_prefixes: Vec<String> =
-            (0..impl_count).map(|i| format!("DESIMP{}", i)).collect();
-        let prefix_refs: Vec<&str> = indexed_prefixes.iter().map(|s| s.as_str()).collect();
-
-        // Combine known keys with indexed prefixes
-        let mut all_known: Vec<&str> = MAP_DEFINER_KNOWN_KEYS.to_vec();
-        all_known.extend(prefix_refs.iter());
-
-        Ok(SchMapDefiner {
-            base,
-            designator_interface: params
-                .get("DESINTF")
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default(),
-            designator_implementation: implementations,
-            is_trivial: params
-                .get("ISTRIVIAL")
-                .map(|v| v.as_bool_or(false))
-                .unwrap_or(false),
-            unknown_params: UnknownFields::from_remaining_params(params, &all_known),
-        })
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchMapDefiner::import_from_params is deprecated. \
+            Use v2::fields::MapDefinerData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        let mut params = ParameterCollection::new();
-        params.add_int("RECORD", Self::RECORD_ID);
-        self.base.export_to_params(&mut params);
-        params.add("DESINTF", &self.designator_interface);
-        params.add_int("DESIMPCOUNT", self.designator_implementation.len() as i32);
-        for (i, des) in self.designator_implementation.iter().enumerate() {
-            params.add(&format!("DESIMP{}", i), des);
-        }
-        params.add_bool("ISTRIVIAL", self.is_trivial);
-
-        // Merge unknown parameters back
-        self.unknown_params.merge_into_params(&mut params);
-
-        params
+        unimplemented!(
+            "V1 SchMapDefiner::export_to_params is deprecated. \
+            Use v2::fields::MapDefinerData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {
@@ -331,6 +257,9 @@ impl SchPrimitive for SchMapDefiner {
 }
 
 /// SchImplementationParameters (Record 48) - Additional implementation parameters.
+///
+/// **DEPRECATED**: Use `v2::fields::ImplementationParametersData` instead.
+#[deprecated(note = "Use v2::fields::ImplementationParametersData")]
 #[derive(Debug, Clone, Default, AltiumRecord)]
 #[altium(record_id = 48, format = "params")]
 pub struct SchImplementationParameters {
@@ -343,6 +272,7 @@ pub struct SchImplementationParameters {
     pub unknown_params: UnknownFields,
 }
 
+#[allow(deprecated)]
 impl SchPrimitive for SchImplementationParameters {
     const RECORD_ID: i32 = 48;
 
@@ -350,12 +280,18 @@ impl SchPrimitive for SchImplementationParameters {
         "ImplementationParameters"
     }
 
-    fn import_from_params(params: &ParameterCollection) -> Result<Self> {
-        Self::from_params(params)
+    fn import_from_params(_params: &ParameterCollection) -> Result<Self> {
+        unimplemented!(
+            "V1 SchImplementationParameters::import_from_params is deprecated. \
+            Use v2::fields::ImplementationParametersData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn export_to_params(&self) -> ParameterCollection {
-        self.to_params()
+        unimplemented!(
+            "V1 SchImplementationParameters::export_to_params is deprecated. \
+            Use v2::fields::ImplementationParametersData with v2::serializer::format_v5 instead."
+        )
     }
 
     fn owner_index(&self) -> i32 {

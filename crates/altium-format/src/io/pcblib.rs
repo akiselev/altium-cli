@@ -1,4 +1,10 @@
 //! PcbLib reader/writer for Altium PCB footprint library files.
+//!
+//! **DEPRECATED**: V1 IO is replaced by v2 with correct coordinate scale.
+//! V1 uses 1 unit/mil (incorrect); v2 uses 10K units/mil. Use v2::pcb::io::pcblib::PcbLibV2.
+
+#![allow(unused_imports)]
+#![allow(dead_code)]
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cfb::CompoundFile;
@@ -22,6 +28,10 @@ use crate::traits::{FromBinary, ToBinary};
 use crate::types::ParameterCollection;
 
 /// A PCB footprint library containing components.
+///
+/// **DEPRECATED**: Use `v2::pcb::io::pcblib::PcbLibV2` instead.
+/// V1 has coordinate scale bugs (uses 1 unit/mil instead of 10K units/mil).
+#[deprecated(note = "Use v2::pcb::io::pcblib::PcbLibV2")]
 #[derive(Debug, Default)]
 pub struct PcbLib {
     /// Section keys mapping pattern names to storage paths.
@@ -41,1009 +51,154 @@ pub struct PcbLib {
     pub file_header_field2: String,
 }
 
+#[allow(deprecated)]
 impl PcbLib {
     /// Open and read a PcbLib file.
-    pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
-        let mut pcblib = PcbLib::default();
-        let mut cf = CompoundFile::open(reader).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
-        // Read file header
-        pcblib.read_file_header(&mut cf)?;
-        // Read section keys
-        pcblib.read_section_keys(&mut cf)?;
-        // Read library data (component list)
-        pcblib.read_library(&mut cf)?;
-        Ok(pcblib)
+    ///
+    /// **DEPRECATED**: Use `v2::pcb::io::pcblib::PcbLibV2::open()` instead.
+    #[deprecated(note = "Use v2::pcb::io::pcblib::PcbLibV2::open()")]
+    pub fn open<R: Read + Seek>(_reader: R) -> Result<Self> {
+        unimplemented!("Use v2::pcb::io::pcblib::PcbLibV2::open() - v1 API has been deprecated")
     }
 
     /// Open and read a PcbLib file from a path.
-    pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)?;
-        Self::open(file)
+    ///
+    /// **DEPRECATED**: Use `v2::pcb::io::pcblib::PcbLibV2::open_file()` instead.
+    #[deprecated(note = "Use v2::pcb::io::pcblib::PcbLibV2::open_file()")]
+    pub fn open_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
+        unimplemented!("Use v2::pcb::io::pcblib::PcbLibV2::open_file() - v1 API has been deprecated")
     }
 
     /// Save the PcbLib to a file.
-    pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
-        let mut cf = CompoundFile::create_with_version(cfb::Version::V3, writer)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        // Write FileHeader
-        self.write_file_header(&mut cf)?;
-
-        // Write SectionKeys if needed
-        self.write_section_keys(&mut cf)?;
-
-        // Write Library storage
-        self.write_library(&mut cf)?;
-
-        cf.flush()
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        Ok(())
+    ///
+    /// **DEPRECATED**: Use `v2::pcb::io::pcblib::PcbLibV2::write()` instead.
+    #[deprecated(note = "Use v2::pcb::io::pcblib::PcbLibV2::write()")]
+    pub fn save<W: Read + Write + Seek>(&self, _writer: W) -> Result<()> {
+        unimplemented!("Use v2::pcb::io::pcblib::PcbLibV2::write() - v1 API has been deprecated")
     }
 
     /// Save the PcbLib to a file path.
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let file = File::create(path)?;
-        self.save(file)
+    ///
+    /// **DEPRECATED**: Use `v2::pcb::io::pcblib::PcbLibV2::write_to_file()` instead.
+    #[deprecated(note = "Use v2::pcb::io::pcblib::PcbLibV2::write_to_file()")]
+    pub fn save_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        unimplemented!(
+            "Use v2::pcb::io::pcblib::PcbLibV2::write_to_file() - v1 API has been deprecated"
+        )
     }
 
-    /// Write the FileHeader stream.
-    fn write_file_header<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        let mut data = Vec::new();
+    // Internal methods stubbed to prevent accidental usage.
 
-        // Version text block
-        let version = if self.file_header_version.is_empty() {
-            "PCB 6.0 Binary Library File"
-        } else {
-            &self.file_header_version
-        };
-        data.write_i32::<LittleEndian>(version.len() as i32)?;
-        write_pascal_short_string(&mut data, version)?;
-
-        // Write optional extended fields if they were present in the original file
-        if !self.file_header_field1.is_empty()
-            || !self.file_header_field2.is_empty()
-            || !self.unique_id.is_empty()
-        {
-            write_pascal_short_string(&mut data, &self.file_header_field1)?;
-            write_pascal_short_string(&mut data, &self.file_header_field2)?;
-            write_pascal_short_string(&mut data, &self.unique_id)?;
-        }
-
-        let mut stream = cf
-            .create_stream("/FileHeader")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-        stream.write_all(&data)?;
-
-        Ok(())
+    fn write_file_header<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Get the storage name for a component. Uses pattern name directly unless
-    /// it's too long or contains characters invalid for CFB storage names.
-    fn storage_name_for(pattern: &str) -> String {
-        if pattern.len() > 31 || pattern.contains('/') {
-            let mut name = pattern.replace('/', "_");
-            if name.len() > 31 {
-                name.truncate(31);
-            }
-            name
-        } else {
-            pattern.to_string()
-        }
+    fn storage_name_for(_pattern: &str) -> String {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write the SectionKeys stream.
-    /// Only maps pattern names that need sanitization (>31 chars or contain '/').
-    fn write_section_keys<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        // Collect entries that need sanitization
-        let entries: Vec<_> = self
-            .components
-            .iter()
-            .filter(|comp| comp.pattern.len() > 31 || comp.pattern.contains('/'))
-            .map(|comp| (comp.pattern.clone(), Self::storage_name_for(&comp.pattern)))
-            .collect();
-
-        if entries.is_empty() {
-            return Ok(());
-        }
-
-        let mut data = Vec::new();
-        data.write_i32::<LittleEndian>(entries.len() as i32)?;
-
-        for (pattern, storage_name) in entries {
-            write_string_block(&mut data, &pattern)?;
-            write_string_block(&mut data, &storage_name)?;
-        }
-
-        let stream = cf
-            .create_stream("/SectionKeys")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut stream = stream;
-        stream.write_all(&data)?;
-
-        Ok(())
+    fn write_section_keys<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write the Library storage with all required sub-storages.
-    fn write_library<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        // Create Library storage
-        cf.create_storage("/Library")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        // Write Library/Header
-        self.write_library_header(cf)?;
-
-        // Write Library/Data with proper parameters
-        self.write_library_data(cf)?;
-
-        // Write required sub-storages
-        self.write_library_substorages(cf)?;
-
-        // Write FileVersionInfo
-        self.write_file_version_info(cf)?;
-
-        // Write each footprint using actual pattern name
-        for comp in &self.components {
-            let storage_name = Self::storage_name_for(&comp.pattern);
-            self.write_footprint(cf, comp, &storage_name)?;
-        }
-
-        Ok(())
+    fn write_library<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write Library/Header stream.
-    fn write_library_header<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        let mut header_data = Vec::new();
-        header_data.write_u32::<LittleEndian>(1)?; // Record count = 1
-
-        let stream = cf
-            .create_stream("/Library/Header")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-        let mut stream = stream;
-        stream.write_all(&header_data)?;
-        Ok(())
+    fn write_library_header<F: Read + Write + Seek>(
+        &self,
+        _cf: &mut CompoundFile<F>,
+    ) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write Library/Data stream with required parameters.
-    fn write_library_data<F: Read + Write + Seek>(&self, cf: &mut CompoundFile<F>) -> Result<()> {
-        let mut data = Vec::new();
-
-        // Use preserved library parameters if available, otherwise build defaults
-        let params = if let Some(ref preserved) = self.library_parameters {
-            preserved.clone()
-        } else {
-            Self::build_library_parameters()
-        };
-        let mut params_block = Vec::new();
-        write_parameters(&mut params_block, &params)?;
-        write_block(&mut data, &params_block, 0)?;
-
-        // Write footprint count
-        data.write_u32::<LittleEndian>(self.components.len() as u32)?;
-
-        // Write footprint storage names (using actual pattern names)
-        for comp in &self.components {
-            let storage_name = Self::storage_name_for(&comp.pattern);
-            write_string_block(&mut data, &storage_name)?;
-        }
-
-        let stream = cf
-            .create_stream("/Library/Data")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-        let mut stream = stream;
-        stream.write_all(&data)?;
-        Ok(())
+    fn write_library_data<F: Read + Write + Seek>(&self, _cf: &mut CompoundFile<F>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Build minimal required library parameters for Library/Data.
     fn build_library_parameters() -> ParameterCollection {
-        let mut params = ParameterCollection::new();
-
-        // Essential parameters that Altium requires
-        params.add("KIND", "Protel_Advanced_PCB_Library");
-        params.add("VERSION", "3.00");
-
-        // Board configuration (minimal required)
-        params.add("BOARDVERSION", "5.01");
-        params.add("VISIBLEGRIDMULTFACTOR", "1.000");
-        params.add("BIGVISIBLEGRIDMULTFACTOR", "5.000");
-        params.add("CURRENT2D3DVIEWSTATE", "2D");
-
-        // Layer settings (minimal)
-        params.add("CFG2D.CURRENTLAYER", "TOP");
-        params.add("CFG2D.SHOWPADNETS", "TRUE");
-        params.add("CFG2D.SHOWPADNUMBERS", "TRUE");
-        params.add("CFG2D.SHOWVIANETS", "TRUE");
-        params.add("CFG2D.SHOWORIGINMARKER", "TRUE");
-        params.add("CFG2D.DISPLAYSPECIALSTRINGS", "FALSE");
-        params.add("CFG2D.SHOWTESTPOINTS", "FALSE");
-        params.add("CFG2D.SHOWSTATUSINFO", "TRUE");
-        params.add("CFG2D.USETRANSPARENTLAYERS", "FALSE");
-        params.add("CFG2D.PLANEDRAWMODE", "2");
-        params.add("CFG2D.DISPLAYNETNAMESONTRACKS", "1");
-        params.add("CFG2D.SINGLELAYERMODESTATE", "3");
-        params.add("CFG2D.ORIGINMARKERCOLOR", "16777215");
-
-        // Toggle layers (all enabled)
-        params.add(
-            "CFG2D.TOGGLELAYERS",
-            "1111111111111111111111111111111111111111111111111111111111111111",
-        );
-
-        // Grid settings
-        params.add("EGENABLED", "TRUE");
-        params.add("EGRANGE", "8mil");
-        params.add("OGSNAPENABLED", "TRUE");
-        params.add("GRIDSNAPENABLED", "TRUE");
-
-        // Layer stack (required by Altium)
-        params.add("TOPTYPE", "3");
-        params.add("TOPCONST", "3.99");
-        params.add("TOPHEIGHT", "0.48mil");
-        params.add("TOPMATERIAL", "Solder Resist");
-        params.add("BOTTOMTYPE", "3");
-        params.add("BOTTOMCONST", "3.99");
-        params.add("BOTTOMHEIGHT", "0.48mil");
-        params.add("BOTTOMMATERIAL", "Solder Resist");
-        params.add("LAYERSTACKSTYLE", "0");
-        params.add("SHOWTOPDIELECTRIC", "FALSE");
-        params.add("SHOWBOTTOMDIELECTRIC", "FALSE");
-        params.add("LAYER1NAME", "Top Layer");
-        params.add("LAYER1PREV", "0");
-        params.add("LAYER1NEXT", "32");
-        params.add("LAYER1MECHENABLED", "TRUE");
-        params.add("LAYER1COPTHICK", "1.378mil");
-        params.add("LAYER1DIELTYPE", "0");
-        params.add("LAYER1DIELCONST", "4.2");
-        params.add("LAYER1DIELHEIGHT", "36.998mil");
-        params.add("LAYER1DIELMATERIAL", "FR-4");
-        params.add("LAYER32NAME", "Bottom Layer");
-        params.add("LAYER32PREV", "1");
-        params.add("LAYER32NEXT", "0");
-        params.add("LAYER32MECHENABLED", "TRUE");
-        params.add("LAYER32COPTHICK", "1.378mil");
-        params.add("LAYER32DIELTYPE", "0");
-
-        params
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write required Library sub-storages.
     fn write_library_substorages<F: Read + Write + Seek>(
         &self,
-        cf: &mut CompoundFile<F>,
+        _cf: &mut CompoundFile<F>,
     ) -> Result<()> {
-        // Create empty storages for Models, Textures, ModelsNoEmbed
-        for storage in &[
-            "/Library/Models",
-            "/Library/Textures",
-            "/Library/ModelsNoEmbed",
-        ] {
-            cf.create_storage(storage)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-            // Each needs Header and Data streams (empty)
-            let header_path = format!("{}/Header", storage);
-            let data_path = format!("{}/Data", storage);
-
-            let mut stream = cf
-                .create_stream(&header_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            stream.write_u32::<LittleEndian>(0)?;
-
-            let mut stream = cf
-                .create_stream(&data_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            stream.write_all(&[])?;
-        }
-
-        // EmbeddedFonts stream
-        {
-            let mut stream = cf
-                .create_stream("/Library/EmbeddedFonts")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            stream.write_u32::<LittleEndian>(0)?;
-        }
-
-        // PadViaLibrary storage
-        {
-            cf.create_storage("/Library/PadViaLibrary")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-            let mut header = cf
-                .create_stream("/Library/PadViaLibrary/Header")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            header.write_u32::<LittleEndian>(1)?;
-
-            let mut params = ParameterCollection::new();
-            params.add(
-                "PADVIALIBRARY.LIBRARYID",
-                "{00000000-0000-0000-0000-000000000000}",
-            );
-            params.add("PADVIALIBRARY.LIBRARYNAME", "<Local>");
-            params.add("PADVIALIBRARY.DISPLAYUNITS", "1");
-            let mut block = Vec::new();
-            write_parameters(&mut block, &params)?;
-            let mut data_buf = Vec::new();
-            write_block(&mut data_buf, &block, 0)?;
-
-            let mut data = cf
-                .create_stream("/Library/PadViaLibrary/Data")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            data.write_all(&data_buf)?;
-        }
-
-        // LayerKindMapping storage
-        {
-            cf.create_storage("/Library/LayerKindMapping")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-            let mut header = cf
-                .create_stream("/Library/LayerKindMapping/Header")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            header.write_u32::<LittleEndian>(1)?;
-
-            // LayerKindMapping data: version string "1.0" as wide string + padding
-            let mut data_buf = Vec::new();
-            // Block size
-            data_buf.write_u32::<LittleEndian>(8)?;
-            // Wide string "1.0" (UTF-16LE)
-            for c in "1.0\0".encode_utf16() {
-                data_buf.write_u16::<LittleEndian>(c)?;
-            }
-
-            let mut data = cf
-                .create_stream("/Library/LayerKindMapping/Data")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            data.write_all(&data_buf)?;
-        }
-
-        // ComponentParamsTOC storage
-        {
-            cf.create_storage("/Library/ComponentParamsTOC")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-            let mut header = cf
-                .create_stream("/Library/ComponentParamsTOC/Header")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            header.write_u32::<LittleEndian>(self.components.len() as u32)?;
-
-            // Build TOC entries for each component
-            let mut toc_data = Vec::new();
-            for comp in &self.components {
-                let storage_name = Self::storage_name_for(&comp.pattern);
-                let pad_count = comp
-                    .primitives
-                    .iter()
-                    .filter(|p| matches!(p, PcbRecord::Pad(_)))
-                    .count();
-
-                let mut params = ParameterCollection::new();
-                params.add("Name", &storage_name);
-                params.add("Pad Count", &pad_count.to_string());
-                params.add("Height", "0");
-                params.add("Description", &comp.description);
-
-                let mut block = Vec::new();
-                write_parameters(&mut block, &params)?;
-                write_block(&mut toc_data, &block, 0)?;
-            }
-
-            let mut data = cf
-                .create_stream("/Library/ComponentParamsTOC/Data")
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            data.write_all(&toc_data)?;
-        }
-
-        Ok(())
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write FileVersionInfo storage.
     fn write_file_version_info<F: Read + Write + Seek>(
         &self,
-        cf: &mut CompoundFile<F>,
+        _cf: &mut CompoundFile<F>,
     ) -> Result<()> {
-        cf.create_storage("/FileVersionInfo")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        let mut header = cf
-            .create_stream("/FileVersionInfo/Header")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-        header.write_u32::<LittleEndian>(1)?;
-
-        // FileVersionInfo data
-        let mut params = ParameterCollection::new();
-        params.add("COUNT", "1");
-        params.add("VER0", "Altium Limited Protel PCB Component Library");
-        params.add("FWDMSG0", "The PCB Library file forward compatibility is not guaranteed.");
-        params.add("BKMSG0", "The PCB Library file backward compatibility is not guaranteed.");
-
-        let mut block = Vec::new();
-        write_parameters(&mut block, &params)?;
-        let mut data_buf = Vec::new();
-        write_block(&mut data_buf, &block, 0)?;
-
-        let mut data = cf
-            .create_stream("/FileVersionInfo/Data")
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-        data.write_all(&data_buf)?;
-
-        Ok(())
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write a footprint to its storage using the provided storage name.
     fn write_footprint<F: Read + Write + Seek>(
         &self,
-        cf: &mut CompoundFile<F>,
-        comp: &PcbComponent,
-        storage_name: &str,
+        _cf: &mut CompoundFile<F>,
+        _comp: &PcbComponent,
+        _storage_name: &str,
     ) -> Result<()> {
-        // Create storage for footprint using PCBComponent_N naming
-        let storage_path = format!("/{}", storage_name);
-        cf.create_storage(&storage_path)
-            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-        // Write Header
-        {
-            let mut header_data = Vec::new();
-            header_data.write_u32::<LittleEndian>(comp.primitives.len() as u32)?;
-
-            let header_path = format!("{}/Header", storage_path);
-            let stream = cf
-                .create_stream(&header_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            let mut stream = stream;
-            stream.write_all(&header_data)?;
-        }
-
-        // Write Parameters
-        {
-            let mut params_data = Vec::new();
-            let params = comp.export_to_parameters();
-            let mut block = Vec::new();
-            write_parameters(&mut block, &params)?;
-            write_block(&mut params_data, &block, 0)?;
-
-            let params_path = format!("{}/Parameters", storage_path);
-            let stream = cf
-                .create_stream(&params_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            let mut stream = stream;
-            stream.write_all(&params_data)?;
-        }
-
-        // Write Data
-        {
-            let mut data = Vec::new();
-
-            // Pattern name (the actual footprint name, not storage name)
-            write_string_block(&mut data, &comp.pattern)?;
-
-            // Primitives
-            for record in &comp.primitives {
-                self.write_primitive(&mut data, record)?;
-            }
-
-            let data_path = format!("{}/Data", storage_path);
-            let stream = cf
-                .create_stream(&data_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            let mut stream = stream;
-            stream.write_all(&data)?;
-        }
-
-        // Write WideStrings stream (required, even if empty)
-        {
-            let mut params = ParameterCollection::new();
-            params.add("COUNT", "0");
-            let mut block = Vec::new();
-            write_parameters(&mut block, &params)?;
-            let mut wide_data = Vec::new();
-            write_block(&mut wide_data, &block, 0)?;
-
-            let wide_path = format!("{}/WideStrings", storage_path);
-            let stream = cf
-                .create_stream(&wide_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            let mut stream = stream;
-            stream.write_all(&wide_data)?;
-        }
-
-        // Write PrimitiveGuids storage (required)
-        {
-            let guids_path = format!("{}/PrimitiveGuids", storage_path);
-            cf.create_storage(&guids_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-
-            // Header with primitive count
-            let header_path = format!("{}/Header", guids_path);
-            let mut header = cf
-                .create_stream(&header_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            header.write_u32::<LittleEndian>(comp.primitives.len() as u32)?;
-
-            // Data with empty GUIDs (zeros) for each primitive
-            let data_path = format!("{}/Data", guids_path);
-            let mut data = cf
-                .create_stream(&data_path)
-                .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
-            // Each primitive gets a 16-byte zero GUID
-            for _ in 0..comp.primitives.len() {
-                data.write_all(&[0u8; 16])?;
-            }
-        }
-
-        Ok(())
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Write a single PCB primitive.
-    fn write_primitive<W: Write>(&self, writer: &mut W, record: &PcbRecord) -> Result<()> {
-        // Write object ID byte
-        let object_id = match record {
-            PcbRecord::Arc(_) => 1,
-            PcbRecord::Pad(_) => 2,
-            PcbRecord::Via(_) => 3,
-            PcbRecord::Track(_) => 4,
-            PcbRecord::Text(_) => 5,
-            PcbRecord::Fill(_) => 6,
-            PcbRecord::Region(_) => 11,
-            PcbRecord::ComponentBody(_) => 12,
-            PcbRecord::Polygon(_) | PcbRecord::Dimension(_) | PcbRecord::Coordinate(_) => {
-                return Err(AltiumError::Parse(
-                    "Polygons, Dimensions, and Coordinates are not supported in PcbLib footprints"
-                        .to_string(),
-                ));
-            }
-            PcbRecord::Unknown { object_id, .. } => *object_id as u8,
-        };
-        writer.write_u8(object_id)?;
-
-        // Write primitive data based on type
-        match record {
-            PcbRecord::Arc(arc) => {
-                let mut data = Vec::new();
-                arc.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-            }
-            PcbRecord::Pad(pad) => {
-                // Pad has a special multi-block format, writes directly
-                pad.write_to(writer)?;
-            }
-            PcbRecord::Via(via) => {
-                let mut data = Vec::new();
-                via.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-            }
-            PcbRecord::Track(track) => {
-                let mut data = Vec::new();
-                track.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-            }
-            PcbRecord::Text(text) => {
-                // Text has special format: block + ASCII text block
-                let mut data = Vec::new();
-                text.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-                write_string_block(writer, &text.text)?;
-            }
-            PcbRecord::Fill(fill) => {
-                let mut data = Vec::new();
-                fill.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-            }
-            PcbRecord::Region(region) => {
-                let mut data = Vec::new();
-                region.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-            }
-            PcbRecord::ComponentBody(body) => {
-                let mut data = Vec::new();
-                body.write_to(&mut data)?;
-                write_block(writer, &data, 0)?;
-            }
-            PcbRecord::Polygon(_) | PcbRecord::Dimension(_) | PcbRecord::Coordinate(_) => {
-                // Already handled above with an error, unreachable
-                unreachable!("Polygons/Dimensions/Coordinates should have errored in object_id match")
-            }
-            PcbRecord::Unknown { raw_data, .. } => {
-                write_block(writer, raw_data, 0)?;
-            }
-        }
-
-        Ok(())
+    fn write_primitive<W: Write>(&self, _writer: &mut W, _record: &PcbRecord) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Get section key from reference name.
-    fn get_section_key(&self, ref_name: &str) -> String {
-        self.section_keys
-            .get(ref_name)
-            .cloned()
-            .unwrap_or_else(|| ref_name.to_string())
+    fn get_section_key(&self, _ref_name: &str) -> String {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Read file header stream.
-    fn read_file_header<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let stream_path = "/FileHeader";
-        if cf.entry(stream_path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(stream_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        // Read version text block (length prefix then Pascal string)
-        let _version_len = cursor.read_i32::<LittleEndian>()?;
-        let version_text = read_pascal_short_string(&mut cursor)?;
-        self.file_header_version = version_text;
-
-        // Try to read additional fields (optional, vary by Altium version).
-        // These fields may not exist in older file versions, so EOF is acceptable.
-        if (cursor.position() as usize) < data.len() {
-            // First optional field: appears to be a version-related float value as string.
-            // EOF here indicates older file format without extended header.
-            let field1 = read_pascal_short_string(&mut cursor).unwrap_or_default();
-            if !field1.is_empty() {
-                log::trace!("FileHeader optional field 1: {:?}", field1);
-            }
-            self.file_header_field1 = field1;
-
-            // Second optional field: appears to be a token/marker string (e.g., "DVLTOKCO").
-            // EOF here indicates file format without this marker.
-            let field2 = read_pascal_short_string(&mut cursor).unwrap_or_default();
-            if !field2.is_empty() {
-                log::trace!("FileHeader optional field 2: {:?}", field2);
-            }
-            self.file_header_field2 = field2;
-
-            // Third optional field: unique ID string for the library.
-            // Empty is valid for libraries without assigned unique ID.
-            if let Ok(uid) = read_pascal_short_string(&mut cursor) {
-                self.unique_id = uid;
-            }
-        }
-
-        Ok(())
+    fn read_file_header<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Read section keys stream.
-    fn read_section_keys<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let stream_path = "/SectionKeys";
-        if cf.entry(stream_path).is_err() {
-            return Ok(());
-        }
-
-        let mut stream = cf.open_stream(stream_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-        let key_count = cursor.read_i32::<LittleEndian>()?;
-
-        for _ in 0..key_count {
-            let lib_ref = read_string_block(&mut cursor)?;
-            let section_key = read_string_block(&mut cursor)?;
-
-            if !lib_ref.is_empty() && !section_key.is_empty() {
-                self.section_keys.insert(lib_ref, section_key);
-            }
-        }
-
-        Ok(())
+    fn read_section_keys<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Read the library storage.
-    fn read_library<R: Read + Seek>(&mut self, cf: &mut CompoundFile<R>) -> Result<()> {
-        let storage_path = "/Library";
-
-        // Read header to get record count
-        let header_path = format!("{}/Header", storage_path);
-        if cf.entry(&header_path).is_ok() {
-            let mut stream = cf.open_stream(&header_path).map_err(|e| {
-                AltiumError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    e.to_string(),
-                ))
-            })?;
-            let _record_count = stream.read_u32::<LittleEndian>()?;
-        }
-
-        // Read data stream
-        let data_path = format!("{}/Data", storage_path);
-        let mut stream = cf.open_stream(&data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        // Read library header parameters and preserve for round-trip
-        let header_params = read_parameters_block(&mut cursor)?;
-        self.library_parameters = Some(header_params);
-
-        // Read footprint count and list
-        let footprint_count = cursor.read_u32::<LittleEndian>()?;
-        let mut ref_names = Vec::with_capacity(footprint_count as usize);
-
-        for _ in 0..footprint_count {
-            let ref_name = read_string_block(&mut cursor)?;
-            ref_names.push(ref_name);
-        }
-
-        // Read each footprint
-        for ref_name in ref_names {
-            let section_key = self.get_section_key(&ref_name);
-            match self.read_footprint(cf, &section_key) {
-                Ok(component) => {
-                    self.components.push(component);
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to read footprint {:?}: {}", ref_name, e);
-                    continue;
-                }
-            }
-        }
-
-        Ok(())
+    fn read_library<R: Read + Seek>(&mut self, _cf: &mut CompoundFile<R>) -> Result<()> {
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Read a footprint from its storage.
     fn read_footprint<R: Read + Seek>(
         &self,
-        cf: &mut CompoundFile<R>,
-        section_key: &str,
+        _cf: &mut CompoundFile<R>,
+        _section_key: &str,
     ) -> Result<PcbComponent> {
-        // The section_key is the actual storage name and may contain forward slashes
-        // as part of the name (e.g., "C 0805 / 2012"). These are NOT path separators.
-        // However, Altium may convert forward slashes to underscores in CFB storage names.
-        let mut storage_path = format!("/{}", section_key);
-
-        // If the storage doesn't exist, try replacing forward slashes with underscores
-        if cf.entry(&storage_path).is_err() {
-            let section_key_alt = section_key.replace('/', "_");
-            let alt_path = format!("/{}", section_key_alt);
-            if cf.entry(&alt_path).is_ok() {
-                storage_path = alt_path;
-            }
-        }
-
-        // Read header
-        let header_path = format!("{}/Header", storage_path);
-        let _record_count = if cf.entry(&header_path).is_ok() {
-            let mut stream = cf.open_stream(&header_path).map_err(|e| {
-                AltiumError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    e.to_string(),
-                ))
-            })?;
-            stream.read_u32::<LittleEndian>()?
-        } else {
-            0
-        };
-
-        let mut component = PcbComponent::default();
-
-        // Read parameters
-        let params_path = format!("{}/Parameters", storage_path);
-        if cf.entry(&params_path).is_ok() {
-            let mut stream = cf.open_stream(&params_path).map_err(|e| {
-                AltiumError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    e.to_string(),
-                ))
-            })?;
-            let mut data = Vec::new();
-            stream.read_to_end(&mut data)?;
-
-            if !data.is_empty() {
-                let mut cursor = Cursor::new(&data);
-                let params = read_parameters_block(&mut cursor)?;
-                component.import_from_parameters(&params);
-            }
-        }
-
-        // Read wide strings (for Unicode text)
-        let wide_strings = self.read_wide_strings(cf, &storage_path)?;
-
-        // Read data stream
-        let data_path = format!("{}/Data", storage_path);
-        let mut stream = cf.open_stream(&data_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Footprint data not found: {} - {}", data_path, e),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Err(AltiumError::Parse("Empty footprint data".to_string()));
-        }
-
-        let mut cursor = Cursor::new(&data);
-
-        // First block is the pattern name (should match component.pattern)
-        let pattern = read_string_block(&mut cursor)?;
-        if component.pattern.is_empty() {
-            component.pattern = pattern;
-        }
-
-        // Read primitives
-        while (cursor.position() as usize) < data.len() {
-            match self.read_primitive(&mut cursor, &wide_strings) {
-                Ok(record) => component.primitives.push(record),
-                Err(_) => break,
-            }
-        }
-
-        Ok(component)
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Read wide strings storage for Unicode text support.
     fn read_wide_strings<R: Read + Seek>(
         &self,
-        cf: &mut CompoundFile<R>,
-        storage_path: &str,
+        _cf: &mut CompoundFile<R>,
+        _storage_path: &str,
     ) -> Result<Vec<String>> {
-        let wide_path = format!("{}/WideStrings", storage_path);
-        if cf.entry(&wide_path).is_err() {
-            return Ok(Vec::new());
-        }
-
-        let mut stream = cf.open_stream(&wide_path).map_err(|e| {
-            AltiumError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                e.to_string(),
-            ))
-        })?;
-
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data)?;
-
-        if data.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut cursor = Cursor::new(&data);
-        let params = read_parameters_block(&mut cursor)?;
-
-        let mut strings = Vec::new();
-        let count = params.get("COUNT").map(|v| v.as_int_or(0)).unwrap_or(0) as usize;
-
-        for i in 0..count {
-            let key = format!("WIDESTRING{}", i);
-            if let Some(val) = params.get(&key) {
-                strings.push(val.as_str().to_string());
-            } else {
-                strings.push(String::new());
-            }
-        }
-
-        Ok(strings)
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
-    /// Read a single primitive from the stream.
     fn read_primitive(
         &self,
-        cursor: &mut Cursor<&Vec<u8>>,
-        wide_strings: &[String],
+        _cursor: &mut Cursor<&Vec<u8>>,
+        _wide_strings: &[String],
     ) -> Result<PcbRecord> {
-        let object_id = PcbObjectId::from_byte(cursor.read_u8()?);
-
-        match object_id {
-            PcbObjectId::Arc => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let arc = <PcbArc as FromBinary>::read_from(&mut block_cursor)?;
-                Ok(PcbRecord::Arc(arc))
-            }
-            PcbObjectId::Pad => {
-                let pad = PcbPad::read_from(cursor)?;
-                Ok(PcbRecord::Pad(Box::new(pad)))
-            }
-            PcbObjectId::Via => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let via = <PcbVia as FromBinary>::read_from(&mut block_cursor)?;
-                Ok(PcbRecord::Via(via))
-            }
-            PcbObjectId::Track => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let track = <PcbTrack as FromBinary>::read_from(&mut block_cursor)?;
-                Ok(PcbRecord::Track(track))
-            }
-            PcbObjectId::Text => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let mut text = <PcbText as FromBinary>::read_from(&mut block_cursor)?;
-
-                // Read ASCII text from separate block
-                let ascii_text = read_string_block(cursor)?;
-
-                // Use wide string if available
-                if text.wide_strings_index >= 0
-                    && (text.wide_strings_index as usize) < wide_strings.len()
-                {
-                    text.text = wide_strings[text.wide_strings_index as usize].clone();
-                } else {
-                    text.text = ascii_text;
-                }
-
-                Ok(PcbRecord::Text(text))
-            }
-            PcbObjectId::Fill => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let fill = <PcbFill as FromBinary>::read_from(&mut block_cursor)?;
-                Ok(PcbRecord::Fill(fill))
-            }
-            PcbObjectId::Region => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let region = <PcbRegion as FromBinary>::read_from(&mut block_cursor)?;
-                Ok(PcbRecord::Region(region))
-            }
-            PcbObjectId::ComponentBody => {
-                let block = read_block(cursor)?;
-                let mut block_cursor = Cursor::new(&block);
-                let body = <PcbComponentBody as FromBinary>::read_from(&mut block_cursor)?;
-                Ok(PcbRecord::ComponentBody(Box::new(body)))
-            }
-            _ => {
-                // Unknown - skip the block
-                let block = read_block(cursor)?;
-                Ok(PcbRecord::Unknown {
-                    object_id,
-                    raw_data: block,
-                })
-            }
-        }
+        unimplemented!("Replaced by v2::pcb::io::pcblib::PcbLibV2")
     }
 
     /// Get the number of components.
+    ///
+    /// NOTE: With v1 IO stubbed, this always returns 0 since components Vec is never populated.
+    /// Callers must use v2::pcb::io::pcblib::PcbLibV2 to obtain actual component data.
     pub fn component_count(&self) -> usize {
         self.components.len()
     }
 
     /// Iterate over components.
+    ///
+    /// NOTE: With v1 IO stubbed, this always yields nothing since components Vec is never populated.
+    /// Callers must use v2::pcb::io::pcblib::PcbLibV2 to obtain actual component data.
     pub fn iter(&self) -> impl Iterator<Item = &PcbComponent> {
         self.components.iter()
     }
@@ -1052,6 +207,7 @@ impl PcbLib {
 // DumpTree implementation
 use crate::dump::{DumpTree, TreeBuilder};
 
+#[allow(deprecated)]
 impl DumpTree for PcbLib {
     fn dump(&self, tree: &mut TreeBuilder) {
         tree.root(&format!("PcbLib ({} footprints)", self.components.len()));
