@@ -1771,6 +1771,12 @@ pub struct SchRectangleJson {
     /// Border color in hex (RRGGBB), default dark blue
     #[serde(default = "default_border_color")]
     pub border_color: String,
+    /// Line width: "smallest", "small", "medium", or "large"
+    #[serde(default = "default_line_width_small")]
+    pub line_width: String,
+    /// Whether the fill is transparent
+    #[serde(default)]
+    pub transparent: bool,
 }
 
 fn default_fill_color() -> String {
@@ -1779,6 +1785,29 @@ fn default_fill_color() -> String {
 
 fn default_border_color() -> String {
     "000080".to_string()
+}
+
+fn default_line_width_small() -> String {
+    "small".to_string()
+}
+
+fn line_width_to_str(lw: LineWidth) -> String {
+    match lw {
+        LineWidth::Smallest => "smallest".to_string(),
+        LineWidth::Small => "small".to_string(),
+        LineWidth::Medium => "medium".to_string(),
+        LineWidth::Large => "large".to_string(),
+    }
+}
+
+fn str_to_line_width(s: &str) -> LineWidth {
+    match s.to_lowercase().as_str() {
+        "smallest" | "0" => LineWidth::Smallest,
+        "small" | "1" => LineWidth::Small,
+        "medium" | "2" => LineWidth::Medium,
+        "large" | "3" => LineWidth::Large,
+        _ => LineWidth::Small,
+    }
 }
 
 /// JSON schema for a line in a schematic component.
@@ -2194,6 +2223,8 @@ fn component_to_json(comp: &SchLibComponent) -> SchComponentJson {
                     filled: rect.is_solid,
                     fill_color: color_to_hex(rect.graphical.area_color),
                     border_color: color_to_hex(rect.graphical.color),
+                    line_width: line_width_to_str(rect.line_width),
+                    transparent: rect.transparent,
                 });
             }
             SchRecord::Line(line) => {
@@ -2484,8 +2515,8 @@ pub fn cmd_add_json(
         };
 
         // Build primitives in groups, then assemble in Altium-native order:
-        // Component(1) → hidden Params(41) → Pins → drawing Primitives →
-        // Designator(34) → Comment(41) → ImplementationList(44) →
+        // Component(1) → hidden Params(41) → drawing Primitives → Pins →
+        // visible Params → Designator(34) → Comment(41) → ImplementationList(44) →
         // [Implementation(45) → MapDefinerList(46) → MapDefiner(47)... → ImplParams(48)]* →
         // remaining Parameters(41)
 
@@ -2499,6 +2530,7 @@ pub fn cmd_add_json(
         for param_json in &component_def.parameters {
             let orientation = parse_text_orientation(&param_json.orientation)?;
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0; // No OWNERINDEX on top-level params
             graphical.base.owner_part_id = Some(-1);
             graphical.color = 8388608; // Dark red (standard for parameters)
             graphical.location_x = param_json.x.to_raw();
@@ -2530,46 +2562,14 @@ pub fn cmd_add_json(
         // Add hidden parameters first (after Component)
         primitives.extend(hidden_params);
 
-        // Group 2: Pins
-        for pin_def in &component_def.pins {
-            let electrical_type = parse_electrical_type(&pin_def.electrical)?;
-            let mut conglomerate = parse_pin_orientation(&pin_def.orientation)?;
-
-            conglomerate |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
-            conglomerate |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
-
-            if pin_def.hidden {
-                conglomerate |= PinConglomerateFlags::HIDE;
-            }
-
-            let mut graphical = SchGraphicalBase::default();
-            graphical.base.is_not_accessible = true;
-            graphical.base.owner_part_id = Some(1);
-            graphical.location_x = pin_def.x.to_raw();
-            graphical.location_y = pin_def.y.to_raw();
-            let pin = SchPin {
-                graphical,
-                designator: pin_def.designator.clone(),
-                name: pin_def.name.clone(),
-                electrical: electrical_type,
-                pin_conglomerate: conglomerate,
-                pin_length: pin_def.length.to_raw(),
-                description: pin_def.description.clone(),
-                symbol_inner_edge: PinSymbol::None,
-                symbol_outer_edge: PinSymbol::None,
-                symbol_inside: PinSymbol::None,
-                symbol_outside: PinSymbol::None,
-                ..Default::default()
-            };
-            primitives.push(SchRecord::Pin(pin));
-        }
-
-        // Group 3: Drawing primitives (rectangles, lines, polygons, arcs, polylines, beziers, elliptical arcs, ellipses, labels)
+        // Group 2: Drawing primitives (rectangles, lines, polygons, arcs, polylines, beziers, elliptical arcs, ellipses, labels)
+        // These come BEFORE pins so that body shapes are drawn underneath pin graphics.
         for rect in &component_def.rectangles {
             let fill_color_val = parse_color(&rect.fill_color)?;
             let border_color_val = parse_color(&rect.border_color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = rect.x1.to_raw();
@@ -2581,9 +2581,9 @@ pub fn cmd_add_json(
                 graphical,
                 corner_x: rect.x2.to_raw(),
                 corner_y: rect.y2.to_raw(),
-                line_width: LineWidth::Small,
+                line_width: str_to_line_width(&rect.line_width),
                 is_solid: rect.filled,
-                transparent: !rect.filled,
+                transparent: rect.transparent,
                 ..Default::default()
             };
             primitives.push(SchRecord::Rectangle(sch_rect));
@@ -2594,6 +2594,7 @@ pub fn cmd_add_json(
             let color_val = parse_color(&line.color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = line.x1.to_raw();
@@ -2625,6 +2626,7 @@ pub fn cmd_add_json(
                 .collect();
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = vertices[0].0;
@@ -2650,6 +2652,7 @@ pub fn cmd_add_json(
             let justification = parse_text_justification(&label.justification)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = label.x.to_raw();
@@ -2673,6 +2676,7 @@ pub fn cmd_add_json(
             let color_val = parse_color(&arc.color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = arc.x.to_raw();
@@ -2706,6 +2710,7 @@ pub fn cmd_add_json(
                 .collect();
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = vertices[0].0;
@@ -2727,6 +2732,7 @@ pub fn cmd_add_json(
             let border_color_val = parse_color(&ellipse.border_color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = ellipse.x.to_raw();
@@ -2761,6 +2767,7 @@ pub fn cmd_add_json(
                 .collect();
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = vertices[0].0;
@@ -2780,6 +2787,7 @@ pub fn cmd_add_json(
             let color_val = parse_color(&earc.color)?;
 
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
             graphical.base.is_not_accessible = true;
             graphical.base.owner_part_id = Some(1);
             graphical.location_x = earc.x.to_raw();
@@ -2797,12 +2805,48 @@ pub fn cmd_add_json(
             primitives.push(SchRecord::EllipticalArc(sch_earc));
         }
 
+        // Group 3: Pins (after drawing primitives for correct z-order)
+        for pin_def in &component_def.pins {
+            let electrical_type = parse_electrical_type(&pin_def.electrical)?;
+            let mut conglomerate = parse_pin_orientation(&pin_def.orientation)?;
+
+            conglomerate |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
+            conglomerate |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
+
+            if pin_def.hidden {
+                conglomerate |= PinConglomerateFlags::HIDE;
+            }
+
+            let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0;
+            graphical.base.is_not_accessible = true;
+            graphical.base.owner_part_id = Some(1);
+            graphical.location_x = pin_def.x.to_raw();
+            graphical.location_y = pin_def.y.to_raw();
+            let pin = SchPin {
+                graphical,
+                designator: pin_def.designator.clone(),
+                name: pin_def.name.clone(),
+                electrical: electrical_type,
+                pin_conglomerate: conglomerate,
+                pin_length: pin_def.length.to_raw(),
+                description: pin_def.description.clone(),
+                symbol_inner_edge: PinSymbol::None,
+                symbol_outer_edge: PinSymbol::None,
+                symbol_inside: PinSymbol::None,
+                symbol_outside: PinSymbol::None,
+                ..Default::default()
+            };
+            primitives.push(SchRecord::Pin(pin));
+        }
+
         // Group 4: Visible parameters (like Value) — before Designator in Altium order
         primitives.extend(visible_params);
 
         // Group 5: Designator (RECORD=34)
         if let Some(des_json) = &component_def.designator {
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0; // No OWNERINDEX on Designator
             graphical.base.owner_part_id = Some(-1);
             graphical.color = 8388608; // Dark red (standard for designators)
             graphical.location_x = des_json.x.to_raw();
@@ -2827,6 +2871,7 @@ pub fn cmd_add_json(
         } else {
             let designator_text = infer_designator_prefix(&component_def.name, &component_def.description);
             let mut graphical = SchGraphicalBase::default();
+            graphical.base.owner_index = 0; // No OWNERINDEX on Designator
             graphical.base.owner_part_id = Some(-1);
             graphical.color = 8388608;
             let designator = SchDesignator {
@@ -2945,6 +2990,16 @@ pub fn cmd_add_json(
             }
         }
 
+        // Compute INDEXINSHEET values based on block position.
+        // Rules from Altium SchLib format:
+        // - Block 0 (Component): INDEXINSHEET=-1
+        // - Designator, Comment (top-level params): INDEXINSHEET=-1
+        // - Implementation (RECORD=45): INDEXINSHEET=-1
+        // - Params owned by ImplementationParameters: INDEXINSHEET=-1
+        // - ImplementationList (44), MapDefinerList (46), ImplementationParameters (48): no INDEXINSHEET
+        // - Child primitives (shapes, pins, regular params): INDEXINSHEET = block_index - 1, omitted when 0
+        compute_index_in_sheet(&mut primitives);
+
         let lib_component = SchLibComponent {
             component,
             primitives,
@@ -2968,6 +3023,39 @@ pub fn cmd_add_json(
             added_components.len(),
             path.display()
         ))
+    }
+}
+
+/// Compute INDEXINSHEET values for all primitives in a component's block list.
+///
+/// Altium SchLib encodes positional metadata in INDEXINSHEET:
+/// - Block 0 (Component, RECORD=1): INDEXINSHEET=-1
+/// - Top-level records (Designator=34, Implementation=45): INDEXINSHEET=-1
+/// - Parameters owned by ImplementationParameters: INDEXINSHEET=-1
+/// - Container records (ImplementationList=44, MapDefinerList=46, ImplParams=48): no INDEXINSHEET
+/// - Child primitives (shapes, pins, params): INDEXINSHEET = block_index - 1, None when value is 0
+fn compute_index_in_sheet(primitives: &mut [SchRecord]) {
+    for (block_index, record) in primitives.iter_mut().enumerate() {
+        let record_id = record.record_id();
+        let iis = match record_id {
+            // Component: always -1
+            1 => Some(-1),
+            // Designator: always -1
+            34 => Some(-1),
+            // Implementation: always -1
+            45 => Some(-1),
+            // ImplementationList, MapDefinerList, ImplementationParameters: no INDEXINSHEET
+            44 | 46 | 48 => None,
+            // Parameters (RECORD=41): always INDEXINSHEET=-1
+            // This covers Comment, hidden params at component level, and impl-owned params.
+            41 => Some(-1),
+            // All other child primitives (shapes, pins, MapDefiner, etc.): positional
+            _ => {
+                let val = block_index as i32 - 1;
+                if val == 0 { None } else { Some(val) }
+            }
+        };
+        record.set_index_in_sheet(iis);
     }
 }
 

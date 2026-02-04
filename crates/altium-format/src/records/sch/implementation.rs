@@ -52,6 +52,7 @@ impl SchPrimitive for SchImplementationList {
 const IMPLEMENTATION_KNOWN_KEYS: &[&str] = &[
     "RECORD",
     "OWNERINDEX",
+    "INDEXINSHEET",
     "ISNOTACCESIBLE",
     "OWNERPARTID",
     "OWNERPARTDISPLAYMODE",
@@ -230,6 +231,7 @@ impl SchPrimitive for SchMapDefinerList {
 const MAP_DEFINER_KNOWN_KEYS: &[&str] = &[
     "RECORD",
     "OWNERINDEX",
+    "INDEXINSHEET",
     "ISNOTACCESIBLE",
     "OWNERPARTID",
     "OWNERPARTDISPLAYMODE",

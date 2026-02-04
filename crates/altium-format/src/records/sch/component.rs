@@ -9,6 +9,7 @@ use super::{SchGraphicalBase, SchPrimitive, SchPrimitiveBase, TextOrientations};
 const KNOWN_KEYS: &[&str] = &[
     "RECORD",
     "OWNERINDEX",
+    "INDEXINSHEET",
     "ISNOTACCESIBLE",
     "OWNERPARTID",
     "OWNERPARTDISPLAYMODE",
@@ -89,11 +90,12 @@ impl Default for SchComponent {
         Self {
             graphical: SchGraphicalBase {
                 base: SchPrimitiveBase {
-                    owner_index: -1,
+                    owner_index: 0, // 0 so OWNERINDEX is omitted (Component is root, has no owner)
                     is_not_accessible: false,
                     owner_part_id: Some(-1), // Components use -1, primitives use None (serializes as 1)
                     owner_part_display_mode: None,
                     graphically_locked: false,
+                    index_in_sheet: Some(-1), // Components always have INDEXINSHEET=-1
                 },
                 location_x: 0,
                 location_y: 0,
@@ -114,7 +116,7 @@ impl Default for SchComponent {
             target_filename: "*".to_string(),     // Altium placeholder
             override_colors: false,
             designator_locked: false,
-            part_id_locked: false, // Part ID unlocked by default in library context
+            part_id_locked: true, // Part ID locked by default in library context
             component_kind: 0,
             alias_list: String::new(),
             orientation: TextOrientations::NONE,
@@ -271,14 +273,9 @@ impl SchPrimitive for SchComponent {
         if self.show_hidden_pins {
             params.add_bool("SHOWHIDDENPINS", true);
         }
-        // Only emit LIBRARYPATH/SHEETPARTFILENAME when not the default placeholder
-        if self.library_path != "*" {
-            params.add("LIBRARYPATH", &self.library_path);
-        }
+        params.add("LIBRARYPATH", &self.library_path);
         params.add("SOURCELIBRARYNAME", &self.source_library_name);
-        if self.sheet_part_filename != "*" {
-            params.add("SHEETPARTFILENAME", &self.sheet_part_filename);
-        }
+        params.add("SHEETPARTFILENAME", &self.sheet_part_filename);
         params.add("TARGETFILENAME", &self.target_filename);
         params.add("UNIQUEID", &self.unique_id);
         // Only emit DISPLAYMODE when non-zero

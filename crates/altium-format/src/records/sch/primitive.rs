@@ -51,6 +51,11 @@ pub struct SchPrimitiveBase {
     pub owner_part_display_mode: Option<i32>,
     /// Whether the primitive is graphically locked.
     pub graphically_locked: bool,
+    /// Index in sheet — position-based index within the component's Data stream.
+    /// In SchLib files: -1 for top-level records (Component, Designator, Comment,
+    /// Implementation); positive values = (block_index - 1) for child primitives;
+    /// None for records that don't use it (ImplementationList, MapDefinerList, ImplParams).
+    pub index_in_sheet: Option<i32>,
 }
 
 impl Default for SchPrimitiveBase {
@@ -61,6 +66,7 @@ impl Default for SchPrimitiveBase {
             owner_part_id: None, // None serializes as 1 for pins; overridden to Some(-1) for components
             owner_part_display_mode: None,
             graphically_locked: false,
+            index_in_sheet: None, // Computed by writer based on position
         }
     }
 }
@@ -83,6 +89,7 @@ impl SchPrimitiveBase {
                 .get("GRAPHICALLYLOCKED")
                 .map(|v| v.as_bool_or(false))
                 .unwrap_or(false),
+            index_in_sheet: params.get("INDEXINSHEET").map(|v| v.as_int_or(-1)),
         }
     }
 
@@ -102,6 +109,10 @@ impl SchPrimitiveBase {
         // Only emit GRAPHICALLYLOCKED when true (Altium omits when false)
         if self.graphically_locked {
             params.add_bool("GRAPHICALLYLOCKED", true);
+        }
+        // Emit INDEXINSHEET when present (position-based index in SchLib Data streams)
+        if let Some(iis) = self.index_in_sheet {
+            params.add_int("INDEXINSHEET", iis);
         }
     }
 
@@ -160,6 +171,7 @@ impl SchGraphicalBase {
                 owner_part_id: Some(-1),
                 owner_part_display_mode: None,
                 graphically_locked: false,
+                index_in_sheet: None,
             },
             location_x: 0,
             location_y: 0,
@@ -179,6 +191,7 @@ impl SchGraphicalBase {
                 owner_part_id: Some(-1),
                 owner_part_display_mode: None,
                 graphically_locked: false,
+                index_in_sheet: None,
             },
             location_x: 0,
             location_y: 0,
@@ -486,6 +499,51 @@ impl SchRecord {
             SchRecord::Unknown { params, .. } => {
                 params.add_int("OWNERINDEX", index);
             }
+        }
+    }
+
+    /// Set the index_in_sheet for this record.
+    ///
+    /// In SchLib files, INDEXINSHEET encodes positional information:
+    /// - Component, Designator, Comment, Implementation: Some(-1)
+    /// - Child primitives (shapes, pins, params): Some(block_index - 1), or None when 0
+    /// - ImplementationList, MapDefinerList, ImplementationParameters: None
+    pub fn set_index_in_sheet(&mut self, value: Option<i32>) {
+        match self {
+            SchRecord::Component(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Pin(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Symbol(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Label(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Bezier(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Polyline(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Polygon(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Ellipse(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Pie(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::EllipticalArc(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Arc(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Line(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Rectangle(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::PowerObject(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Port(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::NoErc(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::NetLabel(r) => r.label.graphical.base.index_in_sheet = value,
+            SchRecord::Bus(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Wire(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::TextFrame(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::TextFrameVariant(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Junction(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Image(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::SheetHeader(r) => r.base.index_in_sheet = value,
+            SchRecord::Designator(r) => r.param.label.graphical.base.index_in_sheet = value,
+            SchRecord::BusEntry(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::Parameter(r) => r.label.graphical.base.index_in_sheet = value,
+            SchRecord::WarningSign(r) => r.graphical.base.index_in_sheet = value,
+            SchRecord::ImplementationList(r) => r.base.index_in_sheet = value,
+            SchRecord::Implementation(r) => r.base.index_in_sheet = value,
+            SchRecord::MapDefinerList(r) => r.base.index_in_sheet = value,
+            SchRecord::MapDefiner(r) => r.base.index_in_sheet = value,
+            SchRecord::ImplementationParameters(r) => r.base.index_in_sheet = value,
+            SchRecord::Unknown { .. } => {} // Unknown records don't have structured base
         }
     }
 
