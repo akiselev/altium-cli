@@ -4,12 +4,12 @@
 //! This module provides type-safe wrappers around these internal coordinates.
 
 use std::fmt;
+use std::io::{Read, Write};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::error::Result;
-use crate::traits::{FromBinary, ToBinary};
 
 /// Conversion factor: internal units per mil.
 pub const INTERNAL_UNITS: f64 = 10000.0;
@@ -305,40 +305,32 @@ impl Sub for CoordPoint {
     }
 }
 
-impl FromBinary for Coord {
-    fn read_from<R: std::io::Read>(reader: &mut R) -> Result<Self> {
+impl Coord {
+    /// Read a Coord from a binary stream.
+    pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
         Ok(Coord::from_raw(reader.read_i32::<LittleEndian>()?))
     }
-}
 
-impl ToBinary for Coord {
-    fn write_to<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+    /// Write this Coord to a binary stream.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32::<LittleEndian>(self.to_raw())?;
         Ok(())
     }
-
-    fn binary_size(&self) -> usize {
-        4
-    }
 }
 
-impl FromBinary for CoordPoint {
-    fn read_from<R: std::io::Read>(reader: &mut R) -> Result<Self> {
+impl CoordPoint {
+    /// Read a CoordPoint from a binary stream.
+    pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
         let x = reader.read_i32::<LittleEndian>()?;
         let y = reader.read_i32::<LittleEndian>()?;
         Ok(CoordPoint::from_raw(x, y))
     }
-}
 
-impl ToBinary for CoordPoint {
-    fn write_to<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+    /// Write this CoordPoint to a binary stream.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32::<LittleEndian>(self.x.to_raw())?;
         writer.write_i32::<LittleEndian>(self.y.to_raw())?;
         Ok(())
-    }
-
-    fn binary_size(&self) -> usize {
-        8
     }
 }
 

@@ -11,10 +11,10 @@
 use encoding_rs::WINDOWS_1252;
 use indexmap::IndexMap;
 use std::fmt;
+use std::io::{Read, Write};
 
 use crate::io::reader::read_parameters_block;
 use crate::io::writer::write_parameters_block;
-use crate::traits::{FromBinary, ToBinary};
 use crate::types::{Color, Coord, Layer, Unit};
 
 /// Entry separators for different nesting levels.
@@ -424,20 +424,15 @@ impl ParameterCollection {
     }
 }
 
-impl FromBinary for ParameterCollection {
-    fn read_from<R: std::io::Read>(reader: &mut R) -> crate::error::Result<Self> {
+impl ParameterCollection {
+    /// Read a ParameterCollection from a binary stream.
+    pub fn read_from<R: Read>(reader: &mut R) -> crate::error::Result<Self> {
         read_parameters_block(reader)
     }
-}
 
-impl ToBinary for ParameterCollection {
-    fn write_to<W: std::io::Write>(&self, writer: &mut W) -> crate::error::Result<()> {
+    /// Write this ParameterCollection to a binary stream.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> crate::error::Result<()> {
         write_parameters_block(writer, self)
-    }
-
-    fn binary_size(&self) -> usize {
-        // 4-byte size prefix + bytes for null-terminated parameter string.
-        4 + self.to_param_string().len() + 1
     }
 }
 

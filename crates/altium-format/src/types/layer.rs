@@ -1,11 +1,11 @@
 //! PCB layer definitions for Altium.
 
 use std::fmt;
+use std::io::{Read, Write};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::error::Result;
-use crate::traits::{FromBinary, ToBinary};
 
 /// PCB layer identifier.
 ///
@@ -358,20 +358,16 @@ impl Layer {
     }
 }
 
-impl FromBinary for Layer {
-    fn read_from<R: std::io::Read>(reader: &mut R) -> Result<Self> {
+impl Layer {
+    /// Read a Layer from a binary stream.
+    pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
         Ok(Layer(reader.read_u8()?))
     }
-}
 
-impl ToBinary for Layer {
-    fn write_to<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+    /// Write this Layer to a binary stream.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u8(self.0)?;
         Ok(())
-    }
-
-    fn binary_size(&self) -> usize {
-        1
     }
 }
 

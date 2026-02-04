@@ -39,30 +39,16 @@
 //!
 //! The library is organized into several modules:
 //!
-//! - [`v2`] - **Recommended**: V2 implementation with correct format handling
+//! - [`v2`] - V2 implementation with correct format handling
 //!   - [`v2::io`] - File I/O (SchLibV2, SchDocV2)
 //!   - [`v2::fields`] - Typed record structs (PinData, ComponentData, etc.)
-//!   - [`v2::pcb`] - PCB types and I/O (PcbLibV2, PcbDocV2)
+//!   - [`v2::pcb`] - PCB types and I/O (PcbLib, PcbDoc)
 //! - [`types`] - Core data types (coordinates, units, layers, parameters)
-//! - [`traits`] - Serialization traits for derive macros
-//! - [`records`] - **Deprecated**: V1 record types (use v2::fields instead)
-//! - [`io`] - **Deprecated**: V1 file I/O (use v2::io instead)
+//! - [`ops`] - High-level operations for CLI and programmatic use
+//! - [`io`] - Low-level I/O utilities (prjpcb, reader, writer)
 //! - [`error`] - Error types
 //!
-//! # Migration from V1 to V2
-//!
-//! | V1 Type | V2 Replacement |
-//! |---------|----------------|
-//! | `io::SchLib` | `v2::io::schlib::SchLibV2` |
-//! | `io::SchDoc` | `v2::io::schdoc::SchDocV2` |
-//! | `io::PcbLib` | `v2::pcb::io::pcblib::PcbLibV2` |
-//! | `io::PcbDoc` | `v2::pcb::io::pcbdoc::PcbDocV2` |
-//! | `records::sch::SchPin` | `v2::PinData` |
-//! | `records::sch::SchComponent` | `v2::ComponentData` |
-//! | `records::sch::SchRecord` | `v2::TypedRecord` |
-//! | `records::pcb::PcbPad` | `v2::pcb::PcbPadV2` |
-//!
-//! # Example (V2)
+//! # Example
 //!
 //! ```ignore
 //! use altium_format::v2::io::schlib::SchLibV2;
@@ -77,27 +63,12 @@
 //!     }
 //! }
 //! ```
-//!
-//! # Legacy V1 API (Deprecated)
-//!
-//! The V1 API in [`records`] and [`io`] modules is deprecated due to:
-//! - Incorrect coordinate scales
-//! - Field type mismatches with Altium's format
-//! - Incomplete roundtrip support
-//!
-//! V1 types remain available for backwards compatibility but will emit deprecation warnings.
 
-pub mod api;
 pub mod dump;
-pub mod edit;
 pub mod error;
-pub mod footprint;
 pub mod format;
 pub mod io;
 pub mod ops;
-pub mod query;
-pub mod records;
-pub mod templates;
 pub mod traits;
 pub mod tree;
 pub mod types;
@@ -145,10 +116,6 @@ pub use v2::{
 // =============================================================================
 
 pub use error::{AltiumError, Result};
-pub use query::{
-    Pattern, QueryMatch, Selector, SelectorEngine, SelectorParser, query_records,
-    query_records_with_doc_name,
-};
 pub use tree::{BreadthFirstWalker, ParentRef, RecordId, RecordTree, TreeRecord, TreeWalker};
 pub use types::{
     Color, Coord, CoordPoint, CoordPoint3D, CoordRect, Layer, ParameterCollection, ParameterValue,
@@ -158,11 +125,5 @@ pub use types::{
 // Re-export derive macros
 pub use altium_format_derive::{AltiumBase, AltiumEnum, AltiumRecord};
 
-// =============================================================================
-// V1 Traits (still used by V1 types, deprecated with V1 API)
-// =============================================================================
-
-pub use traits::{
-    AltiumRecord, FromBinary, FromParamValue, FromParams, PcbPrimitive, SchPrimitive, ToBinary,
-    ToParamValue, ToParams,
-};
+// Re-export value conversion traits
+pub use traits::{FromParamList, FromParamValue, ToParamList, ToParamValue};

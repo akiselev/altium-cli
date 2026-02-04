@@ -5,16 +5,14 @@
 //!
 //! This module provides reusable operations for working with Altium files
 //! that can be used by CLI tools and other applications.
+//!
+//! Supported operations:
+//! - `pcblib` - PCB library operations
+//! - `pcbdoc` - PCB document operations
+//! - `categorization` - Component categorization utilities
+//! - `output` - Output formatting structures
 
 pub mod categorization;
-pub mod intlib;
 pub mod output;
 pub mod pcbdoc;
 pub mod pcblib;
-pub mod prjpcb;
-pub mod queries;
-pub mod schdoc;
-pub mod schdoc_edit;
-pub mod schlib;
-pub mod transforms;
-pub mod util;

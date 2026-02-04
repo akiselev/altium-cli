@@ -22,8 +22,44 @@ use crate::v2::pcb::io::pcblib::{PcbLib, PcbLibFootprint};
 use crate::v2::pcb::PcbCoord;
 use crate::v2::pcb::pad::PcbPad;
 
-use super::util::alphanumeric_sort;
 use crate::ops::output::*;
+
+/// Alphanumeric sort that handles numbers embedded in strings naturally.
+/// "A1" < "A2" < "A10" instead of "A1" < "A10" < "A2".
+fn alphanumeric_sort(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let mut a_chars = a.chars().peekable();
+    let mut b_chars = b.chars().peekable();
+
+    loop {
+        match (a_chars.peek(), b_chars.peek()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(&ac), Some(&bc)) => {
+                if ac.is_ascii_digit() && bc.is_ascii_digit() {
+                    // Extract and compare numbers
+                    let a_num: String = a_chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
+                    let b_num: String = b_chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
+                    let a_val: u64 = a_num.parse().unwrap_or(0);
+                    let b_val: u64 = b_num.parse().unwrap_or(0);
+                    match a_val.cmp(&b_val) {
+                        Ordering::Equal => continue,
+                        other => return other,
+                    }
+                } else {
+                    a_chars.next();
+                    b_chars.next();
+                    match ac.cmp(&bc) {
+                        Ordering::Equal => continue,
+                        other => return other,
+                    }
+                }
+            }
+        }
+    }
+}
 
 fn open_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
     let file = File::open(path)?;

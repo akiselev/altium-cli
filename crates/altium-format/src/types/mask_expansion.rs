@@ -1,10 +1,9 @@
 //! Mask expansion state type.
 
 use crate::error::Result;
-use crate::traits::{FromBinary, ToBinary};
 use crate::types::Coord;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::Read;
+use std::io::{Read, Write};
 
 /// Mask expansion mode (replaces manual bool + value Coord pairs).
 ///
@@ -31,10 +30,9 @@ impl MaskExpansion {
             MaskExpansion::Manual(v) => *v,
         }
     }
-}
 
-impl FromBinary for MaskExpansion {
-    fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
+    /// Read a MaskExpansion from a binary stream.
+    pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
         let manual_flag = reader.read_u8()?;
         let value = Coord::from_raw(reader.read_i32::<LittleEndian>()?);
 
@@ -47,10 +45,9 @@ impl FromBinary for MaskExpansion {
             MaskExpansion::Auto
         })
     }
-}
 
-impl ToBinary for MaskExpansion {
-    fn write_to<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+    /// Write this MaskExpansion to a binary stream.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         match self {
             MaskExpansion::Auto => {
                 writer.write_u8(0)?;
@@ -63,9 +60,5 @@ impl ToBinary for MaskExpansion {
             }
         }
         Ok(())
-    }
-
-    fn binary_size(&self) -> usize {
-        5
     }
 }
