@@ -6,18 +6,17 @@ Browse and extract commands for integrated libraries (.IntLib).
 
 | Command | Purpose |
 |---------|---------|
-| `overview` | Library overview with component categories and statistics |
-| `list` | List all components in the library |
+| `overview` | Library overview with component counts and statistics |
+| `list` | List all components |
 | `search` | Search for components by name or description |
-| `info` | Library info and statistics |
+| `info` | Library metadata and statistics |
 
 ## Component Commands
 
 | Command | Purpose |
 |---------|---------|
 | `component` | Show detailed component information |
-| `crossrefs` | Show symbol/footprint cross-references |
-| `parameters` | Show BOM parameters across components |
+| `parameters` | Show BOM parameters |
 
 ## Embedded Content Commands
 
@@ -46,7 +45,6 @@ Browse and extract commands for integrated libraries (.IntLib).
 ```bash
 # Library overview
 altium-cli intlib overview library.IntLib
-altium-cli intlib overview library.IntLib --full
 
 # List all components
 altium-cli intlib list library.IntLib
@@ -64,34 +62,26 @@ altium-cli intlib info library.IntLib
 ```bash
 # Component details
 altium-cli intlib component library.IntLib LM358
-altium-cli intlib component library.IntLib LM358 --params
-
-# Cross-references
-altium-cli intlib crossrefs library.IntLib
-altium-cli intlib crossrefs library.IntLib --footprint SOIC-8
 ```
 
 ### Embedded Content
 
 ```bash
-# List symbols
+# List embedded symbols
 altium-cli intlib symbols library.IntLib
 
-# List footprints
+# List embedded footprints
 altium-cli intlib footprints library.IntLib
 ```
 
 ### Parameters
 
 ```bash
-# All parameters
+# All component parameters
 altium-cli intlib parameters library.IntLib
 
 # Parameters for specific component
 altium-cli intlib parameters library.IntLib -c LM358
-
-# Filter by parameter keys
-altium-cli intlib parameters library.IntLib --keys "Manufacturer,Part Number,Value"
 ```
 
 ### Extraction
@@ -107,30 +97,29 @@ altium-cli intlib extract-pcblib library.IntLib -o footprints.PcbLib
 ### JSON Export
 
 ```bash
-# Export as JSON
+# Basic export
 altium-cli intlib json library.IntLib
-altium-cli intlib json library.IntLib --pretty
+
+# Full details (includes symbol and footprint info)
+altium-cli intlib json library.IntLib --full
 ```
 
 ## Command Details
 
 ### overview
 
-Library overview with component categories and statistics.
+Library overview with component counts and statistics.
 
 ```bash
-altium-cli intlib overview <PATH> [OPTIONS]
-
-Options:
-  --full  Include full component details
+altium-cli intlib overview <PATH>
 ```
 
 Output includes:
-- Library name and path
+- Library path and version
 - Total component count
-- Component categories
-- Symbol count
-- Footprint count
+- Schematic symbol count
+- PCB footprint count
+- Footprint usage statistics
 
 ### search
 
@@ -140,51 +129,54 @@ Search for components by name or description.
 altium-cli intlib search <PATH> <QUERY> [OPTIONS]
 
 Arguments:
-  <QUERY>  Search query
+  <QUERY>  Search query (supports partial matching)
 
 Options:
   -l, --limit <LIMIT>  Maximum results to return
 ```
-
-Searches:
-- Component name
-- Description
-- Part number
-- Parameters
 
 ### component
 
 Show detailed component information.
 
 ```bash
-altium-cli intlib component <PATH> <NAME> [OPTIONS]
+altium-cli intlib component <PATH> <NAME>
 
 Arguments:
-  <NAME>  Component name or index
-
-Options:
-  --params  Show all parameters
+  <NAME>  Component name
 ```
 
 Output includes:
-- Component name
-- Description
-- Symbol reference
-- Footprint reference
-- Parameters (with --params)
+- Component name and description
+- Linked footprint
+- Symbol and footprint paths
+- Pin count and primitive count
 
-### crossrefs
+### symbols
 
-Show symbol/footprint cross-references.
+List embedded schematic symbols.
 
 ```bash
-altium-cli intlib crossrefs <PATH> [OPTIONS]
-
-Options:
-  -f, --footprint <NAME>  Filter by footprint name
+altium-cli intlib symbols <PATH>
 ```
 
-Shows which components use which symbols and footprints.
+Output includes:
+- Symbol name
+- Description
+- Pin count
+
+### footprints
+
+List embedded PCB footprints.
+
+```bash
+altium-cli intlib footprints <PATH>
+```
+
+Output includes:
+- Footprint name
+- Description
+- Pad count
 
 ### parameters
 
@@ -195,16 +187,9 @@ altium-cli intlib parameters <PATH> [OPTIONS]
 
 Options:
   -c, --component <NAME>  Filter by component name
-  -k, --keys <KEYS>       Filter by parameter keys (comma-separated)
 ```
 
-Common parameters:
-- Manufacturer
-- Part Number
-- Value
-- Tolerance
-- Voltage Rating
-- Package
+Output includes parameter key-value pairs for each component.
 
 ### extract-schlib
 
@@ -228,12 +213,23 @@ Options:
   -o, --output <PATH>  Output .PcbLib file path (required)
 ```
 
+### json
+
+Export library as JSON for processing.
+
+```bash
+altium-cli intlib json <PATH> [OPTIONS]
+
+Options:
+  --full  Include detailed symbol and footprint information
+```
+
 ## Integrated Library Structure
 
 IntLib files contain:
-1. **Component database** - Component metadata and parameters
+1. **Component database** - Component metadata and cross-references
 2. **Schematic symbols** - Embedded .SchLib content
 3. **PCB footprints** - Embedded .PcbLib content
-4. **Cross-reference table** - Maps components to symbols/footprints
+4. **Parameter sets** - BOM parameters for each component
 
 The extraction commands let you recover the embedded libraries for editing or use in other projects.

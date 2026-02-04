@@ -16,12 +16,13 @@ fn synthiam_schlib_path() -> PathBuf {
     path
 }
 
+/// Test reading Synthiam.SchLib - requires fixture in workspace root
+#[ignore = "Requires Synthiam.SchLib fixture in workspace root"]
 #[test]
 fn read_synthiam_schlib() {
     let path = synthiam_schlib_path();
     if !path.exists() {
-        eprintln!("Skipping: {} not found", path.display());
-        return;
+        panic!("Fixture not found: {}", path.display());
     }
 
     let file = File::open(&path).expect("failed to open Synthiam.SchLib");
@@ -41,12 +42,13 @@ fn read_synthiam_schlib() {
     }
 }
 
+/// JSON roundtrip test - requires fixture in workspace root
+#[ignore = "Requires Synthiam.SchLib fixture in workspace root"]
 #[test]
 fn json_roundtrip_synthiam_schlib() {
     let path = synthiam_schlib_path();
     if !path.exists() {
-        eprintln!("Skipping: {} not found", path.display());
-        return;
+        panic!("Fixture not found: {}", path.display());
     }
 
     let file = File::open(&path).expect("failed to open Synthiam.SchLib");

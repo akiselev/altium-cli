@@ -6,39 +6,23 @@ Analysis and export commands for schematic documents (.SchDoc).
 
 | Command | Purpose |
 |---------|---------|
-| `overview` | Complete design overview with categories, power, interfaces |
-| `bom` | Bill of materials grouped by component |
+| `overview` | Complete design overview with categories and statistics |
+| `info` | Document info and sheet metadata |
 | `netlist` | Net connectivity map |
 | `power-map` | Power distribution analysis |
-| `blocks` | Block diagram of major ICs |
-| `signal-flow` | Signal flow tracing |
-| `project` | Multi-file hierarchical analysis |
-
-## Info Commands
-
-| Command | Purpose |
-|---------|---------|
-| `info` | Document info and sheet metadata |
-| `stats` | Detailed record statistics |
-| `hierarchy` | Show record hierarchy tree |
 
 ## Component Commands
 
 | Command | Purpose |
 |---------|---------|
-| `components` | List all components |
-| `component` | Show component details |
-| `pins` | List pins (optionally filtered by component) |
+| `components` | List all placed components |
 
 ## Connectivity Commands
 
 | Command | Purpose |
 |---------|---------|
-| `wires` | List all wires |
-| `nets` | List all net labels |
-| `ports` | List all ports |
-| `power` | List all power objects |
-| `junctions` | List all junctions |
+| `wires` | List all wire primitives |
+| `ports` | List all port definitions |
 
 ## Export Commands
 
@@ -48,116 +32,149 @@ Analysis and export commands for schematic documents (.SchDoc).
 
 ## Examples
 
+### Design Analysis
+
 ```bash
-# Design analysis
+# Complete design overview
 altium-cli schdoc overview design.SchDoc
-altium-cli schdoc bom design.SchDoc --json
-altium-cli schdoc netlist design.SchDoc
-altium-cli schdoc power-map design.SchDoc
-
-# Block diagrams and signal flow
-altium-cli schdoc blocks design.SchDoc
-altium-cli schdoc signal-flow design.SchDoc CLK
-
-# Multi-file project analysis
-altium-cli schdoc project sheet1.SchDoc sheet2.SchDoc sheet3.SchDoc
 
 # Document info
 altium-cli schdoc info design.SchDoc
-altium-cli schdoc stats design.SchDoc
-altium-cli schdoc hierarchy design.SchDoc
 
-# Component inspection
+# Net connectivity
+altium-cli schdoc netlist design.SchDoc
+altium-cli schdoc netlist design.SchDoc --filter "VCC*"
+
+# Power distribution
+altium-cli schdoc power-map design.SchDoc
+```
+
+### Component Inspection
+
+```bash
+# List all components
 altium-cli schdoc components design.SchDoc
-altium-cli schdoc component design.SchDoc U1
-altium-cli schdoc pins design.SchDoc -c U1
+```
 
-# Connectivity
+### Connectivity
+
+```bash
+# List wires
 altium-cli schdoc wires design.SchDoc
-altium-cli schdoc nets design.SchDoc --group
-altium-cli schdoc ports design.SchDoc
-altium-cli schdoc power design.SchDoc --group
-altium-cli schdoc junctions design.SchDoc
 
-# JSON export
-altium-cli schdoc json design.SchDoc --full --pretty
+# List ports
+altium-cli schdoc ports design.SchDoc
+```
+
+### JSON Export
+
+```bash
+# Basic export
+altium-cli schdoc json design.SchDoc
+
+# Full details
+altium-cli schdoc json design.SchDoc --full
 ```
 
 ## Command Details
 
 ### overview
 
-Complete design overview including component categories, power analysis, and interface summary.
+Complete design overview with component categories, power analysis, and statistics.
 
 ```bash
 altium-cli schdoc overview <PATH>
 ```
 
-### bom
+Output includes:
+- Sheet information (size, title block)
+- Component count by category
+- Net summary
+- Power net analysis
 
-Generate bill of materials with component grouping.
+### info
+
+Detailed sheet metadata and properties.
 
 ```bash
-altium-cli schdoc bom <PATH>
+altium-cli schdoc info <PATH>
 ```
+
+Output includes:
+- Sheet size and style
+- Title block information
+- Grid settings
+- Record counts
 
 ### netlist
 
-Generate net connectivity map showing all connections.
+Extract net connectivity information.
 
 ```bash
-altium-cli schdoc netlist <PATH>
+altium-cli schdoc netlist <PATH> [OPTIONS]
+
+Options:
+  -f, --filter <PATTERN>  Filter nets by name pattern
 ```
+
+Output includes:
+- Net names
+- Connected pins
+- Component connections
 
 ### power-map
 
-Analyze power distribution showing power nets and connected components.
+Analyze power distribution and connections.
 
 ```bash
 altium-cli schdoc power-map <PATH>
 ```
 
-### signal-flow
-
-Trace signal flow through the design starting from a named signal.
-
-```bash
-altium-cli schdoc signal-flow <PATH> <SIGNAL>
-
-Arguments:
-  <PATH>    Path to .SchDoc file
-  <SIGNAL>  Signal name to trace (e.g., CLK, DATA, RESET)
-```
-
-### project
-
-Analyze multi-file hierarchical project.
-
-```bash
-altium-cli schdoc project <PATH>...
-
-Arguments:
-  <PATH>...  Paths to all .SchDoc files in project
-```
+Output includes:
+- Power net names
+- Power port types
+- Connected components
+- Power symbol locations
 
 ### components
 
-List all components with optional filtering.
+List all placed components.
 
 ```bash
 altium-cli schdoc components <PATH>
 ```
 
-### nets
+Output includes:
+- Designator
+- Library reference
+- Part number
+- Location
 
-List all net labels with optional grouping.
+### wires
+
+List wire primitives for routing analysis.
 
 ```bash
-altium-cli schdoc nets <PATH> [OPTIONS]
-
-Options:
-  --group  Group nets by name
+altium-cli schdoc wires <PATH>
 ```
+
+Output includes:
+- Wire endpoints
+- Wire index
+- Associated net (if any)
+
+### ports
+
+List port definitions for hierarchical designs.
+
+```bash
+altium-cli schdoc ports <PATH>
+```
+
+Output includes:
+- Port name
+- Port I/O type (input, output, bidirectional)
+- Location
 
 ### json
 
@@ -167,6 +184,5 @@ Export full document as JSON for processing.
 altium-cli schdoc json <PATH> [OPTIONS]
 
 Options:
-  --full    Include full component details
-  --pretty  Pretty-print JSON output
+  --full  Include full primitive details
 ```

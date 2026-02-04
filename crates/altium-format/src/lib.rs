@@ -70,7 +70,6 @@ pub mod format;
 pub mod io;
 pub mod ops;
 pub mod traits;
-pub mod tree;
 pub mod types;
 pub mod v2;
 
@@ -116,7 +115,6 @@ pub use v2::{
 // =============================================================================
 
 pub use error::{AltiumError, Result};
-pub use tree::{BreadthFirstWalker, ParentRef, RecordId, RecordTree, TreeRecord, TreeWalker};
 pub use types::{
     Color, Coord, CoordPoint, CoordPoint3D, CoordRect, Layer, ParameterCollection, ParameterValue,
     Unit, UnknownFields,

@@ -17,12 +17,13 @@ fn synthiam_pcblib_path() -> PathBuf {
     path
 }
 
+/// Test reading Synthiam.PcbLib - requires fixture in workspace root
+#[ignore = "Requires Synthiam.PcbLib fixture in workspace root"]
 #[test]
 fn read_synthiam_pcblib() {
     let path = synthiam_pcblib_path();
     if !path.exists() {
-        eprintln!("Skipping: {} not found", path.display());
-        return;
+        panic!("Fixture not found: {}", path.display());
     }
 
     let file = File::open(&path).expect("failed to open Synthiam.PcbLib");
@@ -47,12 +48,13 @@ fn read_synthiam_pcblib() {
     }
 }
 
+/// JSON roundtrip test - requires fixture in workspace root
+#[ignore = "Requires Synthiam.PcbLib fixture in workspace root"]
 #[test]
 fn json_roundtrip_synthiam_pcblib() {
     let path = synthiam_pcblib_path();
     if !path.exists() {
-        eprintln!("Skipping: {} not found", path.display());
-        return;
+        panic!("Fixture not found: {}", path.display());
     }
 
     let file = File::open(&path).expect("failed to open Synthiam.PcbLib");

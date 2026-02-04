@@ -618,7 +618,7 @@ impl SchLibComponent {
 
 /// Parse a raw record into a TypedRecord based on record_id.
 ///
-/// Record IDs from `SchRecordId` in format/record_ids.rs:
+/// Record IDs (see `ObjectId` in v2/types.rs):
 /// - 1: Component
 /// - 2: Pin
 /// - 3: Symbol

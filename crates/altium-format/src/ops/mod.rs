@@ -9,10 +9,18 @@
 //! Supported operations:
 //! - `pcblib` - PCB library operations
 //! - `pcbdoc` - PCB document operations
+//! - `schlib` - Schematic library operations
+//! - `schdoc` - Schematic document operations
+//! - `prjpcb` - Project file operations (cross-document handling)
+//! - `intlib` - Integrated library operations (embedded SchLib + PcbLib)
 //! - `categorization` - Component categorization utilities
 //! - `output` - Output formatting structures
 
 pub mod categorization;
+pub mod intlib;
 pub mod output;
 pub mod pcbdoc;
 pub mod pcblib;
+pub mod prjpcb;
+pub mod schdoc;
+pub mod schlib;

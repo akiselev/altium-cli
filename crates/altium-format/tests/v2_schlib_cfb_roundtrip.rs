@@ -15,13 +15,14 @@ fn workspace_root() -> PathBuf {
     path
 }
 
+/// CFB roundtrip test - requires Synthiam.SchLib fixture
+#[ignore = "Requires Synthiam.SchLib fixture in workspace root"]
 #[test]
 fn cfb_roundtrip_synthiam_schlib() {
     let root = workspace_root();
     let src_path = root.join("Synthiam.SchLib");
     if !src_path.exists() {
-        eprintln!("Skipping: {} not found", src_path.display());
-        return;
+        panic!("Fixture not found: {}", src_path.display());
     }
 
     // Read original

@@ -12,13 +12,14 @@ fn workspace_root() -> PathBuf {
     path
 }
 
+/// CFB roundtrip test - requires Synthiam.PcbLib fixture
+#[ignore = "Requires Synthiam.PcbLib fixture in workspace root"]
 #[test]
 fn cfb_roundtrip_synthiam_pcblib() {
     let root = workspace_root();
     let src_path = root.join("Synthiam.PcbLib");
     if !src_path.exists() {
-        eprintln!("Skipping: {} not found", src_path.display());
-        return;
+        panic!("Fixture not found: {}", src_path.display());
     }
 
     // Read original

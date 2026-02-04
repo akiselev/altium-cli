@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::commands::{pcbdoc::PcbDocCommands, pcblib::PcbLibCommands};
+use crate::commands::{intlib::IntLibCommands, pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, prjpcb::PrjPcbCommands, schdoc::SchDocCommands, schlib::SchLibCommands};
 
 #[derive(Parser)]
 #[command(name = "altium-cli")]
@@ -44,6 +44,34 @@ enum Commands {
         command: PcbLibCommands,
     },
 
+    /// Schematic library operations (browse, pins, primitives)
+    #[command(name = "schlib")]
+    SchLib {
+        #[command(subcommand)]
+        command: SchLibCommands,
+    },
+
+    /// Schematic document operations (components, nets, wires, ports)
+    #[command(name = "schdoc")]
+    SchDoc {
+        #[command(subcommand)]
+        command: SchDocCommands,
+    },
+
+    /// Project file operations (documents, bom, validate)
+    #[command(name = "prjpcb")]
+    PrjPcb {
+        #[command(subcommand)]
+        command: PrjPcbCommands,
+    },
+
+    /// Integrated library operations (browse, extract, search)
+    #[command(name = "intlib")]
+    IntLib {
+        #[command(subcommand)]
+        command: IntLibCommands,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell)
@@ -67,6 +95,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::PcbLib { command } => {
             crate::commands::pcblib::run(&command, format)?;
+        }
+        Commands::SchLib { command } => {
+            crate::commands::schlib::run(&command, format)?;
+        }
+        Commands::SchDoc { command } => {
+            crate::commands::schdoc::run(&command, format)?;
+        }
+        Commands::PrjPcb { command } => {
+            crate::commands::prjpcb::run(&command, format)?;
+        }
+        Commands::IntLib { command } => {
+            crate::commands::intlib::run(&command, format)?;
         }
         Commands::Completions { shell } => {
             use clap::CommandFactory;

@@ -87,22 +87,17 @@ altium-cli intlib search library.IntLib "LM358"
 ```bash
 # Analysis
 altium-cli schdoc overview design.SchDoc
-altium-cli schdoc bom design.SchDoc
+altium-cli schdoc info design.SchDoc
 altium-cli schdoc netlist design.SchDoc
+altium-cli schdoc netlist design.SchDoc --filter "VCC*"
 altium-cli schdoc power-map design.SchDoc
-altium-cli schdoc blocks design.SchDoc
-altium-cli schdoc signal-flow design.SchDoc CLK
 
 # Components
 altium-cli schdoc components design.SchDoc
-altium-cli schdoc component design.SchDoc U1
-altium-cli schdoc pins design.SchDoc -c U1
 
 # Connectivity
 altium-cli schdoc wires design.SchDoc
-altium-cli schdoc nets design.SchDoc --group
 altium-cli schdoc ports design.SchDoc
-altium-cli schdoc power design.SchDoc
 
 # Export
 altium-cli schdoc json design.SchDoc --full
@@ -115,13 +110,25 @@ altium-cli schdoc json design.SchDoc --full
 altium-cli schlib overview components.SchLib
 altium-cli schlib list components.SchLib
 altium-cli schlib search components.SchLib "LM358"
+altium-cli schlib search components.SchLib "op amp" --limit 10
+altium-cli schlib info components.SchLib
 altium-cli schlib component components.SchLib LM358
+altium-cli schlib component components.SchLib LM358 --primitives
+
+# Pins and Primitives
+altium-cli schlib pins components.SchLib
+altium-cli schlib pins components.SchLib -c LM358
+altium-cli schlib primitives components.SchLib LM358
 
 # Create/Edit
 altium-cli schlib create new.SchLib
 altium-cli schlib add-component lib.SchLib MyPart
-altium-cli schlib add-pin lib.SchLib MyPart -n VCC -x 0 -y 100
-altium-cli schlib gen-ic lib.SchLib IC1 --pins "VCC,GND,IN,OUT"
+altium-cli schlib add-component lib.SchLib MyPart -d "My component description"
+altium-cli schlib add-pin lib.SchLib -c MyPart -d 1 -n VCC -e power
+
+# Export
+altium-cli schlib json components.SchLib
+altium-cli schlib json components.SchLib --full
 ```
 
 ### PCB Document (pcbdoc)
@@ -173,21 +180,15 @@ altium-cli pcblib add-dual-row lib.PcbLib FP 8 --pitch 50 --span 300
 ```bash
 # Analysis
 altium-cli prjpcb overview project.PrjPcb
+altium-cli prjpcb info project.PrjPcb
 altium-cli prjpcb documents project.PrjPcb
-altium-cli prjpcb netlist project.PrjPcb
-altium-cli prjpcb components project.PrjPcb
+altium-cli prjpcb documents project.PrjPcb -t Schematic
+altium-cli prjpcb bom project.PrjPcb
 altium-cli prjpcb bom project.PrjPcb --grouped
-altium-cli prjpcb diff-sch-pcb project.PrjPcb
-altium-cli prjpcb validate project.PrjPcb --check-files
+altium-cli prjpcb validate project.PrjPcb
 
-# Edit
-altium-cli prjpcb create new.PrjPcb --name "My Project"
-altium-cli prjpcb add-document project.PrjPcb sheet.SchDoc
-altium-cli prjpcb set-parameter project.PrjPcb Revision "1.0"
-
-# Sync
-altium-cli prjpcb import-to-pcb project.PrjPcb --dry-run
-altium-cli prjpcb sync-to-pcb project.PrjPcb --dry-run
+# Export
+altium-cli prjpcb json project.PrjPcb
 ```
 
 ### Integrated Library (intlib)
@@ -196,13 +197,24 @@ altium-cli prjpcb sync-to-pcb project.PrjPcb --dry-run
 # Browse
 altium-cli intlib overview library.IntLib
 altium-cli intlib list library.IntLib
-altium-cli intlib search library.IntLib "LM358" --limit 10
-altium-cli intlib component library.IntLib LM358 --params
-altium-cli intlib crossrefs library.IntLib --footprint SOIC-8
+altium-cli intlib search library.IntLib "LM358"
+altium-cli intlib search library.IntLib "voltage regulator" --limit 10
+altium-cli intlib info library.IntLib
+altium-cli intlib component library.IntLib LM358
+
+# Embedded Content
+altium-cli intlib symbols library.IntLib
+altium-cli intlib footprints library.IntLib
+altium-cli intlib parameters library.IntLib
+altium-cli intlib parameters library.IntLib -c LM358
 
 # Extract
 altium-cli intlib extract-schlib library.IntLib -o symbols.SchLib
 altium-cli intlib extract-pcblib library.IntLib -o footprints.PcbLib
+
+# Export
+altium-cli intlib json library.IntLib
+altium-cli intlib json library.IntLib --full
 ```
 
 ## Query Language

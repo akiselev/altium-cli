@@ -90,41 +90,55 @@ altium-format = "0.1.0"
 
 ## Quick Start
 
-**CLI usage:**
+**CLI usage (V2 API):**
 ```bash
-# Inspect file structure
-altium-cli inspect components.SchLib
+# Schematic library operations
+altium-cli schlib list components.SchLib
+altium-cli schlib search components.SchLib "LM358"
+altium-cli schlib overview components.SchLib
 
-# Query components
-altium-cli query design.SchDoc "R*"
-
-# Schematic analysis
-altium-cli schdoc bom design.SchDoc
+# Schematic document operations
+altium-cli schdoc overview design.SchDoc
+altium-cli schdoc components design.SchDoc
 altium-cli schdoc netlist design.SchDoc
 
-# PCB analysis
+# PCB library operations
+altium-cli pcblib list footprints.PcbLib
+altium-cli pcblib measure footprints.PcbLib SOIC-8
+altium-cli pcblib overview footprints.PcbLib
+
+# PCB document operations
 altium-cli pcbdoc rules design.PcbDoc
 altium-cli pcbdoc components design.PcbDoc
+altium-cli pcbdoc overview design.PcbDoc
 
-# Project management
+# Project operations
 altium-cli prjpcb overview project.PrjPcb
 altium-cli prjpcb bom project.PrjPcb --grouped
+altium-cli prjpcb validate project.PrjPcb
 
-# Library browsing
-altium-cli schlib list components.SchLib
-altium-cli pcblib measure footprints.PcbLib SOIC-8
+# Integrated library operations
+altium-cli intlib overview library.IntLib
 altium-cli intlib search library.IntLib "LM358"
-
-# Edit schematic
-altium-cli edit design.SchDoc -c "move U1 1000 2000" -o output.SchDoc
+altium-cli intlib extract-schlib library.IntLib -o symbols.SchLib
 ```
 
-**Library usage:**
+**Library usage (V2 API):**
 ```rust
-use altium_format::io::SchLib;
+use altium_format::v2::io::schlib::SchLibV2;
+use altium_format::v2::fields::{TypedRecord, PinData, ComponentData};
 use std::fs::File;
 use std::io::BufReader;
 
+// Open a schematic library
 let file = File::open("components.SchLib")?;
-let lib = SchLib::open(BufReader::new(file))?;
+let lib = SchLibV2::open(BufReader::new(file))?;
+
+// Iterate components with typed access
+for comp in &lib.components {
+    println!("Component: {}", comp.entry.lib_ref);
+    for pin in comp.pins() {
+        println!("  Pin: {} ({})", pin.name, pin.designator);
+    }
+}
 ```

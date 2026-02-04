@@ -8,8 +8,7 @@ use altium_format::v2::io::schdoc::SchDocV2;
 fn test_schdoc_roundtrip(src_dir: &str, filename: &str) {
     let src_path = PathBuf::from(src_dir).join(filename);
     if !src_path.exists() {
-        eprintln!("Skipping: {} not found", src_path.display());
-        return;
+        panic!("Fixture not found: {}", src_path.display());
     }
 
     // Read original
@@ -65,6 +64,8 @@ fn test_schdoc_roundtrip(src_dir: &str, filename: &str) {
     );
 }
 
+/// CFB roundtrip test for M2 Mosaic SchDoc files - requires local fixtures
+#[ignore = "Requires M2_Mosaic-G5_Smart fixtures at C:/Users/dev/git/"]
 #[test]
 fn cfb_roundtrip_m2_mosaic_schdocs() {
     let dir = "C:/Users/dev/git/M2_Mosaic-G5_Smart";
