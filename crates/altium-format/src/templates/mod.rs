@@ -182,14 +182,16 @@ impl<'de> Deserialize<'de> for CoordInput {
     }
 }
 
-/// Parse a coordinate string with units to mils.
-fn parse_coord_string(s: &str) -> Result<CoordInput, String> {
+/// Parse a string into a numeric value and optional unit suffix.
+///
+/// Returns `(value, unit_lowercase)` where unit is empty if no suffix.
+fn parse_number_with_unit(s: &str) -> Result<(f64, String), String> {
     let s = s.trim();
     if s.is_empty() {
         return Err("empty coordinate string".to_string());
     }
 
-    // Try to find where the number ends and the unit begins
+    // Find where the number ends and the unit begins
     let mut split_pos = s.len();
     for (i, c) in s.char_indices().rev() {
         if c.is_ascii_digit() || c == '.' || c == '-' || c == '+' {
@@ -205,14 +207,35 @@ fn parse_coord_string(s: &str) -> Result<CoordInput, String> {
         .parse()
         .map_err(|e| format!("invalid number '{}': {}", num_str, e))?;
 
-    let mils = match unit_str.as_str() {
-        "" | "mil" | "mils" => value,
-        "mm" => value / 0.0254,
-        "in" | "inch" | "inches" => value * 1000.0,
-        "cm" => value * 10.0 / 0.0254,
-        _ => return Err(format!("unknown unit '{}'", unit_str)),
-    };
+    Ok((value, unit_str))
+}
 
+/// Convert a value with a given unit to mils.
+fn to_mils_with_unit(value: f64, unit: &str) -> Result<f64, String> {
+    match unit {
+        "" | "mil" | "mils" => Ok(value),
+        "mm" => Ok(value / 0.0254),
+        "in" | "inch" | "inches" => Ok(value * 1000.0),
+        "cm" => Ok(value * 10.0 / 0.0254),
+        _ => Err(format!("unknown unit '{}'", unit)),
+    }
+}
+
+/// Convert a value with a given unit to mm.
+fn to_mm_with_unit(value: f64, unit: &str) -> Result<f64, String> {
+    match unit {
+        "" | "mm" => Ok(value),
+        "mil" | "mils" => Ok(value * 0.0254),
+        "in" | "inch" | "inches" => Ok(value * 25.4),
+        "cm" => Ok(value * 10.0),
+        _ => Err(format!("unknown unit '{}'", unit)),
+    }
+}
+
+/// Parse a coordinate string with units to mils.
+fn parse_coord_string(s: &str) -> Result<CoordInput, String> {
+    let (value, unit) = parse_number_with_unit(s)?;
+    let mils = to_mils_with_unit(value, &unit)?;
     Ok(CoordInput(mils))
 }
 
@@ -333,34 +356,8 @@ impl<'de> Deserialize<'de> for MmInput {
 
 /// Parse a mm-default coordinate string.
 fn parse_mm_string(s: &str) -> Result<MmInput, String> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Err("empty coordinate string".to_string());
-    }
-
-    let mut split_pos = s.len();
-    for (i, c) in s.char_indices().rev() {
-        if c.is_ascii_digit() || c == '.' || c == '-' || c == '+' {
-            split_pos = i + c.len_utf8();
-            break;
-        }
-    }
-
-    let num_str = &s[..split_pos];
-    let unit_str = s[split_pos..].trim().to_lowercase();
-
-    let value: f64 = num_str
-        .parse()
-        .map_err(|e| format!("invalid number '{}': {}", num_str, e))?;
-
-    let mm = match unit_str.as_str() {
-        "" | "mm" => value,
-        "mil" | "mils" => value * 0.0254,
-        "in" | "inch" | "inches" => value * 25.4,
-        "cm" => value * 10.0,
-        _ => return Err(format!("unknown unit '{}'", unit_str)),
-    };
-
+    let (value, unit) = parse_number_with_unit(s)?;
+    let mm = to_mm_with_unit(value, &unit)?;
     Ok(MmInput(mm))
 }
 

@@ -52,6 +52,10 @@ pub enum AltiumError {
     /// Validation error for invalid data values.
     #[error("Validation error: {0}")]
     Validation(String),
+
+    /// Template application error.
+    #[error("Template error: {0}")]
+    Template(String),
 }
 
 /// Result type alias for Altium operations.

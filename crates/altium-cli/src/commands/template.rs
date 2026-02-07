@@ -36,7 +36,10 @@ pub fn run(cmd: &TemplateCommands, format: &str) -> Result<(), Box<dyn std::erro
     match cmd {
         TemplateCommands::List => {
             let templates = altium_format::templates::list_templates();
-            if format.contains("json") {
+            if format == "json" {
+                let json = serde_json::to_string(&templates)?;
+                println!("{}", json);
+            } else if format == "json-pretty" {
                 let json = serde_json::to_string_pretty(&templates)?;
                 println!("{}", json);
             } else {
@@ -46,7 +49,7 @@ pub fn run(cmd: &TemplateCommands, format: &str) -> Result<(), Box<dyn std::erro
                 }
                 println!();
                 println!("Use 'template schema <name>' to get the JSON Schema for a template.");
-                println!("Use 'template apply <name> <file> --json <input>' to apply a template.");
+                println!("Use 'template apply <name> <file> --input <json>' to apply a template.");
             }
         }
 
@@ -108,14 +111,38 @@ fn read_json_input(
             Ok(buffer)
         }
         (Some(ref file_path), None) => Ok(std::fs::read_to_string(file_path)?),
-        (None, None) => Err("Must provide either --file <file> or --json <string>".into()),
+        (None, None) => Err("Must provide either --file <file> or --input <string>".into()),
     }
+}
+
+/// Validate that a file path has an expected extension for the template type.
+fn validate_file_extension(
+    path: &std::path::Path,
+    expected_ext: &str,
+    template_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    if !ext.eq_ignore_ascii_case(expected_ext) {
+        return Err(format!(
+            "template '{}' expects a .{} file, got '{}'",
+            template_name,
+            expected_ext,
+            path.display()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn apply_schlib_component(
     path: &std::path::Path,
     json_content: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    validate_file_extension(path, "SchLib", "schlib-component")?;
+
     use altium_format::templates::schlib::SchComponentTemplate;
 
     let template: SchComponentTemplate = serde_json::from_str(json_content)?;
@@ -146,6 +173,8 @@ fn apply_pcblib_footprint(
     path: &std::path::Path,
     json_content: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    validate_file_extension(path, "PcbLib", "pcblib-footprint")?;
+
     use altium_format::templates::pcblib::PcbFootprintTemplate;
 
     let template: PcbFootprintTemplate = serde_json::from_str(json_content)?;
@@ -176,11 +205,8 @@ fn apply_schdoc_placement(
     _path: &std::path::Path,
     _json_content: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // SchDoc placement requires the edit session infrastructure
-    // which is more complex. For now, provide a clear message.
-    println!("schdoc-placement template application is available through the edit command.");
-    println!("Use: altium-cli edit <file> -c \"add-wire ...\" for individual operations.");
-    println!("The schdoc-placement template schema can be used for LLM structured output");
-    println!("to plan edits, which can then be applied via the edit command.");
-    Ok(())
+    Err("schdoc-placement template apply is not yet implemented. \
+         Use 'altium-cli edit <file> -c \"add-wire ...\"' for individual operations, \
+         or use 'template schema schdoc-placement' to get the JSON Schema for LLM structured output."
+        .into())
 }

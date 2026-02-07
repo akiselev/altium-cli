@@ -133,7 +133,7 @@ pub struct NetLabelPlacement {
     /// Y position (mils).
     pub y: CoordInput,
     /// Orientation: "horizontal", "vertical". Default: "horizontal".
-    #[serde(default = "default_orientation")]
+    #[serde(default = "default_net_label_orientation")]
     pub orientation: String,
 }
 
@@ -181,6 +181,10 @@ pub struct PortPlacement {
 
 fn default_orientation() -> String {
     "normal".to_string()
+}
+
+fn default_net_label_orientation() -> String {
+    "horizontal".to_string()
 }
 
 fn default_io_type() -> String {

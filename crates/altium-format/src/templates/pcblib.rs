@@ -339,6 +339,39 @@ fn default_courtyard_width() -> MmInput {
 // ═══════════════════════════════════════════════════════════════════════════
 
 impl PcbFootprintTemplate {
+    /// Compute the approximate position of pad 1 from template inputs.
+    ///
+    /// Returns `(x_mm, y_mm)` for the first pad, or `None` if no pads are defined.
+    fn first_pad_position(&self) -> Option<(f64, f64)> {
+        // Check explicit pads first
+        if let Some(pad) = self.pads.first() {
+            return Some((pad.x.to_mm(), pad.y.to_mm()));
+        }
+        // Dual rows: pad 1 is at left side, bottom of left column
+        if let Some(dual) = self.dual_rows.first() {
+            let half_span = dual.row_spacing.to_mm() / 2.0;
+            let row_length = (dual.pads_per_side - 1) as f64 * dual.pitch.to_mm();
+            return Some((-half_span, -row_length / 2.0));
+        }
+        // Pad rows: pad 1 is at the start position
+        if let Some(row) = self.pad_rows.first() {
+            return Some((row.start_x.to_mm(), row.start_y.to_mm()));
+        }
+        // Quad pads: pad 1 is at the bottom of the left side
+        if let Some(quad) = self.quad_pads.first() {
+            let half_span = quad.span.to_mm() / 2.0;
+            let row_length = (quad.pads_per_side - 1) as f64 * quad.pitch.to_mm();
+            return Some((-half_span, -row_length / 2.0));
+        }
+        // Grid pads: pad A1 is at top-left
+        if let Some(grid) = self.pad_grids.first() {
+            let grid_width = (grid.cols - 1) as f64 * grid.pitch.to_mm();
+            let grid_height = (grid.rows - 1) as f64 * grid.pitch.to_mm();
+            return Some((-grid_width / 2.0, grid_height / 2.0));
+        }
+        None
+    }
+
     /// Apply this template to produce a `PcbComponent`.
     pub fn apply(&self) -> Result<PcbComponent> {
         let mut builder = FootprintBuilder::new(&self.name);
@@ -535,14 +568,19 @@ impl PcbFootprintTemplate {
         // Pin 1 indicator
         let show_indicator = self.pin1_indicator.unwrap_or(has_pads);
         if show_indicator && has_pads {
-            // Place indicator near pin 1, which is typically at the most negative position
-            // For dual-row: left side, bottom
-            // This is a reasonable default; explicit placement can override
-            if let Some(ref silk) = self.silkscreen {
+            // Compute indicator position near pin 1
+            let (ind_x, ind_y) = if let Some(ref silk) = self.silkscreen {
+                // Place outside silkscreen, near bottom-left corner
                 let x = silk.x.to_mm() - silk.width.to_mm() / 2.0 - 0.5;
                 let y = silk.y.to_mm() - silk.height.to_mm() / 2.0;
-                builder.add_pin1_indicator(x, y, 0.3);
-            }
+                (x, y)
+            } else {
+                // Infer position from pad geometry: find first pad position
+                self.first_pad_position()
+                    .map(|(x, y)| (x - 0.5, y - 0.5))
+                    .unwrap_or((-0.5, -0.5))
+            };
+            builder.add_pin1_indicator(ind_x, ind_y, 0.3);
         }
 
         let component = builder.build_deterministic(&mut ());

@@ -55,7 +55,8 @@ pub struct SchComponentTemplate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Designator prefix (e.g., "U", "R", "C"). Inferred from name if not provided.
+    /// Designator prefix (e.g., "U?", "R?", "C?"). Inferred from name if not provided.
+    /// The "?" suffix is Altium's auto-numbering placeholder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub designator_prefix: Option<String>,
 
@@ -329,7 +330,7 @@ impl SchComponentTemplate {
         let designator_text = self
             .designator_prefix
             .clone()
-            .unwrap_or_else(|| infer_designator_prefix(&self.name, self.description.as_deref().unwrap_or("")));
+            .unwrap_or_else(|| infer_designator_prefix(&self.name, self.description.as_deref()));
         let designator = SchDesignator {
             param: SchParameter {
                 label: SchLabel {
@@ -370,15 +371,15 @@ impl SchComponentTemplate {
 
             let mut graphical = SchGraphicalBase::default();
             graphical.base.owner_part_id = Some(1);
-            graphical.location_x = mils_to_raw(0.0);
-            graphical.location_y = mils_to_raw(0.0);
+            graphical.location_x = CoordInput::from_mils(0.0).to_raw();
+            graphical.location_y = CoordInput::from_mils(0.0).to_raw();
             graphical.color = border;
             graphical.area_color = fill;
 
             let rect = SchRectangle {
                 graphical,
-                corner_x: mils_to_raw(body_width_mils),
-                corner_y: mils_to_raw(body_height_mils),
+                corner_x: CoordInput::from_mils(body_width_mils).to_raw(),
+                corner_y: CoordInput::from_mils(body_height_mils).to_raw(),
                 line_width: LineWidth::Small,
                 is_solid: true,
                 transparent: false,
@@ -441,20 +442,36 @@ impl SchComponentTemplate {
                           x_mils: f64,
                           y_mils: f64,
                           conglomerate: PinConglomerateFlags|
-         -> SchPin {
+         -> Result<SchPin> {
             let length = pin_tmpl
                 .length
                 .as_ref()
                 .map(|c| c.to_mils())
                 .unwrap_or(pin_length_mils);
 
-            let electrical = pin_tmpl
-                .electrical
-                .as_deref()
-                .map(parse_electrical_type)
-                .unwrap_or(PinElectricalType::Passive);
+            let electrical = match pin_tmpl.electrical.as_deref() {
+                Some(s) => parse_electrical_type(s).map_err(|e| {
+                    crate::error::AltiumError::Template(format!(
+                        "pin '{}': {}", pin_tmpl.designator, e
+                    ))
+                })?,
+                None => PinElectricalType::Passive,
+            };
 
-            let mut flags = conglomerate;
+            // Use explicit orientation if set, otherwise use side-inferred conglomerate
+            let orientation_flags = pin_tmpl
+                .orientation
+                .as_deref()
+                .map(|o| match o.to_lowercase().as_str() {
+                    "right" => PinConglomerateFlags::NONE,
+                    "left" => PinConglomerateFlags::FLIPPED,
+                    "down" => PinConglomerateFlags::ROTATED,
+                    "up" => PinConglomerateFlags::ROTATED | PinConglomerateFlags::FLIPPED,
+                    _ => conglomerate,
+                })
+                .unwrap_or(conglomerate);
+
+            let mut flags = orientation_flags;
             flags |= PinConglomerateFlags::DISPLAY_NAME_VISIBLE;
             flags |= PinConglomerateFlags::DESIGNATOR_VISIBLE;
             if pin_tmpl.hidden {
@@ -463,17 +480,17 @@ impl SchComponentTemplate {
 
             let mut graphical = SchGraphicalBase::default();
             graphical.base.owner_part_id = Some(1);
-            graphical.location_x = mils_to_raw(x_mils);
-            graphical.location_y = mils_to_raw(y_mils);
+            graphical.location_x = CoordInput::from_mils(x_mils).to_raw();
+            graphical.location_y = CoordInput::from_mils(y_mils).to_raw();
             graphical.color = 0x000080;
 
-            SchPin {
+            Ok(SchPin {
                 graphical,
                 designator: pin_tmpl.designator.clone(),
                 name: pin_tmpl.name.clone(),
                 electrical,
                 pin_conglomerate: flags,
-                pin_length: mils_to_raw(length),
+                pin_length: CoordInput::from_mils(length).to_raw(),
                 description: pin_tmpl.description.clone().unwrap_or_default(),
                 symbol_inner_edge: pin_tmpl
                     .symbol_inner
@@ -496,7 +513,7 @@ impl SchComponentTemplate {
                     .map(parse_pin_symbol)
                     .unwrap_or(PinSymbol::None),
                 ..Default::default()
-            }
+            })
         };
 
         // Left pins (pointing right into body)
@@ -507,7 +524,7 @@ impl SchComponentTemplate {
                 let y = body_height_mils - (i + 1) as f64 * pin_spacing_mils;
                 (-pin_length_mils, y)
             };
-            let pin = create_pin(pin_tmpl, x, y, PinConglomerateFlags::NONE);
+            let pin = create_pin(pin_tmpl, x, y, PinConglomerateFlags::NONE)?;
             primitives.push(SchRecord::Pin(pin));
         }
 
@@ -519,7 +536,7 @@ impl SchComponentTemplate {
                 let y = body_height_mils - (i + 1) as f64 * pin_spacing_mils;
                 (body_width_mils + pin_length_mils, y)
             };
-            let pin = create_pin(pin_tmpl, x, y, PinConglomerateFlags::FLIPPED);
+            let pin = create_pin(pin_tmpl, x, y, PinConglomerateFlags::FLIPPED)?;
             primitives.push(SchRecord::Pin(pin));
         }
 
@@ -531,7 +548,7 @@ impl SchComponentTemplate {
                 let x = (i + 1) as f64 * pin_spacing_mils;
                 (x, body_height_mils + pin_length_mils)
             };
-            let pin = create_pin(pin_tmpl, x, y, PinConglomerateFlags::ROTATED);
+            let pin = create_pin(pin_tmpl, x, y, PinConglomerateFlags::ROTATED)?;
             primitives.push(SchRecord::Pin(pin));
         }
 
@@ -548,7 +565,7 @@ impl SchComponentTemplate {
                 x,
                 y,
                 PinConglomerateFlags::ROTATED | PinConglomerateFlags::FLIPPED,
-            );
+            )?;
             primitives.push(SchRecord::Pin(pin));
         }
 
@@ -594,21 +611,20 @@ impl PinTemplate {
 // Helper Functions
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn mils_to_raw(mils: f64) -> i32 {
-    (mils * 10000.0).round() as i32
-}
-
-fn parse_electrical_type(s: &str) -> PinElectricalType {
+fn parse_electrical_type(s: &str) -> std::result::Result<PinElectricalType, String> {
     match s.to_lowercase().as_str() {
-        "input" | "in" => PinElectricalType::Input,
-        "output" | "out" => PinElectricalType::Output,
-        "io" | "inputoutput" | "bidirectional" => PinElectricalType::InputOutput,
-        "passive" | "pas" => PinElectricalType::Passive,
-        "power" | "pwr" => PinElectricalType::Power,
-        "oc" | "opencollector" | "open_collector" => PinElectricalType::OpenCollector,
-        "oe" | "openemitter" | "open_emitter" => PinElectricalType::OpenEmitter,
-        "hiz" | "hi_z" | "tristate" => PinElectricalType::HiZ,
-        _ => PinElectricalType::Passive,
+        "input" | "in" => Ok(PinElectricalType::Input),
+        "output" | "out" => Ok(PinElectricalType::Output),
+        "io" | "inputoutput" | "bidirectional" => Ok(PinElectricalType::InputOutput),
+        "passive" | "pas" => Ok(PinElectricalType::Passive),
+        "power" | "pwr" => Ok(PinElectricalType::Power),
+        "oc" | "opencollector" | "open_collector" => Ok(PinElectricalType::OpenCollector),
+        "oe" | "openemitter" | "open_emitter" => Ok(PinElectricalType::OpenEmitter),
+        "hiz" | "hi_z" | "tristate" => Ok(PinElectricalType::HiZ),
+        _ => Err(format!(
+            "unknown electrical type '{}'. Valid values: input, output, io, passive, power, oc, oe, hiz",
+            s
+        )),
     }
 }
 
@@ -635,9 +651,9 @@ fn parse_pin_symbol(s: &str) -> PinSymbol {
 /// - Generic ICs → "U"
 /// - Connectors → "J"
 /// - etc.
-fn infer_designator_prefix(name: &str, description: &str) -> String {
+fn infer_designator_prefix(name: &str, description: Option<&str>) -> String {
     let n = name.to_uppercase();
-    let d = description.to_uppercase();
+    let d = description.unwrap_or("").to_uppercase();
 
     // Check for common passive prefixes
     if n.starts_with("R_") || n.starts_with("R ") || d.contains("RESISTOR") {
@@ -782,11 +798,11 @@ mod tests {
 
     #[test]
     fn test_designator_inference() {
-        assert_eq!(infer_designator_prefix("R_100K", ""), "R?");
-        assert_eq!(infer_designator_prefix("C_100nF", ""), "C?");
-        assert_eq!(infer_designator_prefix("LM358", "Dual Op-Amp"), "U?");
+        assert_eq!(infer_designator_prefix("R_100K", None), "R?");
+        assert_eq!(infer_designator_prefix("C_100nF", None), "C?");
+        assert_eq!(infer_designator_prefix("LM358", Some("Dual Op-Amp")), "U?");
         assert_eq!(
-            infer_designator_prefix("CONN_01x04", "Connector"),
+            infer_designator_prefix("CONN_01x04", Some("Connector")),
             "J?"
         );
     }
