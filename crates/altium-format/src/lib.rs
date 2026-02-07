@@ -98,6 +98,7 @@ pub mod io;
 pub mod ops;
 pub mod query;
 pub mod records;
+pub mod templates;
 pub mod traits;
 pub mod tree;
 pub mod types;

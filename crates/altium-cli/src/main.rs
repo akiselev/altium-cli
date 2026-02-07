@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::commands::{intlib::IntLibCommands, pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, prjpcb::PrjPcbCommands, schdoc::SchDocCommands, schlib::SchLibCommands};
+use crate::commands::{intlib::IntLibCommands, pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, prjpcb::PrjPcbCommands, schdoc::SchDocCommands, schlib::SchLibCommands, template::TemplateCommands};
 
 #[derive(Parser)]
 #[command(name = "altium-cli")]
@@ -129,6 +129,13 @@ enum Commands {
         command: IntLibCommands,
     },
 
+    /// Template operations (list, schema export, apply)
+    #[command(name = "template")]
+    Template {
+        #[command(subcommand)]
+        command: TemplateCommands,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell)
@@ -180,6 +187,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::IntLib { command } => {
             crate::commands::intlib::run(&command, format)?;
+        }
+        Commands::Template { command } => {
+            crate::commands::template::run(&command, format)?;
         }
         Commands::Completions { shell } => {
             use clap::CommandFactory;

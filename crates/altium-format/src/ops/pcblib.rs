@@ -1718,6 +1718,11 @@ pub fn cmd_render_ascii(
 
 // Helper functions
 
+/// Open an existing PcbLib or create a new blank one if the file doesn't exist.
+pub fn open_or_create(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
+    open_or_create_pcblib(path)
+}
+
 fn open_or_create_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
     if path.exists() {
         open_pcblib(path)

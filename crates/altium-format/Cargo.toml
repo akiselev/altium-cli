@@ -41,3 +41,4 @@ resvg = "0.44"
 thiserror = "2.0.17"
 uuid = { version = "1.19", features = ["v4"] }
 base64 = "0.22.1"
+schemars = "0.8"
