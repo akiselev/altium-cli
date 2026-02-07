@@ -612,6 +612,11 @@ fn load_blank_schlib() -> Result<SchLib, Box<dyn std::error::Error>> {
 }
 
 /// Open or create a SchLib file.
+/// Open an existing SchLib or create a new blank one if the file doesn't exist.
+pub fn open_or_create(path: &Path) -> Result<SchLib, Box<dyn std::error::Error>> {
+    open_or_create_schlib(path)
+}
+
 fn open_or_create_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Error>> {
     if path.exists() {
         open_schlib(path)

@@ -9,3 +9,4 @@ pub mod prjpcb;
 pub mod query;
 pub mod schdoc;
 pub mod schlib;
+pub mod template;
