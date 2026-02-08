@@ -1124,7 +1124,7 @@ impl PcbRectangularBase {
 
 /// Dispatch enum containing all PCB record types.
 ///
-/// Large variants (Pad, ComponentBody) are boxed to reduce enum size on the stack.
+/// Large variants (Pad, ComponentBody, Dimension) are boxed to reduce enum size on the stack.
 #[derive(Debug, Clone)]
 pub enum PcbRecord {
     Arc(super::PcbArc),
@@ -1136,6 +1136,8 @@ pub enum PcbRecord {
     Region(super::PcbRegion),
     ComponentBody(Box<super::PcbComponentBody>),
     Polygon(super::PcbPolygon),
+    Dimension(Box<super::PcbDimension>),
+    Coordinate(super::PcbCoordinate),
     /// Unknown record type.
     Unknown {
         object_id: PcbObjectId,
@@ -1156,6 +1158,8 @@ impl PcbRecord {
             PcbRecord::Region(_) => PcbObjectId::Region,
             PcbRecord::ComponentBody(_) => PcbObjectId::ComponentBody,
             PcbRecord::Polygon(_) => PcbObjectId::Polygon,
+            PcbRecord::Dimension(_) => PcbObjectId::Dimension,
+            PcbRecord::Coordinate(_) => PcbObjectId::Coordinate,
             PcbRecord::Unknown { object_id, .. } => *object_id,
         }
     }
@@ -1172,6 +1176,8 @@ impl PcbRecord {
             PcbRecord::Region(r) => r.common.layer,
             PcbRecord::ComponentBody(r) => r.common.layer,
             PcbRecord::Polygon(r) => r.layer,
+            PcbRecord::Dimension(r) => r.layer,
+            PcbRecord::Coordinate(r) => r.layer,
             PcbRecord::Unknown { .. } => Layer::default(),
         }
     }

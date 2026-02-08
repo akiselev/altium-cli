@@ -8,7 +8,9 @@ mod class;
 mod component;
 mod component_body;
 mod connection;
+mod coordinate;
 mod differential_pair;
+mod dimension;
 mod fill;
 mod fromto;
 mod net;
@@ -29,7 +31,9 @@ pub use class::*;
 pub use component::*;
 pub use component_body::*;
 pub use connection::*;
+pub use coordinate::*;
 pub use differential_pair::*;
+pub use dimension::*;
 pub use fill::*;
 pub use fromto::*;
 pub use net::*;
@@ -187,6 +191,38 @@ impl DumpTree for PcbComponentBody {
     }
 }
 
+impl DumpTree for PcbDimension {
+    fn dump(&self, tree: &mut TreeBuilder) {
+        let mut props = vec![
+            ("kind", self.dimension_kind.name().to_string()),
+            ("layer", fmt_layer(&self.layer)),
+        ];
+        if self.x1.to_raw() != 0 || self.y1.to_raw() != 0 {
+            props.push(("from", format!("({}, {})", fmt_coord_val(&self.x1), fmt_coord_val(&self.y1))));
+        }
+        if self.x2.to_raw() != 0 || self.y2.to_raw() != 0 {
+            props.push(("to", format!("({}, {})", fmt_coord_val(&self.x2), fmt_coord_val(&self.y2))));
+        }
+        if !self.references.is_empty() {
+            props.push(("references", format!("{}", self.references.len())));
+        }
+        tree.add_leaf("Dimension", &props);
+    }
+}
+
+impl DumpTree for PcbCoordinate {
+    fn dump(&self, tree: &mut TreeBuilder) {
+        let mut props = vec![
+            ("layer", fmt_layer(&self.layer)),
+            ("position", format!("({}, {})", fmt_coord_val(&self.x), fmt_coord_val(&self.y))),
+        ];
+        if self.angle != 0.0 {
+            props.push(("angle", fmt_angle(self.angle)));
+        }
+        tree.add_leaf("Coordinate", &props);
+    }
+}
+
 impl DumpTree for PcbRecord {
     fn dump(&self, tree: &mut TreeBuilder) {
         match self {
@@ -199,6 +235,8 @@ impl DumpTree for PcbRecord {
             PcbRecord::Region(r) => r.dump(tree),
             PcbRecord::ComponentBody(r) => r.dump(tree),
             PcbRecord::Polygon(r) => r.dump(tree),
+            PcbRecord::Dimension(r) => r.dump(tree),
+            PcbRecord::Coordinate(r) => r.dump(tree),
             PcbRecord::Unknown {
                 object_id,
                 raw_data,

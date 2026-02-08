@@ -594,9 +594,10 @@ impl PcbLib {
             PcbRecord::Fill(_) => 6,
             PcbRecord::Region(_) => 11,
             PcbRecord::ComponentBody(_) => 12,
-            PcbRecord::Polygon(_) => {
+            PcbRecord::Polygon(_) | PcbRecord::Dimension(_) | PcbRecord::Coordinate(_) => {
                 return Err(AltiumError::Parse(
-                    "Polygons are not supported in PcbLib footprints".to_string(),
+                    "Polygons, Dimensions, and Coordinates are not supported in PcbLib footprints"
+                        .to_string(),
                 ));
             }
             PcbRecord::Unknown { object_id, .. } => *object_id as u8,
@@ -646,9 +647,9 @@ impl PcbLib {
                 body.write_to(&mut data)?;
                 write_block(writer, &data, 0)?;
             }
-            PcbRecord::Polygon(_) => {
+            PcbRecord::Polygon(_) | PcbRecord::Dimension(_) | PcbRecord::Coordinate(_) => {
                 // Already handled above with an error, unreachable
-                unreachable!("Polygons should have errored in object_id match")
+                unreachable!("Polygons/Dimensions/Coordinates should have errored in object_id match")
             }
             PcbRecord::Unknown { raw_data, .. } => {
                 write_block(writer, raw_data, 0)?;

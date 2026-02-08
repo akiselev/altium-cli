@@ -13,8 +13,9 @@ use crate::error::{AltiumError, Result};
 use crate::io::reader::{read_block, read_parameters_block};
 use crate::io::writer::write_parameters_block;
 use crate::records::pcb::{
-    PcbAdvancedPlacerOptions, PcbArc, PcbClass, PcbDrcOptions, PcbFill, PcbObjectId,
-    PcbPinSwapOptions, PcbPolygon, PcbRecord, PcbRegion, PcbRule, PcbText, PcbTrack, PcbVia,
+    PcbAdvancedPlacerOptions, PcbArc, PcbClass, PcbCoordinate, PcbDimension, PcbDrcOptions,
+    PcbFill, PcbObjectId, PcbPinSwapOptions, PcbPolygon, PcbRecord, PcbRegion, PcbRule, PcbText,
+    PcbTrack, PcbVia,
 };
 use crate::traits::FromBinary;
 use crate::types::ParameterCollection;
@@ -259,14 +260,9 @@ impl PcbDoc {
         })?;
 
         // Read polygons (copper pours)
+        // Note: Polygons6/Data uses parameter format without a record ID byte prefix.
+        // Each record is [i32 size][parameter_string] (same as Components6/Data).
         self.read_primitive_storage(cf, "/Polygons6/Data", |cursor, _| {
-            let record_id = cursor.read_u8()?;
-            if record_id != PcbObjectId::Polygon.to_byte() {
-                return Err(AltiumError::InvalidRecord(format!(
-                    "Expected Polygon record ID (10), got {}",
-                    record_id
-                )));
-            }
             let params = read_parameters_block(cursor)?;
             Ok(PcbRecord::Polygon(PcbPolygon::from_params(&params)))
         })?;
@@ -283,6 +279,29 @@ impl PcbDoc {
             let block = read_block(cursor)?;
             let mut block_cursor = Cursor::new(&block);
             <PcbText as FromBinary>::read_from(&mut block_cursor).map(PcbRecord::Text)
+        })?;
+
+        // Read dimensions
+        // Dimensions6/Data uses a 2-byte header [u8 version][u8 flags] before each
+        // parameter block: [version][flags][i32 size][parameter_string]
+        self.read_primitive_storage(cf, "/Dimensions6/Data", |cursor, _| {
+            let _version = cursor.read_u8()?;
+            let _flags = cursor.read_u8()?;
+            let params = read_parameters_block(cursor)?;
+            Ok(PcbRecord::Dimension(Box::new(PcbDimension::from_params(
+                &params,
+            ))))
+        })?;
+
+        // Read coordinates
+        // Coordinates6/Data format: assumed to use the same 2-byte header as
+        // Dimensions6/Data ([u8 version][u8 flags][i32 size][parameter_string]).
+        // Not yet verified from real data (all test files have empty streams).
+        self.read_primitive_storage(cf, "/Coordinates6/Data", |cursor, _| {
+            let _version = cursor.read_u8()?;
+            let _flags = cursor.read_u8()?;
+            let params = read_parameters_block(cursor)?;
+            Ok(PcbRecord::Coordinate(PcbCoordinate::from_params(&params)))
         })?;
 
         Ok(())
@@ -907,6 +926,8 @@ impl PcbDoc {
     /// - Fills
     /// - Regions
     /// - Polygons
+    /// - Dimensions
+    /// - Coordinates
     /// - Components
     /// - Rules
     pub fn save_all_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
@@ -939,6 +960,12 @@ impl PcbDoc {
 
         // Write polygons
         self.write_polygons_internal(&mut cf)?;
+
+        // Write dimensions
+        self.write_dimensions(&mut cf)?;
+
+        // Write coordinates
+        self.write_coordinates(&mut cf)?;
 
         // Write pads
         self.write_pads(&mut cf)?;
@@ -1276,6 +1303,82 @@ impl PcbDoc {
         Ok(())
     }
 
+    /// Write dimensions to the CFB file.
+    fn write_dimensions<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
+        use byteorder::WriteBytesExt;
+
+        let data_path = "/Dimensions6/Data";
+
+        if cf.entry(data_path).is_err() {
+            return Ok(());
+        }
+
+        let mut buffer = Vec::new();
+        for prim in &self.primitives {
+            if let PcbRecord::Dimension(dim) = prim {
+                // Write 2-byte header: version=1, flags=0
+                buffer.write_u8(0x01)?;
+                buffer.write_u8(0x00)?;
+                // Write parameter block
+                let params = dim.to_params();
+                write_parameters_block(&mut buffer, &params)?;
+            }
+        }
+
+        let mut stream = cf.open_stream(data_path).map_err(|e| {
+            AltiumError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                e.to_string(),
+            ))
+        })?;
+
+        stream.seek(SeekFrom::Start(0))?;
+        stream.write_all(&buffer)?;
+        stream
+            .set_len(buffer.len() as u64)
+            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
+
+        Ok(())
+    }
+
+    /// Write coordinates to the CFB file.
+    fn write_coordinates<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
+        use byteorder::WriteBytesExt;
+
+        let data_path = "/Coordinates6/Data";
+
+        if cf.entry(data_path).is_err() {
+            return Ok(());
+        }
+
+        let mut buffer = Vec::new();
+        for prim in &self.primitives {
+            if let PcbRecord::Coordinate(coord) = prim {
+                // Write 2-byte header (assumed same as Dimensions6/Data)
+                buffer.write_u8(0x01)?;
+                buffer.write_u8(0x00)?;
+                // Write parameter block
+                let params = coord.to_params();
+                write_parameters_block(&mut buffer, &params)?;
+            }
+        }
+
+        let mut stream = cf.open_stream(data_path).map_err(|e| {
+            AltiumError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                e.to_string(),
+            ))
+        })?;
+
+        stream.seek(SeekFrom::Start(0))?;
+        stream.write_all(&buffer)?;
+        stream
+            .set_len(buffer.len() as u64)
+            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
+
+        Ok(())
+    }
+
     /// Count arcs.
     pub fn arc_count(&self) -> usize {
         self.primitives
@@ -1316,6 +1419,22 @@ impl PcbDoc {
             .count()
     }
 
+    /// Count dimensions.
+    pub fn dimension_count(&self) -> usize {
+        self.primitives
+            .iter()
+            .filter(|p| matches!(p, PcbRecord::Dimension(_)))
+            .count()
+    }
+
+    /// Count coordinates.
+    pub fn coordinate_count(&self) -> usize {
+        self.primitives
+            .iter()
+            .filter(|p| matches!(p, PcbRecord::Coordinate(_)))
+            .count()
+    }
+
     /// Add a track.
     pub fn add_track(&mut self, track: PcbTrack) {
         self.primitives.push(PcbRecord::Track(track));
@@ -1344,6 +1463,17 @@ impl PcbDoc {
     /// Add a polygon.
     pub fn add_polygon(&mut self, polygon: PcbPolygon) {
         self.primitives.push(PcbRecord::Polygon(polygon));
+    }
+
+    /// Add a dimension.
+    pub fn add_dimension(&mut self, dimension: PcbDimension) {
+        self.primitives
+            .push(PcbRecord::Dimension(Box::new(dimension)));
+    }
+
+    /// Add a coordinate.
+    pub fn add_coordinate(&mut self, coordinate: PcbCoordinate) {
+        self.primitives.push(PcbRecord::Coordinate(coordinate));
     }
 
     /// Remove primitive at index.
@@ -1436,6 +1566,28 @@ impl PcbDoc {
         self.primitives.iter().filter_map(|p| {
             if let PcbRecord::Text(t) = p {
                 Some(t)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Iterate over dimensions.
+    pub fn iter_dimensions(&self) -> impl Iterator<Item = &PcbDimension> {
+        self.primitives.iter().filter_map(|p| {
+            if let PcbRecord::Dimension(d) = p {
+                Some(d.as_ref())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Iterate over coordinates.
+    pub fn iter_coordinates(&self) -> impl Iterator<Item = &PcbCoordinate> {
+        self.primitives.iter().filter_map(|p| {
+            if let PcbRecord::Coordinate(c) = p {
+                Some(c)
             } else {
                 None
             }
@@ -1630,5 +1782,116 @@ mod tests {
         // Should have rules
         assert!(!pcbdoc.rules.is_empty(), "Should have rules");
         println!("Rules: {}", pcbdoc.rules.len());
+    }
+
+    #[test]
+    fn test_read_dimensions() {
+        let data = std::fs::read("data/Plumo-2D.PcbDoc").expect("Failed to read file");
+        let pcbdoc = PcbDoc::open(Cursor::new(&data)).expect("Failed to parse PcbDoc");
+
+        // Plumo-2D has 2 dimension annotations
+        assert_eq!(
+            pcbdoc.dimension_count(),
+            2,
+            "Should have 2 dimensions"
+        );
+
+        // Check first dimension
+        let dims: Vec<_> = pcbdoc.iter_dimensions().collect();
+        let dim0 = &dims[0];
+        assert_eq!(
+            dim0.dimension_kind,
+            crate::records::pcb::DimensionKind::Linear,
+            "First dimension should be Linear"
+        );
+        assert_eq!(dim0.references.len(), 2, "Should have 2 references");
+        assert_eq!(
+            dim0.references[0].object_string, "BoardOutline",
+            "Reference should be BoardOutline"
+        );
+        assert!(!dim0.font_name.is_empty(), "Should have font name");
+        assert_eq!(dim0.text_precision, 2, "Precision should be 2");
+
+        // Check second dimension
+        let dim1 = &dims[1];
+        assert_eq!(
+            dim1.dimension_kind,
+            crate::records::pcb::DimensionKind::Linear,
+            "Second dimension should be Linear"
+        );
+        assert_eq!(dim1.references.len(), 2, "Should have 2 references");
+    }
+
+    #[test]
+    fn test_read_polygons_from_plumo() {
+        let data = std::fs::read("data/Plumo-2D.PcbDoc").expect("Failed to read file");
+        let pcbdoc = PcbDoc::open(Cursor::new(&data)).expect("Failed to parse PcbDoc");
+
+        // Plumo-2D should have polygons (copper pours)
+        let polygon_count = pcbdoc.polygon_count();
+        assert!(
+            polygon_count > 0,
+            "Should have at least one polygon, got {}",
+            polygon_count
+        );
+
+        // Check that polygons have vertices
+        for polygon in pcbdoc.iter_polygons() {
+            assert!(
+                !polygon.vertices.is_empty(),
+                "Polygon should have vertices"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dimension_roundtrip() {
+        use crate::records::pcb::DimensionKind;
+
+        // Create a dimension and verify parameter round-trip
+        let mut params = ParameterCollection::new();
+        params.add_int("OBJECTID", 13);
+        params.add_int("DIMENSIONKIND", 1);
+        params.add("LAYER", "MECHANICAL1");
+        params.add("DIMENSIONLAYER", "MECHANICAL1");
+        params.add("X1", "1000mil");
+        params.add("Y1", "2000mil");
+        params.add("X2", "3000mil");
+        params.add("Y2", "2000mil");
+        params.add_int("REFERENCES_COUNT", 1);
+        params.add_int("REFERENCE0PRIM", 0);
+        params.add_int("REFERENCE0OBJECTID", 25);
+        params.add("REFERENCE0OBJECTSTRING", "BoardOutline");
+        params.add("REFERENCE0POINTX", "1000mil");
+        params.add("REFERENCE0POINTY", "2000mil");
+        params.add_int("REFERENCE0ANCHOR", 3);
+        params.add("TEXTPOSITION", "Auto");
+        params.add_int("TEXTPRECISION", 2);
+        params.add("FONTNAME", "Arial");
+        params.add_bool("BOLD", false);
+        params.add_bool("ITALIC", false);
+
+        let dim = PcbDimension::from_params(&params);
+        assert_eq!(dim.dimension_kind, DimensionKind::Linear);
+        assert_eq!(dim.references.len(), 1);
+        assert_eq!(dim.references[0].object_string, "BoardOutline");
+        assert_eq!(dim.references[0].anchor, 3);
+        assert_eq!(dim.text_precision, 2);
+        assert_eq!(dim.font_name, "Arial");
+
+        // Round-trip
+        let params_out = dim.to_params();
+        assert_eq!(
+            params_out.get("DIMENSIONKIND").map(|v| v.as_int_or(0)),
+            Some(1)
+        );
+        assert_eq!(
+            params_out.get("REFERENCE0OBJECTSTRING").map(|v| v.as_str().to_string()),
+            Some("BoardOutline".to_string())
+        );
+        assert_eq!(
+            params_out.get("REFERENCES_COUNT").map(|v| v.as_int_or(0)),
+            Some(1)
+        );
     }
 }

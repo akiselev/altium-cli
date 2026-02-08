@@ -103,7 +103,9 @@ impl PcbComponent {
                 PcbRecord::Fill(r) => r.calculate_bounds(),
                 PcbRecord::Region(r) => r.calculate_bounds(),
                 PcbRecord::ComponentBody(r) => r.calculate_bounds(),
-                PcbRecord::Polygon(_) => continue, // Polygons don't belong to components
+                PcbRecord::Polygon(_)
+                | PcbRecord::Dimension(_)
+                | PcbRecord::Coordinate(_) => continue, // These don't belong to footprint components
                 PcbRecord::Unknown { .. } => continue,
             };
 

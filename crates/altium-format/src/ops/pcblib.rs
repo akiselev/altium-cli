@@ -26,8 +26,7 @@ use crate::io::PcbLib;
 use crate::records::pcb::{
     PcbArc, PcbComponent, PcbComponentBody, PcbFill, PcbFlags, PcbObjectId, PcbPad,
     PcbPadHoleShape, PcbPadShape, PcbPrimitiveCommon, PcbRecord, PcbRectangularBase, PcbRegion,
-    PcbStackMode, PcbText, PcbTextJustification, PcbTextKind, PcbTextStrokeFont, PcbTrack,
-    PcbVia,
+    PcbStackMode, PcbText, PcbTextJustification, PcbTextKind, PcbTextStrokeFont, PcbTrack, PcbVia,
 };
 use crate::types::{Coord, CoordPoint, Layer, MaskExpansion, ParameterCollection, Unit};
 
@@ -186,6 +185,8 @@ fn record_type_name(record: &PcbRecord) -> &'static str {
         PcbRecord::Region(_) => "Region",
         PcbRecord::ComponentBody(_) => "ComponentBody",
         PcbRecord::Polygon(_) => "Polygon",
+        PcbRecord::Dimension(_) => "Dimension",
+        PcbRecord::Coordinate(_) => "Coordinate",
         PcbRecord::Unknown { .. } => "Unknown",
     }
 }
@@ -707,14 +708,12 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
     } else {
         let footprints: Vec<FootprintJsonData> = lib
             .iter()
-            .map(|comp| {
-                FootprintJsonData {
-                    name: comp.pattern.clone(),
-                    description: comp.description.clone(),
-                    pad_count: comp.pad_count(),
-                    primitive_count: comp.primitive_count(),
-                    pads: None,
-                }
+            .map(|comp| FootprintJsonData {
+                name: comp.pattern.clone(),
+                description: comp.description.clone(),
+                pad_count: comp.pad_count(),
+                primitive_count: comp.primitive_count(),
+                pads: None,
             })
             .collect();
 
@@ -2986,7 +2985,10 @@ fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
     match record {
         PcbRecord::Arc(arc) => PcbPrimitiveJson::Arc {
             common: common_to_json(&arc.common),
-            location: [arc.location.x.to_raw() as i64, arc.location.y.to_raw() as i64],
+            location: [
+                arc.location.x.to_raw() as i64,
+                arc.location.y.to_raw() as i64,
+            ],
             radius: arc.radius.to_raw() as i64,
             start_angle: arc.start_angle,
             end_angle: arc.end_angle,
@@ -2995,7 +2997,10 @@ fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
         PcbRecord::Pad(pad) => PcbPrimitiveJson::Pad {
             common: common_to_json(&pad.common),
             designator: pad.designator.clone(),
-            location: [pad.location.x.to_raw() as i64, pad.location.y.to_raw() as i64],
+            location: [
+                pad.location.x.to_raw() as i64,
+                pad.location.y.to_raw() as i64,
+            ],
             rotation: pad.rotation,
             is_plated: pad.is_plated,
             jumper_id: pad.jumper_id,
@@ -3021,7 +3026,10 @@ fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
         },
         PcbRecord::Via(via) => PcbPrimitiveJson::Via {
             common: common_to_json(&via.common),
-            location: [via.location.x.to_raw() as i64, via.location.y.to_raw() as i64],
+            location: [
+                via.location.x.to_raw() as i64,
+                via.location.y.to_raw() as i64,
+            ],
             hole_size: via.hole_size.to_raw() as i64,
             from_layer: via.from_layer.0,
             to_layer: via.to_layer.0,
@@ -3120,7 +3128,10 @@ fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
             object_id: PcbObjectId::Polygon.to_byte(),
             raw_data: String::new(),
         },
-        PcbRecord::Unknown { object_id, raw_data } => PcbPrimitiveJson::Unknown {
+        PcbRecord::Unknown {
+            object_id,
+            raw_data,
+        } => PcbPrimitiveJson::Unknown {
             object_id: object_id.to_byte(),
             raw_data: base64::engine::general_purpose::STANDARD.encode(raw_data),
         },
@@ -3211,7 +3222,9 @@ fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
             to_layer: Layer::new(*to_layer),
             thermal_relief_air_gap_width: Coord::from_raw(*thermal_relief_air_gap_width as i32),
             thermal_relief_conductors: *thermal_relief_conductors,
-            thermal_relief_conductors_width: Coord::from_raw(*thermal_relief_conductors_width as i32),
+            thermal_relief_conductors_width: Coord::from_raw(
+                *thermal_relief_conductors_width as i32,
+            ),
             solder_mask_expansion: mask_expansion_from_json(solder_mask_expansion),
             diameter_stack_mode: PcbStackMode::from_byte(*diameter_stack_mode),
             diameters: vec_to_coord_diameter_array(diameters),
@@ -3227,8 +3240,14 @@ fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
             unknown_trailer,
         } => Ok(PcbRecord::Track(PcbTrack {
             common: common_from_json(common),
-            start: CoordPoint::new(Coord::from_raw(start[0] as i32), Coord::from_raw(start[1] as i32)),
-            end: CoordPoint::new(Coord::from_raw(end[0] as i32), Coord::from_raw(end[1] as i32)),
+            start: CoordPoint::new(
+                Coord::from_raw(start[0] as i32),
+                Coord::from_raw(start[1] as i32),
+            ),
+            end: CoordPoint::new(
+                Coord::from_raw(end[0] as i32),
+                Coord::from_raw(end[1] as i32),
+            ),
             width: Coord::from_raw(*width as i32),
             unknown: base64::engine::general_purpose::STANDARD
                 .decode(unknown_trailer)
@@ -3324,7 +3343,12 @@ fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
                 parameters: params,
                 outline: outline
                     .iter()
-                    .map(|pt| CoordPoint::new(Coord::from_raw(pt[0] as i32), Coord::from_raw(pt[1] as i32)))
+                    .map(|pt| {
+                        CoordPoint::new(
+                            Coord::from_raw(pt[0] as i32),
+                            Coord::from_raw(pt[1] as i32),
+                        )
+                    })
                     .collect(),
             };
             Ok(PcbRecord::Region(region))
@@ -3338,7 +3362,12 @@ fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
                 common: common_from_json(common),
                 outline: outline
                     .iter()
-                    .map(|pt| CoordPoint::new(Coord::from_raw(pt[0] as i32), Coord::from_raw(pt[1] as i32)))
+                    .map(|pt| {
+                        CoordPoint::new(
+                            Coord::from_raw(pt[0] as i32),
+                            Coord::from_raw(pt[1] as i32),
+                        )
+                    })
                     .collect(),
                 model_id: parameters.get("MODELID").cloned().unwrap_or_default(),
                 name: parameters.get("NAME").cloned().unwrap_or_default(),
