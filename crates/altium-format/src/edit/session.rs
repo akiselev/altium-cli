@@ -9,7 +9,7 @@ use crate::records::sch::{
     SchGraphicalBase, SchJunction, SchLabel, SchNetLabel, SchPort, SchPowerObject, SchRecord,
     SchWire, TextJustification, TextOrientations,
 };
-use crate::types::{Coord, CoordPoint, UnknownFields};
+use crate::types::{Coord, CoordPoint, CoordRect, UnknownFields};
 
 use super::layout::LayoutEngine;
 use super::library::LibraryManager;
@@ -483,11 +483,60 @@ impl EditSession {
         component2: &str,
         pin2: &str,
     ) -> Result<usize> {
-        // Find pin locations
+        // Find pin locations and component bounds
         let pin1_loc = self.find_pin_location(component1, pin1)?;
         let pin2_loc = self.find_pin_location(component2, pin2)?;
 
-        self.route_wire(pin1_loc, pin2_loc)
+        // Find component bounds to exclude from obstacles
+        let mut exclude_rects = Vec::new();
+        if let Some(bounds) = self.find_component_bounds(component1) {
+            exclude_rects.push(bounds);
+        }
+        if let Some(bounds) = self.find_component_bounds(component2) {
+            exclude_rects.push(bounds);
+        }
+
+        self.route_wire_excluding(pin1_loc, pin2_loc, &exclude_rects)
+    }
+
+    /// Route a wire between two points, excluding certain component bounds from obstacles.
+    pub fn route_wire_excluding(
+        &mut self,
+        start: CoordPoint,
+        end: CoordPoint,
+        exclude_rects: &[CoordRect],
+    ) -> Result<usize> {
+        self.routing
+            .update_obstacles(&self.doc.primitives, &self.layout);
+
+        let path = self
+            .routing
+            .route_excluding(start, end, exclude_rects)
+            .ok_or_else(|| AltiumError::Parse("No route found".to_string()))?;
+
+        // Add wire segments
+        let vertices = path.vertices();
+        if vertices.is_empty() {
+            return Err(AltiumError::Parse("Empty route".to_string()));
+        }
+
+        let index = self.add_wire(&vertices)?;
+
+        // Add junctions if needed
+        for junction in self.routing.find_junctions(&path) {
+            self.add_junction(junction)?;
+        }
+
+        Ok(index)
+    }
+
+    /// Find the bounds of a component by designator.
+    fn find_component_bounds(&self, designator: &str) -> Option<CoordRect> {
+        let components = self.layout.get_placed_components(&self.doc.primitives);
+        components
+            .iter()
+            .find(|c| c.designator == designator)
+            .map(|c| c.bounds)
     }
 
     /// Find the endpoint location of a pin.

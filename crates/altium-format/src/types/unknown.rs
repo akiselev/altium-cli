@@ -102,11 +102,16 @@ impl UnknownFields {
     /// Merge unknown parameters back into a parameter collection.
     ///
     /// Parameters are written in their original order to preserve
-    /// file structure as much as possible.
+    /// file structure as much as possible. Parameters that already
+    /// exist in the collection are NOT overwritten, so that struct
+    /// fields (written by `append_to_params`) take priority over
+    /// stale values captured in unknown_params during loading.
     pub fn merge_into_params(&self, params: &mut ParameterCollection) {
         for key in &self.param_order {
             if let Some(value) = self.params.get(key) {
-                params.add(key, value.as_str());
+                if !params.contains(key) {
+                    params.add(key, value.as_str());
+                }
             }
         }
     }

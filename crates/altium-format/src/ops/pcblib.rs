@@ -24,9 +24,10 @@ use crate::footprint::{
 };
 use crate::io::PcbLib;
 use crate::records::pcb::{
-    PcbArc, PcbComponent, PcbComponentBody, PcbFill, PcbFlags, PcbObjectId, PcbPad,
-    PcbPadHoleShape, PcbPadShape, PcbPrimitiveCommon, PcbRecord, PcbRectangularBase, PcbRegion,
-    PcbStackMode, PcbText, PcbTextJustification, PcbTextKind, PcbTextStrokeFont, PcbTrack, PcbVia,
+    DimensionKind, PcbArc, PcbComponent, PcbComponentBody, PcbCoordinate, PcbDimension, PcbFill,
+    PcbFlags, PcbObjectId, PcbPad, PcbPadHoleShape, PcbPadShape, PcbPrimitiveCommon, PcbRecord,
+    PcbRectangularBase, PcbRegion, PcbStackMode, PcbText, PcbTextJustification, PcbTextKind,
+    PcbTextStrokeFont, PcbTrack, PcbVia,
 };
 use crate::types::{Coord, CoordPoint, Layer, MaskExpansion, ParameterCollection, Unit};
 
@@ -755,7 +756,7 @@ pub fn cmd_measure(
         .ok_or_else(|| format!("Footprint '{}' not found", name))?;
 
     match measure_type.to_lowercase().as_str() {
-        "all" | "report" => {
+        "all" | "report" | "summary" => {
             let report = generate_report(component);
 
             if output_json {
@@ -2897,6 +2898,40 @@ pub enum PcbPrimitiveJson {
         parameters: HashMap<String, String>,
         outline: Vec<[i64; 2]>,
     },
+    Dimension {
+        dimension_kind: u8,
+        layer: u8,
+        x1: i64,
+        y1: i64,
+        x2: i64,
+        y2: i64,
+        height: i64,
+        angle: f64,
+        line_width: i64,
+        text_x: i64,
+        text_y: i64,
+        text_height: i64,
+        text_width: i64,
+        text_precision: i32,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        text_format: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        text_dimension_unit: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        text_prefix: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        text_suffix: String,
+        arrow_size: i64,
+        references_count: usize,
+    },
+    Coordinate {
+        layer: u8,
+        x: i64,
+        y: i64,
+        angle: f64,
+        text_height: i64,
+        text_width: i64,
+    },
     Unknown {
         object_id: u8,
         #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -3127,6 +3162,36 @@ fn primitive_to_json(record: &PcbRecord) -> PcbPrimitiveJson {
         PcbRecord::Polygon(_) => PcbPrimitiveJson::Unknown {
             object_id: PcbObjectId::Polygon.to_byte(),
             raw_data: String::new(),
+        },
+        PcbRecord::Dimension(dim) => PcbPrimitiveJson::Dimension {
+            dimension_kind: dim.dimension_kind.to_byte(),
+            layer: dim.layer.0,
+            x1: dim.x1.to_raw() as i64,
+            y1: dim.y1.to_raw() as i64,
+            x2: dim.x2.to_raw() as i64,
+            y2: dim.y2.to_raw() as i64,
+            height: dim.height.to_raw() as i64,
+            angle: dim.angle,
+            line_width: dim.line_width.to_raw() as i64,
+            text_x: dim.text_x.to_raw() as i64,
+            text_y: dim.text_y.to_raw() as i64,
+            text_height: dim.text_height.to_raw() as i64,
+            text_width: dim.text_width.to_raw() as i64,
+            text_precision: dim.text_precision,
+            text_format: dim.text_format.clone(),
+            text_dimension_unit: dim.text_dimension_unit.clone(),
+            text_prefix: dim.text_prefix.clone(),
+            text_suffix: dim.text_suffix.clone(),
+            arrow_size: dim.arrow_size.to_raw() as i64,
+            references_count: dim.references.len(),
+        },
+        PcbRecord::Coordinate(coord) => PcbPrimitiveJson::Coordinate {
+            layer: coord.layer.0,
+            x: coord.x.to_raw() as i64,
+            y: coord.y.to_raw() as i64,
+            angle: coord.angle,
+            text_height: coord.text_height.to_raw() as i64,
+            text_width: coord.text_width.to_raw() as i64,
         },
         PcbRecord::Unknown {
             object_id,
@@ -3374,6 +3439,57 @@ fn primitive_from_json(json: &PcbPrimitiveJson) -> Result<PcbRecord, String> {
                 ..Default::default()
             };
             Ok(PcbRecord::ComponentBody(Box::new(body)))
+        }
+        PcbPrimitiveJson::Dimension {
+            dimension_kind,
+            layer,
+            x1,
+            y1,
+            x2,
+            y2,
+            height,
+            angle,
+            line_width,
+            text_x,
+            text_y,
+            text_height,
+            text_width,
+            text_precision,
+            ..
+        } => {
+            let mut dim = PcbDimension::default();
+            dim.dimension_kind = DimensionKind::from_byte(*dimension_kind);
+            dim.layer = Layer::new(*layer);
+            dim.x1 = Coord::from_raw(*x1 as i32);
+            dim.y1 = Coord::from_raw(*y1 as i32);
+            dim.x2 = Coord::from_raw(*x2 as i32);
+            dim.y2 = Coord::from_raw(*y2 as i32);
+            dim.height = Coord::from_raw(*height as i32);
+            dim.angle = *angle;
+            dim.line_width = Coord::from_raw(*line_width as i32);
+            dim.text_x = Coord::from_raw(*text_x as i32);
+            dim.text_y = Coord::from_raw(*text_y as i32);
+            dim.text_height = Coord::from_raw(*text_height as i32);
+            dim.text_width = Coord::from_raw(*text_width as i32);
+            dim.text_precision = *text_precision;
+            Ok(PcbRecord::Dimension(Box::new(dim)))
+        }
+        PcbPrimitiveJson::Coordinate {
+            layer,
+            x,
+            y,
+            angle,
+            text_height,
+            text_width,
+        } => {
+            let mut coord = PcbCoordinate::default();
+            coord.layer = Layer::new(*layer);
+            coord.x = Coord::from_raw(*x as i32);
+            coord.y = Coord::from_raw(*y as i32);
+            coord.angle = *angle;
+            coord.text_height = Coord::from_raw(*text_height as i32);
+            coord.text_width = Coord::from_raw(*text_width as i32);
+            Ok(PcbRecord::Coordinate(coord))
         }
         PcbPrimitiveJson::Unknown {
             object_id,

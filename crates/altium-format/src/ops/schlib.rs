@@ -763,19 +763,23 @@ fn parse_unit_value_to_mils(s: &str) -> Result<f64, Box<dyn std::error::Error>> 
 fn parse_unit_value_or_mil(s: &str) -> Result<f64, Box<dyn std::error::Error>> {
     let s = s.trim();
 
-    // Try parsing with unit suffix first
+    // If the string is a plain number (no alphabetic suffix), treat as mils directly.
+    // This avoids the DxpDefault interpretation from parse_with_unit which would
+    // multiply by 10 (since 1 DXP default unit = 10 mils).
+    if s.parse::<f64>().is_ok() && !s.chars().any(|c| c.is_alphabetic()) {
+        return Ok(s.parse::<f64>()?);
+    }
+
+    // Try parsing with explicit unit suffix
     if let Ok((coord, _unit)) = Unit::parse_with_unit(s) {
         return Ok(coord.to_mils());
     }
 
-    // If no unit suffix, try as plain number (interpreted as mils)
-    s.parse::<f64>().map_err(|_| {
-        format!(
-            "Invalid value '{}': expected number with optional unit (e.g., '100mil', '2.54mm')",
-            s
-        )
-        .into()
-    })
+    Err(format!(
+        "Invalid value '{}': expected number with optional unit (e.g., '100mil', '2.54mm')",
+        s
+    )
+    .into())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -17,8 +17,12 @@ pub struct ConnectionPoint {
 /// Types of connection points.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConnectionKind {
-    /// Pin connection with component designator and pin designator.
-    Pin { component: String, pin: String },
+    /// Pin connection with component designator, pin designator, and pin name.
+    Pin {
+        component: String,
+        pin: String,
+        pin_name: String,
+    },
     /// Wire endpoint.
     WireEnd { wire_index: usize },
     /// Junction.
@@ -48,7 +52,7 @@ impl Net {
         self.connections
             .iter()
             .filter_map(|c| match &c.kind {
-                ConnectionKind::Pin { component, pin } => Some((component.as_str(), pin.as_str())),
+                ConnectionKind::Pin { component, pin, .. } => Some((component.as_str(), pin.as_str())),
                 _ => None,
             })
             .collect()
@@ -145,6 +149,7 @@ impl NetlistBuilder {
                         kind: ConnectionKind::Pin {
                             component,
                             pin: pin.designator.clone(),
+                            pin_name: pin.name.clone(),
                         },
                     });
                 }
@@ -408,7 +413,7 @@ impl NetlistBuilder {
                     .any(|c| matches!(c.kind, ConnectionKind::WireEnd { .. }));
 
                 if !has_wires {
-                    if let ConnectionKind::Pin { component, pin } = &pins[0].kind {
+                    if let ConnectionKind::Pin { component, pin, .. } = &pins[0].kind {
                         unconnected.push((component.clone(), pin.clone(), pins[0].location));
                     }
                 }

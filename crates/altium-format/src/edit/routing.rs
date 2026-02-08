@@ -106,25 +106,51 @@ impl RoutingEngine {
 
     /// Route a wire between two points using A* pathfinding.
     pub fn route(&self, start: CoordPoint, end: CoordPoint) -> Option<RoutingPath> {
+        self.route_excluding(start, end, &[])
+    }
+
+    /// Route a wire between two points, excluding certain rectangles from obstacles.
+    ///
+    /// The `exclude_rects` parameter specifies component bounds that should be
+    /// ignored during routing (typically the source and target components).
+    pub fn route_excluding(
+        &self,
+        start: CoordPoint,
+        end: CoordPoint,
+        exclude_rects: &[CoordRect],
+    ) -> Option<RoutingPath> {
         let start = self.grid.snap(start);
         let end = self.grid.snap(end);
 
+        // Build filtered obstacle list excluding specified rectangles
+        let filtered_obstacles: Vec<CoordRect> = self
+            .obstacles
+            .iter()
+            .filter(|obs| !exclude_rects.iter().any(|ex| rects_overlap(obs, ex)))
+            .copied()
+            .collect();
+
         // Quick check for direct path
-        if let Some(path) = self.try_direct_path(start, end) {
+        if let Some(path) = self.try_direct_path_with(start, end, &filtered_obstacles) {
             return Some(path);
         }
 
         // Try L-shaped paths (two segments)
-        if let Some(path) = self.try_l_path(start, end) {
+        if let Some(path) = self.try_l_path_with(start, end, &filtered_obstacles) {
             return Some(path);
         }
 
         // Fall back to A* for complex routes
-        self.route_astar(start, end)
+        self.route_astar_with(start, end, &filtered_obstacles)
     }
 
     /// Try to find a direct horizontal or vertical path.
-    fn try_direct_path(&self, start: CoordPoint, end: CoordPoint) -> Option<RoutingPath> {
+    fn try_direct_path_with(
+        &self,
+        start: CoordPoint,
+        end: CoordPoint,
+        obstacles: &[CoordRect],
+    ) -> Option<RoutingPath> {
         let segment = WireSegment::new(start, end);
 
         // Only works for axis-aligned paths
@@ -133,7 +159,7 @@ impl RoutingEngine {
         }
 
         // Check for obstacles
-        if self.segment_blocked(&segment) {
+        if self.segment_blocked_by(&segment, obstacles) {
             return None;
         }
 
@@ -143,13 +169,20 @@ impl RoutingEngine {
     }
 
     /// Try to find an L-shaped path (horizontal then vertical, or vice versa).
-    fn try_l_path(&self, start: CoordPoint, end: CoordPoint) -> Option<RoutingPath> {
+    fn try_l_path_with(
+        &self,
+        start: CoordPoint,
+        end: CoordPoint,
+        obstacles: &[CoordRect],
+    ) -> Option<RoutingPath> {
         // Try horizontal-first L
         let corner1 = CoordPoint::new(end.x, start.y);
         let seg1_h = WireSegment::new(start, corner1);
         let seg2_v = WireSegment::new(corner1, end);
 
-        if !self.segment_blocked(&seg1_h) && !self.segment_blocked(&seg2_v) {
+        if !self.segment_blocked_by(&seg1_h, obstacles)
+            && !self.segment_blocked_by(&seg2_v, obstacles)
+        {
             let mut path = RoutingPath::new();
             path.add_segment(seg1_h);
             path.add_segment(seg2_v);
@@ -161,7 +194,9 @@ impl RoutingEngine {
         let seg1_v = WireSegment::new(start, corner2);
         let seg2_h = WireSegment::new(corner2, end);
 
-        if !self.segment_blocked(&seg1_v) && !self.segment_blocked(&seg2_h) {
+        if !self.segment_blocked_by(&seg1_v, obstacles)
+            && !self.segment_blocked_by(&seg2_h, obstacles)
+        {
             let mut path = RoutingPath::new();
             path.add_segment(seg1_v);
             path.add_segment(seg2_h);
@@ -171,11 +206,11 @@ impl RoutingEngine {
         None
     }
 
-    /// Check if a segment is blocked by an obstacle.
-    fn segment_blocked(&self, segment: &WireSegment) -> bool {
+    /// Check if a segment is blocked by any obstacle in the given list.
+    fn segment_blocked_by(&self, segment: &WireSegment, obstacles: &[CoordRect]) -> bool {
         let bounds = segment.bounds();
 
-        for obstacle in &self.obstacles {
+        for obstacle in obstacles {
             if bounds.intersects(*obstacle) {
                 // More precise check for the line segment
                 if self.line_intersects_rect(segment, obstacle) {
@@ -218,8 +253,13 @@ impl RoutingEngine {
         false
     }
 
-    /// Route using A* algorithm.
-    fn route_astar(&self, start: CoordPoint, end: CoordPoint) -> Option<RoutingPath> {
+    /// Route using A* algorithm with filtered obstacles.
+    fn route_astar_with(
+        &self,
+        start: CoordPoint,
+        end: CoordPoint,
+        obstacles: &[CoordRect],
+    ) -> Option<RoutingPath> {
         let mut open_set = BinaryHeap::new();
         let mut came_from: HashMap<(i32, i32), ((i32, i32), Direction)> = HashMap::new();
         let mut g_score: HashMap<(i32, i32), i64> = HashMap::new();
@@ -275,8 +315,11 @@ impl RoutingEngine {
                     continue;
                 }
 
-                // Check if this position is blocked
-                if self.point_blocked(next_pos) && next_key != end_key {
+                // Check if this position is blocked (exclude both start and end points)
+                if self.point_blocked_by(next_pos, obstacles)
+                    && next_key != end_key
+                    && next_key != start_key
+                {
                     continue;
                 }
 
@@ -321,9 +364,9 @@ impl RoutingEngine {
         dx + dy
     }
 
-    /// Check if a point is inside an obstacle.
-    fn point_blocked(&self, point: CoordPoint) -> bool {
-        for obstacle in &self.obstacles {
+    /// Check if a point is inside any obstacle in the given list.
+    fn point_blocked_by(&self, point: CoordPoint, obstacles: &[CoordRect]) -> bool {
+        for obstacle in obstacles {
             if obstacle.contains(point) {
                 return true;
             }
@@ -513,4 +556,12 @@ impl RoutingEngine {
 
         results
     }
+}
+
+/// Check if two rectangles overlap (used to match component bounds for exclusion).
+fn rects_overlap(a: &CoordRect, b: &CoordRect) -> bool {
+    a.location1.x == b.location1.x
+        && a.location1.y == b.location1.y
+        && a.location2.x == b.location2.x
+        && a.location2.y == b.location2.y
 }

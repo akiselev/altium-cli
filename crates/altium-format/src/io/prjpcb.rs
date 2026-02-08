@@ -533,10 +533,11 @@ impl PrjPcb {
             .collect()
     }
 
-    /// Get the primary PCB document (first one found).
+    /// Get the primary PCB document (last one found, most recently added).
     pub fn primary_pcb(&self) -> Option<&ProjectDocument> {
         self.documents
             .iter()
+            .rev()
             .find(|d| d.doc_type == DocumentType::Pcb)
     }
 

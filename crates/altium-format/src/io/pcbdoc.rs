@@ -527,6 +527,9 @@ impl PcbDoc {
         // Write rules
         self.write_rules(&mut cf)?;
 
+        // Write nets
+        self.write_nets(&mut cf)?;
+
         cf.flush()
             .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
 
@@ -566,6 +569,58 @@ impl PcbDoc {
 
         // If new content is shorter, we need to truncate
         // cfb crate's stream should handle this, but let's be safe
+        let new_len = buffer.len() as u64;
+        stream
+            .set_len(new_len)
+            .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;
+
+        Ok(())
+    }
+
+    /// Write nets to the CFB file.
+    fn write_nets<R: Read + Write + Seek>(&self, cf: &mut CompoundFile<R>) -> Result<()> {
+        let data_path = "/Nets6/Data";
+
+        if self.nets.is_empty() {
+            return Ok(());
+        }
+
+        // Serialize all nets to a buffer
+        let mut buffer = Vec::new();
+        for net_name in &self.nets {
+            let mut params = ParameterCollection::new();
+            params.add("NAME", net_name);
+            write_parameters_block(&mut buffer, &params)?;
+        }
+
+        // Check if stream exists, create if needed
+        if cf.entry(data_path).is_err() {
+            // Create the Nets6 storage and Data stream
+            cf.create_storage("/Nets6").map_err(|e| {
+                AltiumError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
+            cf.create_stream(data_path).map_err(|e| {
+                AltiumError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
+        }
+
+        // Open and write the stream
+        let mut stream = cf.open_stream(data_path).map_err(|e| {
+            AltiumError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                e.to_string(),
+            ))
+        })?;
+
+        stream.seek(SeekFrom::Start(0))?;
+        stream.write_all(&buffer)?;
+
         let new_len = buffer.len() as u64;
         stream
             .set_len(new_len)
@@ -978,6 +1033,9 @@ impl PcbDoc {
 
         // Write components
         self.write_components(&mut cf)?;
+
+        // Write nets
+        self.write_nets(&mut cf)?;
 
         cf.flush()
             .map_err(|e| AltiumError::Io(std::io::Error::other(e.to_string())))?;

@@ -17,8 +17,8 @@ use crate::ops::categorization::categorize_component;
 use crate::ops::output::*;
 use crate::ops::queries::power::{power_map, separate_power_and_ground};
 use crate::ops::util::{
-    alphanumeric_sort, count_record_types, get_component_designator, get_component_pins,
-    record_type_name, sheet_size_name,
+    alphanumeric_sort, count_record_types, get_component_designator, record_type_name,
+    sheet_size_name,
 };
 
 use crate::dump::{fmt_coord, fmt_point};
@@ -312,65 +312,45 @@ pub fn cmd_bom(path: &Path) -> Result<SchDocBom, Box<dyn std::error::Error>> {
 }
 
 /// Net connectivity map.
+///
+/// Uses wire-tracing connectivity (union-find over wire endpoints, pins,
+/// net labels, and power ports) instead of proximity matching.
 #[allow(clippy::type_complexity)]
 pub fn cmd_netlist(
     path: &Path,
     net_filter: Option<String>,
     min_connections: usize,
 ) -> Result<SchDocNetlist, Box<dyn std::error::Error>> {
+    use crate::edit::netlist::{ConnectionKind, NetlistBuilder};
+
     let doc = open_schdoc(path)?;
-    let tree = RecordTree::from_records(doc.primitives.clone());
 
-    // Build component designator lookup and pin locations
-    let mut pin_locations: HashMap<(i32, i32), Vec<(String, String, String)>> = HashMap::new();
-    for (id, record) in tree.iter() {
-        if let SchRecord::Component(_) = record {
-            let des =
-                get_component_designator(&tree, id).unwrap_or_else(|| format!("?{}", id.index()));
-            for (pin_des, pin_name, corner_x, corner_y) in get_component_pins(&tree, id) {
-                pin_locations
-                    .entry((corner_x, corner_y))
-                    .or_default()
-                    .push((des.clone(), pin_des, pin_name));
-            }
-        }
-    }
+    // Use the NetlistBuilder for proper wire-tracing connectivity
+    let builder = NetlistBuilder::new();
+    let netlist = builder.build(&doc.primitives);
 
-    // Build net name to location mapping
-    let mut net_at_location: HashMap<(i32, i32), String> = HashMap::new();
-    for record in &doc.primitives {
-        match record {
-            SchRecord::NetLabel(nl) => {
-                net_at_location.insert(
-                    (nl.label.graphical.location_x, nl.label.graphical.location_y),
-                    nl.label.text.clone(),
-                );
-            }
-            SchRecord::PowerObject(p) => {
-                net_at_location.insert(
-                    (p.graphical.location_x, p.graphical.location_y),
-                    p.text.clone(),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    // Group connections by net name
+    // Convert netlist to output format
     let mut nets: HashMap<String, Vec<String>> = HashMap::new();
-    let proximity_threshold = 100000; // 10 mils
 
-    for ((net_x, net_y), net_name) in &net_at_location {
-        for ((pin_x, pin_y), pins) in &pin_locations {
-            if (net_x - pin_x).abs() < proximity_threshold
-                && (net_y - pin_y).abs() < proximity_threshold
+    for net in &netlist.nets {
+        // Collect pin connections for this net
+        let mut connections = Vec::new();
+        for conn in &net.connections {
+            if let ConnectionKind::Pin {
+                ref component,
+                ref pin,
+                ref pin_name,
+            } = conn.kind
             {
-                for (comp_des, pin_des, pin_name) in pins {
-                    nets.entry(net_name.clone())
-                        .or_default()
-                        .push(format!("{}.{} ({})", comp_des, pin_des, pin_name));
+                if !component.is_empty() {
+                    let display_name = if pin_name.is_empty() { pin } else { pin_name };
+                    connections.push(format!("{}.{} ({})", component, pin, display_name));
                 }
             }
+        }
+
+        if !connections.is_empty() {
+            nets.insert(net.name.clone(), connections);
         }
     }
 
