@@ -9,8 +9,7 @@ use std::path::Path;
 
 use crate::error::{AltiumError, Result};
 use crate::io::reader::{
-    read_block, read_parameters_block, read_pascal_short_string, read_pascal_string,
-    read_string_block,
+    read_block, read_parameters_block, read_pascal_short_string, read_string_block,
 };
 use crate::io::writer::{
     write_block, write_parameters, write_pascal_short_string, write_string_block,
@@ -157,7 +156,7 @@ impl PcbLib {
         data.write_i32::<LittleEndian>(entries.len() as i32)?;
 
         for (pattern, storage_name) in entries {
-            crate::io::writer::write_pascal_string(&mut data, &pattern)?;
+            write_string_block(&mut data, &pattern)?;
             write_string_block(&mut data, &storage_name)?;
         }
 
@@ -749,7 +748,7 @@ impl PcbLib {
         let key_count = cursor.read_i32::<LittleEndian>()?;
 
         for _ in 0..key_count {
-            let lib_ref = read_pascal_string(&mut cursor)?;
+            let lib_ref = read_string_block(&mut cursor)?;
             let section_key = read_string_block(&mut cursor)?;
 
             if !lib_ref.is_empty() && !section_key.is_empty() {
