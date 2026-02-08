@@ -24,3 +24,7 @@ target
 # Altium files for reverse engineering
 /AD26/
 /AD26-dotnet/
+
+
+# Scenarios files
+/scenarios/
