@@ -369,3 +369,10 @@ A test is rejected unless it asserts at least one of:
 4. `UnknownFields` is removed from editing path in favor of full-origin patching.
 5. Existing v2 test files still exist but now assert functional behavior with high signal.
 6. Query/high-level CLI command redesign starts only after FCIS core/test/validation gates are complete.
+
+
+==== 
+
+Lets discuss these things. Make sure to give me tradeoffs/pros/cons etc.
+
+1. should we even have private fields? since we're using getters/setters they can just use the Index for field/param lookups. Maybe we should add a binary FieldIndex as well and remove 
