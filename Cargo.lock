@@ -28,6 +28,7 @@ name = "altium-cli"
 version = "0.1.8"
 dependencies = [
  "altium-format",
+ "altium-format-ops",
  "clap",
  "clap_complete",
  "schemars",

@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::output::{self, TextFormat};
-use altium_format::v2::ops::schlib;
+use altium_format_ops::schlib;
 
 #[derive(Subcommand)]
 pub enum SchLibCommands {

@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::output::{self, TextFormat};
-use altium_format::v2::ops::schdoc;
+use altium_format_ops::schdoc;
 
 #[derive(Subcommand)]
 pub enum SchDocCommands {

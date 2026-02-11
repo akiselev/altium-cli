@@ -26,8 +26,5 @@ pub mod query;
 pub mod templates;
 pub mod builders;
 
-// CLI operations (Phase 7)
-pub mod ops;
-
 // ParameterCollection (from v1, self-contained)
 pub mod parameters;
