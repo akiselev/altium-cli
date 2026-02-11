@@ -2,6 +2,17 @@
 
 Command-line tool for reading, writing, and querying Altium Designer files.
 
+## Data Model
+
+| File | What it covers |
+|------|----------------|
+| [model/README.md](model/README.md) | Data model overview and architecture |
+| [model/container-format.md](model/container-format.md) | OLE/CFB container, block encoding, stream layout |
+| [model/coordinates.md](model/coordinates.md) | Coordinate system, DXP fractional encoding, units |
+| [model/schematic-records.md](model/schematic-records.md) | Schematic record types (SchPin, SchComponent, SchWire, etc.) |
+| [model/pcb-records.md](model/pcb-records.md) | PCB record types (PcbPad, PcbTrack, PcbVia, etc.) |
+| [model/serialization.md](model/serialization.md) | Derive macros, traits, field mapping attributes |
+
 ## Command Reference
 
 | File | Commands |
