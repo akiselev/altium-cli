@@ -100,6 +100,50 @@ impl SchDoc {
     pub fn component_count(&self) -> usize {
         self.groups.len()
     }
+
+    /// Iterate all components with mutable view access.
+    pub fn for_each_component<F>(&mut self, mut f: F)
+    where
+        F: FnMut(crate::v2::views::SchComponentView<'_>),
+    {
+        for group in self.groups.iter_mut() {
+            let (comp, children) = group.split_borrow();
+            let view = crate::v2::views::SchComponentView::new(comp, children);
+            f(view);
+        }
+    }
+
+    /// Count all records of a given type across groups and orphans.
+    pub fn count_record_type(&self, record_id: u8) -> usize {
+        let mut count = 0;
+        for group in &self.groups {
+            if group.component.key == record_id {
+                count += 1;
+            }
+            count += group.children.iter().filter(|c| c.key == record_id).count();
+        }
+        count += self
+            .orphan_records
+            .iter()
+            .filter(|r| r.key == record_id)
+            .count();
+        count
+    }
+
+    /// Returns the sheet record (RECORD=31) if present.
+    pub fn sheet_record(&self) -> Option<crate::v2::records::SchSheetRecord> {
+        use crate::v2::traits::RecordType;
+        let id = crate::v2::records::SchSheetRecord::RECORD_ID;
+        self.orphan_records
+            .iter()
+            .find(|r| r.key == id)
+            .map(|r| crate::v2::records::SchSheetRecord::from_origin(r.origin.clone()))
+    }
+
+    /// Returns a reference to the orphan records.
+    pub fn orphans(&self) -> &[RecordNode] {
+        &self.orphan_records
+    }
 }
 
 // ---------------------------------------------------------------------------

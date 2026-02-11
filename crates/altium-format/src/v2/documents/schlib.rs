@@ -45,6 +45,23 @@ pub struct SchLibHeader {
     pub raw: Option<Vec<u8>>,
 }
 
+impl SchLibHeader {
+    /// Returns the unique ID.
+    pub fn unique_id(&self) -> &str {
+        &self.unique_id
+    }
+
+    /// Returns the header text.
+    pub fn header_text(&self) -> &str {
+        &self.header_text
+    }
+
+    /// Clears the raw bytes (forces re-serialization on save).
+    pub fn clear_raw(&mut self) {
+        self.raw = None;
+    }
+}
+
 /// Component entry from the FileHeader's component list.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SchLibComponentEntry {
@@ -54,6 +71,23 @@ pub struct SchLibComponentEntry {
     pub description: String,
     /// Number of parts in the component.
     pub part_count: i32,
+}
+
+impl SchLibComponentEntry {
+    /// Library reference name.
+    pub fn lib_ref(&self) -> &str {
+        &self.lib_ref
+    }
+
+    /// Component description.
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Number of parts.
+    pub fn part_count(&self) -> i32 {
+        self.part_count
+    }
 }
 
 /// A parsed SchLib library using the v2 backing-store architecture.
@@ -189,6 +223,59 @@ impl SchLib {
             .iter()
             .map(|e| e.lib_ref.as_str())
             .collect()
+    }
+
+    /// Returns the component entry metadata.
+    pub fn entries(&self) -> &[SchLibComponentEntry] {
+        &self.component_entries
+    }
+
+    /// Returns the library header.
+    pub fn header(&self) -> &SchLibHeader {
+        &self.header
+    }
+
+    /// Returns a mutable reference to the library header.
+    pub fn header_mut(&mut self) -> &mut SchLibHeader {
+        &mut self.header
+    }
+
+    /// Iterate all components with entry metadata and a mutable view.
+    pub fn for_each_component<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>),
+    {
+        let entries = &self.component_entries;
+        let groups = &mut self.groups;
+        for (entry, group) in entries.iter().zip(groups.iter_mut()) {
+            let (comp, children) = group.split_borrow();
+            let view = crate::v2::views::SchComponentView::new(comp, children);
+            f(entry, view);
+        }
+    }
+
+    /// Access a specific component by index.
+    pub fn with_component<R>(
+        &mut self,
+        index: usize,
+        f: impl FnOnce(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>) -> R,
+    ) -> Option<R> {
+        if index >= self.groups.len() || index >= self.component_entries.len() {
+            return None;
+        }
+        let entry = &self.component_entries[index];
+        let group = &mut self.groups[index];
+        let (comp, children) = group.split_borrow();
+        let view = crate::v2::views::SchComponentView::new(comp, children);
+        Some(f(entry, view))
+    }
+
+    /// Find a component by name (case-insensitive), returns index.
+    pub fn find_component(&self, name: &str) -> Option<usize> {
+        let name_lower = name.to_lowercase();
+        self.component_entries
+            .iter()
+            .position(|e| e.lib_ref.to_lowercase() == name_lower)
     }
 }
 

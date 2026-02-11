@@ -200,6 +200,49 @@ impl PcbLib {
     pub fn footprint_count(&self) -> usize {
         self.footprints.len()
     }
+
+    /// Returns the footprint storage names.
+    pub fn names(&self) -> &[String] {
+        &self.footprint_names
+    }
+
+    /// Iterate all footprints with name and mutable view access.
+    pub fn for_each_footprint<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&str, crate::v2::views::PcbFootprintView<'_>),
+    {
+        let names = &self.footprint_names;
+        let footprints = &mut self.footprints;
+        for (name, group) in names.iter().zip(footprints.iter_mut()) {
+            let (metadata, primitives) = group.split_borrow();
+            let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
+            f(name, view);
+        }
+    }
+
+    /// Access a specific footprint by index.
+    pub fn with_footprint<R>(
+        &mut self,
+        index: usize,
+        f: impl FnOnce(&str, crate::v2::views::PcbFootprintView<'_>) -> R,
+    ) -> Option<R> {
+        if index >= self.footprints.len() || index >= self.footprint_names.len() {
+            return None;
+        }
+        let name = &self.footprint_names[index];
+        let group = &mut self.footprints[index];
+        let (metadata, primitives) = group.split_borrow();
+        let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
+        Some(f(name, view))
+    }
+
+    /// Find a footprint by name (case-insensitive), returns index.
+    pub fn find_footprint(&self, name: &str) -> Option<usize> {
+        let name_lower = name.to_lowercase();
+        self.footprint_names
+            .iter()
+            .position(|n| n.to_lowercase() == name_lower)
+    }
 }
 
 // ---------------------------------------------------------------------------
