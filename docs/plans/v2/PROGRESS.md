@@ -9,7 +9,7 @@
 | 3 | Phase 2A-2B: Macro System | COMPLETE | 2026-02-10 | 2026-02-10 |
 | 4 | Phase 3A-3C: Record Types | COMPLETE | 2026-02-10 | 2026-02-10 |
 | 5 | Phase 4A-4D, 5C, 6A-6C: Docs/Views/Query/Templates | COMPLETE | 2026-02-10 | 2026-02-11 |
-| 6 | Phase 7A-7D: CLI & Ops | NOT STARTED | - | - |
+| 6 | Phase 7A-7D: CLI & Ops | COMPLETE | 2026-02-11 | 2026-02-11 |
 | 7 | Phase 8A-8D: Tests | NOT STARTED | - | - |
 | 8 | Phase 9: Cleanup | NOT STARTED | - | - |
 

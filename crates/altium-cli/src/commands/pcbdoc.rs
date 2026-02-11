@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::output::{self, TextFormat};
-use altium_format::ops::pcbdoc;
+use altium_format::v2::ops::pcbdoc;
 
 #[derive(Subcommand)]
 pub enum PcbDocCommands {
