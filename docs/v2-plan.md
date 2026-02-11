@@ -21,7 +21,7 @@ The result is a **standard imperative library** with a well-designed internal da
 2. **Edit in place**: setters patch the backing store directly. The backing store is the same type whether it came from an Altium file or a template — there is no separate "create" vs "edit" mechanism.
 3. **No core defaults**: contextual defaults live in DTO/interface layers only (CLI/JSON/UI), never in core record types. Template functions provide Altium-correct defaults for new records.
 4. **No runtime fields**: macro-declared fields exist for documentation and autocomplete; runtime access is through generated getters/setters over the backing store.
-5. **Macro-first generation**: the macro generates record types, getters/setters, lens types (with dirty tracking and validation), and builder APIs. Param types handle their own serialization via `ParamCodec` (single key). Binary records use hand-written parsers with helper functions.
+5. **Macro-first generation**: the macro generates `*Record` types with getters/setters and builder APIs. Hierarchical wrapper types are hand-written (Deref to record types for getters/setters, plus dirty tracking, child navigation, and validation). Param types handle their own serialization via `ParamCodec` (single key). Binary records use hand-written parsers with helper functions.
 6. **Tests are behavioral**: assertions must prove functional behavior (byte identity, patch locality, invariant enforcement), not just counts.
 
 ## Core Data Model
@@ -71,6 +71,26 @@ pub struct BinaryOrigin {
 
 `UnknownFields` is removed entirely. Unknown data is preserved automatically because we never extract fields out of the backing store — the backing store IS the record. Known fields are accessed through typed getters/setters; unknown fields remain untouched in the backing store.
 
+### ComponentGroup Storage
+
+To enable hierarchical access (component → children) without borrow checker conflicts, the document stores records in **component groups** that separate the parent record from its children as distinct struct fields:
+
+```rust
+pub struct ComponentGroup {
+    component: RecordNode,           // the component record itself
+    children: Vec<RecordNode>,       // pins, lines, arcs, parameters, etc.
+    original_indices: Vec<usize>,    // position in original stream (for lossless save)
+}
+```
+
+Because `component` and `children` are separate fields, Rust allows borrowing them independently — this is the key enabler for the hierarchical wrapper API.
+
+**SchLib**: Each component is a separate CFB stream. One `ComponentGroup` per stream, built naturally during parsing.
+
+**SchDoc**: All records are in one flat stream with OWNERINDEX links. On load, records are grouped by OWNERINDEX into `ComponentGroup`s. On save, the groups are flattened back to the original order using stored indices to preserve byte-identical output for untouched records.
+
+This replaces the generic `DocumentCore` → `StreamNode` → `Vec<RecordNode>` structure for schematic formats. The `ComponentGroup` abstraction unifies SchLib (tree) and SchDoc (flat + OWNERINDEX) behind the same query and closure API. See [Document Type Structure](#document-type-structure) for the full struct definitions.
+
 ### Write Rules
 
 On save, for each record:
@@ -80,50 +100,55 @@ On save, for each record:
 
 This applies identically regardless of whether the backing store was loaded from an Altium file or created from a template. There is no separate "rebuild" or "re-serialize" path. Setters always update in place.
 
-### DocumentCore as Struct Member
+### Document Type Structure
 
-`DocumentCore` is a **struct**, not a trait. Each document type contains it as a member:
+Each document type is a separate struct. Schematic formats use `ComponentGroup` for hierarchical access; PCB formats may use a different grouping strategy suited to their typed-stream layout.
 
 ```rust
 pub struct SchLib {
-    core: DocumentCore,
-    section_keys: HashMap<String, String>,
-    // SchLib-specific metadata
+    groups: Vec<ComponentGroup>,         // one per CFB stream
+    section_keys: SectionKeyList,
+    header: SchLibHeader,
+}
+
+pub struct SchDoc {
+    groups: Vec<ComponentGroup>,         // grouped by OWNERINDEX on load
+    orphan_records: Vec<RecordNode>,     // records not owned by any component
 }
 
 pub struct PcbLib {
     core: DocumentCore,
-    // PcbLib-specific metadata
-}
-
-pub struct SchDoc {
-    core: DocumentCore,
-    // SchDoc-specific metadata
+    // PcbLib-specific metadata — per-footprint sections
 }
 
 pub struct PcbDoc {
     core: DocumentCore,
-    // PcbDoc-specific metadata (typed stream map, etc.)
+    // PcbDoc-specific metadata — typed stream map (Tracks6, Arcs6, etc.)
 }
 ```
 
-This allows generic operations on `DocumentCore` (iteration, save, test fixture construction) while each document type adds its own semantic layer. Separate types per format because they are semantically different:
+Separate types per format because they are semantically different:
 
-- **SchLib**: components containing primitives (tree structure)
-- **SchDoc**: flat primitives with OWNERINDEX links (flat + implicit tree)
+- **SchLib**: components containing primitives (tree structure) → `ComponentGroup` per stream
+- **SchDoc**: flat primitives with OWNERINDEX links → `ComponentGroup` per owner, built on load
 - **PcbLib**: components containing binary records with multi-block structures
 - **PcbDoc**: flat binary records in typed streams (Tracks6, Arcs6, etc.)
 
+`DocumentCore` remains as a lower-level building block for PCB formats and for generic operations (iteration, save, test fixtures). Schematic formats use `ComponentGroup` directly for the query and closure API.
+
 ## API Shape: Imperative Access with Backing Store
 
-### Two Layers: Record Types and Document Lens
+### Three Layers: Records, Hierarchical Wrappers, and Query
 
-There are two distinct layers:
+There are three distinct layers:
 
-1. **Record types** (`SchPin`, `SchComponent`, etc.) — own a `RecordOrigin` and have typed getters/setters directly on them. These are the primary API surface. No lifetimes, no lens indirection.
-2. **Lens types** (`SchPinRef<'a>`, `SchPinMut<'a>`) — used **only** by the document's closure-based edit API. Deref to the record type so the user calls the same getters/setters, but also provide dirty tracking, drop validation, panic rollback, and read access to sibling records.
+1. **Record types** (`SchPinRecord`, `SchComponentRecord`, etc.) — own a `RecordOrigin` and have typed getters/setters directly on them. Records are **pure data** — they have no knowledge of parent/child/sibling relationships. No lifetimes, no document awareness. The `Record` suffix distinguishes this layer from the wrapper layer. The macro generates these types. **Users never interact with `*Record` types directly.**
 
-The user interacts with the record type's methods. The lens is plumbing.
+2. **Hierarchical wrapper types** (`SchComponent`, `SchPin`, etc.) — hand-written wrappers that borrow into the document's `ComponentGroup` storage. `Deref` to their underlying record type so the user gets all getters/setters for free. Most wrappers are trivial — just a Deref to the record type plus dirty tracking. Only parent types like `SchComponent` add child navigation methods (query, iterate, with_child_mut). Wrappers are **hand-written, not macro-generated**, because this is where API ergonomics lives. **These are the public API types — the only types users see.**
+
+3. **Query API** (`doc.query::<SchComponent>(q)`, `doc.query_all::<SchComponent>(q)`) — returns handles that open closures over matched records. Same query language works at both the document level and within hierarchical wrappers for child access. `query` errors on 0 or 2+ matches; `query_all` returns all matches. Type parameters are wrapper family markers, not record types.
+
+The user interacts with wrapper types everywhere. Record types are internal — the wrapper's Deref makes getters/setters available transparently. Most wrapper types are a single Deref impl plus a Drop for dirty tracking.
 
 ### Macro Declaration (Source of Truth)
 
@@ -136,7 +161,7 @@ The macro passes param key names to the type's `ParamCodec` trait implementation
 ```rust
 #[derive(AltiumEntity)]
 #[altium(kind = "sch", record_id = 2, codec = "params")]
-struct SchPin {
+struct SchPinRecord {
     #[altium(key = "DESIGNATOR")]
     designator: Designator,
 
@@ -306,11 +331,11 @@ The macro generates three access patterns per field on the record type:
 
 ```rust
 // Generated by macro:
-pub struct SchPin {
+pub struct SchPinRecord {
     origin: RecordOrigin,
 }
 
-impl SchPin {
+impl SchPinRecord {
     // 1. Read: calls Designator::from_params() on the backing store
     pub fn designator(&self) -> Designator { ... }
 
@@ -340,94 +365,413 @@ impl SchPin {
 }
 ```
 
-### Generated Lens Types (Document Closure API Only)
+### Hierarchical Wrapper Types (Hand-Written)
 
-Lens types are wrappers generated by the macro that borrow into the document's storage. They deref to the record type so the same getters/setters are available, but they also provide features that a bare `&mut SchPin` can't:
+Wrapper types are **hand-written, not macro-generated**. This is where API ergonomics lives — each wrapper is crafted for its specific use case.
+
+Most wrapper types are trivial: they Deref to their underlying record type, add dirty tracking on Drop, and nothing else. Only **parent types** (like `SchComponent`) add child navigation.
+
+#### Leaf Wrappers (Most Types)
+
+Leaf wrappers like `SchPin`, `SchArc`, `SchLine`, etc. are minimal — just a Deref to the record type plus dirty tracking. They have no children and no special methods:
 
 ```rust
-// Generated by macro — used only by the document closure API:
-pub struct SchPinMut<'a> {
-    record: &'a mut RecordNode,      // mutably borrows the target record
-    core: &'a DocumentCore,          // read access to sibling records
-    dirty: bool,                     // tracks whether any setter was called
-    snapshot: Vec<u8>,               // original bytes for rollback on panic
+/// Hand-written. Wraps SchPinRecord with Deref + dirty tracking.
+/// No child navigation — pins are leaf records.
+pub struct SchPin<'a> {
+    record: &'a mut SchPinRecord,
+    dirty: bool,
+    snapshot: Vec<u8>,
 }
 
-impl<'a> Deref for SchPinMut<'a> { type Target = SchPin; }
-impl<'a> DerefMut for SchPinMut<'a> { ... }
+impl<'a> Deref for SchPin<'a> { type Target = SchPinRecord; }
+impl<'a> DerefMut for SchPin<'a> { ... }
 
-impl<'a> Drop for SchPinMut<'a> {
+impl<'a> Drop for SchPin<'a> {
     fn drop(&mut self) {
-        if self.dirty {
-            self.record.mark_dirty();
-            // Run validation — warn or panic if invariants are violated
-        }
-        // If panicking, roll back to snapshot
-        if std::thread::panicking() {
-            self.record.restore_from(&self.snapshot);
-        }
+        if self.dirty { self.record.mark_dirty(); }
+        if std::thread::panicking() { self.record.restore_from(&self.snapshot); }
     }
 }
 ```
 
-**Lens features beyond deref:**
-
-| Feature | What | Why a bare `&mut SchPin` can't do it |
-|---|---|---|
-| **Dirty tracking** | Marks the record dirty on drop if any setter was called | The document needs to know what changed for efficient save — bare ref doesn't report back |
-| **Sibling access** | Read-only access to other records in the document via `&DocumentCore` | A bare `&mut SchPin` only sees itself — can't read a related component to check constraints |
-| **Drop validation** | Validates record invariants when the closure returns | Catches constraint violations early instead of at save time |
-| **Panic rollback** | Restores original bytes if the closure panics | Prevents half-mutated records from corrupting the document |
+These are boilerplate-heavy but intentionally hand-written. A helper macro (`impl_leaf_wrapper!`) can reduce repetition without going full code generation — this keeps the wrapper layer explicit and easy to customize per type:
 
 ```rust
-impl<'a> SchPinMut<'a> {
-    /// Read a sibling record without taking a mutable borrow on it.
-    pub fn read_component(&self, id: RecordKey) -> SchComponentRef<'_> { ... }
+impl_leaf_wrapper!(SchPin<'a> wraps SchPinRecord);
+impl_leaf_wrapper!(SchArc<'a> wraps SchArcRecord);
+impl_leaf_wrapper!(SchLine<'a> wraps SchLineRecord);
+impl_leaf_wrapper!(SchRectangle<'a> wraps SchRectangleRecord);
+// ... etc
+```
 
-    /// Check if any setter has been called.
-    pub fn is_dirty(&self) -> bool { self.dirty }
+#### Parent Wrappers (SchComponent)
+
+Parent types add child navigation. `SchComponent` is the primary example — it borrows both the component record and its children from separate `ComponentGroup` fields, which is what enables the split-borrow pattern:
+
+```rust
+/// Hand-written. Wraps SchComponentRecord + children with child navigation.
+pub struct SchComponent<'a> {
+    component: &'a mut SchComponentRecord, // borrows ComponentGroup.component
+    children: &'a mut [RecordNode],        // borrows ComponentGroup.children
+    dirty: bool,
+    snapshot: Vec<u8>,
+}
+
+impl<'a> Deref for SchComponent<'a> { type Target = SchComponentRecord; }
+impl<'a> DerefMut for SchComponent<'a> { ... }
+
+impl<'a> Drop for SchComponent<'a> {
+    fn drop(&mut self) {
+        if self.dirty { self.component.mark_dirty(); }
+        if std::thread::panicking() { self.component.restore_from(&self.snapshot); }
+    }
 }
 ```
 
-`SchPinRef<'a>` is the read-only counterpart — holds `&'a RecordNode` and `&'a DocumentCore`, derefs to `SchPin` for getters only, no dirty tracking needed.
-
-### Document Access via Closures
-
-The closure API provides lens-wrapped access. Because the lens derefs to the record type, the user calls getters/setters on the record type directly:
+**Why Deref works here**: Borrows through Deref are temporary — released after each statement. This means getter/setter calls on the component don't conflict with subsequent child access:
 
 ```rust
-// Edit existing record
-doc.with_pin(pin_id, |pin| {
-    pin.set_designator(Designator::new("A1"));
-    pin.set_pin_length(SchCoord::from_mils(100.0));
-    pin.update_pin_conglomerate(|flags| {
-        flags.set(PinConglomerateFlags::DISPLAY_NAME_VISIBLE, true);
-    });
-});
-
-// Create new record — same closure pattern, template is selected internally
-doc.insert_pin(component_id, |pin| {
-    pin.set_designator(Designator::new("A1"));
-    pin.set_pin_length(SchCoord::from_mils(100.0));
-});
-
-// Save — writes original bytes for unchanged records, serializes backing store for changed ones
-doc.save(path)?;
+comp.set_description("New description");   // temp borrow via DerefMut, released
+comp.for_each_pin_mut(|pin| { ... });      // no conflict — nothing borrows comp
 ```
 
-The `with_pin` closure receives a `SchPinMut<'_>` lens. Because the lens derefs to `SchPin`, the user calls the same getters/setters as on a standalone record. But the lens also provides dirty tracking (marks the record on drop if any setter was called), panic rollback (restores original bytes), drop validation, and read access to sibling records. There is no separate `with_pin_mut` — all closures provide mutable access. Read-only access is just calling getters inside the closure.
+The only case that won't compile is holding a reference across child access:
 
-The `insert_pin` method creates a new record from a template function, gives the closure a lens to configure it, then inserts it into the document. Same closure shape, same setters — the user doesn't need to know whether they're editing or creating.
+```rust
+let lib_ref: &str = comp.lib_reference();  // holds borrow via Deref
+comp.for_each_pin_mut(|pin| { ... });      // CONFLICT — comp still borrowed
+```
 
-This is the **first-pass API**. An owned/checkout API for external consumers can be added later.
+Fix by cloning (common), or use `split()` for zero-copy (rare):
+
+```rust
+// Fix 1: clone to release borrow
+let lib_ref = comp.lib_reference().to_string();
+comp.for_each_pin_mut(|pin| { ... });
+
+// Fix 2: split() for simultaneous parent + child access
+let (data, children) = comp.split();
+let lib_ref = data.lib_reference();        // borrows data only
+children.for_each_pin_mut(|pin| {          // borrows children only — no conflict
+    pin.set_name(PinName::new(format!("{}_{}", lib_ref, pin.designator())));
+});
+```
+
+**Features only parent wrappers have:**
+
+| Feature | What |
+|---|---|
+| **Child navigation** | Query and iterate child records (pins, lines, etc.) |
+| **`split()`** | Returns independent refs to parent record and children view |
+| **Child query** | Same AQL scoped to this component's children |
+
+**Features all wrappers have (leaf and parent):**
+
+| Feature | What |
+|---|---|
+| **Deref to record type** | All getters/setters from the record type, no re-declaration |
+| **Dirty tracking** | Marks the record dirty on drop if any setter was called |
+| **Drop validation** | Validates record invariants when the closure returns |
+| **Panic rollback** | Restores original bytes if the closure panics |
+
+#### Child Access Methods
+
+```rust
+impl<'a> SchComponent::Wrapper<'a> {
+    /// Iterate all pins with mutable access.
+    /// Closure receives SchPin wrapper, not SchPinRecord.
+    pub fn for_each_pin_mut(&mut self, f: impl FnMut(SchPin::Wrapper<'_>)) { ... }
+    pub fn for_each_pin(&self, f: impl FnMut(SchPin::RefWrapper<'_>)) { ... }
+
+    /// Query children — same AQL syntax, scoped to this component.
+    /// T is a WrapperFamily marker (SchPin, SchLine, etc.)
+    /// Errors on 0 or 2+ matches.
+    pub fn query<T: WrapperFamily>(&mut self, q: &str) -> Result<ChildHandle<'_, T>> { ... }
+
+    /// Query children — returns all matches.
+    pub fn query_all<T: WrapperFamily>(&mut self, q: &str) -> Result<ChildResults<'_, T>> { ... }
+
+    /// Access a specific child by key (for when handles are passed around).
+    /// Closure receives wrapper type, not record type.
+    pub fn with_child_mut<T: WrapperFamily, R>(
+        &mut self, key: ChildKey<T>, f: impl FnOnce(T::Wrapper<'_>) -> R,
+    ) -> R { ... }
+    pub fn with_child_ref<T: WrapperFamily, R>(
+        &self, key: ChildKey<T>, f: impl FnOnce(T::RefWrapper<'_>) -> R,
+    ) -> R { ... }
+
+    /// Get child keys for external use (passing to other functions, collecting).
+    pub fn pin_keys(&self) -> impl Iterator<Item = ChildKey<SchPin>> { ... }
+
+    /// Split borrows escape hatch — returns independent refs to parent record and children.
+    pub fn split(&mut self) -> (&mut SchComponentRecord, ChildrenView<'_>) { ... }
+
+    pub fn pin_count(&self) -> usize { ... }
+}
+```
+
+#### Child Handles (from query)
+
+`ChildHandle` and `ChildResults` are returned by query methods on the wrapper. They hold `&mut` into the children storage and provide `with_mut`/`with_ref`/`for_each_mut` directly — same pattern as the document-level `QueryHandle`. Closures receive **wrapper types**, not record types.
+
+```rust
+/// Single child match — from comp.query::<SchPin>("pin[name=VCC]")?
+/// T is a WrapperFamily marker (SchPin, SchLine, etc.)
+pub struct ChildHandle<'a, T: WrapperFamily> {
+    children: &'a mut [RecordNode],
+    index: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<'a, T: WrapperFamily> ChildHandle<'a, T> {
+    pub fn with_mut<R>(self, f: impl FnOnce(T::Wrapper<'_>) -> R) -> R { ... }
+    pub fn with_ref<R>(self, f: impl FnOnce(T::RefWrapper<'_>) -> R) -> R { ... }
+}
+
+/// Multiple child matches — from comp.query_all::<SchPin>("pin:power")?
+pub struct ChildResults<'a, T: WrapperFamily> {
+    children: &'a mut [RecordNode],
+    indices: Vec<usize>,
+    _marker: PhantomData<T>,
+}
+
+impl<'a, T: WrapperFamily> ChildResults<'a, T> {
+    pub fn for_each_mut(self, f: impl FnMut(T::Wrapper<'_>)) { ... }
+    pub fn for_each_ref(self, f: impl FnMut(T::RefWrapper<'_>)) { ... }
+    pub fn len(&self) -> usize { self.indices.len() }
+    pub fn is_empty(&self) -> bool { self.indices.is_empty() }
+}
+```
+
+#### Child Keys (for passing around)
+
+`ChildKey<T>` is a lightweight typed index with no borrow — safe to collect, store, pass to other functions, and use later with `with_child_mut`. The closure still receives a wrapper type:
+
+```rust
+pub struct ChildKey<T: WrapperFamily> {
+    index: usize,
+    _marker: PhantomData<T>,
+}
+```
+
+Use `ChildHandle.with_mut()` for inline chains (ergonomic). Use `ChildKey` + `with_child_mut` when handles need to be collected or passed around (flexible).
+
+### Document-Level Query API
+
+The query API is the primary entry point for finding and mutating records in a document.
+
+```rust
+impl SchLib {
+    /// Find exactly one matching component. Errors on 0 or 2+ matches.
+    pub fn query<T: RecordType>(&mut self, q: &str) -> Result<QueryHandle<'_, T>> { ... }
+
+    /// Find all matching components.
+    pub fn query_all<T: RecordType>(&mut self, q: &str) -> Result<QueryResults<'_, T>> { ... }
+}
+```
+
+Both take `&mut self` because the returned handles need mutable access for `with_mut`. The query itself only reads, but the handle must be able to open a mutable closure.
+
+```rust
+/// Single match — from doc.query::<SchComponent>("U1")?
+/// T is a WrapperFamily marker type (SchComponent, SchPin, etc.)
+pub struct QueryHandle<'a, T: WrapperFamily> {
+    doc: &'a mut SchLib,   // (or SchDoc, PcbLib, etc.)
+    index: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<'a> QueryHandle<'a, SchComponent> {
+    /// Open a mutable closure over the matched component.
+    pub fn with_mut<R>(self, f: impl FnOnce(SchComponent::Wrapper<'_>) -> Result<R>) -> Result<R> {
+        let group = &mut self.doc.groups[self.index];
+        // split borrow: component vs children — separate ComponentGroup fields
+        let (comp_node, children) = (&mut group.component, &mut group.children[..]);
+        let record = SchComponentRecord::from_origin_mut(&mut comp_node.origin);
+        f(/* construct SchComponent wrapper with record + children */)
+    }
+
+    /// Read-only access.
+    pub fn with_ref<R>(self, f: impl FnOnce(SchComponent::RefWrapper<'_>) -> R) -> R { ... }
+}
+
+/// Multiple matches — from doc.query_all::<SchComponent>("R*")?
+pub struct QueryResults<'a, T: WrapperFamily> {
+    doc: &'a mut SchLib,
+    indices: Vec<usize>,
+    _marker: PhantomData<T>,
+}
+
+impl<'a> QueryResults<'a, SchComponent> {
+    pub fn for_each_mut(self, f: impl FnMut(SchComponent::Wrapper<'_>) -> Result<()>) -> Result<()> { ... }
+    pub fn for_each_ref(self, f: impl FnMut(SchComponent::RefWrapper<'_>)) { ... }
+    pub fn len(&self) -> usize { self.indices.len() }
+    pub fn is_empty(&self) -> bool { self.indices.is_empty() }
+}
+```
+
+### Document Access: Full Example
+
+The user-facing API uses **wrapper type names only** (`SchComponent`, `SchPin`, etc.). Users never write `*Record` types — those are internal.
+
+```rust
+let mut doc = SchLib::open("Library.SchLib")?;
+
+// Single component — exact match (errors on 0 or 2+)
+doc.query::<SchComponent>("U1")?.with_mut(|comp| {
+    // comp: SchComponent<'_> — wrapper, Deref to SchComponentRecord
+    // Getters/setters available directly via Deref
+    comp.set_lib_reference("LM358N");
+    comp.set_description("Dual Op-Amp");
+
+    // Query single child — with_mut directly on the handle
+    comp.query::<SchPin>("pin[name=VCC]")?.with_mut(|pin| {
+        // pin: SchPin<'_> — wrapper, Deref to SchPinRecord
+        pin.set_electrical(PinElectricalType::Power);
+    });
+
+    // Query multiple children — for_each_mut on the results
+    comp.query_all::<SchPin>("pin:power")?.for_each_mut(|pin| {
+        pin.set_electrical(PinElectricalType::Power);
+    });
+
+    // Iterate all pins
+    comp.for_each_pin_mut(|pin| {
+        pin.update_designator(|d| d.increment());
+    });
+
+    // Collect keys for later use (keys are lightweight indices, no borrow)
+    let pin_keys: Vec<_> = comp.pin_keys().collect();
+    for key in pin_keys {
+        comp.with_child_mut(key, |pin: SchPin<'_>| {
+            pin.set_pin_length(SchCoord::from_mils(100.0));
+        });
+    }
+
+    Ok(())
+})?;
+
+// Multiple components — all resistors
+doc.query_all::<SchComponent>("R*")?.for_each_mut(|comp| {
+    comp.set_description("Resistor (modified)");
+    Ok(())
+})?;
+
+// Insert new record — same closure shape, template is selected internally
+doc.insert_component(|comp| {
+    comp.set_lib_reference("R_NEW");
+    comp.set_description("New resistor");
+    Ok(())
+})?;
+
+doc.save("Library.SchLib")?;
+```
+
+**Implementation note**: Since wrapper types like `SchPin<'a>` have lifetimes, they can't be used directly as type parameters in `query::<SchPin>()`. The actual mechanism uses a **wrapper family trait** with an associated record type. Each wrapper family is a zero-sized marker type that maps to the wrapper and record types via GATs:
+
+```rust
+pub trait WrapperFamily {
+    type Record: RecordType;
+    type Wrapper<'a>;
+}
+
+// SchPin as a type parameter is this marker — not the wrapper itself
+pub enum SchPin {}
+impl WrapperFamily for SchPin {
+    type Record = SchPinRecord;
+    type Wrapper<'a> = SchPinWrapper<'a>;  // the actual wrapper struct
+}
+```
+
+The exact naming of the internal wrapper struct (e.g., `SchPinWrapper<'a>` vs `SchPinView<'a>`) is an implementation detail. Users only see `SchPin` in type parameters and in closure argument types (via type alias).
+
+### SchDoc Generalization
+
+The same API works identically for SchDoc despite different underlying storage. On load, flat records are grouped by OWNERINDEX into `ComponentGroup`s:
+
+```rust
+impl SchDoc {
+    fn open(reader: impl Read + Seek) -> Result<Self> {
+        let records = parse_flat_stream(reader)?;
+
+        // Group by OWNERINDEX → ComponentGroup
+        let mut groups: Vec<ComponentGroup> = Vec::new();
+        for (original_index, record) in records.into_iter().enumerate() {
+            if record.is_component() {
+                groups.push(ComponentGroup {
+                    component: record,
+                    children: Vec::new(),
+                    original_indices: vec![original_index],
+                });
+            } else {
+                let owner = record.owner_index();
+                groups[owner].children.push(record);
+                groups[owner].original_indices.push(original_index);
+            }
+        }
+        // ...
+    }
+}
+```
+
+On save, groups are flattened back to original order using `original_indices`. Untouched records write original bytes; changed records serialize from the backing store. The user code is identical:
+
+```rust
+// Works the same for SchDoc — user doesn't know about OWNERINDEX
+let mut doc = SchDoc::open("Design.SchDoc")?;
+
+doc.query::<SchComponent>("U1")?.with_mut(|comp| {
+    comp.query_all::<SchPin>("pin:power")?.for_each_mut(|pin| {
+        pin.set_electrical(PinElectricalType::Passive);
+    });
+    Ok(())
+})?;
+
+doc.save("Design.SchDoc")?;
+```
+
+### Query Language Parsing
+
+The AQL grammar (see `docs/query-lang.md`) is parsed using **pest** (PEG parser generator). The grammar file maps directly from the EBNF spec and produces structured AST nodes that the evaluator walks against record collections.
+
+**Why pest:**
+- Grammar file (`.pest`) is a direct translation of the EBNF in `docs/query-lang.md` — readable and maintainable.
+- Excellent error messages for user-facing query strings (points to the exact character that failed).
+- Operator precedence (`NOT` → `AND` → `OR` → union) is natural in PEG.
+- No existing parser dependencies in the project — clean addition.
+
+**Dependencies:**
+```toml
+[dependencies]
+pest = "2.7"
+pest_derive = "2.7"
+```
+
+**Architecture:**
+
+```
+src/query/
+    grammar.pest       # PEG grammar (translated from docs/query-lang.md EBNF)
+    mod.rs             # parse() → AqlQuery AST
+    ast.rs             # AqlQuery, Selector, AttrFilter, PseudoClass, etc.
+    eval.rs            # evaluate(query, &[RecordNode]) → Vec<usize> (matched indices)
+```
+
+The parser produces an AST. The evaluator walks the AST against a record collection and returns matched indices. Both the document-level `query()` and the component-level `query()` use the same parser and evaluator — the only difference is the input record set.
+
+**Alternatives considered:**
+- **winnow**: Faster compilation, smaller binary, but requires hand-writing combinators. Better if parsing becomes a bottleneck. Could switch later without changing the AST/evaluator.
+- **nom**: Predecessor to winnow, less ergonomic. No advantage over winnow.
+- **chumsky**: Best error recovery, but 780 KiB binary overhead — overkill for a query language.
 
 ### Standalone Record Usage (Without a Document)
 
-Because getters/setters live on the record type, records work standalone too:
+Because getters/setters live on the record type, records work standalone without any document or wrapper:
 
 ```rust
 // Create from template function
-let mut pin = SchPin::new(templates::sch_pin_default());
+let mut pin = SchPinRecord::new(templates::sch_pin_default());
 pin.set_designator(Designator::new("A1"));
 pin.set_pin_length(SchCoord::from_mils(100.0));
 
@@ -460,10 +804,10 @@ This is important for tests, and for library consumers who don't need the full d
 Defaults are applied only in boundary mappers, never in core types:
 
 ```rust
-impl From<&SchPin> for SchPinDto {
-    fn from(pin: &SchPin) -> Self {
+impl From<&SchPinRecord> for SchPinDto {
+    fn from(pin: &SchPinRecord) -> Self {
         Self {
-            // Context default applied HERE, not in SchPin
+            // Context default applied HERE, not in SchPinRecord
             electrical: pin.try_electrical().unwrap_or(PinElectricalType::Passive),
         }
     }
@@ -522,13 +866,13 @@ The builder is a convenience wrapper around "create from template + call setters
 
 ```rust
 // These are equivalent:
-let pin = SchPin::builder(templates::sch_pin_default)
+let pin = SchPinRecord::builder(templates::sch_pin_default)
     .designator(Designator::new("A1"))
     .pin_length(SchCoord::from_mils(100.0))
     .build();
 
 // Desugars to:
-let mut pin = SchPin::new(templates::sch_pin_default());
+let mut pin = SchPinRecord::new(templates::sch_pin_default());
 pin.set_designator(Designator::new("A1"));
 pin.set_pin_length(SchCoord::from_mils(100.0));
 ```
@@ -540,23 +884,25 @@ The builder takes a template function, not a file path. The macro generates the 
 ### Goals
 
 1. Remove fields from runtime struct; generate record type with typed getters/setters/updaters.
-2. Generate lens types for document closure API (with dirty tracking, validation, and sibling access).
-3. Delegate param serialization to types via `ParamCodec` trait — the macro passes a single key per field.
-4. Binary records: macro generates getters/setters over field span map; parse/serialize is hand-written per record type.
-5. No `default` support in core — defaults come from template functions only.
-6. Generate `Builder` type that wraps template function + same setters.
-7. For types that don't fit `ParamCodec`, support overriding with `codec_fn = "custom_fn"`.
-8. Generate test helpers and `Arbitrary` impls.
+2. Delegate param serialization to types via `ParamCodec` trait — the macro passes a single key per field.
+3. Binary records: macro generates getters/setters over field span map; parse/serialize is hand-written per record type.
+4. No `default` support in core — defaults come from template functions only.
+5. Generate `Builder` type that wraps template function + same setters.
+6. For types that don't fit `ParamCodec`, support overriding with `codec_fn = "custom_fn"`.
+7. Generate test helpers and `Arbitrary` impls.
+
+**Not generated by the macro:** Hierarchical wrapper types (`SchComponent<'a>`, `SchPin<'a>`, etc.) are hand-written. The macro only generates the `*Record` types that the wrappers Deref to.
 
 ### Generated Pieces
 
 From a single `#[derive(AltiumEntity)]` annotation:
 
-- **Record type** (`SchPin`) wrapping `RecordOrigin`, with typed getters/setters/updaters.
-- **Lens types** (`SchPinRef<'a>`, `SchPinMut<'a>`) for document closure API. Deref to the record type for getters/setters, but also provide dirty tracking, drop validation, and sibling access.
-- **Builder type** (`SchPinBuilder`) — takes a template function, applies typed overrides.
-- **Test helpers** (`SchPin::test_fixture()`, `SchPin::assert_roundtrip_identity()`).
+- **Record type** (`SchPinRecord`) wrapping `RecordOrigin`, with typed getters/setters/updaters.
+- **Builder type** (`SchPinRecordBuilder`) — takes a template function, applies typed overrides.
+- **Test helpers** (`SchPinRecord::test_fixture()`, `SchPinRecord::assert_roundtrip_identity()`).
 - **`Arbitrary` impl** (behind `#[cfg(test)]`) for property-based testing.
+
+The hierarchical wrappers (`SchPin<'a>`, `SchComponent<'a>`, etc.) are hand-written separately. Most use `impl_leaf_wrapper!` for the boilerplate; parent types like `SchComponent` are fully hand-written.
 
 ### Type Traits the Macro Uses
 
@@ -869,7 +1215,7 @@ Do not remove commands in code right now. Track with explicit freeze/remove/rebu
 
 1. **Binary record field span map**: For binary records with complex multi-block structures (like PcbPad with its 6 blocks), the hand-written parser builds the field span map. How should this map be structured for records with variable-length blocks? May need a two-level map: block-level + field-level within each block.
 
-2. **Cross-record operations**: When an operation needs to read record A while mutating record B (e.g., connecting a wire to a pin), the lens already provides read access to siblings via `&DocumentCore`. But if both records need mutation, options: (a) interior mutability for the second record, (b) explicit multi-record closure API, (c) separate mutations in sequence.
+2. ~~**Cross-record operations**~~ **RESOLVED**: The hierarchical wrapper solves this. `SchComponentMut` borrows the component record and its children from separate `ComponentGroup` fields, so you can read the parent while mutating children (via `split()`). For mutations across sibling components, use sequential `query().with_mut()` calls — each closure borrows and releases one component at a time.
 
 3. **PadLayerStack and similar complex wrappers**: How many of these do we need? Each one is hand-written domain logic. Need an inventory of all complex binary field types across all record types.
 
@@ -877,7 +1223,13 @@ Do not remove commands in code right now. Track with explicit freeze/remove/rebu
 
 5. **OLE container compatibility**: What sector size, mini-stream cutoff, and directory entry ordering does Altium use? This determines whether we can achieve byte-identical CFB output.
 
-6. **insert vs. update semantics**: `with_pin` and `insert_pin` use the same closure shape. Should we unify them further, or is the semantic distinction (edit existing vs. create new) worth keeping in the API?
+6. ~~**insert vs. update semantics**~~ **RESOLVED**: The query API provides `query().with_mut()` for editing existing records. `insert_component()` / `insert_pin()` use the same closure shape for creating new records from templates. The semantic distinction (edit vs. create) is worth keeping because insert needs a template function and may need to update indices/keys.
+
+7. **PcbLib/PcbDoc hierarchical model**: PCB formats have different structure — PcbLib has per-footprint sections, PcbDoc has typed streams (Tracks6, Arcs6, etc.). The `ComponentGroup` model fits schematic formats naturally but may need a different grouping strategy for PCB. Should PcbDoc use typed-stream groups instead of OWNERINDEX groups?
+
+8. **Query language implementation scope**: The AQL spec (docs/query-lang.md) is comprehensive. For v2 initial implementation, which subset is required? Pattern selectors and attribute selectors likely cover 90% of use cases. Combinators and pseudo-classes can be deferred.
+
+9. **ChildHandle borrow scope**: `comp.query::<SchPin>(q)?` takes `&mut self` on the wrapper, which means you can't interleave query calls. Each query+with_mut chain must complete before the next one starts. Is this acceptable, or do we need a way to batch multiple child queries?
 
 ## Definition of Done
 
@@ -888,9 +1240,12 @@ Do not remove commands in code right now. Track with explicit freeze/remove/rebu
 5. `UnknownFields` type is removed entirely. Unknown data lives in the backing store.
 6. SchCoord (100k/mil) and PcbCoord (10k/mil) are separate types with `AltiumCoord` trait.
 7. Boundary `Measurement<U>` type provides type-safe unit conversions via `From` impls.
-8. Lens types provide dirty tracking, drop validation, panic rollback, and sibling read access.
-9. `Designator` (concrete, SchDoc) and `DesignatorTemplate` (placeholder, SchLib) are separate newtypes.
-10. E2E tests rebuild from JSON using templates. In-place edit tests cover each record type.
-11. diff-ole.py has exit codes, container-level comparison, and both strict/semantic modes.
-12. Existing test files still exist but assert functional behavior with high signal.
-13. CLI command redesign starts only after core/test/validation gates are complete.
+8. Hierarchical wrapper types (`SchComponentMut`, etc.) Deref to record types and provide child navigation via closures and query.
+9. `ComponentGroup` storage separates component record from children for split-borrow safety. SchLib builds groups per CFB stream; SchDoc groups by OWNERINDEX.
+10. Query API: `query::<T>(q)` errors on 0 or 2+ matches; `query_all::<T>(q)` returns all. Same AQL works at document level and within component wrappers for child access.
+11. `QueryHandle` and `ChildHandle` have `with_mut`/`with_ref` directly on them. `ChildKey<T>` + `with_child_mut` available for when handles are passed around.
+12. `Designator` (concrete, SchDoc) and `DesignatorTemplate` (placeholder, SchLib) are separate newtypes.
+13. E2E tests rebuild from JSON using templates. In-place edit tests cover each record type.
+14. diff-ole.py has exit codes, container-level comparison, and both strict/semantic modes.
+15. Existing test files still exist but assert functional behavior with high signal.
+16. CLI command redesign starts only after core/test/validation gates are complete.
