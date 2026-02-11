@@ -91,11 +91,6 @@ impl SchDoc {
         self.save(file)
     }
 
-    /// Returns a reference to the component groups.
-    pub fn components(&self) -> &[ComponentGroup] {
-        &self.groups
-    }
-
     /// Returns the number of components in the document.
     pub fn component_count(&self) -> usize {
         self.groups.len()
@@ -140,9 +135,19 @@ impl SchDoc {
             .map(|r| crate::v2::records::SchSheetRecord::from_origin(r.origin.clone()))
     }
 
-    /// Returns a reference to the orphan records.
-    pub fn orphans(&self) -> &[RecordNode] {
-        &self.orphan_records
+    /// Returns the number of orphan records (records not owned by any component).
+    pub fn orphan_count(&self) -> usize {
+        self.orphan_records.len()
+    }
+
+    /// Iterate orphan records (records not owned by any component) as opaque refs.
+    pub fn for_each_orphan<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::views::SchChildRef<'_>),
+    {
+        for orphan in &self.orphan_records {
+            f(crate::v2::views::SchChildRef::new(orphan));
+        }
     }
 }
 

@@ -207,11 +207,6 @@ impl SchLib {
         self.save(file)
     }
 
-    /// Returns a reference to the component groups.
-    pub fn components(&self) -> &[ComponentGroup] {
-        &self.groups
-    }
-
     /// Returns the number of components in the library.
     pub fn component_count(&self) -> usize {
         self.groups.len()
@@ -276,6 +271,44 @@ impl SchLib {
         self.component_entries
             .iter()
             .position(|e| e.lib_ref.to_lowercase() == name_lower)
+    }
+
+    /// Build and add a new component using the builder pattern.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// lib.build_component(templates::sch_component_default, |builder| {
+    ///     builder.with_component(|comp| {
+    ///         comp.set_lib_reference(LibReference::from("R_NEW"));
+    ///     });
+    ///     builder.add_pin(templates::sch_pin_default, |pin| {
+    ///         pin.set_designator(Designator::from("1"));
+    ///     });
+    /// });
+    /// ```
+    pub fn build_component(
+        &mut self,
+        template: fn() -> RecordOrigin,
+        build: impl FnOnce(&mut crate::v2::builders::ComponentBuilder),
+    ) {
+        let mut builder = crate::v2::builders::ComponentBuilder::new(template);
+        build(&mut builder);
+
+        // Extract the lib_reference from the built component for the entry
+        let group = builder.build();
+        let comp_record = crate::v2::records::SchComponentRecord::from_origin(
+            group.component.origin.clone(),
+        );
+        let lib_ref = comp_record.lib_reference().to_string();
+        let description = comp_record.component_description().to_string();
+
+        self.component_entries.push(SchLibComponentEntry {
+            lib_ref,
+            description,
+            part_count: 1,
+        });
+        self.groups.push(group);
     }
 }
 

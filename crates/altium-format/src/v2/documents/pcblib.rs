@@ -191,11 +191,6 @@ impl PcbLib {
         self.save(file)
     }
 
-    /// Returns a reference to the footprint groups.
-    pub fn footprints(&self) -> &[FootprintGroup] {
-        &self.footprints
-    }
-
     /// Returns the number of footprints in the library.
     pub fn footprint_count(&self) -> usize {
         self.footprints.len()
@@ -242,6 +237,32 @@ impl PcbLib {
         self.footprint_names
             .iter()
             .position(|n| n.to_lowercase() == name_lower)
+    }
+
+    /// Build and add a new footprint using the builder pattern.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// lib.build_footprint("SOIC-8", templates::pcb_footprint_default, |builder| {
+    ///     builder.with_metadata(|fp| {
+    ///         fp.set_pattern("SOIC-8".into());
+    ///     });
+    ///     builder.add_pad(templates::pcb_pad_default, |pad| {
+    ///         pad.set_position_x(PcbCoord::from_mm(1.27));
+    ///     });
+    /// });
+    /// ```
+    pub fn build_footprint(
+        &mut self,
+        name: &str,
+        template: fn() -> RecordOrigin,
+        build: impl FnOnce(&mut crate::v2::builders::FootprintBuilder),
+    ) {
+        let mut builder = crate::v2::builders::FootprintBuilder::new(template);
+        build(&mut builder);
+        self.footprint_names.push(name.to_string());
+        self.footprints.push(builder.build());
     }
 }
 

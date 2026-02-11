@@ -239,8 +239,9 @@ pub fn pcb_track_default() -> RecordOrigin {
 }
 
 pub fn pcb_arc_default() -> RecordOrigin {
-    // 13-byte common header + 24 arc-specific bytes
-    let mut data = vec![0u8; 37];
+    // 13-byte common header + 34 arc-specific bytes
+    // center_x(4) + center_y(4) + radius(4) + start_angle(8) + end_angle(8) + width(4) + subpoly_index(2)
+    let mut data = vec![0u8; 47];
     data[3] = 0xFF;
     data[4] = 0xFF; // net
     data[7] = 0xFF;
@@ -267,8 +268,68 @@ pub fn pcb_fill_default() -> RecordOrigin {
 }
 
 pub fn pcb_pad_default() -> RecordOrigin {
-    // Complex record - just create a minimal binary block
-    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 64]))
+    use crate::v2::backing_store::FieldSpan;
+
+    // Pad format: 6 subrecords, each prefixed with u32 length.
+    // 1. Designator string (empty)
+    // 2-4. Empty strings
+    // 5. Core data (172 bytes)
+    // 6. Stack data (596 bytes)
+    let core_len: usize = 172;
+    let stack_len: usize = 596;
+    // Total: 4×4 (string length prefixes) + 4 (core length) + 172 + 4 (stack length) + 596
+    let total = 16 + 4 + core_len + 4 + stack_len;
+    let mut data = vec![0u8; total];
+
+    // Subrecords 1-4: all have length 0 (4 zero bytes each = 16 bytes)
+    // Already zeroed.
+
+    // Subrecord 5 length at offset 16
+    data[16..20].copy_from_slice(&(core_len as u32).to_le_bytes());
+
+    // Subrecord 5 core data starts at offset 20
+    let s = 20; // core_start
+
+    // Common header defaults (13 bytes at core start)
+    data[s] = 74; // layer = MultiLayer
+    // flags at s+1..s+3 = 0
+    data[s + 3] = 0xFF;
+    data[s + 4] = 0xFF; // net = 0xFFFF (none)
+    // polygon_ref at s+5..s+7 = 0x0000
+    data[s + 7] = 0xFF;
+    data[s + 8] = 0xFF; // component_ref = 0xFFFF
+    data[s + 9] = 0xFF;
+    data[s + 10] = 0xFF; // ref4
+    data[s + 11] = 0xFF;
+    data[s + 12] = 0xFF; // ref5
+
+    // Subrecord 6 length at offset 20 + 172 = 192
+    let stack_offset = 20 + core_len;
+    data[stack_offset..stack_offset + 4].copy_from_slice(&(stack_len as u32).to_le_bytes());
+
+    // Field spans reference into subrecord 5's core data
+    let spans = vec![
+        FieldSpan::new(s + 13, 4),  // 0: position_x
+        FieldSpan::new(s + 17, 4),  // 1: position_y
+        FieldSpan::new(s + 21, 4),  // 2: top_size_x
+        FieldSpan::new(s + 25, 4),  // 3: top_size_y
+        FieldSpan::new(s + 29, 4),  // 4: mid_size_x
+        FieldSpan::new(s + 33, 4),  // 5: mid_size_y
+        FieldSpan::new(s + 37, 4),  // 6: bot_size_x
+        FieldSpan::new(s + 41, 4),  // 7: bot_size_y
+        FieldSpan::new(s + 45, 4),  // 8: hole_size
+        FieldSpan::new(s + 49, 1),  // 9: top_shape
+        FieldSpan::new(s + 50, 1),  // 10: mid_shape
+        FieldSpan::new(s + 51, 1),  // 11: bot_shape
+        FieldSpan::new(s + 52, 8),  // 12: rotation
+        FieldSpan::new(s + 60, 1),  // 13: is_plated
+        FieldSpan::new(s + 62, 1),  // 14: pad_mode
+        FieldSpan::new(s + 86, 4),  // 15: paste_mask_expansion
+        FieldSpan::new(s + 90, 4),  // 16: solder_mask_expansion
+        FieldSpan::new(s + 0, 1),   // 17: layer
+    ];
+
+    RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))
 }
 
 pub fn pcb_via_default() -> RecordOrigin {
