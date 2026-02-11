@@ -56,6 +56,22 @@ pub enum AltiumError {
     /// Template application error.
     #[error("Template error: {0}")]
     Template(String),
+
+    /// Query evaluation error.
+    #[error("query error: {0}")]
+    Query(String),
+
+    /// No match found for a query.
+    #[error("no match found: {0}")]
+    NoMatch(String),
+
+    /// Ambiguous match: multiple results where one was expected.
+    #[error("ambiguous match: {0} matches found for query '{1}'")]
+    AmbiguousMatch(usize, String),
+
+    /// CFB (Compound File Binary) format error.
+    #[error("CFB error: {0}")]
+    Cfb(String),
 }
 
 /// Result type alias for Altium operations.

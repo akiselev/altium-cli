@@ -1,0 +1,103 @@
+// Altium Query Language (AQL) PEG grammar
+//
+// Initial v2 scope: pattern selectors + attribute selectors + logical operators.
+// Combinators (>, +, ~) and pseudo-classes (:power, :input) are deferred.
+
+// Top-level
+query = { SOI ~ expr ~ EOI }
+
+// Expression with OR/union
+expr = { term ~ (or_op ~ term)* }
+or_op = { "OR" | "," }
+
+// Term with AND
+term = { factor ~ ("AND" ~ factor)* }
+
+// Factor with NOT
+factor = { "NOT" ~ factor | selector }
+
+// Selector types
+//
+// compound_selector must come first because it matches everything a bare
+// pattern or element_type would match, plus trailing attribute selectors.
+// element_type must come before pattern so that "component" is not parsed
+// as a designator pattern.
+selector = { compound_selector | element_type | pattern }
+
+// Compound: element type or pattern with one or more attribute selectors.
+// At least one attr_sel is required to distinguish from a bare element_type
+// or bare pattern.
+compound_selector = { (element_type | pattern) ~ attr_sel+ }
+
+// Pattern selectors (initial v2 scope)
+//
+// Order matters in PEG: pin_pat must precede designator_pat because
+// "U1:VCC" would otherwise match as a designator followed by ":VCC".
+pattern = {
+    pin_pat
+    | net_pat
+    | value_pat
+    | part_pat
+    | id_pat
+    | designator_pat
+}
+
+designator_pat = @{ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* ~ ("*" | "??" | "?")? }
+net_pat        = { "~" ~ ident }
+value_pat      = { "@" ~ value_literal }
+part_pat       = { "$" ~ ident }
+id_pat         = { "#" ~ integer }
+pin_pat        = { ident ~ ":" ~ ident }
+
+// Element type selectors (case-insensitive)
+element_type = {
+    ^"component"
+    | ^"pin"
+    | ^"net"
+    | ^"wire"
+    | ^"bus"
+    | ^"port"
+    | ^"power"
+    | ^"label"
+    | ^"netlabel"
+    | ^"junction"
+    | ^"sheet"
+    | ^"parameter"
+    | ^"line"
+    | ^"arc"
+    | ^"text"
+    | ^"polygon"
+    | ^"rectangle"
+    | ^"pad"
+    | ^"via"
+    | ^"track"
+    | ^"fill"
+    | ^"region"
+    | ^"rule"
+}
+
+// Attribute selectors
+attr_sel    = { "[" ~ field_name ~ attr_op ~ attr_value ~ "]" }
+field_name  = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_" | ".")* }
+attr_op     = { ">=" | "<=" | "!=" | "*=" | "^=" | "$=" | "~=" | ">" | "<" | "=" }
+attr_value  = { coord_value | quoted_string | number | boolean | bare_string }
+
+// Value types
+//
+// coord_value uses `number_inner` to avoid the negative lookahead that
+// `number` carries (number must not be followed by alphabetic chars so
+// that "10K" is parsed as bare_string, not number + leftover "K").
+coord_value   = @{ number_inner ~ ("mil" | "mm" | "in") }
+quoted_string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+number        = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ !(ASCII_ALPHA | "_") }
+number_inner  = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+integer       = @{ "-"? ~ ASCII_DIGIT+ }
+boolean       = { ^"true" | ^"false" }
+bare_string   = @{ (ASCII_ALPHANUMERIC | "_" | "-" | ".")+ }
+
+// Shared tokens
+ident         = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+value_literal = @{ (ASCII_ALPHANUMERIC | "_" | "-" | ".")+ }
+
+// Implicit whitespace (silently consumed between tokens)
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
