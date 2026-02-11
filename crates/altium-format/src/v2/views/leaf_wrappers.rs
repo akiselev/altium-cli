@@ -4,6 +4,10 @@
 //! type. The [`impl_leaf_wrapper!`] macro generates the struct, constructor,
 //! and `Deref`/`DerefMut` impls.
 //!
+//! The wrapper holds a `&'a mut RecordNode` + a cached copy of the record.
+//! On `DerefMut`, the dirty flag is set. On `Drop`, if dirty, the cached
+//! record's origin is flushed back to the node.
+//!
 //! Each wrapper also has a corresponding `WrapperFamily` marker enum that
 //! ties the record to its view for use as a type parameter in query APIs.
 
@@ -11,41 +15,55 @@
 // impl_leaf_wrapper! macro
 // ---------------------------------------------------------------------------
 
-/// Generates a leaf view wrapper struct with `Deref`/`DerefMut` to the
-/// underlying record type, plus a `WrapperFamily` marker enum.
+/// Generates a leaf view wrapper struct that caches a record from a `RecordNode`.
+///
+/// The wrapper:
+/// - Clones the record from the node's origin on construction
+/// - Provides `Deref<Target = Record>` for read access
+/// - Provides `DerefMut` for write access (sets dirty flag)
+/// - On `Drop`, if dirty, flushes the cached record's origin back to the node
 ///
 /// # Usage
 ///
 /// ```ignore
 /// impl_leaf_wrapper!(SchPinView wraps SchPinRecord);
 /// ```
-///
-/// This generates:
-/// - `pub struct SchPinView<'a>` with a `&'a mut SchPinRecord` field
-/// - `SchPinView::new(record: &'a mut SchPinRecord) -> Self`
-/// - `Deref<Target = SchPinRecord>` and `DerefMut` impls
 macro_rules! impl_leaf_wrapper {
     ($view:ident wraps $record:ty) => {
         pub struct $view<'a> {
-            record: &'a mut $record,
+            node: &'a mut crate::v2::backing_store::RecordNode,
+            cached: $record,
+            dirty: bool,
         }
 
         impl<'a> $view<'a> {
-            pub fn new(record: &'a mut $record) -> Self {
-                Self { record }
+            pub fn new(node: &'a mut crate::v2::backing_store::RecordNode) -> Self {
+                let cached = <$record>::from_origin(node.origin.clone());
+                Self { node, cached, dirty: false }
             }
         }
 
         impl<'a> std::ops::Deref for $view<'a> {
             type Target = $record;
             fn deref(&self) -> &$record {
-                self.record
+                &self.cached
             }
         }
 
         impl<'a> std::ops::DerefMut for $view<'a> {
             fn deref_mut(&mut self) -> &mut $record {
-                self.record
+                self.dirty = true;
+                &mut self.cached
+            }
+        }
+
+        impl<'a> Drop for $view<'a> {
+            fn drop(&mut self) {
+                if self.dirty {
+                    use crate::v2::traits::RecordType;
+                    self.node.origin = self.cached.origin().clone();
+                    self.node.mark_dirty();
+                }
             }
         }
     };

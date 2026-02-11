@@ -358,7 +358,7 @@ impl ComponentGroup {
     /// This is the key method that enables safe concurrent access to both
     /// the component record and its children without requiring multiple
     /// borrows of the same struct.
-    pub fn split_borrow(&mut self) -> (&mut RecordNode, &mut [RecordNode]) {
+    pub fn split_borrow(&mut self) -> (&mut RecordNode, &mut Vec<RecordNode>) {
         (&mut self.component, &mut self.children)
     }
 }
@@ -424,6 +424,11 @@ impl FootprintGroup {
             original_primitive_order,
             raw_header,
         }
+    }
+
+    /// Returns split borrows: the metadata and its primitives simultaneously.
+    pub fn split_borrow(&mut self) -> (&mut RecordNode, &mut Vec<RecordNode>) {
+        (&mut self.metadata, &mut self.primitives)
     }
 }
 

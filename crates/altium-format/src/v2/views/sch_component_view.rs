@@ -3,55 +3,52 @@
 //! [`SchComponentView`] provides lifetime-bounded access to a schematic
 //! component record and all of its child records (pins, designators,
 //! parameters, etc.) through a single borrowed view.
+//!
+//! The view caches the component record for efficient field access through
+//! `Deref<Target = SchComponentRecord>`. Mutations through `DerefMut` set
+//! a dirty flag, and on `Drop` the cached record's origin is flushed back
+//! to the underlying `RecordNode`.
 
 use crate::v2::backing_store::{RecordNode, RecordOrigin};
-use crate::v2::records::SchComponentRecord;
+use crate::v2::records::{SchComponentRecord, SchPinRecord};
+use crate::v2::traits::RecordType;
+
+use super::child_ref::SchChildRef;
+use super::leaf_wrappers::SchPinView;
 
 /// A borrowed view over a schematic component and its child records.
 ///
-/// This is a "parent wrapper" that provides access to both the component
-/// record node and its owned children (pins, labels, designators, etc.).
-/// The view borrows from a [`ComponentGroup`](crate::v2::backing_store::ComponentGroup)
-/// via its `split_borrow()` method.
+/// Provides `Deref<Target = SchComponentRecord>` for reading component
+/// fields and `DerefMut` for writing them. On drop, if modified, the
+/// cached record's origin is flushed back to the backing store node.
 ///
 /// # Example
 ///
 /// ```ignore
 /// let (component, children) = group.split_borrow();
-/// let view = SchComponentView::new(component, children);
-/// println!("Component has {} pins", view.pin_count());
+/// let mut view = SchComponentView::new(component, children);
+/// println!("Ref: {}", view.lib_reference());
+/// view.set_lib_reference(LibReference::from("NewRef"));
+/// // On drop, changes are flushed to the node.
 /// ```
 pub struct SchComponentView<'a> {
-    component: &'a mut RecordNode,
-    children: &'a mut [RecordNode],
+    node: &'a mut RecordNode,
+    cached: SchComponentRecord,
+    dirty: bool,
+    children: &'a mut Vec<RecordNode>,
 }
 
 impl<'a> SchComponentView<'a> {
     /// Creates a new `SchComponentView` from a component record node and
-    /// its children slice.
-    pub fn new(component: &'a mut RecordNode, children: &'a mut [RecordNode]) -> Self {
+    /// its children vector.
+    pub fn new(node: &'a mut RecordNode, children: &'a mut Vec<RecordNode>) -> Self {
+        let cached = SchComponentRecord::from_origin(node.origin.clone());
         Self {
-            component,
+            node,
+            cached,
+            dirty: false,
             children,
         }
-    }
-
-    /// Access the component record by cloning the origin.
-    ///
-    /// Returns a new `SchComponentRecord` constructed from a clone of the
-    /// backing store origin. Changes to the returned record will NOT be
-    /// reflected back -- use `record_origin_mut()` for modifications.
-    pub fn record(&self) -> SchComponentRecord {
-        SchComponentRecord::from_origin(self.component.origin.clone())
-    }
-
-    /// Access a mutable reference to the component record's origin for
-    /// modifications.
-    ///
-    /// Marks the record node as dirty automatically.
-    pub fn record_origin_mut(&mut self) -> &mut RecordOrigin {
-        self.component.mark_dirty();
-        &mut self.component.origin
     }
 
     /// Number of child records.
@@ -61,30 +58,85 @@ impl<'a> SchComponentView<'a> {
 
     /// Count pins (record_id == 2).
     pub fn pin_count(&self) -> usize {
-        self.children.iter().filter(|c| c.key == 2).count()
-    }
-
-    /// Split borrow: component record node + children slice.
-    ///
-    /// This enables simultaneous mutable access to the component and its
-    /// children, which is safe because they are stored in separate memory.
-    pub fn split(&mut self) -> (&mut RecordNode, &mut [RecordNode]) {
-        (self.component, self.children)
-    }
-
-    /// Iterate over children matching a record ID.
-    pub fn children_by_type(&self, record_id: u8) -> impl Iterator<Item = &RecordNode> {
-        self.children.iter().filter(move |c| c.key == record_id)
-    }
-
-    /// Iterate mutably over children matching a record ID.
-    pub fn children_by_type_mut(
-        &mut self,
-        record_id: u8,
-    ) -> impl Iterator<Item = &mut RecordNode> {
         self.children
+            .iter()
+            .filter(|c| c.key == SchPinRecord::RECORD_ID)
+            .count()
+    }
+
+    /// Count children of a specific record type.
+    pub fn count_by_type(&self, record_id: u8) -> usize {
+        self.children.iter().filter(|c| c.key == record_id).count()
+    }
+
+    /// Iterate over all pins, providing owned (cloned) records for read access.
+    pub fn for_each_pin(&self, mut f: impl FnMut(SchPinRecord)) {
+        for child in self
+            .children
+            .iter()
+            .filter(|c| c.key == SchPinRecord::RECORD_ID)
+        {
+            let rec = SchPinRecord::from_origin(child.origin.clone());
+            f(rec);
+        }
+    }
+
+    /// Iterate over all pins with mutable view access.
+    ///
+    /// Each `SchPinView` provides `Deref` access to `SchPinRecord` getters,
+    /// and `DerefMut` access to setters. Changes are flushed on view drop.
+    pub fn for_each_pin_mut(&mut self, mut f: impl FnMut(SchPinView<'_>)) {
+        for child in self
+            .children
             .iter_mut()
-            .filter(move |c| c.key == record_id)
+            .filter(|c| c.key == SchPinRecord::RECORD_ID)
+        {
+            let view = SchPinView::new(child);
+            f(view);
+        }
+    }
+
+    /// Iterate over ALL children with opaque read-only references.
+    pub fn for_each_child(&self, mut f: impl FnMut(SchChildRef<'_>)) {
+        for child in self.children.iter() {
+            f(SchChildRef::new(child));
+        }
+    }
+
+    /// Add a new pin using a template origin and a configure closure.
+    pub fn add_pin(
+        &mut self,
+        template: fn() -> RecordOrigin,
+        f: impl FnOnce(&mut SchPinRecord),
+    ) {
+        let origin = template();
+        let mut rec = SchPinRecord::from_origin(origin);
+        f(&mut rec);
+        let node = RecordNode::new(SchPinRecord::RECORD_ID, rec.origin().clone());
+        self.children.push(node);
+    }
+}
+
+impl<'a> std::ops::Deref for SchComponentView<'a> {
+    type Target = SchComponentRecord;
+    fn deref(&self) -> &SchComponentRecord {
+        &self.cached
+    }
+}
+
+impl<'a> std::ops::DerefMut for SchComponentView<'a> {
+    fn deref_mut(&mut self) -> &mut SchComponentRecord {
+        self.dirty = true;
+        &mut self.cached
+    }
+}
+
+impl<'a> Drop for SchComponentView<'a> {
+    fn drop(&mut self) {
+        if self.dirty {
+            self.node.origin = self.cached.origin().clone();
+            self.node.mark_dirty();
+        }
     }
 }
 

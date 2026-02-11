@@ -2,7 +2,7 @@
 
 use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
-use crate::v2::newtypes::{LibReference, UniqueId};
+use crate::v2::newtypes::{Designator, LibReference, UniqueId};
 use super::enums::*;
 
 /// Schematic component record -- RECORD=1.
@@ -164,6 +164,10 @@ pub struct SchComponentRecord {
     // --- Component kind ---
     #[altium(key = "ComponentKind")]
     component_kind: ComponentKind,
+
+    // --- Designator (present in SchDoc component instances) ---
+    #[altium(key = "Designator")]
+    designator: Designator,
 }
 
 #[cfg(test)]

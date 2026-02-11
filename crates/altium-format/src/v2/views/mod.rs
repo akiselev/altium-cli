@@ -16,11 +16,13 @@ pub mod leaf_wrappers;
 pub mod sch_component_view;
 pub mod pcb_footprint_view;
 pub mod child_handle;
+pub mod child_ref;
 
 pub use leaf_wrappers::*;
 pub use sch_component_view::*;
 pub use pcb_footprint_view::*;
 pub use child_handle::*;
+pub use child_ref::*;
 
 #[cfg(test)]
 mod tests {
@@ -35,12 +37,12 @@ mod tests {
 
     #[test]
     fn leaf_wrapper_deref() {
-        // Create a SchPinRecord, wrap in SchPinView, access getter via Deref.
+        // Create a RecordNode, wrap in SchPinView, access getter via Deref.
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|Designator=1|Name=VCC|PinLength=30|",
         ));
-        let mut record = crate::v2::records::SchPinRecord::from_origin(origin);
-        let view = SchPinView::new(&mut record);
+        let mut node = RecordNode::new(2, origin);
+        let view = SchPinView::new(&mut node);
 
         // Deref allows calling record getters directly on the view.
         assert_eq!(view.name(), crate::v2::newtypes::PinName::from("VCC"));
@@ -56,14 +58,33 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|Designator=1|Name=VCC|PinLength=30|",
         ));
-        let mut record = crate::v2::records::SchPinRecord::from_origin(origin);
+        let mut node = RecordNode::new(2, origin);
 
         {
-            let mut view = SchPinView::new(&mut record);
+            let mut view = SchPinView::new(&mut node);
             view.set_name(crate::v2::newtypes::PinName::from("GND"));
         }
 
-        assert_eq!(record.name(), crate::v2::newtypes::PinName::from("GND"));
+        // After drop, the node's origin should be updated.
+        let rec = crate::v2::records::SchPinRecord::from_origin(node.origin.clone());
+        assert_eq!(rec.name(), crate::v2::newtypes::PinName::from("GND"));
+        assert!(node.is_dirty());
+    }
+
+    #[test]
+    fn leaf_wrapper_no_flush_when_clean() {
+        // If we only read (no DerefMut), drop should NOT mark dirty.
+        let origin = RecordOrigin::Param(ParamOrigin::new(
+            "|RECORD=2|Designator=1|Name=VCC|PinLength=30|",
+        ));
+        let mut node = RecordNode::new(2, origin);
+
+        {
+            let view = SchPinView::new(&mut node);
+            let _name = view.name(); // read-only, no DerefMut
+        }
+
+        assert!(!node.is_dirty());
     }
 
     // -----------------------------------------------------------------------
@@ -72,7 +93,6 @@ mod tests {
 
     #[test]
     fn component_view_child_count() {
-        // Create a ComponentGroup with a component and two pin children.
         let comp_origin =
             RecordOrigin::Param(ParamOrigin::new("|RECORD=1|LibReference=Resistor|"));
         let comp = RecordNode::new(1, comp_origin);
@@ -83,7 +103,6 @@ mod tests {
         let pin2_origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=GND|"));
         let pin2 = RecordNode::new(2, pin2_origin);
 
-        // Add a non-pin child (e.g., designator, RECORD=34).
         let desig_origin =
             RecordOrigin::Param(ParamOrigin::new("|RECORD=34|Name=Designator|"));
         let desig = RecordNode::new(34, desig_origin);
@@ -98,27 +117,108 @@ mod tests {
     }
 
     #[test]
-    fn component_view_split_borrow() {
-        // Verify that split() allows simultaneous access to component and children.
-        let comp_origin =
-            RecordOrigin::Param(ParamOrigin::new("|RECORD=1|LibReference=Cap|"));
+    fn component_view_deref() {
+        let comp_origin = RecordOrigin::Param(ParamOrigin::new(
+            "|RECORD=1|LibReference=Resistor|ComponentDescription=100k|",
+        ));
         let comp = RecordNode::new(1, comp_origin);
 
-        let pin_origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=A|"));
-        let pin = RecordNode::new(2, pin_origin);
-
-        let mut group = ComponentGroup::new(comp, vec![pin], vec![1]);
+        let mut group = ComponentGroup::new(comp, vec![], vec![]);
 
         let (component, children) = group.split_borrow();
-        let mut view = SchComponentView::new(component, children);
+        let view = SchComponentView::new(component, children);
 
-        // Split: modify both simultaneously.
-        let (comp_node, child_slice) = view.split();
-        comp_node.mark_dirty();
-        child_slice[0].mark_dirty();
+        // Deref to SchComponentRecord
+        assert_eq!(
+            view.lib_reference(),
+            crate::v2::newtypes::LibReference::from("Resistor")
+        );
+        assert_eq!(view.component_description(), "100k");
+    }
 
-        assert!(comp_node.is_dirty());
-        assert!(child_slice[0].is_dirty());
+    #[test]
+    fn component_view_deref_mut_flushes() {
+        let comp_origin = RecordOrigin::Param(ParamOrigin::new(
+            "|RECORD=1|LibReference=Resistor|",
+        ));
+        let comp = RecordNode::new(1, comp_origin);
+
+        let mut group = ComponentGroup::new(comp, vec![], vec![]);
+
+        {
+            let (component, children) = group.split_borrow();
+            let mut view = SchComponentView::new(component, children);
+            view.set_lib_reference(crate::v2::newtypes::LibReference::from("Capacitor"));
+        }
+
+        // After drop, the node should be dirty and origin updated.
+        assert!(group.component().is_dirty());
+        let rec = crate::v2::records::SchComponentRecord::from_origin(
+            group.component().origin.clone(),
+        );
+        assert_eq!(
+            rec.lib_reference(),
+            crate::v2::newtypes::LibReference::from("Capacitor")
+        );
+    }
+
+    #[test]
+    fn component_view_for_each_pin() {
+        let comp_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=1|LibReference=IC|"));
+        let comp = RecordNode::new(1, comp_origin);
+
+        let pin1_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=VCC|Designator=1|"));
+        let pin1 = RecordNode::new(2, pin1_origin);
+
+        let pin2_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=GND|Designator=2|"));
+        let pin2 = RecordNode::new(2, pin2_origin);
+
+        let desig_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=34|Name=U1|"));
+        let desig = RecordNode::new(34, desig_origin);
+
+        let mut group =
+            ComponentGroup::new(comp, vec![pin1, pin2, desig], vec![1, 2, 3]);
+
+        let (component, children) = group.split_borrow();
+        let view = SchComponentView::new(component, children);
+
+        let mut names = Vec::new();
+        view.for_each_pin(|pin| {
+            names.push(pin.name().to_string());
+        });
+
+        assert_eq!(names, vec!["VCC", "GND"]);
+    }
+
+    #[test]
+    fn component_view_for_each_child() {
+        let comp_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=1|LibReference=IC|"));
+        let comp = RecordNode::new(1, comp_origin);
+
+        let pin_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=A|"));
+        let pin = RecordNode::new(2, pin_origin);
+
+        let desig_origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=34|Name=U1|"));
+        let desig = RecordNode::new(34, desig_origin);
+
+        let mut group = ComponentGroup::new(comp, vec![pin, desig], vec![1, 2]);
+
+        let (component, children) = group.split_borrow();
+        let view = SchComponentView::new(component, children);
+
+        let mut ids = Vec::new();
+        view.for_each_child(|child| {
+            ids.push(child.record_id());
+        });
+
+        assert_eq!(ids, vec![2, 34]);
     }
 
     // -----------------------------------------------------------------------
@@ -129,7 +229,6 @@ mod tests {
     fn child_handle_basics() {
         use std::marker::PhantomData;
 
-        // Verify ChildKey, ChildHandle, ChildResults can be constructed.
         let _key: ChildKey<SchPin> = ChildKey {
             index: 0,
             _marker: PhantomData,

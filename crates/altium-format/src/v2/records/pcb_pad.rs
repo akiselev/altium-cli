@@ -52,6 +52,8 @@ pub struct PcbPadRecord {
     paste_mask_expansion: PcbCoord,
     /// Solder mask expansion.
     solder_mask_expansion: PcbCoord,
+    /// Layer (byte 0 of common header in subrecord 5).
+    layer: u8,
 }
 
 /// Parse pad data from the raw binary block (6 subrecords).
@@ -118,6 +120,7 @@ fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigi
         FieldSpan::new(s + 62, 1),  // 14: pad_mode (offset 62, byte 61 is padding)
         FieldSpan::new(s + 86, 4),  // 15: paste_mask_expansion
         FieldSpan::new(s + 90, 4),  // 16: solder_mask_expansion
+        FieldSpan::new(s + 0, 1),   // 17: layer (byte 0 of common header)
     ];
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
@@ -187,6 +190,8 @@ mod tests {
         data[49..53].copy_from_slice(&1000i32.to_le_bytes());
         // solder_mask_expansion at offset 53
         data[53..57].copy_from_slice(&2000i32.to_le_bytes());
+        // layer at offset 57
+        data[57] = 74; // MultiLayer
 
         let spans = vec![
             FieldSpan::new(0, 4),   // position_x
@@ -206,6 +211,7 @@ mod tests {
             FieldSpan::new(48, 1),  // pad_mode
             FieldSpan::new(49, 4),  // paste_mask_expansion
             FieldSpan::new(53, 4),  // solder_mask_expansion
+            FieldSpan::new(57, 1),  // layer
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))
@@ -226,6 +232,7 @@ mod tests {
         assert_eq!(rec.pad_mode(), 0);
         assert_eq!(rec.paste_mask_expansion().to_raw(), 1000);
         assert_eq!(rec.solder_mask_expansion().to_raw(), 2000);
+        assert_eq!(rec.layer(), 74);
     }
 
     #[test]
