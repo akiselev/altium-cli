@@ -18,8 +18,8 @@ pub struct CoordPoint {
 
 /// Axis-aligned bounding rectangle.
 pub struct CoordRect {
-    pub min: CoordPoint,
-    pub max: CoordPoint,
+    pub location1: CoordPoint,  // Bottom-left corner (minimum x, minimum y)
+    pub location2: CoordPoint,  // Top-right corner (maximum x, maximum y)
 }
 ```
 

@@ -122,7 +122,7 @@ SchComponent (OWNERINDEX=-1, index 0 in primitives list)
 ├── SchParameter  (OWNERINDEX=0)
 ├── SchImplementationList (OWNERINDEX=0)
 │   └── SchImplementation (OWNERINDEX=6)  — owned by impl list at index 6
-│       └── SchMapDefiner (OWNERINDEX=7)
+│       └── SchMapDefiner (OWNERINDEX=7)  — owned by implementation at index 7
 └── …
 ```
 

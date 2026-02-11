@@ -311,9 +311,7 @@ PcbDoc
 │   ├── PcbTrack              Free-standing traces
 │   ├── PcbVia                Board-level vias
 │   └── …
-└── (component primitives     Pads/tracks belonging to components are
-     are associated by         linked by component index, not owner_index)
-     component index)
+└── (Component primitives are associated by component index, not owner_index)
 ```
 
 There is no `OWNERINDEX` linking. Component ownership is determined by which

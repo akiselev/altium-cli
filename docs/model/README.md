@@ -19,13 +19,13 @@ that structure to Rust types.
 ┌─────────────────────────────────────────────────────┐
 │                  Altium .SchLib file                 │
 │            (OLE Compound Document / CFB)             │
-├──────────┬──────────────────────────────────────────┤
-│ /Storage │  Icon storage header                     │
-│ /FileHeader │  Component index + metadata           │
-│ /R1/Data │  SchRecord[] (pipe-delimited parameters) │
-│ /R2/Data │  SchRecord[] (pipe-delimited parameters) │
-│ ...      │                                          │
-└──────────┴──────────────────────────────────────────┘
+├─────────────┬──────────────────────────────────────────┤
+│ /Storage    │  Icon storage header                     │
+│ /FileHeader │  Component index + metadata              │
+│ /R1/Data    │  SchRecord[] (pipe-delimited parameters) │
+│ /R2/Data    │  SchRecord[] (pipe-delimited parameters) │
+│ ...         │                                          │
+└─────────────┴──────────────────────────────────────────┘
          │ read blocks, parse parameters
          ▼
 ┌─────────────────────────────────────────────────────┐
