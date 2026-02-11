@@ -209,59 +209,37 @@ impl<T: ParamCodec> ParamCodec for Option<T> {
 // Coordinate ParamCodec implementations
 // ---------------------------------------------------------------------------
 
-// These impls depend on types from crate::v2::coord (Track 1A).
-// SchCoord uses a composite key format: the base key holds the integer part
-// (whole mils) and {key}_FRAC holds the fractional sub-mil part.
-// raw = integer * 100_000 + frac
-//
-// PcbCoord is a simple i32 value (10,000 units/mil).
-//
-// Since coord.rs is currently a stub, these impls will not compile until
-// Track 1A provides SchCoord and PcbCoord with the required methods:
-//   SchCoord::from_dxp_parts(i32, i32) -> Self
-//   SchCoord::to_dxp_parts(self) -> (i32, i32)
-//   PcbCoord::from_raw(i32) -> Self
-//   PcbCoord::to_raw(self) -> i32
-//
-// Temporarily gated behind cfg(feature = "v2-coord") until Track 1A lands.
-// Remove the cfg gate once coord types are available.
+use crate::v2::coord::{AltiumCoord, PcbCoord, SchCoord};
 
-#[cfg(feature = "v2-coord")]
-mod coord_impls {
-    use super::*;
-    use crate::v2::coord::{PcbCoord, SchCoord};
-
-    impl ParamCodec for SchCoord {
-        fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-            // The base key must be present for the coord to exist.
-            let int_val = params.get(key)?.as_int_or(0);
-            let frac_key = format!("{}_FRAC", key);
-            let frac_val = params
-                .get(&frac_key)
-                .map(|v| v.as_int_or(0))
-                .unwrap_or(0);
-            Some(SchCoord::from_dxp_parts(int_val, frac_val))
-        }
-
-        fn write(&self, params: &mut ParameterCollection, key: &str) {
-            let (int_val, frac_val) = self.to_dxp_parts();
-            params.add_int(key, int_val);
-            if frac_val != 0 {
-                params.add_int(&format!("{}_FRAC", key), frac_val);
-            }
-        }
+impl ParamCodec for SchCoord {
+    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
+        let int_val = params.get(key)?.as_int_or(0);
+        let frac_key = format!("{}_FRAC", key);
+        let frac_val = params
+            .get(&frac_key)
+            .map(|v| v.as_int_or(0))
+            .unwrap_or(0);
+        Some(SchCoord::from_dxp_parts(int_val, frac_val))
     }
 
-    impl ParamCodec for PcbCoord {
-        fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-            params
-                .get(key)
-                .map(|v| PcbCoord::from_raw(v.as_int_or(0)))
+    fn write(&self, params: &mut ParameterCollection, key: &str) {
+        let (int_val, frac_val) = self.to_dxp_parts();
+        params.add_int(key, int_val);
+        if frac_val != 0 {
+            params.add_int(&format!("{}_FRAC", key), frac_val);
         }
+    }
+}
 
-        fn write(&self, params: &mut ParameterCollection, key: &str) {
-            params.add_int(key, self.to_raw());
-        }
+impl ParamCodec for PcbCoord {
+    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
+        params
+            .get(key)
+            .map(|v| PcbCoord::from_raw(v.as_int_or(0)))
+    }
+
+    fn write(&self, params: &mut ParameterCollection, key: &str) {
+        params.add_int(key, self.to_raw());
     }
 }
 

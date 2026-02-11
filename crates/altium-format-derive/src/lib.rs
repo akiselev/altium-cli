@@ -15,6 +15,8 @@
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
+mod altium_enum_attr;
+mod altium_record;
 mod attrs;
 mod base;
 mod enum_derive;
@@ -134,6 +136,81 @@ pub fn derive_altium_base(input: TokenStream) -> TokenStream {
 pub fn derive_altium_enum(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     enum_derive::derive_enum(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Attribute macro for v2 Altium enums with integer mapping.
+///
+/// Generates `crate::v2::traits::AltiumEnum` and `crate::v2::traits::ParamCodec`
+/// implementations. Unlike the v1 `#[derive(AltiumEnum)]`, this does NOT
+/// generate a `Default` impl.
+///
+/// # Macro-level Attributes
+///
+/// - `#[altium_enum]` — default: i32, first variant as fallback
+/// - `#[altium_enum(fallback = "Unknown")]` — specific fallback variant
+///
+/// # Variant Attributes
+///
+/// - `#[altium(value = N)]` — explicit integer value (overrides discriminant)
+///
+/// # Example
+///
+/// ```ignore
+/// #[altium_enum]
+/// #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// pub enum PinElectricalType {
+///     Input = 0,
+///     IO = 1,
+///     Output = 2,
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn altium_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
+    altium_enum_attr::expand(attr.into(), item.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Attribute macro for v2 Altium record types.
+///
+/// Replaces the annotated struct with a thin wrapper around `RecordOrigin`
+/// and generates getters, setters, update closures, a builder, and a
+/// `RecordType` trait implementation.
+///
+/// # Macro-level Attributes
+///
+/// - `kind = "sch"` or `kind = "pcb"` (required)
+/// - `record_id = N` (required for sch)
+/// - `object_id = Variant` (required for pcb)
+/// - `codec = "params"` or `codec = "binary"` (required)
+/// - `parse_fn = "name"` (optional, for complex binary records)
+/// - `serialize_fn = "name"` (optional, for complex binary records)
+///
+/// # Field-level Attributes
+///
+/// - `#[altium(key = "KEY")]` — parameter key for param codec
+/// - `#[altium(codec_fn = "name")]` — custom codec escape hatch
+/// - `#[altium(header)]` — marks PcbCommonHeader in binary records
+/// - `#[altium(trailing)]` — marks adaptive trailing fields
+/// - `#[altium(skip)]` — skip field entirely
+///
+/// # Example
+///
+/// ```ignore
+/// #[altium_record(kind = "sch", record_id = 2, codec = "params")]
+/// struct SchPinRecord {
+///     #[altium(key = "DESIGNATOR")]
+///     designator: Designator,
+///
+///     #[altium(key = "PINLENGTH")]
+///     pin_length: SchCoord,
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn altium_record(attr: TokenStream, item: TokenStream) -> TokenStream {
+    altium_record::expand(attr.into(), item.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

@@ -4,7 +4,7 @@
 //! byte order to match Altium's binary format. They are used by hand-written
 //! PCB record parsers to read and write individual fields from raw binary data.
 
-use crate::v2::coord::PcbCoord;
+use crate::v2::coord::{AltiumCoord, PcbCoord};
 
 // ---------------------------------------------------------------------------
 // Read helpers — all read from `&[u8]` at `offset`
