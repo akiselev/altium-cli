@@ -119,6 +119,91 @@ impl<'a> SchChildRef<'a> {
         (self.node.key == SchImplementationRecord::RECORD_ID)
             .then(|| SchImplementationRecord::from_origin(self.node.origin.clone()))
     }
+
+    pub fn as_power(&self) -> Option<SchPowerRecord> {
+        (self.node.key == SchPowerRecord::RECORD_ID)
+            .then(|| SchPowerRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_port(&self) -> Option<SchPortRecord> {
+        (self.node.key == SchPortRecord::RECORD_ID)
+            .then(|| SchPortRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_net_label(&self) -> Option<SchNetLabelRecord> {
+        (self.node.key == SchNetLabelRecord::RECORD_ID)
+            .then(|| SchNetLabelRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_wire(&self) -> Option<SchWireRecord> {
+        (self.node.key == SchWireRecord::RECORD_ID)
+            .then(|| SchWireRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_junction(&self) -> Option<SchJunctionRecord> {
+        (self.node.key == SchJunctionRecord::RECORD_ID)
+            .then(|| SchJunctionRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_sheet(&self) -> Option<SchSheetRecord> {
+        (self.node.key == SchSheetRecord::RECORD_ID)
+            .then(|| SchSheetRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_no_erc(&self) -> Option<SchNoERCRecord> {
+        (self.node.key == SchNoERCRecord::RECORD_ID)
+            .then(|| SchNoERCRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_bus(&self) -> Option<SchBusRecord> {
+        (self.node.key == SchBusRecord::RECORD_ID)
+            .then(|| SchBusRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_text_frame(&self) -> Option<SchTextFrameRecord> {
+        (self.node.key == SchTextFrameRecord::RECORD_ID)
+            .then(|| SchTextFrameRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_sheet_name(&self) -> Option<SchSheetNameRecord> {
+        (self.node.key == SchSheetNameRecord::RECORD_ID)
+            .then(|| SchSheetNameRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_sheet_file_name(&self) -> Option<SchSheetFileNameRecord> {
+        (self.node.key == SchSheetFileNameRecord::RECORD_ID)
+            .then(|| SchSheetFileNameRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_bus_entry(&self) -> Option<SchBusEntryRecord> {
+        (self.node.key == SchBusEntryRecord::RECORD_ID)
+            .then(|| SchBusEntryRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_sheet_symbol(&self) -> Option<SchSheetSymbolRecord> {
+        (self.node.key == SchSheetSymbolRecord::RECORD_ID)
+            .then(|| SchSheetSymbolRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_sheet_entry(&self) -> Option<SchSheetEntryRecord> {
+        (self.node.key == SchSheetEntryRecord::RECORD_ID)
+            .then(|| SchSheetEntryRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_note(&self) -> Option<SchNoteRecord> {
+        (self.node.key == SchNoteRecord::RECORD_ID)
+            .then(|| SchNoteRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_blanket(&self) -> Option<SchBlanketRecord> {
+        (self.node.key == SchBlanketRecord::RECORD_ID)
+            .then(|| SchBlanketRecord::from_origin(self.node.origin.clone()))
+    }
+
+    pub fn as_component(&self) -> Option<SchComponentRecord> {
+        (self.node.key == SchComponentRecord::RECORD_ID)
+            .then(|| SchComponentRecord::from_origin(self.node.origin.clone()))
+    }
 }
 
 // ---------------------------------------------------------------------------

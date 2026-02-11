@@ -239,6 +239,35 @@ impl PcbLib {
             .position(|n| n.to_lowercase() == name_lower)
     }
 
+    /// Returns a unique ID from the library (from the first footprint's UNIQUEID parameter).
+    pub fn unique_id(&self) -> String {
+        for group in &self.footprints {
+            if let Some(param) = group.metadata.origin.as_param() {
+                if let Some(v) = param.params.get("UNIQUEID") {
+                    let s = v.as_str().to_string();
+                    if !s.is_empty() {
+                        return s;
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// Iterate all footprints with name and read-only view access.
+    ///
+    /// Unlike `for_each_footprint`, this takes `&self` and provides read-only
+    /// `PcbChildRef` access to primitives via the closure's footprint view.
+    pub fn for_each_footprint_ref<F>(&self, mut f: F)
+    where
+        F: FnMut(&str, PcbFootprintReadView<'_>),
+    {
+        for (name, group) in self.footprint_names.iter().zip(self.footprints.iter()) {
+            let view = PcbFootprintReadView { group };
+            f(name, view);
+        }
+    }
+
     /// Build and add a new footprint using the builder pattern.
     ///
     /// # Example
@@ -263,6 +292,102 @@ impl PcbLib {
         build(&mut builder);
         self.footprint_names.push(name.to_string());
         self.footprints.push(builder.build());
+    }
+}
+
+/// Read-only view into a footprint for non-mutable iteration.
+///
+/// Provides access to footprint metadata (pattern, description, height)
+/// and read-only iteration over primitives via `PcbChildRef`.
+pub struct PcbFootprintReadView<'a> {
+    group: &'a FootprintGroup,
+}
+
+impl<'a> PcbFootprintReadView<'a> {
+    /// Returns the PATTERN parameter value.
+    pub fn pattern(&self) -> String {
+        self.get_param("PATTERN")
+    }
+
+    /// Returns the DESCRIPTION parameter value.
+    pub fn description(&self) -> String {
+        self.get_param("DESCRIPTION")
+    }
+
+    /// Returns the HEIGHT parameter formatted as mm, or empty string if zero.
+    pub fn height(&self) -> String {
+        if let Some(param) = self.group.metadata.origin.as_param() {
+            param
+                .params
+                .get("HEIGHT")
+                .map(|v| {
+                    let raw = v.as_int_or(0);
+                    if raw != 0 {
+                        use crate::v2::coord::AltiumCoord;
+                        format!("{:.3}mm", crate::v2::coord::PcbCoord::from_raw(raw).to_mm())
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Returns the UNIQUEID parameter value.
+    pub fn unique_id(&self) -> String {
+        self.get_param("UNIQUEID")
+    }
+
+    /// Total primitive count.
+    pub fn primitive_count(&self) -> usize {
+        self.group.primitives.len()
+    }
+
+    /// Count pads.
+    pub fn pad_count(&self) -> usize {
+        self.group.primitives.iter().filter(|p| p.key == 2).count()
+    }
+
+    /// Count primitives of a given type.
+    pub fn count_by_type(&self, type_id: u8) -> usize {
+        self.group.primitives.iter().filter(|p| p.key == type_id).count()
+    }
+
+    /// Iterate all primitives as opaque refs.
+    pub fn for_each_primitive<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::views::PcbChildRef<'_>),
+    {
+        for prim in &self.group.primitives {
+            f(crate::v2::views::PcbChildRef::new(prim));
+        }
+    }
+
+    /// Iterate pads as cloned typed records.
+    pub fn for_each_pad<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::records::PcbPadRecord),
+    {
+        use crate::v2::traits::RecordType;
+        for prim in &self.group.primitives {
+            if prim.key == crate::v2::records::PcbPadRecord::RECORD_ID {
+                f(crate::v2::records::PcbPadRecord::from_origin(prim.origin.clone()));
+            }
+        }
+    }
+
+    fn get_param(&self, key: &str) -> String {
+        if let Some(param) = self.group.metadata.origin.as_param() {
+            param
+                .params
+                .get(key)
+                .map(|v| v.as_str().to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        }
     }
 }
 

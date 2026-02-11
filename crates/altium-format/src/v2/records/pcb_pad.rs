@@ -137,6 +137,32 @@ impl PcbPadRecord {
         let origin = parse_pad(data)?;
         Ok(Self::from_origin(origin))
     }
+
+    /// Returns the pad designator string (extracted from subrecord 1).
+    ///
+    /// The designator is stored as a length-prefixed string at the start
+    /// of the raw binary block, before the core data subrecords.
+    pub fn designator(&self) -> String {
+        use crate::v2::traits::RecordType;
+        let origin = self.origin();
+        if let Some(binary) = origin.as_binary() {
+            let data = &binary.raw_block;
+            if data.len() < 4 {
+                return String::new();
+            }
+            let name_len = u32::from_le_bytes(
+                data[0..4].try_into().unwrap_or([0; 4]),
+            ) as usize;
+            if 4 + name_len > data.len() {
+                return String::new();
+            }
+            String::from_utf8_lossy(&data[4..4 + name_len])
+                .trim_end_matches('\0')
+                .to_string()
+        } else {
+            String::new()
+        }
+    }
 }
 
 /// Serialize pad data back to binary.

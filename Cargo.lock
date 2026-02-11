@@ -71,6 +71,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "altium-format-ops"
+version = "0.1.8"
+dependencies = [
+ "altium-format",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

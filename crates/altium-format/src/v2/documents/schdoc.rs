@@ -149,6 +149,93 @@ impl SchDoc {
             f(crate::v2::views::SchChildRef::new(orphan));
         }
     }
+
+    /// Iterate ALL records of a given type across groups (children only) and orphans.
+    ///
+    /// This provides a flat view of every record with the matching type ID,
+    /// regardless of which component (if any) owns it.
+    pub fn for_each_record_of_type<F>(&self, record_id: u8, mut f: F)
+    where
+        F: FnMut(crate::v2::views::SchChildRef<'_>),
+    {
+        for group in &self.groups {
+            for child in &group.children {
+                if child.key == record_id {
+                    f(crate::v2::views::SchChildRef::new(child));
+                }
+            }
+        }
+        for orphan in &self.orphan_records {
+            if orphan.key == record_id {
+                f(crate::v2::views::SchChildRef::new(orphan));
+            }
+        }
+    }
+    /// Iterate all component groups with read-only access.
+    ///
+    /// The closure receives a read-only component view that provides
+    /// access to the component record and its children without requiring
+    /// `&mut self`.
+    pub fn for_each_component_ref<F>(&self, mut f: F)
+    where
+        F: FnMut(SchDocComponentReadView<'_>),
+    {
+        for group in &self.groups {
+            f(SchDocComponentReadView { group });
+        }
+    }
+}
+
+/// Read-only view into a SchDoc component group.
+pub struct SchDocComponentReadView<'a> {
+    group: &'a ComponentGroup,
+}
+
+impl<'a> SchDocComponentReadView<'a> {
+    /// Returns a cloned `SchComponentRecord` for the component.
+    pub fn component_record(&self) -> crate::v2::records::SchComponentRecord {
+        crate::v2::records::SchComponentRecord::from_origin(
+            self.group.component.origin.clone(),
+        )
+    }
+
+    /// Total child record count.
+    pub fn child_count(&self) -> usize {
+        self.group.children.len()
+    }
+
+    /// Count children of a specific record type.
+    pub fn count_by_type(&self, record_id: u8) -> usize {
+        self.group.children.iter().filter(|c| c.key == record_id).count()
+    }
+
+    /// Count pin children (RECORD=2).
+    pub fn pin_count(&self) -> usize {
+        self.count_by_type(2)
+    }
+
+    /// Iterate all children as opaque refs.
+    pub fn for_each_child<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::views::SchChildRef<'_>),
+    {
+        for child in &self.group.children {
+            f(crate::v2::views::SchChildRef::new(child));
+        }
+    }
+
+    /// Iterate pin children as cloned typed records.
+    pub fn for_each_pin<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::records::SchPinRecord),
+    {
+        use crate::v2::traits::RecordType;
+        for child in &self.group.children {
+            if child.key == crate::v2::records::SchPinRecord::RECORD_ID {
+                f(crate::v2::records::SchPinRecord::from_origin(child.origin.clone()));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

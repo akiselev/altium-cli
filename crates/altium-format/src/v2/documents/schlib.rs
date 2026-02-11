@@ -273,6 +273,34 @@ impl SchLib {
             .position(|e| e.lib_ref.to_lowercase() == name_lower)
     }
 
+    /// Iterate all components with entry metadata and read-only child access.
+    ///
+    /// Unlike `for_each_component`, this takes `&self` and provides read-only
+    /// `SchChildRef` access to children via the closure's component view.
+    pub fn for_each_component_ref<F>(&self, mut f: F)
+    where
+        F: FnMut(&SchLibComponentEntry, SchLibComponentReadView<'_>),
+    {
+        for (entry, group) in self.component_entries.iter().zip(self.groups.iter()) {
+            let view = SchLibComponentReadView { group };
+            f(entry, view);
+        }
+    }
+
+    /// Access a specific component by index with read-only access.
+    pub fn with_component_ref<R>(
+        &self,
+        index: usize,
+        f: impl FnOnce(&SchLibComponentEntry, SchLibComponentReadView<'_>) -> R,
+    ) -> Option<R> {
+        if index >= self.groups.len() || index >= self.component_entries.len() {
+            return None;
+        }
+        let entry = &self.component_entries[index];
+        let view = SchLibComponentReadView { group: &self.groups[index] };
+        Some(f(entry, view))
+    }
+
     /// Build and add a new component using the builder pattern.
     ///
     /// # Example
@@ -309,6 +337,61 @@ impl SchLib {
             part_count: 1,
         });
         self.groups.push(group);
+    }
+}
+
+/// Read-only view into a component for non-mutable iteration.
+///
+/// Provides access to component record data (via `SchComponentRecord`)
+/// and read-only iteration over children via `SchChildRef`.
+pub struct SchLibComponentReadView<'a> {
+    group: &'a ComponentGroup,
+}
+
+impl<'a> SchLibComponentReadView<'a> {
+    /// Returns a cloned `SchComponentRecord` for the component.
+    pub fn component_record(&self) -> crate::v2::records::SchComponentRecord {
+        crate::v2::records::SchComponentRecord::from_origin(
+            self.group.component.origin.clone(),
+        )
+    }
+
+    /// Total child record count.
+    pub fn child_count(&self) -> usize {
+        self.group.children.len()
+    }
+
+    /// Count children of a specific record type.
+    pub fn count_by_type(&self, record_id: u8) -> usize {
+        self.group.children.iter().filter(|c| c.key == record_id).count()
+    }
+
+    /// Count pin children (RECORD=2).
+    pub fn pin_count(&self) -> usize {
+        self.count_by_type(2)
+    }
+
+    /// Iterate all children as opaque refs.
+    pub fn for_each_child<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::views::SchChildRef<'_>),
+    {
+        for child in &self.group.children {
+            f(crate::v2::views::SchChildRef::new(child));
+        }
+    }
+
+    /// Iterate pin children as cloned typed records.
+    pub fn for_each_pin<F>(&self, mut f: F)
+    where
+        F: FnMut(crate::v2::records::SchPinRecord),
+    {
+        use crate::v2::traits::RecordType;
+        for child in &self.group.children {
+            if child.key == crate::v2::records::SchPinRecord::RECORD_ID {
+                f(crate::v2::records::SchPinRecord::from_origin(child.origin.clone()));
+            }
+        }
     }
 }
 
