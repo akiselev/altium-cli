@@ -6,15 +6,7 @@ Design from scratch for one goal: **lossless, nondestructive editing with an erg
 
 This document intentionally ignores migration constraints. Existing code is treated as a knowledge base and oracle; the new architecture is allowed to break old APIs.
 
-### Why Not FCIS?
-
-The original draft proposed a Functional Core / Imperative Shell architecture. After analysis, FCIS is the wrong organizing principle for a **library**:
-
-- FCIS was designed for **applications** with a main loop that orchestrates side effects. For a library, the consumer IS the shell — there is no main loop to own.
-- The "functional" parts (immutable snapshots, produce-new-state) add complexity without benefit. File editing is open → edit → save, not event-sourced state management.
-- The concrete benefits we wanted from FCIS (testability, determinism, I/O separation) fall out naturally from good Rust library design without needing FCIS as an architecture.
-
-**What we keep: four design rules that FCIS inspired:**
+**Goals**
 
 1. **Origin-backed records**: Records store their raw representation. This gives non-destructive editing and lossless roundtrip.
 2. **In-place mutation**: Setters patch the backing store directly. No separate patch planning, no PatchOps. The backing store IS the data.
