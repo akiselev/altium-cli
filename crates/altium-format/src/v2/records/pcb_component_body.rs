@@ -28,16 +28,64 @@ pub struct PcbComponentBodyRecord {
     num_outline_vertices: u32,
 }
 
-#[allow(dead_code)]
-fn parse_component_body(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    todo!("Complex component body parsing -- will be implemented in Phase 4")
+/// Parse component body data from the raw binary block.
+///
+/// Structurally identical to Region (same binary header + parametric +
+/// vertices), just with a different object type ID (12 vs 11).
+fn parse_component_body(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
+    use crate::error::AltiumError;
+
+    if data.len() < 22 {
+        return Err(AltiumError::Parse(format!(
+            "component body data too short: {} bytes (need >= 22)", data.len()
+        )));
+    }
+
+    // Same layout as Region: header(13) + extra(5) + hole_count(2) + padding(2)
+    let spans = vec![
+        FieldSpan::new(0, 1),   // 0: layer
+        FieldSpan::new(1, 2),   // 1: flags
+        FieldSpan::new(3, 2),   // 2: net
+        FieldSpan::new(5, 2),   // 3: polygon_ref
+        FieldSpan::new(7, 2),   // 4: component_ref
+        FieldSpan::new(18, 2),  // 5: hole_count
+        find_body_outline_vertex_count_span(data), // 6: num_outline_vertices
+    ];
+
+    Ok(crate::v2::backing_store::RecordOrigin::Binary(
+        BinaryOrigin::with_spans(data.to_vec(), spans),
+    ))
 }
 
-#[allow(dead_code)]
+/// Find the FieldSpan for num_outline_vertices within component body data.
+fn find_body_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::FieldSpan {
+    use crate::v2::backing_store::FieldSpan;
+
+    // Skip: 13 (header) + 5 (extra) + 2 (hole_count) + 2 (padding) = 22
+    let mut offset = 22usize;
+
+    // Read prop_len and skip properties
+    if offset + 4 <= data.len() {
+        let prop_len = u32::from_le_bytes(
+            data[offset..offset + 4].try_into().unwrap_or([0; 4]),
+        ) as usize;
+        offset += 4 + prop_len;
+    }
+
+    // Now at num_outline_vertices (u32)
+    if offset + 4 <= data.len() {
+        FieldSpan::new(offset, 4)
+    } else {
+        FieldSpan::new(0, 1)
+    }
+}
+
+/// Serialize component body data back to binary.
 fn serialize_component_body(
-    _origin: &crate::v2::backing_store::BinaryOrigin,
+    origin: &crate::v2::backing_store::BinaryOrigin,
 ) -> crate::Result<Vec<u8>> {
-    todo!("Complex component body serialization -- will be implemented in Phase 4")
+    Ok(origin.raw_block.clone())
 }
 
 #[cfg(test)]

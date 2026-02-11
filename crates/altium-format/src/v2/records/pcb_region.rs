@@ -29,14 +29,73 @@ pub struct PcbRegionRecord {
     num_outline_vertices: u32,
 }
 
-#[allow(dead_code)]
-fn parse_region(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    todo!("Complex region parsing -- will be implemented in Phase 4")
+/// Parse region data from the raw binary block (hybrid binary+parametric).
+///
+/// Structure:
+/// - 13-byte PcbCommonHeader (layer, flags, net, polygon, component, ref4, ref5)
+/// - 5-byte extra header
+/// - 2-byte hole_count
+/// - 2-byte padding
+/// - u32 prop_len + parametric properties (null-terminated)
+/// - u32 num_outline_vertices + vertex data
+/// - hole vertex lists
+fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
+    use crate::error::AltiumError;
+
+    if data.len() < 22 {
+        return Err(AltiumError::Parse(format!(
+            "region data too short: {} bytes (need >= 22)", data.len()
+        )));
+    }
+
+    // Fields in the common header (offsets 0-12)
+    let spans = vec![
+        FieldSpan::new(0, 1),   // 0: layer
+        FieldSpan::new(1, 2),   // 1: flags
+        FieldSpan::new(3, 2),   // 2: net
+        FieldSpan::new(5, 2),   // 3: polygon_ref
+        FieldSpan::new(7, 2),   // 4: component_ref
+        // After 13-byte header + 5-byte extra = offset 18
+        FieldSpan::new(18, 2),  // 5: hole_count
+        // num_outline_vertices: located after header(13) + extra(5) +
+        // hole_count(2) + padding(2) + prop_len(4) + props + ...
+        // We need to compute this dynamically
+        find_outline_vertex_count_span(data), // 6: num_outline_vertices
+    ];
+
+    Ok(crate::v2::backing_store::RecordOrigin::Binary(
+        BinaryOrigin::with_spans(data.to_vec(), spans),
+    ))
 }
 
-#[allow(dead_code)]
-fn serialize_region(_origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
-    todo!("Complex region serialization -- will be implemented in Phase 4")
+/// Find the FieldSpan for num_outline_vertices within region data.
+fn find_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::FieldSpan {
+    use crate::v2::backing_store::FieldSpan;
+
+    // Skip: 13 (header) + 5 (extra) + 2 (hole_count) + 2 (padding) = 22
+    let mut offset = 22usize;
+
+    // Read prop_len and skip properties
+    if offset + 4 <= data.len() {
+        let prop_len = u32::from_le_bytes(
+            data[offset..offset + 4].try_into().unwrap_or([0; 4]),
+        ) as usize;
+        offset += 4 + prop_len;
+    }
+
+    // Now at num_outline_vertices (u32)
+    if offset + 4 <= data.len() {
+        FieldSpan::new(offset, 4)
+    } else {
+        // Fallback: point to a safe location
+        FieldSpan::new(0, 1)
+    }
+}
+
+/// Serialize region data back to binary.
+fn serialize_region(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
+    Ok(origin.raw_block.clone())
 }
 
 #[cfg(test)]

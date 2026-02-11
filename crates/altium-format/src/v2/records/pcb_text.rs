@@ -40,14 +40,85 @@ pub struct PcbTextRecord {
     is_designator: bool,
 }
 
-#[allow(dead_code)]
-fn parse_text(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    todo!("Complex text parsing -- will be implemented in Phase 4")
+/// Parse text data from the raw binary block (2 subrecords).
+///
+/// Subrecord 1: Main text data (u32 len + data, 252 bytes in AD26, min 40)
+/// Subrecord 2: Text string (u32 len + null-terminated ASCII)
+///
+/// Typed fields are extracted from subrecord 1 at fixed offsets.
+fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
+    use crate::error::AltiumError;
+
+    if data.len() < 4 {
+        return Err(AltiumError::Parse(
+            "text data too short for subrecord 1 length".into(),
+        ));
+    }
+
+    // Subrecord 1: main text data
+    let sub1_len = u32::from_le_bytes(
+        data[0..4].try_into().unwrap(),
+    ) as usize;
+    let sub1_start = 4; // after length prefix
+    if sub1_start + sub1_len > data.len() {
+        return Err(AltiumError::Parse(
+            "text subrecord 1 extends beyond data".into(),
+        ));
+    }
+    if sub1_len < 40 {
+        return Err(AltiumError::Parse(format!(
+            "text subrecord 1 too short: {} bytes (need >= 40)", sub1_len
+        )));
+    }
+
+    // Field offsets within subrecord 1 (from v1 PcbText::from_subrecords)
+    // Byte 0-12: PcbCommonHeader (13 bytes), then typed fields
+    let s = sub1_start;
+    let mut spans = vec![
+        FieldSpan::new(s + 13, 4),  // 0: position_x
+        FieldSpan::new(s + 17, 4),  // 1: position_y
+        FieldSpan::new(s + 21, 4),  // 2: height
+        FieldSpan::new(s + 25, 2),  // 3: stroke_font_type
+        FieldSpan::new(s + 27, 8),  // 4: rotation
+        FieldSpan::new(s + 35, 1),  // 5: is_mirrored
+        FieldSpan::new(s + 36, 4),  // 6: stroke_width
+    ];
+
+    // Extended fields (if subrecord 1 >= 46 bytes)
+    if sub1_len >= 46 {
+        spans.push(FieldSpan::new(s + 43, 1));  // 7: font_type
+        spans.push(FieldSpan::new(s + 44, 1));  // 8: is_bold
+        spans.push(FieldSpan::new(s + 45, 1));  // 9: is_italic
+    } else {
+        // Fallback spans for missing extended fields
+        spans.push(FieldSpan::new(s + 35, 1));  // 7: font_type (fallback)
+        spans.push(FieldSpan::new(s + 35, 1));  // 8: is_bold (fallback)
+        spans.push(FieldSpan::new(s + 35, 1));  // 9: is_italic (fallback)
+    }
+
+    if sub1_len > 110 {
+        spans.push(FieldSpan::new(s + 110, 1)); // 10: is_inverted
+    } else {
+        spans.push(FieldSpan::new(s + 35, 1));  // 10: fallback
+    }
+
+    if sub1_len >= 46 {
+        spans.push(FieldSpan::new(s + 40, 1));  // 11: is_comment
+        spans.push(FieldSpan::new(s + 41, 1));  // 12: is_designator
+    } else {
+        spans.push(FieldSpan::new(s + 35, 1));  // 11: fallback
+        spans.push(FieldSpan::new(s + 35, 1));  // 12: fallback
+    }
+
+    Ok(crate::v2::backing_store::RecordOrigin::Binary(
+        BinaryOrigin::with_spans(data.to_vec(), spans),
+    ))
 }
 
-#[allow(dead_code)]
-fn serialize_text(_origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
-    todo!("Complex text serialization -- will be implemented in Phase 4")
+/// Serialize text data back to binary.
+fn serialize_text(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
+    Ok(origin.raw_block.clone())
 }
 
 #[cfg(test)]

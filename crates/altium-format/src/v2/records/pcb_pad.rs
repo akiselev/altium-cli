@@ -54,14 +54,93 @@ pub struct PcbPadRecord {
     solder_mask_expansion: PcbCoord,
 }
 
-#[allow(dead_code)]
-fn parse_pad(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    todo!("Complex pad parsing -- will be implemented in Phase 4")
+/// Parse pad data from the raw binary block (6 subrecords).
+///
+/// Each subrecord is length-prefixed with u32. The typed fields are
+/// extracted from subrecord 5 (main pad core data) at fixed offsets.
+fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
+    use crate::error::AltiumError;
+
+    // Walk through 4 string subrecords to find subrecord 5's data offset
+    let mut offset = 0usize;
+    for i in 0..4 {
+        if offset + 4 > data.len() {
+            return Err(AltiumError::Parse(format!(
+                "pad data too short reading subrecord {} length", i + 1
+            )));
+        }
+        let sub_len = u32::from_le_bytes(
+            data[offset..offset + 4].try_into().unwrap(),
+        ) as usize;
+        offset += 4 + sub_len;
+    }
+
+    // Subrecord 5: main pad core data
+    if offset + 4 > data.len() {
+        return Err(AltiumError::Parse(
+            "pad data too short for subrecord 5 length".into(),
+        ));
+    }
+    let core_len = u32::from_le_bytes(
+        data[offset..offset + 4].try_into().unwrap(),
+    ) as usize;
+    let core_start = offset + 4; // skip length prefix
+    if core_start + core_len > data.len() {
+        return Err(AltiumError::Parse(
+            "pad subrecord 5 extends beyond data".into(),
+        ));
+    }
+    if core_len < 94 {
+        return Err(AltiumError::Parse(format!(
+            "pad core too short: {} bytes (need >= 94)", core_len
+        )));
+    }
+
+    // Field offsets within subrecord 5 data (from v1 PcbPadCore::from_bytes)
+    // Byte 0-12: PcbCommonHeader (13 bytes), then typed fields follow
+    let s = core_start; // base offset into raw_block
+    let spans = vec![
+        FieldSpan::new(s + 13, 4),  // 0: position_x
+        FieldSpan::new(s + 17, 4),  // 1: position_y
+        FieldSpan::new(s + 21, 4),  // 2: top_size_x
+        FieldSpan::new(s + 25, 4),  // 3: top_size_y
+        FieldSpan::new(s + 29, 4),  // 4: mid_size_x
+        FieldSpan::new(s + 33, 4),  // 5: mid_size_y
+        FieldSpan::new(s + 37, 4),  // 6: bot_size_x
+        FieldSpan::new(s + 41, 4),  // 7: bot_size_y
+        FieldSpan::new(s + 45, 4),  // 8: hole_size
+        FieldSpan::new(s + 49, 1),  // 9: top_shape
+        FieldSpan::new(s + 50, 1),  // 10: mid_shape
+        FieldSpan::new(s + 51, 1),  // 11: bot_shape
+        FieldSpan::new(s + 52, 8),  // 12: rotation
+        FieldSpan::new(s + 60, 1),  // 13: is_plated
+        FieldSpan::new(s + 62, 1),  // 14: pad_mode (offset 62, byte 61 is padding)
+        FieldSpan::new(s + 86, 4),  // 15: paste_mask_expansion
+        FieldSpan::new(s + 90, 4),  // 16: solder_mask_expansion
+    ];
+
+    Ok(crate::v2::backing_store::RecordOrigin::Binary(
+        BinaryOrigin::with_spans(data.to_vec(), spans),
+    ))
 }
 
-#[allow(dead_code)]
-fn serialize_pad(_origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
-    todo!("Complex pad serialization -- will be implemented in Phase 4")
+impl PcbPadRecord {
+    /// Create a `PcbPadRecord` from raw binary pad data.
+    ///
+    /// Parses the 6-subrecord binary format and creates an origin with
+    /// proper field spans for typed access via the generated getters.
+    pub fn from_binary(data: &[u8]) -> crate::Result<Self> {
+        let origin = parse_pad(data)?;
+        Ok(Self::from_origin(origin))
+    }
+}
+
+/// Serialize pad data back to binary.
+///
+/// Returns the raw_block which has already been patched by setters.
+fn serialize_pad(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
+    Ok(origin.raw_block.clone())
 }
 
 #[cfg(test)]
