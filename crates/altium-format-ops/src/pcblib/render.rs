@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use altium_format::v2::coord::AltiumCoord;
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::PcbFootprint;
 
 use super::{extract_pads_from_view, find_footprint_by_name, open_pcblib};
 
@@ -16,14 +18,14 @@ pub fn cmd_render_ascii(
     width: u32,
     height: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let (idx, _) = find_footprint_by_name(&lib, footprint)?;
 
     let mut output: Option<Result<(), Box<dyn std::error::Error>>> = None;
     let mut current_idx = 0;
-    lib.for_each_footprint_ref(|fp_name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|fp_name, mut view| {
         if current_idx == idx {
-            let pads = extract_pads_from_view(&view);
+            let pads = extract_pads_from_view(&mut view);
             if pads.is_empty() {
                 println!("Footprint '{}' has no pads to render.", fp_name);
                 output = Some(Ok(()));

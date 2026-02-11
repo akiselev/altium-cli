@@ -6,6 +6,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::{PcbFootprint, PcbPad};
+
 use crate::helpers::*;
 use crate::output::*;
 
@@ -15,15 +18,15 @@ use super::{
 
 /// Returns library overview with statistics and footprint category breakdown.
 pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 
     // 1. FOOTPRINTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<FootprintSummaryExt>> = HashMap::new();
 
-    lib.for_each_footprint_ref(|name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|name, view| {
         let description = view.description();
-        let pad_count = view.pad_count();
+        let pad_count = view.child_keys::<PcbPad>().count();
         let category = categorize_footprint(name, &description);
 
         categories
@@ -76,8 +79,8 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     let mut shape_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut hole_counts: HashMap<String, usize> = HashMap::new();
 
-    lib.for_each_footprint_ref(|_name, view| {
-        let pads = extract_pads_from_view(&view);
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|_name, mut view| {
+        let pads = extract_pads_from_view(&mut view);
         for pad in &pads {
             total_pads += 1;
             if pad.is_smd() {
@@ -104,8 +107,8 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
 
     // 3. LARGEST FOOTPRINTS (by pad count)
     let mut by_pads: Vec<(String, String, usize)> = Vec::new();
-    lib.for_each_footprint_ref(|name, view| {
-        let pad_count = view.pad_count();
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|name, view| {
+        let pad_count = view.child_keys::<PcbPad>().count();
         let description = view.description();
         by_pads.push((name.to_string(), description, pad_count));
     });
@@ -139,14 +142,14 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
 
 /// Lists all footprints in the library sorted alphanumerically.
 pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
 
     let mut footprints: Vec<FootprintSummaryExt> = Vec::new();
-    lib.for_each_footprint_ref(|name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|name, view| {
         footprints.push(FootprintSummaryExt {
             name: name.to_string(),
             description: view.description(),
-            pad_count: view.pad_count(),
+            pad_count: view.child_keys::<PcbPad>().count(),
         });
     });
 
@@ -164,14 +167,14 @@ pub fn cmd_search(
     path: &Path,
     query: &str,
 ) -> Result<PcbLibSearchResults, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
 
     let query_lower = query.to_lowercase();
     let has_wildcard = query.contains('*');
 
     let mut matches: Vec<FootprintSummaryExt> = Vec::new();
 
-    lib.for_each_footprint_ref(|name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|name, view| {
         let name_lower = name.to_lowercase();
         let desc = view.description();
         let desc_lower = desc.to_lowercase();
@@ -187,7 +190,7 @@ pub fn cmd_search(
             matches.push(FootprintSummaryExt {
                 name: name.to_string(),
                 description: desc,
-                pad_count: view.pad_count(),
+                pad_count: view.child_keys::<PcbPad>().count(),
             });
         }
     });
@@ -213,13 +216,13 @@ pub fn cmd_search(
 
 /// Returns detailed library metadata including file info and primitive statistics.
 pub fn cmd_info(path: &Path) -> Result<PcbLibInfo, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 
     let mut primitive_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut total_primitives = 0;
 
-    lib.for_each_footprint_ref(|_name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|_name, view| {
         let counts = count_primitives_from_view(&view);
         for (name, count) in counts {
             *primitive_counts.entry(name).or_insert(0) += count;

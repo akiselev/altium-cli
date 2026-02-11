@@ -6,6 +6,8 @@
 use std::path::Path;
 
 use altium_format::v2::coord::{AltiumCoord, PcbCoord};
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::PcbFootprint;
 
 use super::{compute_bounding_box, extract_pads_from_view, find_footprint_by_name, open_pcblib};
 
@@ -19,14 +21,14 @@ pub fn cmd_measure(
     _axis: Option<&str>,
     as_json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let (idx, _) = find_footprint_by_name(&lib, footprint)?;
 
     let mut output: Option<Result<(), Box<dyn std::error::Error>>> = None;
     let mut current_idx = 0;
-    lib.for_each_footprint_ref(|fp_name, view| {
+    lib.query_all::<PcbFootprint>("#0")?.for_each_mut(|fp_name, mut view| {
         if current_idx == idx {
-            let pads = extract_pads_from_view(&view);
+            let pads = extract_pads_from_view(&mut view);
             let bb = compute_bounding_box(&pads);
 
             // Calculate pad pitch (min center-to-center distance)

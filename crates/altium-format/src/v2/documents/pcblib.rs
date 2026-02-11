@@ -201,36 +201,6 @@ impl PcbLib {
         &self.footprint_names
     }
 
-    /// Iterate all footprints with name and mutable view access.
-    pub fn for_each_footprint<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&str, crate::v2::views::PcbFootprintView<'_>),
-    {
-        let names = &self.footprint_names;
-        let footprints = &mut self.footprints;
-        for (name, group) in names.iter().zip(footprints.iter_mut()) {
-            let (metadata, primitives) = group.split_borrow();
-            let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
-            f(name, view);
-        }
-    }
-
-    /// Access a specific footprint by index.
-    pub fn with_footprint<R>(
-        &mut self,
-        index: usize,
-        f: impl FnOnce(&str, crate::v2::views::PcbFootprintView<'_>) -> R,
-    ) -> Option<R> {
-        if index >= self.footprints.len() || index >= self.footprint_names.len() {
-            return None;
-        }
-        let name = &self.footprint_names[index];
-        let group = &mut self.footprints[index];
-        let (metadata, primitives) = group.split_borrow();
-        let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
-        Some(f(name, view))
-    }
-
     /// Find a footprint by name (case-insensitive), returns index.
     pub fn find_footprint(&self, name: &str) -> Option<usize> {
         let name_lower = name.to_lowercase();
@@ -252,20 +222,6 @@ impl PcbLib {
             }
         }
         String::new()
-    }
-
-    /// Iterate all footprints with name and read-only view access.
-    ///
-    /// Unlike `for_each_footprint`, this takes `&self` and provides read-only
-    /// `PcbChildRef` access to primitives via the closure's footprint view.
-    pub fn for_each_footprint_ref<F>(&self, mut f: F)
-    where
-        F: FnMut(&str, PcbFootprintReadView<'_>),
-    {
-        for (name, group) in self.footprint_names.iter().zip(self.footprints.iter()) {
-            let view = PcbFootprintReadView { group };
-            f(name, view);
-        }
     }
 
     /// Build and add a new footprint using the builder pattern.
@@ -295,99 +251,228 @@ impl PcbLib {
     }
 }
 
-/// Read-only view into a footprint for non-mutable iteration.
-///
-/// Provides access to footprint metadata (pattern, description, height)
-/// and read-only iteration over primitives via `PcbChildRef`.
-pub struct PcbFootprintReadView<'a> {
-    group: &'a FootprintGroup,
+// ---------------------------------------------------------------------------
+// FootprintQueryHandle / FootprintQueryResults
+// ---------------------------------------------------------------------------
+
+/// A mutable handle to a single matched footprint in a PcbLib.
+pub struct FootprintQueryHandle<'a> {
+    footprints: &'a mut [FootprintGroup],
+    names: &'a [String],
+    index: usize,
 }
 
-impl<'a> PcbFootprintReadView<'a> {
-    /// Returns the PATTERN parameter value.
-    pub fn pattern(&self) -> String {
-        self.get_param("PATTERN")
+impl<'a> FootprintQueryHandle<'a> {
+    /// Consume this handle, construct a `PcbFootprintView`, pass it to the closure.
+    pub fn with_mut<R>(
+        self,
+        f: impl FnOnce(&str, crate::v2::views::PcbFootprintView<'_>) -> R,
+    ) -> R {
+        let name = &self.names[self.index];
+        let group = &mut self.footprints[self.index];
+        let (metadata, primitives) = group.split_borrow();
+        let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
+        f(name, view)
     }
 
-    /// Returns the DESCRIPTION parameter value.
-    pub fn description(&self) -> String {
-        self.get_param("DESCRIPTION")
+    /// Returns the index of the matched footprint.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
+/// Results from a multi-match footprint query on a PcbLib.
+pub struct FootprintQueryResults<'a> {
+    footprints: &'a mut [FootprintGroup],
+    names: &'a [String],
+    indices: Vec<usize>,
+}
+
+impl<'a> FootprintQueryResults<'a> {
+    pub fn len(&self) -> usize {
+        self.indices.len()
     }
 
-    /// Returns the HEIGHT parameter formatted as mm, or empty string if zero.
-    pub fn height(&self) -> String {
-        if let Some(param) = self.group.metadata.origin.as_param() {
-            param
-                .params
-                .get("HEIGHT")
-                .map(|v| {
-                    let raw = v.as_int_or(0);
-                    if raw != 0 {
-                        use crate::v2::coord::AltiumCoord;
-                        format!("{:.3}mm", crate::v2::coord::PcbCoord::from_raw(raw).to_mm())
-                    } else {
-                        String::new()
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    pub fn for_each_mut(
+        self,
+        mut f: impl FnMut(&str, crate::v2::views::PcbFootprintView<'_>),
+    ) {
+        for idx in self.indices {
+            let name = &self.names[idx];
+            let group = &mut self.footprints[idx];
+            let (metadata, primitives) = group.split_borrow();
+            let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
+            f(name, view);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DocumentQuery<PcbFootprint> for PcbLib
+// ---------------------------------------------------------------------------
+
+impl crate::v2::traits::DocumentQuery<crate::v2::views::PcbFootprint> for PcbLib {
+    type Handle<'a> = FootprintQueryHandle<'a>;
+    type Results<'a> = FootprintQueryResults<'a>;
+
+    fn query(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<FootprintQueryHandle<'_>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let eval_nodes: Vec<_> = self
+            .footprints
+            .iter()
+            .map(|g| g.metadata.clone())
+            .collect();
+
+        let matching = evaluate(&parsed, &eval_nodes);
+
+        match matching.len() {
+            0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
+            1 => Ok(FootprintQueryHandle {
+                footprints: &mut self.footprints,
+                names: &self.footprint_names,
+                index: matching[0],
+            }),
+            n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    fn query_all(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<FootprintQueryResults<'_>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let eval_nodes: Vec<_> = self
+            .footprints
+            .iter()
+            .map(|g| g.metadata.clone())
+            .collect();
+
+        let indices = evaluate(&parsed, &eval_nodes);
+
+        Ok(FootprintQueryResults {
+            footprints: &mut self.footprints,
+            names: &self.footprint_names,
+            indices,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DeepPrimitiveHandle / DeepPrimitiveResults — cross-footprint primitive queries
+// ---------------------------------------------------------------------------
+
+/// A mutable handle to a primitive found via deep query across all footprints.
+pub struct DeepPrimitiveHandle<'a, T: crate::v2::traits::WrapperFamily> {
+    footprints: &'a mut [FootprintGroup],
+    fp_index: usize,
+    prim_index: usize,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepPrimitiveHandle<'a, T> {
+    pub fn with_mut<R>(self, f: impl FnOnce(T::View<'_>) -> R) -> R {
+        let node = &mut self.footprints[self.fp_index].primitives[self.prim_index];
+        let view = T::make_view(node);
+        f(view)
+    }
+}
+
+/// Results from a deep query across all footprints.
+pub struct DeepPrimitiveResults<'a, T: crate::v2::traits::WrapperFamily> {
+    footprints: &'a mut [FootprintGroup],
+    matches: Vec<(usize, usize)>,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepPrimitiveResults<'a, T> {
+    pub fn len(&self) -> usize {
+        self.matches.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.matches.is_empty()
+    }
+
+    pub fn for_each_mut(self, mut f: impl FnMut(T::View<'_>)) {
+        for (fi, pi) in self.matches {
+            let node = &mut self.footprints[fi].primitives[pi];
+            let view = T::make_view(node);
+            f(view);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DocumentQuery<T: LeafViewConstructor> for PcbLib (blanket deep query)
+// ---------------------------------------------------------------------------
+
+impl<T: crate::v2::traits::LeafViewConstructor> crate::v2::traits::DocumentQuery<T> for PcbLib {
+    type Handle<'a> = DeepPrimitiveHandle<'a, T>;
+    type Results<'a> = DeepPrimitiveResults<'a, T>;
+
+    fn query(&mut self, q: &str) -> crate::error::Result<DeepPrimitiveHandle<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let mut matches = Vec::new();
+        for (fi, fp) in self.footprints.iter().enumerate() {
+            for (pi, prim) in fp.primitives.iter().enumerate() {
+                if prim.key == T::record_id() {
+                    let all = std::slice::from_ref(prim);
+                    if !evaluate(&parsed, all).is_empty() {
+                        matches.push((fi, pi));
                     }
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        }
-    }
-
-    /// Returns the UNIQUEID parameter value.
-    pub fn unique_id(&self) -> String {
-        self.get_param("UNIQUEID")
-    }
-
-    /// Total primitive count.
-    pub fn primitive_count(&self) -> usize {
-        self.group.primitives.len()
-    }
-
-    /// Count pads.
-    pub fn pad_count(&self) -> usize {
-        self.group.primitives.iter().filter(|p| p.key == 2).count()
-    }
-
-    /// Count primitives of a given type.
-    pub fn count_by_type(&self, type_id: u8) -> usize {
-        self.group.primitives.iter().filter(|p| p.key == type_id).count()
-    }
-
-    /// Iterate all primitives as opaque refs.
-    pub fn for_each_primitive<F>(&self, mut f: F)
-    where
-        F: FnMut(crate::v2::views::PcbChildRef<'_>),
-    {
-        for prim in &self.group.primitives {
-            f(crate::v2::views::PcbChildRef::new(prim));
-        }
-    }
-
-    /// Iterate pads as cloned typed records.
-    pub fn for_each_pad<F>(&self, mut f: F)
-    where
-        F: FnMut(crate::v2::records::PcbPadRecord),
-    {
-        use crate::v2::traits::RecordType;
-        for prim in &self.group.primitives {
-            if prim.key == crate::v2::records::PcbPadRecord::RECORD_ID {
-                f(crate::v2::records::PcbPadRecord::from_origin(prim.origin.clone()));
+                }
             }
         }
+
+        match matches.len() {
+            0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
+            1 => {
+                let (fi, pi) = matches[0];
+                Ok(DeepPrimitiveHandle {
+                    footprints: &mut self.footprints,
+                    fp_index: fi,
+                    prim_index: pi,
+                    _marker: std::marker::PhantomData,
+                })
+            }
+            n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
     }
 
-    fn get_param(&self, key: &str) -> String {
-        if let Some(param) = self.group.metadata.origin.as_param() {
-            param
-                .params
-                .get(key)
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_default()
-        } else {
-            String::new()
+    fn query_all(&mut self, q: &str) -> crate::error::Result<DeepPrimitiveResults<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let mut matches = Vec::new();
+        for (fi, fp) in self.footprints.iter().enumerate() {
+            for (pi, prim) in fp.primitives.iter().enumerate() {
+                if prim.key == T::record_id() {
+                    let all = std::slice::from_ref(prim);
+                    if !evaluate(&parsed, all).is_empty() {
+                        matches.push((fi, pi));
+                    }
+                }
+            }
         }
+
+        Ok(DeepPrimitiveResults {
+            footprints: &mut self.footprints,
+            matches,
+            _marker: std::marker::PhantomData,
+        })
     }
 }
 
@@ -577,6 +662,80 @@ mod tests {
         assert_eq!(prims[0].key, 4);
         assert_eq!(order.len(), 1);
         assert_eq!(order[0].type_id, 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // DocumentQuery tests for PcbLib
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pcblib_query_all_footprints() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = PcbLib::default();
+        for name in &["SOT-23", "QFP-48", "DIP-8"] {
+            lib.footprint_names.push(name.to_string());
+            lib.footprints.push(FootprintGroup::new(
+                RecordNode::new(
+                    0,
+                    RecordOrigin::Param(ParamOrigin::new(&format!(
+                        "|PATTERN={}|DESCRIPTION={}|",
+                        name, name
+                    ))),
+                ),
+                vec![],
+                Vec::new(),
+                vec![],
+                vec![],
+            ));
+        }
+
+        let results = DocumentQuery::<crate::v2::views::PcbFootprint>::query_all(&mut lib, "#0")
+            .unwrap();
+        assert_eq!(results.len(), 3); // all have record_id=0
+    }
+
+    #[test]
+    fn pcblib_deep_query_pad() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = PcbLib::default();
+        lib.footprint_names.push("SOT-23".to_string());
+
+        let pad_block = vec![0u8; 40]; // minimal binary block for a pad
+        lib.footprints.push(FootprintGroup::new(
+            RecordNode::new(
+                0,
+                RecordOrigin::Param(ParamOrigin::new("|PATTERN=SOT-23|")),
+            ),
+            vec![
+                RecordNode::new(
+                    2, // pad type
+                    RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())),
+                ),
+                RecordNode::new(
+                    2,
+                    RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())),
+                ),
+                RecordNode::new(
+                    4, // track type
+                    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 35])),
+                ),
+            ],
+            Vec::new(),
+            vec![
+                PcbPrimitiveRef::new(2, 0),
+                PcbPrimitiveRef::new(2, 1),
+                PcbPrimitiveRef::new(4, 2),
+            ],
+            vec![],
+        ));
+
+        // Use #2 (record_id match) because the AQL element_type_to_record_id
+        // for Pad currently maps to a placeholder (100), not the actual PCB type_id (2).
+        let results =
+            DocumentQuery::<crate::v2::views::PcbPad>::query_all(&mut lib, "#2").unwrap();
+        assert_eq!(results.len(), 2);
     }
 
     #[test]

@@ -4,11 +4,10 @@
 //! through `Deref<Target = PcbFootprintRecord>` and child navigation methods.
 
 use crate::v2::backing_store::{RecordNode, RecordOrigin};
-use crate::v2::records::{PcbArcRecord, PcbFootprintRecord, PcbPadRecord, PcbTrackRecord};
-use crate::v2::traits::RecordType;
+use crate::v2::records::{PcbFootprintRecord, PcbPadRecord};
+use crate::v2::traits::{LeafViewConstructor, RecordType, WrapperFamily};
 
-use super::child_ref::PcbChildRef;
-use super::leaf_wrappers::{PcbArcView, PcbPadView, PcbTrackView};
+use super::child_handle::{ChildHandle, ChildKey, ChildResults, ChildrenMut};
 
 /// View over a PCB footprint's metadata and primitive records.
 ///
@@ -37,108 +36,99 @@ impl<'a> PcbFootprintView<'a> {
         }
     }
 
-    /// Returns the number of primitives in this footprint.
-    pub fn primitive_count(&self) -> usize {
+    /// Query primitives for a single match of type `T`.
+    pub fn query<T: WrapperFamily>(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<ChildHandle<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let matching: Vec<usize> = self
+            .primitives
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.key == T::record_id())
+            .filter(|(_, node)| {
+                let all = std::slice::from_ref(*node);
+                !evaluate(&parsed, all).is_empty()
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        match matching.len() {
+            0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
+            1 => Ok(ChildHandle::new(&mut *self.primitives, matching[0])),
+            n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    /// Query primitives for all matches of type `T`.
+    pub fn query_all<T: WrapperFamily>(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<ChildResults<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let indices: Vec<usize> = self
+            .primitives
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.key == T::record_id())
+            .filter(|(_, node)| {
+                let all = std::slice::from_ref(*node);
+                !evaluate(&parsed, all).is_empty()
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        Ok(ChildResults {
+            children: &mut *self.primitives,
+            indices,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    /// Returns an iterator over `ChildKey<T>` for all primitives of type `T`.
+    pub fn child_keys<T: WrapperFamily>(&self) -> impl Iterator<Item = ChildKey<T>> + use<'_, T> {
+        self.primitives
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.key == T::record_id())
+            .map(|(i, _)| ChildKey::new(i))
+    }
+
+    /// Access a primitive by its `ChildKey`, constructing a typed view.
+    pub fn with_child_mut<T: LeafViewConstructor, R>(
+        &mut self,
+        key: ChildKey<T>,
+        f: impl FnOnce(T::View<'_>) -> R,
+    ) -> R {
+        let node = &mut self.primitives[key.index()];
+        let view = T::make_view(node);
+        f(view)
+    }
+
+    /// Split the view into independent metadata record and primitives access.
+    pub fn split(&mut self) -> (&mut PcbFootprintRecord, ChildrenMut<'_>) {
+        self.dirty = true;
+        (
+            &mut self.cached_metadata,
+            ChildrenMut {
+                children: &mut *self.primitives,
+            },
+        )
+    }
+
+    /// Returns the total number of primitives (all types).
+    pub fn primitives_len(&self) -> usize {
         self.primitives.len()
     }
 
-    /// Count pads in this footprint.
-    pub fn pad_count(&self) -> usize {
-        self.primitives
-            .iter()
-            .filter(|p| p.key == PcbPadRecord::RECORD_ID)
-            .count()
-    }
-
-    /// Count tracks in this footprint.
-    pub fn track_count(&self) -> usize {
-        self.primitives
-            .iter()
-            .filter(|p| p.key == PcbTrackRecord::RECORD_ID)
-            .count()
-    }
-
-    /// Count arcs in this footprint.
-    pub fn arc_count(&self) -> usize {
-        self.primitives
-            .iter()
-            .filter(|p| p.key == PcbArcRecord::RECORD_ID)
-            .count()
-    }
-
-    /// Count primitives of a specific type.
-    pub fn count_by_type(&self, type_id: u8) -> usize {
-        self.primitives
-            .iter()
-            .filter(|p| p.key == type_id)
-            .count()
-    }
-
-    /// Iterate over all pads, providing owned (cloned) records for read access.
-    pub fn for_each_pad(&self, mut f: impl FnMut(PcbPadRecord)) {
-        for prim in self
-            .primitives
-            .iter()
-            .filter(|p| p.key == PcbPadRecord::RECORD_ID)
-        {
-            let rec = PcbPadRecord::from_origin(prim.origin.clone());
-            f(rec);
-        }
-    }
-
-    /// Iterate over all pads with mutable view access.
-    pub fn for_each_pad_mut(&mut self, mut f: impl FnMut(PcbPadView<'_>)) {
-        for prim in self
-            .primitives
-            .iter_mut()
-            .filter(|p| p.key == PcbPadRecord::RECORD_ID)
-        {
-            let view = PcbPadView::new(prim);
-            f(view);
-        }
-    }
-
-    /// Iterate over all tracks, providing owned (cloned) records for read access.
-    pub fn for_each_track(&self, mut f: impl FnMut(PcbTrackRecord)) {
-        for prim in self
-            .primitives
-            .iter()
-            .filter(|p| p.key == PcbTrackRecord::RECORD_ID)
-        {
-            let rec = PcbTrackRecord::from_origin(prim.origin.clone());
-            f(rec);
-        }
-    }
-
-    /// Iterate over all tracks with mutable view access.
-    pub fn for_each_track_mut(&mut self, mut f: impl FnMut(PcbTrackView<'_>)) {
-        for prim in self
-            .primitives
-            .iter_mut()
-            .filter(|p| p.key == PcbTrackRecord::RECORD_ID)
-        {
-            let view = PcbTrackView::new(prim);
-            f(view);
-        }
-    }
-
-    /// Iterate over all arcs with mutable view access.
-    pub fn for_each_arc_mut(&mut self, mut f: impl FnMut(PcbArcView<'_>)) {
-        for prim in self
-            .primitives
-            .iter_mut()
-            .filter(|p| p.key == PcbArcRecord::RECORD_ID)
-        {
-            let view = PcbArcView::new(prim);
-            f(view);
-        }
-    }
-
-    /// Iterate over ALL primitives with opaque read-only references.
-    pub fn for_each_primitive(&self, mut f: impl FnMut(PcbChildRef<'_>)) {
-        for prim in self.primitives.iter() {
-            f(PcbChildRef::new(prim));
-        }
+    /// Returns an iterator over the type IDs of all primitives.
+    pub fn primitive_type_ids(&self) -> impl Iterator<Item = u8> + '_ {
+        self.primitives.iter().map(|n| n.key)
     }
 
     /// Add a new pad using a template origin and a configure closure.
@@ -176,4 +166,21 @@ impl<'a> Drop for PcbFootprintView<'a> {
             self.metadata_node.mark_dirty();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// WrapperFamily for PcbFootprint (parent wrapper)
+// ---------------------------------------------------------------------------
+
+/// Marker type for the PCB footprint `WrapperFamily`.
+///
+/// Used as a type parameter in query APIs:
+/// ```ignore
+/// doc.query::<PcbFootprint>("SOIC-8")?
+/// ```
+pub enum PcbFootprint {}
+
+impl crate::v2::traits::WrapperFamily for PcbFootprint {
+    type Record = PcbFootprintRecord;
+    type View<'a> = PcbFootprintView<'a>;
 }

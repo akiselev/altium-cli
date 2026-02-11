@@ -83,6 +83,11 @@ macro_rules! impl_wrapper_family {
             type Record = $record;
             type View<'a> = $view<'a>;
         }
+        impl crate::v2::traits::LeafViewConstructor for $marker {
+            fn make_view(node: &mut crate::v2::backing_store::RecordNode) -> Self::View<'_> {
+                $view::new(node)
+            }
+        }
     };
 }
 

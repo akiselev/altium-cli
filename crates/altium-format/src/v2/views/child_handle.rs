@@ -8,7 +8,7 @@
 use std::marker::PhantomData;
 
 use crate::v2::backing_store::RecordNode;
-use crate::v2::traits::WrapperFamily;
+use crate::v2::traits::{LeafViewConstructor, WrapperFamily};
 
 // ---------------------------------------------------------------------------
 // ChildKey
@@ -96,6 +96,18 @@ impl<'a, T: WrapperFamily> ChildHandle<'a, T> {
     pub fn node_mut(&mut self) -> &mut RecordNode {
         &mut self.children[self.index]
     }
+
+    /// Consume this handle, construct a typed view, pass it to the closure,
+    /// and return the closure's result. The view is dropped (flushing any
+    /// mutations) before this method returns.
+    pub fn with_mut<R>(self, f: impl FnOnce(T::View<'_>) -> R) -> R
+    where
+        T: LeafViewConstructor,
+    {
+        let node = &mut self.children[self.index];
+        let view = T::make_view(node);
+        f(view)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,5 +145,121 @@ impl<'a, T: WrapperFamily> ChildResults<'a, T> {
     /// Converts the results into a vector of `ChildKey` values.
     pub fn keys(&self) -> Vec<ChildKey<T>> {
         self.indices.iter().map(|&i| ChildKey::new(i)).collect()
+    }
+
+    /// Consume this results set and call the closure for each matching child,
+    /// providing a typed mutable view. Each view is dropped (flushing
+    /// mutations) before the next iteration.
+    pub fn for_each_mut(self, mut f: impl FnMut(T::View<'_>))
+    where
+        T: LeafViewConstructor,
+    {
+        let indices = self.indices;
+        let children = self.children;
+        for idx in indices {
+            let node = &mut children[idx];
+            let view = T::make_view(node);
+            f(view);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ChildrenMut — independent mutable access to children from split()
+// ---------------------------------------------------------------------------
+
+/// Mutable access to a parent's children slice, independent of the parent
+/// record borrow.
+///
+/// Obtained via `SchComponentView::split()` or `PcbFootprintView::split()`.
+/// Provides the same query/child_keys/with_child_mut methods as the parent
+/// view's child section, enabling simultaneous parent+child borrowing.
+pub struct ChildrenMut<'a> {
+    pub(crate) children: &'a mut [RecordNode],
+}
+
+impl<'a> ChildrenMut<'a> {
+    /// Query children for a single match of type `T`.
+    pub fn query<T: WrapperFamily>(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<ChildHandle<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let matching: Vec<usize> = self
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.key == T::record_id())
+            .filter(|(_, node)| {
+                let all = std::slice::from_ref(*node);
+                !evaluate(&parsed, all).is_empty()
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        match matching.len() {
+            0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
+            1 => Ok(ChildHandle::new(&mut *self.children, matching[0])),
+            n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    /// Query children for all matches of type `T`.
+    pub fn query_all<T: WrapperFamily>(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<ChildResults<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let indices: Vec<usize> = self
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.key == T::record_id())
+            .filter(|(_, node)| {
+                let all = std::slice::from_ref(*node);
+                !evaluate(&parsed, all).is_empty()
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        Ok(ChildResults {
+            children: &mut *self.children,
+            indices,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Returns an iterator over `ChildKey<T>` for all children of type `T`.
+    pub fn child_keys<T: WrapperFamily>(&self) -> impl Iterator<Item = ChildKey<T>> + use<'_, T> {
+        self.children
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.key == T::record_id())
+            .map(|(i, _)| ChildKey::new(i))
+    }
+
+    /// Access a child by its `ChildKey`, constructing a typed view.
+    pub fn with_child_mut<T: LeafViewConstructor, R>(
+        &mut self,
+        key: ChildKey<T>,
+        f: impl FnOnce(T::View<'_>) -> R,
+    ) -> R {
+        let node = &mut self.children[key.index()];
+        let view = T::make_view(node);
+        f(view)
+    }
+
+    /// Returns the number of children.
+    pub fn len(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Returns true if there are no children.
+    pub fn is_empty(&self) -> bool {
+        self.children.is_empty()
     }
 }

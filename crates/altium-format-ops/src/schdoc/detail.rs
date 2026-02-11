@@ -9,6 +9,8 @@ use std::path::Path;
 use crate::helpers::*;
 use crate::output::*;
 
+use altium_format::v2::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
+
 use super::{format_location, open_schdoc, port_io_type_name, power_style_name};
 
 /// Extracts net label information, optionally filtered by name pattern.
@@ -24,25 +26,24 @@ pub fn cmd_netlist(
     let mut net_labels: Vec<NetLabelInfo> = Vec::new();
     let mut net_counts: HashMap<String, usize> = HashMap::new();
 
-    doc.for_each_record_of_type(25, |child_ref| {
-        if let Some(rec) = child_ref.as_net_label() {
-            let text = rec.text();
-            if text.is_empty() {
+    doc.for_each_record_of_type(25, |node| {
+        let rec = SchNetLabelRecord::from_origin(node.origin.clone());
+        let text = rec.text();
+        if text.is_empty() {
+            return;
+        }
+
+        if let Some(ref pattern) = filter_lower {
+            if !text.to_lowercase().contains(pattern) {
                 return;
             }
-
-            if let Some(ref pattern) = filter_lower {
-                if !text.to_lowercase().contains(pattern) {
-                    return;
-                }
-            }
-
-            *net_counts.entry(text.clone()).or_insert(0) += 1;
-            net_labels.push(NetLabelInfo {
-                net_name: text,
-                location: format_location(rec.location_x(), rec.location_y()),
-            });
         }
+
+        *net_counts.entry(text.clone()).or_insert(0) += 1;
+        net_labels.push(NetLabelInfo {
+            net_name: text,
+            location: format_location(rec.location_x(), rec.location_y()),
+        });
     });
 
     net_labels.sort_by(|a, b| {
@@ -80,17 +81,16 @@ pub fn cmd_ports(path: &Path) -> Result<SchDocPortList, Box<dyn std::error::Erro
 
     let mut ports: Vec<PortInfo> = Vec::new();
 
-    doc.for_each_record_of_type(18, |child_ref| {
-        if let Some(rec) = child_ref.as_port() {
-            let name = rec.name();
-            let io_type = rec.io_type();
+    doc.for_each_record_of_type(18, |node| {
+        let rec = SchPortRecord::from_origin(node.origin.clone());
+        let name = rec.name();
+        let io_type = rec.io_type();
 
-            ports.push(PortInfo {
-                name,
-                io_type: port_io_type_name(io_type).to_string(),
-                location: format_location(rec.location_x(), rec.location_y()),
-            });
-        }
+        ports.push(PortInfo {
+            name,
+            io_type: port_io_type_name(io_type).to_string(),
+            location: format_location(rec.location_x(), rec.location_y()),
+        });
     });
 
     ports.sort_by(|a, b| alphanumeric_sort(&a.name, &b.name));
@@ -110,21 +110,20 @@ pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerList, Box<dyn std::error:
     let mut power_objects: Vec<PowerObjectInfo> = Vec::new();
     let mut net_counts: HashMap<String, usize> = HashMap::new();
 
-    doc.for_each_record_of_type(17, |child_ref| {
-        if let Some(rec) = child_ref.as_power() {
-            let text = rec.text();
-            let style = rec.style();
+    doc.for_each_record_of_type(17, |node| {
+        let rec = SchPowerRecord::from_origin(node.origin.clone());
+        let text = rec.text();
+        let style = rec.style();
 
-            if !text.is_empty() {
-                *net_counts.entry(text.clone()).or_insert(0) += 1;
-            }
-
-            power_objects.push(PowerObjectInfo {
-                net: text,
-                style: power_style_name(style).to_string(),
-                location: format_location(rec.location_x(), rec.location_y()),
-            });
+        if !text.is_empty() {
+            *net_counts.entry(text.clone()).or_insert(0) += 1;
         }
+
+        power_objects.push(PowerObjectInfo {
+            net: text,
+            style: power_style_name(style).to_string(),
+            location: format_location(rec.location_x(), rec.location_y()),
+        });
     });
 
     power_objects.sort_by(|a, b| {

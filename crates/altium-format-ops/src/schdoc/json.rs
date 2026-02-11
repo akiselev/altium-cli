@@ -7,6 +7,9 @@ use std::path::Path;
 
 use crate::helpers::*;
 
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::{SchComponent, SchPin};
+
 use super::{collect_net_names, collect_power_nets, get_sheet_size, open_schdoc};
 
 /// Serializes the schematic document to JSON for LLM processing or external analysis.
@@ -14,22 +17,21 @@ pub fn cmd_json(
     path: &Path,
     full: bool,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let mut doc = open_schdoc(path)?;
 
     if full {
         Ok(serde_json::to_value(&doc)?)
     } else {
         let mut components: Vec<serde_json::Value> = Vec::new();
 
-        doc.for_each_component_ref(|view| {
-            let rec = view.component_record();
-            let designator = rec.designator().to_string();
-            let pin_count = view.pin_count();
-            let child_count = view.child_count();
+        DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
+            let designator = view.designator().to_string();
+            let pin_count = view.child_keys::<SchPin>().count();
+            let child_count = view.children_len();
 
             components.push(serde_json::json!({
                 "designator": designator,
-                "lib_reference": rec.lib_reference().to_string(),
+                "lib_reference": view.lib_reference().to_string(),
                 "pin_count": pin_count,
                 "child_count": child_count,
             }));

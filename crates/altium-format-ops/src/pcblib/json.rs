@@ -6,6 +6,8 @@
 use std::path::Path;
 
 use altium_format::v2::coord::AltiumCoord;
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::{PcbFootprint, PcbPad};
 
 use crate::output::*;
 
@@ -16,18 +18,18 @@ pub fn cmd_json(
     path: &Path,
     full: bool,
 ) -> Result<PcbLibJson, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 
     let mut footprints: Vec<FootprintJsonData> = Vec::new();
 
-    lib.for_each_footprint_ref(|name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|name, mut view| {
         let description = view.description();
-        let pad_count = view.pad_count();
-        let primitive_count = view.primitive_count();
+        let pad_count = view.child_keys::<PcbPad>().count();
+        let primitive_count = view.primitives_len();
 
         let pads = if full {
-            let pad_list = extract_pads_from_view(&view);
+            let pad_list = extract_pads_from_view(&mut view);
             Some(
                 pad_list
                     .iter()

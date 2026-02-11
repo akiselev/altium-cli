@@ -235,70 +235,12 @@ impl SchLib {
         &mut self.header
     }
 
-    /// Iterate all components with entry metadata and a mutable view.
-    pub fn for_each_component<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>),
-    {
-        let entries = &self.component_entries;
-        let groups = &mut self.groups;
-        for (entry, group) in entries.iter().zip(groups.iter_mut()) {
-            let (comp, children) = group.split_borrow();
-            let view = crate::v2::views::SchComponentView::new(comp, children);
-            f(entry, view);
-        }
-    }
-
-    /// Access a specific component by index.
-    pub fn with_component<R>(
-        &mut self,
-        index: usize,
-        f: impl FnOnce(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>) -> R,
-    ) -> Option<R> {
-        if index >= self.groups.len() || index >= self.component_entries.len() {
-            return None;
-        }
-        let entry = &self.component_entries[index];
-        let group = &mut self.groups[index];
-        let (comp, children) = group.split_borrow();
-        let view = crate::v2::views::SchComponentView::new(comp, children);
-        Some(f(entry, view))
-    }
-
     /// Find a component by name (case-insensitive), returns index.
     pub fn find_component(&self, name: &str) -> Option<usize> {
         let name_lower = name.to_lowercase();
         self.component_entries
             .iter()
             .position(|e| e.lib_ref.to_lowercase() == name_lower)
-    }
-
-    /// Iterate all components with entry metadata and read-only child access.
-    ///
-    /// Unlike `for_each_component`, this takes `&self` and provides read-only
-    /// `SchChildRef` access to children via the closure's component view.
-    pub fn for_each_component_ref<F>(&self, mut f: F)
-    where
-        F: FnMut(&SchLibComponentEntry, SchLibComponentReadView<'_>),
-    {
-        for (entry, group) in self.component_entries.iter().zip(self.groups.iter()) {
-            let view = SchLibComponentReadView { group };
-            f(entry, view);
-        }
-    }
-
-    /// Access a specific component by index with read-only access.
-    pub fn with_component_ref<R>(
-        &self,
-        index: usize,
-        f: impl FnOnce(&SchLibComponentEntry, SchLibComponentReadView<'_>) -> R,
-    ) -> Option<R> {
-        if index >= self.groups.len() || index >= self.component_entries.len() {
-            return None;
-        }
-        let entry = &self.component_entries[index];
-        let view = SchLibComponentReadView { group: &self.groups[index] };
-        Some(f(entry, view))
     }
 
     /// Build and add a new component using the builder pattern.
@@ -340,58 +282,242 @@ impl SchLib {
     }
 }
 
-/// Read-only view into a component for non-mutable iteration.
+// ---------------------------------------------------------------------------
+// ComponentQueryHandle / ComponentQueryResults
+// ---------------------------------------------------------------------------
+
+/// A mutable handle to a single matched component in a SchLib.
 ///
-/// Provides access to component record data (via `SchComponentRecord`)
-/// and read-only iteration over children via `SchChildRef`.
-pub struct SchLibComponentReadView<'a> {
-    group: &'a ComponentGroup,
+/// Obtained from `DocumentQuery<SchComponent>::query()`.
+pub struct ComponentQueryHandle<'a> {
+    groups: &'a mut [ComponentGroup],
+    entries: &'a [SchLibComponentEntry],
+    index: usize,
 }
 
-impl<'a> SchLibComponentReadView<'a> {
-    /// Returns a cloned `SchComponentRecord` for the component.
-    pub fn component_record(&self) -> crate::v2::records::SchComponentRecord {
-        crate::v2::records::SchComponentRecord::from_origin(
-            self.group.component.origin.clone(),
-        )
+impl<'a> ComponentQueryHandle<'a> {
+    /// Consume this handle, construct a `SchComponentView`, pass it to the
+    /// closure, and return the closure's result.
+    pub fn with_mut<R>(
+        self,
+        f: impl FnOnce(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>) -> R,
+    ) -> R {
+        let group = &mut self.groups[self.index];
+        let entry = &self.entries[self.index];
+        let (comp, children) = group.split_borrow();
+        let view = crate::v2::views::SchComponentView::new(comp, children);
+        f(entry, view)
     }
 
-    /// Total child record count.
-    pub fn child_count(&self) -> usize {
-        self.group.children.len()
+    /// Returns the index of the matched component.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
+/// Results from a multi-match component query on a SchLib.
+///
+/// Obtained from `DocumentQuery<SchComponent>::query_all()`.
+pub struct ComponentQueryResults<'a> {
+    groups: &'a mut [ComponentGroup],
+    entries: &'a [SchLibComponentEntry],
+    indices: Vec<usize>,
+}
+
+impl<'a> ComponentQueryResults<'a> {
+    /// Returns the number of matches.
+    pub fn len(&self) -> usize {
+        self.indices.len()
     }
 
-    /// Count children of a specific record type.
-    pub fn count_by_type(&self, record_id: u8) -> usize {
-        self.group.children.iter().filter(|c| c.key == record_id).count()
+    /// Returns true if no components matched.
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
     }
 
-    /// Count pin children (RECORD=2).
-    pub fn pin_count(&self) -> usize {
-        self.count_by_type(2)
+    /// Consume this results set and call the closure for each match.
+    pub fn for_each_mut(
+        self,
+        mut f: impl FnMut(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>),
+    ) {
+        for idx in self.indices {
+            let group = &mut self.groups[idx];
+            let entry = &self.entries[idx];
+            let (comp, children) = group.split_borrow();
+            let view = crate::v2::views::SchComponentView::new(comp, children);
+            f(entry, view);
+        }
     }
+}
 
-    /// Iterate all children as opaque refs.
-    pub fn for_each_child<F>(&self, mut f: F)
-    where
-        F: FnMut(crate::v2::views::SchChildRef<'_>),
-    {
-        for child in &self.group.children {
-            f(crate::v2::views::SchChildRef::new(child));
+// ---------------------------------------------------------------------------
+// DocumentQuery<SchComponent> for SchLib
+// ---------------------------------------------------------------------------
+
+impl crate::v2::traits::DocumentQuery<crate::v2::views::SchComponent> for SchLib {
+    type Handle<'a> = ComponentQueryHandle<'a>;
+    type Results<'a> = ComponentQueryResults<'a>;
+
+    fn query(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<ComponentQueryHandle<'_>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        // Clone component nodes for evaluation (releases borrow)
+        let eval_nodes: Vec<_> = self
+            .groups
+            .iter()
+            .map(|g| g.component.clone())
+            .collect();
+
+        let matching = evaluate(&parsed, &eval_nodes);
+
+        match matching.len() {
+            0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
+            1 => Ok(ComponentQueryHandle {
+                groups: &mut self.groups,
+                entries: &self.component_entries,
+                index: matching[0],
+            }),
+            n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
 
-    /// Iterate pin children as cloned typed records.
-    pub fn for_each_pin<F>(&self, mut f: F)
-    where
-        F: FnMut(crate::v2::records::SchPinRecord),
-    {
-        use crate::v2::traits::RecordType;
-        for child in &self.group.children {
-            if child.key == crate::v2::records::SchPinRecord::RECORD_ID {
-                f(crate::v2::records::SchPinRecord::from_origin(child.origin.clone()));
+    fn query_all(
+        &mut self,
+        q: &str,
+    ) -> crate::error::Result<ComponentQueryResults<'_>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let eval_nodes: Vec<_> = self
+            .groups
+            .iter()
+            .map(|g| g.component.clone())
+            .collect();
+
+        let indices = evaluate(&parsed, &eval_nodes);
+
+        Ok(ComponentQueryResults {
+            groups: &mut self.groups,
+            entries: &self.component_entries,
+            indices,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DeepChildHandle / DeepChildResults — cross-group child queries
+// ---------------------------------------------------------------------------
+
+/// A mutable handle to a single child record found via deep query across
+/// all component groups.
+pub struct DeepChildHandle<'a, T: crate::v2::traits::WrapperFamily> {
+    groups: &'a mut [ComponentGroup],
+    group_index: usize,
+    child_index: usize,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepChildHandle<'a, T> {
+    /// Consume this handle, construct a typed view, pass it to the closure.
+    pub fn with_mut<R>(self, f: impl FnOnce(T::View<'_>) -> R) -> R {
+        let node = &mut self.groups[self.group_index].children[self.child_index];
+        let view = T::make_view(node);
+        f(view)
+    }
+}
+
+/// Results from a deep query across all component groups.
+pub struct DeepChildResults<'a, T: crate::v2::traits::WrapperFamily> {
+    groups: &'a mut [ComponentGroup],
+    matches: Vec<(usize, usize)>, // (group_idx, child_idx)
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepChildResults<'a, T> {
+    /// Returns the number of matches.
+    pub fn len(&self) -> usize {
+        self.matches.len()
+    }
+
+    /// Returns true if no children matched.
+    pub fn is_empty(&self) -> bool {
+        self.matches.is_empty()
+    }
+
+    /// Consume and iterate, calling the closure for each match.
+    pub fn for_each_mut(self, mut f: impl FnMut(T::View<'_>)) {
+        for (gi, ci) in self.matches {
+            let node = &mut self.groups[gi].children[ci];
+            let view = T::make_view(node);
+            f(view);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DocumentQuery<T: LeafViewConstructor> for SchLib (blanket deep query)
+// ---------------------------------------------------------------------------
+
+impl<T: crate::v2::traits::LeafViewConstructor> crate::v2::traits::DocumentQuery<T> for SchLib {
+    type Handle<'a> = DeepChildHandle<'a, T>;
+    type Results<'a> = DeepChildResults<'a, T>;
+
+    fn query(&mut self, q: &str) -> crate::error::Result<DeepChildHandle<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let mut matches = Vec::new();
+        for (gi, group) in self.groups.iter().enumerate() {
+            for (ci, child) in group.children.iter().enumerate() {
+                if child.key == T::record_id() {
+                    let all = std::slice::from_ref(child);
+                    if !evaluate(&parsed, all).is_empty() {
+                        matches.push((gi, ci));
+                    }
+                }
             }
         }
+
+        match matches.len() {
+            0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
+            1 => {
+                let (gi, ci) = matches[0];
+                Ok(DeepChildHandle {
+                    groups: &mut self.groups,
+                    group_index: gi,
+                    child_index: ci,
+                    _marker: std::marker::PhantomData,
+                })
+            }
+            n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    fn query_all(&mut self, q: &str) -> crate::error::Result<DeepChildResults<'_, T>> {
+        use crate::v2::query::eval::evaluate;
+        let parsed = crate::v2::query::parse(q)?;
+
+        let mut matches = Vec::new();
+        for (gi, group) in self.groups.iter().enumerate() {
+            for (ci, child) in group.children.iter().enumerate() {
+                if child.key == T::record_id() {
+                    let all = std::slice::from_ref(child);
+                    if !evaluate(&parsed, all).is_empty() {
+                        matches.push((gi, ci));
+                    }
+                }
+            }
+        }
+
+        Ok(DeepChildResults {
+            groups: &mut self.groups,
+            matches,
+            _marker: std::marker::PhantomData,
+        })
     }
 }
 
@@ -762,6 +888,229 @@ mod tests {
         let group = parse_data_stream_to_group(&[]).unwrap();
         assert_eq!(group.component.key, 1);
         assert!(group.children.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // DocumentQuery<SchComponent> for SchLib
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schlib_query_component() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = SchLib::default();
+        for name in &["R1", "R2", "C1"] {
+            lib.component_entries.push(SchLibComponentEntry {
+                lib_ref: name.to_string(),
+                description: String::new(),
+                part_count: 1,
+            });
+            lib.groups.push(ComponentGroup::new(
+                RecordNode::new(
+                    1,
+                    RecordOrigin::Param(ParamOrigin::new(&format!(
+                        "|RECORD=1|DESIGNATOR={}|LIBREFERENCE={}|",
+                        name, name
+                    ))),
+                ),
+                vec![],
+                vec![],
+            ));
+        }
+
+        let name = DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "C1")
+            .unwrap()
+            .with_mut(|entry, _view| entry.lib_ref().to_string());
+        assert_eq!(name, "C1");
+    }
+
+    #[test]
+    fn schlib_query_all_components() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = SchLib::default();
+        for name in &["R1", "R2", "R3"] {
+            lib.component_entries.push(SchLibComponentEntry {
+                lib_ref: name.to_string(),
+                description: String::new(),
+                part_count: 1,
+            });
+            lib.groups.push(ComponentGroup::new(
+                RecordNode::new(
+                    1,
+                    RecordOrigin::Param(ParamOrigin::new(&format!(
+                        "|RECORD=1|DESIGNATOR={}|LIBREFERENCE={}|",
+                        name, name
+                    ))),
+                ),
+                vec![],
+                vec![],
+            ));
+        }
+
+        let results = DocumentQuery::<crate::v2::views::SchComponent>::query_all(&mut lib, "R*")
+            .unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn schlib_query_no_match() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = SchLib::default();
+        lib.component_entries.push(SchLibComponentEntry {
+            lib_ref: "R1".to_string(),
+            description: String::new(),
+            part_count: 1,
+        });
+        lib.groups.push(ComponentGroup::new(
+            RecordNode::new(
+                1,
+                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=R1|")),
+            ),
+            vec![],
+            vec![],
+        ));
+
+        let result = DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "C1");
+        assert!(matches!(result, Err(crate::error::AltiumError::NoMatch(_))));
+    }
+
+    #[test]
+    fn schlib_query_ambiguous() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = SchLib::default();
+        for name in &["R1", "R2"] {
+            lib.component_entries.push(SchLibComponentEntry {
+                lib_ref: name.to_string(),
+                description: String::new(),
+                part_count: 1,
+            });
+            lib.groups.push(ComponentGroup::new(
+                RecordNode::new(
+                    1,
+                    RecordOrigin::Param(ParamOrigin::new(&format!(
+                        "|RECORD=1|DESIGNATOR={}|",
+                        name
+                    ))),
+                ),
+                vec![],
+                vec![],
+            ));
+        }
+
+        let result = DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "R*");
+        assert!(matches!(
+            result,
+            Err(crate::error::AltiumError::AmbiguousMatch(2, _))
+        ));
+    }
+
+    #[test]
+    fn schlib_query_with_mut_modifies() {
+        use crate::v2::traits::DocumentQuery;
+        use crate::v2::newtypes::LibReference;
+
+        let mut lib = SchLib::default();
+        lib.component_entries.push(SchLibComponentEntry {
+            lib_ref: "R1".to_string(),
+            description: String::new(),
+            part_count: 1,
+        });
+        lib.groups.push(ComponentGroup::new(
+            RecordNode::new(
+                1,
+                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=R1|LIBREFERENCE=R1|")),
+            ),
+            vec![],
+            vec![],
+        ));
+
+        DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "R1")
+            .unwrap()
+            .with_mut(|_entry, mut view| {
+                view.set_lib_reference(LibReference::from("R_MODIFIED"));
+            });
+
+        assert!(lib.groups[0].component.is_dirty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Deep queries (SchLib + SchPin)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schlib_deep_query_pin() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = SchLib::default();
+        // Component with 2 pins
+        lib.component_entries.push(SchLibComponentEntry {
+            lib_ref: "U1".to_string(),
+            description: String::new(),
+            part_count: 1,
+        });
+        lib.groups.push(ComponentGroup::new(
+            RecordNode::new(
+                1,
+                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=U1|")),
+            ),
+            vec![
+                RecordNode::new(
+                    2,
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=VCC|Designator=1|")),
+                ),
+                RecordNode::new(
+                    2,
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=GND|Designator=2|")),
+                ),
+            ],
+            vec![1, 2],
+        ));
+
+        let name = DocumentQuery::<crate::v2::views::SchPin>::query(&mut lib, "pin[designator=1]")
+            .unwrap()
+            .with_mut(|v| v.name().to_string());
+        assert_eq!(name, "VCC");
+    }
+
+    #[test]
+    fn schlib_deep_query_all_pins() {
+        use crate::v2::traits::DocumentQuery;
+
+        let mut lib = SchLib::default();
+        for comp_name in &["U1", "U2"] {
+            lib.component_entries.push(SchLibComponentEntry {
+                lib_ref: comp_name.to_string(),
+                description: String::new(),
+                part_count: 1,
+            });
+            lib.groups.push(ComponentGroup::new(
+                RecordNode::new(
+                    1,
+                    RecordOrigin::Param(ParamOrigin::new(&format!(
+                        "|RECORD=1|DESIGNATOR={}|",
+                        comp_name
+                    ))),
+                ),
+                vec![
+                    RecordNode::new(
+                        2,
+                        RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=A|Designator=1|")),
+                    ),
+                    RecordNode::new(
+                        2,
+                        RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=B|Designator=2|")),
+                    ),
+                ],
+                vec![1, 2],
+            ));
+        }
+
+        let results =
+            DocumentQuery::<crate::v2::views::SchPin>::query_all(&mut lib, "pin").unwrap();
+        assert_eq!(results.len(), 4); // 2 pins per component, 2 components
     }
 
     #[test]

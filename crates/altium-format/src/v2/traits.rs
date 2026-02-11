@@ -303,6 +303,45 @@ pub trait WrapperFamily {
 }
 
 // ---------------------------------------------------------------------------
+// DocumentQuery
+// ---------------------------------------------------------------------------
+
+/// Trait for document-level querying, parameterized by the target wrapper type.
+///
+/// Documents implement this for each type they support querying. For example,
+/// `SchLib` implements `DocumentQuery<SchComponent>` for top-level component
+/// queries, and `DocumentQuery<SchPin>` for deep cross-group child queries.
+pub trait DocumentQuery<T: WrapperFamily> {
+    /// Handle type for a single match.
+    type Handle<'a> where Self: 'a;
+    /// Results type for multiple matches.
+    type Results<'a> where Self: 'a;
+
+    /// Query for a single match. Returns `NoMatch` or `AmbiguousMatch` on failure.
+    fn query(&mut self, q: &str) -> crate::error::Result<Self::Handle<'_>>;
+    /// Query for all matches.
+    fn query_all(&mut self, q: &str) -> crate::error::Result<Self::Results<'_>>;
+}
+
+// ---------------------------------------------------------------------------
+// LeafViewConstructor
+// ---------------------------------------------------------------------------
+
+/// Subtrait of `WrapperFamily` for leaf wrappers that can construct a view
+/// from a single `RecordNode`.
+///
+/// Parent wrappers (like `SchComponent`, `PcbFootprint`) do NOT implement this
+/// because they need additional data (children/primitives slice) beyond a
+/// single node.
+///
+/// This trait is generated automatically by the `impl_wrapper_family!` macro
+/// for leaf wrappers.
+pub trait LeafViewConstructor: WrapperFamily {
+    /// Construct a view from a mutable reference to a `RecordNode`.
+    fn make_view(node: &mut crate::v2::backing_store::RecordNode) -> Self::View<'_>;
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

@@ -5,20 +5,23 @@
 
 use std::path::Path;
 
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::{SchComponent, SchPin};
+
 use super::open_schlib;
 
 /// Serializes the library to JSON for LLM processing or external analysis.
 pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let lib = open_schlib(path)?;
+    let mut lib = open_schlib(path)?;
 
     if full {
         Ok(serde_json::to_value(&lib)?)
     } else {
         let mut components: Vec<serde_json::Value> = Vec::new();
 
-        lib.for_each_component_ref(|entry, view| {
-            let pin_count = view.pin_count();
-            let primitive_count = view.child_count();
+        DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
+            let pin_count = view.child_keys::<SchPin>().count();
+            let primitive_count = view.children_len();
             components.push(serde_json::json!({
                 "name": entry.lib_ref(),
                 "description": entry.description(),

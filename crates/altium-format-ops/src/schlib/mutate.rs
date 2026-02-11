@@ -79,15 +79,18 @@ pub fn cmd_add_pin(
     // Add pin using the mutable view API
     use altium_format::v2::newtypes::{Designator, PinName};
     use altium_format::v2::templates;
+    use altium_format::v2::views::SchComponentView;
     let designator_owned = designator.to_string();
     let name_owned = name.to_string();
-    lib.with_component(entry_idx, |_entry, mut view| {
+    {
+        let (comp, children) = lib.groups[entry_idx].split_borrow();
+        let mut view = SchComponentView::new(comp, children);
         view.add_pin(templates::sch_pin_default, |pin| {
             pin.set_designator(Designator::from(designator_owned.as_str()));
             pin.set_name(PinName::from(name_owned.as_str()));
             pin.set_electrical(electrical);
         });
-    });
+    }
 
     // Clear raw header to force rebuild
     lib.header_mut().clear_raw();

@@ -7,8 +7,8 @@
 //! document (.SchDoc) files using the v2 public API.
 //!
 //! This module uses ONLY the public API of `altium_format::v2::documents::schdoc::SchDoc`.
-//! No internal backing-store types (`RecordNode`, `RecordOrigin`, `ParamOrigin`,
-//! `BinaryOrigin`, `ComponentGroup`) are accessed directly.
+//! No internal backing-store types (`ParamOrigin`, `BinaryOrigin`, `ComponentGroup`)
+//! are accessed directly.
 
 mod browse;
 mod detail;
@@ -23,6 +23,7 @@ use std::path::Path;
 
 use altium_format::v2::coord::{AltiumCoord, SchCoord};
 use altium_format::v2::documents::schdoc::SchDoc;
+use altium_format::v2::records::{SchNetLabelRecord, SchPowerRecord};
 
 use crate::helpers::*;
 
@@ -99,12 +100,11 @@ pub(super) fn get_sheet_size(doc: &SchDoc) -> String {
 /// Collect all unique net names from net labels (RECORD=25).
 pub(super) fn collect_net_names(doc: &SchDoc) -> Vec<String> {
     let mut nets: HashMap<String, bool> = HashMap::new();
-    doc.for_each_record_of_type(25, |child_ref| {
-        if let Some(rec) = child_ref.as_net_label() {
-            let text = rec.text();
-            if !text.is_empty() {
-                nets.insert(text, true);
-            }
+    doc.for_each_record_of_type(25, |node| {
+        let rec = SchNetLabelRecord::from_origin(node.origin.clone());
+        let text = rec.text();
+        if !text.is_empty() {
+            nets.insert(text, true);
         }
     });
     let mut result: Vec<String> = nets.into_keys().collect();
@@ -115,12 +115,11 @@ pub(super) fn collect_net_names(doc: &SchDoc) -> Vec<String> {
 /// Collect all unique power net names from power port records (RECORD=17).
 pub(super) fn collect_power_nets(doc: &SchDoc) -> Vec<String> {
     let mut nets: HashMap<String, bool> = HashMap::new();
-    doc.for_each_record_of_type(17, |child_ref| {
-        if let Some(rec) = child_ref.as_power() {
-            let text = rec.text();
-            if !text.is_empty() {
-                nets.insert(text, true);
-            }
+    doc.for_each_record_of_type(17, |node| {
+        let rec = SchPowerRecord::from_origin(node.origin.clone());
+        let text = rec.text();
+        if !text.is_empty() {
+            nets.insert(text, true);
         }
     });
     let mut result: Vec<String> = nets.into_keys().collect();

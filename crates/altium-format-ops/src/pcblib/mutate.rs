@@ -10,6 +10,8 @@ use altium_format::v2::coord::{AltiumCoord, PcbCoord};
 
 use crate::helpers::*;
 
+use altium_format::v2::views::PcbFootprintView;
+
 use super::{find_footprint_by_name, mm_to_raw, open_pcblib};
 
 /// Embedded blank PcbLib template.
@@ -86,7 +88,9 @@ pub fn cmd_add_pad(
     let layer: u8 = if hole_raw.to_raw() > 0 { 74 } else { 1 };
 
     let _desig = designator.to_string();
-    lib.with_footprint(idx, |_, mut fp| {
+    {
+        let (metadata, primitives) = lib.footprints[idx].split_borrow();
+        let mut fp = PcbFootprintView::new(metadata, primitives);
         fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
             pad.set_position_x(x_raw);
             pad.set_position_y(y_raw);
@@ -103,7 +107,7 @@ pub fn cmd_add_pad(
             pad.set_is_plated(hole_raw.to_raw() > 0);
             pad.set_layer(layer);
         });
-    });
+    }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 
@@ -399,7 +403,9 @@ pub fn cmd_add_pad_row(
 
     let total_span = pitch_raw as i64 * (count as i64 - 1);
 
-    lib.with_footprint(idx, |_, mut fp| {
+    {
+        let (metadata, primitives) = lib.footprints[idx].split_borrow();
+        let mut fp = PcbFootprintView::new(metadata, primitives);
         for i in 0..count {
             let _pad_num = start + i as u32;
             let offset_along = -(total_span / 2) + pitch_raw as i64 * i as i64;
@@ -427,7 +433,7 @@ pub fn cmd_add_pad_row(
                 pad.set_layer(layer);
             });
         }
-    });
+    }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 
@@ -482,7 +488,9 @@ pub fn cmd_add_dual_row(
     let total_span = pitch_raw as i64 * (pads_per_side as i64 - 1);
     let total_pads = pads_per_side * 2;
 
-    lib.with_footprint(idx, |_, mut fp| {
+    {
+        let (metadata, primitives) = lib.footprints[idx].split_borrow();
+        let mut fp = PcbFootprintView::new(metadata, primitives);
         // Left side: pads 1..N (bottom to top)
         for i in 0..pads_per_side {
             let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
@@ -526,7 +534,7 @@ pub fn cmd_add_dual_row(
                 pad.set_layer(layer);
             });
         }
-    });
+    }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 
@@ -565,7 +573,9 @@ pub fn cmd_add_quad_pads(
     let total_span = pitch_raw as i64 * (pads_per_side as i64 - 1);
     let total_pads = pads_per_side * 4;
 
-    lib.with_footprint(idx, |_, mut fp| {
+    {
+        let (metadata, primitives) = lib.footprints[idx].split_borrow();
+        let mut fp = PcbFootprintView::new(metadata, primitives);
         // Side 1: Bottom (left to right)
         for i in 0..pads_per_side {
             let x = -(total_span / 2) + pitch_raw as i64 * i as i64;
@@ -641,7 +651,7 @@ pub fn cmd_add_quad_pads(
                 pad.set_layer(layer);
             });
         }
-    });
+    }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 
@@ -702,7 +712,9 @@ pub fn cmd_add_pad_grid(
     }
     let pad_count = positions.len();
 
-    lib.with_footprint(idx, |_, mut fp| {
+    {
+        let (metadata, primitives) = lib.footprints[idx].split_borrow();
+        let mut fp = PcbFootprintView::new(metadata, primitives);
         for &(x, y) in &positions {
             fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
                 pad.set_position_x(PcbCoord::from_raw(x as i32));
@@ -719,7 +731,7 @@ pub fn cmd_add_pad_grid(
                 pad.set_layer(layer);
             });
         }
-    });
+    }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 

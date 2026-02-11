@@ -133,24 +133,31 @@ pub(super) fn find_footprint_by_name<'a>(
     Ok((idx, &lib.names()[idx]))
 }
 
-/// Extract all pad data from a footprint via the read-only view.
-pub(super) fn extract_pads_from_view(view: &altium_format::v2::documents::pcblib::PcbFootprintReadView<'_>) -> Vec<PadData> {
+/// Extract all pad data from a footprint via the view.
+pub(super) fn extract_pads_from_view(view: &mut altium_format::v2::views::PcbFootprintView<'_>) -> Vec<PadData> {
+    use altium_format::v2::views::PcbPad;
+    use altium_format::v2::records::PcbPadRecord;
+    use altium_format::v2::traits::RecordType;
+    let keys: Vec<_> = view.child_keys::<PcbPad>().collect();
     let mut pads = Vec::new();
-    view.for_each_pad(|record| {
-        pads.push(PadData::from_record(record));
-    });
+    for key in keys {
+        view.with_child_mut(key, |pad_view| {
+            let record = PcbPadRecord::from_origin(pad_view.origin().clone());
+            pads.push(PadData::from_record(record));
+        });
+    }
     pads
 }
 
-/// Count primitives by type using the read-only view.
+/// Count primitives by type using the view.
 pub(super) fn count_primitives_from_view(
-    view: &altium_format::v2::documents::pcblib::PcbFootprintReadView<'_>,
+    view: &altium_format::v2::views::PcbFootprintView<'_>,
 ) -> HashMap<&'static str, usize> {
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
-    view.for_each_primitive(|child| {
-        let name = pcb_primitive_type_name(child.type_id());
+    for type_id in view.primitive_type_ids() {
+        let name = pcb_primitive_type_name(type_id);
         *counts.entry(name).or_insert(0) += 1;
-    });
+    }
     counts
 }
 

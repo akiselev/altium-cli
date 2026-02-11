@@ -34,15 +34,15 @@ pub(super) fn coord_to_mils(value: SchCoord) -> String {
     format!("{:.1}", value.to_mils())
 }
 
-/// Count primitives by type name using the read-only component view.
+/// Count primitives by type name using the component view.
 pub(super) fn count_primitives_via_view(
-    view: &altium_format::v2::documents::schlib::SchLibComponentReadView<'_>,
+    view: &altium_format::v2::views::SchComponentView<'_>,
 ) -> HashMap<&'static str, usize> {
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
-    view.for_each_child(|child| {
-        let name = sch_record_type_name(child.record_id());
+    for record_id in view.child_record_ids() {
+        let name = sch_record_type_name(record_id);
         *counts.entry(name).or_insert(0) += 1;
-    });
+    }
     counts
 }
 

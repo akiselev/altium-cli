@@ -6,6 +6,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::{SchComponent, SchPin};
+
 use crate::categorization::categorize_component;
 use crate::helpers::*;
 use crate::output::*;
@@ -14,14 +17,14 @@ use super::{count_primitives_via_view, open_schlib};
 
 /// Returns library overview with statistics and component category breakdown.
 pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::Error>> {
-    let lib = open_schlib(path)?;
+    let mut lib = open_schlib(path)?;
 
     // 1. COMPONENTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<ComponentSummary>> = HashMap::new();
 
-    lib.for_each_component_ref(|entry, view| {
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
         let category = categorize_component(entry.lib_ref(), entry.description());
-        let pin_count = view.pin_count();
+        let pin_count = view.child_keys::<SchPin>().count();
         categories
             .entry(category)
             .or_default()
@@ -74,12 +77,15 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     let mut total_pins = 0;
     let mut pin_types: HashMap<&'static str, usize> = HashMap::new();
 
-    lib.for_each_component_ref(|_entry, view| {
-        view.for_each_pin(|pin| {
-            total_pins += 1;
-            let type_name = electrical_type_name(pin.electrical());
-            *pin_types.entry(type_name).or_insert(0) += 1;
-        });
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|_entry, mut view| {
+        let keys: Vec<_> = view.child_keys::<SchPin>().collect();
+        for key in keys {
+            view.with_child_mut(key, |pin| {
+                total_pins += 1;
+                let type_name = electrical_type_name(pin.electrical());
+                *pin_types.entry(type_name).or_insert(0) += 1;
+            });
+        }
     });
 
     let mut pin_types_vec: Vec<_> = pin_types
@@ -91,12 +97,12 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     // 3. MULTI-PART COMPONENTS
     let mut multi_part_components: Vec<ComponentSummary> = Vec::new();
 
-    lib.for_each_component_ref(|entry, view| {
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
         if entry.part_count() > 1 {
             multi_part_components.push(ComponentSummary {
                 name: entry.lib_ref().to_string(),
                 description: entry.description().to_string(),
-                pin_count: view.pin_count(),
+                pin_count: view.child_keys::<SchPin>().count(),
                 part_count: entry.part_count(),
             });
         }
@@ -106,11 +112,11 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     // 4. LARGEST COMPONENTS (by pin count)
     let mut by_pins: Vec<ComponentSummary> = Vec::new();
 
-    lib.for_each_component_ref(|entry, view| {
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
         by_pins.push(ComponentSummary {
             name: entry.lib_ref().to_string(),
             description: entry.description().to_string(),
-            pin_count: view.pin_count(),
+            pin_count: view.child_keys::<SchPin>().count(),
             part_count: entry.part_count(),
         });
     });
@@ -134,15 +140,15 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
 
 /// Lists all components in the library sorted alphanumerically.
 pub fn cmd_list(path: &Path) -> Result<SchLibComponentList, Box<dyn std::error::Error>> {
-    let lib = open_schlib(path)?;
+    let mut lib = open_schlib(path)?;
 
     let mut components: Vec<ComponentSummary> = Vec::new();
 
-    lib.for_each_component_ref(|entry, view| {
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
         components.push(ComponentSummary {
             name: entry.lib_ref().to_string(),
             description: entry.description().to_string(),
-            pin_count: view.pin_count(),
+            pin_count: view.child_keys::<SchPin>().count(),
             part_count: entry.part_count(),
         });
     });
@@ -162,14 +168,14 @@ pub fn cmd_search(
     query: &str,
     limit: Option<usize>,
 ) -> Result<SchLibSearchResults, Box<dyn std::error::Error>> {
-    let lib = open_schlib(path)?;
+    let mut lib = open_schlib(path)?;
 
     let query_lower = query.to_lowercase();
     let has_wildcard = query.contains('*');
 
     let mut matches: Vec<ComponentSummary> = Vec::new();
 
-    lib.for_each_component_ref(|entry, view| {
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
         let name = entry.lib_ref().to_lowercase();
         let desc = entry.description().to_lowercase();
 
@@ -184,7 +190,7 @@ pub fn cmd_search(
             matches.push(ComponentSummary {
                 name: entry.lib_ref().to_string(),
                 description: entry.description().to_string(),
-                pin_count: view.pin_count(),
+                pin_count: view.child_keys::<SchPin>().count(),
                 part_count: entry.part_count(),
             });
         }
@@ -216,13 +222,13 @@ pub fn cmd_search(
 
 /// Returns detailed library metadata including file info and header data.
 pub fn cmd_info(path: &Path) -> Result<SchLibInfo, Box<dyn std::error::Error>> {
-    let lib = open_schlib(path)?;
+    let mut lib = open_schlib(path)?;
 
     let mut primitive_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut total_primitives = 0;
     let mut multi_part_count = 0;
 
-    lib.for_each_component_ref(|entry, view| {
+    DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
         let counts = count_primitives_via_view(&view);
         for (name, count) in counts {
             *primitive_counts.entry(name).or_insert(0) += count;

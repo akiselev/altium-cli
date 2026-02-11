@@ -11,6 +11,9 @@ use crate::helpers::*;
 use crate::output::*;
 
 use altium_format::v2::coord::AltiumCoord;
+use altium_format::v2::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::SchComponent;
 
 use super::{
     collect_net_names, format_location, get_sheet_size, is_address_bus, is_control_signal,
@@ -20,16 +23,15 @@ use super::{
 /// Returns a schematic overview with component categories, power architecture,
 /// interfaces, key signals, and quick statistics.
 pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let mut doc = open_schdoc(path)?;
 
     // 1. COMPONENTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<SchDocComponentRef>> = HashMap::new();
 
-    doc.for_each_component_ref(|view| {
-        let rec = view.component_record();
-        let designator = rec.designator().to_string();
-        let lib_reference = rec.lib_reference().to_string();
-        let description = rec.component_description();
+    DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
+        let designator = view.designator().to_string();
+        let lib_reference = view.lib_reference().to_string();
+        let description = view.component_description();
         let category = categorize_component(&lib_reference, &description);
         let comp_ref = SchDocComponentRef {
             designator,
@@ -80,28 +82,26 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
     let mut power_net_counts: HashMap<String, usize> = HashMap::new();
     let mut ground_net_counts: HashMap<String, usize> = HashMap::new();
 
-    doc.for_each_record_of_type(17, |child_ref| {
-        if let Some(rec) = child_ref.as_power() {
-            let text = rec.text();
-            if !text.is_empty() {
-                if is_ground_net(&text) {
-                    *ground_net_counts.entry(text).or_insert(0) += 1;
-                } else {
-                    *power_net_counts.entry(text).or_insert(0) += 1;
-                }
+    doc.for_each_record_of_type(17, |node| {
+        let rec = SchPowerRecord::from_origin(node.origin.clone());
+        let text = rec.text();
+        if !text.is_empty() {
+            if is_ground_net(&text) {
+                *ground_net_counts.entry(text).or_insert(0) += 1;
+            } else {
+                *power_net_counts.entry(text).or_insert(0) += 1;
             }
         }
     });
 
-    doc.for_each_record_of_type(25, |child_ref| {
-        if let Some(rec) = child_ref.as_net_label() {
-            let text = rec.text();
-            if !text.is_empty() {
-                if is_ground_net(&text) {
-                    *ground_net_counts.entry(text).or_insert(0) += 1;
-                } else if is_power_rail(&text) {
-                    *power_net_counts.entry(text).or_insert(0) += 1;
-                }
+    doc.for_each_record_of_type(25, |node| {
+        let rec = SchNetLabelRecord::from_origin(node.origin.clone());
+        let text = rec.text();
+        if !text.is_empty() {
+            if is_ground_net(&text) {
+                *ground_net_counts.entry(text).or_insert(0) += 1;
+            } else if is_power_rail(&text) {
+                *power_net_counts.entry(text).or_insert(0) += 1;
             }
         }
     });
@@ -123,17 +123,16 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
     let mut bidirectional = Vec::new();
     let mut unspecified = Vec::new();
 
-    doc.for_each_record_of_type(18, |child_ref| {
-        if let Some(rec) = child_ref.as_port() {
-            let name = rec.name();
-            let io_type = rec.io_type();
-            if !name.is_empty() {
-                match io_type {
-                    1 => outputs.push(name),
-                    2 => inputs.push(name),
-                    3 => bidirectional.push(name),
-                    _ => unspecified.push(name),
-                }
+    doc.for_each_record_of_type(18, |node| {
+        let rec = SchPortRecord::from_origin(node.origin.clone());
+        let name = rec.name();
+        let io_type = rec.io_type();
+        if !name.is_empty() {
+            match io_type {
+                1 => outputs.push(name),
+                2 => inputs.push(name),
+                3 => bidirectional.push(name),
+                _ => unspecified.push(name),
             }
         }
     });
@@ -205,7 +204,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
 
 /// Returns detailed sheet metadata, primitive summary, and net information.
 pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let mut doc = open_schdoc(path)?;
 
     // 1. SHEET INFO
     let sheet_info = if let Some(rec) = doc.sheet_record() {
@@ -241,8 +240,8 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
     let pin_count = doc.count_record_type(2);
 
     let mut total_primitives = doc.component_count();
-    doc.for_each_component_ref(|view| {
-        total_primitives += view.child_count();
+    DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
+        total_primitives += view.children_len();
     });
     total_primitives += doc.orphan_count();
 
@@ -272,21 +271,20 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
 
 /// Lists all placed components with their designators, references, and locations.
 pub fn cmd_components(path: &Path) -> Result<SchDocComponentList, Box<dyn std::error::Error>> {
-    let doc = open_schdoc(path)?;
+    let mut doc = open_schdoc(path)?;
 
     let mut components: Vec<SchDocComponentInfo> = Vec::new();
 
-    doc.for_each_component_ref(|view| {
-        let rec = view.component_record();
-        let designator = rec.designator().to_string();
+    DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
+        let designator = view.designator().to_string();
 
         components.push(SchDocComponentInfo {
             designator,
-            lib_reference: rec.lib_reference().to_string(),
-            description: rec.component_description(),
-            location: format_location(rec.location_x(), rec.location_y()),
-            parts: rec.part_count() as i32,
-            child_count: Some(view.child_count()),
+            lib_reference: view.lib_reference().to_string(),
+            description: view.component_description(),
+            location: format_location(view.location_x(), view.location_y()),
+            parts: view.part_count() as i32,
+            child_count: Some(view.children_len()),
         });
     });
 

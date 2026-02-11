@@ -7,13 +7,15 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use altium_format::v2::coord::AltiumCoord;
+use altium_format::v2::traits::DocumentQuery;
+use altium_format::v2::views::PcbFootprint;
 
 use crate::helpers::*;
 use crate::output::*;
 
 use super::{
     compute_bounding_box, count_primitives_from_view, extract_pads_from_view,
-    find_footprint_by_name, open_pcblib, PadData, TYPE_PAD,
+    find_footprint_by_name, open_pcblib, TYPE_PAD,
 };
 
 /// Returns detailed information about a single footprint.
@@ -22,19 +24,19 @@ pub fn cmd_footprint(
     name: &str,
     show_primitives: bool,
 ) -> Result<PcbLibFootprintDetail, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let (idx, _) = find_footprint_by_name(&lib, name)?;
 
     let mut result: Option<PcbLibFootprintDetail> = None;
     let mut current_idx = 0;
-    lib.for_each_footprint_ref(|fp_name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|fp_name, mut view| {
         if current_idx == idx {
             let pattern = view.pattern();
             let description = view.description();
-            let height = view.height();
-            let total_prims = view.primitive_count();
+            let height = format!("{:.3}mm", view.height().to_mm());
+            let total_prims = view.primitives_len();
 
-            let pads = extract_pads_from_view(&view);
+            let pads = extract_pads_from_view(&mut view);
             let pad_count = pads.len();
             let bounding_box = compute_bounding_box(&pads);
 
@@ -89,20 +91,20 @@ pub fn cmd_pads(
     footprint: Option<String>,
     _group_by_shape: bool,
 ) -> Result<PcbLibPadList, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
 
     let filter_lower = footprint.as_ref().map(|s| s.to_lowercase());
 
     let mut all_pads: Vec<PadWithFootprint> = Vec::new();
 
-    lib.for_each_footprint_ref(|fp_name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|fp_name, mut view| {
         if let Some(ref filter) = filter_lower {
             if fp_name.to_lowercase() != *filter {
                 return;
             }
         }
 
-        let pads = extract_pads_from_view(&view);
+        let pads = extract_pads_from_view(&mut view);
         for pad in &pads {
             all_pads.push(PadWithFootprint {
                 footprint_name: fp_name.to_string(),
@@ -163,29 +165,33 @@ pub fn cmd_primitives(
     path: &Path,
     footprint: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
     let (idx, _) = find_footprint_by_name(&lib, footprint)?;
 
     let mut result: Option<serde_json::Value> = None;
     let mut current_idx = 0;
-    lib.for_each_footprint_ref(|fp_name, view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|fp_name, mut view| {
         if current_idx == idx {
+            let total_prims = view.primitives_len();
+
+            // Extract pads first so we can enrich pad entries
+            let pads = extract_pads_from_view(&mut view);
+            let mut pad_iter = pads.iter();
             let mut primitives: Vec<serde_json::Value> = Vec::new();
             let mut prim_idx = 0;
 
-            view.for_each_primitive(|child| {
-                let type_name = pcb_primitive_type_name(child.type_id());
+            for type_id in view.primitive_type_ids() {
+                let type_name = pcb_primitive_type_name(type_id);
 
                 let mut entry = serde_json::json!({
                     "index": prim_idx,
                     "type": type_name,
-                    "type_id": child.type_id(),
+                    "type_id": type_id,
                 });
 
-                if child.type_id() == TYPE_PAD {
-                    if let Some(pad_record) = child.as_pad() {
-                        let pad = PadData::from_record(pad_record);
-                        entry["designator"] = serde_json::json!(pad.designator);
+                if type_id == TYPE_PAD {
+                    if let Some(pad) = pad_iter.next() {
+                        entry["designator"] = serde_json::json!(pad.designator.clone());
                         entry["position"] = serde_json::json!(format!(
                             "({:.3}mm, {:.3}mm)",
                             pad.record.position_x().to_mm(),
@@ -198,11 +204,11 @@ pub fn cmd_primitives(
 
                 primitives.push(entry);
                 prim_idx += 1;
-            });
+            }
 
             result = Some(serde_json::json!({
                 "footprint": fp_name,
-                "total_primitives": view.primitive_count(),
+                "total_primitives": total_prims,
                 "primitives": primitives,
             }));
         }
@@ -216,12 +222,12 @@ pub fn cmd_primitives(
 pub fn cmd_holes(
     path: &Path,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let lib = open_pcblib(path)?;
+    let mut lib = open_pcblib(path)?;
 
     let mut hole_info: HashMap<String, Vec<String>> = HashMap::new();
 
-    lib.for_each_footprint_ref(|fp_name, view| {
-        let pads = extract_pads_from_view(&view);
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|fp_name, mut view| {
+        let pads = extract_pads_from_view(&mut view);
         for pad in &pads {
             if pad.record.hole_size().to_raw() > 0 {
                 let hole_str =
