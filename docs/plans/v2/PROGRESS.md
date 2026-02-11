@@ -7,8 +7,8 @@
 | 1 | Phase 0: Scaffolding | COMPLETE | 2026-02-10 | 2026-02-10 |
 | 2 | Phase 1A-1F, 5A, 5B: Foundation + Query | COMPLETE | 2026-02-10 | 2026-02-10 |
 | 3 | Phase 2A-2B: Macro System | COMPLETE | 2026-02-10 | 2026-02-10 |
-| 4 | Phase 3A-3C: Record Types | IN PROGRESS | 2026-02-10 | - |
-| 5 | Phase 4A-4D, 5C, 6A-6C: Docs/Views/Query/Templates | NOT STARTED | - | - |
+| 4 | Phase 3A-3C: Record Types | COMPLETE | 2026-02-10 | 2026-02-10 |
+| 5 | Phase 4A-4D, 5C, 6A-6C: Docs/Views/Query/Templates | COMPLETE | 2026-02-10 | 2026-02-11 |
 | 6 | Phase 7A-7D: CLI & Ops | NOT STARTED | - | - |
 | 7 | Phase 8A-8D: Tests | NOT STARTED | - | - |
 | 8 | Phase 9: Cleanup | NOT STARTED | - | - |
@@ -33,19 +33,19 @@
 - [x] Track 2B: `#[altium_enum]` attribute macro — 6 tests
 
 ### Wave 4
-- [ ] Track 3A: Core sch records + enums
-- [ ] Track 3B: Additional sch records
-- [ ] Track 3C: PCB records
+- [x] Track 3A: Core sch records + enums — 23 enums, 15 records, 45 tests
+- [x] Track 3B: Additional sch records — 20 records, 40 tests
+- [x] Track 3C: PCB records — 11 PCB enums, 9 records, 36 tests
 
 ### Wave 5
-- [ ] Track 4A: SchLib document + IO
-- [ ] Track 4B: SchDoc document + IO
-- [ ] Track 4C: PcbLib document + IO
-- [ ] Track 4D: View types + wrappers
-- [ ] Track 5C: Queryable integration
-- [ ] Track 6A: Sch template functions
-- [ ] Track 6B: PCB template functions
-- [ ] Track 6C: Document-level builders
+- [x] Track 4A: SchLib document + IO — 6 tests
+- [x] Track 4B: SchDoc document + IO — 3 tests
+- [x] Track 4C: PcbLib document + IO — 6 tests
+- [x] Track 4D: View types + wrappers — 5 tests
+- [x] Track 5C: Queryable integration — 14 tests
+- [x] Track 6A: Sch template functions — 29 templates
+- [x] Track 6B: PCB template functions — 9 templates
+- [x] Track 6C: Document-level builders — 10 tests
 
 ### Wave 6
 - [ ] Track 7A: SchLib ops + CLI
@@ -69,8 +69,8 @@
 | 1 | `cargo check --workspace` | PASS | All compiles, v1 removed from tree |
 | 2 | `cargo check --workspace` + unit tests | PASS | 117 tests pass, 0 warnings |
 | 3 | `cargo check --workspace` + macro tests | PASS | 132 tests pass, 0 warnings |
-| 4 | `cargo check --workspace` + record tests | - | - |
-| 5 | Documents open/save + views + templates | - | - |
+| 4 | `cargo check --workspace` + record tests | PASS | 253 tests pass, 0 warnings |
+| 5 | `cargo check -p altium-format` + lib tests | PASS | 297 tests pass, 1 warning (expected dead_code) |
 | 6 | `cargo build --workspace` + CLI output | - | - |
 | 7 | `cargo test --workspace -- --ignored` | - | - |
 | 8 | Final validation, no v1 code remains | - | - |

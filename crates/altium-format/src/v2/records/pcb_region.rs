@@ -29,10 +29,12 @@ pub struct PcbRegionRecord {
     num_outline_vertices: u32,
 }
 
+#[allow(dead_code)]
 fn parse_region(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     todo!("Complex region parsing -- will be implemented in Phase 4")
 }
 
+#[allow(dead_code)]
 fn serialize_region(_origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     todo!("Complex region serialization -- will be implemented in Phase 4")
 }

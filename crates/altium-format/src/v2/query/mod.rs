@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod eval;
+pub mod integration;
 
 use pest::Parser;
 use pest_derive::Parser;

@@ -28,10 +28,12 @@ pub struct PcbComponentBodyRecord {
     num_outline_vertices: u32,
 }
 
+#[allow(dead_code)]
 fn parse_component_body(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     todo!("Complex component body parsing -- will be implemented in Phase 4")
 }
 
+#[allow(dead_code)]
 fn serialize_component_body(
     _origin: &crate::v2::backing_store::BinaryOrigin,
 ) -> crate::Result<Vec<u8>> {

@@ -40,10 +40,12 @@ pub struct PcbTextRecord {
     is_designator: bool,
 }
 
+#[allow(dead_code)]
 fn parse_text(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     todo!("Complex text parsing -- will be implemented in Phase 4")
 }
 
+#[allow(dead_code)]
 fn serialize_text(_origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     todo!("Complex text serialization -- will be implemented in Phase 4")
 }

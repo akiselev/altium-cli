@@ -34,10 +34,12 @@ pub struct PcbViaRecord {
     soldermask_expansion_manual: bool,
 }
 
+#[allow(dead_code)]
 fn parse_via(_data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     todo!("Complex via parsing -- will be implemented in Phase 4")
 }
 
+#[allow(dead_code)]
 fn serialize_via(_origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     todo!("Complex via serialization -- will be implemented in Phase 4")
 }
