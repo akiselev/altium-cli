@@ -9,11 +9,10 @@ This document intentionally ignores migration constraints. Existing code is trea
 **Goals**
 
 1. **Origin-backed records**: Records store their raw representation. This gives non-destructive editing and lossless roundtrip.
-2. **In-place mutation**: Setters patch the backing store directly. No separate patch planning, no PatchOps. The backing store IS the data.
+2. **In-place mutation**: Setters patch the backing store directly. The backing store IS the data.
 3. **No defaults in core types**: Defaults live in template functions and DTO layers only.
 4. **I/O in Document types, not record types**: Records are pure data. Documents handle CFB/OLE.
 
-The result is a **standard imperative library** with a well-designed internal data model.
 
 ## Non-Negotiables
 
@@ -21,7 +20,7 @@ The result is a **standard imperative library** with a well-designed internal da
 2. **Edit in place**: setters patch the backing store directly. The backing store is the same type whether it came from an Altium file or a template — there is no separate "create" vs "edit" mechanism.
 3. **No core defaults**: contextual defaults live in DTO/interface layers only (CLI/JSON/UI), never in core record types. Template functions provide Altium-correct defaults for new records.
 4. **No runtime fields**: macro-declared fields exist for documentation and autocomplete; runtime access is through generated getters/setters over the backing store.
-5. **Macro-first generation**: the macro generates `*Record` types with getters/setters and builder APIs. Hierarchical wrapper types are hand-written (Deref to record types for getters/setters, plus dirty tracking, child navigation, and validation). Param types handle their own serialization via `ParamCodec` (single key). Binary records use hand-written parsers with helper functions.
+5. **Macro-first generation**: the macro generates `*Record` types with getters/setters and builder APIs. Hierarchical view types (`*View`) are hand-written (Deref/DerefMut to record types for getters/setters, DerefMut marks dirty, child navigation for parent types). Param types handle their own serialization via `ParamCodec` (single key). Binary records use sequential-layout macro or hand-written parsers with helper functions.
 6. **Tests are behavioral**: assertions must prove functional behavior (byte identity, patch locality, invariant enforcement), not just counts.
 
 ## Core Data Model
@@ -46,9 +45,10 @@ pub struct StreamNode {
 }
 
 pub struct RecordNode {
-    key: RecordKey,
+    key: u8,                       // RECORD param value (sch) or type byte (pcb)
     origin: RecordOrigin,
     original_snapshot: Vec<u8>,    // for byte-level dirty detection on save
+    dirty: bool,                   // set by DerefMut on wrapper types
 }
 ```
 
@@ -60,6 +60,8 @@ pub enum RecordOrigin {
 
 pub struct ParamOrigin {
     params: ParameterCollection,   // THE authoritative data — reads and writes go here
+                                   // Order-preserving: keys maintain original insertion order
+                                   // for lossless roundtrip of untouched records
     raw_record_text: String,       // original serialized text (written verbatim if unchanged)
 }
 
@@ -102,7 +104,7 @@ This applies identically regardless of whether the backing store was loaded from
 
 ### Document Type Structure
 
-Each document type is a separate struct. Schematic formats use `ComponentGroup` for hierarchical access; PCB formats may use a different grouping strategy suited to their typed-stream layout.
+Each document type is a separate struct. Schematic formats use `ComponentGroup` for hierarchical access; PcbLib uses `FootprintGroup`. PcbDoc is deferred.
 
 ```rust
 pub struct SchLib {
@@ -117,24 +119,20 @@ pub struct SchDoc {
 }
 
 pub struct PcbLib {
-    core: DocumentCore,
-    // PcbLib-specific metadata — per-footprint sections
-}
-
-pub struct PcbDoc {
-    core: DocumentCore,
-    // PcbDoc-specific metadata — typed stream map (Tracks6, Arcs6, etc.)
+    footprints: Vec<FootprintGroup>,     // one per CFB storage
+    section_keys: SectionKeyList,        // maps long names → truncated storage names
+    raw_streams: BTreeMap<String, Vec<u8>>,  // other CFB streams (verbatim roundtrip)
 }
 ```
 
 Separate types per format because they are semantically different:
 
-- **SchLib**: components containing primitives (tree structure) → `ComponentGroup` per stream
-- **SchDoc**: flat primitives with OWNERINDEX links → `ComponentGroup` per owner, built on load
-- **PcbLib**: components containing binary records with multi-block structures
-- **PcbDoc**: flat binary records in typed streams (Tracks6, Arcs6, etc.)
+- **SchLib**: components containing param-based primitives (tree structure) → `ComponentGroup` per stream
+- **SchDoc**: flat param-based primitives with OWNERINDEX links → `ComponentGroup` per owner, built on load
+- **PcbLib**: footprints containing binary primitives (tree structure) → `FootprintGroup` per CFB storage
+- **PcbDoc**: deferred (flat binary records in typed streams — Tracks6, Arcs6, etc.)
 
-`DocumentCore` remains as a lower-level building block for PCB formats and for generic operations (iteration, save, test fixtures). Schematic formats use `ComponentGroup` directly for the query and closure API.
+`DocumentCore` remains as a lower-level building block for generic operations (iteration, save, test fixtures).
 
 ## API Shape: Imperative Access with Backing Store
 
@@ -144,11 +142,11 @@ There are three distinct layers:
 
 1. **Record types** (`SchPinRecord`, `SchComponentRecord`, etc.) — own a `RecordOrigin` and have typed getters/setters directly on them. Records are **pure data** — they have no knowledge of parent/child/sibling relationships. No lifetimes, no document awareness. The `Record` suffix distinguishes this layer from the wrapper layer. The macro generates these types. **Users never interact with `*Record` types directly.**
 
-2. **Hierarchical wrapper types** (`SchComponent`, `SchPin`, etc.) — hand-written wrappers that borrow into the document's `ComponentGroup` storage. `Deref` to their underlying record type so the user gets all getters/setters for free. Most wrappers are trivial — just a Deref to the record type plus dirty tracking. Only parent types like `SchComponent` add child navigation methods (query, iterate, with_child_mut). Wrappers are **hand-written, not macro-generated**, because this is where API ergonomics lives. **These are the public API types — the only types users see.**
+2. **Hierarchical view types** (`SchComponentView`, `SchPinView`, etc.) — hand-written wrappers that borrow into the document's `ComponentGroup` storage. `Deref`/`DerefMut` to their underlying record type so the user gets all getters/setters for free. `DerefMut` marks the record dirty. Most views are trivial — just Deref/DerefMut to the record type. Only parent types like `SchComponentView` add child navigation methods (query, iterate, with_child_mut). Views are **hand-written, not macro-generated**, because this is where API ergonomics lives. Users interact with view types through closures (e.g., `with_mut(|comp| { ... })`) and with marker types as type parameters (e.g., `query::<SchComponent>(...)`).
 
 3. **Query API** (`doc.query::<SchComponent>(q)`, `doc.query_all::<SchComponent>(q)`) — returns handles that open closures over matched records. Same query language works at both the document level and within hierarchical wrappers for child access. `query` errors on 0 or 2+ matches; `query_all` returns all matches. Type parameters are wrapper family markers, not record types.
 
-The user interacts with wrapper types everywhere. Record types are internal — the wrapper's Deref makes getters/setters available transparently. Most wrapper types are a single Deref impl plus a Drop for dirty tracking.
+The user interacts with marker types (for type parameters) and view types (in closures). Record types are internal — the view's Deref makes getters/setters available transparently. Most view types are a single Deref/DerefMut impl. Mut-only for now — no read-only view variants.
 
 ### Macro Declaration (Source of Truth)
 
@@ -159,8 +157,7 @@ Field types should be **domain newtypes**, not raw primitives. A `Designator` is
 The macro passes param key names to the type's `ParamCodec` trait implementation. **Types handle their own serialization** — the macro just orchestrates. This means `SchCoord` knows how to read/write its integer+frac pair, `Designator` knows how to read/write its string, etc. The macro doesn't need special-case logic for `frac`, `bitflags`, or any other encoding detail.
 
 ```rust
-#[derive(AltiumEntity)]
-#[altium(kind = "sch", record_id = 2, codec = "params")]
+#[altium_record(kind = "sch", record_id = 2, codec = "params")]
 struct SchPinRecord {
     #[altium(key = "DESIGNATOR")]
     designator: Designator,
@@ -176,37 +173,30 @@ struct SchPinRecord {
 }
 ```
 
+**Why an attribute macro, not derive**: Derive macros can only add impl blocks — they cannot modify the struct. Since we need to replace the struct's fields with a `RecordOrigin` backing store, this must be an **attribute macro** (`#[altium_record]`). The attribute macro consumes the struct definition (using the fields for documentation and code generation) and emits a new struct wrapping `RecordOrigin` plus all the generated getters/setters/updaters.
+
 ### Domain Newtypes
 
 String-backed fields get newtypes with domain-specific helpers:
 
 ```rust
-/// Concrete designator in a schematic document (e.g., "R1", "U3", "C12").
-/// Always has a prefix and a number.
+/// Designator string — covers both concrete ("R1", "U3") and template ("U?", "R?") forms.
+/// A single newtype that interprets the string based on content.
 pub struct Designator(String);
 
 impl Designator {
     pub fn new(s: impl Into<String>) -> Self { ... }
     pub fn as_str(&self) -> &str { &self.0 }
-    pub fn prefix(&self) -> &str { ... }           // "U2" → "U"
-    pub fn number(&self) -> u32 { ... }            // "U2" → 2
+    pub fn prefix(&self) -> &str { ... }           // "U2" → "U", "U?" → "U"
+    pub fn is_template(&self) -> bool { ... }      // has "?" placeholder
+    pub fn number(&self) -> Option<u32> { ... }    // "U2" → Some(2), "U?" → None
     pub fn set_number(&mut self, n: u32) { ... }   // "U2" → "U5"
-    pub fn increment(&mut self) { ... }            // "U2" → "U3"
-}
-
-/// Template designator in a schematic library (e.g., "U?", "R?", "C?").
-/// The `?` placeholder gets replaced with an incrementing number on placement into a SchDoc.
-pub struct DesignatorTemplate(String);
-
-impl DesignatorTemplate {
-    pub fn new(s: impl Into<String>) -> Self { ... }
-    pub fn as_str(&self) -> &str { &self.0 }
-    pub fn prefix(&self) -> &str { ... }           // "U?" → "U"
-    pub fn resolve(&self, n: u32) -> Designator { ... }  // "U?" + 3 → Designator("U3")
+    pub fn increment(&mut self) { ... }            // "U2" → "U3" (panics on template)
+    pub fn resolve(&self, n: u32) -> Designator { ... }  // "U?" + 3 → "U3"
 }
 ```
 
-Both types implement `ParamCodec` identically (read/write a string to the `DESIGNATOR` key), but they parse the string differently and offer different methods. SchLib `SchComponent` uses `DesignatorTemplate`; SchDoc `SchComponent` uses `Designator`.
+A single `Designator` type for both SchLib (template form `U?`) and SchDoc (concrete form `U1`). The `is_template()` method distinguishes them. Both forms read/write identically via `ParamCodec` — just a string to the `DESIGNATOR` key.
 
 ```rust
 /// Library reference name.
@@ -378,30 +368,28 @@ Leaf wrappers like `SchPin`, `SchArc`, `SchLine`, etc. are minimal — just a De
 ```rust
 /// Hand-written. Wraps SchPinRecord with Deref + dirty tracking.
 /// No child navigation — pins are leaf records.
-pub struct SchPin<'a> {
+pub struct SchPinView<'a> {
     record: &'a mut SchPinRecord,
-    dirty: bool,
-    snapshot: Vec<u8>,
 }
 
-impl<'a> Deref for SchPin<'a> { type Target = SchPinRecord; }
-impl<'a> DerefMut for SchPin<'a> { ... }
-
-impl<'a> Drop for SchPin<'a> {
-    fn drop(&mut self) {
-        if self.dirty { self.record.mark_dirty(); }
-        if std::thread::panicking() { self.record.restore_from(&self.snapshot); }
+impl<'a> Deref for SchPinView<'a> { type Target = SchPinRecord; }
+impl<'a> DerefMut for SchPinView<'a> {
+    fn deref_mut(&mut self) -> &mut SchPinRecord {
+        self.record.mark_dirty();  // any &mut access marks dirty
+        self.record
     }
 }
 ```
 
+Dirty tracking uses `DerefMut`: Rust dispatches `Deref` for shared borrows and `DerefMut` for mutable borrows, so read-only access through getters does NOT mark dirty. Only setter calls (which require `&mut self`) trigger `DerefMut` and mark the record. No snapshot, no panic rollback — if a closure panics, dirty state is left as-is.
+
 These are boilerplate-heavy but intentionally hand-written. A helper macro (`impl_leaf_wrapper!`) can reduce repetition without going full code generation — this keeps the wrapper layer explicit and easy to customize per type:
 
 ```rust
-impl_leaf_wrapper!(SchPin<'a> wraps SchPinRecord);
-impl_leaf_wrapper!(SchArc<'a> wraps SchArcRecord);
-impl_leaf_wrapper!(SchLine<'a> wraps SchLineRecord);
-impl_leaf_wrapper!(SchRectangle<'a> wraps SchRectangleRecord);
+impl_leaf_wrapper!(SchPinView<'a> wraps SchPinRecord);
+impl_leaf_wrapper!(SchArcView<'a> wraps SchArcRecord);
+impl_leaf_wrapper!(SchLineView<'a> wraps SchLineRecord);
+impl_leaf_wrapper!(SchRectangleView<'a> wraps SchRectangleRecord);
 // ... etc
 ```
 
@@ -411,20 +399,16 @@ Parent types add child navigation. `SchComponent` is the primary example — it 
 
 ```rust
 /// Hand-written. Wraps SchComponentRecord + children with child navigation.
-pub struct SchComponent<'a> {
+pub struct SchComponentView<'a> {
     component: &'a mut SchComponentRecord, // borrows ComponentGroup.component
     children: &'a mut [RecordNode],        // borrows ComponentGroup.children
-    dirty: bool,
-    snapshot: Vec<u8>,
 }
 
-impl<'a> Deref for SchComponent<'a> { type Target = SchComponentRecord; }
-impl<'a> DerefMut for SchComponent<'a> { ... }
-
-impl<'a> Drop for SchComponent<'a> {
-    fn drop(&mut self) {
-        if self.dirty { self.component.mark_dirty(); }
-        if std::thread::panicking() { self.component.restore_from(&self.snapshot); }
+impl<'a> Deref for SchComponentView<'a> { type Target = SchComponentRecord; }
+impl<'a> DerefMut for SchComponentView<'a> {
+    fn deref_mut(&mut self) -> &mut SchComponentRecord {
+        self.component.mark_dirty();
+        self.component
     }
 }
 ```
@@ -471,18 +455,15 @@ children.for_each_pin_mut(|pin| {          // borrows children only — no confl
 | Feature | What |
 |---|---|
 | **Deref to record type** | All getters/setters from the record type, no re-declaration |
-| **Dirty tracking** | Marks the record dirty on drop if any setter was called |
-| **Drop validation** | Validates record invariants when the closure returns |
-| **Panic rollback** | Restores original bytes if the closure panics |
+| **Dirty tracking** | DerefMut marks the record dirty on any mutable access |
 
 #### Child Access Methods
 
 ```rust
-impl<'a> SchComponent::Wrapper<'a> {
+impl<'a> SchComponentView<'a> {
     /// Iterate all pins with mutable access.
-    /// Closure receives SchPin wrapper, not SchPinRecord.
-    pub fn for_each_pin_mut(&mut self, f: impl FnMut(SchPin::Wrapper<'_>)) { ... }
-    pub fn for_each_pin(&self, f: impl FnMut(SchPin::RefWrapper<'_>)) { ... }
+    /// Closure receives SchPinView wrapper, not SchPinRecord.
+    pub fn for_each_pin_mut(&mut self, f: impl FnMut(SchPinView<'_>)) { ... }
 
     /// Query children — same AQL syntax, scoped to this component.
     /// T is a WrapperFamily marker (SchPin, SchLine, etc.)
@@ -495,17 +476,14 @@ impl<'a> SchComponent::Wrapper<'a> {
     /// Access a specific child by key (for when handles are passed around).
     /// Closure receives wrapper type, not record type.
     pub fn with_child_mut<T: WrapperFamily, R>(
-        &mut self, key: ChildKey<T>, f: impl FnOnce(T::Wrapper<'_>) -> R,
-    ) -> R { ... }
-    pub fn with_child_ref<T: WrapperFamily, R>(
-        &self, key: ChildKey<T>, f: impl FnOnce(T::RefWrapper<'_>) -> R,
+        &mut self, key: ChildKey<T>, f: impl FnOnce(T::View<'_>) -> R,
     ) -> R { ... }
 
     /// Get child keys for external use (passing to other functions, collecting).
-    pub fn pin_keys(&self) -> impl Iterator<Item = ChildKey<SchPin>> { ... }
+    pub fn child_keys<T: WrapperFamily>(&self) -> impl Iterator<Item = ChildKey<T>> { ... }
 
     /// Split borrows escape hatch — returns independent refs to parent record and children.
-    pub fn split(&mut self) -> (&mut SchComponentRecord, ChildrenView<'_>) { ... }
+    pub fn split(&mut self) -> (&mut SchComponentRecord, ChildrenMut<'_>) { ... }
 
     pub fn pin_count(&self) -> usize { ... }
 }
@@ -513,7 +491,7 @@ impl<'a> SchComponent::Wrapper<'a> {
 
 #### Child Handles (from query)
 
-`ChildHandle` and `ChildResults` are returned by query methods on the wrapper. They hold `&mut` into the children storage and provide `with_mut`/`with_ref`/`for_each_mut` directly — same pattern as the document-level `QueryHandle`. Closures receive **wrapper types**, not record types.
+`ChildHandle` and `ChildResults` are returned by query methods on the wrapper. They hold `&mut` into the children storage and provide `with_mut`/`for_each_mut` directly — same pattern as the document-level `QueryHandle`. Closures receive **wrapper view types**, not record types. Closures are generic over return type — they pass through whatever the user returns.
 
 ```rust
 /// Single child match — from comp.query::<SchPin>("pin[name=VCC]")?
@@ -525,8 +503,7 @@ pub struct ChildHandle<'a, T: WrapperFamily> {
 }
 
 impl<'a, T: WrapperFamily> ChildHandle<'a, T> {
-    pub fn with_mut<R>(self, f: impl FnOnce(T::Wrapper<'_>) -> R) -> R { ... }
-    pub fn with_ref<R>(self, f: impl FnOnce(T::RefWrapper<'_>) -> R) -> R { ... }
+    pub fn with_mut<R>(self, f: impl FnOnce(T::View<'_>) -> R) -> R { ... }
 }
 
 /// Multiple child matches — from comp.query_all::<SchPin>("pin:power")?
@@ -537,8 +514,7 @@ pub struct ChildResults<'a, T: WrapperFamily> {
 }
 
 impl<'a, T: WrapperFamily> ChildResults<'a, T> {
-    pub fn for_each_mut(self, f: impl FnMut(T::Wrapper<'_>)) { ... }
-    pub fn for_each_ref(self, f: impl FnMut(T::RefWrapper<'_>)) { ... }
+    pub fn for_each_mut(self, f: impl FnMut(T::View<'_>)) { ... }
     pub fn len(&self) -> usize { self.indices.len() }
     pub fn is_empty(&self) -> bool { self.indices.is_empty() }
 }
@@ -564,14 +540,16 @@ The query API is the primary entry point for finding and mutating records in a d
 ```rust
 impl SchLib {
     /// Find exactly one matching component. Errors on 0 or 2+ matches.
-    pub fn query<T: RecordType>(&mut self, q: &str) -> Result<QueryHandle<'_, T>> { ... }
+    pub fn query<T: WrapperFamily>(&mut self, q: &str) -> Result<QueryHandle<'_, T>> { ... }
 
     /// Find all matching components.
-    pub fn query_all<T: RecordType>(&mut self, q: &str) -> Result<QueryResults<'_, T>> { ... }
+    pub fn query_all<T: WrapperFamily>(&mut self, q: &str) -> Result<QueryResults<'_, T>> { ... }
 }
 ```
 
-Both take `&mut self` because the returned handles need mutable access for `with_mut`. The query itself only reads, but the handle must be able to open a mutable closure.
+`query()` and `query_all()` return `Result` with our error type (parse errors, zero/multiple matches). Both take `&mut self` because the returned handles need mutable access for `with_mut`. The query itself only reads, but the handle must be able to open a mutable closure.
+
+Closure return types are **generic passthrough** — the closure returns whatever the user wants (`R`), and the handle passes it through. This lets users return custom types, `Result`, or `()` as needed. Only the query functions themselves return our `Result` type.
 
 ```rust
 /// Single match — from doc.query::<SchComponent>("U1")?
@@ -584,16 +562,14 @@ pub struct QueryHandle<'a, T: WrapperFamily> {
 
 impl<'a> QueryHandle<'a, SchComponent> {
     /// Open a mutable closure over the matched component.
-    pub fn with_mut<R>(self, f: impl FnOnce(SchComponent::Wrapper<'_>) -> Result<R>) -> Result<R> {
+    /// Closure return type is generic — passes through whatever the user returns.
+    pub fn with_mut<R>(self, f: impl FnOnce(SchComponentView<'_>) -> R) -> R {
         let group = &mut self.doc.groups[self.index];
         // split borrow: component vs children — separate ComponentGroup fields
         let (comp_node, children) = (&mut group.component, &mut group.children[..]);
         let record = SchComponentRecord::from_origin_mut(&mut comp_node.origin);
-        f(/* construct SchComponent wrapper with record + children */)
+        f(/* construct SchComponentView with record + children */)
     }
-
-    /// Read-only access.
-    pub fn with_ref<R>(self, f: impl FnOnce(SchComponent::RefWrapper<'_>) -> R) -> R { ... }
 }
 
 /// Multiple matches — from doc.query_all::<SchComponent>("R*")?
@@ -604,8 +580,7 @@ pub struct QueryResults<'a, T: WrapperFamily> {
 }
 
 impl<'a> QueryResults<'a, SchComponent> {
-    pub fn for_each_mut(self, f: impl FnMut(SchComponent::Wrapper<'_>) -> Result<()>) -> Result<()> { ... }
-    pub fn for_each_ref(self, f: impl FnMut(SchComponent::RefWrapper<'_>)) { ... }
+    pub fn for_each_mut(self, f: impl FnMut(SchComponentView<'_>)) { ... }
     pub fn len(&self) -> usize { self.indices.len() }
     pub fn is_empty(&self) -> bool { self.indices.is_empty() }
 }
@@ -620,14 +595,14 @@ let mut doc = SchLib::open("Library.SchLib")?;
 
 // Single component — exact match (errors on 0 or 2+)
 doc.query::<SchComponent>("U1")?.with_mut(|comp| {
-    // comp: SchComponent<'_> — wrapper, Deref to SchComponentRecord
+    // comp: SchComponentView<'_> — Deref to SchComponentRecord
     // Getters/setters available directly via Deref
     comp.set_lib_reference("LM358N");
     comp.set_description("Dual Op-Amp");
 
     // Query single child — with_mut directly on the handle
     comp.query::<SchPin>("pin[name=VCC]")?.with_mut(|pin| {
-        // pin: SchPin<'_> — wrapper, Deref to SchPinRecord
+        // pin: SchPinView<'_> — Deref to SchPinRecord
         pin.set_electrical(PinElectricalType::Power);
     });
 
@@ -642,49 +617,59 @@ doc.query::<SchComponent>("U1")?.with_mut(|comp| {
     });
 
     // Collect keys for later use (keys are lightweight indices, no borrow)
-    let pin_keys: Vec<_> = comp.pin_keys().collect();
+    let pin_keys: Vec<_> = comp.child_keys::<SchPin>().collect();
     for key in pin_keys {
-        comp.with_child_mut(key, |pin: SchPin<'_>| {
+        comp.with_child_mut(key, |pin| {
             pin.set_pin_length(SchCoord::from_mils(100.0));
         });
     }
-
-    Ok(())
-})?;
+});
 
 // Multiple components — all resistors
 doc.query_all::<SchComponent>("R*")?.for_each_mut(|comp| {
     comp.set_description("Resistor (modified)");
-    Ok(())
-})?;
+});
 
-// Insert new record — same closure shape, template is selected internally
-doc.insert_component(|comp| {
+// Build new component with children from templates
+doc.build_component(templates::sch_component_default, |comp| {
     comp.set_lib_reference("R_NEW");
     comp.set_description("New resistor");
-    Ok(())
+    comp.add_pin(templates::sch_pin_default, |pin| {
+        pin.set_designator(Designator::new("1"));
+        pin.set_name(PinName::new("A"));
+    });
+    comp.add_pin(templates::sch_pin_default, |pin| {
+        pin.set_designator(Designator::new("2"));
+        pin.set_name(PinName::new("B"));
+    });
 })?;
 
 doc.save("Library.SchLib")?;
 ```
 
-**Implementation note**: Since wrapper types like `SchPin<'a>` have lifetimes, they can't be used directly as type parameters in `query::<SchPin>()`. The actual mechanism uses a **wrapper family trait** with an associated record type. Each wrapper family is a zero-sized marker type that maps to the wrapper and record types via GATs:
+**Implementation note**: Since view types like `SchPinView<'a>` have lifetimes, they can't be used directly as type parameters in `query::<SchPin>()`. The actual mechanism uses a **wrapper family trait** with an associated record type. Each wrapper family is a zero-sized marker type that maps to the view and record types via GATs:
 
 ```rust
 pub trait WrapperFamily {
     type Record: RecordType;
-    type Wrapper<'a>;
+    type View<'a>;
 }
 
-// SchPin as a type parameter is this marker — not the wrapper itself
+// SchPin as a type parameter is this marker — not the view itself
 pub enum SchPin {}
 impl WrapperFamily for SchPin {
     type Record = SchPinRecord;
-    type Wrapper<'a> = SchPinWrapper<'a>;  // the actual wrapper struct
+    type View<'a> = SchPinView<'a>;
+}
+
+pub enum SchComponent {}
+impl WrapperFamily for SchComponent {
+    type Record = SchComponentRecord;
+    type View<'a> = SchComponentView<'a>;
 }
 ```
 
-The exact naming of the internal wrapper struct (e.g., `SchPinWrapper<'a>` vs `SchPinView<'a>`) is an implementation detail. Users only see `SchPin` in type parameters and in closure argument types (via type alias).
+Users see `SchPin` in type parameters (e.g., `query::<SchPin>(...)`) and `SchPinView<'_>` in closure arguments. The `*View` suffix is used consistently for all internal wrapper structs.
 
 ### SchDoc Generalization
 
@@ -725,11 +710,103 @@ doc.query::<SchComponent>("U1")?.with_mut(|comp| {
     comp.query_all::<SchPin>("pin:power")?.for_each_mut(|pin| {
         pin.set_electrical(PinElectricalType::Passive);
     });
-    Ok(())
-})?;
+});
 
 doc.save("Design.SchDoc")?;
 ```
+
+### PcbLib Design
+
+PcbLib uses the same hierarchical pattern as schematic formats. Each footprint is a CFB storage containing binary primitive records (pads, tracks, arcs, etc.). The `FootprintGroup` is analogous to `ComponentGroup`:
+
+```rust
+pub struct FootprintGroup {
+    metadata: RecordNode,                      // from Parameters stream (param-based)
+    primitives: Vec<RecordNode>,               // from Data stream (binary records)
+    raw_pattern_name_block: Vec<u8>,           // original name block for lossless roundtrip
+    original_primitive_order: Vec<PcbPrimitiveRef>,  // type + index for ordering preservation
+    raw_header: Vec<u8>,                       // original Header stream (u32 count)
+}
+```
+
+**CFB layout per footprint:**
+
+```
+/{FootprintName}/
+    Header          → u32 primitive count
+    Data            → pattern name block + mixed binary primitive records
+    Parameters      → parametric properties (|KEY=VALUE| text)
+    WideStrings     → optional extended strings
+```
+
+**Record dispatch:** Each binary record starts with a type byte (u8) mapped to `PcbObjectId`:
+
+| Type byte | Record | Framing |
+|-----------|--------|---------|
+| 1 | Arc | `type + u32 len + data` |
+| 2 | Pad | `type + 6 subrecords (each u32 len + data)` — NO outer length |
+| 3 | Via | `type + u32 len + data` (multi-section internally) |
+| 4 | Track | `type + u32 len + data` |
+| 5 | Text | `type + 2 subrecords (each u32 len + data)` — NO outer length |
+| 6 | Fill | `type + u32 len + data` |
+| 11 | Region | `type + u32 len + binary header + params + vertices` (hybrid) |
+| 12 | ComponentBody | `type + u32 len + data` (hybrid like Region) |
+
+Unknown type bytes are stored as raw bytes for lossless roundtrip.
+
+**All binary records share a 13-byte common header:**
+
+```rust
+pub struct PcbCommonHeader {
+    layer: u8,              // TLayer enum (0-82)
+    flags: u16,             // bitmask (locked, teardrop, tent, etc.)
+    net: u16,               // 0xFFFF = no ref
+    polygon_ref: u16,       // 0xFFFF = no ref
+    component_ref: u16,     // 0xFFFF = no ref
+    ref4: u16,              // 0xFFFF = no ref
+    ref5: u16,              // 0xFFFF = no ref
+}
+```
+
+**Query API — same pattern as schematic:**
+
+```rust
+let mut lib = PcbLib::open("Library.PcbLib")?;
+
+lib.query::<PcbFootprint>("SOIC-8")?.with_mut(|fp| {
+    fp.query_all::<PcbPad>("pad")?.for_each_mut(|pad| {
+        pad.set_hole_size(PcbCoord::from_mils(40.0));
+    });
+
+    fp.query_all::<PcbTrack>("track[width>=10mil]")?.for_each_mut(|track| {
+        track.set_width(PcbCoord::from_mils(12.0));
+    });
+});
+
+lib.save("Library.PcbLib")?;
+```
+
+**Wrapper families for PCB:**
+
+```rust
+pub enum PcbFootprint {}
+impl WrapperFamily for PcbFootprint {
+    type Record = PcbFootprintRecord;     // metadata from Parameters stream
+    type View<'a> = PcbFootprintView<'a>; // parent wrapper with child navigation
+}
+
+pub enum PcbPad {}
+impl WrapperFamily for PcbPad {
+    type Record = PcbPadRecord;
+    type View<'a> = PcbPadView<'a>;       // leaf wrapper
+}
+
+// Same for PcbTrack, PcbArc, PcbVia, PcbFill, PcbText, PcbRegion
+```
+
+`PcbFootprintView` is a parent wrapper (like `SchComponentView`) — it Derefs to `PcbFootprintRecord` for metadata access and provides child navigation over its primitives. Leaf wrappers (`PcbPadView`, `PcbTrackView`, etc.) use `impl_leaf_wrapper!`.
+
+**PcbDoc is deferred.** PcbDoc has a fundamentally different structure (flat typed streams like Tracks6, Arcs6 rather than per-component grouping) that needs separate design work. PcbLib is sufficient for initial library editing workflows.
 
 ### Query Language Parsing
 
@@ -759,6 +836,8 @@ src/query/
 ```
 
 The parser produces an AST. The evaluator walks the AST against a record collection and returns matched indices. Both the document-level `query()` and the component-level `query()` use the same parser and evaluator — the only difference is the input record set.
+
+**Initial scope (v2):** Pattern selectors + attribute selectors only. These cover ~90% of use cases. Combinators (`>`, `+`, `~`, `,`) and pseudo-classes (`:power`, `:input`, etc.) are deferred to a later version.
 
 **Alternatives considered:**
 - **winnow**: Faster compilation, smaller binary, but requires hand-writing combinators. Better if parsing becomes a bottleneck. Could switch later without changing the AST/evaluator.
@@ -891,18 +970,18 @@ The builder takes a template function, not a file path. The macro generates the 
 6. For types that don't fit `ParamCodec`, support overriding with `codec_fn = "custom_fn"`.
 7. Generate test helpers and `Arbitrary` impls.
 
-**Not generated by the macro:** Hierarchical wrapper types (`SchComponent<'a>`, `SchPin<'a>`, etc.) are hand-written. The macro only generates the `*Record` types that the wrappers Deref to.
+**Not generated by the macro:** Hierarchical wrapper types (`SchComponentView<'a>`, `SchPinView<'a>`, etc.) are hand-written. The macro only generates the `*Record` types that the view types Deref to.
 
 ### Generated Pieces
 
-From a single `#[derive(AltiumEntity)]` annotation:
+From a single `#[altium_record]` attribute macro:
 
 - **Record type** (`SchPinRecord`) wrapping `RecordOrigin`, with typed getters/setters/updaters.
 - **Builder type** (`SchPinRecordBuilder`) — takes a template function, applies typed overrides.
 - **Test helpers** (`SchPinRecord::test_fixture()`, `SchPinRecord::assert_roundtrip_identity()`).
 - **`Arbitrary` impl** (behind `#[cfg(test)]`) for property-based testing.
 
-The hierarchical wrappers (`SchPin<'a>`, `SchComponent<'a>`, etc.) are hand-written separately. Most use `impl_leaf_wrapper!` for the boilerplate; parent types like `SchComponent` are fully hand-written.
+The hierarchical view types (`SchPinView<'a>`, `SchComponentView<'a>`, etc.) are hand-written separately. Most use `impl_leaf_wrapper!` for the boilerplate; parent types like `SchComponentView` are fully hand-written.
 
 ### Type Traits the Macro Uses
 
@@ -923,9 +1002,134 @@ pub trait AltiumEnum: Sized {
 }
 ```
 
-`AltiumEnum` types get a blanket `ParamCodec` impl (or a derive macro). `AltiumCoord` types implement `ParamCodec` directly because they need to handle the `{key}_FRAC` pattern. Bitflags types implement `ParamCodec` using `.bits()` / `from_bits_truncate()`. Complex param types implement `ParamCodec` by hand or use `codec_fn`.
+`AltiumEnum` types get an `#[altium_enum]` attribute macro that generates the `AltiumEnum` trait impl (from_int/to_int mapping), plus a blanket `impl<T: AltiumEnum> ParamCodec for T` that handles the read/write. `AltiumCoord` types implement `ParamCodec` directly because they need to handle the `{key}_FRAC` pattern. Bitflags types implement `ParamCodec` using `.bits()` / `from_bits_truncate()`. Complex param types implement `ParamCodec` by hand or use `codec_fn`.
 
-For binary-codec records, the macro generates getters/setters that index into a field span map built by the record's hand-written parser. No `BinaryCodec` trait — binary records use helper functions for common patterns (`read_i32`, `read_coord`, `read_pascal_string`, etc.) and hand-write their block structure parsing.
+### Binary Record Macro Attributes
+
+For binary-codec records, the `#[altium_record]` macro supports two modes:
+
+**Sequential layout (simple records — Track, Arc, Fill):** Fields are declared in order. The macro computes offsets from type sizes. No explicit offsets needed.
+
+```rust
+#[altium_record(kind = "pcb", object_id = Track, codec = "binary")]
+struct PcbTrackRecord {
+    #[altium(header)]
+    header: PcbCommonHeader,          // 13 bytes, always first
+
+    start_x: PcbCoord,                // 4 bytes at offset 13
+    start_y: PcbCoord,                // 4 bytes at offset 17
+    end_x: PcbCoord,                  // 4 bytes at offset 21
+    end_y: PcbCoord,                  // 4 bytes at offset 25
+    width: PcbCoord,                  // 4 bytes at offset 29
+    subpoly_index: u16,              // 2 bytes at offset 33
+
+    #[altium(trailing)]
+    trailing: PcbTrailingFields,     // adaptive trailing fields (1-14 bytes)
+}
+```
+
+The macro knows the size of each type (`PcbCoord` = 4 bytes, `u16` = 2 bytes, `f64` = 8 bytes, `u8` = 1 byte, `bool` = 1 byte, `PcbCommonHeader` = 13 bytes) and computes offsets automatically. The `#[altium(header)]` attribute marks the common header. The `#[altium(trailing)]` attribute marks adaptive trailing fields parsed from remaining bytes.
+
+**Custom parser (complex multi-block records — Pad, Via, Text, Region):** For records with variable-length blocks or multi-subrecord structures, the macro generates getters/setters but delegates parse/serialize to hand-written functions.
+
+```rust
+#[altium_record(kind = "pcb", object_id = Pad, codec = "binary",
+    parse_fn = "parse_pad", serialize_fn = "serialize_pad")]
+struct PcbPadRecord {
+    name: PadName,
+    position_x: PcbCoord,
+    position_y: PcbCoord,
+    top_size: PcbPoint,
+    mid_size: PcbPoint,
+    bot_size: PcbPoint,
+    hole_size: PcbCoord,
+    top_shape: PcbPadShape,
+    mid_shape: PcbPadShape,
+    bot_shape: PcbPadShape,
+    rotation: f64,
+    is_plated: bool,
+    // ... all fields declared for documentation + getter/setter generation
+}
+```
+
+The hand-written `parse_pad` function reads the 6 subrecords, builds a `BinaryOrigin` with a field span map, and returns a `RecordOrigin`. The hand-written `serialize_pad` function writes the subrecords back from the span map. The macro generates typed getters/setters that read/write through the span map using field IDs derived from field declaration order.
+
+**Field span map:** For custom-parser records, each field gets an auto-generated `usize` ID based on declaration order (0, 1, 2, ...). The hand-written parser builds a `Vec<FieldSpan>` indexed by these IDs:
+
+```rust
+pub struct FieldSpan {
+    offset: usize,    // byte offset in raw_block
+    size: usize,      // field size in bytes
+}
+
+// Generated getter:
+pub fn position_x(&self) -> PcbCoord {
+    let span = &self.origin.binary().field_spans[Self::FIELD_POSITION_X]; // ID = 1
+    PcbCoord::from_raw(i32::from_le_bytes(
+        self.origin.binary().raw_block[span.offset..span.offset+4].try_into().unwrap()
+    ))
+}
+```
+
+The macro generates `const FIELD_*: usize` constants so the hand-written parser can use them to build the span map consistently.
+
+### Insert / Builder API
+
+**Record-level builders** are generated by `#[altium_record]`. They wrap `new(template) + set_*()` in a fluent chain:
+
+```rust
+let pin = SchPinRecord::builder(templates::sch_pin_default)
+    .designator(Designator::new("A1"))
+    .pin_length(SchCoord::from_mils(100.0))
+    .build();
+```
+
+No external builder crate — the macro generates this trivially since it already knows all fields and setters.
+
+**Document-level insertion** is hand-written on each document type because it involves domain logic (index management, hierarchy construction, ordering):
+
+```rust
+impl SchLib {
+    /// Build a new component with children from templates.
+    pub fn build_component(
+        &mut self,
+        template: fn() -> RecordOrigin,
+        build: impl FnOnce(&mut ComponentBuilder),
+    ) -> Result<()> {
+        let mut builder = ComponentBuilder::new(template());
+        build(&mut builder);
+        self.groups.push(builder.into_group());
+        Ok(())
+    }
+}
+
+/// Builder for constructing a component with children.
+/// Hand-written — handles hierarchy construction.
+pub struct ComponentBuilder {
+    component: RecordNode,
+    children: Vec<RecordNode>,
+}
+
+impl ComponentBuilder {
+    /// Deref to the component record for setting fields.
+    pub fn set_lib_reference(&mut self, v: impl Into<LibReference>) { ... }
+
+    /// Add a child record from a template.
+    pub fn add_pin(
+        &mut self,
+        template: fn() -> RecordOrigin,
+        build: impl FnOnce(&mut SchPinRecord),
+    ) {
+        let mut node = RecordNode::new(template());
+        build(node.as_record_mut());
+        self.children.push(node);
+    }
+
+    // add_line, add_arc, add_rectangle, etc.
+}
+```
+
+For SchDoc, the builder also assigns OWNERINDEX values automatically. For PcbLib, `FootprintBuilder` handles the pattern name block, header, and primitive ordering.
 
 ## Coordinate System
 
@@ -1066,7 +1270,7 @@ Newtypes implement `Deref<Target=str>` for transparent read access, `Display`, `
 
 | Newtype | Backing | Helper methods |
 |---|---|---|
-| `Designator` | `String` | `prefix()`, `number()`, `set_number()`, `increment()` |
+| `Designator` | `String` | `prefix()`, `number()`, `is_template()`, `set_number()`, `increment()`, `resolve()` |
 | `LibReference` | `String` | `normalize()`, `matches_pattern()` |
 | `NetName` | `String` | `is_power_net()`, `prefix()`, `matches()` |
 | `UniqueId` | `String` | `generate()`, `is_valid()` |
@@ -1079,7 +1283,7 @@ The full newtype inventory will grow as we type more fields. The rule: if a stri
 
 All Altium enumerated values get proper Rust types:
 
-- **Simple enums** (`PinElectricalType`, `PinSymbol`, `LineWidth`, `PcbPadShape`): implement `AltiumEnum` trait, which provides a blanket `ParamCodec` impl.
+- **Simple enums** (`PinElectricalType`, `PinSymbol`, `LineWidth`, `PcbPadShape`): use `#[altium_enum]` attribute macro to generate `AltiumEnum` trait impl. A blanket `impl<T: AltiumEnum> ParamCodec for T` provides serialization for free.
 - **Bitflags** (`PinConglomerateFlags`, etc.): use the `bitflags` crate. Implement `ParamCodec` using `.bits()` / `from_bits_truncate()`.
 - **Composite values** (`MaskExpansion = Auto | Manual(Coord)`, etc.): implement `ParamCodec` or `BinaryCodec` by hand.
 - **Layer enums with named ranges**: implement `AltiumEnum` by hand with the semantic layer mapping.
@@ -1105,14 +1309,18 @@ impl PadLayerStack {
 
 These types are used by the hand-written binary record parsers. The macro generates getters/setters that call into the wrapper's methods — no special hooks needed.
 
-## v1/v2 Unification Strategy
+## v1/v2 Migration Strategy
 
-- One `DocumentCore` struct and one save path.
-- Format-specific codecs implement the same core traits:
-  - `DecodeOrigin`: parse raw bytes into `RecordOrigin`
-  - `EncodeOrigin`: materialize `RecordOrigin` back to bytes
-- v1 and v2 become codec implementations, not separate editing stacks.
-- `Coord` (v1, 10k/mil) is deprecated in favor of explicit `SchCoord` / `PcbCoord`.
+When v2 work begins, remove v1 from the module hierarchy entirely. Only migrate what is needed from v1 into the v2 module structure — do NOT copy everything. The v1 code serves as a knowledge base and oracle, not as a codebase to preserve.
+
+**Steps:**
+1. Remove v1 module exports — builds break immediately, which is intentional.
+2. Build v2 module structure from scratch (backing store, record types, wrappers, query).
+3. As each record type is implemented in v2, pull knowledge from the corresponding v1 code (field names, param keys, binary offsets, enum mappings). Delete the v1 source file once v2 replaces it.
+4. Format-specific codecs implement core traits:
+   - `DecodeOrigin`: parse raw bytes into `RecordOrigin`
+   - `EncodeOrigin`: materialize `RecordOrigin` back to bytes
+5. `Coord` (v1, 10k/mil) is removed in favor of explicit `SchCoord` / `PcbCoord`.
 
 ## Test Strategy
 
@@ -1149,9 +1357,9 @@ A small set of integration tests validates in-place editing:
 
 Per-record, the macro generates:
 
-- `SchPin::test_fixture()` — creates from default template function
-- `SchPin::assert_roundtrip_identity(params)` — parse → re-serialize → compare
-- `impl Arbitrary for SchPin` — for proptest
+- `SchPinRecord::test_fixture()` — creates from default template function
+- `SchPinRecord::assert_roundtrip_identity(params)` — parse → re-serialize → compare
+- `impl Arbitrary for SchPinRecord` — for proptest (creates from template, then applies random valid values via setters using per-field proptest strategies)
 
 ### Anti-Pointless Test Rules
 
@@ -1213,39 +1421,42 @@ Do not remove commands in code right now. Track with explicit freeze/remove/rebu
 
 ## Open Questions
 
-1. **Binary record field span map**: For binary records with complex multi-block structures (like PcbPad with its 6 blocks), the hand-written parser builds the field span map. How should this map be structured for records with variable-length blocks? May need a two-level map: block-level + field-level within each block.
+1. ~~**Binary record field span map**~~ **RESOLVED**: Simple binary records use sequential field layout in the macro (offsets computed from type sizes). Complex multi-block records (Pad, Via, Text, Region) use `parse_fn`/`serialize_fn` with hand-written parsers that build a flat `Vec<FieldSpan>` indexed by macro-generated `FIELD_*` constants. See [Binary Record Macro Attributes](#binary-record-macro-attributes).
 
-2. ~~**Cross-record operations**~~ **RESOLVED**: The hierarchical wrapper solves this. `SchComponentMut` borrows the component record and its children from separate `ComponentGroup` fields, so you can read the parent while mutating children (via `split()`). For mutations across sibling components, use sequential `query().with_mut()` calls — each closure borrows and releases one component at a time.
+2. ~~**Cross-record operations**~~ **RESOLVED**: The hierarchical wrapper solves this. `SchComponentView` borrows the component record and its children from separate `ComponentGroup` fields, so you can read the parent while mutating children (via `split()`). For mutations across sibling components, use sequential `query().with_mut()` calls — each closure borrows and releases one component at a time.
 
-3. **PadLayerStack and similar complex wrappers**: How many of these do we need? Each one is hand-written domain logic. Need an inventory of all complex binary field types across all record types.
+3. **PadLayerStack and similar complex wrappers**: These are hand-written domain types used by hand-written binary record parsers (NOT generated by the macro — the macro generates `*Record` types only, wrappers are hand-written). Need an inventory of all complex binary field types across PcbLib record types during implementation.
 
-4. **Template function coverage**: We need template functions for every record type we want to create. Default values must be extracted from real Altium files. May need a template extraction tool to bootstrap these.
+4. **Template function coverage**: We need template functions for every record type we want to create. Default values must be extracted from real Altium files. Template extraction tooling will be built later — for initial implementation, extract defaults manually from test fixtures.
 
-5. **OLE container compatibility**: What sector size, mini-stream cutoff, and directory entry ordering does Altium use? This determines whether we can achieve byte-identical CFB output.
+5. **OLE container compatibility**: What sector size, mini-stream cutoff, and directory entry ordering does Altium use? This is critical for byte-identical CFB output. Will be investigated during implementation — examine real Altium files with diff-ole.py and patch the `cfb` crate configuration as needed.
 
-6. ~~**insert vs. update semantics**~~ **RESOLVED**: The query API provides `query().with_mut()` for editing existing records. `insert_component()` / `insert_pin()` use the same closure shape for creating new records from templates. The semantic distinction (edit vs. create) is worth keeping because insert needs a template function and may need to update indices/keys.
+6. ~~**insert vs. update semantics**~~ **RESOLVED**: The query API provides `query().with_mut()` for editing existing records. `build_component()` / `add_pin()` use a builder closure pattern for creating new records from templates. See [Insert / Builder API](#insert--builder-api).
 
-7. **PcbLib/PcbDoc hierarchical model**: PCB formats have different structure — PcbLib has per-footprint sections, PcbDoc has typed streams (Tracks6, Arcs6, etc.). The `ComponentGroup` model fits schematic formats naturally but may need a different grouping strategy for PCB. Should PcbDoc use typed-stream groups instead of OWNERINDEX groups?
+7. ~~**PcbLib/PcbDoc hierarchical model**~~ **RESOLVED**: PcbLib uses `FootprintGroup` (analogous to `ComponentGroup`). PcbDoc is deferred. See [PcbLib Design](#pcblib-design).
 
-8. **Query language implementation scope**: The AQL spec (docs/query-lang.md) is comprehensive. For v2 initial implementation, which subset is required? Pattern selectors and attribute selectors likely cover 90% of use cases. Combinators and pseudo-classes can be deferred.
+8. ~~**Query language implementation scope**~~ **RESOLVED**: Pattern selectors + attribute selectors for initial v2 implementation. Combinators and pseudo-classes deferred.
 
-9. **ChildHandle borrow scope**: `comp.query::<SchPin>(q)?` takes `&mut self` on the wrapper, which means you can't interleave query calls. Each query+with_mut chain must complete before the next one starts. Is this acceptable, or do we need a way to batch multiple child queries?
+9. ~~**ChildHandle borrow scope**~~ **RESOLVED**: Sequential-only constraint is acceptable. Each `query().with_mut()` chain must complete before the next. `ChildKey<T>` + `child_keys()` provides a collect-and-iterate pattern for when handles need to be passed around. No query batching.
 
 ## Definition of Done
 
 1. All record types use backing-store access — no runtime typed fields.
 2. All getters/setters use proper domain newtypes, coordinates, enums, and bitflags types.
-3. Param types handle their own serialization via `ParamCodec` trait (single key). Binary records use hand-written parsers with helper functions.
+3. Param types handle their own serialization via `ParamCodec` trait (single key). Binary records use hand-written parsers with helper functions or sequential-layout macro generation.
 4. Core types have zero implicit defaults. New records are created from template functions.
 5. `UnknownFields` type is removed entirely. Unknown data lives in the backing store.
 6. SchCoord (100k/mil) and PcbCoord (10k/mil) are separate types with `AltiumCoord` trait.
 7. Boundary `Measurement<U>` type provides type-safe unit conversions via `From` impls.
-8. Hierarchical wrapper types (`SchComponentMut`, etc.) Deref to record types and provide child navigation via closures and query.
-9. `ComponentGroup` storage separates component record from children for split-borrow safety. SchLib builds groups per CFB stream; SchDoc groups by OWNERINDEX.
-10. Query API: `query::<T>(q)` errors on 0 or 2+ matches; `query_all::<T>(q)` returns all. Same AQL works at document level and within component wrappers for child access.
-11. `QueryHandle` and `ChildHandle` have `with_mut`/`with_ref` directly on them. `ChildKey<T>` + `with_child_mut` available for when handles are passed around.
-12. `Designator` (concrete, SchDoc) and `DesignatorTemplate` (placeholder, SchLib) are separate newtypes.
+8. Hierarchical view types (`SchComponentView`, `SchPinView`, etc.) Deref/DerefMut to record types and provide child navigation via closures and query. DerefMut marks dirty.
+9. `ComponentGroup` storage separates component record from children for split-borrow safety. SchLib builds groups per CFB stream; SchDoc groups by OWNERINDEX. PcbLib uses `FootprintGroup`.
+10. Query API: `query::<T>(q)` errors on 0 or 2+ matches; `query_all::<T>(q)` returns all. Same AQL works at document level and within parent wrappers for child access. Closures are generic over return type.
+11. `QueryHandle` and `ChildHandle` have `with_mut` directly on them. `ChildKey<T>` + `with_child_mut` available for when handles are passed around. Mut-only for now.
+12. `Designator` is a single newtype covering both concrete (`U1`) and template (`U?`) forms.
 13. E2E tests rebuild from JSON using templates. In-place edit tests cover each record type.
 14. diff-ole.py has exit codes, container-level comparison, and both strict/semantic modes.
 15. Existing test files still exist but assert functional behavior with high signal.
 16. CLI command redesign starts only after core/test/validation gates are complete.
+17. AQL parser uses pest. Initial scope: pattern selectors + attribute selectors.
+18. `#[altium_enum]` attribute macro generates `AltiumEnum` impl with blanket `ParamCodec`.
+19. v1 module hierarchy removed at start. v2 built from scratch, pulling knowledge from v1 as needed.
