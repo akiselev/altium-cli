@@ -7,6 +7,9 @@ pub mod traits;
 pub mod newtypes;
 pub mod binary_helpers;
 
+// PCB-specific types (enums, etc.)
+pub mod pcb;
+
 // Record types (Phase 3) — populated by macro-generated types
 pub mod records;
 

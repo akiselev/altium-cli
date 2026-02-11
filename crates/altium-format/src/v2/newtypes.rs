@@ -62,7 +62,7 @@ macro_rules! impl_string_newtype {
 ///
 /// Designators consist of a letter prefix followed by either a numeric
 /// suffix or a "?" placeholder (template designator).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Designator(String);
 
 impl_string_newtype!(Designator);
@@ -163,7 +163,7 @@ impl Designator {
 /// Library component reference identifier.
 ///
 /// Used to look up components in schematic libraries.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibReference(String);
 
 impl_string_newtype!(LibReference);
@@ -234,7 +234,7 @@ impl LibReference {
 // ---------------------------------------------------------------------------
 
 /// Electrical net name in a schematic or PCB.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NetName(String);
 
 impl_string_newtype!(NetName);
@@ -283,7 +283,7 @@ impl NetName {
 // ---------------------------------------------------------------------------
 
 /// Altium unique identifier (8-character alphanumeric string).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UniqueId(String);
 
 impl_string_newtype!(UniqueId);
@@ -321,7 +321,7 @@ impl UniqueId {
 /// Component or object description string.
 ///
 /// Thin wrapper providing type safety with no additional domain logic.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Description(String);
 
 impl_string_newtype!(Description);
@@ -341,7 +341,7 @@ impl Description {
 ///
 /// In Altium, a leading `~` indicates that the pin name should be displayed
 /// with an overbar, signifying an active-low signal.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PinName(String);
 
 impl_string_newtype!(PinName);
