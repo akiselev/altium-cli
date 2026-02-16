@@ -26,7 +26,7 @@ pub fn cmd_measure(
 
     let mut output: Option<Result<(), Box<dyn std::error::Error>>> = None;
     let mut current_idx = 0;
-    lib.query_all::<PcbFootprint>("#0")?.for_each_mut(|fp_name, mut view| {
+    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|fp_name, mut view| {
         if current_idx == idx {
             let pads = extract_pads_from_view(&mut view);
             let bb = compute_bounding_box(&pads);
