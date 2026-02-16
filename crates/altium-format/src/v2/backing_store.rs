@@ -13,6 +13,8 @@
 //! - **`FootprintGroup`**: A PCB footprint with metadata and primitives
 //! - **`StreamNode`**: A named OLE stream containing a list of records
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::v2::parameters::ParameterCollection;
@@ -317,6 +319,9 @@ pub struct ComponentGroup {
     pub children: Vec<RecordNode>,
     /// Original indices of the children in the flat record list.
     pub original_indices: Vec<usize>,
+    /// Extra CFB streams in this component's storage (not Data), preserved for round-trip.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub raw_extra_streams: HashMap<String, Vec<u8>>,
 }
 
 impl ComponentGroup {
@@ -330,6 +335,7 @@ impl ComponentGroup {
             component,
             children,
             original_indices,
+            raw_extra_streams: HashMap::new(),
         }
     }
 
@@ -406,6 +412,10 @@ pub struct FootprintGroup {
     pub original_primitive_order: Vec<PcbPrimitiveRef>,
     /// Raw header bytes preserved for identity write-back.
     pub raw_header: Vec<u8>,
+    /// Extra CFB streams in this footprint's storage (not Parameters/Header/Data),
+    /// preserved for round-trip.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub raw_extra_streams: HashMap<String, Vec<u8>>,
 }
 
 impl FootprintGroup {
@@ -423,6 +433,7 @@ impl FootprintGroup {
             raw_pattern_name_block,
             original_primitive_order,
             raw_header,
+            raw_extra_streams: HashMap::new(),
         }
     }
 

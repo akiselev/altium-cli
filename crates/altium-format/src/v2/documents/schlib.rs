@@ -9,6 +9,7 @@
 //! pipe-delimited parameter strings. The first record is the component itself
 //! (RECORD=1), followed by child records (pins, labels, etc.).
 
+use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, Write};
 
 use serde::{Deserialize, Serialize};
@@ -104,6 +105,9 @@ pub struct SchLib {
     /// Section key mappings for long component names.
     #[serde(skip)]
     pub section_keys: SectionKeyList,
+    /// Library-level extra CFB streams (Storage, etc.), preserved for round-trip.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub raw_extra_streams: HashMap<String, Vec<u8>>,
 }
 
 impl SchLib {
@@ -120,13 +124,25 @@ impl SchLib {
         // 2. Read SectionKeys
         lib.section_keys = read_section_keys(&mut cfb)?;
 
+        // Collect all stream paths for capturing extra streams
+        let all_stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(|e| e.is_stream())
+            .filter_map(|e| Some(e.path().to_str()?.to_string()))
+            .collect();
+
+        // Track which section keys are used by components
+        let mut component_keys: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
         // 3. Read Data stream for each component
         for entry in &lib.component_entries {
             let safe_name = sanitize_cfb_name(&entry.lib_ref);
             let section_key = lib.section_keys.get_key(&safe_name).to_string();
+            component_keys.insert(section_key.clone());
             let data_path = format!("/{}/{}", section_key, STREAM_DATA);
 
-            let group = if let Ok(mut stream) = cfb.open_stream(&data_path) {
+            let mut group = if let Ok(mut stream) = cfb.open_stream(&data_path) {
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
                 parse_data_stream_to_group(&data)?
@@ -136,7 +152,43 @@ impl SchLib {
                 ComponentGroup::new(RecordNode::new(1, origin), Vec::new(), Vec::new())
             };
 
+            // Capture extra streams in this component's storage
+            let storage_prefix = format!("/{}/", section_key);
+            for stream_path in &all_stream_paths {
+                if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
+                    if rest == STREAM_DATA {
+                        continue;
+                    }
+                    if let Ok(mut stream) = cfb.open_stream(stream_path) {
+                        let mut data = Vec::new();
+                        if stream.read_to_end(&mut data).is_ok() {
+                            group.raw_extra_streams.insert(rest.to_string(), data);
+                        }
+                    }
+                }
+            }
+
             lib.groups.push(group);
+        }
+
+        // 4. Capture library-level extra streams
+        for stream_path in &all_stream_paths {
+            let path_no_slash = stream_path.trim_start_matches('/');
+            let top_level = path_no_slash.split('/').next().unwrap_or("");
+            // Skip known top-level streams and component storages
+            if top_level == STREAM_FILE_HEADER
+                || top_level == STREAM_SECTION_KEYS
+                || component_keys.contains(top_level)
+            {
+                continue;
+            }
+            if let Ok(mut stream) = cfb.open_stream(stream_path) {
+                let mut data = Vec::new();
+                if stream.read_to_end(&mut data).is_ok() {
+                    lib.raw_extra_streams
+                        .insert(path_no_slash.to_string(), data);
+                }
+            }
         }
 
         Ok(lib)
@@ -194,6 +246,36 @@ impl SchLib {
                 AltiumError::Cfb(format!("Failed to create Data stream: {}", e))
             })?;
             stream.write_all(&data).map_err(AltiumError::Io)?;
+
+            // Write per-component extra streams
+            for (rel_path, data) in &group.raw_extra_streams {
+                let full_path = format!("/{}/{}", section_key, rel_path);
+                if let Ok(mut stream) = cfb.create_stream(&full_path) {
+                    let _ = stream.write_all(data);
+                }
+            }
+        }
+
+        // 5. Write library-level extra streams
+        {
+            let mut created_storages: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut sorted_extras: Vec<_> = self.raw_extra_streams.iter().collect();
+            sorted_extras.sort_by_key(|(k, _)| (*k).clone());
+            for (rel_path, data) in &sorted_extras {
+                let full_path = format!("/{}", rel_path);
+                // Create parent storage if nested
+                if let Some(slash_pos) = rel_path.find('/') {
+                    let parent = &rel_path[..slash_pos];
+                    let parent_path = format!("/{}", parent);
+                    if created_storages.insert(parent_path.clone()) {
+                        let _ = cfb.create_storage(&parent_path);
+                    }
+                }
+                if let Ok(mut stream) = cfb.create_stream(&full_path) {
+                    let _ = stream.write_all(data);
+                }
+            }
         }
 
         cfb.flush()

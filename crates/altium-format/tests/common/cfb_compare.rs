@@ -132,6 +132,152 @@ pub fn is_text_stream(data: &[u8]) -> bool {
     (printable as f64 / data.len() as f64) > 0.80
 }
 
+/// Check if a stream path is a SchLib Data stream (e.g. `/ComponentName/Data`).
+fn is_schlib_data_stream(path: &str) -> bool {
+    let trimmed = path.trim_start_matches('/');
+    // Must be exactly `<something>/Data`
+    if let Some(slash_pos) = trimmed.find('/') {
+        let rest = &trimmed[slash_pos + 1..];
+        rest == "Data"
+    } else {
+        false
+    }
+}
+
+/// Size flag mask: low 24 bits = length, upper bits = mode flag.
+const SIZE_FLAG_MASK: u32 = 0x00FF_FFFF;
+
+/// A parsed record from a SchLib Data stream.
+#[derive(Debug)]
+struct SchLibRecord {
+    /// The raw length prefix (including mode flag).
+    size_raw: u32,
+    /// The record data bytes.
+    data: Vec<u8>,
+}
+
+/// Parse a SchLib Data stream into individual records.
+fn parse_schlib_data_records(data: &[u8]) -> Vec<SchLibRecord> {
+    let mut records = Vec::new();
+    let mut pos = 0;
+    while pos + 4 <= data.len() {
+        let size_raw = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+        let record_len = (size_raw & SIZE_FLAG_MASK) as usize;
+        pos += 4;
+        if record_len == 0 || pos + record_len > data.len() {
+            break;
+        }
+        records.push(SchLibRecord {
+            size_raw,
+            data: data[pos..pos + record_len].to_vec(),
+        });
+        pos += record_len;
+    }
+    records
+}
+
+/// Compare two SchLib Data streams record-by-record.
+fn compare_schlib_data_streams(
+    path: &str,
+    orig_data: &[u8],
+    rebuilt_data: &[u8],
+    report: &mut CfbDiffReport,
+) {
+    let orig_records = parse_schlib_data_records(orig_data);
+    let rebuilt_records = parse_schlib_data_records(rebuilt_data);
+
+    let mut diffs = Vec::new();
+
+    // Compare record counts
+    if orig_records.len() != rebuilt_records.len() {
+        diffs.push((
+            "RecordCount".to_string(),
+            Some(orig_records.len().to_string()),
+            Some(rebuilt_records.len().to_string()),
+        ));
+    }
+
+    // Compare each record
+    let max_len = orig_records.len().max(rebuilt_records.len());
+    for i in 0..max_len {
+        match (orig_records.get(i), rebuilt_records.get(i)) {
+            (Some(orig), Some(rebuilt)) => {
+                let is_binary_orig = (orig.size_raw & !SIZE_FLAG_MASK) != 0;
+                let is_binary_rebuilt = (rebuilt.size_raw & !SIZE_FLAG_MASK) != 0;
+
+                if is_binary_orig != is_binary_rebuilt {
+                    diffs.push((
+                        format!("Record[{}].mode", i),
+                        Some(if is_binary_orig { "binary" } else { "text" }.to_string()),
+                        Some(if is_binary_rebuilt { "binary" } else { "text" }.to_string()),
+                    ));
+                } else if is_binary_orig {
+                    // Binary record: byte-level comparison
+                    if orig.data != rebuilt.data {
+                        let first_diff = orig.data.iter().zip(rebuilt.data.iter())
+                            .position(|(a, b)| a != b);
+                        diffs.push((
+                            format!("Record[{}].binary", i),
+                            Some(format!("{} bytes", orig.data.len())),
+                            Some(format!("{} bytes, first_diff={:?}", rebuilt.data.len(), first_diff)),
+                        ));
+                    }
+                } else {
+                    // Text record: parameter-level comparison
+                    let orig_text = String::from_utf8_lossy(&orig.data);
+                    let rebuilt_text = String::from_utf8_lossy(&rebuilt.data);
+                    let orig_params = ParameterCollection::from_string(&orig_text);
+                    let rebuilt_params = ParameterCollection::from_string(&rebuilt_text);
+
+                    let mut all_keys: BTreeSet<String> = BTreeSet::new();
+                    for (k, _) in orig_params.iter() {
+                        all_keys.insert(k.to_string());
+                    }
+                    for (k, _) in rebuilt_params.iter() {
+                        all_keys.insert(k.to_string());
+                    }
+
+                    for key in &all_keys {
+                        let orig_val = orig_params.get(key).map(|v| v.as_str().to_string());
+                        let rebuilt_val = rebuilt_params.get(key).map(|v| v.as_str().to_string());
+                        if orig_val != rebuilt_val {
+                            diffs.push((
+                                format!("Record[{}].{}", i, key),
+                                orig_val,
+                                rebuilt_val,
+                            ));
+                        }
+                    }
+                }
+            }
+            (Some(_), None) => {
+                diffs.push((
+                    format!("Record[{}]", i),
+                    Some("present".to_string()),
+                    None,
+                ));
+            }
+            (None, Some(_)) => {
+                diffs.push((
+                    format!("Record[{}]", i),
+                    None,
+                    Some("present".to_string()),
+                ));
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+
+    if diffs.is_empty() {
+        report.matched.push(path.to_string());
+    } else {
+        report.text_diffs.push(TextStreamDiff {
+            stream_name: path.to_string(),
+            param_diffs: diffs,
+        });
+    }
+}
+
 /// Compare two CFB files at the stream level.
 ///
 /// `original` and `rebuilt` are the raw bytes of the two CFB files.
@@ -178,7 +324,9 @@ pub fn compare_cfb_files(original: &[u8], rebuilt: &[u8]) -> CfbDiffReport {
     for path in all_paths {
         match (orig_streams.get(&path), rebuilt_streams.get(&path)) {
             (Some(orig_data), Some(rebuilt_data)) => {
-                if is_text_stream(orig_data) && is_text_stream(rebuilt_data) {
+                if is_schlib_data_stream(&path) {
+                    compare_schlib_data_streams(&path, orig_data, rebuilt_data, &mut report);
+                } else if is_text_stream(orig_data) && is_text_stream(rebuilt_data) {
                     compare_text_streams(&path, orig_data, rebuilt_data, &mut report);
                 } else {
                     compare_binary_streams(&path, orig_data, rebuilt_data, &mut report);

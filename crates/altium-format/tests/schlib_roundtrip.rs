@@ -53,13 +53,13 @@ fn destructive_roundtrip_synthiam_schlib() {
     // -----------------------------------------------------------------------
     let mut new_lib = SchLib::default();
 
-    // Copy header but clear raw bytes to force re-serialization
+    // Preserve original raw FileHeader bytes for identity write-back
     new_lib.header = SchLibHeader {
         header_text: orig_lib.header.header_text.clone(),
         weight: orig_lib.header.weight,
         minor_version: orig_lib.header.minor_version,
         unique_id: orig_lib.header.unique_id.clone(),
-        raw: None, // Force re-serialization of FileHeader
+        raw: orig_lib.header.raw.clone(),
     };
 
     // For each component: clone the records from the original and rebuild
