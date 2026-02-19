@@ -1,28 +1,30 @@
-//! V2 Altium format API — backing-store architecture.
+//! V2 Altium format API — ID-handle architecture.
 
-// Foundation (Phase 1)
+// Foundation
 pub mod backing_store;
 pub mod coord;
 pub mod traits;
 pub mod newtypes;
 pub mod binary_helpers;
 
+// ID types and store
+pub mod ids;
+pub mod store;
+pub mod handles;
+
 // PCB-specific types (enums, etc.)
 pub mod pcb;
 
-// Record types (Phase 3) — populated by macro-generated types
+// Record types — populated by macro-generated types
 pub mod records;
 
-// View types (Phase 4)
-pub mod views;
-
-// Document types (Phase 4)
+// Document types
 pub mod documents;
 
-// Query language (Phase 5)
+// Query language
 pub mod query;
 
-// Templates & builders (Phase 6)
+// Templates & builders
 pub mod templates;
 pub mod builders;
 

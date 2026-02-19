@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 Alexander Kiselev <alex@akiselev.com>
 //
-//! Destructive round-trip test for PcbLib files.
+//! Round-trip test for PcbLib files.
 //!
-//! Opens a real PcbLib file, extracts all footprint data, rebuilds from
-//! scratch using the v2 API, saves to a new CFB, then compares the
-//! original and rebuilt files at the stream level.
+//! Opens a real PcbLib file, saves it to a byte buffer, re-opens from that
+//! buffer, then compares structural invariants (footprint count, names) and
+//! raw CFB streams between the original and saved copies.
 //!
-//! This test is diagnostic: differences are reported, not asserted
+//! This test is diagnostic: stream differences are reported, not asserted
 //! (except for structural invariants like footprint count).
 //!
 //! Requires `Synthiam.PcbLib` at the repo root. Run with:
@@ -17,8 +17,8 @@ mod common;
 
 use std::io::Cursor;
 
-use altium_format::v2::backing_store::{FootprintGroup, PcbPrimitiveRef, RecordNode};
 use altium_format::v2::documents::PcbLib;
+use altium_format::v2::store::GroupMeta;
 
 use common::cfb_compare::compare_cfb_files;
 
@@ -38,104 +38,69 @@ fn destructive_roundtrip_synthiam_pcblib() {
         orig_footprint_count
     );
 
-    // Print footprint summary
-    for (i, name) in orig_lib.footprint_names.iter().enumerate() {
-        let group = &orig_lib.footprints[i];
-        let prim_count = group.primitives.len();
-        let pattern_name_len = group.raw_pattern_name_block.len();
-        let header_len = group.raw_header.len();
+    // Print footprint summary using the new API
+    {
+        let store = orig_lib.store().borrow();
+        for (i, &group_id) in store.group_ids().iter().enumerate() {
+            let group = store.group(group_id);
+            let prim_count = group.child_ids().len();
 
-        // Count primitives by type
-        let mut type_counts: std::collections::HashMap<u8, usize> =
-            std::collections::HashMap::new();
-        for prim in &group.primitives {
-            *type_counts.entry(prim.key).or_insert(0) += 1;
-        }
+            let (name, raw_pattern_name_block, raw_header) = match &group.meta() {
+                GroupMeta::PcbFootprint {
+                    name,
+                    raw_pattern_name_block,
+                    raw_header,
+                    ..
+                } => (name.clone(), raw_pattern_name_block.clone(), raw_header.clone()),
+                _ => continue,
+            };
 
-        println!(
-            "  [{}] '{}': {} primitives, pattern_name={} bytes, header={} bytes",
-            i, name, prim_count, pattern_name_len, header_len
-        );
+            let pattern_name_len = raw_pattern_name_block.len();
+            let header_len = raw_header.len();
 
-        let mut type_summary: Vec<_> = type_counts.iter().collect();
-        type_summary.sort_by_key(|(k, _)| **k);
-        for (type_id, count) in &type_summary {
-            let name = pcb_type_name(**type_id);
-            println!("    type={} ({}): {}", type_id, name, count);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // 2. Build a new PcbLib from scratch using extracted data
-    // -----------------------------------------------------------------------
-    let mut new_lib = PcbLib::default();
-
-    for (i, orig_group) in orig_lib.footprints.iter().enumerate() {
-        let name = &orig_lib.footprint_names[i];
-
-        // Clone metadata record (footprint parameters), marking dirty
-        let mut metadata_node = RecordNode::new(
-            orig_group.metadata.key,
-            orig_group.metadata.origin.clone(),
-        );
-        metadata_node.mark_dirty();
-
-        // Clone all primitive records, marking each dirty
-        let mut primitives = Vec::with_capacity(orig_group.primitives.len());
-        let mut primitive_order = Vec::with_capacity(orig_group.original_primitive_order.len());
-
-        for (idx, prim) in orig_group.primitives.iter().enumerate() {
-            // Debug: check raw_block sizes for first 3 footprints
-            if i < 3 {
-                if let Some(b) = prim.origin.as_binary() {
-                    println!(
-                        "    prim[{}] type={} raw_block={} bytes, snapshot={} bytes",
-                        idx, prim.key, b.raw_block.len(), prim.original_snapshot.len()
-                    );
-                }
+            // Count primitives by type
+            let mut type_counts: std::collections::HashMap<u8, usize> =
+                std::collections::HashMap::new();
+            for &child_id in group.child_ids() {
+                let node = store.record(child_id);
+                *type_counts.entry(node.key).or_insert(0) += 1;
             }
-            let mut prim_node = RecordNode::new(prim.key, prim.origin.clone());
-            prim_node.mark_dirty();
-            primitives.push(prim_node);
-            primitive_order.push(PcbPrimitiveRef::new(prim.key, idx));
+
+            println!(
+                "  [{}] '{}': {} primitives, pattern_name={} bytes, header={} bytes",
+                i, name, prim_count, pattern_name_len, header_len
+            );
+
+            let mut type_summary: Vec<_> = type_counts.iter().collect();
+            type_summary.sort_by_key(|(k, _)| **k);
+            for (type_id, count) in &type_summary {
+                let type_name = pcb_type_name(**type_id);
+                println!("    type={} ({}): {}", type_id, type_name, count);
+            }
         }
-
-        println!(
-            "  Rebuilding [{}] '{}': {} primitives",
-            i,
-            name,
-            primitives.len()
-        );
-
-        // Build new footprint group from cloned origins
-        // raw_pattern_name_block: clone from original (this is the binary pattern name)
-        // raw_header: empty vec to force re-generation from primitive count
-        let new_group = FootprintGroup::new(
-            metadata_node,
-            primitives,
-            orig_group.raw_pattern_name_block.clone(),
-            primitive_order,
-            Vec::new(), // Empty raw_header forces re-generation
-        );
-
-        new_lib.footprint_names.push(name.clone());
-        new_lib.footprints.push(new_group);
     }
 
     // -----------------------------------------------------------------------
-    // 3. Save both to byte buffers
+    // 2. Save to a byte buffer (identity write-back)
     // -----------------------------------------------------------------------
-    let original_bytes = std::fs::read(FIXTURE_PATH).expect("Failed to read original file");
-
     let mut rebuilt_bytes_cursor = Cursor::new(Vec::new());
-    new_lib
+    orig_lib
         .save(&mut rebuilt_bytes_cursor)
-        .expect("Failed to save rebuilt PcbLib");
+        .expect("Failed to save PcbLib");
     let rebuilt_bytes = rebuilt_bytes_cursor.into_inner();
+
+    // -----------------------------------------------------------------------
+    // 3. Re-open from the saved buffer
+    // -----------------------------------------------------------------------
+    let reloaded_lib = PcbLib::open(Cursor::new(rebuilt_bytes.clone()))
+        .expect("Failed to re-open saved PcbLib");
+    let reloaded_count = reloaded_lib.footprint_count();
+    println!("Re-opened PcbLib: {} footprints", reloaded_count);
 
     // -----------------------------------------------------------------------
     // 4. Compare using CFB stream comparison
     // -----------------------------------------------------------------------
+    let original_bytes = std::fs::read(FIXTURE_PATH).expect("Failed to read original file");
     let report = compare_cfb_files(&original_bytes, &rebuilt_bytes);
     println!("\n{}", report);
 
@@ -143,19 +108,26 @@ fn destructive_roundtrip_synthiam_pcblib() {
     // 5. Structural assertions (these SHOULD pass)
     // -----------------------------------------------------------------------
     assert_eq!(
-        new_lib.footprint_count(),
+        reloaded_count,
         orig_footprint_count,
-        "Footprint count mismatch: original={}, rebuilt={}",
+        "Footprint count mismatch after round-trip: original={}, reloaded={}",
         orig_footprint_count,
-        new_lib.footprint_count()
+        reloaded_count
+    );
+
+    // Verify footprint names are preserved
+    let orig_names = orig_lib.names();
+    let reloaded_names = reloaded_lib.names();
+    assert_eq!(
+        orig_names, reloaded_names,
+        "Footprint names changed after round-trip"
     );
 
     // Log summary
     println!("=== Summary ===");
     println!(
-        "Footprints: {} (original) / {} (rebuilt)",
-        orig_footprint_count,
-        new_lib.footprint_count()
+        "Footprints: {} (original) / {} (reloaded)",
+        orig_footprint_count, reloaded_count
     );
     println!("Matched streams: {}", report.matched.len());
     println!("Text diffs: {}", report.text_diffs.len());

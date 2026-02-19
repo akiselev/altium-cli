@@ -38,7 +38,7 @@ pub struct PcbViaRecord {
 ///
 /// Via data is a single block with core fields at fixed offsets.
 /// Optional extended fields are present when the data is long enough.
-fn parse_via(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+pub(crate) fn parse_via(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
 
@@ -80,6 +80,7 @@ fn parse_via(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigi
 }
 
 /// Serialize via data back to binary.
+#[allow(dead_code)]
 fn serialize_via(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     Ok(origin.raw_block.clone())
 }

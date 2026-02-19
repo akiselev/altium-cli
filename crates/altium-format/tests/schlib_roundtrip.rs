@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: 2026 Alexander Kiselev <alex@akiselev.com>
 //
-//! Destructive round-trip test for SchLib files.
+//! Round-trip test for SchLib files.
 //!
-//! Opens a real SchLib file, extracts all component data, rebuilds from
-//! scratch using the v2 API, saves to a new CFB, then compares the
-//! original and rebuilt files at the stream level.
+//! Opens a real SchLib file, saves it to a byte buffer, re-opens from that
+//! buffer, then compares structural invariants (component count, names) and
+//! raw CFB streams between the original and saved copies.
 //!
-//! This test is diagnostic: differences are reported, not asserted
+//! This test is diagnostic: stream differences are reported, not asserted
 //! (except for structural invariants like component count).
 //!
 //! Requires `Synthiam.SchLib` at the repo root. Run with:
@@ -17,9 +17,7 @@ mod common;
 
 use std::io::Cursor;
 
-use altium_format::v2::backing_store::{ComponentGroup, RecordNode};
-use altium_format::v2::documents::{SchLib, SchLibComponentEntry, SchLibHeader};
-use altium_format::v2::records::SchComponentRecord;
+use altium_format::v2::documents::SchLib;
 
 use common::cfb_compare::compare_cfb_files;
 
@@ -39,100 +37,46 @@ fn destructive_roundtrip_synthiam_schlib() {
         orig_component_count
     );
 
-    // Print component summary
-    for (i, entry) in orig_lib.component_entries.iter().enumerate() {
-        let child_count = orig_lib.groups[i].children.len();
+    // Print component summary using the new entries() API
+    let entries = orig_lib.entries();
+    let store = orig_lib.store().borrow();
+    for (i, entry) in entries.iter().enumerate() {
+        let group_id = store.group_ids()[i];
+        let group = store.group(group_id);
+        let child_count = group.child_ids().len();
         println!(
             "  [{}] {} ({}) - {} children",
             i, entry.lib_ref, entry.description, child_count
         );
     }
+    drop(store);
+
+    // Print header info
+    let header = orig_lib.header();
+    println!("Header: {}", header.header_text);
+    println!("UniqueID: {}", header.unique_id);
 
     // -----------------------------------------------------------------------
-    // 2. Build a new SchLib from scratch using extracted data
+    // 2. Save to a byte buffer (identity write-back)
     // -----------------------------------------------------------------------
-    let mut new_lib = SchLib::default();
-
-    // Preserve original raw FileHeader bytes for identity write-back
-    new_lib.header = SchLibHeader {
-        header_text: orig_lib.header.header_text.clone(),
-        weight: orig_lib.header.weight,
-        minor_version: orig_lib.header.minor_version,
-        unique_id: orig_lib.header.unique_id.clone(),
-        raw: orig_lib.header.raw.clone(),
-    };
-
-    // For each component: clone the records from the original and rebuild
-    for (i, orig_group) in orig_lib.groups.iter().enumerate() {
-        let entry = &orig_lib.component_entries[i];
-
-        // Clone the component record's origin and create a new dirty node
-        let mut comp_node = RecordNode::new(
-            orig_group.component.key,
-            orig_group.component.origin.clone(),
-        );
-        comp_node.mark_dirty();
-
-        // Clone all child records, marking each dirty
-        let mut children = Vec::with_capacity(orig_group.children.len());
-        let mut record_type_counts: std::collections::HashMap<u8, usize> =
-            std::collections::HashMap::new();
-
-        for child in &orig_group.children {
-            let mut child_node = RecordNode::new(child.key, child.origin.clone());
-            child_node.mark_dirty();
-            *record_type_counts.entry(child.key).or_insert(0) += 1;
-            children.push(child_node);
-        }
-
-        // Report record type distribution for this component
-        let comp_record =
-            SchComponentRecord::from_origin(orig_group.component.origin.clone());
-        println!(
-            "  Rebuilding [{}] '{}': {} children",
-            i,
-            comp_record.lib_reference(),
-            children.len()
-        );
-        let mut type_summary: Vec<_> = record_type_counts.iter().collect();
-        type_summary.sort_by_key(|(k, _)| **k);
-        for (record_id, count) in &type_summary {
-            let name = record_type_name(**record_id);
-            println!("    RECORD={} ({}): {}", record_id, name, count);
-        }
-
-        // Build new group from cloned origins
-        let original_indices: Vec<usize> = (1..=children.len()).collect();
-        let new_group = ComponentGroup::new(comp_node, children, original_indices);
-
-        new_lib.component_entries.push(SchLibComponentEntry {
-            lib_ref: entry.lib_ref.clone(),
-            description: entry.description.clone(),
-            part_count: entry.part_count,
-        });
-        new_lib.groups.push(new_group);
-    }
-
-    // -----------------------------------------------------------------------
-    // 3. Save both to byte buffers
-    // -----------------------------------------------------------------------
-    let original_bytes = std::fs::read(FIXTURE_PATH).expect("Failed to read original file");
-
-    let rebuilt_buf = Cursor::new(Vec::new());
-    new_lib
-        .save(rebuilt_buf)
-        .expect("Failed to save rebuilt SchLib");
-
-    // Re-read the rebuilt bytes: save into a fresh buffer to get the bytes
     let mut rebuilt_bytes_cursor = Cursor::new(Vec::new());
-    new_lib
+    orig_lib
         .save(&mut rebuilt_bytes_cursor)
-        .expect("Failed to save rebuilt SchLib (2nd pass)");
+        .expect("Failed to save SchLib");
     let rebuilt_bytes = rebuilt_bytes_cursor.into_inner();
+
+    // -----------------------------------------------------------------------
+    // 3. Re-open from the saved buffer
+    // -----------------------------------------------------------------------
+    let reloaded_lib = SchLib::open(Cursor::new(rebuilt_bytes.clone()))
+        .expect("Failed to re-open saved SchLib");
+    let reloaded_count = reloaded_lib.component_count();
+    println!("Re-opened SchLib: {} components", reloaded_count);
 
     // -----------------------------------------------------------------------
     // 4. Compare using CFB stream comparison
     // -----------------------------------------------------------------------
+    let original_bytes = std::fs::read(FIXTURE_PATH).expect("Failed to read original file");
     let report = compare_cfb_files(&original_bytes, &rebuilt_bytes);
     println!("\n{}", report);
 
@@ -140,16 +84,27 @@ fn destructive_roundtrip_synthiam_schlib() {
     // 5. Structural assertions (these SHOULD pass)
     // -----------------------------------------------------------------------
     assert_eq!(
-        new_lib.component_count(),
+        reloaded_count,
         orig_component_count,
-        "Component count mismatch: original={}, rebuilt={}",
+        "Component count mismatch after round-trip: original={}, reloaded={}",
         orig_component_count,
-        new_lib.component_count()
+        reloaded_count
+    );
+
+    // Verify component names are preserved
+    let orig_names = orig_lib.component_names();
+    let reloaded_names = reloaded_lib.component_names();
+    assert_eq!(
+        orig_names, reloaded_names,
+        "Component names changed after round-trip"
     );
 
     // Log summary
     println!("=== Summary ===");
-    println!("Components: {} (original) / {} (rebuilt)", orig_component_count, new_lib.component_count());
+    println!(
+        "Components: {} (original) / {} (reloaded)",
+        orig_component_count, reloaded_count
+    );
     println!("Matched streams: {}", report.matched.len());
     println!("Text diffs: {}", report.text_diffs.len());
     println!("Binary diffs: {}", report.binary_diffs.len());
@@ -158,6 +113,7 @@ fn destructive_roundtrip_synthiam_schlib() {
 }
 
 /// Map record type IDs to human-readable names.
+#[allow(dead_code)]
 fn record_type_name(id: u8) -> &'static str {
     match id {
         1 => "Component",
@@ -196,5 +152,22 @@ fn record_type_name(id: u8) -> &'static str {
         209 => "Note",
         215 => "Blanket",
         _ => "Unknown",
+    }
+}
+
+/// Print a summary of record type distribution for a component's children.
+#[allow(dead_code)]
+fn print_record_type_summary(store: &altium_format::v2::store::DocumentStore, child_ids: &[altium_format::v2::ids::RecordId]) {
+    let mut type_counts: std::collections::HashMap<u8, usize> =
+        std::collections::HashMap::new();
+    for &id in child_ids {
+        let key = store.record(id).key;
+        *type_counts.entry(key).or_insert(0) += 1;
+    }
+    let mut type_summary: Vec<_> = type_counts.iter().collect();
+    type_summary.sort_by_key(|(k, _)| **k);
+    for (record_id, count) in &type_summary {
+        let name = record_type_name(**record_id);
+        println!("    RECORD={} ({}): {}", record_id, name, count);
     }
 }

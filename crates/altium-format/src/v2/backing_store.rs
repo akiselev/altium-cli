@@ -233,6 +233,11 @@ impl RecordOrigin {
         self.as_binary_mut().expect("expected Binary origin")
     }
 
+    /// Returns `true` if this origin is the `Binary` variant.
+    pub fn is_binary(&self) -> bool {
+        matches!(self, RecordOrigin::Binary(_))
+    }
+
     /// Returns the snapshot bytes for this origin.
     fn snapshot_bytes(&self) -> Vec<u8> {
         match self {

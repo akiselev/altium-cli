@@ -257,6 +257,10 @@ pub trait RecordType {
     /// type byte for PCB binary types).
     const RECORD_ID: u8;
 
+    /// Whether this record type uses a binary origin (`true` for PCB records,
+    /// `false` for schematic parameter-based records).
+    const IS_BINARY: bool;
+
     /// Shared reference to the backing store origin.
     fn origin(&self) -> &RecordOrigin;
 
@@ -265,80 +269,66 @@ pub trait RecordType {
 }
 
 // ---------------------------------------------------------------------------
-// WrapperFamily trait
+// FromOrigin trait
 // ---------------------------------------------------------------------------
 
-/// Associates a record type with its view type, used as a type parameter
-/// for the query API.
+/// Trait for record types that can be constructed from / decomposed into
+/// a [`RecordOrigin`].
 ///
-/// Users pass `WrapperFamily` implementors as type parameters to
-/// `doc.query::<SchComponent>(q)` and similar methods. The trait connects
-/// the family marker type to the concrete record and view types.
-///
-/// # Example
-///
-/// ```ignore
-/// struct SchComponent;
-///
-/// impl WrapperFamily for SchComponent {
-///     type Record = SchComponentRecord;
-///     type View<'a> = SchComponentView<'a>;
-/// }
-///
-/// // Usage:
-/// doc.query::<SchComponent>("DESIGNATOR == 'U1'")?
-///     .with_mut(|comp| { comp.set_designator("U2".into()); });
-/// ```
-pub trait WrapperFamily {
-    /// The underlying record type.
-    type Record: RecordType;
+/// The proc macro already generates `from_origin()` on each record struct.
+/// This trait formalises the contract so generic code (handles, store) can
+/// work with any record type.
+pub trait FromOrigin: Sized {
+    /// Create a record from a backing-store origin.
+    fn from_origin(origin: RecordOrigin) -> Self;
+    /// Consume the record and return its backing-store origin.
+    fn into_origin(self) -> RecordOrigin;
+}
 
-    /// The view/wrapper type (lifetime-parameterized).
-    type View<'a>;
+// ---------------------------------------------------------------------------
+// HandleFamily trait
+// ---------------------------------------------------------------------------
+
+/// Associates a record type with its handle type, used as a type parameter
+/// for the query and handle APIs.
+///
+/// Users pass `HandleFamily` implementors as type parameters to
+/// `comp.children::<SchPin>()` and similar methods. The trait connects
+/// the family marker type to the concrete record and handle types.
+pub trait HandleFamily {
+    /// The underlying record type.
+    type Record: RecordType + FromOrigin;
+    /// The handle type (Clone, holds DocRef + RecordId).
+    type Handle: Clone;
+
+    /// Construct a handle from a store reference and record id.
+    fn make_handle(store: crate::v2::store::DocRef, id: crate::v2::ids::RecordId) -> Self::Handle;
 
     /// Convenience: returns the record ID from the associated record type.
     fn record_id() -> u8 {
         Self::Record::RECORD_ID
     }
+
+    /// Convenience: returns whether this family expects a binary origin.
+    fn is_binary() -> bool {
+        Self::Record::IS_BINARY
+    }
 }
 
 // ---------------------------------------------------------------------------
-// DocumentQuery
+// DocumentQuery trait (new: takes &self, no closures)
 // ---------------------------------------------------------------------------
 
-/// Trait for document-level querying, parameterized by the target wrapper type.
+/// Trait for document-level querying, parameterized by the target handle
+/// family type.
 ///
-/// Documents implement this for each type they support querying. For example,
-/// `SchLib` implements `DocumentQuery<SchComponent>` for top-level component
-/// queries, and `DocumentQuery<SchPin>` for deep cross-group child queries.
-pub trait DocumentQuery<T: WrapperFamily> {
-    /// Handle type for a single match.
-    type Handle<'a> where Self: 'a;
-    /// Results type for multiple matches.
-    type Results<'a> where Self: 'a;
-
+/// Documents implement this for each type they support querying. Queries
+/// take `&self` (shared access via `Rc<RefCell<>>`), not `&mut self`.
+pub trait DocumentQuery<T: HandleFamily> {
     /// Query for a single match. Returns `NoMatch` or `AmbiguousMatch` on failure.
-    fn query(&mut self, q: &str) -> crate::error::Result<Self::Handle<'_>>;
+    fn query(&self, q: &str) -> crate::error::Result<T::Handle>;
     /// Query for all matches.
-    fn query_all(&mut self, q: &str) -> crate::error::Result<Self::Results<'_>>;
-}
-
-// ---------------------------------------------------------------------------
-// LeafViewConstructor
-// ---------------------------------------------------------------------------
-
-/// Subtrait of `WrapperFamily` for leaf wrappers that can construct a view
-/// from a single `RecordNode`.
-///
-/// Parent wrappers (like `SchComponent`, `PcbFootprint`) do NOT implement this
-/// because they need additional data (children/primitives slice) beyond a
-/// single node.
-///
-/// This trait is generated automatically by the `impl_wrapper_family!` macro
-/// for leaf wrappers.
-pub trait LeafViewConstructor: WrapperFamily {
-    /// Construct a view from a mutable reference to a `RecordNode`.
-    fn make_view(node: &mut crate::v2::backing_store::RecordNode) -> Self::View<'_>;
+    fn query_all(&self, q: &str) -> crate::error::Result<Vec<T::Handle>>;
 }
 
 // ---------------------------------------------------------------------------

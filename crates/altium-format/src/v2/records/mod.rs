@@ -135,6 +135,16 @@ pub use pcb_component_body::PcbComponentBodyRecord;
 pub use pcb_footprint::PcbFootprintRecord;
 
 // ---------------------------------------------------------------------------
+// Re-exports: PCB custom parse functions
+// ---------------------------------------------------------------------------
+
+pub(crate) use pcb_pad::parse_pad;
+pub(crate) use pcb_via::parse_via;
+pub(crate) use pcb_text::parse_text;
+pub(crate) use pcb_region::parse_region;
+pub(crate) use pcb_component_body::parse_component_body;
+
+// ---------------------------------------------------------------------------
 // Utility functions
 // ---------------------------------------------------------------------------
 

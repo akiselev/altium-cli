@@ -26,6 +26,7 @@ use std::path::Path;
 
 use altium_format::v2::coord::{AltiumCoord, PcbCoord};
 use altium_format::v2::documents::pcblib::PcbLib;
+use altium_format::v2::handles::{PcbFootprintHandle, PcbPad};
 
 use crate::helpers::*;
 use crate::output::*;
@@ -122,39 +123,25 @@ pub(super) fn mm_to_raw(mm: f64) -> i32 {
     PcbCoord::from_mm(mm).to_raw()
 }
 
-/// Find a footprint by name (case-insensitive). Returns (index, name).
-pub(super) fn find_footprint_by_name<'a>(
-    lib: &'a PcbLib,
+/// Find a footprint by name (case-insensitive). Returns the handle.
+pub(super) fn find_footprint_by_name(
+    lib: &PcbLib,
     name: &str,
-) -> Result<(usize, &'a str), Box<dyn std::error::Error>> {
-    let idx = lib
-        .find_footprint(name)
-        .ok_or_else(|| format!("Footprint '{}' not found in library", name))?;
-    Ok((idx, &lib.names()[idx]))
+) -> Result<PcbFootprintHandle, Box<dyn std::error::Error>> {
+    lib.find_footprint(name)
+        .ok_or_else(|| format!("Footprint '{}' not found in library", name).into())
 }
 
-/// Extract all pad data from a footprint via the view.
-pub(super) fn extract_pads_from_view(view: &mut altium_format::v2::views::PcbFootprintView<'_>) -> Vec<PadData> {
-    use altium_format::v2::views::PcbPad;
-    use altium_format::v2::records::PcbPadRecord;
-    use altium_format::v2::traits::RecordType;
-    let keys: Vec<_> = view.child_keys::<PcbPad>().collect();
-    let mut pads = Vec::new();
-    for key in keys {
-        view.with_child_mut(key, |pad_view| {
-            let record = PcbPadRecord::from_origin(pad_view.origin().clone());
-            pads.push(PadData::from_record(record));
-        });
-    }
-    pads
+/// Extract all pad data from a footprint handle.
+pub(super) fn extract_pads(fp: &PcbFootprintHandle) -> Vec<PadData> {
+    let pad_handles = fp.children::<PcbPad>();
+    pad_handles.iter().map(|h| PadData::from_record(h.read())).collect()
 }
 
-/// Count primitives by type using the view.
-pub(super) fn count_primitives_from_view(
-    view: &altium_format::v2::views::PcbFootprintView<'_>,
-) -> HashMap<&'static str, usize> {
+/// Count primitives by type using the handle.
+pub(super) fn count_primitives(fp: &PcbFootprintHandle) -> HashMap<&'static str, usize> {
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
-    for type_id in view.primitive_type_ids() {
+    for (type_id, _) in fp.all_children() {
         let name = pcb_primitive_type_name(type_id);
         *counts.entry(name).or_insert(0) += 1;
     }

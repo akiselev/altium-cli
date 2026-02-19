@@ -6,30 +6,33 @@
 use std::path::Path;
 
 use altium_format::v2::coord::AltiumCoord;
+use altium_format::v2::handles::{PcbFootprint, PcbPad};
 use altium_format::v2::traits::DocumentQuery;
-use altium_format::v2::views::{PcbFootprint, PcbPad};
 
 use crate::output::*;
 
-use super::{extract_pads_from_view, open_pcblib};
+use super::{extract_pads, open_pcblib};
 
 /// Serializes the library to JSON for LLM processing or external analysis.
 pub fn cmd_json(
     path: &Path,
     full: bool,
 ) -> Result<PcbLibJson, Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
+    let lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 
     let mut footprints: Vec<FootprintJsonData> = Vec::new();
 
-    DocumentQuery::<PcbFootprint>::query_all(&mut lib, "#0")?.for_each_mut(|name, mut view| {
-        let description = view.description();
-        let pad_count = view.child_keys::<PcbPad>().count();
-        let primitive_count = view.primitives_len();
+    let fp_handles = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    for fp in &fp_handles {
+        let fp_name = fp.name();
+        let fp_rec = fp.read();
+        let description = fp_rec.description();
+        let pad_count = fp.child_count::<PcbPad>();
+        let primitive_count = fp.children_len();
 
         let pads = if full {
-            let pad_list = extract_pads_from_view(&mut view);
+            let pad_list = extract_pads(fp);
             Some(
                 pad_list
                     .iter()
@@ -54,13 +57,13 @@ pub fn cmd_json(
         };
 
         footprints.push(FootprintJsonData {
-            name: name.to_string(),
+            name: fp_name,
             description,
             pad_count,
             primitive_count,
             pads,
         });
-    });
+    }
 
     Ok(PcbLibJson {
         file: path.display().to_string(),

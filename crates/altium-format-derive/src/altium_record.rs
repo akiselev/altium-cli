@@ -463,11 +463,24 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     // Generate builder (only for param and binary-sequential records)
     let builder = gen_builder(struct_name, &macro_attrs, &field_infos)?;
 
+    // Generate FromOrigin trait impl
+    let from_origin_impl = quote! {
+        impl crate::v2::traits::FromOrigin for #struct_name {
+            fn from_origin(origin: crate::v2::backing_store::RecordOrigin) -> Self {
+                Self { origin }
+            }
+            fn into_origin(self) -> crate::v2::backing_store::RecordOrigin {
+                self.origin
+            }
+        }
+    };
+
     Ok(quote! {
         #struct_def
         #constructors
         #accessors
         #record_type_impl
+        #from_origin_impl
         #builder
     })
 }
@@ -894,9 +907,15 @@ fn gen_record_type_impl(struct_name: &Ident, attrs: &MacroAttrs) -> Result<Token
         }
     };
 
+    let is_binary_expr = match attrs.codec {
+        Codec::Binary => quote! { true },
+        Codec::Params => quote! { false },
+    };
+
     Ok(quote! {
         impl crate::v2::traits::RecordType for #struct_name {
             const RECORD_ID: u8 = #record_id_expr;
+            const IS_BINARY: bool = #is_binary_expr;
 
             fn origin(&self) -> &crate::v2::backing_store::RecordOrigin {
                 &self.origin

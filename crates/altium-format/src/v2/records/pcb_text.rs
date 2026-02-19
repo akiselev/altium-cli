@@ -46,7 +46,7 @@ pub struct PcbTextRecord {
 /// Subrecord 2: Text string (u32 len + null-terminated ASCII)
 ///
 /// Typed fields are extracted from subrecord 1 at fixed offsets.
-fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
 
@@ -117,6 +117,7 @@ fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrig
 }
 
 /// Serialize text data back to binary.
+#[allow(dead_code)]
 fn serialize_text(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     Ok(origin.raw_block.clone())
 }

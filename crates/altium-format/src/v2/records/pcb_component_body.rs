@@ -32,7 +32,7 @@ pub struct PcbComponentBodyRecord {
 ///
 /// Structurally identical to Region (same binary header + parametric +
 /// vertices), just with a different object type ID (12 vs 11).
-fn parse_component_body(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+pub(crate) fn parse_component_body(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
 
@@ -59,6 +59,7 @@ fn parse_component_body(data: &[u8]) -> crate::Result<crate::v2::backing_store::
 }
 
 /// Find the FieldSpan for num_outline_vertices within component body data.
+#[allow(dead_code)]
 fn find_body_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::FieldSpan {
     use crate::v2::backing_store::FieldSpan;
 
@@ -82,6 +83,7 @@ fn find_body_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store:
 }
 
 /// Serialize component body data back to binary.
+#[allow(dead_code)]
 fn serialize_component_body(
     origin: &crate::v2::backing_store::BinaryOrigin,
 ) -> crate::Result<Vec<u8>> {

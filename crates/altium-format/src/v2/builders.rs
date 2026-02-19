@@ -5,7 +5,7 @@
 //! never sees `RecordOrigin` or `RecordNode`.
 
 use crate::v2::backing_store::{
-    ComponentGroup, FootprintGroup, PcbPrimitiveRef, RecordNode, RecordOrigin,
+    PcbPrimitiveRef, RecordNode, RecordOrigin,
 };
 use crate::v2::records::{
     SchComponentRecord, SchPinRecord, SchArcRecord, SchLineRecord, SchRectangleRecord,
@@ -184,9 +184,9 @@ impl ComponentBuilder {
         self
     }
 
-    /// Consume the builder into a ComponentGroup.
-    pub(crate) fn build(self) -> ComponentGroup {
-        ComponentGroup::new(self.component, self.children, Vec::new())
+    /// Consume the builder, returning (component_node, children_nodes).
+    pub(crate) fn build(self) -> (RecordNode, Vec<RecordNode>) {
+        (self.component, self.children)
     }
 }
 
@@ -291,15 +291,9 @@ impl FootprintBuilder {
         self
     }
 
-    /// Consume the builder into a FootprintGroup.
-    pub(crate) fn build(self) -> FootprintGroup {
-        FootprintGroup::new(
-            self.metadata,
-            self.primitives,
-            Vec::new(), // raw_pattern_name_block
-            self.primitive_refs,
-            Vec::new(), // raw_header
-        )
+    /// Consume the builder, returning (metadata_node, primitive_nodes, primitive_refs).
+    pub(crate) fn build(self) -> (RecordNode, Vec<RecordNode>, Vec<PcbPrimitiveRef>) {
+        (self.metadata, self.primitives, self.primitive_refs)
     }
 }
 
@@ -318,10 +312,10 @@ mod tests {
 
     #[test]
     fn component_builder_basic() {
-        let group = ComponentBuilder::new(templates::sch_component_default).build();
+        let (comp, children) = ComponentBuilder::new(templates::sch_component_default).build();
 
-        assert_eq!(group.component.key, 1);
-        assert!(group.children.is_empty());
+        assert_eq!(comp.key, 1);
+        assert!(children.is_empty());
     }
 
     #[test]
@@ -335,19 +329,19 @@ mod tests {
             pin.set_designator(Designator::from("2"));
             pin.set_name(PinName::from("GND"));
         });
-        let group = builder.build();
+        let (comp, children) = builder.build();
 
-        assert_eq!(group.component.key, 1);
-        assert_eq!(group.children.len(), 2);
-        assert_eq!(group.children[0].key, 2); // pin record_id
-        assert_eq!(group.children[1].key, 2);
+        assert_eq!(comp.key, 1);
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].key, 2); // pin record_id
+        assert_eq!(children[1].key, 2);
 
         // Verify the pin data was actually written through the typed closure
-        let pin0 = SchPinRecord::from_origin(group.children[0].origin.clone());
+        let pin0 = SchPinRecord::from_origin(children[0].origin.clone());
         assert_eq!(pin0.name(), PinName::from("VCC"));
         assert_eq!(pin0.designator(), Designator::from("1"));
 
-        let pin1 = SchPinRecord::from_origin(group.children[1].origin.clone());
+        let pin1 = SchPinRecord::from_origin(children[1].origin.clone());
         assert_eq!(pin1.name(), PinName::from("GND"));
         assert_eq!(pin1.designator(), Designator::from("2"));
     }
@@ -358,18 +352,18 @@ mod tests {
         builder.with_component(|comp| {
             comp.set_lib_reference(LibReference::from("LM358"));
         });
-        let group = builder.build();
+        let (comp, _children) = builder.build();
 
-        let record = SchComponentRecord::from_origin(group.component.origin.clone());
+        let record = SchComponentRecord::from_origin(comp.origin.clone());
         assert_eq!(record.lib_reference(), LibReference::from("LM358"));
     }
 
     #[test]
     fn footprint_builder_basic() {
-        let group = FootprintBuilder::new(templates::pcb_footprint_default).build();
+        let (metadata, primitives, _refs) = FootprintBuilder::new(templates::pcb_footprint_default).build();
 
-        assert_eq!(group.metadata.key, 0);
-        assert!(group.primitives.is_empty());
+        assert_eq!(metadata.key, 0);
+        assert!(primitives.is_empty());
     }
 
     #[test]
@@ -382,20 +376,20 @@ mod tests {
             track.set_width(PcbCoord::from_raw(10_000));
         });
         builder.add_track(templates::pcb_track_default, |_| {});
-        let group = builder.build();
+        let (_, primitives, prim_refs) = builder.build();
 
-        assert_eq!(group.primitives.len(), 3);
-        assert_eq!(group.primitives[0].key, 2); // pad type_id
-        assert_eq!(group.primitives[1].key, 4); // track type_id
-        assert_eq!(group.primitives[2].key, 4);
-        assert_eq!(group.original_primitive_order.len(), 3);
+        assert_eq!(primitives.len(), 3);
+        assert_eq!(primitives[0].key, 2); // pad type_id
+        assert_eq!(primitives[1].key, 4); // track type_id
+        assert_eq!(primitives[2].key, 4);
+        assert_eq!(prim_refs.len(), 3);
 
         // Verify the pad data was actually written
-        let pad = PcbPadRecord::from_origin(group.primitives[0].origin.clone());
+        let pad = PcbPadRecord::from_origin(primitives[0].origin.clone());
         assert_eq!(pad.position_x().to_raw(), 100_000);
 
         // Verify the track data was actually written
-        let track = PcbTrackRecord::from_origin(group.primitives[1].origin.clone());
+        let track = PcbTrackRecord::from_origin(primitives[1].origin.clone());
         assert_eq!(track.width().to_raw(), 10_000);
     }
 
@@ -405,9 +399,9 @@ mod tests {
         builder.with_metadata(|fp| {
             fp.set_pattern("SOIC-8".to_string());
         });
-        let group = builder.build();
+        let (metadata, _, _) = builder.build();
 
-        let record = PcbFootprintRecord::from_origin(group.metadata.origin.clone());
+        let record = PcbFootprintRecord::from_origin(metadata.origin.clone());
         assert_eq!(record.pattern(), "SOIC-8");
     }
 
@@ -498,19 +492,19 @@ mod tests {
             pin.set_name(PinName::from("B"));
             pin.set_electrical(PinElectricalType::Passive);
         });
-        let group = builder.build();
+        let (component, children) = builder.build();
 
         // Verify component
-        let comp = SchComponentRecord::from_origin(group.component.origin.clone());
+        let comp = SchComponentRecord::from_origin(component.origin.clone());
         assert_eq!(comp.lib_reference(), LibReference::from("Resistor"));
 
         // Verify children
-        assert_eq!(group.children.len(), 2);
-        let pin0 = SchPinRecord::from_origin(group.children[0].origin.clone());
+        assert_eq!(children.len(), 2);
+        let pin0 = SchPinRecord::from_origin(children[0].origin.clone());
         assert_eq!(pin0.designator(), Designator::from("1"));
         assert_eq!(pin0.electrical(), PinElectricalType::Passive);
 
-        let pin1 = SchPinRecord::from_origin(group.children[1].origin.clone());
+        let pin1 = SchPinRecord::from_origin(children[1].origin.clone());
         assert_eq!(pin1.designator(), Designator::from("2"));
     }
 }

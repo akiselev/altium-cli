@@ -21,6 +21,7 @@ use std::path::Path;
 
 use altium_format::v2::coord::{AltiumCoord, SchCoord};
 use altium_format::v2::documents::schlib::SchLib;
+use altium_format::v2::handles::SchComponentHandle;
 
 use crate::helpers::*;
 
@@ -34,13 +35,11 @@ pub(super) fn coord_to_mils(value: SchCoord) -> String {
     format!("{:.1}", value.to_mils())
 }
 
-/// Count primitives by type name using the component view.
-pub(super) fn count_primitives_via_view(
-    view: &altium_format::v2::views::SchComponentView<'_>,
-) -> HashMap<&'static str, usize> {
+/// Count primitives by type name using the component handle.
+pub(super) fn count_primitives(comp: &SchComponentHandle) -> HashMap<&'static str, usize> {
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
-    for record_id in view.child_record_ids() {
-        let name = sch_record_type_name(record_id);
+    for (type_id, _) in comp.all_children() {
+        let name = sch_record_type_name(type_id);
         *counts.entry(name).or_insert(0) += 1;
     }
     counts

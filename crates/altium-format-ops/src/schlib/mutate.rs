@@ -7,6 +7,8 @@ use std::path::Path;
 
 use crate::helpers::*;
 
+use altium_format::v2::handles::SchComponentHandle;
+
 use super::open_schlib;
 
 /// Embedded blank SchLib template.
@@ -31,7 +33,7 @@ pub fn cmd_add_component(
     name: &str,
     description: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_schlib(path)?;
+    let lib = open_schlib(path)?;
 
     // Check if component already exists
     if lib.find_component(name).is_some() {
@@ -49,7 +51,14 @@ pub fn cmd_add_component(
     });
 
     // Clear raw header to force rebuild
-    lib.header_mut().clear_raw();
+    {
+        let mut store = lib.store().borrow_mut();
+        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } =
+            store.meta_mut()
+        {
+            *raw_header = None;
+        }
+    }
 
     // Write back
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -66,34 +75,42 @@ pub fn cmd_add_pin(
     name: &str,
     electrical_type: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_schlib(path)?;
+    let lib = open_schlib(path)?;
 
     // Find component
-    let entry_idx = lib
+    let group_id = lib
         .find_component(component)
         .ok_or_else(|| format!("Component '{}' not found", component))?;
 
     // Parse electrical type
     let electrical = parse_electrical_type(electrical_type);
 
-    // Add pin using the mutable view API
+    // Build pin record from template
+    use altium_format::v2::backing_store::RecordNode;
     use altium_format::v2::newtypes::{Designator, PinName};
+    use altium_format::v2::records::SchPinRecord;
     use altium_format::v2::templates;
-    use altium_format::v2::views::SchComponentView;
-    let designator_owned = designator.to_string();
-    let name_owned = name.to_string();
-    {
-        let (comp, children) = lib.groups[entry_idx].split_borrow();
-        let mut view = SchComponentView::new(comp, children);
-        view.add_pin(templates::sch_pin_default, |pin| {
-            pin.set_designator(Designator::from(designator_owned.as_str()));
-            pin.set_name(PinName::from(name_owned.as_str()));
-            pin.set_electrical(electrical);
-        });
-    }
+    use altium_format::v2::traits::{FromOrigin, RecordType};
+
+    let pin_origin = templates::sch_pin_default();
+    let mut pin_rec = SchPinRecord::from_origin(pin_origin.clone());
+    pin_rec.set_designator(Designator::from(designator));
+    pin_rec.set_name(PinName::from(name));
+    pin_rec.set_electrical(electrical);
+    let node = RecordNode::new(SchPinRecord::RECORD_ID, pin_rec.into_origin());
+
+    let comp = SchComponentHandle::new(lib.store().clone(), group_id);
+    comp.add_record(node);
 
     // Clear raw header to force rebuild
-    lib.header_mut().clear_raw();
+    {
+        let mut store = lib.store().borrow_mut();
+        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } =
+            store.meta_mut()
+        {
+            *raw_header = None;
+        }
+    }
 
     // Write back
     lib.save_file(path).map_err(|e| e.to_string())?;

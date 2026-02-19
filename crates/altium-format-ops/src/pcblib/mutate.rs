@@ -6,17 +6,47 @@
 
 use std::path::Path;
 
+use altium_format::v2::backing_store::RecordNode;
 use altium_format::v2::coord::{AltiumCoord, PcbCoord};
+use altium_format::v2::records::PcbPadRecord;
+use altium_format::v2::traits::{FromOrigin, RecordType};
 
 use crate::helpers::*;
-
-use altium_format::v2::views::PcbFootprintView;
 
 use super::{find_footprint_by_name, mm_to_raw, open_pcblib};
 
 /// Embedded blank PcbLib template.
 const BLANK_PCBLIB_TEMPLATE: &[u8] =
     include_bytes!("../../../altium-format/data/blank/PcbLib1.PcbLib");
+
+/// Build a pad RecordNode from parameters.
+fn build_pad_node(
+    x: PcbCoord,
+    y: PcbCoord,
+    w: PcbCoord,
+    h: PcbCoord,
+    hole: PcbCoord,
+    shape: u8,
+    layer: u8,
+) -> RecordNode {
+    let origin = altium_format::v2::templates::pcb_pad_default();
+    let mut pad = PcbPadRecord::from_origin(origin);
+    pad.set_position_x(x);
+    pad.set_position_y(y);
+    pad.set_top_size_x(w);
+    pad.set_top_size_y(h);
+    pad.set_mid_size_x(w);
+    pad.set_mid_size_y(h);
+    pad.set_bot_size_x(w);
+    pad.set_bot_size_y(h);
+    pad.set_hole_size(hole);
+    pad.set_top_shape(shape);
+    pad.set_mid_shape(shape);
+    pad.set_bot_shape(shape);
+    pad.set_is_plated(hole.to_raw() > 0);
+    pad.set_layer(layer);
+    RecordNode::new(PcbPadRecord::RECORD_ID, pad.into_origin())
+}
 
 /// Creates an empty PcbLib file at the given path.
 pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -37,7 +67,7 @@ pub fn cmd_add_footprint(
     name: &str,
     description: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
+    let lib = open_pcblib(path)?;
 
     if lib.find_footprint(name).is_some() {
         return Err(
@@ -75,8 +105,8 @@ pub fn cmd_add_pad(
     shape: &str,
     hole: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lib = open_pcblib(path)?;
-    let (idx, _) = find_footprint_by_name(&lib, footprint)?;
+    let lib = open_pcblib(path)?;
+    let fp = find_footprint_by_name(&lib, footprint)?;
 
     let x_raw = PcbCoord::from_mm(x);
     let y_raw = PcbCoord::from_mm(y);
@@ -84,30 +114,10 @@ pub fn cmd_add_pad(
     let h_raw = PcbCoord::from_mm(height);
     let hole_raw = PcbCoord::from_mm(hole);
     let shape_byte = parse_shape(shape);
-
     let layer: u8 = if hole_raw.to_raw() > 0 { 74 } else { 1 };
 
-    let _desig = designator.to_string();
-    {
-        let (metadata, primitives) = lib.footprints[idx].split_borrow();
-        let mut fp = PcbFootprintView::new(metadata, primitives);
-        fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-            pad.set_position_x(x_raw);
-            pad.set_position_y(y_raw);
-            pad.set_top_size_x(w_raw);
-            pad.set_top_size_y(h_raw);
-            pad.set_mid_size_x(w_raw);
-            pad.set_mid_size_y(h_raw);
-            pad.set_bot_size_x(w_raw);
-            pad.set_bot_size_y(h_raw);
-            pad.set_hole_size(hole_raw);
-            pad.set_top_shape(shape_byte);
-            pad.set_mid_shape(shape_byte);
-            pad.set_bot_shape(shape_byte);
-            pad.set_is_plated(hole_raw.to_raw() > 0);
-            pad.set_layer(layer);
-        });
-    }
+    let node = build_pad_node(x_raw, y_raw, w_raw, h_raw, hole_raw, shape_byte, layer);
+    fp.add_record(node);
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 
@@ -133,8 +143,7 @@ pub fn cmd_add_silkscreen(
     _width: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     Err("Adding silkscreen tracks to existing footprints is not yet supported \
-         through the public API. PcbFootprintView currently only supports add_pad(). \
-         Use build_footprint() for new footprints that include tracks."
+         through the public API. Use build_footprint() for new footprints that include tracks."
         .into())
 }
 
@@ -150,8 +159,7 @@ pub fn cmd_add_arc(
     _width: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     Err("Adding arcs to existing footprints is not yet supported \
-         through the public API. PcbFootprintView currently only supports add_pad(). \
-         Use build_footprint() for new footprints that include arcs."
+         through the public API. Use build_footprint() for new footprints that include arcs."
         .into())
 }
 
@@ -205,7 +213,7 @@ pub fn cmd_gen_chip(
         }
     }
 
-    let mut lib = open_pcblib(path)?;
+    let lib = open_pcblib(path)?;
     let x_offset = pad_spacing / 2.0;
     let desc = format!("{} chip footprint, {} density", size, density);
 
@@ -398,41 +406,31 @@ pub fn cmd_add_pad_row(
         "horizontal" | "h" | "x"
     );
 
-    let mut lib = open_pcblib(path)?;
-    let (idx, _) = find_footprint_by_name(&lib, footprint)?;
+    let lib = open_pcblib(path)?;
+    let fp = find_footprint_by_name(&lib, footprint)?;
 
     let total_span = pitch_raw as i64 * (count as i64 - 1);
 
-    {
-        let (metadata, primitives) = lib.footprints[idx].split_borrow();
-        let mut fp = PcbFootprintView::new(metadata, primitives);
-        for i in 0..count {
-            let _pad_num = start + i as u32;
-            let offset_along = -(total_span / 2) + pitch_raw as i64 * i as i64;
+    for i in 0..count {
+        let _pad_num = start + i as u32;
+        let offset_along = -(total_span / 2) + pitch_raw as i64 * i as i64;
 
-            let (px, py) = if is_horizontal {
-                (x_offset as i64 + offset_along, y_offset as i64)
-            } else {
-                (x_offset as i64, y_offset as i64 + offset_along)
-            };
+        let (px, py) = if is_horizontal {
+            (x_offset as i64 + offset_along, y_offset as i64)
+        } else {
+            (x_offset as i64, y_offset as i64 + offset_along)
+        };
 
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(px as i32));
-                pad.set_position_y(PcbCoord::from_raw(py as i32));
-                pad.set_top_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_top_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_hole_size(PcbCoord::from_raw(hole_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_is_plated(hole_raw > 0);
-                pad.set_layer(layer);
-            });
-        }
+        let node = build_pad_node(
+            PcbCoord::from_raw(px as i32),
+            PcbCoord::from_raw(py as i32),
+            PcbCoord::from_raw(pw_raw),
+            PcbCoord::from_raw(ph_raw),
+            PcbCoord::from_raw(hole_raw),
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -481,59 +479,41 @@ pub fn cmd_add_dual_row(
     let shape_byte = parse_shape(shape);
     let layer: u8 = if hole_raw > 0 { 74 } else { 1 };
 
-    let mut lib = open_pcblib(path)?;
-    let (idx, _) = find_footprint_by_name(&lib, footprint)?;
+    let lib = open_pcblib(path)?;
+    let fp = find_footprint_by_name(&lib, footprint)?;
 
     let half_spacing = spacing_raw / 2;
     let total_span = pitch_raw as i64 * (pads_per_side as i64 - 1);
     let total_pads = pads_per_side * 2;
 
-    {
-        let (metadata, primitives) = lib.footprints[idx].split_borrow();
-        let mut fp = PcbFootprintView::new(metadata, primitives);
-        // Left side: pads 1..N (bottom to top)
-        for i in 0..pads_per_side {
-            let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
+    // Left side: pads 1..N (bottom to top)
+    for i in 0..pads_per_side {
+        let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
+        let node = build_pad_node(
+            PcbCoord::from_raw(-half_spacing),
+            PcbCoord::from_raw(y as i32),
+            PcbCoord::from_raw(pw_raw),
+            PcbCoord::from_raw(ph_raw),
+            PcbCoord::from_raw(hole_raw),
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
+    }
 
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(-half_spacing));
-                pad.set_position_y(PcbCoord::from_raw(y as i32));
-                pad.set_top_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_top_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_hole_size(PcbCoord::from_raw(hole_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_is_plated(hole_raw > 0);
-                pad.set_layer(layer);
-            });
-        }
-
-        // Right side: pads N+1..2N (top to bottom, standard IC numbering)
-        for i in 0..pads_per_side {
-            let y = (total_span / 2) - pitch_raw as i64 * i as i64;
-
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(half_spacing));
-                pad.set_position_y(PcbCoord::from_raw(y as i32));
-                pad.set_top_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_top_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_hole_size(PcbCoord::from_raw(hole_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_is_plated(hole_raw > 0);
-                pad.set_layer(layer);
-            });
-        }
+    // Right side: pads N+1..2N (top to bottom, standard IC numbering)
+    for i in 0..pads_per_side {
+        let y = (total_span / 2) - pitch_raw as i64 * i as i64;
+        let node = build_pad_node(
+            PcbCoord::from_raw(half_spacing),
+            PcbCoord::from_raw(y as i32),
+            PcbCoord::from_raw(pw_raw),
+            PcbCoord::from_raw(ph_raw),
+            PcbCoord::from_raw(hole_raw),
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -566,91 +546,73 @@ pub fn cmd_add_quad_pads(
     let shape_byte = parse_shape(shape);
     let layer: u8 = 1;
 
-    let mut lib = open_pcblib(path)?;
-    let (idx, _) = find_footprint_by_name(&lib, footprint)?;
+    let lib = open_pcblib(path)?;
+    let fp = find_footprint_by_name(&lib, footprint)?;
 
     let half_span = span_raw / 2;
     let total_span = pitch_raw as i64 * (pads_per_side as i64 - 1);
     let total_pads = pads_per_side * 4;
 
-    {
-        let (metadata, primitives) = lib.footprints[idx].split_borrow();
-        let mut fp = PcbFootprintView::new(metadata, primitives);
-        // Side 1: Bottom (left to right)
-        for i in 0..pads_per_side {
-            let x = -(total_span / 2) + pitch_raw as i64 * i as i64;
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(x as i32));
-                pad.set_position_y(PcbCoord::from_raw(-half_span));
-                pad.set_top_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_top_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_layer(layer);
-            });
-        }
+    let zero_hole = PcbCoord::from_raw(0);
 
-        // Side 2: Right (bottom to top)
-        for i in 0..pads_per_side {
-            let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(half_span));
-                pad.set_position_y(PcbCoord::from_raw(y as i32));
-                pad.set_top_size_x(PcbCoord::from_raw(ph_raw)); // rotated
-                pad.set_top_size_y(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(pw_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_layer(layer);
-            });
-        }
+    // Side 1: Bottom (left to right)
+    for i in 0..pads_per_side {
+        let x = -(total_span / 2) + pitch_raw as i64 * i as i64;
+        let node = build_pad_node(
+            PcbCoord::from_raw(x as i32),
+            PcbCoord::from_raw(-half_span),
+            PcbCoord::from_raw(pw_raw),
+            PcbCoord::from_raw(ph_raw),
+            zero_hole,
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
+    }
 
-        // Side 3: Top (right to left)
-        for i in 0..pads_per_side {
-            let x = (total_span / 2) - pitch_raw as i64 * i as i64;
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(x as i32));
-                pad.set_position_y(PcbCoord::from_raw(half_span));
-                pad.set_top_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_top_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(ph_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_layer(layer);
-            });
-        }
+    // Side 2: Right (bottom to top)
+    for i in 0..pads_per_side {
+        let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
+        let node = build_pad_node(
+            PcbCoord::from_raw(half_span),
+            PcbCoord::from_raw(y as i32),
+            PcbCoord::from_raw(ph_raw), // rotated
+            PcbCoord::from_raw(pw_raw),
+            zero_hole,
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
+    }
 
-        // Side 4: Left (top to bottom)
-        for i in 0..pads_per_side {
-            let y = (total_span / 2) - pitch_raw as i64 * i as i64;
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(-half_span));
-                pad.set_position_y(PcbCoord::from_raw(y as i32));
-                pad.set_top_size_x(PcbCoord::from_raw(ph_raw)); // rotated
-                pad.set_top_size_y(PcbCoord::from_raw(pw_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(ph_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(pw_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(ph_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(pw_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_layer(layer);
-            });
-        }
+    // Side 3: Top (right to left)
+    for i in 0..pads_per_side {
+        let x = (total_span / 2) - pitch_raw as i64 * i as i64;
+        let node = build_pad_node(
+            PcbCoord::from_raw(x as i32),
+            PcbCoord::from_raw(half_span),
+            PcbCoord::from_raw(pw_raw),
+            PcbCoord::from_raw(ph_raw),
+            zero_hole,
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
+    }
+
+    // Side 4: Left (top to bottom)
+    for i in 0..pads_per_side {
+        let y = (total_span / 2) - pitch_raw as i64 * i as i64;
+        let node = build_pad_node(
+            PcbCoord::from_raw(-half_span),
+            PcbCoord::from_raw(y as i32),
+            PcbCoord::from_raw(ph_raw), // rotated
+            PcbCoord::from_raw(pw_raw),
+            zero_hole,
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -682,8 +644,8 @@ pub fn cmd_add_pad_grid(
     let shape_byte = parse_shape(shape);
     let layer: u8 = 1;
 
-    let mut lib = open_pcblib(path)?;
-    let (idx, _) = find_footprint_by_name(&lib, footprint)?;
+    let lib = open_pcblib(path)?;
+    let fp = find_footprint_by_name(&lib, footprint)?;
 
     let skip_radius_sq = if skip_raw > 0 {
         let half = skip_raw as f64 / 2.0;
@@ -712,25 +674,18 @@ pub fn cmd_add_pad_grid(
     }
     let pad_count = positions.len();
 
-    {
-        let (metadata, primitives) = lib.footprints[idx].split_borrow();
-        let mut fp = PcbFootprintView::new(metadata, primitives);
-        for &(x, y) in &positions {
-            fp.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
-                pad.set_position_x(PcbCoord::from_raw(x as i32));
-                pad.set_position_y(PcbCoord::from_raw(y as i32));
-                pad.set_top_size_x(PcbCoord::from_raw(diam_raw));
-                pad.set_top_size_y(PcbCoord::from_raw(diam_raw));
-                pad.set_mid_size_x(PcbCoord::from_raw(diam_raw));
-                pad.set_mid_size_y(PcbCoord::from_raw(diam_raw));
-                pad.set_bot_size_x(PcbCoord::from_raw(diam_raw));
-                pad.set_bot_size_y(PcbCoord::from_raw(diam_raw));
-                pad.set_top_shape(shape_byte);
-                pad.set_mid_shape(shape_byte);
-                pad.set_bot_shape(shape_byte);
-                pad.set_layer(layer);
-            });
-        }
+    let zero_hole = PcbCoord::from_raw(0);
+    for &(x, y) in &positions {
+        let node = build_pad_node(
+            PcbCoord::from_raw(x as i32),
+            PcbCoord::from_raw(y as i32),
+            PcbCoord::from_raw(diam_raw),
+            PcbCoord::from_raw(diam_raw),
+            zero_hole,
+            shape_byte,
+            layer,
+        );
+        fp.add_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;

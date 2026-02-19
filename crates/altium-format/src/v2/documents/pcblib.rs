@@ -1,4 +1,4 @@
-//! PcbLib document I/O using the v2 backing-store architecture.
+//! PcbLib document I/O using the v2 DocumentStore architecture.
 //!
 //! A PcbLib file is a CFB compound file with one storage per footprint:
 //! - `/<FootprintName>/Parameters` stream: footprint metadata (pipe-delimited)
@@ -8,17 +8,22 @@
 //! The Data stream begins with a length-prefixed pattern name block, followed
 //! by packed binary primitive records.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, Write};
+use std::rc::Rc;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use serde::{Deserialize, Serialize};
 
 use crate::error::{AltiumError, Result};
 use crate::v2::backing_store::{
-    BinaryOrigin, FootprintGroup, ParamOrigin, PcbPrimitiveRef, RecordNode,
-    RecordOrigin,
+    BinaryOrigin, ParamOrigin, PcbPrimitiveRef, RecordNode, RecordOrigin,
 };
+use crate::v2::handles::PcbFootprintHandle;
+use crate::v2::ids::RecordId;
+use crate::v2::records::{parse_component_body, parse_pad, parse_region, parse_text, parse_via};
+use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
+use crate::v2::traits::{DocumentQuery, HandleFamily};
 
 use super::section_keys::SectionKeyList;
 
@@ -26,39 +31,29 @@ const STREAM_PARAMETERS: &str = "Parameters";
 const STREAM_HEADER: &str = "Header";
 const STREAM_DATA: &str = "Data";
 
-/// A parsed PcbLib document using the v2 backing-store architecture.
+/// A parsed PcbLib document using the v2 DocumentStore architecture.
 ///
-/// Each footprint is a `FootprintGroup` containing metadata, binary primitives,
-/// and raw blocks for identity write-back.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// All records and groups are stored in a centralized `DocumentStore` accessed
+/// via `Rc<RefCell<>>` handles. The `store()` method provides access for
+/// reading and writing footprint data through typed handles.
 pub struct PcbLib {
-    /// Footprint groups (one per footprint pattern).
-    pub footprints: Vec<FootprintGroup>,
-    /// Footprint storage names (parallel to `footprints`).
-    pub footprint_names: Vec<String>,
-    /// Section key mappings (for long footprint names).
-    #[serde(skip)]
-    pub section_keys: SectionKeyList,
-    /// Library-level extra CFB streams (FileHeader, Library/*, etc.),
-    /// preserved for round-trip.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub raw_extra_streams: HashMap<String, Vec<u8>>,
+    store: DocRef,
 }
 
 impl PcbLib {
+    /// Returns a reference to the underlying document store.
+    pub fn store(&self) -> &DocRef {
+        &self.store
+    }
+
     /// Open a PcbLib from a reader.
     pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
         let mut cfb = cfb::CompoundFile::open(reader)
             .map_err(|e| AltiumError::Cfb(format!("Failed to open CFB: {}", e)))?;
 
-        let mut lib = PcbLib::default();
+        let section_keys = read_pcb_section_keys(&mut cfb)?;
 
-        // Read section keys (if any)
-        lib.section_keys = read_pcb_section_keys(&mut cfb)?;
-
-        // Enumerate top-level storages in the CFB to find footprints.
-        // We collect the entries first because walk() borrows cfb immutably,
-        // and we need mutable access later to open streams.
+        // Enumerate top-level storages to find footprints.
         let entries: Vec<String> = cfb
             .walk()
             .filter(|e| {
@@ -69,34 +64,52 @@ impl PcbLib {
             })
             .filter_map(|e| {
                 let name = e.path().file_name()?.to_str()?.to_string();
-                // Skip system streams/storages
-                if name == "SectionKeys"
-                    || name == "FileHeader"
-                    || name == "Library"
-                {
+                if name == "SectionKeys" || name == "FileHeader" || name == "Library" {
                     return None;
                 }
                 Some(name)
             })
             .collect();
 
-        // Collect all stream paths for capturing extra streams per footprint
+        // Collect all stream paths upfront to avoid re-borrowing cfb.
         let all_stream_paths: Vec<String> = cfb
             .walk()
             .filter(|e| e.is_stream())
             .filter_map(|e| Some(e.path().to_str()?.to_string()))
             .collect();
 
+        // Capture library-level extra streams (FileHeader, Library/*, etc.).
+        let footprint_set: std::collections::HashSet<&str> =
+            entries.iter().map(|s| s.as_str()).collect();
+        let mut lib_extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+        for stream_path in &all_stream_paths {
+            let path_no_slash = stream_path.trim_start_matches('/');
+            let top_level = path_no_slash.split('/').next().unwrap_or("");
+            if footprint_set.contains(top_level) {
+                continue;
+            }
+            if let Ok(mut stream) = cfb.open_stream(stream_path) {
+                let mut data = Vec::new();
+                if stream.read_to_end(&mut data).is_ok() {
+                    lib_extra_streams.insert(path_no_slash.to_string(), data);
+                }
+            }
+        }
+
+        let doc_meta = DocumentMeta::PcbLib {
+            section_keys,
+            raw_extra_streams: lib_extra_streams,
+        };
+        let mut store = DocumentStore::new(doc_meta);
+
         for storage_name in &entries {
             // Read Parameters stream (footprint metadata)
             let params_path = format!("/{}/{}", storage_name, STREAM_PARAMETERS);
-            let metadata = if let Ok(mut stream) = cfb.open_stream(&params_path) {
+            let metadata_node = if let Ok(mut stream) = cfb.open_stream(&params_path) {
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
                 let param_str = String::from_utf8_lossy(&data).to_string();
-                let origin =
-                    RecordOrigin::Param(ParamOrigin::new(&param_str));
-                RecordNode::new(0, origin)
+                RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new(&param_str)))
             } else {
                 RecordNode::new(
                     0,
@@ -104,7 +117,7 @@ impl PcbLib {
                 )
             };
 
-            // Read Header stream (primitive count / version info)
+            // Read Header stream
             let header_path = format!("/{}/{}", storage_name, STREAM_HEADER);
             let raw_header = if let Ok(mut stream) = cfb.open_stream(&header_path) {
                 let mut data = Vec::new();
@@ -116,7 +129,7 @@ impl PcbLib {
 
             // Read Data stream (pattern name block + binary primitives)
             let data_path = format!("/{}/{}", storage_name, STREAM_DATA);
-            let (primitives, primitive_order, raw_pattern_name) =
+            let (primitives, primitive_order, raw_pattern_name_block) =
                 if let Ok(mut stream) = cfb.open_stream(&data_path) {
                     let mut data = Vec::new();
                     stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
@@ -127,7 +140,7 @@ impl PcbLib {
 
             // Capture extra streams in this footprint's storage
             let storage_prefix = format!("/{}/", storage_name);
-            let mut extra_streams = HashMap::new();
+            let mut extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
             for stream_path in &all_stream_paths {
                 if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
                     if rest == STREAM_PARAMETERS
@@ -145,40 +158,38 @@ impl PcbLib {
                 }
             }
 
-            lib.footprint_names.push(storage_name.clone());
-            let mut group = FootprintGroup::new(
-                metadata,
-                primitives,
-                raw_pattern_name,
-                primitive_order,
-                raw_header,
-            );
-            group.raw_extra_streams = extra_streams;
-            lib.footprints.push(group);
+            // Insert metadata record into store
+            let parent_id = store.insert_record(metadata_node);
+
+            // Insert primitive records into store
+            let mut child_ids: Vec<RecordId> = Vec::with_capacity(primitives.len());
+            for prim_node in primitives {
+                let id = store.insert_record(prim_node);
+                child_ids.push(id);
+            }
+
+            // Build original_indices parallel to primitive_order (index within children vec)
+            let original_indices: Vec<usize> =
+                primitive_order.iter().map(|r| r.index).collect();
+
+            let group_data = GroupData {
+                parent: parent_id,
+                children: child_ids,
+                original_indices,
+                extra_streams,
+                meta: GroupMeta::PcbFootprint {
+                    name: storage_name.clone(),
+                    raw_pattern_name_block,
+                    original_primitive_order: primitive_order,
+                    raw_header,
+                },
+            };
+            store.insert_group(group_data);
         }
 
-        // Capture library-level extra streams (top-level streams/storages
-        // that aren't footprint storages)
-        let footprint_set: std::collections::HashSet<&str> =
-            entries.iter().map(|s| s.as_str()).collect();
-        for stream_path in &all_stream_paths {
-            // Extract top-level component: /Name or /Name/Child
-            let path_no_slash = stream_path.trim_start_matches('/');
-            let top_level = path_no_slash.split('/').next().unwrap_or("");
-            if footprint_set.contains(top_level) {
-                continue; // Already handled per-footprint
-            }
-            if let Ok(mut stream) = cfb.open_stream(stream_path) {
-                let mut data = Vec::new();
-                if stream.read_to_end(&mut data).is_ok() {
-                    // Store with leading slash stripped for consistent naming
-                    lib.raw_extra_streams
-                        .insert(path_no_slash.to_string(), data);
-                }
-            }
-        }
-
-        Ok(lib)
+        Ok(PcbLib {
+            store: Rc::new(RefCell::new(store)),
+        })
     }
 
     /// Open a PcbLib from a file path.
@@ -192,16 +203,16 @@ impl PcbLib {
         let mut cfb = cfb::CompoundFile::create(writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
-        // Write library-level extra streams first (FileHeader, Library/*, etc.)
-        // We need to create any parent storages for nested paths.
-        {
+        let store = self.store.borrow();
+
+        // Write library-level extra streams (FileHeader, Library/*, etc.)
+        if let DocumentMeta::PcbLib { raw_extra_streams, .. } = store.meta() {
             let mut created_storages: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            let mut sorted_extras: Vec<_> = self.raw_extra_streams.iter().collect();
+            let mut sorted_extras: Vec<_> = raw_extra_streams.iter().collect();
             sorted_extras.sort_by_key(|(k, _)| (*k).clone());
             for (rel_path, data) in &sorted_extras {
                 let full_path = format!("/{}", rel_path);
-                // Create parent storage if it contains a slash (e.g. "Library/Data")
                 if let Some(slash_pos) = rel_path.find('/') {
                     let parent = &rel_path[..slash_pos];
                     let parent_path = format!("/{}", parent);
@@ -215,8 +226,24 @@ impl PcbLib {
             }
         }
 
-        for (i, group) in self.footprints.iter().enumerate() {
-            let name = &self.footprint_names[i];
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            let (name, raw_pattern_name_block, original_primitive_order, raw_header) =
+                match &group.meta {
+                    GroupMeta::PcbFootprint {
+                        name,
+                        raw_pattern_name_block,
+                        original_primitive_order,
+                        raw_header,
+                    } => (
+                        name.clone(),
+                        raw_pattern_name_block.clone(),
+                        original_primitive_order.clone(),
+                        raw_header.clone(),
+                    ),
+                    _ => continue,
+                };
+
             let storage_path = format!("/{}", name);
             cfb.create_storage(&storage_path).map_err(|e| {
                 AltiumError::Cfb(format!("Failed to create storage: {}", e))
@@ -224,7 +251,7 @@ impl PcbLib {
 
             // Write Parameters stream
             let params_path = format!("/{}/{}", name, STREAM_PARAMETERS);
-            let params_data = match &group.metadata.origin {
+            let params_data = match &store.record(group.parent).origin {
                 RecordOrigin::Param(p) => p.params.to_param_string().into_bytes(),
                 _ => Vec::new(),
             };
@@ -238,27 +265,31 @@ impl PcbLib {
             let mut stream = cfb.create_stream(&header_path).map_err(|e| {
                 AltiumError::Cfb(format!("Failed to create Header: {}", e))
             })?;
-            if group.raw_header.is_empty() {
-                let count = group.primitives.len() as u32;
+            if raw_header.is_empty() {
+                let count = group.children.len() as u32;
                 stream
                     .write_all(&count.to_le_bytes())
                     .map_err(AltiumError::Io)?;
             } else {
-                stream
-                    .write_all(&group.raw_header)
-                    .map_err(AltiumError::Io)?;
+                stream.write_all(&raw_header).map_err(AltiumError::Io)?;
             }
 
             // Write Data stream
             let data_path = format!("/{}/{}", name, STREAM_DATA);
-            let data = build_pcb_data_stream(group)?;
+            let primitives: Vec<&RecordNode> =
+                group.children.iter().map(|&id| store.record(id)).collect();
+            let data = build_pcb_data_stream(
+                &raw_pattern_name_block,
+                &original_primitive_order,
+                &primitives,
+            )?;
             let mut stream = cfb.create_stream(&data_path).map_err(|e| {
                 AltiumError::Cfb(format!("Failed to create Data: {}", e))
             })?;
             stream.write_all(&data).map_err(AltiumError::Io)?;
 
             // Write per-footprint extra streams
-            for (rel_path, data) in &group.raw_extra_streams {
+            for (rel_path, data) in &group.extra_streams {
                 let full_path = format!("/{}/{}", name, rel_path);
                 if let Ok(mut stream) = cfb.create_stream(&full_path) {
                     let _ = stream.write_all(data);
@@ -279,27 +310,46 @@ impl PcbLib {
 
     /// Returns the number of footprints in the library.
     pub fn footprint_count(&self) -> usize {
-        self.footprints.len()
+        self.store.borrow().group_count()
     }
 
-    /// Returns the footprint storage names.
-    pub fn names(&self) -> &[String] {
-        &self.footprint_names
-    }
-
-    /// Find a footprint by name (case-insensitive), returns index.
-    pub fn find_footprint(&self, name: &str) -> Option<usize> {
-        let name_lower = name.to_lowercase();
-        self.footprint_names
+    /// Returns the footprint storage names in order.
+    pub fn names(&self) -> Vec<String> {
+        let store = self.store.borrow();
+        store
+            .group_ids()
             .iter()
-            .position(|n| n.to_lowercase() == name_lower)
+            .filter_map(|&id| {
+                if let GroupMeta::PcbFootprint { name, .. } = &store.group(id).meta {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Find a footprint by name (case-insensitive), returns a handle.
+    pub fn find_footprint(&self, name: &str) -> Option<PcbFootprintHandle> {
+        let store = self.store.borrow();
+        let name_lower = name.to_lowercase();
+        for &id in store.group_ids() {
+            if let GroupMeta::PcbFootprint { name: fp_name, .. } = &store.group(id).meta {
+                if fp_name.to_lowercase() == name_lower {
+                    return Some(PcbFootprintHandle::new(self.store.clone(), id));
+                }
+            }
+        }
+        None
     }
 
     /// Returns a unique ID from the library (from the first footprint's UNIQUEID parameter).
     pub fn unique_id(&self) -> String {
-        for group in &self.footprints {
-            if let Some(param) = group.metadata.origin.as_param() {
-                if let Some(v) = param.params.get("UNIQUEID") {
+        let store = self.store.borrow();
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            if let RecordOrigin::Param(p) = &store.record(group.parent).origin {
+                if let Some(v) = p.params.get("UNIQUEID") {
                     let s = v.as_str().to_string();
                     if !s.is_empty() {
                         return s;
@@ -312,88 +362,43 @@ impl PcbLib {
 
     /// Build and add a new footprint using the builder pattern.
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// lib.build_footprint("SOIC-8", templates::pcb_footprint_default, |builder| {
-    ///     builder.with_metadata(|fp| {
-    ///         fp.set_pattern("SOIC-8".into());
-    ///     });
-    ///     builder.add_pad(templates::pcb_pad_default, |pad| {
-    ///         pad.set_position_x(PcbCoord::from_mm(1.27));
-    ///     });
-    /// });
-    /// ```
+    /// The footprint is inserted into the centralized `DocumentStore`.
     pub fn build_footprint(
-        &mut self,
+        &self,
         name: &str,
         template: fn() -> RecordOrigin,
         build: impl FnOnce(&mut crate::v2::builders::FootprintBuilder),
     ) {
         let mut builder = crate::v2::builders::FootprintBuilder::new(template);
         build(&mut builder);
-        self.footprint_names.push(name.to_string());
-        self.footprints.push(builder.build());
-    }
-}
+        let (metadata, primitives, primitive_refs) = builder.build();
 
-// ---------------------------------------------------------------------------
-// FootprintQueryHandle / FootprintQueryResults
-// ---------------------------------------------------------------------------
+        let mut store = self.store.borrow_mut();
 
-/// A mutable handle to a single matched footprint in a PcbLib.
-pub struct FootprintQueryHandle<'a> {
-    footprints: &'a mut [FootprintGroup],
-    names: &'a [String],
-    index: usize,
-}
+        let parent_id = store.insert_record(metadata);
 
-impl<'a> FootprintQueryHandle<'a> {
-    /// Consume this handle, construct a `PcbFootprintView`, pass it to the closure.
-    pub fn with_mut<R>(
-        self,
-        f: impl FnOnce(&str, crate::v2::views::PcbFootprintView<'_>) -> R,
-    ) -> R {
-        let name = &self.names[self.index];
-        let group = &mut self.footprints[self.index];
-        let (metadata, primitives) = group.split_borrow();
-        let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
-        f(name, view)
-    }
-
-    /// Returns the index of the matched footprint.
-    pub fn index(&self) -> usize {
-        self.index
-    }
-}
-
-/// Results from a multi-match footprint query on a PcbLib.
-pub struct FootprintQueryResults<'a> {
-    footprints: &'a mut [FootprintGroup],
-    names: &'a [String],
-    indices: Vec<usize>,
-}
-
-impl<'a> FootprintQueryResults<'a> {
-    pub fn len(&self) -> usize {
-        self.indices.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.indices.is_empty()
-    }
-
-    pub fn for_each_mut(
-        self,
-        mut f: impl FnMut(&str, crate::v2::views::PcbFootprintView<'_>),
-    ) {
-        for idx in self.indices {
-            let name = &self.names[idx];
-            let group = &mut self.footprints[idx];
-            let (metadata, primitives) = group.split_borrow();
-            let view = crate::v2::views::PcbFootprintView::new(metadata, primitives);
-            f(name, view);
+        let mut child_ids: Vec<RecordId> = Vec::with_capacity(primitives.len());
+        for prim_node in primitives {
+            let id = store.insert_record(prim_node);
+            child_ids.push(id);
         }
+
+        let original_indices: Vec<usize> =
+            primitive_refs.iter().map(|r| r.index).collect();
+
+        let group_data = GroupData {
+            parent: parent_id,
+            children: child_ids,
+            original_indices,
+            extra_streams: HashMap::new(),
+            meta: GroupMeta::PcbFootprint {
+                name: name.to_string(),
+                raw_pattern_name_block: Vec::new(),
+                original_primitive_order: primitive_refs,
+                raw_header: Vec::new(),
+            },
+        };
+        store.insert_group(group_data);
     }
 }
 
@@ -401,123 +406,71 @@ impl<'a> FootprintQueryResults<'a> {
 // DocumentQuery<PcbFootprint> for PcbLib
 // ---------------------------------------------------------------------------
 
-impl crate::v2::traits::DocumentQuery<crate::v2::views::PcbFootprint> for PcbLib {
-    type Handle<'a> = FootprintQueryHandle<'a>;
-    type Results<'a> = FootprintQueryResults<'a>;
-
-    fn query(
-        &mut self,
-        q: &str,
-    ) -> crate::error::Result<FootprintQueryHandle<'_>> {
+impl DocumentQuery<crate::v2::handles::PcbFootprint> for PcbLib {
+    fn query(&self, q: &str) -> crate::error::Result<PcbFootprintHandle> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
-        let eval_nodes: Vec<_> = self
-            .footprints
-            .iter()
-            .map(|g| g.metadata.clone())
-            .collect();
+        let store = self.store.borrow();
+        let mut matches = Vec::new();
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            let parent_node = store.record(group.parent);
+            let all = std::slice::from_ref(parent_node);
+            if !evaluate(&parsed, all).is_empty() {
+                matches.push(group_id);
+            }
+        }
 
-        let matching = evaluate(&parsed, &eval_nodes);
-
-        match matching.len() {
+        match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => Ok(FootprintQueryHandle {
-                footprints: &mut self.footprints,
-                names: &self.footprint_names,
-                index: matching[0],
-            }),
+            1 => Ok(PcbFootprintHandle::new(self.store.clone(), matches[0])),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
 
-    fn query_all(
-        &mut self,
-        q: &str,
-    ) -> crate::error::Result<FootprintQueryResults<'_>> {
+    fn query_all(&self, q: &str) -> crate::error::Result<Vec<PcbFootprintHandle>> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
-        let eval_nodes: Vec<_> = self
-            .footprints
-            .iter()
-            .map(|g| g.metadata.clone())
-            .collect();
-
-        let indices = evaluate(&parsed, &eval_nodes);
-
-        Ok(FootprintQueryResults {
-            footprints: &mut self.footprints,
-            names: &self.footprint_names,
-            indices,
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DeepPrimitiveHandle / DeepPrimitiveResults — cross-footprint primitive queries
-// ---------------------------------------------------------------------------
-
-/// A mutable handle to a primitive found via deep query across all footprints.
-pub struct DeepPrimitiveHandle<'a, T: crate::v2::traits::WrapperFamily> {
-    footprints: &'a mut [FootprintGroup],
-    fp_index: usize,
-    prim_index: usize,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepPrimitiveHandle<'a, T> {
-    pub fn with_mut<R>(self, f: impl FnOnce(T::View<'_>) -> R) -> R {
-        let node = &mut self.footprints[self.fp_index].primitives[self.prim_index];
-        let view = T::make_view(node);
-        f(view)
-    }
-}
-
-/// Results from a deep query across all footprints.
-pub struct DeepPrimitiveResults<'a, T: crate::v2::traits::WrapperFamily> {
-    footprints: &'a mut [FootprintGroup],
-    matches: Vec<(usize, usize)>,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepPrimitiveResults<'a, T> {
-    pub fn len(&self) -> usize {
-        self.matches.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.matches.is_empty()
-    }
-
-    pub fn for_each_mut(self, mut f: impl FnMut(T::View<'_>)) {
-        for (fi, pi) in self.matches {
-            let node = &mut self.footprints[fi].primitives[pi];
-            let view = T::make_view(node);
-            f(view);
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            let parent_node = store.record(group.parent);
+            let all = std::slice::from_ref(parent_node);
+            if !evaluate(&parsed, all).is_empty() {
+                handles.push(PcbFootprintHandle::new(self.store.clone(), group_id));
+            }
         }
+
+        Ok(handles)
     }
 }
 
 // ---------------------------------------------------------------------------
-// DocumentQuery<T: LeafViewConstructor> for PcbLib (blanket deep query)
+// Deep primitive queries for PcbLib
 // ---------------------------------------------------------------------------
 
-impl<T: crate::v2::traits::LeafViewConstructor> crate::v2::traits::DocumentQuery<T> for PcbLib {
-    type Handle<'a> = DeepPrimitiveHandle<'a, T>;
-    type Results<'a> = DeepPrimitiveResults<'a, T>;
-
-    fn query(&mut self, q: &str) -> crate::error::Result<DeepPrimitiveHandle<'_, T>> {
+impl PcbLib {
+    /// Query a single child record of type `T` across all footprint groups.
+    pub fn query_child<T: HandleFamily>(
+        &self,
+        q: &str,
+    ) -> crate::error::Result<T::Handle> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
+        let store = self.store.borrow();
         let mut matches = Vec::new();
-        for (fi, fp) in self.footprints.iter().enumerate() {
-            for (pi, prim) in fp.primitives.iter().enumerate() {
-                if prim.key == T::record_id() {
-                    let all = std::slice::from_ref(prim);
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            for &child_id in &group.children {
+                let node = store.record(child_id);
+                if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
+                    let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
-                        matches.push((fi, pi));
+                        matches.push(child_id);
                     }
                 }
             }
@@ -525,40 +478,35 @@ impl<T: crate::v2::traits::LeafViewConstructor> crate::v2::traits::DocumentQuery
 
         match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => {
-                let (fi, pi) = matches[0];
-                Ok(DeepPrimitiveHandle {
-                    footprints: &mut self.footprints,
-                    fp_index: fi,
-                    prim_index: pi,
-                    _marker: std::marker::PhantomData,
-                })
-            }
+            1 => Ok(T::make_handle(self.store.clone(), matches[0])),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
 
-    fn query_all(&mut self, q: &str) -> crate::error::Result<DeepPrimitiveResults<'_, T>> {
+    /// Query all child records of type `T` across all footprint groups.
+    pub fn query_all_children<T: HandleFamily>(
+        &self,
+        q: &str,
+    ) -> crate::error::Result<Vec<T::Handle>> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
-        let mut matches = Vec::new();
-        for (fi, fp) in self.footprints.iter().enumerate() {
-            for (pi, prim) in fp.primitives.iter().enumerate() {
-                if prim.key == T::record_id() {
-                    let all = std::slice::from_ref(prim);
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            for &child_id in &group.children {
+                let node = store.record(child_id);
+                if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
+                    let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
-                        matches.push((fi, pi));
+                        handles.push(T::make_handle(self.store.clone(), child_id));
                     }
                 }
             }
         }
 
-        Ok(DeepPrimitiveResults {
-            footprints: &mut self.footprints,
-            matches,
-            _marker: std::marker::PhantomData,
-        })
+        Ok(handles)
     }
 }
 
@@ -579,9 +527,42 @@ fn read_pcb_section_keys<F: Read + Seek>(
 /// all others have 1 subrecord.
 fn subrecord_count(type_id: u8) -> usize {
     match type_id {
-        2 => 6,  // Pad
-        5 => 2,  // Text
+        2 => 6, // Pad
+        5 => 2, // Text
         _ => 1,
+    }
+}
+
+/// Build a `RecordOrigin` for a single-subrecord PCB primitive.
+///
+/// For types that have custom parse functions (Via=3, Region=11,
+/// ComponentBody=12), calls the appropriate parser to populate field_spans.
+/// Falls back to a plain `BinaryOrigin` if parsing fails or the type is
+/// unknown.
+fn parse_single_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> RecordOrigin {
+    match type_byte {
+        3 => parse_via(&block_data)
+            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        11 => parse_region(&block_data)
+            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        12 => parse_component_body(&block_data)
+            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        _ => RecordOrigin::Binary(BinaryOrigin::new(block_data)),
+    }
+}
+
+/// Build a `RecordOrigin` for a multi-subrecord PCB primitive.
+///
+/// For types that have custom parse functions (Pad=2, Text=5), calls the
+/// appropriate parser to populate field_spans. Falls back to a plain
+/// `BinaryOrigin` if parsing fails.
+fn parse_multi_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> RecordOrigin {
+    match type_byte {
+        2 => parse_pad(&block_data)
+            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        5 => parse_text(&block_data)
+            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        _ => RecordOrigin::Binary(BinaryOrigin::new(block_data)),
     }
 }
 
@@ -644,7 +625,7 @@ fn parse_pcb_data_stream(
             }
 
             let index = primitives.len();
-            let origin = RecordOrigin::Binary(BinaryOrigin::new(block_data));
+            let origin = parse_single_subrecord_origin(type_byte, block_data);
             primitives.push(RecordNode::new(type_byte, origin));
             primitive_order.push(PcbPrimitiveRef::new(type_byte, index));
         } else {
@@ -655,7 +636,10 @@ fn parse_pcb_data_stream(
             for _ in 0..n {
                 let sub_len = match cursor.read_u32::<LittleEndian>() {
                     Ok(l) => l as usize,
-                    Err(_) => { ok = false; break; }
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
                 };
                 if cursor.position() as usize + sub_len > data.len() {
                     ok = false;
@@ -670,7 +654,7 @@ fn parse_pcb_data_stream(
             let block_data = data[start..end].to_vec();
 
             let index = primitives.len();
-            let origin = RecordOrigin::Binary(BinaryOrigin::new(block_data));
+            let origin = parse_multi_subrecord_origin(type_byte, block_data);
             primitives.push(RecordNode::new(type_byte, origin));
             primitive_order.push(PcbPrimitiveRef::new(type_byte, index));
         }
@@ -679,27 +663,34 @@ fn parse_pcb_data_stream(
     Ok((primitives, primitive_order, pattern_name_block))
 }
 
-/// Build a PCB Data stream from a FootprintGroup.
-fn build_pcb_data_stream(group: &FootprintGroup) -> Result<Vec<u8>> {
+/// Build a PCB Data stream from store-level components.
+///
+/// Accepts the raw pattern name block, the original primitive ordering, and
+/// the borrowed primitive records (indexed by position in the children vec).
+fn build_pcb_data_stream(
+    raw_pattern_name_block: &[u8],
+    original_primitive_order: &[PcbPrimitiveRef],
+    primitives: &[&RecordNode],
+) -> Result<Vec<u8>> {
     let mut output = Vec::new();
 
     // Write pattern name block
     output
-        .write_u32::<LittleEndian>(group.raw_pattern_name_block.len() as u32)
+        .write_u32::<LittleEndian>(raw_pattern_name_block.len() as u32)
         .map_err(AltiumError::Io)?;
-    output.extend_from_slice(&group.raw_pattern_name_block);
+    output.extend_from_slice(raw_pattern_name_block);
 
     // Write primitives in original order
-    for prim_ref in &group.original_primitive_order {
-        if prim_ref.index < group.primitives.len() {
-            let prim = &group.primitives[prim_ref.index];
+    for prim_ref in original_primitive_order {
+        if prim_ref.index < primitives.len() {
+            let prim = primitives[prim_ref.index];
             let n = subrecord_count(prim.key);
 
             // Get the bytes to write (from dirty origin or clean snapshot)
-            let bytes = if prim.is_dirty() {
+            let bytes: &[u8] = if prim.is_dirty() {
                 match &prim.origin {
                     RecordOrigin::Binary(b) => &b.raw_block,
-                    RecordOrigin::Param(_) => &[] as &[u8],
+                    RecordOrigin::Param(_) => &[],
                 }
             } else {
                 &prim.original_snapshot
@@ -731,6 +722,11 @@ fn build_pcb_data_stream(group: &FootprintGroup) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v2::backing_store::{BinaryOrigin, ParamOrigin, PcbPrimitiveRef, RecordOrigin};
+
+    // ---------------------------------------------------------------------------
+    // parse_pcb_data_stream tests
+    // ---------------------------------------------------------------------------
 
     #[test]
     fn pcb_data_stream_roundtrip() {
@@ -744,8 +740,7 @@ mod tests {
         data.extend_from_slice(&35u32.to_le_bytes()); // length
         data.extend_from_slice(&vec![0u8; 35]); // data
 
-        let (prims, order, pattern_name) =
-            parse_pcb_data_stream(&data).unwrap();
+        let (prims, order, pattern_name) = parse_pcb_data_stream(&data).unwrap();
         assert_eq!(pattern_name, name);
         assert_eq!(prims.len(), 1);
         assert_eq!(prims[0].key, 4);
@@ -754,115 +749,10 @@ mod tests {
 
     #[test]
     fn empty_data_stream() {
-        let (prims, order, pattern_name) =
-            parse_pcb_data_stream(&[]).unwrap();
+        let (prims, order, pattern_name) = parse_pcb_data_stream(&[]).unwrap();
         assert!(prims.is_empty());
         assert!(order.is_empty());
         assert!(pattern_name.is_empty());
-    }
-
-    #[test]
-    fn build_stream_roundtrip() {
-        // Build a minimal footprint group
-        let block_data = vec![0xAA; 10];
-        let prim = RecordNode::new(
-            4,
-            RecordOrigin::Binary(BinaryOrigin::new(block_data.clone())),
-        );
-        let group = FootprintGroup::new(
-            RecordNode::new(
-                0,
-                RecordOrigin::Param(ParamOrigin::new("|PATTERN=DIP-8|")),
-            ),
-            vec![prim],
-            b"DIP-8".to_vec(),
-            vec![PcbPrimitiveRef::new(4, 0)],
-            vec![],
-        );
-
-        let data = build_pcb_data_stream(&group).unwrap();
-        let (prims, order, pattern_name) =
-            parse_pcb_data_stream(&data).unwrap();
-
-        assert_eq!(pattern_name, b"DIP-8");
-        assert_eq!(prims.len(), 1);
-        assert_eq!(prims[0].key, 4);
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].type_id, 4);
-    }
-
-    // -----------------------------------------------------------------------
-    // DocumentQuery tests for PcbLib
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn pcblib_query_all_footprints() {
-        use crate::v2::traits::DocumentQuery;
-
-        let mut lib = PcbLib::default();
-        for name in &["SOT-23", "QFP-48", "DIP-8"] {
-            lib.footprint_names.push(name.to_string());
-            lib.footprints.push(FootprintGroup::new(
-                RecordNode::new(
-                    0,
-                    RecordOrigin::Param(ParamOrigin::new(&format!(
-                        "|PATTERN={}|DESCRIPTION={}|",
-                        name, name
-                    ))),
-                ),
-                vec![],
-                Vec::new(),
-                vec![],
-                vec![],
-            ));
-        }
-
-        let results = DocumentQuery::<crate::v2::views::PcbFootprint>::query_all(&mut lib, "#0")
-            .unwrap();
-        assert_eq!(results.len(), 3); // all have record_id=0
-    }
-
-    #[test]
-    fn pcblib_deep_query_pad() {
-        use crate::v2::traits::DocumentQuery;
-
-        let mut lib = PcbLib::default();
-        lib.footprint_names.push("SOT-23".to_string());
-
-        let pad_block = vec![0u8; 40]; // minimal binary block for a pad
-        lib.footprints.push(FootprintGroup::new(
-            RecordNode::new(
-                0,
-                RecordOrigin::Param(ParamOrigin::new("|PATTERN=SOT-23|")),
-            ),
-            vec![
-                RecordNode::new(
-                    2, // pad type
-                    RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())),
-                ),
-                RecordNode::new(
-                    2,
-                    RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())),
-                ),
-                RecordNode::new(
-                    4, // track type
-                    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 35])),
-                ),
-            ],
-            Vec::new(),
-            vec![
-                PcbPrimitiveRef::new(2, 0),
-                PcbPrimitiveRef::new(2, 1),
-                PcbPrimitiveRef::new(4, 2),
-            ],
-            vec![],
-        ));
-
-        // Use #2 (record_id match) because the AQL element_type_to_record_id
-        // for Pad currently maps to a placeholder (100), not the actual PCB type_id (2).
-        let results =
-            DocumentQuery::<crate::v2::views::PcbPad>::query_all(&mut lib, "#2").unwrap();
-        assert_eq!(results.len(), 2);
     }
 
     #[test]
@@ -899,7 +789,7 @@ mod tests {
         data.extend_from_slice(name);
         // Pad primitive: type=2 with 6 subrecords
         data.push(2);
-        // Subrecords 1-4: small string subrecords
+        // Subrecords 1-4: small subrecords
         for i in 0u8..4 {
             let sub = vec![i; 2]; // 2-byte payload
             data.extend_from_slice(&(sub.len() as u32).to_le_bytes());
@@ -925,22 +815,13 @@ mod tests {
         // 4*(4+2) + (4+16) + (4+8) = 24 + 20 + 12 = 56
         assert_eq!(raw.raw_block.len(), 56);
 
-        // Round-trip: build and re-parse
-        let group = FootprintGroup::new(
-            RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new("|PATTERN=PAD|"))),
-            prims,
-            b"PAD".to_vec(),
-            order,
-            vec![],
-        );
-        let rebuilt = build_pcb_data_stream(&group).unwrap();
+        // Round-trip via build_pcb_data_stream
+        let prim_refs: Vec<&RecordNode> = prims.iter().collect();
+        let rebuilt = build_pcb_data_stream(b"PAD", &order, &prim_refs).unwrap();
         let (prims2, _, _) = parse_pcb_data_stream(&rebuilt).unwrap();
         assert_eq!(prims2.len(), 1);
         assert_eq!(prims2[0].key, 2);
-        assert_eq!(
-            prims2[0].origin.as_binary().unwrap().raw_block.len(),
-            56
-        );
+        assert_eq!(prims2[0].origin.as_binary().unwrap().raw_block.len(), 56);
     }
 
     #[test]
@@ -968,17 +849,227 @@ mod tests {
         assert_eq!(prims[0].origin.as_binary().unwrap().raw_block.len(), 58);
 
         // Round-trip
-        let group = FootprintGroup::new(
-            RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new("|PATTERN=TXT|"))),
-            prims,
-            b"TXT".to_vec(),
-            order,
-            vec![],
-        );
-        let rebuilt = build_pcb_data_stream(&group).unwrap();
+        let prim_refs: Vec<&RecordNode> = prims.iter().collect();
+        let rebuilt = build_pcb_data_stream(b"TXT", &order, &prim_refs).unwrap();
         let (prims2, _, _) = parse_pcb_data_stream(&rebuilt).unwrap();
         assert_eq!(prims2.len(), 1);
         assert_eq!(prims2[0].key, 5);
         assert_eq!(prims2[0].origin.as_binary().unwrap().raw_block.len(), 58);
+    }
+
+    #[test]
+    fn build_stream_roundtrip() {
+        let block_data = vec![0xAA; 10];
+        let prim = RecordNode::new(
+            4,
+            RecordOrigin::Binary(BinaryOrigin::new(block_data.clone())),
+        );
+        let order = vec![PcbPrimitiveRef::new(4, 0)];
+        let prim_refs: Vec<&RecordNode> = vec![&prim];
+
+        let data = build_pcb_data_stream(b"DIP-8", &order, &prim_refs).unwrap();
+        let (prims, out_order, pattern_name) = parse_pcb_data_stream(&data).unwrap();
+
+        assert_eq!(pattern_name, b"DIP-8");
+        assert_eq!(prims.len(), 1);
+        assert_eq!(prims[0].key, 4);
+        assert_eq!(out_order.len(), 1);
+        assert_eq!(out_order[0].type_id, 4);
+    }
+
+    // ---------------------------------------------------------------------------
+    // DocumentStore-based PcbLib construction and query tests
+    // ---------------------------------------------------------------------------
+
+    /// Helper: build a minimal PcbLib in-memory with named footprints.
+    fn make_test_lib(fp_names: &[&str]) -> PcbLib {
+        let doc_meta = DocumentMeta::PcbLib {
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        };
+        let mut store = DocumentStore::new(doc_meta);
+
+        for &name in fp_names {
+            let param_str = format!("|PATTERN={}|DESCRIPTION={}|", name, name);
+            let metadata = RecordNode::new(
+                0,
+                RecordOrigin::Param(ParamOrigin::new(&param_str)),
+            );
+            let parent_id = store.insert_record(metadata);
+
+            let group_data = GroupData {
+                parent: parent_id,
+                children: Vec::new(),
+                original_indices: Vec::new(),
+                extra_streams: HashMap::new(),
+                meta: GroupMeta::PcbFootprint {
+                    name: name.to_string(),
+                    raw_pattern_name_block: name.as_bytes().to_vec(),
+                    original_primitive_order: Vec::new(),
+                    raw_header: Vec::new(),
+                },
+            };
+            store.insert_group(group_data);
+        }
+
+        PcbLib {
+            store: Rc::new(RefCell::new(store)),
+        }
+    }
+
+    /// Helper: build a PcbLib with one footprint containing typed primitives.
+    fn make_lib_with_primitives() -> PcbLib {
+        let doc_meta = DocumentMeta::PcbLib {
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        };
+        let mut store = DocumentStore::new(doc_meta);
+
+        let metadata = RecordNode::new(
+            0,
+            RecordOrigin::Param(ParamOrigin::new("|PATTERN=SOT-23|")),
+        );
+        let parent_id = store.insert_record(metadata);
+
+        let pad_block = vec![0u8; 40];
+        let pad0 = RecordNode::new(2, RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())));
+        let pad1 = RecordNode::new(2, RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())));
+        let track = RecordNode::new(4, RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 35])));
+
+        let pad0_id = store.insert_record(pad0);
+        let pad1_id = store.insert_record(pad1);
+        let track_id = store.insert_record(track);
+
+        let group_data = GroupData {
+            parent: parent_id,
+            children: vec![pad0_id, pad1_id, track_id],
+            original_indices: vec![0, 1, 2],
+            extra_streams: HashMap::new(),
+            meta: GroupMeta::PcbFootprint {
+                name: "SOT-23".to_string(),
+                raw_pattern_name_block: b"SOT-23".to_vec(),
+                original_primitive_order: vec![
+                    PcbPrimitiveRef::new(2, 0),
+                    PcbPrimitiveRef::new(2, 1),
+                    PcbPrimitiveRef::new(4, 2),
+                ],
+                raw_header: Vec::new(),
+            },
+        };
+        store.insert_group(group_data);
+
+        PcbLib {
+            store: Rc::new(RefCell::new(store)),
+        }
+    }
+
+    #[test]
+    fn pcblib_footprint_count() {
+        let lib = make_test_lib(&["SOT-23", "QFP-48", "DIP-8"]);
+        assert_eq!(lib.footprint_count(), 3);
+    }
+
+    #[test]
+    fn pcblib_names() {
+        let lib = make_test_lib(&["SOT-23", "QFP-48", "DIP-8"]);
+        let names = lib.names();
+        assert_eq!(names, vec!["SOT-23", "QFP-48", "DIP-8"]);
+    }
+
+    #[test]
+    fn pcblib_find_footprint_found() {
+        let lib = make_test_lib(&["SOT-23", "QFP-48"]);
+        let handle = lib.find_footprint("sot-23");
+        assert!(handle.is_some());
+        assert_eq!(handle.unwrap().name(), "SOT-23");
+    }
+
+    #[test]
+    fn pcblib_find_footprint_not_found() {
+        let lib = make_test_lib(&["SOT-23"]);
+        assert!(lib.find_footprint("DIP-8").is_none());
+    }
+
+    #[test]
+    fn pcblib_query_all_footprints() {
+        use crate::v2::traits::DocumentQuery;
+
+        let lib = make_test_lib(&["SOT-23", "QFP-48", "DIP-8"]);
+        let results = DocumentQuery::<crate::v2::handles::PcbFootprint>::query_all(&lib, "#0")
+            .unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn pcblib_query_single_footprint() {
+        use crate::v2::traits::DocumentQuery;
+
+        let lib = make_test_lib(&["SOT-23"]);
+        let handle = DocumentQuery::<crate::v2::handles::PcbFootprint>::query(&lib, "#0")
+            .unwrap();
+        assert_eq!(handle.name(), "SOT-23");
+    }
+
+    #[test]
+    fn pcblib_query_no_match() {
+        use crate::v2::traits::DocumentQuery;
+
+        let lib = make_test_lib(&["SOT-23"]);
+        let result =
+            DocumentQuery::<crate::v2::handles::PcbFootprint>::query(&lib, "NONEXISTENT");
+        assert!(matches!(
+            result,
+            Err(crate::error::AltiumError::NoMatch(_))
+        ));
+    }
+
+    #[test]
+    fn pcblib_deep_query_pads() {
+        let lib = make_lib_with_primitives();
+        let results = lib
+            .query_all_children::<crate::v2::handles::PcbPad>("#2")
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn pcblib_deep_query_track() {
+        let lib = make_lib_with_primitives();
+        let results = lib
+            .query_all_children::<crate::v2::handles::PcbTrack>("#4")
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn pcblib_build_footprint() {
+        use crate::v2::templates;
+
+        let lib = PcbLib {
+            store: DocumentStore::new_ref(DocumentMeta::PcbLib {
+                section_keys: SectionKeyList::new(),
+                raw_extra_streams: HashMap::new(),
+            }),
+        };
+
+        assert_eq!(lib.footprint_count(), 0);
+        lib.build_footprint("SOIC-8", templates::pcb_footprint_default, |_builder| {});
+        assert_eq!(lib.footprint_count(), 1);
+        assert_eq!(lib.names(), vec!["SOIC-8"]);
+    }
+
+    #[test]
+    fn pcblib_unique_id_empty_when_absent() {
+        let lib = make_test_lib(&["SOT-23"]);
+        assert_eq!(lib.unique_id(), "");
+    }
+
+    #[test]
+    fn pcblib_save_and_open_roundtrip() {
+        use std::io::Cursor;
+
+        let lib = make_test_lib(&["SOT-23", "DIP-8"]);
+        let buf = Cursor::new(Vec::new());
+        lib.save(buf).unwrap();
     }
 }

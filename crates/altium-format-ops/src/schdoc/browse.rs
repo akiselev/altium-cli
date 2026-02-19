@@ -11,9 +11,9 @@ use crate::helpers::*;
 use crate::output::*;
 
 use altium_format::v2::coord::AltiumCoord;
+use altium_format::v2::handles::SchComponent;
 use altium_format::v2::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
 use altium_format::v2::traits::DocumentQuery;
-use altium_format::v2::views::SchComponent;
 
 use super::{
     collect_net_names, format_location, get_sheet_size, is_address_bus, is_control_signal,
@@ -23,15 +23,17 @@ use super::{
 /// Returns a schematic overview with component categories, power architecture,
 /// interfaces, key signals, and quick statistics.
 pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::Error>> {
-    let mut doc = open_schdoc(path)?;
+    let doc = open_schdoc(path)?;
 
     // 1. COMPONENTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<SchDocComponentRef>> = HashMap::new();
 
-    DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
-        let designator = view.designator().to_string();
-        let lib_reference = view.lib_reference().to_string();
-        let description = view.component_description();
+    let components = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+    for comp in &components {
+        let rec = comp.read();
+        let designator = rec.designator().to_string();
+        let lib_reference = rec.lib_reference().to_string();
+        let description = rec.component_description();
         let category = categorize_component(&lib_reference, &description);
         let comp_ref = SchDocComponentRef {
             designator,
@@ -39,7 +41,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
             description,
         };
         categories.entry(category).or_default().push(comp_ref);
-    });
+    }
 
     let category_order = [
         "Microcontroller",
@@ -204,7 +206,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
 
 /// Returns detailed sheet metadata, primitive summary, and net information.
 pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
-    let mut doc = open_schdoc(path)?;
+    let doc = open_schdoc(path)?;
 
     // 1. SHEET INFO
     let sheet_info = if let Some(rec) = doc.sheet_record() {
@@ -240,9 +242,10 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
     let pin_count = doc.count_record_type(2);
 
     let mut total_primitives = doc.component_count();
-    DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
-        total_primitives += view.children_len();
-    });
+    let components = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+    for comp in &components {
+        total_primitives += comp.children_len();
+    }
     total_primitives += doc.orphan_count();
 
     let primitive_summary = PrimitiveSummary {
@@ -271,22 +274,24 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
 
 /// Lists all placed components with their designators, references, and locations.
 pub fn cmd_components(path: &Path) -> Result<SchDocComponentList, Box<dyn std::error::Error>> {
-    let mut doc = open_schdoc(path)?;
+    let doc = open_schdoc(path)?;
 
     let mut components: Vec<SchDocComponentInfo> = Vec::new();
 
-    DocumentQuery::<SchComponent>::query_all(&mut doc, "#1")?.for_each_mut(|view| {
-        let designator = view.designator().to_string();
+    let comps = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+    for comp in &comps {
+        let rec = comp.read();
+        let designator = rec.designator().to_string();
 
         components.push(SchDocComponentInfo {
             designator,
-            lib_reference: view.lib_reference().to_string(),
-            description: view.component_description(),
-            location: format_location(view.location_x(), view.location_y()),
-            parts: view.part_count() as i32,
-            child_count: Some(view.children_len()),
+            lib_reference: rec.lib_reference().to_string(),
+            description: rec.component_description(),
+            location: format_location(rec.location_x(), rec.location_y()),
+            parts: rec.part_count() as i32,
+            child_count: Some(comp.children_len()),
         });
-    });
+    }
 
     components.sort_by(|a, b| alphanumeric_sort(&a.designator, &b.designator));
 

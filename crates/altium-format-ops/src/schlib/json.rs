@@ -5,31 +5,64 @@
 
 use std::path::Path;
 
+use altium_format::v2::handles::{SchComponent, SchPin};
 use altium_format::v2::traits::DocumentQuery;
-use altium_format::v2::views::{SchComponent, SchPin};
 
 use super::open_schlib;
 
 /// Serializes the library to JSON for LLM processing or external analysis.
 pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let mut lib = open_schlib(path)?;
+    let lib = open_schlib(path)?;
 
     if full {
-        Ok(serde_json::to_value(&lib)?)
+        // Build comprehensive JSON manually since SchLib is no longer Serialize.
+        let components_all = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+        let mut components: Vec<serde_json::Value> = Vec::new();
+        for comp in &components_all {
+            let pin_handles = comp.children::<SchPin>();
+            let mut pins: Vec<serde_json::Value> = Vec::new();
+            for pin_handle in &pin_handles {
+                let pin = pin_handle.read();
+                pins.push(serde_json::json!({
+                    "designator": pin.designator().to_string(),
+                    "name": pin.name().to_string(),
+                    "electrical": pin.electrical() as i32,
+                }));
+            }
+            let primitive_count = comp.children_len();
+            let rec = comp.read();
+            components.push(serde_json::json!({
+                "name": comp.lib_ref(),
+                "description": comp.description(),
+                "part_count": comp.part_count(),
+                "display_mode_count": rec.display_mode_count(),
+                "pin_count": pin_handles.len(),
+                "primitive_count": primitive_count,
+                "pins": pins,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "file": path.display().to_string(),
+            "unique_id": lib.header().unique_id(),
+            "component_count": lib.component_count(),
+            "components": components,
+        }))
     } else {
         let mut components: Vec<serde_json::Value> = Vec::new();
 
-        DocumentQuery::<SchComponent>::query_all(&mut lib, "#1")?.for_each_mut(|entry, view| {
-            let pin_count = view.child_keys::<SchPin>().count();
-            let primitive_count = view.children_len();
+        let results = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+        for comp in &results {
+            let pin_count = comp.child_count::<SchPin>();
+            let primitive_count = comp.children_len();
             components.push(serde_json::json!({
-                "name": entry.lib_ref(),
-                "description": entry.description(),
+                "name": comp.lib_ref(),
+                "description": comp.description(),
                 "pin_count": pin_count,
-                "part_count": entry.part_count(),
+                "part_count": comp.part_count(),
                 "primitive_count": primitive_count,
             }));
-        });
+        }
 
         Ok(serde_json::json!({
             "file": path.display().to_string(),

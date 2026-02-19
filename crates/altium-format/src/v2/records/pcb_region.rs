@@ -39,7 +39,7 @@ pub struct PcbRegionRecord {
 /// - u32 prop_len + parametric properties (null-terminated)
 /// - u32 num_outline_vertices + vertex data
 /// - hole vertex lists
-fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+pub(crate) fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
 
@@ -70,6 +70,7 @@ fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOr
 }
 
 /// Find the FieldSpan for num_outline_vertices within region data.
+#[allow(dead_code)]
 fn find_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::FieldSpan {
     use crate::v2::backing_store::FieldSpan;
 
@@ -94,6 +95,7 @@ fn find_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::Fiel
 }
 
 /// Serialize region data back to binary.
+#[allow(dead_code)]
 fn serialize_region(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     Ok(origin.raw_block.clone())
 }

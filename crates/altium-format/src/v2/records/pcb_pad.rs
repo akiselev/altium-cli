@@ -60,7 +60,7 @@ pub struct PcbPadRecord {
 ///
 /// Each subrecord is length-prefixed with u32. The typed fields are
 /// extracted from subrecord 5 (main pad core data) at fixed offsets.
-fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
+pub(crate) fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
 
@@ -168,6 +168,7 @@ impl PcbPadRecord {
 /// Serialize pad data back to binary.
 ///
 /// Returns the raw_block which has already been patched by setters.
+#[allow(dead_code)]
 fn serialize_pad(origin: &crate::v2::backing_store::BinaryOrigin) -> crate::Result<Vec<u8>> {
     Ok(origin.raw_block.clone())
 }

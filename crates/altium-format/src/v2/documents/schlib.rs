@@ -11,14 +11,15 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, Write};
-
-use serde::{Deserialize, Serialize};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use crate::error::{AltiumError, Result};
-use crate::v2::backing_store::{
-    ComponentGroup, ParamOrigin, RecordNode, RecordOrigin,
-};
+use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
+use crate::v2::ids::GroupId;
 use crate::v2::parameters::ParameterCollection;
+use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
+use crate::v2::traits::HandleFamily;
 
 use super::section_keys::SectionKeyList;
 
@@ -31,7 +32,7 @@ const STREAM_DATA: &str = "Data";
 const SIZE_FLAG_MASK: u32 = 0x00FF_FFFF;
 
 /// SchLib header info.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct SchLibHeader {
     /// Header identification text (e.g. "Protel for Windows - Schematic Library Editor Binary File Version 5.0").
     pub header_text: String,
@@ -42,7 +43,6 @@ pub struct SchLibHeader {
     /// Unique ID for the library.
     pub unique_id: String,
     /// Raw bytes of the FileHeader stream (for identity write-back).
-    #[serde(skip)]
     pub raw: Option<Vec<u8>>,
 }
 
@@ -64,7 +64,7 @@ impl SchLibHeader {
 }
 
 /// Component entry from the FileHeader's component list.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct SchLibComponentEntry {
     /// Library reference name (the component's display name).
     pub lib_ref: String,
@@ -91,38 +91,30 @@ impl SchLibComponentEntry {
     }
 }
 
-/// A parsed SchLib library using the v2 backing-store architecture.
+/// A parsed SchLib library using the v2 DocumentStore architecture.
 ///
 /// Preserves raw data for unmodified records to enable identity write-back.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SchLib {
-    /// Library header metadata.
-    pub header: SchLibHeader,
-    /// Component groups (one per component, each with its child records).
-    pub groups: Vec<ComponentGroup>,
-    /// Component entries from the FileHeader (name, description, part count).
-    pub component_entries: Vec<SchLibComponentEntry>,
-    /// Section key mappings for long component names.
-    #[serde(skip)]
-    pub section_keys: SectionKeyList,
-    /// Library-level extra CFB streams (Storage, etc.), preserved for round-trip.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub raw_extra_streams: HashMap<String, Vec<u8>>,
+    store: DocRef,
 }
 
 impl SchLib {
+    /// Returns a reference to the underlying document store.
+    pub fn store(&self) -> &DocRef {
+        &self.store
+    }
+
     /// Open a SchLib from a reader (CFB compound file).
     pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
         let mut cfb = cfb::CompoundFile::open(reader)
             .map_err(|e| AltiumError::Cfb(format!("Failed to open CFB: {}", e)))?;
 
-        let mut lib = SchLib::default();
-
         // 1. Read FileHeader
-        lib.header = read_file_header(&mut cfb, &mut lib.component_entries)?;
+        let mut component_entries: Vec<SchLibComponentEntry> = Vec::new();
+        let header = read_file_header(&mut cfb, &mut component_entries)?;
 
         // 2. Read SectionKeys
-        lib.section_keys = read_section_keys(&mut cfb)?;
+        let section_keys = read_section_keys(&mut cfb)?;
 
         // Collect all stream paths for capturing extra streams
         let all_stream_paths: Vec<String> = cfb
@@ -135,47 +127,20 @@ impl SchLib {
         let mut component_keys: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
-        // 3. Read Data stream for each component
-        for entry in &lib.component_entries {
+        // Build library-level extra_streams (determined before group insertion)
+        let mut raw_extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+
+        // Collect component_keys first pass
+        for entry in &component_entries {
             let safe_name = sanitize_cfb_name(&entry.lib_ref);
-            let section_key = lib.section_keys.get_key(&safe_name).to_string();
-            component_keys.insert(section_key.clone());
-            let data_path = format!("/{}/{}", section_key, STREAM_DATA);
-
-            let mut group = if let Ok(mut stream) = cfb.open_stream(&data_path) {
-                let mut data = Vec::new();
-                stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
-                parse_data_stream_to_group(&data)?
-            } else {
-                // Empty component — create a minimal component record
-                let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"));
-                ComponentGroup::new(RecordNode::new(1, origin), Vec::new(), Vec::new())
-            };
-
-            // Capture extra streams in this component's storage
-            let storage_prefix = format!("/{}/", section_key);
-            for stream_path in &all_stream_paths {
-                if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
-                    if rest == STREAM_DATA {
-                        continue;
-                    }
-                    if let Ok(mut stream) = cfb.open_stream(stream_path) {
-                        let mut data = Vec::new();
-                        if stream.read_to_end(&mut data).is_ok() {
-                            group.raw_extra_streams.insert(rest.to_string(), data);
-                        }
-                    }
-                }
-            }
-
-            lib.groups.push(group);
+            let section_key = section_keys.get_key(&safe_name).to_string();
+            component_keys.insert(section_key);
         }
 
-        // 4. Capture library-level extra streams
+        // Capture library-level extra streams
         for stream_path in &all_stream_paths {
             let path_no_slash = stream_path.trim_start_matches('/');
             let top_level = path_no_slash.split('/').next().unwrap_or("");
-            // Skip known top-level streams and component storages
             if top_level == STREAM_FILE_HEADER
                 || top_level == STREAM_SECTION_KEYS
                 || component_keys.contains(top_level)
@@ -185,13 +150,85 @@ impl SchLib {
             if let Ok(mut stream) = cfb.open_stream(stream_path) {
                 let mut data = Vec::new();
                 if stream.read_to_end(&mut data).is_ok() {
-                    lib.raw_extra_streams
-                        .insert(path_no_slash.to_string(), data);
+                    raw_extra_streams.insert(path_no_slash.to_string(), data);
                 }
             }
         }
 
-        Ok(lib)
+        // Create DocumentStore with SchLib metadata
+        let mut store = DocumentStore::new(DocumentMeta::SchLib {
+            header_text: header.header_text.clone(),
+            weight: header.weight,
+            minor_version: header.minor_version,
+            unique_id: header.unique_id.clone(),
+            raw_header: header.raw.clone(),
+            section_keys: section_keys.clone(),
+            raw_extra_streams,
+        });
+
+        // 3. Read Data stream for each component and insert into store
+        for entry in &component_entries {
+            let safe_name = sanitize_cfb_name(&entry.lib_ref);
+            let section_key = section_keys.get_key(&safe_name).to_string();
+            let data_path = format!("/{}/{}", section_key, STREAM_DATA);
+
+            let (parent_node, children, original_indices) =
+                if let Ok(mut stream) = cfb.open_stream(&data_path) {
+                    let mut data = Vec::new();
+                    stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
+                    parse_data_stream_to_group(&data)?
+                } else {
+                    let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"));
+                    (RecordNode::new(1, origin), Vec::new(), Vec::new())
+                };
+
+            // Capture extra streams in this component's storage
+            let storage_prefix = format!("/{}/", section_key);
+            let mut extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+            for stream_path in &all_stream_paths {
+                if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
+                    if rest == STREAM_DATA {
+                        continue;
+                    }
+                    if let Ok(mut stream) = cfb.open_stream(stream_path) {
+                        let mut data = Vec::new();
+                        if stream.read_to_end(&mut data).is_ok() {
+                            extra_streams.insert(rest.to_string(), data);
+                        }
+                    }
+                }
+            }
+
+            // Insert parent record
+            let parent_id = store.insert_record(parent_node);
+
+            // Insert child records
+            let mut child_ids = Vec::with_capacity(children.len());
+            for child in children {
+                let id = store.insert_record(child);
+                child_ids.push(id);
+            }
+
+            // Create GroupData with SchComponent metadata
+            let group_data = GroupData {
+                parent: parent_id,
+                children: child_ids,
+                original_indices,
+                extra_streams,
+                meta: GroupMeta::SchComponent {
+                    lib_ref: entry.lib_ref.clone(),
+                    description: entry.description.clone(),
+                    part_count: entry.part_count,
+                    section_key,
+                },
+            };
+
+            store.insert_group(group_data);
+        }
+
+        Ok(SchLib {
+            store: Rc::new(RefCell::new(store)),
+        })
     }
 
     /// Open a SchLib from a file path.
@@ -202,18 +239,71 @@ impl SchLib {
 
     /// Save the SchLib to a writer (creates a new CFB compound file).
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
+        let store = self.store.borrow();
+
+        // Extract SchLib metadata
+        let (
+            header_text,
+            weight,
+            minor_version,
+            unique_id,
+            raw_header,
+            _stored_section_keys,
+            raw_extra_streams,
+        ) = match &store.meta {
+            DocumentMeta::SchLib {
+                header_text,
+                weight,
+                minor_version,
+                unique_id,
+                raw_header,
+                section_keys,
+                raw_extra_streams,
+            } => (
+                header_text.clone(),
+                *weight,
+                *minor_version,
+                unique_id.clone(),
+                raw_header.clone(),
+                section_keys.clone(),
+                raw_extra_streams.clone(),
+            ),
+            _ => return Err(AltiumError::Cfb("Expected SchLib metadata".to_string())),
+        };
+
         let mut cfb = cfb::CompoundFile::create(writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
+        // Collect component entries from group metadata
+        let mut component_entries: Vec<SchLibComponentEntry> = Vec::new();
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            match &group.meta {
+                GroupMeta::SchComponent {
+                    lib_ref,
+                    description,
+                    part_count,
+                    ..
+                } => {
+                    component_entries.push(SchLibComponentEntry {
+                        lib_ref: lib_ref.clone(),
+                        description: description.clone(),
+                        part_count: *part_count,
+                    });
+                }
+                _ => {}
+            }
+        }
+
         // 1. Build section keys
         let mut section_keys = SectionKeyList::new();
-        for entry in &self.component_entries {
+        for entry in &component_entries {
             let safe = sanitize_cfb_name(&entry.lib_ref);
             section_keys.add_key(&safe, 30);
         }
 
         // 2. Write FileHeader
-        if let Some(raw) = &self.header.raw {
+        if let Some(raw) = &raw_header {
             let mut stream = cfb
                 .create_stream(format!("/{}", STREAM_FILE_HEADER))
                 .map_err(|e| {
@@ -221,18 +311,28 @@ impl SchLib {
                 })?;
             stream.write_all(raw).map_err(AltiumError::Io)?;
         } else {
-            write_file_header(&mut cfb, &self.header, &self.component_entries)?;
+            let header = SchLibHeader {
+                header_text,
+                weight,
+                minor_version,
+                unique_id,
+                raw: None,
+            };
+            write_file_header(&mut cfb, &header, &component_entries)?;
         }
 
         // 3. Write SectionKeys
         write_section_keys(&mut cfb, &section_keys)?;
 
-        // 4. Write Data stream for each component
-        for (i, group) in self.groups.iter().enumerate() {
-            if i >= self.component_entries.len() {
-                break;
-            }
-            let safe_name = sanitize_cfb_name(&self.component_entries[i].lib_ref);
+        // 4. Write Data stream for each component group
+        for (i, &group_id) in store.group_ids().iter().enumerate() {
+            let group = store.group(group_id);
+            let lib_ref = match &group.meta {
+                GroupMeta::SchComponent { lib_ref, .. } => lib_ref.clone(),
+                _ => continue,
+            };
+
+            let safe_name = sanitize_cfb_name(&lib_ref);
             let section_key = section_keys.get_key(&safe_name).to_string();
 
             let storage_path = format!("/{}", section_key);
@@ -240,31 +340,40 @@ impl SchLib {
                 AltiumError::Cfb(format!("Failed to create storage: {}", e))
             })?;
 
-            let data = build_data_stream_from_group(group)?;
+            // Build data stream from store records
+            let parent_node = store.record(group.parent_id());
+            let mut data_bytes = Vec::new();
+            write_record_to_stream(&mut data_bytes, parent_node)?;
+            for &child_id in group.child_ids() {
+                let child_node = store.record(child_id);
+                write_record_to_stream(&mut data_bytes, child_node)?;
+            }
+
             let data_path = format!("/{}/{}", section_key, STREAM_DATA);
             let mut stream = cfb.create_stream(&data_path).map_err(|e| {
                 AltiumError::Cfb(format!("Failed to create Data stream: {}", e))
             })?;
-            stream.write_all(&data).map_err(AltiumError::Io)?;
+            stream.write_all(&data_bytes).map_err(AltiumError::Io)?;
 
             // Write per-component extra streams
-            for (rel_path, data) in &group.raw_extra_streams {
+            for (rel_path, extra_data) in &group.extra_streams {
                 let full_path = format!("/{}/{}", section_key, rel_path);
                 if let Ok(mut stream) = cfb.create_stream(&full_path) {
-                    let _ = stream.write_all(data);
+                    let _ = stream.write_all(extra_data);
                 }
             }
+
+            let _ = i; // suppress unused warning
         }
 
         // 5. Write library-level extra streams
         {
             let mut created_storages: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            let mut sorted_extras: Vec<_> = self.raw_extra_streams.iter().collect();
+            let mut sorted_extras: Vec<_> = raw_extra_streams.iter().collect();
             sorted_extras.sort_by_key(|(k, _)| (*k).clone());
             for (rel_path, data) in &sorted_extras {
                 let full_path = format!("/{}", rel_path);
-                // Create parent storage if nested
                 if let Some(slash_pos) = rel_path.find('/') {
                     let parent = &rel_path[..slash_pos];
                     let parent_path = format!("/{}", parent);
@@ -291,38 +400,87 @@ impl SchLib {
 
     /// Returns the number of components in the library.
     pub fn component_count(&self) -> usize {
-        self.groups.len()
+        self.store.borrow().group_count()
     }
 
     /// Returns the library reference names of all components.
-    pub fn component_names(&self) -> Vec<&str> {
-        self.component_entries
+    pub fn component_names(&self) -> Vec<String> {
+        let store = self.store.borrow();
+        store
+            .group_ids()
             .iter()
-            .map(|e| e.lib_ref.as_str())
+            .filter_map(|&gid| {
+                let group = store.group(gid);
+                match &group.meta {
+                    GroupMeta::SchComponent { lib_ref, .. } => Some(lib_ref.clone()),
+                    _ => None,
+                }
+            })
             .collect()
     }
 
-    /// Returns the component entry metadata.
-    pub fn entries(&self) -> &[SchLibComponentEntry] {
-        &self.component_entries
-    }
-
-    /// Returns the library header.
-    pub fn header(&self) -> &SchLibHeader {
-        &self.header
-    }
-
-    /// Returns a mutable reference to the library header.
-    pub fn header_mut(&mut self) -> &mut SchLibHeader {
-        &mut self.header
-    }
-
-    /// Find a component by name (case-insensitive), returns index.
-    pub fn find_component(&self, name: &str) -> Option<usize> {
-        let name_lower = name.to_lowercase();
-        self.component_entries
+    /// Returns component entries derived from store group metadata.
+    pub fn entries(&self) -> Vec<SchLibComponentEntry> {
+        let store = self.store.borrow();
+        store
+            .group_ids()
             .iter()
-            .position(|e| e.lib_ref.to_lowercase() == name_lower)
+            .filter_map(|&gid| {
+                let group = store.group(gid);
+                match &group.meta {
+                    GroupMeta::SchComponent {
+                        lib_ref,
+                        description,
+                        part_count,
+                        ..
+                    } => Some(SchLibComponentEntry {
+                        lib_ref: lib_ref.clone(),
+                        description: description.clone(),
+                        part_count: *part_count,
+                    }),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Returns the library header derived from store metadata.
+    pub fn header(&self) -> SchLibHeader {
+        let store = self.store.borrow();
+        match &store.meta {
+            DocumentMeta::SchLib {
+                header_text,
+                weight,
+                minor_version,
+                unique_id,
+                raw_header,
+                ..
+            } => SchLibHeader {
+                header_text: header_text.clone(),
+                weight: *weight,
+                minor_version: *minor_version,
+                unique_id: unique_id.clone(),
+                raw: raw_header.clone(),
+            },
+            _ => SchLibHeader::default(),
+        }
+    }
+
+    /// Find a component by name (case-insensitive), returns its GroupId.
+    pub fn find_component(&self, name: &str) -> Option<GroupId> {
+        let name_lower = name.to_lowercase();
+        let store = self.store.borrow();
+        store.group_ids().iter().find_map(|&gid| {
+            let group = store.group(gid);
+            match &group.meta {
+                GroupMeta::SchComponent { lib_ref, .. }
+                    if lib_ref.to_lowercase() == name_lower =>
+                {
+                    Some(gid)
+                }
+                _ => None,
+            }
+        })
     }
 
     /// Build and add a new component using the builder pattern.
@@ -340,95 +498,45 @@ impl SchLib {
     /// });
     /// ```
     pub fn build_component(
-        &mut self,
+        &self,
         template: fn() -> RecordOrigin,
         build: impl FnOnce(&mut crate::v2::builders::ComponentBuilder),
     ) {
         let mut builder = crate::v2::builders::ComponentBuilder::new(template);
         build(&mut builder);
 
-        // Extract the lib_reference from the built component for the entry
-        let group = builder.build();
+        let (component, children) = builder.build();
+
+        // Extract lib_ref and description from the built component record
         let comp_record = crate::v2::records::SchComponentRecord::from_origin(
-            group.component.origin.clone(),
+            component.origin.clone(),
         );
         let lib_ref = comp_record.lib_reference().to_string();
         let description = comp_record.component_description().to_string();
 
-        self.component_entries.push(SchLibComponentEntry {
-            lib_ref,
-            description,
-            part_count: 1,
-        });
-        self.groups.push(group);
-    }
-}
+        let mut store = self.store.borrow_mut();
 
-// ---------------------------------------------------------------------------
-// ComponentQueryHandle / ComponentQueryResults
-// ---------------------------------------------------------------------------
-
-/// A mutable handle to a single matched component in a SchLib.
-///
-/// Obtained from `DocumentQuery<SchComponent>::query()`.
-pub struct ComponentQueryHandle<'a> {
-    groups: &'a mut [ComponentGroup],
-    entries: &'a [SchLibComponentEntry],
-    index: usize,
-}
-
-impl<'a> ComponentQueryHandle<'a> {
-    /// Consume this handle, construct a `SchComponentView`, pass it to the
-    /// closure, and return the closure's result.
-    pub fn with_mut<R>(
-        self,
-        f: impl FnOnce(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>) -> R,
-    ) -> R {
-        let group = &mut self.groups[self.index];
-        let entry = &self.entries[self.index];
-        let (comp, children) = group.split_borrow();
-        let view = crate::v2::views::SchComponentView::new(comp, children);
-        f(entry, view)
-    }
-
-    /// Returns the index of the matched component.
-    pub fn index(&self) -> usize {
-        self.index
-    }
-}
-
-/// Results from a multi-match component query on a SchLib.
-///
-/// Obtained from `DocumentQuery<SchComponent>::query_all()`.
-pub struct ComponentQueryResults<'a> {
-    groups: &'a mut [ComponentGroup],
-    entries: &'a [SchLibComponentEntry],
-    indices: Vec<usize>,
-}
-
-impl<'a> ComponentQueryResults<'a> {
-    /// Returns the number of matches.
-    pub fn len(&self) -> usize {
-        self.indices.len()
-    }
-
-    /// Returns true if no components matched.
-    pub fn is_empty(&self) -> bool {
-        self.indices.is_empty()
-    }
-
-    /// Consume this results set and call the closure for each match.
-    pub fn for_each_mut(
-        self,
-        mut f: impl FnMut(&SchLibComponentEntry, crate::v2::views::SchComponentView<'_>),
-    ) {
-        for idx in self.indices {
-            let group = &mut self.groups[idx];
-            let entry = &self.entries[idx];
-            let (comp, children) = group.split_borrow();
-            let view = crate::v2::views::SchComponentView::new(comp, children);
-            f(entry, view);
+        let parent_id = store.insert_record(component);
+        let mut child_ids = Vec::with_capacity(children.len());
+        for child in children {
+            let id = store.insert_record(child);
+            child_ids.push(id);
         }
+
+        let group_data = GroupData {
+            parent: parent_id,
+            children: child_ids,
+            original_indices: Vec::new(),
+            extra_streams: HashMap::new(),
+            meta: GroupMeta::SchComponent {
+                lib_ref,
+                description,
+                part_count: 1,
+                section_key: String::new(),
+            },
+        };
+
+        store.insert_group(group_data);
     }
 }
 
@@ -436,129 +544,86 @@ impl<'a> ComponentQueryResults<'a> {
 // DocumentQuery<SchComponent> for SchLib
 // ---------------------------------------------------------------------------
 
-impl crate::v2::traits::DocumentQuery<crate::v2::views::SchComponent> for SchLib {
-    type Handle<'a> = ComponentQueryHandle<'a>;
-    type Results<'a> = ComponentQueryResults<'a>;
-
+impl crate::v2::traits::DocumentQuery<crate::v2::handles::SchComponent> for SchLib {
     fn query(
-        &mut self,
+        &self,
         q: &str,
-    ) -> crate::error::Result<ComponentQueryHandle<'_>> {
+    ) -> crate::error::Result<crate::v2::handles::SchComponentHandle> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
-        // Clone component nodes for evaluation (releases borrow)
-        let eval_nodes: Vec<_> = self
-            .groups
-            .iter()
-            .map(|g| g.component.clone())
-            .collect();
+        let store = self.store.borrow();
+        let mut matches: Vec<GroupId> = Vec::new();
 
-        let matching = evaluate(&parsed, &eval_nodes);
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            let node = store.record(group.parent_id());
+            let all = std::slice::from_ref(node);
+            if !evaluate(&parsed, all).is_empty() {
+                matches.push(group_id);
+            }
+        }
 
-        match matching.len() {
+        match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => Ok(ComponentQueryHandle {
-                groups: &mut self.groups,
-                entries: &self.component_entries,
-                index: matching[0],
-            }),
+            1 => Ok(crate::v2::handles::SchComponentHandle::new(
+                self.store.clone(),
+                matches[0],
+            )),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
 
     fn query_all(
-        &mut self,
+        &self,
         q: &str,
-    ) -> crate::error::Result<ComponentQueryResults<'_>> {
+    ) -> crate::error::Result<Vec<crate::v2::handles::SchComponentHandle>> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
-        let eval_nodes: Vec<_> = self
-            .groups
-            .iter()
-            .map(|g| g.component.clone())
-            .collect();
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
 
-        let indices = evaluate(&parsed, &eval_nodes);
-
-        Ok(ComponentQueryResults {
-            groups: &mut self.groups,
-            entries: &self.component_entries,
-            indices,
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DeepChildHandle / DeepChildResults — cross-group child queries
-// ---------------------------------------------------------------------------
-
-/// A mutable handle to a single child record found via deep query across
-/// all component groups.
-pub struct DeepChildHandle<'a, T: crate::v2::traits::WrapperFamily> {
-    groups: &'a mut [ComponentGroup],
-    group_index: usize,
-    child_index: usize,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepChildHandle<'a, T> {
-    /// Consume this handle, construct a typed view, pass it to the closure.
-    pub fn with_mut<R>(self, f: impl FnOnce(T::View<'_>) -> R) -> R {
-        let node = &mut self.groups[self.group_index].children[self.child_index];
-        let view = T::make_view(node);
-        f(view)
-    }
-}
-
-/// Results from a deep query across all component groups.
-pub struct DeepChildResults<'a, T: crate::v2::traits::WrapperFamily> {
-    groups: &'a mut [ComponentGroup],
-    matches: Vec<(usize, usize)>, // (group_idx, child_idx)
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<'a, T: crate::v2::traits::LeafViewConstructor> DeepChildResults<'a, T> {
-    /// Returns the number of matches.
-    pub fn len(&self) -> usize {
-        self.matches.len()
-    }
-
-    /// Returns true if no children matched.
-    pub fn is_empty(&self) -> bool {
-        self.matches.is_empty()
-    }
-
-    /// Consume and iterate, calling the closure for each match.
-    pub fn for_each_mut(self, mut f: impl FnMut(T::View<'_>)) {
-        for (gi, ci) in self.matches {
-            let node = &mut self.groups[gi].children[ci];
-            let view = T::make_view(node);
-            f(view);
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            let node = store.record(group.parent_id());
+            let all = std::slice::from_ref(node);
+            if !evaluate(&parsed, all).is_empty() {
+                handles.push(crate::v2::handles::SchComponentHandle::new(
+                    self.store.clone(),
+                    group_id,
+                ));
+            }
         }
+
+        Ok(handles)
     }
 }
 
 // ---------------------------------------------------------------------------
-// DocumentQuery<T: LeafViewConstructor> for SchLib (blanket deep query)
+// Deep child queries for SchLib
 // ---------------------------------------------------------------------------
 
-impl<T: crate::v2::traits::LeafViewConstructor> crate::v2::traits::DocumentQuery<T> for SchLib {
-    type Handle<'a> = DeepChildHandle<'a, T>;
-    type Results<'a> = DeepChildResults<'a, T>;
-
-    fn query(&mut self, q: &str) -> crate::error::Result<DeepChildHandle<'_, T>> {
+impl SchLib {
+    /// Query a single child record of type `T` across all component groups.
+    pub fn query_child<T: HandleFamily>(
+        &self,
+        q: &str,
+    ) -> crate::error::Result<T::Handle> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
+        let store = self.store.borrow();
         let mut matches = Vec::new();
-        for (gi, group) in self.groups.iter().enumerate() {
-            for (ci, child) in group.children.iter().enumerate() {
-                if child.key == T::record_id() {
-                    let all = std::slice::from_ref(child);
+
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            for &child_id in group.child_ids() {
+                let node = store.record(child_id);
+                if node.key == T::record_id() {
+                    let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
-                        matches.push((gi, ci));
+                        matches.push(child_id);
                     }
                 }
             }
@@ -566,40 +631,36 @@ impl<T: crate::v2::traits::LeafViewConstructor> crate::v2::traits::DocumentQuery
 
         match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => {
-                let (gi, ci) = matches[0];
-                Ok(DeepChildHandle {
-                    groups: &mut self.groups,
-                    group_index: gi,
-                    child_index: ci,
-                    _marker: std::marker::PhantomData,
-                })
-            }
+            1 => Ok(T::make_handle(self.store.clone(), matches[0])),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
 
-    fn query_all(&mut self, q: &str) -> crate::error::Result<DeepChildResults<'_, T>> {
+    /// Query all child records of type `T` across all component groups.
+    pub fn query_all_children<T: HandleFamily>(
+        &self,
+        q: &str,
+    ) -> crate::error::Result<Vec<T::Handle>> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
-        let mut matches = Vec::new();
-        for (gi, group) in self.groups.iter().enumerate() {
-            for (ci, child) in group.children.iter().enumerate() {
-                if child.key == T::record_id() {
-                    let all = std::slice::from_ref(child);
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
+
+        for &group_id in store.group_ids() {
+            let group = store.group(group_id);
+            for &child_id in group.child_ids() {
+                let node = store.record(child_id);
+                if node.key == T::record_id() {
+                    let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
-                        matches.push((gi, ci));
+                        handles.push(T::make_handle(self.store.clone(), child_id));
                     }
                 }
             }
         }
 
-        Ok(DeepChildResults {
-            groups: &mut self.groups,
-            matches,
-            _marker: std::marker::PhantomData,
-        })
+        Ok(handles)
     }
 }
 
@@ -711,8 +772,6 @@ fn write_file_header<F: Read + Write + Seek>(
     params.add_int("Weight", header.weight);
     params.add_int("MinorVersion", header.minor_version);
     params.add("UniqueID", &header.unique_id);
-    // Use add() with string conversion since add_int skips zero values,
-    // and CompCount=0 is a valid state.
     params.add("CompCount", &entries.len().to_string());
 
     for (i, entry) in entries.iter().enumerate() {
@@ -753,27 +812,25 @@ fn write_section_keys<F: Read + Write + Seek>(
     Ok(())
 }
 
-/// Parse a data stream into a ComponentGroup.
+/// Parse a data stream into `(parent_node, children, original_indices)`.
 ///
 /// The first record is the component (RECORD=1); remaining records are children.
-fn parse_data_stream_to_group(data: &[u8]) -> Result<ComponentGroup> {
+fn parse_data_stream_to_group(
+    data: &[u8],
+) -> Result<(RecordNode, Vec<RecordNode>, Vec<usize>)> {
     let records = parse_data_stream(data)?;
 
     if records.is_empty() {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"));
-        return Ok(ComponentGroup::new(
-            RecordNode::new(1, origin),
-            Vec::new(),
-            Vec::new(),
-        ));
+        return Ok((RecordNode::new(1, origin), Vec::new(), Vec::new()));
     }
 
     let mut iter = records.into_iter();
-    let component = iter.next().unwrap();
+    let parent = iter.next().unwrap();
     let children: Vec<RecordNode> = iter.collect();
     let original_indices: Vec<usize> = (1..=children.len()).collect();
 
-    Ok(ComponentGroup::new(component, children, original_indices))
+    Ok((parent, children, original_indices))
 }
 
 /// Parse a data stream into individual RecordNodes.
@@ -807,7 +864,6 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
         }
 
         if is_binary {
-            // Binary record
             let record_type = if record_data.len() >= 4 {
                 u32::from_le_bytes([
                     record_data[0],
@@ -828,7 +884,6 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
             node.original_snapshot = full_raw;
             records.push(node);
         } else {
-            // Text (param) record
             let param_str = String::from_utf8_lossy(&record_data).to_string();
             let params = ParameterCollection::from_string(&param_str);
             let record_id = params
@@ -843,28 +898,12 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
 
             let origin = RecordOrigin::Param(ParamOrigin::new(&param_str));
             let mut node = RecordNode::new(record_id, origin);
-            // Store the raw record bytes (without length header) as snapshot
             node.original_snapshot = record_data;
             records.push(node);
         }
     }
 
     Ok(records)
-}
-
-/// Build a data stream from a ComponentGroup.
-fn build_data_stream_from_group(group: &ComponentGroup) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
-
-    // Write component record
-    write_record_to_stream(&mut output, &group.component)?;
-
-    // Write child records
-    for child in &group.children {
-        write_record_to_stream(&mut output, child)?;
-    }
-
-    Ok(output)
 }
 
 /// Write a single RecordNode to a data stream.
@@ -913,53 +952,107 @@ pub(super) fn write_record_to_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn make_lib_with_components(names: &[&str]) -> SchLib {
+        let store = DocumentStore::new(DocumentMeta::SchLib {
+            header_text: "Test".to_string(),
+            weight: 0,
+            minor_version: 0,
+            unique_id: String::new(),
+            raw_header: None,
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        });
+        let lib = SchLib {
+            store: Rc::new(RefCell::new(store)),
+        };
+
+        for name in names {
+            let param_str =
+                format!("|RECORD=1|DESIGNATOR={}|LIBREFERENCE={}|", name, name);
+            let origin = RecordOrigin::Param(ParamOrigin::new(&param_str));
+            let parent = RecordNode::new(1, origin);
+
+            let mut s = lib.store.borrow_mut();
+            let parent_id = s.insert_record(parent);
+            s.insert_group(GroupData {
+                parent: parent_id,
+                children: Vec::new(),
+                original_indices: Vec::new(),
+                extra_streams: HashMap::new(),
+                meta: GroupMeta::SchComponent {
+                    lib_ref: name.to_string(),
+                    description: String::new(),
+                    part_count: 1,
+                    section_key: String::new(),
+                },
+            });
+        }
+
+        lib
+    }
 
     #[test]
     fn data_stream_roundtrip() {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=1|LIBREFERENCE=LM358|PARTCOUNT=2|",
         ));
-        let component = RecordNode::new(1, origin);
+        let parent = RecordNode::new(1, origin);
         let pin_origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|OWNERINDEX=0|NAME=VCC|",
         ));
         let pin = RecordNode::new(2, pin_origin);
-        let group = ComponentGroup::new(component, vec![pin], vec![1]);
 
-        let data = build_data_stream_from_group(&group).unwrap();
-        let parsed = parse_data_stream_to_group(&data).unwrap();
+        let mut data = Vec::new();
+        write_record_to_stream(&mut data, &parent).unwrap();
+        write_record_to_stream(&mut data, &pin).unwrap();
 
-        assert_eq!(parsed.component.key, 1);
-        assert_eq!(parsed.children.len(), 1);
-        assert_eq!(parsed.children[0].key, 2);
+        let (parsed_parent, children, _) = parse_data_stream_to_group(&data).unwrap();
+
+        assert_eq!(parsed_parent.key, 1);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].key, 2);
     }
 
     #[test]
     fn cfb_roundtrip() {
-        let mut lib = SchLib::default();
-        lib.header = SchLibHeader {
+        let store = DocumentStore::new(DocumentMeta::SchLib {
             header_text: "Test".to_string(),
             weight: 3,
             minor_version: 9,
             unique_id: "TEST".to_string(),
-            raw: None,
-        };
-        lib.component_entries.push(SchLibComponentEntry {
-            lib_ref: "R1".to_string(),
-            description: "Resistor".to_string(),
-            part_count: 1,
+            raw_header: None,
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
         });
+        let lib = SchLib {
+            store: Rc::new(RefCell::new(store)),
+        };
+
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=1|LIBREFERENCE=R1|PARTCOUNT=1|",
         ));
         let pin_origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|OWNERINDEX=0|NAME=1|DESIGNATOR=1|",
         ));
-        lib.groups.push(ComponentGroup::new(
-            RecordNode::new(1, origin),
-            vec![RecordNode::new(2, pin_origin)],
-            vec![1],
-        ));
+        {
+            let mut s = lib.store.borrow_mut();
+            let parent_id = s.insert_record(RecordNode::new(1, origin));
+            let child_id = s.insert_record(RecordNode::new(2, pin_origin));
+            s.insert_group(GroupData {
+                parent: parent_id,
+                children: vec![child_id],
+                original_indices: vec![1],
+                extra_streams: HashMap::new(),
+                meta: GroupMeta::SchComponent {
+                    lib_ref: "R1".to_string(),
+                    description: "Resistor".to_string(),
+                    part_count: 1,
+                    section_key: String::new(),
+                },
+            });
+        }
 
         let buf = Cursor::new(Vec::new());
         lib.save(buf).unwrap();
@@ -967,9 +1060,15 @@ mod tests {
 
     #[test]
     fn empty_data_stream_returns_default_group() {
-        let group = parse_data_stream_to_group(&[]).unwrap();
-        assert_eq!(group.component.key, 1);
-        assert!(group.children.is_empty());
+        let (parent, children, _) = parse_data_stream_to_group(&[]).unwrap();
+        assert_eq!(parent.key, 1);
+        assert!(children.is_empty());
+    }
+
+    #[test]
+    fn sanitize_cfb_name_replaces_slashes() {
+        assert_eq!(sanitize_cfb_name("A/B/C"), "A_B_C");
+        assert_eq!(sanitize_cfb_name("simple"), "simple");
     }
 
     // -----------------------------------------------------------------------
@@ -979,110 +1078,45 @@ mod tests {
     #[test]
     fn schlib_query_component() {
         use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchComponent;
 
-        let mut lib = SchLib::default();
-        for name in &["R1", "R2", "C1"] {
-            lib.component_entries.push(SchLibComponentEntry {
-                lib_ref: name.to_string(),
-                description: String::new(),
-                part_count: 1,
-            });
-            lib.groups.push(ComponentGroup::new(
-                RecordNode::new(
-                    1,
-                    RecordOrigin::Param(ParamOrigin::new(&format!(
-                        "|RECORD=1|DESIGNATOR={}|LIBREFERENCE={}|",
-                        name, name
-                    ))),
-                ),
-                vec![],
-                vec![],
-            ));
-        }
+        let lib = make_lib_with_components(&["R1", "R2", "C1"]);
 
-        let name = DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "C1")
-            .unwrap()
-            .with_mut(|entry, _view| entry.lib_ref().to_string());
-        assert_eq!(name, "C1");
+        let handle = DocumentQuery::<SchComponent>::query(&lib, "C1").unwrap();
+        let lib_ref = handle.lib_ref();
+        assert_eq!(lib_ref, "C1");
     }
 
     #[test]
     fn schlib_query_all_components() {
         use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchComponent;
 
-        let mut lib = SchLib::default();
-        for name in &["R1", "R2", "R3"] {
-            lib.component_entries.push(SchLibComponentEntry {
-                lib_ref: name.to_string(),
-                description: String::new(),
-                part_count: 1,
-            });
-            lib.groups.push(ComponentGroup::new(
-                RecordNode::new(
-                    1,
-                    RecordOrigin::Param(ParamOrigin::new(&format!(
-                        "|RECORD=1|DESIGNATOR={}|LIBREFERENCE={}|",
-                        name, name
-                    ))),
-                ),
-                vec![],
-                vec![],
-            ));
-        }
+        let lib = make_lib_with_components(&["R1", "R2", "R3"]);
 
-        let results = DocumentQuery::<crate::v2::views::SchComponent>::query_all(&mut lib, "R*")
-            .unwrap();
+        let results = DocumentQuery::<SchComponent>::query_all(&lib, "R*").unwrap();
         assert_eq!(results.len(), 3);
     }
 
     #[test]
     fn schlib_query_no_match() {
         use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchComponent;
 
-        let mut lib = SchLib::default();
-        lib.component_entries.push(SchLibComponentEntry {
-            lib_ref: "R1".to_string(),
-            description: String::new(),
-            part_count: 1,
-        });
-        lib.groups.push(ComponentGroup::new(
-            RecordNode::new(
-                1,
-                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=R1|")),
-            ),
-            vec![],
-            vec![],
-        ));
+        let lib = make_lib_with_components(&["R1"]);
 
-        let result = DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "C1");
+        let result = DocumentQuery::<SchComponent>::query(&lib, "C1");
         assert!(matches!(result, Err(crate::error::AltiumError::NoMatch(_))));
     }
 
     #[test]
     fn schlib_query_ambiguous() {
         use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchComponent;
 
-        let mut lib = SchLib::default();
-        for name in &["R1", "R2"] {
-            lib.component_entries.push(SchLibComponentEntry {
-                lib_ref: name.to_string(),
-                description: String::new(),
-                part_count: 1,
-            });
-            lib.groups.push(ComponentGroup::new(
-                RecordNode::new(
-                    1,
-                    RecordOrigin::Param(ParamOrigin::new(&format!(
-                        "|RECORD=1|DESIGNATOR={}|",
-                        name
-                    ))),
-                ),
-                vec![],
-                vec![],
-            ));
-        }
+        let lib = make_lib_with_components(&["R1", "R2"]);
 
-        let result = DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "R*");
+        let result = DocumentQuery::<SchComponent>::query(&lib, "R*");
         assert!(matches!(
             result,
             Err(crate::error::AltiumError::AmbiguousMatch(2, _))
@@ -1090,114 +1124,122 @@ mod tests {
     }
 
     #[test]
-    fn schlib_query_with_mut_modifies() {
+    fn schlib_query_modifies_via_handle() {
         use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchComponent;
         use crate::v2::newtypes::LibReference;
 
-        let mut lib = SchLib::default();
-        lib.component_entries.push(SchLibComponentEntry {
-            lib_ref: "R1".to_string(),
-            description: String::new(),
-            part_count: 1,
-        });
-        lib.groups.push(ComponentGroup::new(
-            RecordNode::new(
-                1,
-                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=R1|LIBREFERENCE=R1|")),
-            ),
-            vec![],
-            vec![],
-        ));
+        let lib = make_lib_with_components(&["R1"]);
 
-        DocumentQuery::<crate::v2::views::SchComponent>::query(&mut lib, "R1")
-            .unwrap()
-            .with_mut(|_entry, mut view| {
-                view.set_lib_reference(LibReference::from("R_MODIFIED"));
-            });
+        let handle = DocumentQuery::<SchComponent>::query(&lib, "R1").unwrap();
+        let mut rec = handle.read();
+        rec.set_lib_reference(LibReference::from("R_MODIFIED"));
+        handle.write(rec);
 
-        assert!(lib.groups[0].component.is_dirty());
+        // Verify the record is now dirty
+        let store = lib.store.borrow();
+        let group_id = store.group_ids()[0];
+        let group = store.group(group_id);
+        let node = store.record(group.parent_id());
+        assert!(node.is_dirty());
     }
 
     // -----------------------------------------------------------------------
     // Deep queries (SchLib + SchPin)
     // -----------------------------------------------------------------------
 
+    fn make_lib_with_pins(comp_names: &[&str], pin_count: usize) -> SchLib {
+        let store = DocumentStore::new(DocumentMeta::SchLib {
+            header_text: String::new(),
+            weight: 0,
+            minor_version: 0,
+            unique_id: String::new(),
+            raw_header: None,
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        });
+        let lib = SchLib {
+            store: Rc::new(RefCell::new(store)),
+        };
+
+        for comp_name in comp_names {
+            let comp_str = format!("|RECORD=1|DESIGNATOR={}|", comp_name);
+            let comp_origin = RecordOrigin::Param(ParamOrigin::new(&comp_str));
+            let comp_node = RecordNode::new(1, comp_origin);
+
+            let mut s = lib.store.borrow_mut();
+            let parent_id = s.insert_record(comp_node);
+
+            let mut child_ids = Vec::new();
+            for i in 0..pin_count {
+                let pin_str = format!(
+                    "|RECORD=2|Name=PIN{}|Designator={}|",
+                    i + 1,
+                    i + 1
+                );
+                let pin_origin = RecordOrigin::Param(ParamOrigin::new(&pin_str));
+                let pin_node = RecordNode::new(2, pin_origin);
+                let id = s.insert_record(pin_node);
+                child_ids.push(id);
+            }
+
+            let original_indices: Vec<usize> = (1..=pin_count).collect();
+            s.insert_group(GroupData {
+                parent: parent_id,
+                children: child_ids,
+                original_indices,
+                extra_streams: HashMap::new(),
+                meta: GroupMeta::SchComponent {
+                    lib_ref: comp_name.to_string(),
+                    description: String::new(),
+                    part_count: 1,
+                    section_key: String::new(),
+                },
+            });
+        }
+
+        lib
+    }
+
     #[test]
     fn schlib_deep_query_pin() {
-        use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchPin;
 
-        let mut lib = SchLib::default();
-        // Component with 2 pins
-        lib.component_entries.push(SchLibComponentEntry {
-            lib_ref: "U1".to_string(),
-            description: String::new(),
-            part_count: 1,
-        });
-        lib.groups.push(ComponentGroup::new(
-            RecordNode::new(
-                1,
-                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=U1|")),
-            ),
-            vec![
-                RecordNode::new(
-                    2,
-                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=VCC|Designator=1|")),
-                ),
-                RecordNode::new(
-                    2,
-                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=GND|Designator=2|")),
-                ),
-            ],
-            vec![1, 2],
-        ));
+        let lib = make_lib_with_pins(&["U1"], 2);
 
-        let name = DocumentQuery::<crate::v2::views::SchPin>::query(&mut lib, "pin[designator=1]")
-            .unwrap()
-            .with_mut(|v| v.name().to_string());
-        assert_eq!(name, "VCC");
+        let handle = lib.query_child::<SchPin>("pin[designator=1]").unwrap();
+        let rec = handle.read();
+        assert_eq!(&*rec.name(), "PIN1");
     }
 
     #[test]
     fn schlib_deep_query_all_pins() {
-        use crate::v2::traits::DocumentQuery;
+        use crate::v2::handles::SchPin;
 
-        let mut lib = SchLib::default();
-        for comp_name in &["U1", "U2"] {
-            lib.component_entries.push(SchLibComponentEntry {
-                lib_ref: comp_name.to_string(),
-                description: String::new(),
-                part_count: 1,
-            });
-            lib.groups.push(ComponentGroup::new(
-                RecordNode::new(
-                    1,
-                    RecordOrigin::Param(ParamOrigin::new(&format!(
-                        "|RECORD=1|DESIGNATOR={}|",
-                        comp_name
-                    ))),
-                ),
-                vec![
-                    RecordNode::new(
-                        2,
-                        RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=A|Designator=1|")),
-                    ),
-                    RecordNode::new(
-                        2,
-                        RecordOrigin::Param(ParamOrigin::new("|RECORD=2|Name=B|Designator=2|")),
-                    ),
-                ],
-                vec![1, 2],
-            ));
-        }
+        let lib = make_lib_with_pins(&["U1", "U2"], 2);
 
-        let results =
-            DocumentQuery::<crate::v2::views::SchPin>::query_all(&mut lib, "pin").unwrap();
-        assert_eq!(results.len(), 4); // 2 pins per component, 2 components
+        let results = lib.query_all_children::<SchPin>("pin").unwrap();
+        assert_eq!(results.len(), 4);
     }
 
     #[test]
-    fn sanitize_cfb_name_replaces_slashes() {
-        assert_eq!(sanitize_cfb_name("A/B/C"), "A_B_C");
-        assert_eq!(sanitize_cfb_name("simple"), "simple");
+    fn component_count() {
+        let lib = make_lib_with_components(&["A", "B", "C"]);
+        assert_eq!(lib.component_count(), 3);
+    }
+
+    #[test]
+    fn component_names() {
+        let lib = make_lib_with_components(&["R1", "C1"]);
+        let names = lib.component_names();
+        assert!(names.contains(&"R1".to_string()));
+        assert!(names.contains(&"C1".to_string()));
+    }
+
+    #[test]
+    fn find_component_case_insensitive() {
+        let lib = make_lib_with_components(&["MyComp"]);
+        assert!(lib.find_component("mycomp").is_some());
+        assert!(lib.find_component("MISSING").is_none());
     }
 }
