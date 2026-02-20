@@ -108,7 +108,7 @@ pub struct SchComponentRecord {
     #[altium(key = "DesignatorLocked")]
     designator_locked: bool,
 
-    #[altium(key = "PartIDLocked")]
+    #[altium(key = "PartIDLocked", emit = "with_default")]
     part_id_locked: bool,
 
     #[altium(key = "PinsMoveable")]
@@ -198,5 +198,19 @@ mod tests {
         assert_eq!(rec.lib_reference(), LibReference::from("Capacitor"));
         rec.set_part_count(2);
         assert_eq!(rec.part_count(), 2);
+    }
+
+    #[test]
+    fn emit_policy_with_default_and_sparse() {
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"));
+        let mut rec = SchComponentRecord::from_origin(origin);
+
+        // `part_id_locked` is emitted with explicit defaults.
+        rec.set_part_id_locked(false);
+        assert_eq!(rec.try_part_id_locked(), Some(false));
+
+        // `designator_locked` remains sparse by default.
+        rec.set_designator_locked(false);
+        assert_eq!(rec.try_designator_locked(), None);
     }
 }

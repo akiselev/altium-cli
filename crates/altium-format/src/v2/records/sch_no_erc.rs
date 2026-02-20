@@ -35,9 +35,9 @@ pub struct SchNoERCRecord {
     /// NoERC symbol type (0=CrossThin, 1=CrossThick, 2=CrossSmall, 3=CheckBox, 4=Triangle).
     #[altium(key = "SYMBOL")]
     symbol: i32,
-    #[altium(key = "ISACTIVE")]
+    #[altium(key = "ISACTIVE", emit = "with_default")]
     is_active: bool,
-    #[altium(key = "SUPPRESSALL")]
+    #[altium(key = "SUPPRESSALL", emit = "with_default")]
     suppress_all: bool,
     #[altium(key = "UNIQUEID")]
     unique_id: String,
@@ -68,5 +68,15 @@ mod tests {
         assert_eq!(rec.symbol(), 1);
         rec.set_is_active(false);
         assert!(!rec.is_active());
+    }
+
+    #[test]
+    fn emit_policy_with_default_fields() {
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=22|"));
+        let mut rec = SchNoERCRecord::from_origin(origin);
+        rec.set_is_active(false);
+        rec.set_suppress_all(false);
+        assert_eq!(rec.try_is_active(), Some(false));
+        assert_eq!(rec.try_suppress_all(), Some(false));
     }
 }

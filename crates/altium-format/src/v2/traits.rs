@@ -22,6 +22,17 @@ use crate::v2::parameters::ParameterCollection;
 // ParamCodec
 // ---------------------------------------------------------------------------
 
+/// Controls whether a param field is emitted sparsely or with explicit default values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamEmitPolicy {
+    /// AD-style sparse emission: omit false/zero/empty values.
+    Sparse,
+    /// Always emit value, even if it is a default (e.g. false/zero/empty).
+    WithDefault,
+    /// Never emit this key.
+    Never,
+}
+
 /// Trait for types that can read/write themselves from/to parameter collections.
 ///
 /// The `key` argument is the base param key name. Types that need additional
@@ -33,7 +44,22 @@ pub trait ParamCodec: Sized {
     fn read(params: &ParameterCollection, key: &str) -> Option<Self>;
 
     /// Write this value into `params` under the given `key`.
-    fn write(&self, params: &mut ParameterCollection, key: &str);
+    fn write(&self, params: &mut ParameterCollection, key: &str) {
+        self.write_with_policy(params, key, ParamEmitPolicy::Sparse);
+    }
+
+    /// Write this value using the given emit policy.
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse | ParamEmitPolicy::WithDefault => self.write(params, key),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +111,28 @@ macro_rules! impl_altium_enum_codec {
                 use $crate::v2::traits::AltiumEnum;
                 params.add_int(key, self.to_int());
             }
+
+            fn write_with_policy(
+                &self,
+                params: &mut $crate::v2::parameters::ParameterCollection,
+                key: &str,
+                policy: $crate::v2::traits::ParamEmitPolicy,
+            ) {
+                use $crate::v2::traits::AltiumEnum;
+                match policy {
+                    $crate::v2::traits::ParamEmitPolicy::Never => params.remove(key),
+                    $crate::v2::traits::ParamEmitPolicy::Sparse => {
+                        if self.to_int() == 0 {
+                            params.remove(key);
+                        } else {
+                            params.add_int(key, self.to_int());
+                        }
+                    }
+                    $crate::v2::traits::ParamEmitPolicy::WithDefault => {
+                        params.add(key, &self.to_int().to_string());
+                    }
+                }
+            }
         }
     };
 }
@@ -100,8 +148,23 @@ impl ParamCodec for String {
         params.get(key).map(|v| v.as_str().to_string())
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        params.add(key, self);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if self.is_empty() {
+                    params.remove(key);
+                } else {
+                    params.add(key, self);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, self),
+        }
     }
 }
 
@@ -112,8 +175,23 @@ impl ParamCodec for i32 {
         params.get(key).map(|v| v.as_int_or(0))
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        params.add_int(key, *self);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if *self == 0 {
+                    params.remove(key);
+                } else {
+                    params.add_int(key, *self);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, &self.to_string()),
+        }
     }
 }
 
@@ -124,8 +202,24 @@ impl ParamCodec for i16 {
         params.get(key).map(|v| v.as_int_or(0) as i16)
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        params.add_int(key, *self as i32);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        let v = *self as i32;
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if v == 0 {
+                    params.remove(key);
+                } else {
+                    params.add_int(key, v);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, &v.to_string()),
+        }
     }
 }
 
@@ -136,8 +230,24 @@ impl ParamCodec for u8 {
         params.get(key).map(|v| v.as_int_or(0) as u8)
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        params.add_int(key, *self as i32);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        let v = *self as i32;
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if v == 0 {
+                    params.remove(key);
+                } else {
+                    params.add_int(key, v);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, &v.to_string()),
+        }
     }
 }
 
@@ -148,8 +258,24 @@ impl ParamCodec for u32 {
         params.get(key).map(|v| v.as_int_or(0) as u32)
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        params.add_int(key, *self as i32);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        let v = *self as i32;
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if v == 0 {
+                    params.remove(key);
+                } else {
+                    params.add_int(key, v);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, &v.to_string()),
+        }
     }
 }
 
@@ -160,11 +286,23 @@ impl ParamCodec for bool {
         params.get(key).map(|v| v.as_bool_or(false))
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        // Write explicitly as "T" or "F" string so that false values are
-        // preserved in the parameter collection. Note: ParameterCollection::add_bool
-        // only writes when true, which would lose explicit false values.
-        params.add(key, if *self { "T" } else { "F" });
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if *self {
+                    params.add(key, "T");
+                } else {
+                    params.remove(key);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, if *self { "T" } else { "F" }),
+        }
     }
 }
 
@@ -175,10 +313,23 @@ impl ParamCodec for f64 {
         params.get(key).map(|v| v.as_double_or(0.0))
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        // Use enough decimal places to preserve precision.
-        // Altium typically uses up to 6 decimal places.
-        params.add_double(key, *self, 6);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if *self == 0.0 {
+                    params.remove(key);
+                } else {
+                    params.add_double(key, *self, 6);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, &format!("{:.6}", *self)),
+        }
     }
 }
 
@@ -193,11 +344,16 @@ impl<T: ParamCodec> ParamCodec for Option<T> {
         Some(T::read(params, key))
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        if let Some(inner) = self {
-            inner.write(params, key);
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        match self {
+            Some(inner) => inner.write_with_policy(params, key, policy),
+            None => params.remove(key),
         }
-        // If None, don't write anything — the key stays absent.
     }
 }
 
@@ -215,11 +371,36 @@ impl ParamCodec for SchCoord {
         Some(SchCoord::from_dxp_parts(int_val, frac_val))
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
         let (int_val, frac_val) = self.to_dxp_parts();
-        params.add_int(key, int_val);
-        if frac_val != 0 {
-            params.add_int(&format!("{}_FRAC", key), frac_val);
+        let frac_key = format!("{}_FRAC", key);
+        match policy {
+            ParamEmitPolicy::Never => {
+                params.remove(key);
+                params.remove(&frac_key);
+            }
+            ParamEmitPolicy::Sparse => {
+                if int_val == 0 && frac_val == 0 {
+                    params.remove(key);
+                    params.remove(&frac_key);
+                } else {
+                    params.add_int(key, int_val);
+                    if frac_val != 0 {
+                        params.add_int(&frac_key, frac_val);
+                    } else {
+                        params.remove(&frac_key);
+                    }
+                }
+            }
+            ParamEmitPolicy::WithDefault => {
+                params.add(key, &int_val.to_string());
+                params.add(&frac_key, &frac_val.to_string());
+            }
         }
     }
 }
@@ -229,8 +410,24 @@ impl ParamCodec for PcbCoord {
         params.get(key).map(|v| PcbCoord::from_raw(v.as_int_or(0)))
     }
 
-    fn write(&self, params: &mut ParameterCollection, key: &str) {
-        params.add_int(key, self.to_raw());
+    fn write_with_policy(
+        &self,
+        params: &mut ParameterCollection,
+        key: &str,
+        policy: ParamEmitPolicy,
+    ) {
+        let raw = self.to_raw();
+        match policy {
+            ParamEmitPolicy::Never => params.remove(key),
+            ParamEmitPolicy::Sparse => {
+                if raw == 0 {
+                    params.remove(key);
+                } else {
+                    params.add_int(key, raw);
+                }
+            }
+            ParamEmitPolicy::WithDefault => params.add(key, &raw.to_string()),
+        }
     }
 }
 
@@ -443,11 +640,19 @@ mod tests {
         // Write false
         false.write(&mut params, "LOCKED");
         let read_back = bool::read(&params, "LOCKED");
-        assert_eq!(read_back, Some(false));
+        assert_eq!(read_back, None);
 
         // Missing key returns None
         let missing = bool::read(&params, "NONEXISTENT");
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn param_codec_bool_with_default() {
+        let mut params = ParameterCollection::new();
+        false.write_with_policy(&mut params, "LOCKED", ParamEmitPolicy::WithDefault);
+        let read_back = bool::read(&params, "LOCKED");
+        assert_eq!(read_back, Some(false));
     }
 
     #[test]

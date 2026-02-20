@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::v2::parameters::ParameterCollection;
-use crate::v2::traits::ParamCodec;
+use crate::v2::traits::{ParamCodec, ParamEmitPolicy};
 
 // ---------------------------------------------------------------------------
 // Macro: impl_string_newtype!
@@ -49,6 +49,25 @@ macro_rules! impl_string_newtype {
 
             fn write(&self, params: &mut ParameterCollection, key: &str) {
                 params.add(key, &self.0);
+            }
+
+            fn write_with_policy(
+                &self,
+                params: &mut ParameterCollection,
+                key: &str,
+                policy: ParamEmitPolicy,
+            ) {
+                match policy {
+                    ParamEmitPolicy::Never => params.remove(key),
+                    ParamEmitPolicy::Sparse => {
+                        if self.0.is_empty() {
+                            params.remove(key);
+                        } else {
+                            params.add(key, &self.0);
+                        }
+                    }
+                    ParamEmitPolicy::WithDefault => params.add(key, &self.0),
+                }
             }
         }
     };

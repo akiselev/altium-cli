@@ -26,7 +26,7 @@ pub struct SchPowerRecord {
     /// Power object style (0=Circle, 1=Arrow, ..., 10=GOSTBar).
     #[altium(key = "STYLE")]
     style: i32,
-    #[altium(key = "SHOWNETNAME")]
+    #[altium(key = "SHOWNETNAME", emit = "with_default")]
     show_net_name: bool,
     #[altium(key = "LOCATION.X")]
     location_x: SchCoord,
@@ -74,5 +74,19 @@ mod tests {
         assert_eq!(rec.text(), "GND");
         rec.set_style(1);
         assert_eq!(rec.style(), 1);
+    }
+
+    #[test]
+    fn emit_policy_with_default_and_sparse() {
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=17|"));
+        let mut rec = SchPowerRecord::from_origin(origin);
+
+        // `show_net_name` is marked emit="with_default": false is explicitly emitted.
+        rec.set_show_net_name(false);
+        assert_eq!(rec.try_show_net_name(), Some(false));
+
+        // `graphically_locked` uses sparse default: false is omitted.
+        rec.set_graphically_locked(false);
+        assert_eq!(rec.try_graphically_locked(), None);
     }
 }

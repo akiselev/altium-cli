@@ -191,6 +191,7 @@ pub fn altium_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Field-level Attributes
 ///
 /// - `#[altium(key = "KEY")]` — parameter key for param codec
+/// - `#[altium(key = "KEY", emit = "sparse"|"with_default"|"never")]` — param emission policy
 /// - `#[altium(codec_fn = "name")]` — custom codec escape hatch
 /// - `#[altium(header)]` — marks PcbCommonHeader in binary records
 /// - `#[altium(trailing)]` — marks adaptive trailing fields

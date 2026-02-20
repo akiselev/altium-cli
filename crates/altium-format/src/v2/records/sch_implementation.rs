@@ -139,9 +139,15 @@ impl SchImplementationRecord {
 
         for (i, link) in links.iter().enumerate() {
             let idx = i.to_string();
-            params.add(&format!("ModelDatafile{}", idx), &link.location);
-            params.add(&format!("ModelDatafileEntity{}", idx), &link.entity);
-            params.add(&format!("ModelDatafileKind{}", idx), &link.kind);
+            if !link.location.is_empty() {
+                params.add(&format!("ModelDatafile{}", idx), &link.location);
+            }
+            if !link.entity.is_empty() {
+                params.add(&format!("ModelDatafileEntity{}", idx), &link.entity);
+            }
+            if !link.kind.is_empty() {
+                params.add(&format!("ModelDatafileKind{}", idx), &link.kind);
+            }
         }
     }
 }

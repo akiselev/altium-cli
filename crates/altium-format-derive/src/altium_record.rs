@@ -178,6 +178,15 @@ struct FieldAttrs {
     trailing: bool,
     /// `#[altium(skip)]`
     skip: bool,
+    /// `#[altium(emit = "sparse"|"with_default"|"never")]`
+    emit_policy: Option<EmitPolicyAttr>,
+}
+
+#[derive(Clone, Copy)]
+enum EmitPolicyAttr {
+    Sparse,
+    WithDefault,
+    Never,
 }
 
 impl FieldAttrs {
@@ -187,6 +196,7 @@ impl FieldAttrs {
         let mut header = false;
         let mut trailing = false;
         let mut skip = false;
+        let mut emit_policy = None;
 
         for attr in attrs {
             if !attr.path().is_ident("altium") {
@@ -218,6 +228,29 @@ impl FieldAttrs {
                     trailing = true;
                 } else if meta.path.is_ident("skip") {
                     skip = true;
+                } else if meta.path.is_ident("emit") {
+                    let value = meta.value()?;
+                    let lit: Lit = value.parse()?;
+                    if let Lit::Str(s) = lit {
+                        emit_policy = Some(match s.value().as_str() {
+                            "sparse" => EmitPolicyAttr::Sparse,
+                            "with_default" => EmitPolicyAttr::WithDefault,
+                            "never" => EmitPolicyAttr::Never,
+                            other => {
+                                return Err(Error::new(
+                                    s.span(),
+                                    format!(
+                                        "unknown emit policy {other:?}, expected \"sparse\", \"with_default\", or \"never\""
+                                    ),
+                                ));
+                            }
+                        });
+                    } else {
+                        return Err(Error::new(
+                            lit.span(),
+                            "expected string literal for `emit`",
+                        ));
+                    }
                 } else {
                     return Err(Error::new(
                         meta.path.span(),
@@ -240,6 +273,7 @@ impl FieldAttrs {
             header,
             trailing,
             skip,
+            emit_policy,
         })
     }
 }
@@ -465,6 +499,12 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         .iter()
         .map(|f| {
             let attrs = FieldAttrs::parse_from(&f.attrs)?;
+            if attrs.emit_policy.is_some() && attrs.key.is_none() {
+                return Err(Error::new(
+                    f.span(),
+                    "`emit` is only valid on `#[altium(key = \"...\")]` fields",
+                ));
+            }
             Ok(FieldInfo {
                 name: f.ident.clone().unwrap(),
                 ty: f.ty.clone(),
@@ -578,24 +618,37 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
         } else if let Some(ref key) = field.attrs.key {
             // Standard param key-based accessor
             let use_into = is_string_newtype(field_ty);
+            let emit_policy = match field.attrs.emit_policy {
+                Some(EmitPolicyAttr::Sparse) => {
+                    quote!(crate::v2::traits::ParamEmitPolicy::Sparse)
+                }
+                Some(EmitPolicyAttr::WithDefault) => {
+                    quote!(crate::v2::traits::ParamEmitPolicy::WithDefault)
+                }
+                Some(EmitPolicyAttr::Never) => quote!(crate::v2::traits::ParamEmitPolicy::Never),
+                None => quote!(crate::v2::traits::ParamEmitPolicy::Sparse),
+            };
 
             let setter_body = if use_into {
                 quote! {
                     pub fn #setter_name(&mut self, value: impl Into<#field_ty>) {
-                        <#field_ty as crate::v2::traits::ParamCodec>::write(
-                            &value.into(),
+                        let value: #field_ty = value.into();
+                        <#field_ty as crate::v2::traits::ParamCodec>::write_with_policy(
+                            &value,
                             &mut self.origin.param_mut().params,
                             #key,
+                            #emit_policy,
                         );
                     }
                 }
             } else {
                 quote! {
                     pub fn #setter_name(&mut self, value: #field_ty) {
-                        <#field_ty as crate::v2::traits::ParamCodec>::write(
+                        <#field_ty as crate::v2::traits::ParamCodec>::write_with_policy(
                             &value,
                             &mut self.origin.param_mut().params,
                             #key,
+                            #emit_policy,
                         );
                     }
                 }

@@ -207,6 +207,28 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
                 use crate::v2::traits::AltiumEnum;
                 params.add_int(key, self.to_int());
             }
+
+            fn write_with_policy(
+                &self,
+                params: &mut crate::v2::parameters::ParameterCollection,
+                key: &str,
+                policy: crate::v2::traits::ParamEmitPolicy,
+            ) {
+                use crate::v2::traits::AltiumEnum;
+                match policy {
+                    crate::v2::traits::ParamEmitPolicy::Never => params.remove(key),
+                    crate::v2::traits::ParamEmitPolicy::Sparse => {
+                        if self.to_int() == 0 {
+                            params.remove(key);
+                        } else {
+                            params.add_int(key, self.to_int());
+                        }
+                    }
+                    crate::v2::traits::ParamEmitPolicy::WithDefault => {
+                        params.add(key, &self.to_int().to_string());
+                    }
+                }
+            }
         }
     })
 }
