@@ -474,12 +474,31 @@ fn rebuild_schlib(
                 store.record(rid).origin.is_binary()
             };
             if is_binary {
-                add_skip(
-                    skips,
-                    "schlib:component-child",
-                    type_id,
-                    "record origin is binary but schematic copier expects params",
-                );
+                if type_id == <SchPinRecord as RecordType>::RECORD_ID {
+                    let decoded = {
+                        let store = src_store.borrow();
+                        store.record(rid).origin.as_binary().and_then(|b| {
+                            SchPinRecord::from_legacy_binary_record_data(&b.raw_block)
+                        })
+                    };
+                    if let Some(pin) = decoded {
+                        dst_comp.add_child_record(pin);
+                    } else {
+                        add_skip(
+                            skips,
+                            "schlib:component-child",
+                            type_id,
+                            "failed to decode legacy binary sch pin",
+                        );
+                    }
+                } else {
+                    add_skip(
+                        skips,
+                        "schlib:component-child",
+                        type_id,
+                        "record origin is binary but schematic copier expects params",
+                    );
+                }
                 continue;
             }
             macro_rules! emit_child {
@@ -608,12 +627,31 @@ fn rebuild_schdoc(
                 store.record(rid).origin.is_binary()
             };
             if is_binary {
-                add_skip(
-                    skips,
-                    "schdoc:component-child",
-                    type_id,
-                    "record origin is binary but schematic copier expects params",
-                );
+                if type_id == <SchPinRecord as RecordType>::RECORD_ID {
+                    let decoded = {
+                        let store = src_store.borrow();
+                        store.record(rid).origin.as_binary().and_then(|b| {
+                            SchPinRecord::from_legacy_binary_record_data(&b.raw_block)
+                        })
+                    };
+                    if let Some(pin) = decoded {
+                        dst_comp.add_child_record(pin);
+                    } else {
+                        add_skip(
+                            skips,
+                            "schdoc:component-child",
+                            type_id,
+                            "failed to decode legacy binary sch pin",
+                        );
+                    }
+                } else {
+                    add_skip(
+                        skips,
+                        "schdoc:component-child",
+                        type_id,
+                        "record origin is binary but schematic copier expects params",
+                    );
+                }
                 continue;
             }
             macro_rules! emit_child {
@@ -648,12 +686,32 @@ fn rebuild_schdoc(
             store.record(rid).origin.is_binary()
         };
         if is_binary {
-            add_skip(
-                skips,
-                "schdoc:orphan",
-                type_id,
-                "record origin is binary but schematic copier expects params",
-            );
+            if type_id == <SchPinRecord as RecordType>::RECORD_ID {
+                let decoded =
+                    {
+                        let store = src_store.borrow();
+                        store.record(rid).origin.as_binary().and_then(|b| {
+                            SchPinRecord::from_legacy_binary_record_data(&b.raw_block)
+                        })
+                    };
+                if let Some(pin) = decoded {
+                    dst.add_orphan_record(pin);
+                } else {
+                    add_skip(
+                        skips,
+                        "schdoc:orphan",
+                        type_id,
+                        "failed to decode legacy binary sch pin",
+                    );
+                }
+            } else {
+                add_skip(
+                    skips,
+                    "schdoc:orphan",
+                    type_id,
+                    "record origin is binary but schematic copier expects params",
+                );
+            }
             continue;
         }
         macro_rules! emit_orphan {

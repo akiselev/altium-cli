@@ -175,9 +175,33 @@ pub fn cmd_primitives(
             store.record(record_id).origin.is_binary()
         };
         if is_binary {
-            primitives.push(PrimitiveInfo::Other {
-                primitive_type: format!("{} (binary)", sch_record_type_name(type_id)),
-            });
+            if type_id == 2 {
+                let decoded = {
+                    let store = lib.store().borrow();
+                    store.record(record_id).origin.as_binary().and_then(|b| {
+                        altium_format::v2::records::SchPinRecord::from_legacy_binary_record_data(
+                            &b.raw_block,
+                        )
+                    })
+                };
+                if let Some(pin) = decoded {
+                    primitives.push(PrimitiveInfo::Pin {
+                        designator: pin.designator().to_string(),
+                        name: pin.name().to_string(),
+                        electrical_type: electrical_type_name(pin.electrical()).to_string(),
+                        x: coord_to_mils(pin.location_x()),
+                        y: coord_to_mils(pin.location_y()),
+                    });
+                } else {
+                    primitives.push(PrimitiveInfo::Other {
+                        primitive_type: "Pin (binary decode failed)".to_string(),
+                    });
+                }
+            } else {
+                primitives.push(PrimitiveInfo::Other {
+                    primitive_type: format!("{} (binary)", sch_record_type_name(type_id)),
+                });
+            }
             continue;
         }
 

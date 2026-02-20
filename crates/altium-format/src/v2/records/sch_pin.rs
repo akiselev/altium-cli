@@ -3,6 +3,7 @@
 use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::{Designator, PinName, UniqueId};
+use crate::v2::traits::{AltiumEnum, RecordType};
 use altium_format_derive::altium_record;
 
 /// Schematic pin record -- RECORD=2.
@@ -131,6 +132,108 @@ pub struct SchPinRecord {
     show_symbolic_name_as_function: bool,
 }
 
+impl SchPinRecord {
+    /// Parse a legacy binary SchLib pin payload into a typed pin record.
+    ///
+    /// Some SchLib files store `RECORD=2` pins in binary form (size flag with
+    /// binary bit set) instead of parameter text. This helper decodes the
+    /// mandatory prefix emitted by AD's binary serializer:
+    /// `record_id, owner/index fields, symbol bytes, core coords/color, name,
+    /// designator, swap/default strings`.
+    pub fn from_legacy_binary_record_data(data: &[u8]) -> Option<Self> {
+        fn read_u8(data: &[u8], pos: &mut usize) -> Option<u8> {
+            let b = *data.get(*pos)?;
+            *pos += 1;
+            Some(b)
+        }
+        fn read_i16_le(data: &[u8], pos: &mut usize) -> Option<i16> {
+            let s = data.get(*pos..*pos + 2)?;
+            *pos += 2;
+            Some(i16::from_le_bytes([s[0], s[1]]))
+        }
+        fn read_i32_le(data: &[u8], pos: &mut usize) -> Option<i32> {
+            let s = data.get(*pos..*pos + 4)?;
+            *pos += 4;
+            Some(i32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        }
+        fn read_u32_le(data: &[u8], pos: &mut usize) -> Option<u32> {
+            let s = data.get(*pos..*pos + 4)?;
+            *pos += 4;
+            Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        }
+        fn read_lp_string(data: &[u8], pos: &mut usize) -> Option<String> {
+            let len = read_u8(data, pos)? as usize;
+            let s = data.get(*pos..*pos + len)?;
+            *pos += len;
+            Some(String::from_utf8_lossy(s).to_string())
+        }
+
+        let mut pos = 0usize;
+        let record_id = read_u8(data, &mut pos)?;
+        if record_id != Self::RECORD_ID {
+            return None;
+        }
+
+        let owner_index = read_i32_le(data, &mut pos)?;
+        let owner_part_id = read_i16_le(data, &mut pos)?;
+        let owner_part_display_mode = read_u8(data, &mut pos)?;
+
+        let symbol_inner_edge = read_u8(data, &mut pos)?;
+        let symbol_outer_edge = read_u8(data, &mut pos)?;
+        let symbol_inner = read_u8(data, &mut pos)?;
+        let symbol_outer = read_u8(data, &mut pos)?;
+
+        let description = read_lp_string(data, &mut pos)?;
+        let formal_type = read_u8(data, &mut pos)?;
+        let electrical = read_u8(data, &mut pos)?;
+        let pin_conglomerate = read_u8(data, &mut pos)?;
+
+        let pin_length_whole = read_i16_le(data, &mut pos)?;
+        let location_x_whole = read_i16_le(data, &mut pos)?;
+        let location_y_whole = read_i16_le(data, &mut pos)?;
+
+        let color = read_u32_le(data, &mut pos)?;
+        let name = read_lp_string(data, &mut pos)?;
+        let designator = read_lp_string(data, &mut pos)?;
+        let swap_id_pin = read_lp_string(data, &mut pos)?;
+        let swap_id_part = read_lp_string(data, &mut pos)?;
+        let default_value = read_lp_string(data, &mut pos)?;
+
+        let mut rec = Self::from_origin(crate::v2::templates::sch_pin_default());
+        rec.set_owner_index(owner_index);
+        rec.set_owner_part_id(owner_part_id);
+        rec.set_owner_part_display_mode(owner_part_display_mode);
+        rec.set_symbol_inner_edge(IeeeSymbol::from_int(symbol_inner_edge as i32));
+        rec.set_symbol_outer_edge(IeeeSymbol::from_int(symbol_outer_edge as i32));
+        rec.set_symbol_inner(IeeeSymbol::from_int(symbol_inner as i32));
+        rec.set_symbol_outer(IeeeSymbol::from_int(symbol_outer as i32));
+        rec.set_description(description);
+        rec.set_formal_type(StdLogicState::from_int(formal_type as i32));
+        rec.set_electrical(PinElectricalType::from_int(electrical as i32));
+        rec.set_pin_conglomerate(pin_conglomerate);
+        rec.set_pin_length(SchCoord::from_binary_parts(pin_length_whole, 0));
+        rec.set_location_x(SchCoord::from_binary_parts(location_x_whole, 0));
+        rec.set_location_y(SchCoord::from_binary_parts(location_y_whole, 0));
+        rec.set_color(color);
+        rec.set_name(PinName::from(name));
+        rec.set_designator(Designator::from(designator));
+        rec.set_swap_id_pin(swap_id_pin);
+        rec.set_swap_id_part(swap_id_part);
+        rec.set_default_value(default_value);
+
+        // Optional trailing dynamic string (typically UniqueID for document pins).
+        if pos < data.len() {
+            if let Some(unique_id) = read_lp_string(data, &mut pos) {
+                if !unique_id.is_empty() {
+                    rec.set_unique_id(UniqueId::from(unique_id));
+                }
+            }
+        }
+
+        Some(rec)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +275,39 @@ mod tests {
 
         assert_eq!(dst.designator(), Designator::from("7"));
         assert_eq!(dst.name(), PinName::from("SCL"));
+    }
+
+    #[test]
+    fn parse_legacy_binary_pin() {
+        // Binary payload from Synthiam.SchLib pin record.
+        let data: [u8; 33] = [
+            0x02, 0x00, 0x00, 0x00, // record id + owner_index low bytes
+            0x00, // owner_index high byte (=> 0)
+            0x01, 0x00, // owner_part_id = 1
+            0x00, // owner_part_display_mode
+            0x00, // symbol_inner_edge
+            0x00, // symbol_outer_edge
+            0x00, // symbol_inner
+            0x00, // symbol_outer
+            0x00, // description length
+            0x01, // formal_type
+            0x04, // electrical
+            0x3A, // pin_conglomerate
+            0x1E, 0x00, // pin_length whole = 30
+            0xE3, 0xFF, // location_x whole = -29
+            0xEE, 0x00, // location_y whole = 238
+            0x00, 0x00, 0x00, 0x00, // color
+            0x01, b'1', // name
+            0x01, b'1', // designator
+            0x00, // swap_id_pin
+            0x00, // swap_id_part
+            0x00, // default_value
+        ];
+
+        let rec =
+            SchPinRecord::from_legacy_binary_record_data(&data).expect("binary pin should decode");
+        assert_eq!(rec.designator(), Designator::from("1"));
+        assert_eq!(rec.name(), PinName::from("1"));
+        assert_eq!(rec.owner_part_id(), 1);
     }
 }
