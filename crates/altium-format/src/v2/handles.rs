@@ -83,8 +83,7 @@ use crate::v2::records::{
     SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord, SchPolylineRecord,
     SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
-    SchSheetSymbolRecord, SchSymbolRecord, SchTextFrameRecord, SchWireRecord,
-    SchTaskHolderRecord,
+    SchSheetSymbolRecord, SchSymbolRecord, SchTaskHolderRecord, SchTextFrameRecord, SchWireRecord,
 };
 
 impl_record_handle!(SchPinHandle, SchPinRecord);

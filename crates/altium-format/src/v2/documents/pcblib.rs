@@ -172,8 +172,8 @@ impl PcbLib {
             let metadata_node = if let Ok(mut stream) = cfb.open_stream(&params_path) {
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
-                let mut payload = super::encoding::parse_first_param_block(&data)
-                    .unwrap_or_else(|| data.clone());
+                let mut payload =
+                    super::encoding::parse_first_param_block(&data).unwrap_or_else(|| data.clone());
                 // Strip trailing NUL terminators so they don't leak into
                 // parameter values (encode_single_param_block re-adds the NUL).
                 while payload.last() == Some(&0) {
@@ -645,10 +645,7 @@ fn subrecord_count(type_id: u8) -> usize {
 /// For types that have custom parse functions (Arc=1, Via=3, Track=4,
 /// Fill=6, Region=11, ComponentBody=12), calls the appropriate parser to
 /// populate field_spans.
-fn parse_single_subrecord_origin(
-    type_byte: u8,
-    block_data: Vec<u8>,
-) -> Result<RecordOrigin> {
+fn parse_single_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> Result<RecordOrigin> {
     match type_byte {
         1 => parse_arc(&block_data),
         3 => parse_via(&block_data),
@@ -667,10 +664,7 @@ fn parse_single_subrecord_origin(
 ///
 /// For types that have custom parse functions (Pad=2, Text=5), calls the
 /// appropriate parser to populate field_spans.
-fn parse_multi_subrecord_origin(
-    type_byte: u8,
-    block_data: Vec<u8>,
-) -> Result<RecordOrigin> {
+fn parse_multi_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> Result<RecordOrigin> {
     match type_byte {
         2 => parse_pad(&block_data),
         5 => parse_text(&block_data),
@@ -731,7 +725,9 @@ fn parse_pcb_data_stream(data: &[u8]) -> Result<(Vec<RecordNode>, Vec<PcbPrimiti
             }
 
             let mut block_data = vec![0u8; block_len];
-            cursor.read_exact(&mut block_data).map_err(AltiumError::Io)?;
+            cursor
+                .read_exact(&mut block_data)
+                .map_err(AltiumError::Io)?;
 
             let index = primitives.len();
             let origin = parse_single_subrecord_origin(type_byte, block_data)?;
@@ -744,7 +740,8 @@ fn parse_pcb_data_stream(data: &[u8]) -> Result<(Vec<RecordNode>, Vec<PcbPrimiti
             for _ in 0..n {
                 let sub_len = cursor
                     .read_u32::<LittleEndian>()
-                    .map_err(|_| AltiumError::UnexpectedEof)? as usize;
+                    .map_err(|_| AltiumError::UnexpectedEof)?
+                    as usize;
                 if cursor.position() as usize + sub_len > data.len() {
                     return Err(AltiumError::UnexpectedEof);
                 }
@@ -1205,7 +1202,9 @@ mod tests {
     fn file_version_info_storage_not_treated_as_footprint() {
         use std::io::Cursor;
 
-        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
+        let mut cfb =
+            cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+                .unwrap();
 
         cfb.create_storage("/SOT-23").unwrap();
         cfb.create_stream("/SOT-23/Header")

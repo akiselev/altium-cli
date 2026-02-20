@@ -16,7 +16,8 @@ use crate::v2::records::{SchBlanketRecord, is_supported_sch_record_id};
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::RecordType;
 
-const DEFAULT_SCHDOC_HEADER: &str = "Protel for Windows - Schematic Capture Binary File Version 5.0";
+const DEFAULT_SCHDOC_HEADER: &str =
+    "Protel for Windows - Schematic Capture Binary File Version 5.0";
 const STREAM_FILE_HEADER: &str = "FileHeader";
 const STREAM_ADDITIONAL: &str = "Additional";
 const STREAM_STORAGE: &str = "Storage";
@@ -648,6 +649,21 @@ fn parse_stream_header_params(raw: Option<&Vec<u8>>) -> Option<ParameterCollecti
     }
 }
 
+fn parse_first_block_with_prefix(raw: &[u8]) -> Option<Vec<u8>> {
+    if raw.len() < 4 {
+        return None;
+    }
+    let size_raw = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
+    if (size_raw & !SIZE_FLAG_MASK) != 0 {
+        return None;
+    }
+    let len = (size_raw & SIZE_FLAG_MASK) as usize;
+    if len == 0 || 4 + len > raw.len() {
+        return None;
+    }
+    Some(raw[0..4 + len].to_vec())
+}
+
 fn build_schdoc_header_block(
     base: Option<ParameterCollection>,
     weight: usize,
@@ -693,17 +709,22 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     let mut file_header_data = Vec::new();
     let mut additional_data = Vec::new();
     let store = doc.store.borrow();
-    let (header_params, additional_params) = match store.meta() {
-        DocumentMeta::SchDoc {
-            header_raw,
-            additional_raw,
-            ..
-        } => (
-            parse_stream_header_params(header_raw.as_ref()),
-            parse_stream_header_params(additional_raw.as_ref()),
-        ),
-        _ => (None, None),
-    };
+    let (header_params, additional_params, header_raw, additional_raw, storage_raw) =
+        match store.meta() {
+            DocumentMeta::SchDoc {
+                header_raw,
+                additional_raw,
+                storage_raw,
+                ..
+            } => (
+                parse_stream_header_params(header_raw.as_ref()),
+                parse_stream_header_params(additional_raw.as_ref()),
+                header_raw.clone(),
+                additional_raw.clone(),
+                storage_raw.clone(),
+            ),
+            _ => (None, None, None, None, None),
+        };
 
     // (original_index, insertion_order, record_id)
     let mut file_header_timeline: Vec<(usize, usize, RecordId)> = Vec::new();
@@ -768,6 +789,13 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     file_header_timeline.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     additional_timeline.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
+    let file_header_has_dirty = file_header_timeline
+        .iter()
+        .any(|(_, _, rid)| store.record(*rid).is_dirty());
+    let additional_has_dirty = additional_timeline
+        .iter()
+        .any(|(_, _, rid)| store.record(*rid).is_dirty());
+
     for (_, _, rid) in file_header_timeline.iter().copied() {
         let node = store.record(rid);
         super::schlib::write_record_to_stream(&mut file_header_data, node)?;
@@ -777,14 +805,32 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
         super::schlib::write_record_to_stream(&mut additional_data, node)?;
     }
 
-    let mut file_header_with_block =
-        build_schdoc_header_block(header_params, file_header_timeline.len(), true);
+    let mut file_header_with_block = if !file_header_has_dirty {
+        header_raw
+            .as_deref()
+            .and_then(parse_first_block_with_prefix)
+            .unwrap_or_else(|| {
+                build_schdoc_header_block(header_params, file_header_timeline.len(), true)
+            })
+    } else {
+        build_schdoc_header_block(header_params, file_header_timeline.len(), true)
+    };
     file_header_with_block.extend_from_slice(&file_header_data);
 
     let additional_with_block = if additional_timeline.is_empty() {
-        Vec::new()
+        // Preserve an existing Additional stream header block if present.
+        additional_raw.unwrap_or_default()
     } else {
-        let mut stream = build_schdoc_header_block(additional_params, additional_timeline.len(), false);
+        let mut stream = if !additional_has_dirty {
+            additional_raw
+                .as_deref()
+                .and_then(parse_first_block_with_prefix)
+                .unwrap_or_else(|| {
+                    build_schdoc_header_block(additional_params, additional_timeline.len(), false)
+                })
+        } else {
+            build_schdoc_header_block(additional_params, additional_timeline.len(), false)
+        };
         stream.extend_from_slice(&additional_data);
         stream
     };
@@ -792,7 +838,7 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     Ok(SchDocSerializedStreams {
         file_header: file_header_with_block,
         additional: additional_with_block,
-        storage: build_icon_storage_stream_bytes(),
+        storage: storage_raw.unwrap_or_else(build_icon_storage_stream_bytes),
     })
 }
 

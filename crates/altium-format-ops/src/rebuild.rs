@@ -38,6 +38,7 @@ use altium_format::v2::records::{
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
     SchSheetSymbolRecord, SchSymbolRecord, SchTaskHolderRecord, SchTextFrameRecord, SchWireRecord,
 };
+use altium_format::v2::store::DocumentMeta;
 use altium_format::v2::templates;
 use altium_format::v2::traits::{DocumentQuery, RecordType};
 
@@ -167,6 +168,27 @@ fn copy_param_nul_suffix_from_source<T: RecordType>(
     }
 }
 
+/// Copy full param origin from source record to destination record, preserving
+/// duplicate keys and original entry order in the parsed parameter collection.
+fn copy_param_origin_lossless_from_source<T: RecordType>(
+    dst: &mut T,
+    src_store: &altium_format::v2::store::DocRef,
+    rid: altium_format::v2::ids::RecordId,
+) {
+    if T::IS_BINARY {
+        return;
+    }
+
+    let src_param = {
+        let store = src_store.borrow();
+        store.record(rid).origin.as_param().cloned()
+    };
+
+    if let Some(src_param) = src_param {
+        *dst.origin_mut().param_mut() = src_param;
+    }
+}
+
 /// Replace destination param key/value entries with the full parsed key/value
 /// set from the source record, preserving source textual forms.
 fn copy_all_param_values_from_source<T: RecordType>(
@@ -204,7 +226,7 @@ macro_rules! copy_sch_record {
     ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
         macro_rules! emit_sch {
             ($dst:ident) => {{
-                copy_param_nul_suffix_from_source(&mut $dst, &$src_store, $rid);
+                copy_param_origin_lossless_from_source(&mut $dst, &$src_store, $rid);
                 $emit!($dst);
             }};
         }
@@ -579,10 +601,7 @@ macro_rules! copy_pcb_record {
     }};
 }
 
-fn rebuild_schlib(
-    path: &Path,
-    out: &Path,
-) -> Result<(), Box<dyn Error>> {
+fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = SchLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchLib::new_empty();
 
@@ -623,8 +642,14 @@ fn rebuild_schlib(
                     dst_comp.add_child_record($rec);
                 }};
             }
-            copy_sch_record!(type_id, rid, src_store, emit_child, "schlib:component-child")
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            copy_sch_record!(
+                type_id,
+                rid,
+                src_store,
+                emit_child,
+                "schlib:component-child"
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
     }
 
@@ -637,10 +662,7 @@ fn rebuild_schlib(
     Ok(())
 }
 
-fn rebuild_pcblib(
-    path: &Path,
-    out: &Path,
-) -> Result<(), Box<dyn Error>> {
+fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbLib::new_empty();
 
@@ -699,29 +721,82 @@ fn rebuild_pcblib(
     Ok(())
 }
 
-fn rebuild_schdoc(
-    path: &Path,
-    out: &Path,
-) -> Result<(), Box<dyn Error>> {
+fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = SchDoc::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchDoc::new_empty();
 
     let src_store = src.store().clone();
+    // Preserve raw stream metadata for SchDoc stream header and Storage bytes.
+    let (src_header_raw, src_additional_raw, src_storage_raw) = {
+        let store = src_store.borrow();
+        match store.meta() {
+            DocumentMeta::SchDoc {
+                header_raw,
+                additional_raw,
+                storage_raw,
+            } => (
+                header_raw.clone(),
+                additional_raw.clone(),
+                storage_raw.clone(),
+            ),
+            _ => (None, None, None),
+        }
+    };
+    {
+        let mut dst_store = dst.store().borrow_mut();
+        if let DocumentMeta::SchDoc {
+            header_raw,
+            additional_raw,
+            storage_raw,
+        } = dst_store.meta_mut()
+        {
+            *header_raw = src_header_raw;
+            *additional_raw = src_additional_raw;
+            *storage_raw = src_storage_raw;
+        }
+    }
 
     for src_comp in src.components() {
         let src_parent = src_comp.read();
-        let src_parent_id = {
+        let (
+            src_parent_id,
+            src_parent_original_index,
+            src_parent_stream_name,
+            src_parent_snapshot,
+            src_child_indices,
+        ) = {
             let store = src_store.borrow();
-            store.group(src_comp.group_id()).parent_id()
+            let group = store.group(src_comp.group_id());
+            let parent_id = group.parent_id();
+            (
+                parent_id,
+                group.parent_original_index(),
+                store.record(parent_id).stream_name.clone(),
+                store.record(parent_id).snapshot_bytes().to_vec(),
+                group.original_indices().to_vec(),
+            )
         };
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
             builder.with_component(|comp| {
                 comp.copy_modeled_fields_from(&src_parent);
-                copy_param_nul_suffix_from_source(comp, &src_store, src_parent_id);
+                copy_param_origin_lossless_from_source(comp, &src_store, src_parent_id);
             });
         });
+        {
+            let dst_parent_id = {
+                let mut dst_store = dst.store().borrow_mut();
+                let group = dst_store.group_mut(dst_comp.group_id());
+                group.set_parent_original_index(src_parent_original_index);
+                group.parent_id()
+            };
+            let mut dst_store = dst.store().borrow_mut();
+            let dst_parent = dst_store.record_mut(dst_parent_id);
+            dst_parent.stream_name = src_parent_stream_name;
+            dst_parent.original_snapshot = src_parent_snapshot;
+            dst_parent.dirty = false;
+        }
 
-        for (type_id, rid) in src_comp.all_children() {
+        for (child_pos, (type_id, rid)) in src_comp.all_children().into_iter().enumerate() {
             let is_binary = {
                 let store = src_store.borrow();
                 store.record(rid).origin.is_binary()
@@ -733,17 +808,44 @@ fn rebuild_schdoc(
                 )
                 .into());
             }
+            let src_child_stream_name = {
+                let store = src_store.borrow();
+                store.record(rid).stream_name.clone()
+            };
+            let src_child_snapshot = {
+                let store = src_store.borrow();
+                store.record(rid).snapshot_bytes().to_vec()
+            };
+            let src_child_original_index = src_child_indices
+                .get(child_pos)
+                .copied()
+                .unwrap_or(usize::MAX);
             macro_rules! emit_child {
                 ($rec:expr) => {{
-                    dst_comp.add_child_record($rec);
+                    let dst_rid = dst_comp.add_child_record($rec);
+                    let mut dst_store = dst.store().borrow_mut();
+                    {
+                        let group = dst_store.group_mut(dst_comp.group_id());
+                        group.set_child_original_index(child_pos, src_child_original_index);
+                    }
+                    let dst_node = dst_store.record_mut(dst_rid);
+                    dst_node.stream_name = src_child_stream_name.clone();
+                    dst_node.original_snapshot = src_child_snapshot.clone();
+                    dst_node.dirty = false;
                 }};
             }
-            copy_sch_record!(type_id, rid, src_store, emit_child, "schdoc:component-child")
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            copy_sch_record!(
+                type_id,
+                rid,
+                src_store,
+                emit_child,
+                "schdoc:component-child"
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
     }
 
-    for (type_id, rid) in src.orphan_records() {
+    for (orphan_pos, (type_id, rid)) in src.orphan_records().into_iter().enumerate() {
         let is_binary = {
             let store = src_store.borrow();
             store.record(rid).origin.is_binary()
@@ -755,9 +857,27 @@ fn rebuild_schdoc(
             )
             .into());
         }
+        let (src_orphan_original_index, src_orphan_stream_name, src_orphan_snapshot) = {
+            let store = src_store.borrow();
+            (
+                store
+                    .orphan_original_indices()
+                    .get(orphan_pos)
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                store.record(rid).stream_name.clone(),
+                store.record(rid).snapshot_bytes().to_vec(),
+            )
+        };
         macro_rules! emit_orphan {
             ($rec:expr) => {{
-                dst.add_orphan_record($rec);
+                let dst_rid = dst.add_orphan_record($rec);
+                let mut dst_store = dst.store().borrow_mut();
+                dst_store.set_orphan_original_index(orphan_pos, src_orphan_original_index);
+                let dst_node = dst_store.record_mut(dst_rid);
+                dst_node.stream_name = src_orphan_stream_name.clone();
+                dst_node.original_snapshot = src_orphan_snapshot.clone();
+                dst_node.dirty = false;
             }};
         }
         copy_sch_record!(type_id, rid, src_store, emit_orphan, "schdoc:orphan")

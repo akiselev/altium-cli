@@ -146,8 +146,8 @@ pub use pcb_via::PcbViaRecord;
 // Re-exports: PCB custom parse functions
 // ---------------------------------------------------------------------------
 
-pub(crate) use pcb_component_body::parse_component_body;
 pub(crate) use pcb_arc::parse_arc;
+pub(crate) use pcb_component_body::parse_component_body;
 pub(crate) use pcb_fill::parse_fill;
 pub(crate) use pcb_pad::parse_pad;
 pub(crate) use pcb_region::parse_region;
@@ -168,9 +168,42 @@ pub fn record_id_for_params(params: &crate::v2::parameters::ParameterCollection)
 pub(crate) fn is_supported_sch_record_id(record_id: u8) -> bool {
     matches!(
         record_id,
-        1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 11 | 12 | 13 | 14 | 17 | 18 | 22 | 25 | 26 | 27
-            | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 37 | 39 | 41 | 43 | 44 | 45 | 46 | 47 | 48
-            | 209 | 225
+        1 | 2
+            | 3
+            | 4
+            | 5
+            | 6
+            | 7
+            | 8
+            | 9
+            | 11
+            | 12
+            | 13
+            | 14
+            | 17
+            | 18
+            | 22
+            | 25
+            | 26
+            | 27
+            | 28
+            | 29
+            | 30
+            | 31
+            | 32
+            | 33
+            | 34
+            | 37
+            | 39
+            | 41
+            | 43
+            | 44
+            | 45
+            | 46
+            | 47
+            | 48
+            | 209
+            | 225
     )
 }
 

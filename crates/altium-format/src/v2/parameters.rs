@@ -219,6 +219,12 @@ impl ParameterCollection {
                 (String::new(), entry.to_string())
             };
 
+            // Always preserve the original parsed entry verbatim for lossless
+            // round-trip when preserve_entry_order is enabled.
+            if self.preserve_entry_order {
+                self.parsed_entries.push((key.clone(), value.clone()));
+            }
+
             // Skip if already processed as UTF8
             let upper_key = key.to_uppercase();
             if ignored.contains(&upper_key) {
@@ -236,10 +242,6 @@ impl ParameterCollection {
                 (key, value)
             };
 
-            if self.preserve_entry_order {
-                self.parsed_entries
-                    .push((final_key.clone(), final_value.clone()));
-            }
             self.add_internal(&final_key, &final_value);
         }
     }

@@ -23,8 +23,8 @@ use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta
 use crate::v2::traits::{HandleFamily, RecordType};
 
 use super::encoding::{
-    decode_win1252, encode_single_param_block, encode_win1252, parse_first_param_block,
-    SIZE_FLAG_MASK,
+    SIZE_FLAG_MASK, decode_win1252, encode_single_param_block, encode_win1252,
+    parse_first_param_block,
 };
 use super::section_keys::SectionKeyList;
 
@@ -1561,7 +1561,9 @@ mod tests {
     #[test]
     fn empty_unique_id_uses_content_hash_for_document_id() {
         fn make_min_schlib_bytes(extra: &str) -> Vec<u8> {
-            let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
+            let mut cfb =
+                cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+                    .unwrap();
             {
                 let mut header = cfb.create_stream("/FileHeader").unwrap();
                 let text = format!(

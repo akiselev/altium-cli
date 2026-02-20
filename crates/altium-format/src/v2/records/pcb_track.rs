@@ -56,13 +56,13 @@ pub(crate) fn parse_track(data: &[u8]) -> crate::Result<crate::v2::backing_store
     }
 
     let mut spans = vec![
-        FieldSpan::new(0, 13),  // 0: header
-        FieldSpan::new(13, 4),  // 1: start_x
-        FieldSpan::new(17, 4),  // 2: start_y
-        FieldSpan::new(21, 4),  // 3: end_x
-        FieldSpan::new(25, 4),  // 4: end_y
-        FieldSpan::new(29, 4),  // 5: width
-        FieldSpan::new(33, 2),  // 6: subpoly_index
+        FieldSpan::new(0, 13), // 0: header
+        FieldSpan::new(13, 4), // 1: start_x
+        FieldSpan::new(17, 4), // 2: start_y
+        FieldSpan::new(21, 4), // 3: end_x
+        FieldSpan::new(25, 4), // 4: end_y
+        FieldSpan::new(29, 4), // 5: width
+        FieldSpan::new(33, 2), // 6: subpoly_index
     ];
 
     spans.push(FieldSpan::new(35, 1)); // 7: user_routed
@@ -214,8 +214,9 @@ mod tests {
             FieldSpan::new(41, 4),
             FieldSpan::new(45, 4),
         ];
-        let mut rec =
-            PcbTrackRecord::from_origin(RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans)));
+        let mut rec = PcbTrackRecord::from_origin(RecordOrigin::Binary(BinaryOrigin::with_spans(
+            data, spans,
+        )));
         assert_eq!(rec.start_x().to_raw(), 123_456);
         rec.set_user_routed(true);
         assert!(rec.user_routed());

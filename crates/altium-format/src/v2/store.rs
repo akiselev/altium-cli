@@ -182,6 +182,18 @@ impl DocumentStore {
         &self.orphan_records
     }
 
+    /// Returns original flat-stream indices for orphan records.
+    pub fn orphan_original_indices(&self) -> &[usize] {
+        &self.orphan_original_indices
+    }
+
+    /// Set original flat-stream index for an orphan record by orphan position.
+    pub fn set_orphan_original_index(&mut self, orphan_pos: usize, original_index: usize) {
+        if orphan_pos < self.orphan_original_indices.len() {
+            self.orphan_original_indices[orphan_pos] = original_index;
+        }
+    }
+
     /// Returns the document-level semantic ID, if computed.
     pub fn document_id(&self) -> Option<&crate::v2::semantic_ids::SemanticId> {
         self.document_id.as_ref()
@@ -232,6 +244,28 @@ impl GroupData {
     /// Returns the child record IDs.
     pub fn child_ids(&self) -> &[RecordId] {
         &self.children
+    }
+
+    /// Returns original child flat-stream indices.
+    pub fn original_indices(&self) -> &[usize] {
+        &self.original_indices
+    }
+
+    /// Returns the original flat-stream index of the parent record, if set.
+    pub fn parent_original_index(&self) -> Option<usize> {
+        self.parent_original_index
+    }
+
+    /// Sets the original flat-stream index of the parent record.
+    pub fn set_parent_original_index(&mut self, index: Option<usize>) {
+        self.parent_original_index = index;
+    }
+
+    /// Sets the original flat-stream index for a child at `child_pos`.
+    pub fn set_child_original_index(&mut self, child_pos: usize, index: usize) {
+        if child_pos < self.original_indices.len() {
+            self.original_indices[child_pos] = index;
+        }
     }
 
     /// Returns the group metadata.

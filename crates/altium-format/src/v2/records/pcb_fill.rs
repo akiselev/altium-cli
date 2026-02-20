@@ -52,12 +52,12 @@ pub(crate) fn parse_fill(data: &[u8]) -> crate::Result<crate::v2::backing_store:
     }
 
     let mut spans = vec![
-        FieldSpan::new(0, 13),  // 0: header
-        FieldSpan::new(13, 4),  // 1: corner1_x
-        FieldSpan::new(17, 4),  // 2: corner1_y
-        FieldSpan::new(21, 4),  // 3: corner2_x
-        FieldSpan::new(25, 4),  // 4: corner2_y
-        FieldSpan::new(29, 8),  // 5: rotation
+        FieldSpan::new(0, 13), // 0: header
+        FieldSpan::new(13, 4), // 1: corner1_x
+        FieldSpan::new(17, 4), // 2: corner1_y
+        FieldSpan::new(21, 4), // 3: corner2_x
+        FieldSpan::new(25, 4), // 4: corner2_y
+        FieldSpan::new(29, 8), // 5: rotation
     ];
 
     spans.push(FieldSpan::new(37, 1)); // 6: user_routed

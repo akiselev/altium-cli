@@ -56,14 +56,14 @@ pub(crate) fn parse_arc(data: &[u8]) -> crate::Result<crate::v2::backing_store::
     }
 
     let mut spans = vec![
-        FieldSpan::new(0, 13),  // 0: header
-        FieldSpan::new(13, 4),  // 1: center_x
-        FieldSpan::new(17, 4),  // 2: center_y
-        FieldSpan::new(21, 4),  // 3: radius
-        FieldSpan::new(25, 8),  // 4: start_angle
-        FieldSpan::new(33, 8),  // 5: end_angle
-        FieldSpan::new(41, 4),  // 6: width
-        FieldSpan::new(45, 2),  // 7: subpoly_index
+        FieldSpan::new(0, 13), // 0: header
+        FieldSpan::new(13, 4), // 1: center_x
+        FieldSpan::new(17, 4), // 2: center_y
+        FieldSpan::new(21, 4), // 3: radius
+        FieldSpan::new(25, 8), // 4: start_angle
+        FieldSpan::new(33, 8), // 5: end_angle
+        FieldSpan::new(41, 4), // 6: width
+        FieldSpan::new(45, 2), // 7: subpoly_index
     ];
 
     spans.push(FieldSpan::new(47, 1)); // 8: user_routed
