@@ -493,7 +493,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
 
         // Create two identical components (same params -> same fingerprint)
@@ -507,12 +508,13 @@ mod tests {
                 children: Vec::new(),
                 original_indices: Vec::new(),
                 parent_original_index: None,
-                extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: "R1".to_string(),
                     description: String::new(),
                     part_count: 1,
                     section_key: String::new(),
+                    sidecar_streams:
+                        crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta::default(),
                 },
             });
         }
@@ -594,7 +596,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
 
         let comp_origin = RecordOrigin::Param(ParamOrigin::new(
@@ -614,12 +617,13 @@ mod tests {
             children: vec![pin_id],
             original_indices: vec![1],
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::SchComponent {
                 lib_ref: "R1".to_string(),
                 description: String::new(),
                 part_count: 1,
                 section_key: String::new(),
+                sidecar_streams:
+                    crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta::default(),
             },
         });
 
@@ -660,7 +664,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
 
         let comp = RecordNode::new(
@@ -691,12 +696,13 @@ mod tests {
             children: vec![pin_a_id, pin_b_id],
             original_indices: vec![1, 2],
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::SchComponent {
                 lib_ref: "U1".to_string(),
                 description: String::new(),
                 part_count: 1,
                 section_key: String::new(),
+                sidecar_streams:
+                    crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta::default(),
             },
         });
 
@@ -726,7 +732,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
 
         let comp = RecordNode::new(
@@ -741,12 +748,13 @@ mod tests {
             children: vec![],
             original_indices: vec![],
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::SchComponent {
                 lib_ref: "U1".to_string(),
                 description: String::new(),
                 part_count: 1,
                 section_key: String::new(),
+                sidecar_streams:
+                    crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta::default(),
             },
         });
 

@@ -5,7 +5,7 @@
 //! [`DocRef`] for shared ownership by handles.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use slotmap::SlotMap;
@@ -54,8 +54,6 @@ pub struct GroupData {
     /// Original flat-stream index of the parent record (used by SchDoc for
     /// preserving interleaving order on save). `None` for library types.
     pub(crate) parent_original_index: Option<usize>,
-    /// Extra CFB streams preserved for round-trip.
-    pub(crate) extra_streams: HashMap<String, Vec<u8>>,
     /// Group-type-specific metadata.
     pub(crate) meta: GroupMeta,
 }
@@ -67,12 +65,15 @@ pub enum GroupMeta {
         description: String,
         part_count: i32,
         section_key: String,
+        sidecar_streams: crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta,
     },
     PcbFootprint {
         name: String,
         raw_pattern_name_block: Vec<u8>,
         original_primitive_order: Vec<PcbPrimitiveRef>,
         raw_header: Vec<u8>,
+        sidecar_streams:
+            crate::v2::documents::pcblib_streams::PcbLibFootprintSidecarStreamsMeta,
     },
     SchDocComponent,
 }
@@ -87,7 +88,11 @@ pub enum DocumentMeta {
         raw_header: Option<Vec<u8>>,
         raw_header_params: Option<crate::v2::parameters::ParameterCollection>,
         section_keys: crate::v2::documents::section_keys::SectionKeyList,
-        raw_extra_streams: HashMap<String, Vec<u8>>,
+        storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta,
+        redirection_streams: BTreeMap<
+            String,
+            crate::v2::documents::schlib_streams::SchLibRedirectionStreamMeta,
+        >,
     },
     SchDoc {
         file_header_meta: crate::v2::documents::schdoc_streams::SchDocFileHeaderStreamMeta,
@@ -96,7 +101,10 @@ pub enum DocumentMeta {
     },
     PcbLib {
         section_keys: crate::v2::documents::section_keys::SectionKeyList,
-        raw_extra_streams: HashMap<String, Vec<u8>>,
+        file_header_meta: crate::v2::documents::pcblib_streams::PcbLibFileHeaderStreamMeta,
+        file_version_info_meta:
+            crate::v2::documents::pcblib_streams::PcbLibCountedDataStreamMeta,
+        library_meta: crate::v2::documents::pcblib_streams::PcbLibLibraryStorageMeta,
     },
     Empty,
 }

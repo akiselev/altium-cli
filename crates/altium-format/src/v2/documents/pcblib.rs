@@ -9,7 +9,7 @@
 //! by packed binary primitive records.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 
@@ -26,11 +26,23 @@ use crate::v2::records::{
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::{DocumentQuery, HandleFamily};
 
+use super::pcblib_streams::{
+    PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibLibraryStorageMeta,
+    PcbLibFootprintSidecarStreamsMeta, PcbLibModelsStorageMeta, parse_file_header_stream,
+    parse_param_table_stream, parse_primitive_guids_stream, parse_section_keys_stream,
+    parse_u32_header_stream, parse_wide_strings_stream, serialize_param_table_stream,
+    serialize_primitive_guids_stream, serialize_section_keys_stream,
+    serialize_u32_header_stream, serialize_wide_strings_stream,
+};
 use super::section_keys::SectionKeyList;
 
 const STREAM_PARAMETERS: &str = "Parameters";
 const STREAM_HEADER: &str = "Header";
 const STREAM_DATA: &str = "Data";
+const STREAM_WIDE_STRINGS: &str = "WideStrings";
+const STREAM_PRIMITIVE_GUIDS: &str = "PrimitiveGuids";
+const STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION: &str = "UniqueIDPrimitiveInformation";
+const STREAM_EXTENDED_PRIMITIVE_INFORMATION: &str = "ExtendedPrimitiveInformation";
 const TOP_LEVEL_SYSTEM_STORAGES: &[&str] =
     &["SectionKeys", "FileHeader", "Library", "FileVersionInfo"];
 
@@ -48,7 +60,12 @@ impl PcbLib {
     pub fn new_empty() -> Self {
         let mut store = DocumentStore::new(DocumentMeta::PcbLib {
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            file_header_meta: PcbLibFileHeaderStreamMeta::default(),
+            file_version_info_meta: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: Vec::new(),
+            },
+            library_meta: PcbLibLibraryStorageMeta::default(),
         });
         store.set_semantic_context("dtid:pcblib", "");
         Self {
@@ -61,26 +78,86 @@ impl PcbLib {
         &self.store
     }
 
-    /// Returns library-level non-footprint streams (e.g. `FileHeader`,
-    /// `Library/*`, `FileVersionInfo/*`) captured during open.
-    pub fn library_extra_streams(&self) -> HashMap<String, Vec<u8>> {
+    /// Returns typed `/SectionKeys` mapping metadata.
+    pub fn section_keys(&self) -> SectionKeyList {
         let store = self.store.borrow();
         match store.meta() {
-            DocumentMeta::PcbLib {
-                raw_extra_streams, ..
-            } => raw_extra_streams.clone(),
-            _ => HashMap::new(),
+            DocumentMeta::PcbLib { section_keys, .. } => section_keys.clone(),
+            _ => SectionKeyList::new(),
         }
     }
 
-    /// Replaces library-level non-footprint passthrough streams.
-    pub fn set_library_extra_streams(&self, streams: HashMap<String, Vec<u8>>) {
+    /// Replace typed `/SectionKeys` mapping metadata.
+    pub fn set_section_keys(&self, keys: SectionKeyList) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::PcbLib { section_keys, .. } = &mut store.meta {
+            *section_keys = keys;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
+    /// Returns typed `/FileHeader` metadata.
+    pub fn file_header_meta(&self) -> PcbLibFileHeaderStreamMeta {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::PcbLib {
+                file_header_meta, ..
+            } => file_header_meta.clone(),
+            _ => PcbLibFileHeaderStreamMeta::default(),
+        }
+    }
+
+    /// Replace typed `/FileHeader` metadata.
+    pub fn set_file_header_meta(&self, meta: PcbLibFileHeaderStreamMeta) {
         let mut store = self.store.borrow_mut();
         if let DocumentMeta::PcbLib {
-            raw_extra_streams, ..
+            file_header_meta, ..
         } = &mut store.meta
         {
-            *raw_extra_streams = streams;
+            *file_header_meta = meta;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
+    /// Returns typed `/FileVersionInfo/{Header,Data}` metadata.
+    pub fn file_version_info_meta(&self) -> PcbLibCountedDataStreamMeta {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::PcbLib {
+                file_version_info_meta,
+                ..
+            } => file_version_info_meta.clone(),
+            _ => PcbLibCountedDataStreamMeta::default(),
+        }
+    }
+
+    /// Replace typed `/FileVersionInfo/{Header,Data}` metadata.
+    pub fn set_file_version_info_meta(&self, meta: PcbLibCountedDataStreamMeta) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::PcbLib {
+            file_version_info_meta,
+            ..
+        } = &mut store.meta
+        {
+            *file_version_info_meta = meta;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
+    /// Returns typed `/Library/*` metadata.
+    pub fn library_meta(&self) -> PcbLibLibraryStorageMeta {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::PcbLib { library_meta, .. } => library_meta.clone(),
+            _ => PcbLibLibraryStorageMeta::default(),
+        }
+    }
+
+    /// Replace typed `/Library/*` metadata.
+    pub fn set_library_meta(&self, meta: PcbLibLibraryStorageMeta) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::PcbLib { library_meta, .. } = &mut store.meta {
+            *library_meta = meta;
             store.mark_semantic_ids_dirty();
         }
     }
@@ -103,12 +180,8 @@ impl PcbLib {
         let mut cfb = cfb::CompoundFile::open(Cursor::new(raw_bytes))
             .map_err(|e| AltiumError::Cfb(format!("Failed to open CFB: {}", e)))?;
 
-        let section_keys = read_pcb_section_keys(&mut cfb)?;
-
         // Enumerate top-level storages to find footprints.
-        // A storage is only treated as a footprint if it has a Data stream
-        // (the defining characteristic). Storages without Data are captured
-        // as library-level extra streams instead.
+        // A storage is only treated as a footprint if it has a Data stream.
         let candidate_entries: Vec<String> = cfb
             .walk()
             .filter(|e| {
@@ -119,7 +192,10 @@ impl PcbLib {
             })
             .filter_map(|e| {
                 let name = e.path().file_name()?.to_str()?.to_string();
-                if TOP_LEVEL_SYSTEM_STORAGES.contains(&name.as_str()) {
+                if TOP_LEVEL_SYSTEM_STORAGES
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&name))
+                {
                     return None;
                 }
                 Some(name)
@@ -142,27 +218,482 @@ impl PcbLib {
             .filter_map(|e| Some(e.path().to_str()?.to_string()))
             .collect();
 
-        // Capture library-level extra streams (FileHeader, Library/*, etc.).
-        let footprint_set: std::collections::HashSet<&str> =
-            entries.iter().map(|s| s.as_str()).collect();
-        let mut lib_extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+        let footprint_set: std::collections::HashSet<String> =
+            entries.iter().map(|s| s.to_ascii_lowercase()).collect();
+
+        let mut path_file_header: Option<String> = None;
+        let mut path_section_keys: Option<String> = None;
+
+        let mut path_fvi_header: Option<String> = None;
+        let mut path_fvi_data: Option<String> = None;
+
+        let mut path_lib_header: Option<String> = None;
+        let mut path_lib_data: Option<String> = None;
+        let mut path_lib_embedded_fonts: Option<String> = None;
+
+        let mut path_lib_cptoc_header: Option<String> = None;
+        let mut path_lib_cptoc_data: Option<String> = None;
+
+        let mut path_lib_layer_kind_header: Option<String> = None;
+        let mut path_lib_layer_kind_data: Option<String> = None;
+
+        let mut path_lib_models_header: Option<String> = None;
+        let mut path_lib_models_data: Option<String> = None;
+        let mut path_lib_models_entries: BTreeMap<u32, String> = BTreeMap::new();
+
+        let mut path_lib_models_no_embed_header: Option<String> = None;
+        let mut path_lib_models_no_embed_data: Option<String> = None;
+
+        let mut path_lib_pad_via_header: Option<String> = None;
+        let mut path_lib_pad_via_data: Option<String> = None;
+
+        let mut path_lib_textures_header: Option<String> = None;
+        let mut path_lib_textures_data: Option<String> = None;
+
         for stream_path in &all_stream_paths {
             let path_no_slash = stream_path.trim_start_matches('/');
-            let top_level = path_no_slash.split('/').next().unwrap_or("");
-            if footprint_set.contains(top_level) {
+            let mut parts = path_no_slash.split('/');
+            let root = parts.next().unwrap_or("");
+            let second = parts.next();
+            let third = parts.next();
+            let fourth = parts.next();
+
+            if footprint_set.contains(&root.to_ascii_lowercase()) {
                 continue;
             }
-            if let Ok(mut stream) = cfb.open_stream(stream_path) {
-                let mut data = Vec::new();
-                if stream.read_to_end(&mut data).is_ok() {
-                    lib_extra_streams.insert(path_no_slash.to_string(), data);
+
+            match root.to_ascii_lowercase().as_str() {
+                "fileheader" => {
+                    if second.is_some() {
+                        return Err(AltiumError::Parse(format!(
+                            "pcblib FileHeader stream must be top-level, got '{}'",
+                            stream_path
+                        )));
+                    }
+                    if path_file_header.is_some() {
+                        return Err(AltiumError::Parse(
+                            "pcblib contains duplicate FileHeader stream".to_string(),
+                        ));
+                    }
+                    path_file_header = Some(stream_path.clone());
+                }
+                "sectionkeys" => {
+                    if second.is_some() {
+                        return Err(AltiumError::Parse(format!(
+                            "pcblib SectionKeys stream must be top-level, got '{}'",
+                            stream_path
+                        )));
+                    }
+                    if path_section_keys.is_some() {
+                        return Err(AltiumError::Parse(
+                            "pcblib contains duplicate SectionKeys stream".to_string(),
+                        ));
+                    }
+                    path_section_keys = Some(stream_path.clone());
+                }
+                "fileversioninfo" => {
+                    if fourth.is_some() || third.is_some() || second.is_none() {
+                        return Err(AltiumError::Parse(format!(
+                            "pcblib contains unimplemented FileVersionInfo stream '{}'",
+                            stream_path
+                        )));
+                    }
+                    match second.unwrap_or_default().to_ascii_lowercase().as_str() {
+                        "header" => {
+                            if path_fvi_header.is_some() {
+                                return Err(AltiumError::Parse(
+                                    "pcblib contains duplicate FileVersionInfo/Header stream"
+                                        .to_string(),
+                                ));
+                            }
+                            path_fvi_header = Some(stream_path.clone());
+                        }
+                        "data" => {
+                            if path_fvi_data.is_some() {
+                                return Err(AltiumError::Parse(
+                                    "pcblib contains duplicate FileVersionInfo/Data stream"
+                                        .to_string(),
+                                ));
+                            }
+                            path_fvi_data = Some(stream_path.clone());
+                        }
+                        _ => {
+                            return Err(AltiumError::Parse(format!(
+                                "pcblib contains unimplemented FileVersionInfo stream '{}'",
+                                stream_path
+                            )));
+                        }
+                    }
+                }
+                "library" => {
+                    if second.is_none() || fourth.is_some() {
+                        return Err(AltiumError::Parse(format!(
+                            "pcblib contains unimplemented Library stream '{}'",
+                            stream_path
+                        )));
+                    }
+                    let second_lc = second.unwrap_or_default().to_ascii_lowercase();
+                    match (second_lc.as_str(), third.map(|s| s.to_ascii_lowercase())) {
+                        ("header", None) => {
+                            if path_lib_header.is_some() {
+                                return Err(AltiumError::Parse(
+                                    "pcblib contains duplicate Library/Header stream".to_string(),
+                                ));
+                            }
+                            path_lib_header = Some(stream_path.clone());
+                        }
+                        ("data", None) => {
+                            if path_lib_data.is_some() {
+                                return Err(AltiumError::Parse(
+                                    "pcblib contains duplicate Library/Data stream".to_string(),
+                                ));
+                            }
+                            path_lib_data = Some(stream_path.clone());
+                        }
+                        ("embeddedfonts", None) => {
+                            if path_lib_embedded_fonts.is_some() {
+                                return Err(AltiumError::Parse(
+                                    "pcblib contains duplicate Library/EmbeddedFonts stream"
+                                        .to_string(),
+                                ));
+                            }
+                            path_lib_embedded_fonts = Some(stream_path.clone());
+                        }
+                        ("componentparamstoc", Some(leaf)) => match leaf.as_str() {
+                            "header" => {
+                                if path_lib_cptoc_header.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/ComponentParamsTOC/Header stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_cptoc_header = Some(stream_path.clone());
+                            }
+                            "data" => {
+                                if path_lib_cptoc_data.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/ComponentParamsTOC/Data stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_cptoc_data = Some(stream_path.clone());
+                            }
+                            _ => {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains unimplemented Library stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                        },
+                        ("layerkindmapping", Some(leaf)) => match leaf.as_str() {
+                            "header" => {
+                                if path_lib_layer_kind_header.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/LayerKindMapping/Header stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_layer_kind_header = Some(stream_path.clone());
+                            }
+                            "data" => {
+                                if path_lib_layer_kind_data.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/LayerKindMapping/Data stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_layer_kind_data = Some(stream_path.clone());
+                            }
+                            _ => {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains unimplemented Library stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                        },
+                        ("models", Some(leaf)) => {
+                            if leaf == "header" {
+                                if path_lib_models_header.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/Models/Header stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_models_header = Some(stream_path.clone());
+                            } else if leaf == "data" {
+                                if path_lib_models_data.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/Models/Data stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_models_data = Some(stream_path.clone());
+                            } else if let Ok(model_index) = leaf.parse::<u32>() {
+                                if path_lib_models_entries.contains_key(&model_index) {
+                                    return Err(AltiumError::Parse(format!(
+                                        "pcblib contains duplicate Library/Models/{} stream",
+                                        model_index
+                                    )));
+                                }
+                                path_lib_models_entries.insert(model_index, stream_path.clone());
+                            } else {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains unimplemented Library/Models stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                        }
+                        ("modelsnoembed", Some(leaf)) => match leaf.as_str() {
+                            "header" => {
+                                if path_lib_models_no_embed_header.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/ModelsNoEmbed/Header stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_models_no_embed_header = Some(stream_path.clone());
+                            }
+                            "data" => {
+                                if path_lib_models_no_embed_data.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/ModelsNoEmbed/Data stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_models_no_embed_data = Some(stream_path.clone());
+                            }
+                            _ => {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains unimplemented Library stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                        },
+                        ("padvialibrary", Some(leaf)) => match leaf.as_str() {
+                            "header" => {
+                                if path_lib_pad_via_header.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/PadViaLibrary/Header stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_pad_via_header = Some(stream_path.clone());
+                            }
+                            "data" => {
+                                if path_lib_pad_via_data.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/PadViaLibrary/Data stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_pad_via_data = Some(stream_path.clone());
+                            }
+                            _ => {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains unimplemented Library stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                        },
+                        ("textures", Some(leaf)) => match leaf.as_str() {
+                            "header" => {
+                                if path_lib_textures_header.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/Textures/Header stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_textures_header = Some(stream_path.clone());
+                            }
+                            "data" => {
+                                if path_lib_textures_data.is_some() {
+                                    return Err(AltiumError::Parse(
+                                        "pcblib contains duplicate Library/Textures/Data stream"
+                                            .to_string(),
+                                    ));
+                                }
+                                path_lib_textures_data = Some(stream_path.clone());
+                            }
+                            _ => {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains unimplemented Library stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                        },
+                        _ => {
+                            return Err(AltiumError::Parse(format!(
+                                "pcblib contains unimplemented Library stream '{}'",
+                                stream_path
+                            )));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(AltiumError::Parse(format!(
+                        "pcblib contains unimplemented stream '{}'",
+                        stream_path
+                    )));
                 }
             }
         }
 
+        let section_keys = if let Some(path) = path_section_keys {
+            parse_section_keys_stream(&read_stream_bytes(&mut cfb, &path)?)?
+        } else {
+            SectionKeyList::new()
+        };
+
+        let file_header_path = path_file_header.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/FileHeader' stream".to_string())
+        })?;
+        let file_header_meta = parse_file_header_stream(&read_stream_bytes(&mut cfb, &file_header_path)?)?;
+
+        let fvi_header_path = path_fvi_header.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/FileVersionInfo/Header' stream".to_string())
+        })?;
+        let fvi_data_path = path_fvi_data.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/FileVersionInfo/Data' stream".to_string())
+        })?;
+        let file_version_info_meta = PcbLibCountedDataStreamMeta {
+            header_count: parse_u32_header_stream(
+                &read_stream_bytes(&mut cfb, &fvi_header_path)?,
+                "FileVersionInfo/Header",
+            )?,
+            data: read_stream_bytes(&mut cfb, &fvi_data_path)?,
+        };
+
+        let lib_header_path = path_lib_header.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/Library/Header' stream".to_string())
+        })?;
+        let lib_data_path = path_lib_data.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/Library/Data' stream".to_string())
+        })?;
+        let lib_embedded_fonts_path = path_lib_embedded_fonts.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/Library/EmbeddedFonts' stream".to_string())
+        })?;
+        let lib_cptoc_header_path = path_lib_cptoc_header.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/ComponentParamsTOC/Header' stream".to_string(),
+            )
+        })?;
+        let lib_cptoc_data_path = path_lib_cptoc_data.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/ComponentParamsTOC/Data' stream".to_string(),
+            )
+        })?;
+        let lib_layer_kind_header_path = path_lib_layer_kind_header.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/LayerKindMapping/Header' stream".to_string(),
+            )
+        })?;
+        let lib_layer_kind_data_path = path_lib_layer_kind_data.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/LayerKindMapping/Data' stream".to_string(),
+            )
+        })?;
+        let lib_models_header_path = path_lib_models_header.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/Library/Models/Header' stream".to_string())
+        })?;
+        let lib_models_data_path = path_lib_models_data.ok_or_else(|| {
+            AltiumError::Parse("pcblib missing required '/Library/Models/Data' stream".to_string())
+        })?;
+        let lib_models_no_embed_header_path = path_lib_models_no_embed_header.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/ModelsNoEmbed/Header' stream".to_string(),
+            )
+        })?;
+        let lib_models_no_embed_data_path = path_lib_models_no_embed_data.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/ModelsNoEmbed/Data' stream".to_string(),
+            )
+        })?;
+        let lib_pad_via_header_path = path_lib_pad_via_header.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/PadViaLibrary/Header' stream".to_string(),
+            )
+        })?;
+        let lib_pad_via_data_path = path_lib_pad_via_data.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/PadViaLibrary/Data' stream".to_string(),
+            )
+        })?;
+        let lib_textures_header_path = path_lib_textures_header.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/Textures/Header' stream".to_string(),
+            )
+        })?;
+        let lib_textures_data_path = path_lib_textures_data.ok_or_else(|| {
+            AltiumError::Parse(
+                "pcblib missing required '/Library/Textures/Data' stream".to_string(),
+            )
+        })?;
+
+        let models_entries = {
+            let mut out: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+            for (idx, path) in path_lib_models_entries {
+                out.insert(idx, read_stream_bytes(&mut cfb, &path)?);
+            }
+            out
+        };
+
+        let library_meta = PcbLibLibraryStorageMeta {
+            header_count: parse_u32_header_stream(
+                &read_stream_bytes(&mut cfb, &lib_header_path)?,
+                "Library/Header",
+            )?,
+            data: read_stream_bytes(&mut cfb, &lib_data_path)?,
+            embedded_fonts: read_stream_bytes(&mut cfb, &lib_embedded_fonts_path)?,
+            component_params_toc: PcbLibCountedDataStreamMeta {
+                header_count: parse_u32_header_stream(
+                    &read_stream_bytes(&mut cfb, &lib_cptoc_header_path)?,
+                    "Library/ComponentParamsTOC/Header",
+                )?,
+                data: read_stream_bytes(&mut cfb, &lib_cptoc_data_path)?,
+            },
+            layer_kind_mapping: PcbLibCountedDataStreamMeta {
+                header_count: parse_u32_header_stream(
+                    &read_stream_bytes(&mut cfb, &lib_layer_kind_header_path)?,
+                    "Library/LayerKindMapping/Header",
+                )?,
+                data: read_stream_bytes(&mut cfb, &lib_layer_kind_data_path)?,
+            },
+            models: PcbLibModelsStorageMeta {
+                header_count: parse_u32_header_stream(
+                    &read_stream_bytes(&mut cfb, &lib_models_header_path)?,
+                    "Library/Models/Header",
+                )?,
+                data: read_stream_bytes(&mut cfb, &lib_models_data_path)?,
+                entries: models_entries,
+            },
+            models_no_embed: PcbLibCountedDataStreamMeta {
+                header_count: parse_u32_header_stream(
+                    &read_stream_bytes(&mut cfb, &lib_models_no_embed_header_path)?,
+                    "Library/ModelsNoEmbed/Header",
+                )?,
+                data: read_stream_bytes(&mut cfb, &lib_models_no_embed_data_path)?,
+            },
+            pad_via_library: PcbLibCountedDataStreamMeta {
+                header_count: parse_u32_header_stream(
+                    &read_stream_bytes(&mut cfb, &lib_pad_via_header_path)?,
+                    "Library/PadViaLibrary/Header",
+                )?,
+                data: read_stream_bytes(&mut cfb, &lib_pad_via_data_path)?,
+            },
+            textures: PcbLibCountedDataStreamMeta {
+                header_count: parse_u32_header_stream(
+                    &read_stream_bytes(&mut cfb, &lib_textures_header_path)?,
+                    "Library/Textures/Header",
+                )?,
+                data: read_stream_bytes(&mut cfb, &lib_textures_data_path)?,
+            },
+        };
+
         let doc_meta = DocumentMeta::PcbLib {
             section_keys,
-            raw_extra_streams: lib_extra_streams,
+            file_header_meta,
+            file_version_info_meta,
+            library_meta,
         };
         let mut store = DocumentStore::new(doc_meta);
 
@@ -206,20 +737,156 @@ impl PcbLib {
                     (Vec::new(), Vec::new(), Vec::new())
                 };
 
-            // Capture extra streams in this footprint's storage
-            let storage_prefix = format!("/{}/", storage_name);
-            let mut extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+            // Parse typed sidecar streams in this footprint storage.
+            let storage_prefix = format!("{}/", storage_name);
+            let mut sidecar_streams = PcbLibFootprintSidecarStreamsMeta::default();
+            let mut path_primitive_guids_header: Option<String> = None;
+            let mut path_primitive_guids_data: Option<String> = None;
+            let mut path_unique_id_header: Option<String> = None;
+            let mut path_unique_id_data: Option<String> = None;
+            let mut path_extended_info_header: Option<String> = None;
+            let mut path_extended_info_data: Option<String> = None;
             for stream_path in &all_stream_paths {
-                if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
-                    if rest == STREAM_PARAMETERS || rest == STREAM_HEADER || rest == STREAM_DATA {
+                let normalized_path = stream_path.trim_start_matches('/');
+                if let Some(rest) = normalized_path.strip_prefix(&storage_prefix) {
+                    if rest.eq_ignore_ascii_case(STREAM_PARAMETERS)
+                        || rest.eq_ignore_ascii_case(STREAM_HEADER)
+                        || rest.eq_ignore_ascii_case(STREAM_DATA)
+                    {
                         continue;
                     }
-                    if let Ok(mut stream) = cfb.open_stream(stream_path) {
-                        let mut data = Vec::new();
-                        if stream.read_to_end(&mut data).is_ok() {
-                            extra_streams.insert(rest.to_string(), data);
+
+                    let rest_lc = rest.to_ascii_lowercase();
+                    match rest_lc.as_str() {
+                        "widestrings" => {
+                            if sidecar_streams.wide_strings.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            let data = read_stream_bytes(&mut cfb, stream_path)?;
+                            sidecar_streams.wide_strings =
+                                Some(parse_wide_strings_stream(&data, stream_path)?);
+                        }
+                        "primitiveguids/header" => {
+                            if path_primitive_guids_header.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            path_primitive_guids_header = Some(stream_path.clone());
+                        }
+                        "primitiveguids/data" => {
+                            if path_primitive_guids_data.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            path_primitive_guids_data = Some(stream_path.clone());
+                        }
+                        "uniqueidprimitiveinformation/header" => {
+                            if path_unique_id_header.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            path_unique_id_header = Some(stream_path.clone());
+                        }
+                        "uniqueidprimitiveinformation/data" => {
+                            if path_unique_id_data.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            path_unique_id_data = Some(stream_path.clone());
+                        }
+                        "extendedprimitiveinformation/header" => {
+                            if path_extended_info_header.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            path_extended_info_header = Some(stream_path.clone());
+                        }
+                        "extendedprimitiveinformation/data" => {
+                            if path_extended_info_data.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "pcblib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            path_extended_info_data = Some(stream_path.clone());
+                        }
+                        _ => {
+                            return Err(AltiumError::Parse(format!(
+                                "pcblib contains unimplemented stream '{}'",
+                                stream_path
+                            )));
                         }
                     }
+                }
+            }
+
+            match (path_primitive_guids_header, path_primitive_guids_data) {
+                (Some(header_path), Some(data_path)) => {
+                    let header_data = read_stream_bytes(&mut cfb, &header_path)?;
+                    let data = read_stream_bytes(&mut cfb, &data_path)?;
+                    sidecar_streams.primitive_guids = Some(parse_primitive_guids_stream(
+                        &header_data,
+                        &data,
+                        &format!("{storage_name}/{STREAM_PRIMITIVE_GUIDS}"),
+                    )?);
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(AltiumError::Parse(format!(
+                        "pcblib footprint '{}' has incomplete {}/{{Header,Data}} streams",
+                        storage_name, STREAM_PRIMITIVE_GUIDS
+                    )));
+                }
+            }
+
+            match (path_unique_id_header, path_unique_id_data) {
+                (Some(header_path), Some(data_path)) => {
+                    let header_data = read_stream_bytes(&mut cfb, &header_path)?;
+                    let data = read_stream_bytes(&mut cfb, &data_path)?;
+                    sidecar_streams.unique_id_primitive_information = Some(parse_param_table_stream(
+                        &header_data,
+                        &data,
+                        &format!("{storage_name}/{STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION}"),
+                    )?);
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(AltiumError::Parse(format!(
+                        "pcblib footprint '{}' has incomplete {}/{{Header,Data}} streams",
+                        storage_name, STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION
+                    )));
+                }
+            }
+
+            match (path_extended_info_header, path_extended_info_data) {
+                (Some(header_path), Some(data_path)) => {
+                    let header_data = read_stream_bytes(&mut cfb, &header_path)?;
+                    let data = read_stream_bytes(&mut cfb, &data_path)?;
+                    sidecar_streams.extended_primitive_information = Some(parse_param_table_stream(
+                        &header_data,
+                        &data,
+                        &format!("{storage_name}/{STREAM_EXTENDED_PRIMITIVE_INFORMATION}"),
+                    )?);
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(AltiumError::Parse(format!(
+                        "pcblib footprint '{}' has incomplete {}/{{Header,Data}} streams",
+                        storage_name, STREAM_EXTENDED_PRIMITIVE_INFORMATION
+                    )));
                 }
             }
 
@@ -241,12 +908,12 @@ impl PcbLib {
                 children: child_ids,
                 original_indices,
                 parent_original_index: None,
-                extra_streams,
                 meta: GroupMeta::PcbFootprint {
                     name: storage_name.clone(),
                     raw_pattern_name_block,
                     original_primitive_order: primitive_order,
                     raw_header,
+                    sidecar_streams,
                 },
             };
             store.insert_group(group_data);
@@ -273,42 +940,107 @@ impl PcbLib {
         let mut store = self.store.borrow_mut();
         store.ensure_semantic_ids();
 
-        // Write library-level extra streams (FileHeader, Library/*, etc.)
-        if let DocumentMeta::PcbLib {
-            raw_extra_streams, ..
-        } = store.meta()
+        let (section_keys, file_header_meta, file_version_info_meta, library_meta) =
+            match store.meta() {
+                DocumentMeta::PcbLib {
+                    section_keys,
+                    file_header_meta,
+                    file_version_info_meta,
+                    library_meta,
+                } => (
+                    section_keys.clone(),
+                    file_header_meta.clone(),
+                    file_version_info_meta.clone(),
+                    library_meta.clone(),
+                ),
+                _ => return Err(AltiumError::Cfb("Expected PcbLib metadata".to_string())),
+            };
+
+        // Write typed non-footprint system streams.
         {
             let mut created_storages: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            let mut sorted_extras: Vec<_> = raw_extra_streams.iter().collect();
-            sorted_extras.sort_by_key(|(k, _)| (*k).clone());
-            for (rel_path, data) in &sorted_extras {
+            let mut write_system_stream = |rel_path: &str, data: &[u8]| -> Result<()> {
                 let full_path = format!("/{}", rel_path);
                 ensure_parent_storages(&mut cfb, &full_path, &mut created_storages)?;
                 let mut stream = cfb.create_stream(&full_path).map_err(|e| {
                     AltiumError::Cfb(format!(
-                        "Failed to create extra stream {}: {}",
+                        "Failed to create system stream {}: {}",
                         full_path, e
                     ))
                 })?;
                 stream.write_all(data).map_err(AltiumError::Io)?;
+                Ok(())
+            };
+
+            if !section_keys.is_empty() {
+                let bytes = serialize_section_keys_stream(&section_keys)?;
+                write_system_stream("SectionKeys", &bytes)?;
             }
+
+            let file_header_bytes = file_header_meta.to_stream_bytes()?;
+            write_system_stream("FileHeader", &file_header_bytes)?;
+
+            let fvi_header = serialize_u32_header_stream(file_version_info_meta.header_count);
+            write_system_stream("FileVersionInfo/Header", &fvi_header)?;
+            write_system_stream("FileVersionInfo/Data", &file_version_info_meta.data)?;
+
+            let lib_header = serialize_u32_header_stream(library_meta.header_count);
+            write_system_stream("Library/Header", &lib_header)?;
+            write_system_stream("Library/Data", &library_meta.data)?;
+            write_system_stream("Library/EmbeddedFonts", &library_meta.embedded_fonts)?;
+
+            let toc_header = serialize_u32_header_stream(library_meta.component_params_toc.header_count);
+            write_system_stream("Library/ComponentParamsTOC/Header", &toc_header)?;
+            write_system_stream("Library/ComponentParamsTOC/Data", &library_meta.component_params_toc.data)?;
+
+            let layer_header = serialize_u32_header_stream(library_meta.layer_kind_mapping.header_count);
+            write_system_stream("Library/LayerKindMapping/Header", &layer_header)?;
+            write_system_stream("Library/LayerKindMapping/Data", &library_meta.layer_kind_mapping.data)?;
+
+            let models_header = serialize_u32_header_stream(library_meta.models.header_count);
+            write_system_stream("Library/Models/Header", &models_header)?;
+            write_system_stream("Library/Models/Data", &library_meta.models.data)?;
+            for (index, blob) in &library_meta.models.entries {
+                write_system_stream(&format!("Library/Models/{}", index), blob)?;
+            }
+
+            let models_no_embed_header =
+                serialize_u32_header_stream(library_meta.models_no_embed.header_count);
+            write_system_stream("Library/ModelsNoEmbed/Header", &models_no_embed_header)?;
+            write_system_stream("Library/ModelsNoEmbed/Data", &library_meta.models_no_embed.data)?;
+
+            let pad_via_header = serialize_u32_header_stream(library_meta.pad_via_library.header_count);
+            write_system_stream("Library/PadViaLibrary/Header", &pad_via_header)?;
+            write_system_stream("Library/PadViaLibrary/Data", &library_meta.pad_via_library.data)?;
+
+            let textures_header = serialize_u32_header_stream(library_meta.textures.header_count);
+            write_system_stream("Library/Textures/Header", &textures_header)?;
+            write_system_stream("Library/Textures/Data", &library_meta.textures.data)?;
         }
 
         for &group_id in store.group_ids() {
             let group = store.group(group_id);
-            let (name, raw_pattern_name_block, original_primitive_order, raw_header) =
+            let (
+                name,
+                raw_pattern_name_block,
+                original_primitive_order,
+                raw_header,
+                sidecar_streams,
+            ) =
                 match &group.meta {
                     GroupMeta::PcbFootprint {
                         name,
                         raw_pattern_name_block,
                         original_primitive_order,
                         raw_header,
+                        sidecar_streams,
                     } => (
                         name.clone(),
                         raw_pattern_name_block.clone(),
                         original_primitive_order.clone(),
                         raw_header.clone(),
+                        sidecar_streams.clone(),
                     ),
                     _ => continue,
                 };
@@ -356,22 +1088,73 @@ impl PcbLib {
                 .map_err(|e| AltiumError::Cfb(format!("Failed to create Data: {}", e)))?;
             stream.write_all(&data).map_err(AltiumError::Io)?;
 
-            // Write per-footprint extra streams
+            // Write typed per-footprint sidecar streams.
             {
                 let mut created_storages: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
-                // The footprint storage itself is already created above.
                 created_storages.insert(storage_path.clone());
-                for (rel_path, data) in &group.extra_streams {
+                let mut write_sidecar = |rel_path: &str, data: &[u8]| -> Result<()> {
                     let full_path = format!("/{}/{}", name, rel_path);
                     ensure_parent_storages(&mut cfb, &full_path, &mut created_storages)?;
                     let mut stream = cfb.create_stream(&full_path).map_err(|e| {
                         AltiumError::Cfb(format!(
-                            "Failed to create extra stream {}: {}",
+                            "Failed to create sidecar stream {}: {}",
                             full_path, e
                         ))
                     })?;
                     stream.write_all(data).map_err(AltiumError::Io)?;
+                    Ok(())
+                };
+
+                if let Some(wide_strings) = &sidecar_streams.wide_strings {
+                    let bytes = serialize_wide_strings_stream(
+                        wide_strings,
+                        &format!("{name}/{STREAM_WIDE_STRINGS}"),
+                    )?;
+                    write_sidecar(STREAM_WIDE_STRINGS, &bytes)?;
+                }
+
+                if let Some(primitive_guids) = &sidecar_streams.primitive_guids {
+                    let (header_bytes, data_bytes) =
+                        serialize_primitive_guids_stream(primitive_guids)?;
+                    write_sidecar(&format!("{STREAM_PRIMITIVE_GUIDS}/{STREAM_HEADER}"), &header_bytes)?;
+                    write_sidecar(&format!("{STREAM_PRIMITIVE_GUIDS}/{STREAM_DATA}"), &data_bytes)?;
+                }
+
+                if let Some(unique_id_info) = &sidecar_streams.unique_id_primitive_information {
+                    let (header_bytes, data_bytes) = serialize_param_table_stream(
+                        unique_id_info,
+                        &format!("{name}/{STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION}"),
+                    )?;
+                    write_sidecar(
+                        &format!(
+                            "{}/{}",
+                            STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION, STREAM_HEADER
+                        ),
+                        &header_bytes,
+                    )?;
+                    write_sidecar(
+                        &format!(
+                            "{}/{}",
+                            STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION, STREAM_DATA
+                        ),
+                        &data_bytes,
+                    )?;
+                }
+
+                if let Some(extended_info) = &sidecar_streams.extended_primitive_information {
+                    let (header_bytes, data_bytes) = serialize_param_table_stream(
+                        extended_info,
+                        &format!("{name}/{STREAM_EXTENDED_PRIMITIVE_INFORMATION}"),
+                    )?;
+                    write_sidecar(
+                        &format!("{}/{}", STREAM_EXTENDED_PRIMITIVE_INFORMATION, STREAM_HEADER),
+                        &header_bytes,
+                    )?;
+                    write_sidecar(
+                        &format!("{}/{}", STREAM_EXTENDED_PRIMITIVE_INFORMATION, STREAM_DATA),
+                        &data_bytes,
+                    )?;
                 }
             }
         }
@@ -469,12 +1252,12 @@ impl PcbLib {
             children: child_ids,
             original_indices,
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::PcbFootprint {
                 name: name.to_string(),
                 raw_pattern_name_block: Vec::new(),
                 original_primitive_order: primitive_refs,
                 raw_header: Vec::new(),
+                sidecar_streams: PcbLibFootprintSidecarStreamsMeta::default(),
             },
         };
         let group_id = store.insert_group(group_data);
@@ -621,11 +1404,13 @@ pub(crate) fn ensure_parent_storages<F: Read + Write + Seek>(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Read PCB section keys (stub — PcbLib files don't typically use section keys).
-fn read_pcb_section_keys<F: Read + Seek>(
-    _cfb: &mut cfb::CompoundFile<F>,
-) -> Result<SectionKeyList> {
-    Ok(SectionKeyList::new())
+fn read_stream_bytes<F: Read + Seek>(cfb: &mut cfb::CompoundFile<F>, path: &str) -> Result<Vec<u8>> {
+    let mut stream = cfb
+        .open_stream(path)
+        .map_err(|e| AltiumError::Cfb(format!("Failed to open {}: {}", path, e)))?;
+    let mut data = Vec::new();
+    stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
+    Ok(data)
 }
 
 /// Returns the number of subrecords for a given PCB primitive type.
@@ -832,10 +1617,10 @@ mod tests {
         let name = b"SOT-23";
         data.extend_from_slice(&(name.len() as u32).to_le_bytes());
         data.extend_from_slice(name);
-        // A track primitive: type=4, length=35, zeros
+        // A track primitive: type=4, length=49, zeros
         data.push(4); // type byte
-        data.extend_from_slice(&35u32.to_le_bytes()); // length
-        data.extend_from_slice(&vec![0u8; 35]); // data
+        data.extend_from_slice(&49u32.to_le_bytes()); // length
+        data.extend_from_slice(&vec![0u8; 49]); // data
 
         let (prims, order, pattern_name) = parse_pcb_data_stream(&data).unwrap();
         assert_eq!(pattern_name, name);
@@ -960,8 +1745,8 @@ mod tests {
         data.extend_from_slice(name);
         // Text primitive: type=5 with 2 subrecords
         data.push(5);
-        // Subrecord 1: main text data (40 bytes)
-        let sub1 = vec![0xCC; 40];
+        // Subrecord 1: main text data (minimum valid for parser = 111 bytes)
+        let sub1 = vec![0xCC; 111];
         data.extend_from_slice(&(sub1.len() as u32).to_le_bytes());
         data.extend_from_slice(&sub1);
         // Subrecord 2: text string (10 bytes)
@@ -972,8 +1757,8 @@ mod tests {
         let (prims, order, _) = parse_pcb_data_stream(&data).unwrap();
         assert_eq!(prims.len(), 1);
         assert_eq!(prims[0].key, 5);
-        // raw_block = (4+40) + (4+10) = 58
-        assert_eq!(prims[0].origin.as_binary().unwrap().raw_block.len(), 58);
+        // raw_block = (4+111) + (4+10) = 129
+        assert_eq!(prims[0].origin.as_binary().unwrap().raw_block.len(), 129);
 
         // Round-trip
         let prim_refs: Vec<&RecordNode> = prims.iter().collect();
@@ -981,7 +1766,7 @@ mod tests {
         let (prims2, _, _) = parse_pcb_data_stream(&rebuilt).unwrap();
         assert_eq!(prims2.len(), 1);
         assert_eq!(prims2[0].key, 5);
-        assert_eq!(prims2[0].origin.as_binary().unwrap().raw_block.len(), 58);
+        assert_eq!(prims2[0].origin.as_binary().unwrap().raw_block.len(), 129);
     }
 
     #[test]
@@ -1012,7 +1797,12 @@ mod tests {
     fn make_test_lib(fp_names: &[&str]) -> PcbLib {
         let doc_meta = DocumentMeta::PcbLib {
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            file_header_meta: PcbLibFileHeaderStreamMeta::default(),
+            file_version_info_meta: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: Vec::new(),
+            },
+            library_meta: PcbLibLibraryStorageMeta::default(),
         };
         let mut store = DocumentStore::new(doc_meta);
 
@@ -1026,12 +1816,12 @@ mod tests {
                 children: Vec::new(),
                 original_indices: Vec::new(),
                 parent_original_index: None,
-                extra_streams: HashMap::new(),
                 meta: GroupMeta::PcbFootprint {
                     name: name.to_string(),
                     raw_pattern_name_block: name.as_bytes().to_vec(),
                     original_primitive_order: Vec::new(),
                     raw_header: Vec::new(),
+                    sidecar_streams: PcbLibFootprintSidecarStreamsMeta::default(),
                 },
             };
             store.insert_group(group_data);
@@ -1046,7 +1836,12 @@ mod tests {
     fn make_lib_with_primitives() -> PcbLib {
         let doc_meta = DocumentMeta::PcbLib {
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            file_header_meta: PcbLibFileHeaderStreamMeta::default(),
+            file_version_info_meta: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: Vec::new(),
+            },
+            library_meta: PcbLibLibraryStorageMeta::default(),
         };
         let mut store = DocumentStore::new(doc_meta);
 
@@ -1074,7 +1869,6 @@ mod tests {
             children: vec![pad0_id, pad1_id, track_id],
             original_indices: vec![0, 1, 2],
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::PcbFootprint {
                 name: "SOT-23".to_string(),
                 raw_pattern_name_block: b"SOT-23".to_vec(),
@@ -1084,6 +1878,7 @@ mod tests {
                     PcbPrimitiveRef::new(4, 2),
                 ],
                 raw_header: Vec::new(),
+                sidecar_streams: PcbLibFootprintSidecarStreamsMeta::default(),
             },
         };
         store.insert_group(group_data);
@@ -1091,6 +1886,61 @@ mod tests {
         PcbLib {
             store: Rc::new(RefCell::new(store)),
         }
+    }
+
+    fn write_minimal_system_streams<W: Read + Write + Seek>(cfb: &mut cfb::CompoundFile<W>) {
+        let mut created_storages: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut write_stream = |path: &str, data: &[u8]| {
+            ensure_parent_storages(cfb, path, &mut created_storages).unwrap();
+            cfb.create_stream(path).unwrap().write_all(data).unwrap();
+        };
+
+        let file_header = PcbLibFileHeaderStreamMeta::default().to_stream_bytes().unwrap();
+        write_stream("/FileHeader", &file_header);
+
+        write_stream("/FileVersionInfo/Header", &1u32.to_le_bytes());
+        write_stream("/FileVersionInfo/Data", b"|COUNT=1|");
+
+        write_stream("/Library/Header", &1u32.to_le_bytes());
+        write_stream("/Library/Data", b"");
+        write_stream("/Library/EmbeddedFonts", b"");
+
+        write_stream("/Library/ComponentParamsTOC/Header", &1u32.to_le_bytes());
+        write_stream("/Library/ComponentParamsTOC/Data", b"");
+
+        write_stream("/Library/LayerKindMapping/Header", &1u32.to_le_bytes());
+        write_stream("/Library/LayerKindMapping/Data", b"");
+
+        write_stream("/Library/Models/Header", &0u32.to_le_bytes());
+        write_stream("/Library/Models/Data", b"");
+
+        write_stream("/Library/ModelsNoEmbed/Header", &0u32.to_le_bytes());
+        write_stream("/Library/ModelsNoEmbed/Data", b"");
+
+        write_stream("/Library/PadViaLibrary/Header", &0u32.to_le_bytes());
+        write_stream("/Library/PadViaLibrary/Data", b"");
+
+        write_stream("/Library/Textures/Header", &0u32.to_le_bytes());
+        write_stream("/Library/Textures/Data", b"");
+    }
+
+    fn write_minimal_footprint<W: Read + Write + Seek>(cfb: &mut cfb::CompoundFile<W>, name: &str) {
+        cfb.create_storage(format!("/{}", name)).unwrap();
+        cfb.create_stream(format!("/{}/Header", name))
+            .unwrap()
+            .write_all(&1u32.to_le_bytes())
+            .unwrap();
+        cfb.create_stream(format!("/{}/Parameters", name))
+            .unwrap()
+            .write_all(format!("|PATTERN={}|", name).as_bytes())
+            .unwrap();
+        let mut data = Vec::new();
+        data.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        data.extend_from_slice(name.as_bytes());
+        cfb.create_stream(format!("/{}/Data", name))
+            .unwrap()
+            .write_all(&data)
+            .unwrap();
     }
 
     #[test]
@@ -1173,7 +2023,12 @@ mod tests {
         let lib = PcbLib {
             store: DocumentStore::new_ref(DocumentMeta::PcbLib {
                 section_keys: SectionKeyList::new(),
-                raw_extra_streams: HashMap::new(),
+                file_header_meta: PcbLibFileHeaderStreamMeta::default(),
+                file_version_info_meta: PcbLibCountedDataStreamMeta {
+                    header_count: 1,
+                    data: Vec::new(),
+                },
+                library_meta: PcbLibLibraryStorageMeta::default(),
             }),
         };
 
@@ -1206,33 +2061,8 @@ mod tests {
             cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
                 .unwrap();
 
-        cfb.create_storage("/SOT-23").unwrap();
-        cfb.create_stream("/SOT-23/Header")
-            .unwrap()
-            .write_all(&1u32.to_le_bytes())
-            .unwrap();
-        cfb.create_stream("/SOT-23/Parameters")
-            .unwrap()
-            .write_all(b"|PATTERN=SOT-23|")
-            .unwrap();
-        let mut data = Vec::new();
-        data.extend_from_slice(&6u32.to_le_bytes());
-        data.extend_from_slice(b"SOT-23");
-        cfb.create_stream("/SOT-23/Data")
-            .unwrap()
-            .write_all(&data)
-            .unwrap();
-
-        // System storage with Data/Header that must not be classified as a footprint.
-        cfb.create_storage("/FileVersionInfo").unwrap();
-        cfb.create_stream("/FileVersionInfo/Header")
-            .unwrap()
-            .write_all(&1u32.to_le_bytes())
-            .unwrap();
-        cfb.create_stream("/FileVersionInfo/Data")
-            .unwrap()
-            .write_all(b"|COUNT=1|")
-            .unwrap();
+        write_minimal_system_streams(&mut cfb);
+        write_minimal_footprint(&mut cfb, "SOT-23");
 
         cfb.flush().unwrap();
         let bytes = cfb.into_inner().into_inner();
@@ -1241,14 +2071,66 @@ mod tests {
         assert_eq!(lib.footprint_count(), 1);
         assert_eq!(lib.names(), vec!["SOT-23"]);
 
-        let store = lib.store.borrow();
-        let extras = match store.meta() {
-            DocumentMeta::PcbLib {
-                raw_extra_streams, ..
-            } => raw_extra_streams,
-            _ => unreachable!(),
+        let file_version_info = lib.file_version_info_meta();
+        assert_eq!(file_version_info.header_count, 1);
+        assert_eq!(file_version_info.data, b"|COUNT=1|");
+    }
+
+    #[test]
+    fn pcblib_open_rejects_unknown_system_stream() {
+        use std::io::Cursor;
+
+        let mut cfb =
+            cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+                .unwrap();
+
+        write_minimal_system_streams(&mut cfb);
+        write_minimal_footprint(&mut cfb, "SOT-23");
+
+        // Unknown non-footprint stream should be rejected.
+        cfb.create_storage("/Mystery").unwrap();
+        cfb.create_stream("/Mystery/Meta")
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+
+        cfb.flush().unwrap();
+        let bytes = cfb.into_inner().into_inner();
+
+        let err = match PcbLib::open(Cursor::new(bytes)) {
+            Ok(_) => panic!("expected PcbLib::open to fail"),
+            Err(err) => err,
         };
-        assert!(extras.contains_key("FileVersionInfo/Data"));
-        assert!(extras.contains_key("FileVersionInfo/Header"));
+        assert!(format!("{err}")
+            .to_ascii_lowercase()
+            .contains("unimplemented stream"));
+    }
+
+    #[test]
+    fn pcblib_open_rejects_unknown_footprint_stream() {
+        use std::io::Cursor;
+
+        let mut cfb =
+            cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+                .unwrap();
+
+        write_minimal_system_streams(&mut cfb);
+        write_minimal_footprint(&mut cfb, "SOT-23");
+
+        cfb.create_stream("/SOT-23/UnknownSidecar")
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+
+        cfb.flush().unwrap();
+        let bytes = cfb.into_inner().into_inner();
+
+        let err = match PcbLib::open(Cursor::new(bytes)) {
+            Ok(_) => panic!("expected PcbLib::open to fail"),
+            Err(err) => err,
+        };
+        assert!(format!("{err}")
+            .to_ascii_lowercase()
+            .contains("unimplemented stream"));
     }
 }

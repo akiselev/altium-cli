@@ -5,7 +5,6 @@
 //! grouped by OWNERINDEX: component records (RECORD=1) own child records
 //! that reference them by index.
 
-use std::collections::HashMap;
 use std::io::{Read, Seek, Write};
 
 use crate::error::{AltiumError, Result};
@@ -292,7 +291,6 @@ impl SchDoc {
             children: child_ids,
             original_indices: vec![usize::MAX; child_len],
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::SchDocComponent,
         });
         store.mark_semantic_ids_dirty();
@@ -710,7 +708,6 @@ fn group_by_owner_index(store: &mut DocumentStore, records: Vec<(usize, RecordNo
             children: Vec::new(),
             original_indices: Vec::new(),
             parent_original_index: Some(flat_idx),
-            extra_streams: HashMap::new(),
             meta: GroupMeta::SchDocComponent,
         };
         let gid = store.insert_group(group_data);

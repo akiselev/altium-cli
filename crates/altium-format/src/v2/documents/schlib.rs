@@ -10,7 +10,7 @@
 //! (RECORD=1), followed by child records (pins, labels, etc.).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 
@@ -25,6 +25,13 @@ use crate::v2::traits::{HandleFamily, RecordType};
 use super::encoding::{
     SIZE_FLAG_MASK, decode_win1252, encode_single_param_block, encode_win1252,
     parse_first_param_block,
+};
+use super::schdoc_streams::parse_storage_meta;
+use super::schlib_streams::{
+    SchLibComponentSidecarStreamsMeta, SchLibRedirectionStreamMeta, STREAM_PIN_FRAC,
+    STREAM_PIN_PACKAGE_LENGTH, STREAM_PIN_SYMBOL_LINE_WIDTH, STREAM_PIN_TEXT_DATA,
+    parse_component_embedded_stream, parse_redirection_stream, serialize_component_embedded_stream,
+    serialize_redirection_stream,
 };
 use super::section_keys::SectionKeyList;
 
@@ -120,7 +127,8 @@ impl SchLib {
             raw_header: None,
             raw_header_params: None,
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
         store.set_semantic_context("dtid:schlib", "");
         Self {
@@ -131,6 +139,52 @@ impl SchLib {
     /// Returns a reference to the underlying document store.
     pub fn store(&self) -> &DocRef {
         &self.store
+    }
+
+    /// Returns typed `/Storage` stream metadata.
+    pub fn storage_meta(&self) -> crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::SchLib { storage_meta, .. } => storage_meta.clone(),
+            _ => crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+        }
+    }
+
+    /// Replace typed `/Storage` stream metadata.
+    pub fn set_storage_meta(
+        &self,
+        meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta,
+    ) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::SchLib { storage_meta, .. } = &mut store.meta {
+            *storage_meta = meta;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
+    /// Returns typed alias redirection streams keyed by alias section key.
+    pub fn redirection_streams(&self) -> BTreeMap<String, SchLibRedirectionStreamMeta> {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::SchLib {
+                redirection_streams,
+                ..
+            } => redirection_streams.clone(),
+            _ => BTreeMap::new(),
+        }
+    }
+
+    /// Replace typed alias redirection stream metadata.
+    pub fn set_redirection_streams(&self, streams: BTreeMap<String, SchLibRedirectionStreamMeta>) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::SchLib {
+            redirection_streams,
+            ..
+        } = &mut store.meta
+        {
+            *redirection_streams = streams;
+            store.mark_semantic_ids_dirty();
+        }
     }
 
     /// Replace library header metadata used when writing `/FileHeader`.
@@ -197,37 +251,76 @@ impl SchLib {
             .filter_map(|e| Some(e.path().to_str()?.to_string()))
             .collect();
 
-        // Track which section keys are used by components
-        let mut component_keys: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        // Track which section keys are used by components.
+        let component_keys: std::collections::HashSet<String> = component_entries
+            .iter()
+            .map(|entry| {
+                let safe_name = sanitize_cfb_name(&entry.lib_ref);
+                section_keys.get_key(&safe_name).to_ascii_lowercase()
+            })
+            .collect();
 
-        // Build library-level extra_streams (determined before group insertion)
-        let mut raw_extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+        // Parse typed SchLib non-component streams.
+        let mut storage_meta: Option<crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta> =
+            None;
+        let mut redirection_streams: BTreeMap<String, SchLibRedirectionStreamMeta> =
+            BTreeMap::new();
 
-        // Collect component_keys first pass
-        for entry in &component_entries {
-            let safe_name = sanitize_cfb_name(&entry.lib_ref);
-            let section_key = section_keys.get_key(&safe_name).to_string();
-            component_keys.insert(section_key);
-        }
-
-        // Capture library-level extra streams
         for stream_path in &all_stream_paths {
             let path_no_slash = stream_path.trim_start_matches('/');
-            let top_level = path_no_slash.split('/').next().unwrap_or("");
-            if top_level == STREAM_FILE_HEADER
-                || top_level == STREAM_SECTION_KEYS
-                || component_keys.contains(top_level)
+            let mut parts = path_no_slash.split('/');
+            let top_level = parts.next().unwrap_or("");
+            let second = parts.next();
+            let third = parts.next();
+            let top_level_lc = top_level.to_ascii_lowercase();
+
+            if top_level.eq_ignore_ascii_case(STREAM_FILE_HEADER)
+                || top_level.eq_ignore_ascii_case(STREAM_SECTION_KEYS)
+                || component_keys.contains(&top_level_lc)
             {
                 continue;
             }
-            if let Ok(mut stream) = cfb.open_stream(stream_path) {
-                let mut data = Vec::new();
-                if stream.read_to_end(&mut data).is_ok() {
-                    raw_extra_streams.insert(path_no_slash.to_string(), data);
+
+            let mut stream = cfb.open_stream(stream_path).map_err(|e| {
+                AltiumError::Cfb(format!("Failed to open stream '{}': {}", stream_path, e))
+            })?;
+            let mut data = Vec::new();
+            stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
+
+            if top_level.eq_ignore_ascii_case("Storage") && second.is_none() {
+                if storage_meta.is_some() {
+                    return Err(AltiumError::Parse(
+                        "schlib contains duplicate /Storage stream".to_string(),
+                    ));
                 }
+                storage_meta = Some(parse_storage_meta(&data)?);
+                continue;
             }
+
+            if second.is_some_and(|s| s.eq_ignore_ascii_case("Redirection")) && third.is_none() {
+                if redirection_streams
+                    .keys()
+                    .any(|k| k.eq_ignore_ascii_case(top_level))
+                {
+                    return Err(AltiumError::Parse(format!(
+                        "schlib contains duplicate redirection stream for '{}'",
+                        top_level
+                    )));
+                }
+                let parsed = parse_redirection_stream(&data, stream_path)?;
+                redirection_streams.insert(top_level.to_string(), parsed);
+                continue;
+            }
+
+            return Err(AltiumError::Parse(format!(
+                "schlib contains unimplemented stream '{}'",
+                stream_path
+            )));
         }
+
+        let storage_meta = storage_meta.ok_or_else(|| {
+            AltiumError::Parse("schlib missing required '/Storage' stream".to_string())
+        })?;
 
         // Create DocumentStore with SchLib metadata
         let mut store = DocumentStore::new(DocumentMeta::SchLib {
@@ -238,7 +331,8 @@ impl SchLib {
             raw_header: header.raw.clone(),
             raw_header_params: header_params,
             section_keys: section_keys.clone(),
-            raw_extra_streams,
+            storage_meta,
+            redirection_streams,
         });
 
         // 3. Read Data stream for each component and insert into store
@@ -257,18 +351,83 @@ impl SchLib {
                     (RecordNode::new(1, origin), Vec::new(), Vec::new())
                 };
 
-            // Capture extra streams in this component's storage
-            let storage_prefix = format!("/{}/", section_key);
-            let mut extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
+            // Parse typed component sidecar streams.
+            let storage_prefix = format!("{}/", section_key);
+            let mut sidecar_streams = SchLibComponentSidecarStreamsMeta::default();
             for stream_path in &all_stream_paths {
-                if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
-                    if rest == STREAM_DATA {
+                let normalized_path = stream_path.trim_start_matches('/');
+                if let Some(rest) = normalized_path.strip_prefix(&storage_prefix) {
+                    if rest.eq_ignore_ascii_case(STREAM_DATA) {
                         continue;
                     }
-                    if let Ok(mut stream) = cfb.open_stream(stream_path) {
-                        let mut data = Vec::new();
-                        if stream.read_to_end(&mut data).is_ok() {
-                            extra_streams.insert(rest.to_string(), data);
+
+                    let mut stream = cfb.open_stream(stream_path).map_err(|e| {
+                        AltiumError::Cfb(format!("Failed to open stream '{}': {}", stream_path, e))
+                    })?;
+                    let mut data = Vec::new();
+                    stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
+
+                    let rest_lc = rest.to_ascii_lowercase();
+                    match rest_lc.as_str() {
+                        "pinfrac" => {
+                            if sidecar_streams.pin_frac.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "schlib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            sidecar_streams.pin_frac = Some(parse_component_embedded_stream(
+                                &data,
+                                stream_path,
+                                STREAM_PIN_FRAC,
+                            )?);
+                        }
+                        "pintextdata" => {
+                            if sidecar_streams.pin_text_data.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "schlib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            sidecar_streams.pin_text_data = Some(parse_component_embedded_stream(
+                                &data,
+                                stream_path,
+                                STREAM_PIN_TEXT_DATA,
+                            )?);
+                        }
+                        "pinsymbollinewidth" => {
+                            if sidecar_streams.pin_symbol_line_width.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "schlib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            sidecar_streams.pin_symbol_line_width =
+                                Some(parse_component_embedded_stream(
+                                    &data,
+                                    stream_path,
+                                    STREAM_PIN_SYMBOL_LINE_WIDTH,
+                                )?);
+                        }
+                        "pinpackagelength" => {
+                            if sidecar_streams.pin_package_length.is_some() {
+                                return Err(AltiumError::Parse(format!(
+                                    "schlib contains duplicate stream '{}'",
+                                    stream_path
+                                )));
+                            }
+                            sidecar_streams.pin_package_length =
+                                Some(parse_component_embedded_stream(
+                                    &data,
+                                    stream_path,
+                                    STREAM_PIN_PACKAGE_LENGTH,
+                                )?);
+                        }
+                        _ => {
+                            return Err(AltiumError::Parse(format!(
+                                "schlib contains unimplemented stream '{}'",
+                                stream_path
+                            )));
                         }
                     }
                 }
@@ -290,12 +449,12 @@ impl SchLib {
                 children: child_ids,
                 original_indices,
                 parent_original_index: None,
-                extra_streams,
                 meta: GroupMeta::SchComponent {
                     lib_ref: entry.lib_ref.clone(),
                     description: entry.description.clone(),
                     part_count: entry.part_count,
                     section_key,
+                    sidecar_streams,
                 },
             };
 
@@ -334,7 +493,8 @@ impl SchLib {
             raw_header,
             raw_header_params,
             _stored_section_keys,
-            raw_extra_streams,
+            storage_meta,
+            redirection_streams,
         ) = match &store.meta {
             DocumentMeta::SchLib {
                 header_text,
@@ -344,7 +504,8 @@ impl SchLib {
                 raw_header,
                 raw_header_params,
                 section_keys,
-                raw_extra_streams,
+                storage_meta,
+                redirection_streams,
             } => (
                 header_text.clone(),
                 *weight,
@@ -353,7 +514,8 @@ impl SchLib {
                 raw_header.clone(),
                 raw_header_params.clone(),
                 section_keys.clone(),
-                raw_extra_streams.clone(),
+                storage_meta.clone(),
+                redirection_streams.clone(),
             ),
             _ => return Err(AltiumError::Cfb("Expected SchLib metadata".to_string())),
         };
@@ -419,11 +581,42 @@ impl SchLib {
         // 3. Write SectionKeys
         write_section_keys(&mut cfb, &section_keys)?;
 
-        // 4. Write Data stream for each component group
-        for (i, &group_id) in store.group_ids().iter().enumerate() {
+        // 4. Build alias redirections from typed metadata + current aliases.
+        let mut all_redirections = redirection_streams.clone();
+
+        for entry in &component_entries {
+            let lib_ref = entry.lib_ref.clone();
+            for alias in &entry.aliases {
+                if alias.eq_ignore_ascii_case(&lib_ref) {
+                    continue;
+                }
+                let alias_safe = sanitize_cfb_name(alias);
+                let alias_key = section_keys.get_key(&alias_safe).to_string();
+                if all_redirections
+                    .keys()
+                    .any(|k| k.eq_ignore_ascii_case(&alias_key))
+                {
+                    continue;
+                }
+                all_redirections.insert(
+                    alias_key,
+                    SchLibRedirectionStreamMeta {
+                        section_name: lib_ref.clone(),
+                        params: ParameterCollection::new(),
+                    },
+                );
+            }
+        }
+
+        // 5. Write Data stream for each component group
+        for &group_id in store.group_ids().iter() {
             let group = store.group(group_id);
-            let lib_ref = match &group.meta {
-                GroupMeta::SchComponent { lib_ref, .. } => lib_ref.clone(),
+            let (lib_ref, sidecar_streams) = match &group.meta {
+                GroupMeta::SchComponent {
+                    lib_ref,
+                    sidecar_streams,
+                    ..
+                } => (lib_ref.clone(), sidecar_streams.clone()),
                 _ => continue,
             };
 
@@ -449,96 +642,75 @@ impl SchLib {
                 .map_err(|e| AltiumError::Cfb(format!("Failed to create Data stream: {}", e)))?;
             stream.write_all(&data_bytes).map_err(AltiumError::Io)?;
 
-            // Write per-component extra streams
+            // Write typed per-component sidecar streams.
             {
                 let mut created_storages: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
                 created_storages.insert(storage_path.clone());
-                for (rel_path, extra_data) in &group.extra_streams {
-                    let full_path = format!("/{}/{}", section_key, rel_path);
-                    super::pcblib::ensure_parent_storages(
-                        &mut cfb,
-                        &full_path,
-                        &mut created_storages,
-                    )?;
-                    let mut stream = cfb.create_stream(&full_path).map_err(|e| {
-                        AltiumError::Cfb(format!(
-                            "Failed to create extra stream {}: {}",
-                            full_path, e
-                        ))
-                    })?;
-                    stream.write_all(extra_data).map_err(AltiumError::Io)?;
-                }
-            }
 
-            // Emit alias redirection streams when they are not already present in
-            // preserved raw extra streams.
-            if let Some(entry) = component_entries.get(i) {
-                let mut created_storages: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
-                let mut emitted_redirections: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
-                for alias in &entry.aliases {
-                    if alias.eq_ignore_ascii_case(&lib_ref) {
-                        continue;
-                    }
-                    let alias_safe = sanitize_cfb_name(alias);
-                    let alias_key = section_keys.get_key(&alias_safe).to_string();
-                    let rel = format!("{}/Redirection", alias_key);
-                    let rel_key = rel.to_ascii_lowercase();
-                    if !emitted_redirections.insert(rel_key) {
-                        continue;
-                    }
-                    if has_library_extra_stream(&raw_extra_streams, &rel) {
-                        continue;
-                    }
-                    let full_path = format!("/{}", rel);
-                    super::pcblib::ensure_parent_storages(
-                        &mut cfb,
-                        &full_path,
-                        &mut created_storages,
-                    )?;
-                    let mut stream = cfb.create_stream(&full_path).map_err(|e| {
-                        AltiumError::Cfb(format!(
-                            "Failed to create redirection stream {}: {}",
-                            full_path, e
-                        ))
-                    })?;
-                    let data = build_section_redirection_stream_bytes(&lib_ref);
-                    stream.write_all(&data).map_err(AltiumError::Io)?;
+                let mut write_sidecar =
+                    |stream_name: &str,
+                     meta: &super::schlib_streams::SchLibEmbeddedObjectStreamMeta|
+                     -> Result<()> {
+                        let full_path = format!("/{}/{}", section_key, stream_name);
+                        super::pcblib::ensure_parent_storages(
+                            &mut cfb,
+                            &full_path,
+                            &mut created_storages,
+                        )?;
+                        let mut stream = cfb.create_stream(&full_path).map_err(|e| {
+                            AltiumError::Cfb(format!(
+                                "Failed to create sidecar stream {}: {}",
+                                full_path, e
+                            ))
+                        })?;
+                        let bytes =
+                            serialize_component_embedded_stream(meta, stream_name, stream_name)?;
+                        stream.write_all(&bytes).map_err(AltiumError::Io)?;
+                        Ok(())
+                    };
+
+                if let Some(meta) = &sidecar_streams.pin_frac {
+                    write_sidecar(STREAM_PIN_FRAC, meta)?;
+                }
+                if let Some(meta) = &sidecar_streams.pin_text_data {
+                    write_sidecar(STREAM_PIN_TEXT_DATA, meta)?;
+                }
+                if let Some(meta) = &sidecar_streams.pin_symbol_line_width {
+                    write_sidecar(STREAM_PIN_SYMBOL_LINE_WIDTH, meta)?;
+                }
+                if let Some(meta) = &sidecar_streams.pin_package_length {
+                    write_sidecar(STREAM_PIN_PACKAGE_LENGTH, meta)?;
                 }
             }
         }
 
-        // 5. Write /Storage if not already preserved as raw extra data.
-        if !raw_extra_streams
-            .keys()
-            .any(|k| k.eq_ignore_ascii_case("Storage"))
+        // 6. Write typed /Storage stream metadata.
         {
             let mut stream = cfb
                 .create_stream("/Storage")
                 .map_err(|e| AltiumError::Cfb(format!("Failed to create /Storage: {}", e)))?;
             stream
-                .write_all(&build_icon_storage_stream_bytes())
+                .write_all(&storage_meta.to_stream_bytes())
                 .map_err(AltiumError::Io)?;
         }
 
-        // 6. Write library-level extra streams
+        // 7. Write typed alias redirection streams.
         {
             let mut created_storages: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            let mut sorted_extras: Vec<_> = raw_extra_streams.iter().collect();
-            sorted_extras.sort_by_key(|(k, _)| (*k).clone());
-            for (rel_path, data) in &sorted_extras {
-                let full_path = format!("/{}", rel_path);
+            for (alias_key, meta) in &all_redirections {
+                let full_path = format!("/{}/Redirection", alias_key);
                 super::pcblib::ensure_parent_storages(&mut cfb, &full_path, &mut created_storages)?;
                 let mut stream = cfb.create_stream(&full_path).map_err(|e| {
                     AltiumError::Cfb(format!(
-                        "Failed to create extra stream {}: {}",
+                        "Failed to create redirection stream {}: {}",
                         full_path, e
                     ))
                 })?;
-                stream.write_all(data).map_err(AltiumError::Io)?;
+                stream
+                    .write_all(&serialize_redirection_stream(meta))
+                    .map_err(AltiumError::Io)?;
             }
         }
 
@@ -688,12 +860,12 @@ impl SchLib {
             children: child_ids,
             original_indices: Vec::new(),
             parent_original_index: None,
-            extra_streams: HashMap::new(),
             meta: GroupMeta::SchComponent {
                 lib_ref,
                 description,
                 part_count,
                 section_key: String::new(),
+                sidecar_streams: SchLibComponentSidecarStreamsMeta::default(),
             },
         };
 
@@ -842,24 +1014,6 @@ fn parse_alias_list(alias_list: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
-}
-
-fn build_section_redirection_stream_bytes(section_name: &str) -> Vec<u8> {
-    let mut params = ParameterCollection::new();
-    params.add("SECTIONNAME", section_name);
-    encode_single_param_block(&params)
-}
-
-fn build_icon_storage_stream_bytes() -> Vec<u8> {
-    let mut params = ParameterCollection::new();
-    params.add("HEADER", "Icon storage");
-    encode_single_param_block(&params)
-}
-
-fn has_library_extra_stream(raw_extra_streams: &HashMap<String, Vec<u8>>, rel_path: &str) -> bool {
-    raw_extra_streams
-        .keys()
-        .any(|k| k.eq_ignore_ascii_case(rel_path))
 }
 
 /// Read and parse the FileHeader stream.
@@ -1280,7 +1434,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
         let lib = SchLib {
             store: Rc::new(RefCell::new(store)),
@@ -1298,12 +1453,12 @@ mod tests {
                 children: Vec::new(),
                 original_indices: Vec::new(),
                 parent_original_index: None,
-                extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: name.to_string(),
                     description: String::new(),
                     part_count: 1,
                     section_key: String::new(),
+                    sidecar_streams: SchLibComponentSidecarStreamsMeta::default(),
                 },
             });
         }
@@ -1341,7 +1496,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
         let lib = SchLib {
             store: Rc::new(RefCell::new(store)),
@@ -1361,12 +1517,12 @@ mod tests {
                 children: vec![child_id],
                 original_indices: vec![1],
                 parent_original_index: None,
-                extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: "R1".to_string(),
                     description: "Resistor".to_string(),
                     part_count: 1,
                     section_key: String::new(),
+                    sidecar_streams: SchLibComponentSidecarStreamsMeta::default(),
                 },
             });
         }
@@ -1474,7 +1630,8 @@ mod tests {
             raw_header: None,
             raw_header_params: None,
             section_keys: SectionKeyList::new(),
-            raw_extra_streams: HashMap::new(),
+            storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default(),
+            redirection_streams: BTreeMap::new(),
         });
         let lib = SchLib {
             store: Rc::new(RefCell::new(store)),
@@ -1503,12 +1660,12 @@ mod tests {
                 children: child_ids,
                 original_indices,
                 parent_original_index: None,
-                extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: comp_name.to_string(),
                     description: String::new(),
                     part_count: 1,
                     section_key: String::new(),
+                    sidecar_streams: SchLibComponentSidecarStreamsMeta::default(),
                 },
             });
         }
@@ -1572,6 +1729,14 @@ mod tests {
                 );
                 use std::io::Write;
                 header.write_all(text.as_bytes()).unwrap();
+
+                let mut storage = cfb.create_stream("/Storage").unwrap();
+                storage
+                    .write_all(
+                        &crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default()
+                            .to_stream_bytes(),
+                    )
+                    .unwrap();
             }
             cfb.flush().unwrap();
             cfb.into_inner().into_inner()
@@ -1587,5 +1752,78 @@ mod tests {
         let did_a = a.document_id().unwrap();
         let did_b = b.document_id().unwrap();
         assert_ne!(did_a.as_str(), did_b.as_str());
+    }
+
+    #[test]
+    fn schlib_open_rejects_unknown_root_stream() {
+        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+            .unwrap();
+
+        let mut header = cfb.create_stream("/FileHeader").unwrap();
+        header
+            .write_all(b"|HEADER=Test|WEIGHT=0|MINORVERSION=9|UNIQUEID=|COMPCOUNT=0|")
+            .unwrap();
+
+        let mut storage = cfb.create_stream("/Storage").unwrap();
+        storage
+            .write_all(
+                &crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta::default()
+                    .to_stream_bytes(),
+            )
+            .unwrap();
+        drop(storage);
+        drop(header);
+
+        cfb.create_storage("/Unexpected").unwrap();
+        cfb.create_stream("/Unexpected/Data")
+            .unwrap()
+            .write_all(b"raw")
+            .unwrap();
+
+        cfb.flush().unwrap();
+        let bytes = cfb.into_inner().into_inner();
+
+        let err = match SchLib::open(Cursor::new(bytes)) {
+            Ok(_) => panic!("expected SchLib::open to fail"),
+            Err(err) => err,
+        };
+        let msg = format!("{err}").to_ascii_lowercase();
+        assert!(
+            msg.contains("unimplemented stream"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn schlib_open_rejects_unknown_component_stream() {
+        use crate::v2::newtypes::LibReference;
+        use crate::v2::templates;
+
+        let lib = SchLib::new_empty();
+        lib.build_component(templates::sch_component_default, |builder| {
+            builder.with_component(|comp| {
+                comp.set_lib_reference(LibReference::from("U1"));
+            });
+        });
+
+        let mut out = Cursor::new(Vec::new());
+        lib.save(&mut out).unwrap();
+        let mut cfb = cfb::CompoundFile::open(Cursor::new(out.into_inner())).unwrap();
+
+        cfb.create_stream("/U1/Unexpected")
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+
+        cfb.flush().unwrap();
+        let bytes = cfb.into_inner().into_inner();
+
+        let err = match SchLib::open(Cursor::new(bytes)) {
+            Ok(_) => panic!("expected SchLib::open to fail"),
+            Err(err) => err,
+        };
+        assert!(format!("{err}")
+            .to_ascii_lowercase()
+            .contains("unimplemented stream"));
     }
 }

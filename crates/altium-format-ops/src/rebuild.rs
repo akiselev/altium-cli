@@ -607,6 +607,8 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
 
     let header = src.header();
     dst.set_header(&header);
+    dst.set_storage_meta(src.storage_meta());
+    dst.set_redirection_streams(src.redirection_streams());
 
     let src_store = src.store().clone();
     let components =
@@ -624,6 +626,7 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                 copy_param_nul_suffix_from_source(comp, &src_store, src_parent_id);
             });
         });
+        dst_comp.set_sidecar_streams(src_comp.sidecar_streams());
 
         for (type_id, rid) in src_comp.all_children() {
             let is_binary = {
@@ -631,11 +634,31 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                 store.record(rid).origin.is_binary()
             };
             if is_binary {
-                return Err(format!(
-                    "schlib:component-child: record_id={} has binary origin (strict AD26 mode)",
-                    type_id
-                )
-                .into());
+                if type_id != <SchPinRecord as RecordType>::RECORD_ID {
+                    return Err(format!(
+                        "schlib:component-child: binary origin only supported for RECORD=2 pins, got record_id={}",
+                        type_id
+                    )
+                    .into());
+                }
+                let raw_pin = {
+                    let store = src_store.borrow();
+                    let node = store.record(rid);
+                    let Some(bin) = node.origin.as_binary() else {
+                        return Err("schlib:component-child: expected binary origin for pin".into());
+                    };
+                    bin.raw_block.clone()
+                };
+                let pin = SchPinRecord::from_legacy_binary_record_data(&raw_pin).ok_or_else(
+                    || {
+                        format!(
+                            "schlib:component-child: failed to decode legacy binary pin payload ({} bytes)",
+                            raw_pin.len()
+                        )
+                    },
+                )?;
+                dst_comp.add_child_record(pin);
+                continue;
             }
             macro_rules! emit_child {
                 ($rec:expr) => {{
@@ -665,6 +688,10 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
 fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbLib::new_empty();
+    dst.set_section_keys(src.section_keys());
+    dst.set_file_header_meta(src.file_header_meta());
+    dst.set_file_version_info_meta(src.file_version_info_meta());
+    dst.set_library_meta(src.library_meta());
 
     let src_store = src.store().clone();
     let names = src.names();
@@ -710,6 +737,8 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             copy_pcb_record!(type_id, rid, src_store, emit_prim, "pcblib:primitive")
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
+
+        dst_fp.set_storage_passthrough(src_fp.storage_passthrough());
     }
 
     if let Some(parent) = out.parent() {
@@ -931,6 +960,22 @@ pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use altium_format::v2::documents::pcblib_streams::{
+        PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibFootprintSidecarStreamsMeta,
+        PcbLibLibraryStorageMeta, PcbLibModelsStorageMeta, PcbLibParamTableStreamMeta,
+        PcbLibPrimitiveGuidEntry, PcbLibPrimitiveGuidsStreamMeta, PcbLibWideStringsStreamMeta,
+    };
+    use altium_format::v2::documents::schdoc_streams::{SchDocStorageEntry, SchDocStorageStreamMeta};
+    use altium_format::v2::documents::schlib_streams::{
+        SchLibRedirectionStreamMeta,
+    };
+    use altium_format::v2::handles::PcbFootprintStoragePassthrough;
+    use altium_format::v2::parameters::ParameterCollection;
+    use altium_format::v2::records::PcbFootprintRecord;
+    use altium_format::v2::templates;
 
     #[test]
     fn classify_extension_case_insensitive() {
@@ -960,5 +1005,303 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    fn temp_file_path(ext: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "altium-rebuild-test-{}-{}.{}",
+            std::process::id(),
+            ts,
+            ext
+        ))
+    }
+
+    #[test]
+    fn rebuild_schlib_preserves_typed_document_streams() {
+        let src_path = temp_file_path("SchLib");
+        let out_path = temp_file_path("SchLib");
+
+        let src = SchLib::new_empty();
+        let mut header = src.header();
+        header.unique_id = "SCHLIB-UNITTEST-UID".to_string();
+        src.set_header(&header);
+
+        let storage_meta = SchDocStorageStreamMeta {
+            header_block: Default::default(),
+            entries: vec![SchDocStorageEntry {
+                id: "icon-0".to_string(),
+                compressed_flags: 0,
+                compressed_data: vec![1, 2, 3, 4],
+            }],
+        };
+        src.set_storage_meta(storage_meta.clone());
+
+        let mut redirection_params = ParameterCollection::new();
+        redirection_params.add("SECTIONNAME", "U_REAL");
+        redirection_params.add("EXTRA", "1");
+        let mut redirection_streams = BTreeMap::new();
+        redirection_streams.insert(
+            "U_ALIAS".to_string(),
+            SchLibRedirectionStreamMeta {
+                section_name: "U_REAL".to_string(),
+                params: redirection_params,
+            },
+        );
+        src.set_redirection_streams(redirection_streams.clone());
+
+        src.build_component(templates::sch_component_default, |builder| {
+            builder.with_component(|record| {
+                record.set_lib_reference("U_REAL");
+                record.set_component_description("test");
+                record.set_part_count(1);
+            });
+        });
+
+        src.save_file(&src_path)
+            .expect("failed to save source SchLib fixture");
+        rebuild_schlib(&src_path, &out_path).expect("failed to rebuild SchLib fixture");
+
+        let rebuilt = SchLib::open_file(&out_path).expect("failed to open rebuilt SchLib fixture");
+        assert_eq!(rebuilt.storage_meta().entries.len(), storage_meta.entries.len());
+        assert_eq!(
+            rebuilt
+                .storage_meta()
+                .entries
+                .first()
+                .map(|e| e.compressed_data.clone()),
+            storage_meta
+                .entries
+                .first()
+                .map(|e| e.compressed_data.clone())
+        );
+        assert_eq!(rebuilt.redirection_streams().len(), redirection_streams.len());
+        assert_eq!(
+            rebuilt
+                .redirection_streams()
+                .get("U_ALIAS")
+                .map(|m| m.section_name.clone()),
+            Some("U_REAL".to_string())
+        );
+
+        let _ = fs::remove_file(&src_path);
+        let _ = fs::remove_file(&out_path);
+    }
+
+    #[test]
+    fn rebuild_pcblib_preserves_typed_document_and_footprint_sidecar_streams() {
+        let src_path = temp_file_path("PcbLib");
+        let out_path = temp_file_path("PcbLib");
+
+        let src = PcbLib::new_empty();
+        let mut section_keys = altium_format::v2::documents::section_keys::SectionKeyList::new();
+        section_keys.insert_mapping("FP1", "FP1K");
+        src.set_section_keys(section_keys.clone());
+        src.set_file_header_meta(PcbLibFileHeaderStreamMeta {
+            header_text: "PCB 6.0 Binary Library File".to_string(),
+            file_version: 5.01,
+            key: "ZZZZZZZZ".to_string(),
+        });
+        src.set_file_version_info_meta(PcbLibCountedDataStreamMeta {
+            header_count: 1,
+            data: b"version-info".to_vec(),
+        });
+        src.set_library_meta(PcbLibLibraryStorageMeta {
+            header_count: 1,
+            data: b"library-data".to_vec(),
+            embedded_fonts: b"fonts".to_vec(),
+            component_params_toc: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: b"toc".to_vec(),
+            },
+            layer_kind_mapping: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: b"layer-kind".to_vec(),
+            },
+            models: PcbLibModelsStorageMeta {
+                header_count: 1,
+                data: b"models".to_vec(),
+                entries: {
+                    let mut m = BTreeMap::new();
+                    m.insert(0, b"model-0".to_vec());
+                    m
+                },
+            },
+            models_no_embed: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: b"models-no-embed".to_vec(),
+            },
+            pad_via_library: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: b"pad-via".to_vec(),
+            },
+            textures: PcbLibCountedDataStreamMeta {
+                header_count: 1,
+                data: b"textures".to_vec(),
+            },
+        });
+
+        let fp = src.build_footprint("FP1", templates::pcb_footprint_default, |builder| {
+            builder.with_metadata(|meta: &mut PcbFootprintRecord| {
+                meta.set_pattern("FP1");
+            });
+        });
+
+        let mut ws_params = ParameterCollection::new();
+        ws_params.add("ENCODEDTEXT0", "65,66,67");
+        let mut uid_params = ParameterCollection::new();
+        uid_params.add("PRIMITIVEINDEX", "0");
+        uid_params.add("UNIQUEID", "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}");
+        let sidecars = PcbLibFootprintSidecarStreamsMeta {
+            wide_strings: Some(PcbLibWideStringsStreamMeta {
+                entries: vec![ws_params],
+            }),
+            primitive_guids: Some(PcbLibPrimitiveGuidsStreamMeta {
+                entries: vec![PcbLibPrimitiveGuidEntry {
+                    tag: 2,
+                    index: 0,
+                    guid: [7u8; 16],
+                }],
+            }),
+            unique_id_primitive_information: Some(PcbLibParamTableStreamMeta {
+                entries: vec![uid_params.clone()],
+            }),
+            extended_primitive_information: Some(PcbLibParamTableStreamMeta {
+                entries: vec![uid_params],
+            }),
+        };
+
+        fp.set_storage_passthrough(PcbFootprintStoragePassthrough {
+            raw_pattern_name_block: b"FP1".to_vec(),
+            raw_header: 1u32.to_le_bytes().to_vec(),
+            original_primitive_order: Vec::new(),
+            sidecar_streams: sidecars.clone(),
+        });
+
+        src.save_file(&src_path)
+            .expect("failed to save source PcbLib fixture");
+        rebuild_pcblib(&src_path, &out_path).expect("failed to rebuild PcbLib fixture");
+
+        let rebuilt = PcbLib::open_file(&out_path).expect("failed to open rebuilt PcbLib fixture");
+        assert_eq!(rebuilt.file_header_meta().key, "ZZZZZZZZ");
+        assert_eq!(rebuilt.section_keys().len(), section_keys.len());
+        assert_eq!(rebuilt.section_keys().get_key("FP1"), "FP1K");
+        assert_eq!(rebuilt.file_version_info_meta().data, b"version-info".to_vec());
+        assert_eq!(rebuilt.library_meta().data, b"library-data".to_vec());
+        assert_eq!(
+            rebuilt
+                .library_meta()
+                .models
+                .entries
+                .get(&0)
+                .cloned(),
+            Some(b"model-0".to_vec())
+        );
+
+        let rebuilt_fp = rebuilt
+            .find_footprint("FP1")
+            .expect("rebuilt footprint should exist");
+        let rebuilt_pass = rebuilt_fp.storage_passthrough();
+        assert_eq!(rebuilt_pass.raw_pattern_name_block, b"FP1".to_vec());
+        assert_eq!(rebuilt_pass.raw_header, 1u32.to_le_bytes().to_vec());
+        assert_eq!(
+            rebuilt_pass
+                .sidecar_streams
+                .wide_strings
+                .as_ref()
+                .map(|m| m.entries.len()),
+            Some(1)
+        );
+        assert_eq!(
+            rebuilt_pass
+                .sidecar_streams
+                .primitive_guids
+                .as_ref()
+                .map(|m| m.entries.len()),
+            Some(1)
+        );
+        assert_eq!(
+            rebuilt_pass
+                .sidecar_streams
+                .unique_id_primitive_information
+                .as_ref()
+                .map(|m| m.entries.len()),
+            Some(1)
+        );
+        assert_eq!(
+            rebuilt_pass
+                .sidecar_streams
+                .extended_primitive_information
+                .as_ref()
+                .map(|m| m.entries.len()),
+            Some(1)
+        );
+
+        let _ = fs::remove_file(&src_path);
+        let _ = fs::remove_file(&out_path);
+    }
+
+    #[test]
+    fn rebuild_schlib_accepts_legacy_binary_pin_children() {
+        let src_path = temp_file_path("SchLib");
+        let out_path = temp_file_path("SchLib");
+
+        let src = SchLib::new_empty();
+        let comp = src.build_component(templates::sch_component_default, |builder| {
+            builder.with_component(|record| {
+                record.set_lib_reference("BINPIN");
+                record.set_component_description("binary pin fixture");
+                record.set_part_count(1);
+            });
+            builder.add_pin(templates::sch_pin_default, |pin| {
+                pin.set_designator("1");
+                pin.set_name("IO1");
+            });
+        });
+
+        // Force the pin child origin to binary to mirror real AD SchLib files.
+        let pin_rid = comp
+            .all_children()
+            .into_iter()
+            .find(|(record_id, _)| *record_id == <SchPinRecord as RecordType>::RECORD_ID)
+            .map(|(_, rid)| rid)
+            .expect("component should contain a pin child");
+        let pin_raw = SchPinHandle::new(src.store().clone(), pin_rid)
+            .read()
+            .to_legacy_binary_record_data();
+        {
+            let mut store = src.store().borrow_mut();
+            let node = store.record_mut(pin_rid);
+            node.origin = altium_format::v2::backing_store::RecordOrigin::Binary(
+                altium_format::v2::backing_store::BinaryOrigin::new(pin_raw),
+            );
+            node.mark_dirty();
+        }
+
+        src.save_file(&src_path)
+            .expect("failed to save source SchLib fixture");
+        rebuild_schlib(&src_path, &out_path)
+            .expect("rebuild should decode and accept binary pin children");
+
+        let rebuilt = SchLib::open_file(&out_path).expect("failed to open rebuilt SchLib fixture");
+        let rebuilt_gid = rebuilt
+            .find_component("BINPIN")
+            .expect("rebuilt component should exist");
+        let rebuilt_pin_count = {
+            let store = rebuilt.store().borrow();
+            let group = store.group(rebuilt_gid);
+            group
+                .child_ids()
+                .iter()
+                .filter(|&&rid| store.record(rid).key == <SchPinRecord as RecordType>::RECORD_ID)
+                .count()
+        };
+        assert_eq!(rebuilt_pin_count, 1);
+
+        let _ = fs::remove_file(&src_path);
+        let _ = fs::remove_file(&out_path);
     }
 }

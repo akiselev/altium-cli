@@ -386,6 +386,33 @@ impl SchComponentHandle {
         }
     }
 
+    /// Returns typed per-component sidecar streams (PinFrac, PinTextData, etc.).
+    pub fn sidecar_streams(
+        &self,
+    ) -> crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta {
+        let store = self.store.borrow();
+        let group = &store.groups[self.group_id];
+        match &group.meta {
+            crate::v2::store::GroupMeta::SchComponent { sidecar_streams, .. } => {
+                sidecar_streams.clone()
+            }
+            _ => crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta::default(),
+        }
+    }
+
+    /// Replace typed per-component sidecar streams.
+    pub fn set_sidecar_streams(
+        &self,
+        streams: crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta,
+    ) {
+        let mut store = self.store.borrow_mut();
+        let group = &mut store.groups[self.group_id];
+        if let crate::v2::store::GroupMeta::SchComponent { sidecar_streams, .. } = &mut group.meta {
+            *sidecar_streams = streams;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
     /// Query children of a given type.
     pub fn query<T: HandleFamily>(&self, q: &str) -> crate::error::Result<T::Handle> {
         use crate::v2::query::eval::evaluate;
@@ -474,7 +501,8 @@ pub struct PcbFootprintHandle {
 pub struct PcbFootprintStoragePassthrough {
     pub raw_pattern_name_block: Vec<u8>,
     pub raw_header: Vec<u8>,
-    pub extra_streams: std::collections::HashMap<String, Vec<u8>>,
+    pub original_primitive_order: Vec<crate::v2::backing_store::PcbPrimitiveRef>,
+    pub sidecar_streams: crate::v2::documents::pcblib_streams::PcbLibFootprintSidecarStreamsMeta,
 }
 
 impl PcbFootprintHandle {
@@ -577,11 +605,14 @@ impl PcbFootprintHandle {
             crate::v2::store::GroupMeta::PcbFootprint {
                 raw_pattern_name_block,
                 raw_header,
+                original_primitive_order,
+                sidecar_streams,
                 ..
             } => PcbFootprintStoragePassthrough {
                 raw_pattern_name_block: raw_pattern_name_block.clone(),
                 raw_header: raw_header.clone(),
-                extra_streams: group.extra_streams.clone(),
+                original_primitive_order: original_primitive_order.clone(),
+                sidecar_streams: sidecar_streams.clone(),
             },
             _ => PcbFootprintStoragePassthrough::default(),
         }
@@ -594,13 +625,16 @@ impl PcbFootprintHandle {
         if let crate::v2::store::GroupMeta::PcbFootprint {
             raw_pattern_name_block,
             raw_header,
+            original_primitive_order,
+            sidecar_streams,
             ..
         } = &mut group.meta
         {
             *raw_pattern_name_block = data.raw_pattern_name_block;
             *raw_header = data.raw_header;
+            *original_primitive_order = data.original_primitive_order;
+            *sidecar_streams = data.sidecar_streams;
         }
-        group.extra_streams = data.extra_streams;
         store.mark_semantic_ids_dirty();
     }
 
