@@ -847,6 +847,66 @@ def _first_diff_offset(a: bytes, b: bytes) -> int | None:
     return None
 
 
+def _canonicalize_param_record_order_agnostic(
+    pairs: list[tuple[str, str]],
+) -> tuple[tuple[str, str], ...]:
+    # Case-insensitive keys, preserve duplicate key/value entries.
+    return tuple(sorted((k.upper(), v) for k, v in pairs))
+
+
+def _canonicalize_param_payload_order_agnostic(
+    data: bytes,
+) -> list[tuple[tuple[str, str], ...]]:
+    return [
+        _canonicalize_param_record_order_agnostic(pairs)
+        for pairs in parse_param_records(data)
+    ]
+
+
+def _stream_equal_param_order_agnostic(path: str, a: bytes, b: bytes) -> bool:
+    if a == b:
+        return True
+
+    a_blocks, a_err = parse_size_prefixed_blocks(a)
+    b_blocks, b_err = parse_size_prefixed_blocks(b)
+
+    # Block-framed payloads (e.g. SchLib Data): compare block-by-block while
+    # allowing key-order-insensitive param comparison inside text payloads.
+    if a_err is None and b_err is None and (a_blocks or b_blocks):
+        if len(a_blocks) != len(b_blocks):
+            return False
+        for ba, bb in zip(a_blocks, b_blocks):
+            pa = a[ba.offset + 4 : ba.offset + 4 + ba.size]
+            pb = b[bb.offset + 4 : bb.offset + 4 + bb.size]
+            if ba.flags != bb.flags:
+                return False
+
+            # SchLib Data streams use non-zero block flags for binary records
+            # (notably legacy pin blocks). Keep those as strict byte compares.
+            if ba.flags != 0:
+                if pa != pb:
+                    return False
+                continue
+
+            a_text = _is_probably_text(pa)
+            b_text = _is_probably_text(pb)
+            if a_text and b_text:
+                if (
+                    _canonicalize_param_payload_order_agnostic(pa)
+                    != _canonicalize_param_payload_order_agnostic(pb)
+                ):
+                    return False
+            elif a_text != b_text or pa != pb:
+                return False
+        return True
+
+    # Whole-stream text payloads.
+    if _classify_stream(path, a) == "text" and _classify_stream(path, b) == "text":
+        return _canonicalize_param_payload_order_agnostic(a) == _canonicalize_param_payload_order_agnostic(b)
+
+    return False
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     original_path = Path(args.original)
     rebuilt_path = Path(args.rebuilt)
@@ -920,6 +980,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
         if orig_data == rebuilt_data:
             matched_streams.append(name)
             continue
+        if args.param_order_agnostic and _stream_equal_param_order_agnostic(
+            name, orig_data, rebuilt_data
+        ):
+            matched_streams.append(name)
+            continue
 
         different_streams.append(
             {
@@ -948,6 +1013,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "unreadable_stream_count": len(unreadable_streams),
         "unreadable_streams": unreadable_streams,
         "matched_count": len(matched_streams),
+        "param_order_agnostic": bool(args.param_order_agnostic),
         "different_count": (
             len(only_in_original_storages)
             + len(only_in_rebuilt_storages)
@@ -1118,6 +1184,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp_compare.add_argument("original", help="Original/reference file.")
     sp_compare.add_argument("rebuilt", help="Rebuilt/candidate file.")
     sp_compare.add_argument("--stream", help="Substring filter for stream path.")
+    sp_compare.add_argument(
+        "--param-order-agnostic",
+        action="store_true",
+        help="Compare text/param payloads ignoring per-record key order.",
+    )
     sp_compare.add_argument("--show-matched", action="store_true", help="Include matched stream names in output.")
     add_json_flags(sp_compare)
     sp_compare.set_defaults(func=cmd_compare)
