@@ -4,6 +4,7 @@
 //! using the v2 backing-store architecture. Documents handle reading from and
 //! writing to CFB (Compound File Binary) format.
 
+pub(crate) mod encoding;
 pub mod pcblib;
 pub mod schdoc;
 pub mod schlib;

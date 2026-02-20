@@ -171,7 +171,14 @@ impl PcbLib {
             let metadata_node = if let Ok(mut stream) = cfb.open_stream(&params_path) {
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
-                let param_str = String::from_utf8_lossy(&data).to_string();
+                let mut payload = super::encoding::parse_first_param_block(&data)
+                    .unwrap_or_else(|| data.clone());
+                // Strip trailing NUL terminators so they don't leak into
+                // parameter values (encode_single_param_block re-adds the NUL).
+                while payload.last() == Some(&0) {
+                    payload.pop();
+                }
+                let param_str = super::encoding::decode_win1252(&payload);
                 RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new(&param_str)))
             } else {
                 RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new("|PATTERN=|")))
@@ -312,7 +319,7 @@ impl PcbLib {
             // Write Parameters stream
             let params_path = format!("/{}/{}", name, STREAM_PARAMETERS);
             let params_data = match &store.record(group.parent).origin {
-                RecordOrigin::Param(p) => p.params.to_param_string().into_bytes(),
+                RecordOrigin::Param(p) => super::encoding::encode_single_param_block(&p.params),
                 _ => Vec::new(),
             };
             let mut stream = cfb

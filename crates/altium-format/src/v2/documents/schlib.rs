@@ -14,8 +14,6 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 
-use encoding_rs::WINDOWS_1252;
-
 use crate::error::{AltiumError, Result};
 use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
 use crate::v2::ids::GroupId;
@@ -24,15 +22,16 @@ use crate::v2::records::{SchComponentRecord, SchPinRecord};
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::{HandleFamily, RecordType};
 
+use super::encoding::{
+    decode_win1252, encode_single_param_block, encode_win1252, parse_first_param_block,
+    SIZE_FLAG_MASK,
+};
 use super::section_keys::SectionKeyList;
 
 // Stream name constants
 const STREAM_FILE_HEADER: &str = "FileHeader";
 const STREAM_SECTION_KEYS: &str = "SectionKeys";
 const STREAM_DATA: &str = "Data";
-
-// Size flag mask: low 24 bits = length, bit 24+ = binary mode flag
-const SIZE_FLAG_MASK: u32 = 0x00FF_FFFF;
 
 /// SchLib header info.
 #[derive(Clone, Debug, Default)]
@@ -843,51 +842,6 @@ fn parse_alias_list(alias_list: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
-}
-
-/// Decode raw bytes as Windows-1252 into a Rust String.
-///
-/// Altium files use Windows-1252 encoding for text records. Using this
-/// instead of `String::from_utf8_lossy` preserves all byte values as
-/// proper Unicode characters (e.g. `\xb5` → µ) instead of replacing
-/// them with U+FFFD.
-pub(super) fn decode_win1252(bytes: &[u8]) -> String {
-    let (text, _, _) = WINDOWS_1252.decode(bytes);
-    text.into_owned()
-}
-
-/// Encode a Rust String back to Windows-1252 bytes.
-///
-/// This is the inverse of `decode_win1252` — characters that originated
-/// from Windows-1252 bytes are mapped back to their original single-byte
-/// values, enabling byte-perfect round-tripping.
-pub(super) fn encode_win1252(s: &str) -> Vec<u8> {
-    let (bytes, _, _) = WINDOWS_1252.encode(s);
-    bytes.into_owned()
-}
-
-fn parse_first_param_block(data: &[u8]) -> Option<Vec<u8>> {
-    if data.len() < 4 {
-        return None;
-    }
-    let raw_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    if (raw_len & !SIZE_FLAG_MASK) != 0 {
-        return None;
-    }
-    let len = (raw_len & SIZE_FLAG_MASK) as usize;
-    if len == 0 || 4 + len > data.len() {
-        return None;
-    }
-    Some(data[4..4 + len].to_vec())
-}
-
-fn encode_single_param_block(params: &ParameterCollection) -> Vec<u8> {
-    let mut payload = encode_win1252(&params.to_param_string());
-    payload.push(0);
-    let mut out = Vec::with_capacity(payload.len() + 4);
-    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    out.extend_from_slice(&payload);
-    out
 }
 
 fn build_section_redirection_stream_bytes(section_name: &str) -> Vec<u8> {
