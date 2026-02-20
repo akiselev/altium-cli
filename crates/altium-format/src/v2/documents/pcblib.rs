@@ -269,7 +269,7 @@ impl PcbLib {
 
     /// Save a PcbLib to a writer.
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
-        let mut cfb = cfb::CompoundFile::create(writer)
+        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
         let mut store = self.store.borrow_mut();
@@ -1202,7 +1202,7 @@ mod tests {
     fn file_version_info_storage_not_treated_as_footprint() {
         use std::io::Cursor;
 
-        let mut cfb = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
 
         cfb.create_storage("/SOT-23").unwrap();
         cfb.create_stream("/SOT-23/Header")

@@ -358,7 +358,7 @@ impl SchLib {
             _ => return Err(AltiumError::Cfb("Expected SchLib metadata".to_string())),
         };
 
-        let mut cfb = cfb::CompoundFile::create(writer)
+        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
         // Collect component entries from current store state.
@@ -1527,7 +1527,7 @@ mod tests {
     #[test]
     fn empty_unique_id_uses_content_hash_for_document_id() {
         fn make_min_schlib_bytes(extra: &str) -> Vec<u8> {
-            let mut cfb = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+            let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
             {
                 let mut header = cfb.create_stream("/FileHeader").unwrap();
                 let text = format!(

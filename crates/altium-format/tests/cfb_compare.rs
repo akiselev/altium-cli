@@ -11,7 +11,7 @@ use std::io::{Cursor, Write};
 /// Create a minimal CFB with given streams.
 fn make_cfb(streams: &[(&str, &[u8])]) -> Vec<u8> {
     let buf = Cursor::new(Vec::new());
-    let mut cfb = cfb::CompoundFile::create(buf).unwrap();
+    let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, buf).unwrap();
     for (path, data) in streams {
         let p = std::path::Path::new(path);
         if let Some(parent) = p.parent() {

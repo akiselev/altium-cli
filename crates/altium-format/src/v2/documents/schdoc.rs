@@ -88,7 +88,7 @@ impl SchDoc {
             let mut store = self.store.borrow_mut();
             store.ensure_semantic_ids();
         }
-        let mut cfb = cfb::CompoundFile::create(writer)
+        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
         let data = flatten_to_stream(self)?;
