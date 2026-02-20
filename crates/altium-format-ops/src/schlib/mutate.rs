@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::helpers::*;
 
-use altium_format::v2::handles::SchComponentHandle;
+use altium_format::handles::SchComponentHandle;
 
 use super::open_schlib;
 
@@ -42,8 +42,8 @@ pub fn cmd_add_component(
     }
 
     // Add component using the builder API
-    use altium_format::v2::newtypes::LibReference;
-    use altium_format::v2::templates;
+    use altium_format::newtypes::LibReference;
+    use altium_format::templates;
     lib.build_component(templates::sch_component_default, |builder| {
         builder.with_component(|comp| {
             comp.set_lib_reference(LibReference::from(name));
@@ -54,7 +54,7 @@ pub fn cmd_add_component(
     // Clear raw header to force rebuild
     {
         let mut store = lib.store().borrow_mut();
-        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
+        if let altium_format::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
         {
             *raw_header = None;
         }
@@ -86,11 +86,11 @@ pub fn cmd_add_pin(
     let electrical = parse_electrical_type(electrical_type);
 
     // Build pin record from template
-    use altium_format::v2::backing_store::RecordNode;
-    use altium_format::v2::newtypes::{Designator, PinName};
-    use altium_format::v2::records::SchPinRecord;
-    use altium_format::v2::templates;
-    use altium_format::v2::traits::{FromOrigin, RecordType};
+    use altium_format::backing_store::RecordNode;
+    use altium_format::newtypes::{Designator, PinName};
+    use altium_format::records::SchPinRecord;
+    use altium_format::templates;
+    use altium_format::traits::{FromOrigin, RecordType};
 
     let pin_origin = templates::sch_pin_default();
     let mut pin_rec = SchPinRecord::from_origin(pin_origin.clone());
@@ -105,7 +105,7 @@ pub fn cmd_add_pin(
     // Clear raw header to force rebuild
     {
         let mut store = lib.store().borrow_mut();
-        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
+        if let altium_format::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
         {
             *raw_header = None;
         }

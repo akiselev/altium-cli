@@ -10,10 +10,10 @@ use crate::categorization::categorize_component;
 use crate::helpers::*;
 use crate::output::*;
 
-use altium_format::v2::coord::AltiumCoord;
-use altium_format::v2::handles::SchComponent;
-use altium_format::v2::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
-use altium_format::v2::traits::DocumentQuery;
+use altium_format::coord::AltiumCoord;
+use altium_format::handles::SchComponent;
+use altium_format::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
+use altium_format::traits::DocumentQuery;
 
 use super::{
     collect_net_names, format_location, get_sheet_size, is_address_bus, is_control_signal,

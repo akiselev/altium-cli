@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use altium_format::v2::handles::{SchComponent, SchPin};
-use altium_format::v2::traits::DocumentQuery;
+use altium_format::handles::{SchComponent, SchPin};
+use altium_format::traits::DocumentQuery;
 
 use crate::categorization::categorize_component;
 use crate::helpers::*;

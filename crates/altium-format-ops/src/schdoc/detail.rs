@@ -9,7 +9,7 @@ use std::path::Path;
 use crate::helpers::*;
 use crate::output::*;
 
-use altium_format::v2::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
+use altium_format::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
 
 use super::{format_location, open_schdoc, port_io_type_name, power_style_name};
 

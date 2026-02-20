@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use altium_format::v2::coord::AltiumCoord;
+use altium_format::coord::AltiumCoord;
 
 use super::{extract_pads, find_footprint_by_name, open_pcblib};
 

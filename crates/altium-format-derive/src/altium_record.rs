@@ -352,34 +352,34 @@ fn binary_read_expr(ty: &Type, offset: usize) -> Result<TokenStream> {
     let offset_lit = proc_macro2::Literal::usize_unsuffixed(offset);
     let tokens = match ident_str.as_str() {
         "u8" => {
-            quote! { crate::v2::binary_helpers::read_u8(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_u8(&self.origin.binary().raw_block, #offset_lit) }
         }
         "i8" => {
-            quote! { crate::v2::binary_helpers::read_i8(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_i8(&self.origin.binary().raw_block, #offset_lit) }
         }
         "bool" => {
-            quote! { crate::v2::binary_helpers::read_bool(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_bool(&self.origin.binary().raw_block, #offset_lit) }
         }
         "u16" => {
-            quote! { crate::v2::binary_helpers::read_u16_le(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_u16_le(&self.origin.binary().raw_block, #offset_lit) }
         }
         "i16" => {
-            quote! { crate::v2::binary_helpers::read_i16_le(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_i16_le(&self.origin.binary().raw_block, #offset_lit) }
         }
         "u32" => {
-            quote! { crate::v2::binary_helpers::read_u32_le(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_u32_le(&self.origin.binary().raw_block, #offset_lit) }
         }
         "i32" => {
-            quote! { crate::v2::binary_helpers::read_i32_le(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_i32_le(&self.origin.binary().raw_block, #offset_lit) }
         }
         "PcbCoord" => {
-            quote! { crate::v2::binary_helpers::read_pcb_coord(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_pcb_coord(&self.origin.binary().raw_block, #offset_lit) }
         }
         "f64" => {
-            quote! { crate::v2::binary_helpers::read_f64_le(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::read_f64_le(&self.origin.binary().raw_block, #offset_lit) }
         }
         "PcbCommonHeader" => {
-            quote! { crate::v2::binary_helpers::PcbCommonHeader::read(&self.origin.binary().raw_block, #offset_lit) }
+            quote! { crate::binary_helpers::PcbCommonHeader::read(&self.origin.binary().raw_block, #offset_lit) }
         }
         other => {
             return Err(Error::new(
@@ -411,31 +411,31 @@ fn binary_write_expr(ty: &Type, offset: usize) -> Result<TokenStream> {
     let offset_lit = proc_macro2::Literal::usize_unsuffixed(offset);
     let tokens = match ident_str.as_str() {
         "u8" => {
-            quote! { crate::v2::binary_helpers::write_u8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_u8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "i8" => {
-            quote! { crate::v2::binary_helpers::write_i8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_i8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "bool" => {
-            quote! { crate::v2::binary_helpers::write_bool(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_bool(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "u16" => {
-            quote! { crate::v2::binary_helpers::write_u16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_u16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "i16" => {
-            quote! { crate::v2::binary_helpers::write_i16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_i16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "u32" => {
-            quote! { crate::v2::binary_helpers::write_u32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_u32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "i32" => {
-            quote! { crate::v2::binary_helpers::write_i32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_i32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "PcbCoord" => {
-            quote! { crate::v2::binary_helpers::write_pcb_coord(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_pcb_coord(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "f64" => {
-            quote! { crate::v2::binary_helpers::write_f64_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+            quote! { crate::binary_helpers::write_f64_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
         }
         "PcbCommonHeader" => {
             quote! { value.write(&mut self.origin.binary_mut().raw_block, #offset_lit) }
@@ -516,18 +516,18 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     // Generate the replaced struct
     let struct_def = quote! {
         #vis struct #struct_name {
-            origin: crate::v2::backing_store::RecordOrigin,
+            origin: crate::backing_store::RecordOrigin,
         }
     };
 
     // Generate constructors
     let constructors = quote! {
         impl #struct_name {
-            pub fn from_origin(origin: crate::v2::backing_store::RecordOrigin) -> Self {
+            pub fn from_origin(origin: crate::backing_store::RecordOrigin) -> Self {
                 Self { origin }
             }
 
-            pub fn new(origin: crate::v2::backing_store::RecordOrigin) -> Self {
+            pub fn new(origin: crate::backing_store::RecordOrigin) -> Self {
                 Self { origin }
             }
         }
@@ -553,11 +553,11 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     // Generate FromOrigin trait impl
     let from_origin_impl = quote! {
-        impl crate::v2::traits::FromOrigin for #struct_name {
-            fn from_origin(origin: crate::v2::backing_store::RecordOrigin) -> Self {
+        impl crate::traits::FromOrigin for #struct_name {
+            fn from_origin(origin: crate::backing_store::RecordOrigin) -> Self {
                 Self { origin }
             }
-            fn into_origin(self) -> crate::v2::backing_store::RecordOrigin {
+            fn into_origin(self) -> crate::backing_store::RecordOrigin {
                 self.origin
             }
         }
@@ -620,20 +620,20 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
             let use_into = is_string_newtype(field_ty);
             let emit_policy = match field.attrs.emit_policy {
                 Some(EmitPolicyAttr::Sparse) => {
-                    quote!(crate::v2::traits::ParamEmitPolicy::Sparse)
+                    quote!(crate::traits::ParamEmitPolicy::Sparse)
                 }
                 Some(EmitPolicyAttr::WithDefault) => {
-                    quote!(crate::v2::traits::ParamEmitPolicy::WithDefault)
+                    quote!(crate::traits::ParamEmitPolicy::WithDefault)
                 }
-                Some(EmitPolicyAttr::Never) => quote!(crate::v2::traits::ParamEmitPolicy::Never),
-                None => quote!(crate::v2::traits::ParamEmitPolicy::Sparse),
+                Some(EmitPolicyAttr::Never) => quote!(crate::traits::ParamEmitPolicy::Never),
+                None => quote!(crate::traits::ParamEmitPolicy::Sparse),
             };
 
             let setter_body = if use_into {
                 quote! {
                     pub fn #setter_name(&mut self, value: impl Into<#field_ty>) {
                         let value: #field_ty = value.into();
-                        <#field_ty as crate::v2::traits::ParamCodec>::write_with_policy(
+                        <#field_ty as crate::traits::ParamCodec>::write_with_policy(
                             &value,
                             &mut self.origin.param_mut().params,
                             #key,
@@ -644,7 +644,7 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
             } else {
                 quote! {
                     pub fn #setter_name(&mut self, value: #field_ty) {
-                        <#field_ty as crate::v2::traits::ParamCodec>::write_with_policy(
+                        <#field_ty as crate::traits::ParamCodec>::write_with_policy(
                             &value,
                             &mut self.origin.param_mut().params,
                             #key,
@@ -656,7 +656,7 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
 
             methods.push(quote! {
                 pub fn #getter_name(&self) -> #field_ty {
-                    <#field_ty as crate::v2::traits::ParamCodec>::read(
+                    <#field_ty as crate::traits::ParamCodec>::read(
                         &self.origin.param().params,
                         #key,
                     )
@@ -664,7 +664,7 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
                 }
 
                 pub fn #try_getter_name(&self) -> Option<#field_ty> {
-                    <#field_ty as crate::v2::traits::ParamCodec>::read(
+                    <#field_ty as crate::traits::ParamCodec>::read(
                         &self.origin.param().params,
                         #key,
                     )
@@ -695,7 +695,7 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
             }
         }
 
-        impl crate::v2::traits::ModeledFieldCopy for #struct_name {
+        impl crate::traits::ModeledFieldCopy for #struct_name {
             fn copy_modeled_fields_from(&mut self, src: &Self) {
                 #struct_name::copy_modeled_fields_from(self, src);
             }
@@ -764,7 +764,7 @@ fn gen_binary_sequential_accessors(
             }
         }
 
-        impl crate::v2::traits::ModeledFieldCopy for #struct_name {
+        impl crate::traits::ModeledFieldCopy for #struct_name {
             fn copy_modeled_fields_from(&mut self, src: &Self) {
                 #struct_name::copy_modeled_fields_from(self, src);
             }
@@ -830,7 +830,7 @@ fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Res
             }
         }
 
-        impl crate::v2::traits::ModeledFieldCopy for #struct_name {
+        impl crate::traits::ModeledFieldCopy for #struct_name {
             fn copy_modeled_fields_from(&mut self, src: &Self) {
                 #struct_name::copy_modeled_fields_from(self, src);
             }
@@ -861,61 +861,61 @@ fn binary_custom_read_expr(ty: &Type, field_index: usize) -> Result<TokenStream>
         "u8" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_u8(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_u8(&self.origin.binary().raw_block, span.offset)
             }
         },
         "i8" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_i8(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_i8(&self.origin.binary().raw_block, span.offset)
             }
         },
         "bool" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_bool(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_bool(&self.origin.binary().raw_block, span.offset)
             }
         },
         "u16" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_u16_le(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_u16_le(&self.origin.binary().raw_block, span.offset)
             }
         },
         "i16" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_i16_le(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_i16_le(&self.origin.binary().raw_block, span.offset)
             }
         },
         "u32" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_u32_le(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_u32_le(&self.origin.binary().raw_block, span.offset)
             }
         },
         "i32" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_i32_le(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_i32_le(&self.origin.binary().raw_block, span.offset)
             }
         },
         "PcbCoord" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_pcb_coord(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_pcb_coord(&self.origin.binary().raw_block, span.offset)
             }
         },
         "f64" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::read_f64_le(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::read_f64_le(&self.origin.binary().raw_block, span.offset)
             }
         },
         "PcbCommonHeader" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
-                crate::v2::binary_helpers::PcbCommonHeader::read(&self.origin.binary().raw_block, span.offset)
+                crate::binary_helpers::PcbCommonHeader::read(&self.origin.binary().raw_block, span.offset)
             }
         },
         other => {
@@ -952,63 +952,63 @@ fn binary_custom_write_expr(ty: &Type, field_index: usize) -> Result<TokenStream
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_u8(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_u8(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "i8" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_i8(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_i8(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "bool" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_bool(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_bool(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "u16" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_u16_le(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_u16_le(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "i16" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_i16_le(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_i16_le(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "u32" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_u32_le(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_u32_le(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "i32" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_i32_le(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_i32_le(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "PcbCoord" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_pcb_coord(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_pcb_coord(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "f64" => quote! {
             {
                 let span = &self.origin.binary().field_spans[#idx_lit];
                 let offset = span.offset;
-                crate::v2::binary_helpers::write_f64_le(&mut self.origin.binary_mut().raw_block, offset, value);
+                crate::binary_helpers::write_f64_le(&mut self.origin.binary_mut().raw_block, offset, value);
             }
         },
         "PcbCommonHeader" => quote! {
@@ -1042,8 +1042,8 @@ fn gen_record_type_impl(struct_name: &Ident, attrs: &MacroAttrs) -> Result<Token
         RecordKind::Pcb => {
             let obj_id = attrs.object_id.as_ref().unwrap();
             // For PCB, use the object_id variant's discriminant.
-            // We generate: crate::v2::pcb::enums::PcbObjectId::#obj_id as u8
-            quote! { crate::v2::pcb::enums::PcbObjectId::#obj_id as u8 }
+            // We generate: crate::pcb::enums::PcbObjectId::#obj_id as u8
+            quote! { crate::pcb::enums::PcbObjectId::#obj_id as u8 }
         }
     };
 
@@ -1053,15 +1053,15 @@ fn gen_record_type_impl(struct_name: &Ident, attrs: &MacroAttrs) -> Result<Token
     };
 
     Ok(quote! {
-        impl crate::v2::traits::RecordType for #struct_name {
+        impl crate::traits::RecordType for #struct_name {
             const RECORD_ID: u8 = #record_id_expr;
             const IS_BINARY: bool = #is_binary_expr;
 
-            fn origin(&self) -> &crate::v2::backing_store::RecordOrigin {
+            fn origin(&self) -> &crate::backing_store::RecordOrigin {
                 &self.origin
             }
 
-            fn origin_mut(&mut self) -> &mut crate::v2::backing_store::RecordOrigin {
+            fn origin_mut(&mut self) -> &mut crate::backing_store::RecordOrigin {
                 &mut self.origin
             }
         }
@@ -1127,7 +1127,7 @@ fn gen_builder(
         }
 
         impl #builder_name {
-            pub fn new(template: fn() -> crate::v2::backing_store::RecordOrigin) -> Self {
+            pub fn new(template: fn() -> crate::backing_store::RecordOrigin) -> Self {
                 Self {
                     record: #struct_name::new(template()),
                 }
@@ -1141,7 +1141,7 @@ fn gen_builder(
         }
 
         impl #struct_name {
-            pub fn builder(template: fn() -> crate::v2::backing_store::RecordOrigin) -> #builder_name {
+            pub fn builder(template: fn() -> crate::backing_store::RecordOrigin) -> #builder_name {
                 #builder_name::new(template)
             }
         }

@@ -17,8 +17,8 @@ mod common;
 
 use std::io::Cursor;
 
-use altium_format::v2::documents::PcbLib;
-use altium_format::v2::store::GroupMeta;
+use altium_format::documents::PcbLib;
+use altium_format::store::GroupMeta;
 
 use common::cfb_compare::compare_cfb_files;
 

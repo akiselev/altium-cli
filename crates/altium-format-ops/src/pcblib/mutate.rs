@@ -6,10 +6,10 @@
 
 use std::path::Path;
 
-use altium_format::v2::backing_store::RecordNode;
-use altium_format::v2::coord::{AltiumCoord, PcbCoord};
-use altium_format::v2::records::PcbPadRecord;
-use altium_format::v2::traits::{FromOrigin, RecordType};
+use altium_format::backing_store::RecordNode;
+use altium_format::coord::{AltiumCoord, PcbCoord};
+use altium_format::records::PcbPadRecord;
+use altium_format::traits::{FromOrigin, RecordType};
 
 use crate::helpers::*;
 
@@ -29,7 +29,7 @@ fn build_pad_node(
     shape: u8,
     layer: u8,
 ) -> RecordNode {
-    let origin = altium_format::v2::templates::pcb_pad_default();
+    let origin = altium_format::templates::pcb_pad_default();
     let mut pad = PcbPadRecord::from_origin(origin);
     pad.set_position_x(x);
     pad.set_position_y(y);
@@ -76,7 +76,7 @@ pub fn cmd_add_footprint(
     let desc = description.as_deref().unwrap_or("").to_string();
     lib.build_footprint(
         name,
-        altium_format::v2::templates::pcb_footprint_default,
+        altium_format::templates::pcb_footprint_default,
         |builder| {
             builder.with_metadata(|fp| {
                 fp.set_pattern(name.to_string());
@@ -217,7 +217,7 @@ pub fn cmd_gen_chip(
 
     lib.build_footprint(
         &fp_name,
-        altium_format::v2::templates::pcb_footprint_default,
+        altium_format::templates::pcb_footprint_default,
         |builder| {
             builder.with_metadata(|fp| {
                 fp.set_pattern(fp_name.clone());
@@ -225,7 +225,7 @@ pub fn cmd_gen_chip(
             });
 
             // Pad 1 on left
-            builder.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
+            builder.add_pad(altium_format::templates::pcb_pad_default, |pad| {
                 pad.set_position_x(PcbCoord::from_mm(-x_offset));
                 pad.set_position_y(PcbCoord::from_mm(0.0));
                 pad.set_top_size_x(PcbCoord::from_mm(pad_length));
@@ -241,7 +241,7 @@ pub fn cmd_gen_chip(
             });
 
             // Pad 2 on right
-            builder.add_pad(altium_format::v2::templates::pcb_pad_default, |pad| {
+            builder.add_pad(altium_format::templates::pcb_pad_default, |pad| {
                 pad.set_position_x(PcbCoord::from_mm(x_offset));
                 pad.set_position_y(PcbCoord::from_mm(0.0));
                 pad.set_top_size_x(PcbCoord::from_mm(pad_length));
@@ -262,7 +262,7 @@ pub fn cmd_gen_chip(
             let silk_y = body_w / 2.0 + silk_margin;
             let silk_width = 0.15;
 
-            builder.add_track(altium_format::v2::templates::pcb_track_default, |track| {
+            builder.add_track(altium_format::templates::pcb_track_default, |track| {
                 track.set_start_x(PcbCoord::from_mm(-silk_x));
                 track.set_start_y(PcbCoord::from_mm(silk_y));
                 track.set_end_x(PcbCoord::from_mm(silk_x));
@@ -273,7 +273,7 @@ pub fn cmd_gen_chip(
                 track.set_header(hdr);
             });
 
-            builder.add_track(altium_format::v2::templates::pcb_track_default, |track| {
+            builder.add_track(altium_format::templates::pcb_track_default, |track| {
                 track.set_start_x(PcbCoord::from_mm(-silk_x));
                 track.set_start_y(PcbCoord::from_mm(-silk_y));
                 track.set_end_x(PcbCoord::from_mm(silk_x));

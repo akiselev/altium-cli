@@ -4,7 +4,7 @@
 //! that map to integer values in Altium parameter files.
 //!
 //! Unlike the v1 `#[derive(AltiumEnum)]`, this attribute macro:
-//! - Targets `crate::v2::traits::AltiumEnum` / `crate::v2::traits::ParamCodec`
+//! - Targets `crate::traits::AltiumEnum` / `crate::traits::ParamCodec`
 //! - Does NOT generate a `Default` impl
 //! - Directly generates the `ParamCodec` impl inline
 
@@ -177,7 +177,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     Ok(quote! {
         #clean_enum
 
-        impl crate::v2::traits::AltiumEnum for #name {
+        impl crate::traits::AltiumEnum for #name {
             fn from_int(value: i32) -> Self {
                 match value {
                     #(#from_int_arms)*
@@ -190,41 +190,41 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
             }
         }
 
-        impl crate::v2::traits::ParamCodec for #name {
+        impl crate::traits::ParamCodec for #name {
             fn read(
-                params: &crate::v2::parameters::ParameterCollection,
+                params: &crate::parameters::ParameterCollection,
                 key: &str,
             ) -> Option<Self> {
-                use crate::v2::traits::AltiumEnum;
+                use crate::traits::AltiumEnum;
                 params.get(key).map(|v| Self::from_int(v.as_int_or(0)))
             }
 
             fn write(
                 &self,
-                params: &mut crate::v2::parameters::ParameterCollection,
+                params: &mut crate::parameters::ParameterCollection,
                 key: &str,
             ) {
-                use crate::v2::traits::AltiumEnum;
+                use crate::traits::AltiumEnum;
                 params.add_int(key, self.to_int());
             }
 
             fn write_with_policy(
                 &self,
-                params: &mut crate::v2::parameters::ParameterCollection,
+                params: &mut crate::parameters::ParameterCollection,
                 key: &str,
-                policy: crate::v2::traits::ParamEmitPolicy,
+                policy: crate::traits::ParamEmitPolicy,
             ) {
-                use crate::v2::traits::AltiumEnum;
+                use crate::traits::AltiumEnum;
                 match policy {
-                    crate::v2::traits::ParamEmitPolicy::Never => params.remove(key),
-                    crate::v2::traits::ParamEmitPolicy::Sparse => {
+                    crate::traits::ParamEmitPolicy::Never => params.remove(key),
+                    crate::traits::ParamEmitPolicy::Sparse => {
                         if self.to_int() == 0 {
                             params.remove(key);
                         } else {
                             params.add_int(key, self.to_int());
                         }
                     }
-                    crate::v2::traits::ParamEmitPolicy::WithDefault => {
+                    crate::traits::ParamEmitPolicy::WithDefault => {
                         params.add(key, &self.to_int().to_string());
                     }
                 }

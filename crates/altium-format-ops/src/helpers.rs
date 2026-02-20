@@ -156,9 +156,9 @@ pub fn pcb_layer_name(layer: u8) -> &'static str {
 
 /// Get the electrical type name for display.
 pub fn electrical_type_name(
-    electrical: altium_format::v2::records::enums::PinElectricalType,
+    electrical: altium_format::records::enums::PinElectricalType,
 ) -> &'static str {
-    use altium_format::v2::records::enums::PinElectricalType;
+    use altium_format::records::enums::PinElectricalType;
     match electrical {
         PinElectricalType::Input => "Input",
         PinElectricalType::Output => "Output",
@@ -172,8 +172,8 @@ pub fn electrical_type_name(
 }
 
 /// Parse electrical type from string.
-pub fn parse_electrical_type(s: &str) -> altium_format::v2::records::enums::PinElectricalType {
-    use altium_format::v2::records::enums::PinElectricalType;
+pub fn parse_electrical_type(s: &str) -> altium_format::records::enums::PinElectricalType {
+    use altium_format::records::enums::PinElectricalType;
     match s.to_lowercase().as_str() {
         "input" | "in" => PinElectricalType::Input,
         "output" | "out" => PinElectricalType::Output,
@@ -190,7 +190,7 @@ pub fn parse_electrical_type(s: &str) -> altium_format::v2::records::enums::PinE
 /// Parse a dimension string with unit suffix (e.g., "2.54mm", "100mil") into
 /// internal PCB coordinate units.
 pub fn parse_dimension(s: &str) -> Result<i32, Box<dyn std::error::Error>> {
-    use altium_format::v2::coord::{AltiumCoord, PcbCoord};
+    use altium_format::coord::{AltiumCoord, PcbCoord};
     let s = s.trim();
     if let Some(val) = s.strip_suffix("mm") {
         let mm: f64 = val
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_parse_dimension() {
-        use altium_format::v2::coord::{AltiumCoord, PcbCoord};
+        use altium_format::coord::{AltiumCoord, PcbCoord};
         let raw_mm = parse_dimension("1.0mm").unwrap();
         let coord = PcbCoord::from_raw(raw_mm);
         assert!((coord.to_mm() - 1.0).abs() < 0.01);

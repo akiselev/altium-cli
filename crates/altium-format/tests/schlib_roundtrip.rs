@@ -17,7 +17,7 @@ mod common;
 
 use std::io::Cursor;
 
-use altium_format::v2::documents::SchLib;
+use altium_format::documents::SchLib;
 
 use common::cfb_compare::compare_cfb_files;
 
@@ -166,8 +166,8 @@ fn record_type_name(id: u8) -> &'static str {
 /// Print a summary of record type distribution for a component's children.
 #[allow(dead_code)]
 fn print_record_type_summary(
-    store: &altium_format::v2::store::DocumentStore,
-    child_ids: &[altium_format::v2::ids::RecordId],
+    store: &altium_format::store::DocumentStore,
+    child_ids: &[altium_format::ids::RecordId],
 ) {
     let mut type_counts: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
     for &id in child_ids {

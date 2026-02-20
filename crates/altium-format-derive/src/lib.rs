@@ -142,7 +142,7 @@ pub fn derive_altium_enum(input: TokenStream) -> TokenStream {
 
 /// Attribute macro for v2 Altium enums with integer mapping.
 ///
-/// Generates `crate::v2::traits::AltiumEnum` and `crate::v2::traits::ParamCodec`
+/// Generates `crate::traits::AltiumEnum` and `crate::traits::ParamCodec`
 /// implementations. Unlike the v1 `#[derive(AltiumEnum)]`, this does NOT
 /// generate a `Default` impl.
 ///

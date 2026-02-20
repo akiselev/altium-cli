@@ -102,7 +102,7 @@ Altium uses two distinct coordinate scales. Using the wrong scale causes silent 
 - **Usage**: All schematic files (.SchLib, .SchDoc)
 
 ```rust
-use altium_format::v2::V2Coord;
+use altium_format::V2Coord;
 
 let coord = V2Coord::from_mils(10.5);
 assert_eq!(coord.to_raw(), 1_050_000);  // 10.5 * 100,000
@@ -121,7 +121,7 @@ assert_eq!(frac, 50_000);   // Stored in PinFrac stream
 - **Usage**: All PCB files (.PcbLib, .PcbDoc)
 
 ```rust
-use altium_format::v2::pcb::PcbCoord;
+use altium_format::pcb::PcbCoord;
 
 let coord = PcbCoord::from_mils(10.5);
 assert_eq!(coord.to_raw(), 105_000);  // 10.5 * 10,000
@@ -134,7 +134,7 @@ assert_eq!(coord.to_raw(), 105_000);  // 10.5 * 10,000
 Runtime dispatch for parsed schematic records:
 
 ```rust
-use altium_format::v2::{TypedRecord, PinData, ComponentData};
+use altium_format::{TypedRecord, PinData, ComponentData};
 
 match record {
     TypedRecord::Pin(pin) => println!("Pin: {}", pin.name),
@@ -213,7 +213,7 @@ SchLib file:
 ### Reading a SchLib
 
 ```rust
-use altium_format::v2::io::schlib::SchLibV2;
+use altium_format::io::schlib::SchLibV2;
 
 let lib = SchLibV2::open_file("components.SchLib")?;
 
@@ -234,7 +234,7 @@ for comp in &lib.components {
 ### Reading a PcbLib
 
 ```rust
-use altium_format::v2::pcb::io::pcblib::PcbLibV2;
+use altium_format::pcb::io::pcblib::PcbLibV2;
 
 let lib = PcbLibV2::open_file("footprints.PcbLib")?;
 
@@ -256,7 +256,7 @@ for footprint in &lib.footprints {
 
 ```rust
 use altium_format::query::query_records;
-use altium_format::v2::io::schlib::SchLibV2;
+use altium_format::io::schlib::SchLibV2;
 
 let lib = SchLibV2::open_file("library.SchLib")?;
 let resistors = query_records(&lib, "Component[Designator^=R]")?;

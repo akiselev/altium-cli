@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use altium_format::v2::coord::AltiumCoord;
-use altium_format::v2::handles::{PcbFootprint, PcbPad};
-use altium_format::v2::traits::DocumentQuery;
+use altium_format::coord::AltiumCoord;
+use altium_format::handles::{PcbFootprint, PcbPad};
+use altium_format::traits::DocumentQuery;
 
 use crate::output::*;
 

@@ -24,9 +24,9 @@ pub use render::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-use altium_format::v2::coord::{AltiumCoord, PcbCoord};
-use altium_format::v2::documents::pcblib::PcbLib;
-use altium_format::v2::handles::{PcbFootprintHandle, PcbPad};
+use altium_format::coord::{AltiumCoord, PcbCoord};
+use altium_format::documents::pcblib::PcbLib;
+use altium_format::handles::{PcbFootprintHandle, PcbPad};
 
 use crate::helpers::*;
 use crate::output::*;
@@ -60,12 +60,12 @@ pub(super) const TYPE_COMPONENT_BODY: u8 = 12;
 pub(super) struct PadData {
     pub(super) designator: String,
     pub(super) layer: u8,
-    pub(super) record: altium_format::v2::records::PcbPadRecord,
+    pub(super) record: altium_format::records::PcbPadRecord,
 }
 
 impl PadData {
     /// Extract pad data from a cloned `PcbPadRecord`.
-    pub(super) fn from_record(record: altium_format::v2::records::PcbPadRecord) -> Self {
+    pub(super) fn from_record(record: altium_format::records::PcbPadRecord) -> Self {
         Self {
             designator: record.designator(),
             layer: record.layer(),
@@ -289,8 +289,8 @@ mod tests {
 
     #[test]
     fn test_pad_data_from_record() {
-        let origin = altium_format::v2::templates::pcb_pad_default();
-        let mut record = altium_format::v2::records::PcbPadRecord::from_origin(origin);
+        let origin = altium_format::templates::pcb_pad_default();
+        let mut record = altium_format::records::PcbPadRecord::from_origin(origin);
         record.set_position_x(PcbCoord::from_mm(1.0));
         record.set_position_y(PcbCoord::from_mm(2.0));
         record.set_top_size_x(PcbCoord::from_mm(0.5));
@@ -309,16 +309,16 @@ mod tests {
 
     #[test]
     fn test_compute_bounding_box_from_records() {
-        let origin1 = altium_format::v2::templates::pcb_pad_default();
-        let mut rec1 = altium_format::v2::records::PcbPadRecord::from_origin(origin1);
+        let origin1 = altium_format::templates::pcb_pad_default();
+        let mut rec1 = altium_format::records::PcbPadRecord::from_origin(origin1);
         rec1.set_position_x(PcbCoord::from_mm(-1.0));
         rec1.set_position_y(PcbCoord::from_mm(0.0));
         rec1.set_top_size_x(PcbCoord::from_mm(0.5));
         rec1.set_top_size_y(PcbCoord::from_mm(0.5));
         rec1.set_layer(1);
 
-        let origin2 = altium_format::v2::templates::pcb_pad_default();
-        let mut rec2 = altium_format::v2::records::PcbPadRecord::from_origin(origin2);
+        let origin2 = altium_format::templates::pcb_pad_default();
+        let mut rec2 = altium_format::records::PcbPadRecord::from_origin(origin2);
         rec2.set_position_x(PcbCoord::from_mm(1.0));
         rec2.set_position_y(PcbCoord::from_mm(0.0));
         rec2.set_top_size_x(PcbCoord::from_mm(0.5));

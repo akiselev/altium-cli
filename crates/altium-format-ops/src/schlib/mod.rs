@@ -19,9 +19,9 @@ pub use mutate::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-use altium_format::v2::coord::{AltiumCoord, SchCoord};
-use altium_format::v2::documents::schlib::SchLib;
-use altium_format::v2::handles::SchComponentHandle;
+use altium_format::coord::{AltiumCoord, SchCoord};
+use altium_format::documents::schlib::SchLib;
+use altium_format::handles::SchComponentHandle;
 
 use crate::helpers::*;
 
@@ -49,7 +49,7 @@ pub(super) fn count_primitives(comp: &SchComponentHandle) -> HashMap<&'static st
 mod tests {
     use crate::categorization::categorize_component;
     use crate::helpers::*;
-    use altium_format::v2::records::enums::PinElectricalType;
+    use altium_format::records::enums::PinElectricalType;
 
     #[test]
     fn test_categorize_component() {

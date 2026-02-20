@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::helpers::*;
 
-use altium_format::v2::handles::{SchComponent, SchPin};
-use altium_format::v2::traits::DocumentQuery;
+use altium_format::handles::{SchComponent, SchPin};
+use altium_format::traits::DocumentQuery;
 
 use super::{collect_net_names, collect_power_nets, get_sheet_size, open_schdoc};
 

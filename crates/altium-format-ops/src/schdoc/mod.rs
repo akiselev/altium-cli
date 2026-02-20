@@ -6,7 +6,7 @@
 //! Provides high-level operations for exploring and analyzing Altium schematic
 //! document (.SchDoc) files using the v2 public API.
 //!
-//! This module uses ONLY the public API of `altium_format::v2::documents::schdoc::SchDoc`.
+//! This module uses ONLY the public API of `altium_format::documents::schdoc::SchDoc`.
 //! No internal backing-store types (`ParamOrigin`, `BinaryOrigin`, `ComponentGroup`)
 //! are accessed directly.
 
@@ -21,9 +21,9 @@ pub use json::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-use altium_format::v2::coord::{AltiumCoord, SchCoord};
-use altium_format::v2::documents::schdoc::SchDoc;
-use altium_format::v2::records::{SchNetLabelRecord, SchPowerRecord};
+use altium_format::coord::{AltiumCoord, SchCoord};
+use altium_format::documents::schdoc::SchDoc;
+use altium_format::records::{SchNetLabelRecord, SchPowerRecord};
 
 use crate::helpers::*;
 
@@ -196,7 +196,7 @@ pub(super) fn is_control_signal(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format::v2::coord::SchCoord;
+    use altium_format::coord::SchCoord;
 
     #[test]
     fn test_schcoord_to_mils() {

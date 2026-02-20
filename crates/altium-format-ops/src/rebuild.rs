@@ -13,9 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use altium_format::v2::documents::pcbdoc_streams::PcbDocSectionMeta;
-use altium_format::v2::documents::{PcbDoc, PcbLib, SchDoc, SchLib};
-use altium_format::v2::handles::{
+use altium_format::documents::pcbdoc_streams::PcbDocSectionMeta;
+use altium_format::documents::{PcbDoc, PcbLib, SchDoc, SchLib};
+use altium_format::handles::{
     PcbArcHandle, PcbComponentBodyHandle, PcbConnectionHandle, PcbFillHandle, PcbPadHandle,
     PcbRegionHandle, PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBezierHandle,
     SchBlanketHandle, SchBusEntryHandle, SchBusHandle, SchComponent, SchDesignatorHandle,
@@ -28,7 +28,7 @@ use altium_format::v2::handles::{
     SchSheetNameHandle, SchSheetSymbolHandle, SchSymbolHandle, SchTaskHolderHandle,
     SchTextFrameHandle, SchWireHandle,
 };
-use altium_format::v2::records::{
+use altium_format::records::{
     PcbArcRecord, PcbComponentBodyRecord, PcbConnectionRecord, PcbFillRecord, PcbPadRecord,
     PcbRegionRecord, PcbTextRecord, PcbTrackRecord, PcbViaRecord, SchArcRecord, SchBezierRecord,
     SchBlanketRecord, SchBusEntryRecord, SchBusRecord, SchDesignatorRecord, SchEllipseRecord,
@@ -40,9 +40,9 @@ use altium_format::v2::records::{
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
     SchSheetSymbolRecord, SchSymbolRecord, SchTaskHolderRecord, SchTextFrameRecord, SchWireRecord,
 };
-use altium_format::v2::store::DocumentMeta;
-use altium_format::v2::templates;
-use altium_format::v2::traits::{DocumentQuery, RecordType};
+use altium_format::store::DocumentMeta;
+use altium_format::templates;
+use altium_format::traits::{DocumentQuery, RecordType};
 
 use crate::cfb_diff::{CfbDiffReport, compare_cfb_files};
 
@@ -135,8 +135,8 @@ fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Bo
 /// value includes `\0` in the source backing store.
 fn copy_param_nul_suffix_from_source<T: RecordType>(
     dst: &mut T,
-    src_store: &altium_format::v2::store::DocRef,
-    rid: altium_format::v2::ids::RecordId,
+    src_store: &altium_format::store::DocRef,
+    rid: altium_format::ids::RecordId,
 ) {
     if T::IS_BINARY {
         return;
@@ -174,8 +174,8 @@ fn copy_param_nul_suffix_from_source<T: RecordType>(
 /// duplicate keys and original entry order in the parsed parameter collection.
 fn copy_param_origin_lossless_from_source<T: RecordType>(
     dst: &mut T,
-    src_store: &altium_format::v2::store::DocRef,
-    rid: altium_format::v2::ids::RecordId,
+    src_store: &altium_format::store::DocRef,
+    rid: altium_format::ids::RecordId,
 ) {
     if T::IS_BINARY {
         return;
@@ -195,8 +195,8 @@ fn copy_param_origin_lossless_from_source<T: RecordType>(
 /// set from the source record, preserving source textual forms.
 fn copy_all_param_values_from_source<T: RecordType>(
     dst: &mut T,
-    src_store: &altium_format::v2::store::DocRef,
-    rid: altium_format::v2::ids::RecordId,
+    src_store: &altium_format::store::DocRef,
+    rid: altium_format::ids::RecordId,
 ) {
     if T::IS_BINARY {
         return;
@@ -992,23 +992,23 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use altium_format::v2::backing_store::{BinaryOrigin, FieldSpan, RecordOrigin};
-    use altium_format::v2::documents::pcbdoc_streams::{
+    use altium_format::backing_store::{BinaryOrigin, FieldSpan, RecordOrigin};
+    use altium_format::documents::pcbdoc_streams::{
         PcbDocPrimitiveSectionMeta, PcbDocSectionMeta,
     };
-    use altium_format::v2::documents::pcblib_streams::{
+    use altium_format::documents::pcblib_streams::{
         PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibFootprintSidecarStreamsMeta,
         PcbLibLibraryStorageMeta, PcbLibModelsStorageMeta, PcbLibParamTableStreamMeta,
         PcbLibPrimitiveGuidEntry, PcbLibPrimitiveGuidsStreamMeta, PcbLibWideStringsStreamMeta,
     };
-    use altium_format::v2::documents::schdoc_streams::{
+    use altium_format::documents::schdoc_streams::{
         SchDocStorageEntry, SchDocStorageStreamMeta,
     };
-    use altium_format::v2::documents::schlib_streams::SchLibRedirectionStreamMeta;
-    use altium_format::v2::handles::PcbFootprintStoragePassthrough;
-    use altium_format::v2::parameters::ParameterCollection;
-    use altium_format::v2::records::{PcbConnectionRecord, PcbFootprintRecord};
-    use altium_format::v2::templates;
+    use altium_format::documents::schlib_streams::SchLibRedirectionStreamMeta;
+    use altium_format::handles::PcbFootprintStoragePassthrough;
+    use altium_format::parameters::ParameterCollection;
+    use altium_format::records::{PcbConnectionRecord, PcbFootprintRecord};
+    use altium_format::templates;
 
     #[test]
     fn classify_extension_case_insensitive() {
@@ -1194,7 +1194,7 @@ mod tests {
         let out_path = temp_file_path("PcbLib");
 
         let src = PcbLib::new_empty();
-        let mut section_keys = altium_format::v2::documents::section_keys::SectionKeyList::new();
+        let mut section_keys = altium_format::documents::section_keys::SectionKeyList::new();
         section_keys.insert_mapping("FP1", "FP1K");
         src.set_section_keys(section_keys.clone());
         src.set_file_header_meta(PcbLibFileHeaderStreamMeta {
@@ -1370,8 +1370,8 @@ mod tests {
         {
             let mut store = src.store().borrow_mut();
             let node = store.record_mut(pin_rid);
-            node.origin = altium_format::v2::backing_store::RecordOrigin::Binary(
-                altium_format::v2::backing_store::BinaryOrigin::new(pin_raw),
+            node.origin = altium_format::backing_store::RecordOrigin::Binary(
+                altium_format::backing_store::BinaryOrigin::new(pin_raw),
             );
             node.mark_dirty();
         }

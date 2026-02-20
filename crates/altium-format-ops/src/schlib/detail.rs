@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use altium_format::v2::handles::{
+use altium_format::handles::{
     SchArcHandle, SchComponent, SchComponentHandle, SchLabelHandle, SchLineHandle, SchPin,
     SchPinHandle, SchRectangleHandle,
 };
-use altium_format::v2::traits::DocumentQuery;
+use altium_format::traits::DocumentQuery;
 
 use crate::helpers::*;
 use crate::output::*;
@@ -179,7 +179,7 @@ pub fn cmd_primitives(
                 let decoded = {
                     let store = lib.store().borrow();
                     store.record(record_id).origin.as_binary().and_then(|b| {
-                        altium_format::v2::records::SchPinRecord::from_legacy_binary_record_data(
+                        altium_format::records::SchPinRecord::from_legacy_binary_record_data(
                             &b.raw_block,
                         )
                     })
