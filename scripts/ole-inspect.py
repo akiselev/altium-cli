@@ -47,7 +47,7 @@ IMPLEMENTED_SCH_RECORD_IDS = {
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 22, 25, 26, 27, 28, 29, 30, 31,
     32, 33, 34, 37, 39, 41, 43, 44, 45, 46, 47, 48, 209, 225,
 }
-IMPLEMENTED_PCB_OBJECT_IDS = {1, 2, 3, 4, 5, 6, 9, 11, 12}
+IMPLEMENTED_PCB_OBJECT_IDS = {1, 2, 3, 4, 5, 6, 7, 11, 12}
 
 
 TEXT_STREAM_SUFFIXES = {
@@ -67,6 +67,24 @@ PCB_LIB_SYSTEM_TOP_LEVEL = {
     "FileHeader",
     "Library",
     "FileVersionInfo",
+}
+
+PCBDOC_PRIMITIVE_SECTION_OBJECT_IDS = {
+    "arcs6": 1,
+    "pads6": 2,
+    "vias6": 3,
+    "tracks6": 4,
+    "texts6": 5,
+    "fills6": 6,
+    "connections6": 7,
+    "regions6": 11,
+    "shapebasedregions6": 11,
+    "splitplaneregions6": 11,
+    "componentbodies6": 12,
+    "shapebasedcomponentbodies6": 12,
+    # Legacy primitive storages still seen in AD26 exports.
+    "boardregions": 11,
+    "texts": 5,
 }
 
 
@@ -271,6 +289,41 @@ def parse_pcblib_data_object_ids(data: bytes) -> tuple[list[int], str | None]:
             if pos + sub_len > len(data):
                 return ids, "truncated-subrecord-data"
             pos += sub_len
+    return ids, None
+
+
+def parse_pcbdoc_data_object_ids(path: str, data: bytes) -> tuple[list[int], str | None]:
+    # Primitive sections are in <Section>/Data streams.
+    parts = path.split("/")
+    if len(parts) != 2 or parts[1].lower() != "data":
+        return [], None
+
+    section = parts[0].lower()
+    expected_id = PCBDOC_PRIMITIVE_SECTION_OBJECT_IDS.get(section)
+    if expected_id is None:
+        return [], None
+
+    pos = 0
+    ids: list[int] = []
+    while pos < len(data):
+        type_id = data[pos]
+        pos += 1
+        ids.append(type_id)
+
+        if type_id != expected_id:
+            return ids, f"unexpected-object-id:{type_id}:expected:{expected_id}"
+
+        # Pad=2 (6 subrecords), Text=5 (2 subrecords)
+        n = 6 if type_id == 2 else 2 if type_id == 5 else 1
+        for _ in range(n):
+            if pos + 4 > len(data):
+                return ids, "truncated-subrecord-len"
+            sub_len = int.from_bytes(data[pos : pos + 4], "little")
+            pos += 4
+            if pos + sub_len > len(data):
+                return ids, "truncated-subrecord-data"
+            pos += sub_len
+
     return ids, None
 
 
@@ -635,24 +688,11 @@ def _collect_pcb_object_ids(
             warnings.append(f"pcblib-data-parse-error:{err}")
         return parsed, warnings
 
-    blocks, err = parse_size_prefixed_blocks(data)
-    if err is not None or not blocks:
+    if ext == ".pcbdoc":
+        parsed, err = parse_pcbdoc_data_object_ids(path, data)
         if err is not None:
-            warnings.append(f"block-parse-error:{err}")
-        return ids, warnings
-
-    # In PcbDoc, any binary stream that has size-prefixed blocks is a candidate for primitive objects
-    if ext == ".pcbdoc" and _classify_stream(path, data) == "binary":
-        for bi, b in enumerate(blocks):
-            block_data_start = b.offset + 4
-            payload = data[block_data_start : block_data_start + b.size]
-            if not payload:
-                continue
-            # Block0 in PcbDoc binary streams is often u32 count, not an object ID
-            if bi == 0 and len(payload) == 4:
-                continue
-            ids.append(payload[0])
-        return ids, warnings
+            warnings.append(f"pcbdoc-data-parse-error:{err}")
+        return parsed, warnings
 
     return ids, warnings
 
