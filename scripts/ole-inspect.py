@@ -62,6 +62,13 @@ TEXT_STREAM_SUFFIXES = {
     "classes6/data",
 }
 
+PCB_LIB_SYSTEM_TOP_LEVEL = {
+    "SectionKeys",
+    "FileHeader",
+    "Library",
+    "FileVersionInfo",
+}
+
 
 @dataclass
 class BlockInfo:
@@ -191,12 +198,12 @@ def _inspect_compressed_payload(payload: bytes) -> tuple[bool, str | None, int |
     return True, ident, out_len
 
 
-def parse_param_records(data: bytes) -> list[dict[str, str]]:
+def parse_param_records(data: bytes) -> list[list[tuple[str, str]]]:
     # Rust mirrors: don't replace \x00 with \n, and don't splitlines.
-    # Altium records are usually one block of pipes.
+    # Preserve raw segment whitespace and duplicate keys (ordered pairs).
     text = _decode_text(data)
-    records: list[dict[str, str]] = []
-    
+    records: list[list[tuple[str, str]]] = []
+
     # Handle %UTF8% prefix decoding similarly to Rust's decode_utf8_from_win1252
     def decode_value(k: str, v: str) -> tuple[str, str]:
         if k.startswith("%UTF8%"):
@@ -209,28 +216,27 @@ def parse_param_records(data: bytes) -> list[dict[str, str]]:
                 return real_key, v
         return k, v
 
-    # If the text has many records separated by some other means, we might need more logic,
-    # but usually it's one record per size-prefixed block or one stream = one record.
-    # We'll split by '|' but be careful about empty segments.
-    # Some blocks might contain multiple records (rare in libraries, common in docs if not using blocks).
-    
-    # Heuristic: if we see multiple "RECORD=" it might be multiple records in one block
-    raw_segments = [s.strip() for s in text.split("|") if s.strip()]
-    
-    current_rec: dict[str, str] = {}
-    for seg in raw_segments:
+    current_rec: list[tuple[str, str]] = []
+    has_record_key = False
+    for seg in text.split("|"):
+        if seg == "":
+            continue
         if "=" in seg:
             k, v = seg.split("=", 1)
             k, v = decode_value(k, v)
-            # If we hit a new RECORD= and already have one, start a new record
-            if k.upper() == "RECORD" and "RECORD" in current_rec:
-                records.append(current_rec)
-                current_rec = {}
-            current_rec[k] = v
         else:
             # Solo value (key is empty string, like Rust)
-            current_rec[""] = seg
-            
+            k, v = "", seg
+
+        if k.upper() == "RECORD" and has_record_key:
+            records.append(current_rec)
+            current_rec = []
+            has_record_key = False
+
+        current_rec.append((k, v))
+        if k.upper() == "RECORD":
+            has_record_key = True
+
     if current_rec:
         records.append(current_rec)
     return records
@@ -279,24 +285,27 @@ def _iter_input_files(target: Path) -> list[Path]:
     return files
 
 
-def _read_ole(path: Path) -> tuple[bool, list[list[str]], dict[str, bytes]]:
+def _read_ole(path: Path) -> tuple[bool, list[list[str]], dict[str, bytes], dict[str, str], str | None]:
     try:
         ole = olefile.OleFileIO(str(path))
     except NotOleFileError:
         # Some Altium formats (notably some .PrjPcb files) are plain text.
         raw = path.read_bytes()
-        return False, [], {"(raw)": raw}
+        return False, [], {"(raw)": raw}, {}, None
+    except Exception as exc:
+        return False, [], {}, {}, f"{type(exc).__name__}: {exc}"
 
     storages = ole.listdir(streams=False, storages=True)
     streams: dict[str, bytes] = {}
+    stream_read_errors: dict[str, str] = {}
     for entry in ole.listdir(streams=True, storages=False):
         key = _stream_path(entry)
         try:
             streams[key] = ole.openstream(entry).read()
-        except Exception:
-            streams[key] = b""
+        except Exception as exc:
+            stream_read_errors[key] = f"{type(exc).__name__}: {exc}"
     ole.close()
-    return True, storages, streams
+    return True, storages, streams, stream_read_errors, None
 
 
 def _match_stream(path: str, stream_filter: str | None) -> bool:
@@ -307,17 +316,35 @@ def _match_stream(path: str, stream_filter: str | None) -> bool:
 
 def cmd_container(args: argparse.Namespace) -> int:
     path = Path(args.path)
-    is_ole, storages, streams = _read_ole(path)
+    is_ole, storages, streams, stream_read_errors, read_error = _read_ole(path)
+    all_stream_names = sorted(set(streams.keys()) | set(stream_read_errors.keys()))
     out: dict[str, Any] = {
         "file": str(path),
         "is_ole": is_ole,
+        "read_error": read_error,
         "storage_count": len(storages),
-        "stream_count": len(streams),
+        "stream_count": len(all_stream_names),
+        "stream_read_error_count": len(stream_read_errors),
+        "stream_read_errors": dict(sorted(stream_read_errors.items())),
         "storages": sorted(_stream_path(s) for s in storages),
         "streams": [],
     }
-    for sp in sorted(streams):
+    for sp in all_stream_names:
         if not _match_stream(sp, args.stream):
+            continue
+        if sp in stream_read_errors:
+            out["streams"].append(
+                {
+                    "path": sp,
+                    "size": None,
+                    "kind": "unreadable",
+                    "block_count": None,
+                    "block_parse_error": None,
+                    "preview_hex": "",
+                    "preview_text": "",
+                    "read_error": stream_read_errors[sp],
+                }
+            )
             continue
         data = streams[sp]
         blocks, err = parse_size_prefixed_blocks(data)
@@ -330,27 +357,42 @@ def cmd_container(args: argparse.Namespace) -> int:
                 "block_parse_error": err,
                 "preview_hex": _hex_preview(data),
                 "preview_text": _text_preview(data),
+                "read_error": None,
             }
         )
 
     if args.json:
         print(json.dumps(out, indent=2 if args.pretty else None))
-        return 0
+        return 1 if read_error or stream_read_errors else 0
 
     print(f"FILE: {path}")
-    print(f"OLE: {is_ole}  Storages: {len(storages)}  Streams: {len(streams)}")
+    print(
+        f"OLE: {is_ole}  Storages: {len(storages)}  Streams: {len(all_stream_names)}"
+        f"  ReadErrors: {len(stream_read_errors)}"
+    )
+    if read_error:
+        print(f"  read_error={read_error}")
     for st in out["streams"]:
+        if st["read_error"]:
+            print(f"  [error ] {'-':>8}  read_error={st['read_error']}  {st['path']}")
+            continue
         block_part = f"blocks={st['block_count']}" + (f" ({st['block_parse_error']})" if st["block_parse_error"] else "")
         print(
             f"  [{st['kind']:<6}] {st['size']:>8}  {block_part:<28}  {st['path']}"
         )
-    return 0
+    return 1 if read_error or stream_read_errors else 0
 
 
 def cmd_blocks(args: argparse.Namespace) -> int:
     path = Path(args.path)
-    _is_ole, _storages, streams = _read_ole(path)
-    result: dict[str, Any] = {"file": str(path), "streams": []}
+    _is_ole, _storages, streams, stream_read_errors, read_error = _read_ole(path)
+    result: dict[str, Any] = {
+        "file": str(path),
+        "read_error": read_error,
+        "stream_read_error_count": len(stream_read_errors),
+        "stream_read_errors": dict(sorted(stream_read_errors.items())),
+        "streams": [],
+    }
 
     for sp in sorted(streams):
         if not _match_stream(sp, args.stream):
@@ -367,13 +409,31 @@ def cmd_blocks(args: argparse.Namespace) -> int:
             "blocks": [asdict(b) for b in blocks[: args.max_blocks]],
         }
         result["streams"].append(stream_entry)
+    for sp, err in sorted(stream_read_errors.items()):
+        if not _match_stream(sp, args.stream):
+            continue
+        result["streams"].append(
+            {
+                "path": sp,
+                "size": None,
+                "kind": "unreadable",
+                "block_parse_error": None,
+                "read_error": err,
+                "blocks": [],
+            }
+        )
 
     if args.json:
         print(json.dumps(result, indent=2 if args.pretty else None))
-        return 0
+        return 1 if read_error or stream_read_errors else 0
 
     print(f"FILE: {path}")
+    if read_error:
+        print(f"read_error={read_error}")
     for st in result["streams"]:
+        if st.get("read_error"):
+            print(f"\n{st['path']}  unreadable error={st['read_error']}")
+            continue
         print(
             f"\n{st['path']}  size={st['size']} kind={st['kind']} "
             f"block_error={st['block_parse_error']}"
@@ -389,78 +449,106 @@ def cmd_blocks(args: argparse.Namespace) -> int:
             if args.preview:
                 print(f"      hex:  {b['payload_preview_hex']}")
                 print(f"      text: {b['payload_preview_text']}")
-    return 0
+    return 1 if read_error or stream_read_errors else 0
 
 
-def _collect_text_records_for_stream(path: str, data: bytes) -> list[dict[str, Any]]:
+def _pairs_to_multimap(pairs: list[tuple[str, str]]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = defaultdict(list)
+    for k, v in pairs:
+        out[k].append(v)
+    return dict(out)
+
+
+def _record_id_from_pairs(pairs: list[tuple[str, str]]) -> int | None:
+    for k, v in pairs:
+        if k.upper() == "RECORD":
+            try:
+                return int(v)
+            except Exception:
+                return None
+    return None
+
+
+def _collect_text_records_for_stream(path: str, data: bytes) -> tuple[list[dict[str, Any]], list[str]]:
     records: list[dict[str, Any]] = []
+    warnings: list[str] = []
     blocks, err = parse_size_prefixed_blocks(data)
-    
+
     # Force text parsing if it's a known text stream
     is_known_text = _classify_stream(path, data) == "text"
 
     if err is None and blocks:
+        skipped_non_text_blocks = 0
         for b in blocks:
             block_data_start = b.offset + 4
             payload = data[block_data_start : block_data_start + b.size]
             if not is_known_text and not _is_probably_text(payload):
+                skipped_non_text_blocks += 1
                 continue
-            for rec in parse_param_records(payload):
-                record_id = None
-                if "RECORD" in rec:
-                    try:
-                        record_id = int(rec["RECORD"])
-                    except Exception:
-                        record_id = None
+            for pairs in parse_param_records(payload):
+                record_id = _record_id_from_pairs(pairs)
                 records.append(
                     {
                         "stream": path,
                         "block_index": b.index,
                         "record_id": record_id,
-                        "params": rec,
+                        "params_pairs": [{"key": k, "value": v} for k, v in pairs],
+                        "params_multi": _pairs_to_multimap(pairs),
                     }
                 )
-        return records
+        if skipped_non_text_blocks:
+            warnings.append(f"skipped_non_text_blocks={skipped_non_text_blocks}")
+        return records, warnings
 
     # Fallback: whole stream as text
+    if err is not None:
+        warnings.append(f"block_parse_error={err};fallback=whole-stream")
     if is_known_text or _is_probably_text(data):
-        for rec in parse_param_records(data):
-            record_id = None
-            if "RECORD" in rec:
-                try:
-                    record_id = int(rec["RECORD"])
-                except Exception:
-                    record_id = None
+        for pairs in parse_param_records(data):
+            record_id = _record_id_from_pairs(pairs)
             records.append(
                 {
                     "stream": path,
                     "block_index": None,
                     "record_id": record_id,
-                    "params": rec,
+                    "params_pairs": [{"key": k, "value": v} for k, v in pairs],
+                    "params_multi": _pairs_to_multimap(pairs),
                 }
             )
-    return records
+    else:
+        warnings.append("stream_not_text_by_classifier")
+    return records, warnings
 
 
 def cmd_text(args: argparse.Namespace) -> int:
     path = Path(args.path)
-    _is_ole, _storages, streams = _read_ole(path)
+    _is_ole, _storages, streams, stream_read_errors, read_error = _read_ole(path)
     all_records: list[dict[str, Any]] = []
     key_counts: Counter[str] = Counter()
     record_counts: Counter[int] = Counter()
+    text_parse_warnings: dict[str, list[str]] = {}
 
     for sp in sorted(streams):
         if not _match_stream(sp, args.stream):
             continue
-        for rec in _collect_text_records_for_stream(sp, streams[sp]):
+        stream_records, warnings = _collect_text_records_for_stream(sp, streams[sp])
+        if warnings:
+            text_parse_warnings[sp] = warnings
+        for rec in stream_records:
             all_records.append(rec)
             if rec["record_id"] is not None:
                 record_counts[rec["record_id"]] += 1
-            for k in rec["params"]:
+            for param in rec["params_pairs"]:
+                k = param["key"]
                 key_counts[k] += 1
 
     output: dict[str, Any] = {
         "file": str(path),
+        "read_error": read_error,
+        "stream_read_error_count": len(stream_read_errors),
+        "stream_read_errors": dict(sorted(stream_read_errors.items())),
+        "text_parse_warning_count": sum(len(v) for v in text_parse_warnings.values()),
+        "text_parse_warnings": dict(sorted(text_parse_warnings.items())),
         "total_text_records": len(all_records),
         "record_id_counts": dict(sorted(record_counts.items())),
         "top_keys": key_counts.most_common(args.top_keys),
@@ -469,9 +557,20 @@ def cmd_text(args: argparse.Namespace) -> int:
 
     if args.json:
         print(json.dumps(output, indent=2 if args.pretty else None))
-        return 0
+        return 1 if read_error or stream_read_errors else 0
 
     print(f"FILE: {path}")
+    if read_error:
+        print(f"read_error={read_error}")
+    if stream_read_errors:
+        print("Stream read errors:")
+        for sp, err in sorted(stream_read_errors.items()):
+            if _match_stream(sp, args.stream):
+                print(f"  {sp}: {err}")
+    if text_parse_warnings:
+        print("Text parse warnings:")
+        for sp, warnings in sorted(text_parse_warnings.items()):
+            print(f"  {sp}: {', '.join(warnings)}")
     print(f"Total parsed text records: {len(all_records)}")
     if record_counts:
         print("Record IDs:")
@@ -490,9 +589,9 @@ def cmd_text(args: argparse.Namespace) -> int:
             rid = rec["record_id"]
             print(f"  stream={rec['stream']} block={rec['block_index']} RECORD={rid}")
             if args.show_params:
-                for k, v in rec["params"].items():
-                    print(f"    {k}={v}")
-    return 0
+                for param in rec["params_pairs"]:
+                    print(f"    {param['key']}={param['value']}")
+    return 1 if read_error or stream_read_errors else 0
 
 
 def _collect_pcb_object_ids(
@@ -500,25 +599,35 @@ def _collect_pcb_object_ids(
     data: bytes,
     ext: str,
     all_stream_names: set[str] | None = None,
-) -> list[int]:
+) -> tuple[list[int], list[str]]:
     ids: list[int] = []
+    warnings: list[str] = []
     lower = path.lower()
+    path_parts = path.split("/")
 
-    if ext == ".pcblib" and lower.endswith("/data"):
+    if ext == ".pcblib" and not (len(path_parts) == 2 and path_parts[1].lower() == "data"):
+        return ids, warnings
+
+    if ext == ".pcblib":
         parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        top_level = parent.split("/", 1)[0] if parent else ""
+        if top_level in PCB_LIB_SYSTEM_TOP_LEVEL:
+            return ids, warnings
         if all_stream_names is not None:
             # Typical PcbLib footprint storage must have Parameters or Header
             if f"{parent}/Parameters" not in all_stream_names and f"{parent}/Header" not in all_stream_names:
-                return ids
+                warnings.append("missing-footprint-siblings:Parameters/Header")
         parsed, err = parse_pcblib_data_object_ids(data)
         if err is not None:
-            return ids
-        return parsed
+            warnings.append(f"pcblib-data-parse-error:{err}")
+        return parsed, warnings
 
     blocks, err = parse_size_prefixed_blocks(data)
     if err is not None or not blocks:
-        return ids
-        
+        if err is not None:
+            warnings.append(f"block-parse-error:{err}")
+        return ids, warnings
+
     # In PcbDoc, any binary stream that has size-prefixed blocks is a candidate for primitive objects
     if ext == ".pcbdoc" and _classify_stream(path, data) == "binary":
         for bi, b in enumerate(blocks):
@@ -530,23 +639,26 @@ def _collect_pcb_object_ids(
             if bi == 0 and len(payload) == 4:
                 continue
             ids.append(payload[0])
-        return ids
+        return ids, warnings
 
-    return ids
+    return ids, warnings
 
 
 def cmd_pcb(args: argparse.Namespace) -> int:
     path = Path(args.path)
     ext = path.suffix.lower()
-    _is_ole, _storages, streams = _read_ole(path)
+    _is_ole, _storages, streams, stream_read_errors, read_error = _read_ole(path)
 
     by_stream: dict[str, list[int]] = {}
+    parse_issues: dict[str, list[str]] = {}
     counts: Counter[int] = Counter()
     stream_names = set(streams.keys())
     for sp in sorted(streams):
         if not _match_stream(sp, args.stream):
             continue
-        ids = _collect_pcb_object_ids(sp, streams[sp], ext, stream_names)
+        ids, warnings = _collect_pcb_object_ids(sp, streams[sp], ext, stream_names)
+        if warnings:
+            parse_issues[sp] = warnings
         if not ids:
             continue
         by_stream[sp] = ids
@@ -554,17 +666,33 @@ def cmd_pcb(args: argparse.Namespace) -> int:
 
     output = {
         "file": str(path),
+        "read_error": read_error,
+        "stream_read_error_count": len(stream_read_errors),
+        "stream_read_errors": dict(sorted(stream_read_errors.items())),
+        "parse_issue_count": sum(len(v) for v in parse_issues.values()),
+        "parse_issues": dict(sorted(parse_issues.items())),
         "object_id_counts": dict(sorted(counts.items())),
         "streams": {k: v[: args.max_ids_per_stream] for k, v in by_stream.items()},
     }
     if args.json:
         print(json.dumps(output, indent=2 if args.pretty else None))
-        return 0
+        return 1 if read_error or stream_read_errors else 0
 
     print(f"FILE: {path}")
+    if read_error:
+        print(f"read_error={read_error}")
+    if stream_read_errors:
+        print("Stream read errors:")
+        for sp, err in sorted(stream_read_errors.items()):
+            if _match_stream(sp, args.stream):
+                print(f"  {sp}: {err}")
+    if parse_issues:
+        print("PCB parse issues:")
+        for sp, warnings in sorted(parse_issues.items()):
+            print(f"  {sp}: {', '.join(warnings)}")
     if not counts:
         print("No PCB object IDs found.")
-        return 0
+        return 1 if read_error or stream_read_errors else 0
     print("Object IDs:")
     for oid, c in sorted(counts.items()):
         print(f"  ID={oid:<3} count={c}")
@@ -572,17 +700,19 @@ def cmd_pcb(args: argparse.Namespace) -> int:
         print("\nPer-stream IDs:")
         for sp, ids in output["streams"].items():
             print(f"  {sp}: {ids}")
-    return 0
+    return 1 if read_error or stream_read_errors else 0
 
 
 def _scan_one_file(path: Path) -> dict[str, Any]:
     ext = path.suffix.lower()
-    is_ole, storages, streams = _read_ole(path)
+    is_ole, storages, streams, stream_read_errors, read_error = _read_ole(path)
 
     stream_entries = []
     sch_record_counts: Counter[int] = Counter()
     pcb_object_counts: Counter[int] = Counter()
     all_record_keys: Counter[str] = Counter()
+    text_parse_warnings: dict[str, list[str]] = {}
+    pcb_parse_issues: dict[str, list[str]] = {}
 
     stream_names = set(streams.keys())
     for sp in sorted(streams):
@@ -599,26 +729,35 @@ def _scan_one_file(path: Path) -> dict[str, Any]:
             }
         )
 
-        for rec in _collect_text_records_for_stream(sp, data):
+        text_records, warnings = _collect_text_records_for_stream(sp, data)
+        if warnings:
+            text_parse_warnings[sp] = warnings
+        for rec in text_records:
             rid = rec["record_id"]
             if rid is not None:
                 sch_record_counts[rid] += 1
-            for k in rec["params"]:
-                all_record_keys[k] += 1
+            for param in rec["params_pairs"]:
+                all_record_keys[param["key"]] += 1
 
-        pcb_ids = _collect_pcb_object_ids(sp, data, ext, stream_names)
+        pcb_ids, pcb_warnings = _collect_pcb_object_ids(sp, data, ext, stream_names)
+        if pcb_warnings:
+            pcb_parse_issues[sp] = pcb_warnings
         pcb_object_counts.update(pcb_ids)
 
     return {
         "file": str(path),
         "extension": ext,
         "is_ole": is_ole,
+        "read_error": read_error,
+        "stream_read_errors": dict(sorted(stream_read_errors.items())),
         "storage_count": len(storages),
-        "stream_count": len(streams),
+        "stream_count": len(streams) + len(stream_read_errors),
         "streams": stream_entries,
         "schematic_record_counts": dict(sorted(sch_record_counts.items())),
         "pcb_object_counts": dict(sorted(pcb_object_counts.items())),
         "top_param_keys": all_record_keys.most_common(30),
+        "text_parse_warnings": dict(sorted(text_parse_warnings.items())),
+        "pcb_parse_issues": dict(sorted(pcb_parse_issues.items())),
     }
 
 
@@ -639,6 +778,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
         all_pcb_counts.update(scan["pcb_object_counts"])
         for st in scan["streams"]:
             stream_names[st["path"]] += 1
+    read_error_files = [
+        s["file"] for s in scans if s.get("read_error") or s.get("stream_read_errors")
+    ]
 
     observed_sch = set(all_sch_counts.keys())
     observed_pcb = set(all_pcb_counts.keys())
@@ -665,12 +807,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     observed_pcb - IMPLEMENTED_PCB_OBJECT_IDS
                 ),
             },
+            "read_error_files": read_error_files,
         },
     }
 
     if args.json:
         print(json.dumps(summary, indent=2 if args.pretty else None))
-        return 0
+        return 1 if read_error_files else 0
 
     print(f"Scanned {len(scans)} files under {target}")
     print("\nAggregate schematic RECORD IDs:")
@@ -686,7 +829,196 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"  PCB docs IDs missing in code:       {cov['docs_model_pcb_missing_in_code']}")
     print(f"  Observed schematic IDs missing:     {cov['observed_schematic_missing_in_code']}")
     print(f"  Observed PCB IDs missing:           {cov['observed_pcb_missing_in_code']}")
+    if read_error_files:
+        print("\nFiles with read errors:")
+        for f in read_error_files:
+            print(f"  {f}")
+        return 1
     return 0
+
+
+def _first_diff_offset(a: bytes, b: bytes) -> int | None:
+    n = min(len(a), len(b))
+    for i in range(n):
+        if a[i] != b[i]:
+            return i
+    if len(a) != len(b):
+        return n
+    return None
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    original_path = Path(args.original)
+    rebuilt_path = Path(args.rebuilt)
+
+    (
+        orig_is_ole,
+        orig_storages,
+        orig_streams,
+        orig_stream_read_errors,
+        orig_read_error,
+    ) = _read_ole(original_path)
+    (
+        rebuilt_is_ole,
+        rebuilt_storages,
+        rebuilt_streams,
+        rebuilt_stream_read_errors,
+        rebuilt_read_error,
+    ) = _read_ole(rebuilt_path)
+
+    orig_storage_names = {_stream_path(s) for s in orig_storages}
+    rebuilt_storage_names = {_stream_path(s) for s in rebuilt_storages}
+    storage_names = sorted(orig_storage_names | rebuilt_storage_names)
+    if args.stream:
+        storage_names = [n for n in storage_names if _match_stream(n, args.stream)]
+    only_in_original_storages = sorted(
+        n for n in storage_names if n in orig_storage_names and n not in rebuilt_storage_names
+    )
+    only_in_rebuilt_storages = sorted(
+        n for n in storage_names if n in rebuilt_storage_names and n not in orig_storage_names
+    )
+
+    orig_names = set(orig_streams.keys()) | set(orig_stream_read_errors.keys())
+    rebuilt_names = set(rebuilt_streams.keys()) | set(rebuilt_stream_read_errors.keys())
+    all_names = sorted(orig_names | rebuilt_names)
+    if args.stream:
+        all_names = [n for n in all_names if _match_stream(n, args.stream)]
+
+    only_in_original = sorted(n for n in all_names if n in orig_names and n not in rebuilt_names)
+    only_in_rebuilt = sorted(n for n in all_names if n in rebuilt_names and n not in orig_names)
+    different_streams: list[dict[str, Any]] = []
+    unreadable_streams: list[dict[str, str | None]] = []
+    matched_streams: list[str] = []
+
+    for name in all_names:
+        if name in only_in_original or name in only_in_rebuilt:
+            continue
+
+        orig_err = orig_stream_read_errors.get(name)
+        rebuilt_err = rebuilt_stream_read_errors.get(name)
+        if orig_err or rebuilt_err:
+            unreadable_streams.append(
+                {
+                    "path": name,
+                    "original_error": orig_err,
+                    "rebuilt_error": rebuilt_err,
+                }
+            )
+            if orig_err != rebuilt_err:
+                different_streams.append(
+                    {
+                        "path": name,
+                        "kind": "unreadable",
+                        "original_error": orig_err,
+                        "rebuilt_error": rebuilt_err,
+                    }
+                )
+            continue
+
+        orig_data = orig_streams[name]
+        rebuilt_data = rebuilt_streams[name]
+        if orig_data == rebuilt_data:
+            matched_streams.append(name)
+            continue
+
+        different_streams.append(
+            {
+                "path": name,
+                "kind": _classify_stream(name, orig_data),
+                "original_size": len(orig_data),
+                "rebuilt_size": len(rebuilt_data),
+                "first_diff_offset": _first_diff_offset(orig_data, rebuilt_data),
+            }
+        )
+
+    output = {
+        "original": str(original_path),
+        "rebuilt": str(rebuilt_path),
+        "original_is_ole": orig_is_ole,
+        "rebuilt_is_ole": rebuilt_is_ole,
+        "original_read_error": orig_read_error,
+        "rebuilt_read_error": rebuilt_read_error,
+        "original_stream_read_errors": dict(sorted(orig_stream_read_errors.items())),
+        "rebuilt_stream_read_errors": dict(sorted(rebuilt_stream_read_errors.items())),
+        "only_in_original_storages": only_in_original_storages,
+        "only_in_rebuilt_storages": only_in_rebuilt_storages,
+        "only_in_original": only_in_original,
+        "only_in_rebuilt": only_in_rebuilt,
+        "different_streams": different_streams,
+        "unreadable_stream_count": len(unreadable_streams),
+        "unreadable_streams": unreadable_streams,
+        "matched_count": len(matched_streams),
+        "different_count": (
+            len(only_in_original_storages)
+            + len(only_in_rebuilt_storages)
+            + len(only_in_original)
+            + len(only_in_rebuilt)
+            + len(different_streams)
+        ),
+    }
+
+    if args.show_matched:
+        output["matched_streams"] = matched_streams
+
+    if args.json:
+        print(json.dumps(output, indent=2 if args.pretty else None))
+    else:
+        print(f"ORIGINAL: {original_path}")
+        print(f"REBUILT:  {rebuilt_path}")
+        if orig_read_error:
+            print(f"original_read_error={orig_read_error}")
+        if rebuilt_read_error:
+            print(f"rebuilt_read_error={rebuilt_read_error}")
+        if orig_stream_read_errors:
+            print("Original stream read errors:")
+            for sp, err in sorted(orig_stream_read_errors.items()):
+                print(f"  {sp}: {err}")
+        if rebuilt_stream_read_errors:
+            print("Rebuilt stream read errors:")
+            for sp, err in sorted(rebuilt_stream_read_errors.items()):
+                print(f"  {sp}: {err}")
+        print(f"Only in original storages: {len(only_in_original_storages)}")
+        for sp in only_in_original_storages:
+            print(f"  - {sp}")
+        print(f"Only in rebuilt storages:  {len(only_in_rebuilt_storages)}")
+        for sp in only_in_rebuilt_storages:
+            print(f"  + {sp}")
+        print(f"Unreadable streams: {len(unreadable_streams)}")
+        for d in unreadable_streams:
+            print(
+                f"  ! {d['path']} orig={d['original_error']} rebuilt={d['rebuilt_error']}"
+            )
+        print(f"Matched streams: {len(matched_streams)}")
+        print(f"Only in original: {len(only_in_original)}")
+        for sp in only_in_original:
+            print(f"  - {sp}")
+        print(f"Only in rebuilt:  {len(only_in_rebuilt)}")
+        for sp in only_in_rebuilt:
+            print(f"  + {sp}")
+        print(f"Different streams: {len(different_streams)}")
+        for d in different_streams:
+            if d["kind"] == "unreadable":
+                print(
+                    f"  * {d['path']} unreadable "
+                    f"orig={d['original_error']} rebuilt={d['rebuilt_error']}"
+                )
+            else:
+                print(
+                    f"  * {d['path']} kind={d['kind']} "
+                    f"orig={d['original_size']} rebuilt={d['rebuilt_size']} "
+                    f"first_diff={d['first_diff_offset']}"
+                )
+
+    return (
+        1
+        if (
+            output["different_count"]
+            or output["unreadable_stream_count"]
+            or orig_read_error
+            or rebuilt_read_error
+        )
+        else 0
+    )
 
 
 def cmd_everything(args: argparse.Namespace) -> int:
@@ -694,8 +1026,9 @@ def cmd_everything(args: argparse.Namespace) -> int:
     path = args.path
     base = argparse.Namespace(path=path, stream=args.stream, json=False, pretty=False)
 
+    status = 0
     print("=== CONTAINER ===")
-    cmd_container(base)
+    status |= cmd_container(base)
 
     print("\n=== BLOCKS ===")
     blocks_args = argparse.Namespace(
@@ -707,7 +1040,7 @@ def cmd_everything(args: argparse.Namespace) -> int:
         max_blocks=args.max_blocks,
         preview=True,
     )
-    cmd_blocks(blocks_args)
+    status |= cmd_blocks(blocks_args)
 
     print("\n=== TEXT ===")
     text_args = argparse.Namespace(
@@ -720,7 +1053,7 @@ def cmd_everything(args: argparse.Namespace) -> int:
         show_params=False,
         max_records=20,
     )
-    cmd_text(text_args)
+    status |= cmd_text(text_args)
 
     print("\n=== PCB ===")
     pcb_args = argparse.Namespace(
@@ -731,8 +1064,8 @@ def cmd_everything(args: argparse.Namespace) -> int:
         max_ids_per_stream=100,
         stream_ids=True,
     )
-    cmd_pcb(pcb_args)
-    return 0
+    status |= cmd_pcb(pcb_args)
+    return 1 if status else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -780,6 +1113,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp_scan.add_argument("path", help="File or directory (e.g. data/).")
     add_json_flags(sp_scan)
     sp_scan.set_defaults(func=cmd_scan)
+
+    sp_compare = sub.add_parser("compare", help="Compare two Altium files stream-by-stream without heuristics.")
+    sp_compare.add_argument("original", help="Original/reference file.")
+    sp_compare.add_argument("rebuilt", help="Rebuilt/candidate file.")
+    sp_compare.add_argument("--stream", help="Substring filter for stream path.")
+    sp_compare.add_argument("--show-matched", action="store_true", help="Include matched stream names in output.")
+    add_json_flags(sp_compare)
+    sp_compare.set_defaults(func=cmd_compare)
 
     sp_everything = sub.add_parser("everything", help="Run container+blocks+text+pcb for one file.")
     sp_everything.add_argument("path", help="Path to an Altium OLE file.")
