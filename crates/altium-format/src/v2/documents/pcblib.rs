@@ -60,6 +60,30 @@ impl PcbLib {
         &self.store
     }
 
+    /// Returns library-level non-footprint streams (e.g. `FileHeader`,
+    /// `Library/*`, `FileVersionInfo/*`) captured during open.
+    pub fn library_extra_streams(&self) -> HashMap<String, Vec<u8>> {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::PcbLib {
+                raw_extra_streams, ..
+            } => raw_extra_streams.clone(),
+            _ => HashMap::new(),
+        }
+    }
+
+    /// Replaces library-level non-footprint passthrough streams.
+    pub fn set_library_extra_streams(&self, streams: HashMap<String, Vec<u8>>) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::PcbLib {
+            raw_extra_streams, ..
+        } = &mut store.meta
+        {
+            *raw_extra_streams = streams;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
     /// Returns the stable document-level semantic ID, if computed.
     pub fn document_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
         let mut store = self.store.borrow_mut();

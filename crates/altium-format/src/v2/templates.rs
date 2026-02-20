@@ -268,8 +268,9 @@ pub fn pcb_arc_default() -> RecordOrigin {
 }
 
 pub fn pcb_fill_default() -> RecordOrigin {
-    // 13-byte common header + 20 fill-specific bytes
-    let mut data = vec![0u8; 33];
+    // 13-byte common header + 24 fill-specific bytes
+    // (corner1_x, corner1_y, corner2_x, corner2_y, rotation f64)
+    let mut data = vec![0u8; 37];
     data[3] = 0xFF;
     data[4] = 0xFF;
     data[7] = 0xFF;
@@ -347,19 +348,76 @@ pub fn pcb_pad_default() -> RecordOrigin {
 }
 
 pub fn pcb_via_default() -> RecordOrigin {
-    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 32]))
+    // Keep this aligned with parse_via() so custom field-span accessors have
+    // stable offsets.
+    let mut data = vec![0u8; 128];
+    data[0] = 74; // layer = MultiLayer
+    data[3] = 0xFF;
+    data[4] = 0xFF; // net = none
+    data[7] = 0xFF;
+    data[8] = 0xFF; // component_ref = none
+    data[9] = 0xFF;
+    data[10] = 0xFF;
+    data[11] = 0xFF;
+    data[12] = 0xFF;
+    crate::v2::records::parse_via(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_text_default() -> RecordOrigin {
-    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 32]))
+    // Two-subrecord format:
+    // 1) u32 len + main text block (min 40 bytes)
+    // 2) u32 len + text bytes (empty by default)
+    let sub1_len: usize = 40;
+    let mut data = vec![0u8; 4 + sub1_len + 4];
+    data[0..4].copy_from_slice(&(sub1_len as u32).to_le_bytes());
+    let s = 4usize; // subrecord 1 payload start
+    data[s] = 74; // layer = MultiLayer
+    data[s + 3] = 0xFF;
+    data[s + 4] = 0xFF; // net = none
+    data[s + 7] = 0xFF;
+    data[s + 8] = 0xFF; // component_ref = none
+    data[s + 9] = 0xFF;
+    data[s + 10] = 0xFF;
+    data[s + 11] = 0xFF;
+    data[s + 12] = 0xFF;
+    crate::v2::records::parse_text(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_region_default() -> RecordOrigin {
-    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 32]))
+    // Minimal region-like payload with prop_len=0 and num_outline_vertices=0.
+    let mut data = vec![0u8; 30];
+    data[0] = 74; // layer = MultiLayer
+    data[3] = 0xFF;
+    data[4] = 0xFF; // net = none
+    data[7] = 0xFF;
+    data[8] = 0xFF; // component_ref = none
+    data[9] = 0xFF;
+    data[10] = 0xFF;
+    data[11] = 0xFF;
+    data[12] = 0xFF;
+    // hole_count at 18..20 = 0 (already zero)
+    // prop_len at 22..26 = 0 (already zero)
+    // num_outline_vertices at 26..30 = 0 (already zero)
+    crate::v2::records::parse_region(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_component_body_default() -> RecordOrigin {
-    RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 32]))
+    // Structurally identical to region.
+    let mut data = vec![0u8; 30];
+    data[0] = 74; // layer = MultiLayer
+    data[3] = 0xFF;
+    data[4] = 0xFF; // net = none
+    data[7] = 0xFF;
+    data[8] = 0xFF; // component_ref = none
+    data[9] = 0xFF;
+    data[10] = 0xFF;
+    data[11] = 0xFF;
+    data[12] = 0xFF;
+    crate::v2::records::parse_component_body(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_footprint_default() -> RecordOrigin {

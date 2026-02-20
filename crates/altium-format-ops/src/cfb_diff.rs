@@ -146,15 +146,27 @@ pub fn is_text_stream(data: &[u8]) -> bool {
 }
 
 /// Check if a stream path is a SchLib Data stream (e.g. `/ComponentName/Data`).
-fn is_schlib_data_stream(path: &str) -> bool {
+fn is_schlib_data_stream(path: &str, all_paths: &BTreeSet<String>) -> bool {
     let trimmed = path.trim_start_matches('/');
     // Must be exactly `<something>/Data`
-    if let Some(slash_pos) = trimmed.find('/') {
-        let rest = &trimmed[slash_pos + 1..];
-        rest == "Data"
-    } else {
-        false
+    let Some((storage, leaf)) = trimmed.rsplit_once('/') else {
+        return false;
+    };
+    if leaf != "Data" || storage.is_empty() {
+        return false;
     }
+
+    // PcbLib footprints also use `/.../Data`, but are identified by sibling
+    // `Header` / `Parameters` streams in the same storage. Those must use PCB
+    // binary Data parsing, not SchLib text-record parsing.
+    let storage_path = format!("/{}", storage);
+    let header = format!("{}/Header", storage_path);
+    let parameters = format!("{}/Parameters", storage_path);
+    if all_paths.contains(&header) || all_paths.contains(&parameters) {
+        return false;
+    }
+
+    true
 }
 
 /// Parse raw pipe-delimited params preserving duplicate key occurrences.
@@ -347,10 +359,10 @@ pub fn compare_cfb_files(original: &[u8], rebuilt: &[u8]) -> CfbDiffReport {
     let orig_streams = read_streams(&mut orig_cfb, &orig_paths);
     let rebuilt_streams = read_streams(&mut rebuilt_cfb, &rebuilt_paths);
 
-    for path in all_paths {
-        match (orig_streams.get(&path), rebuilt_streams.get(&path)) {
+    for path in &all_paths {
+        match (orig_streams.get(path), rebuilt_streams.get(path)) {
             (Some(orig_data), Some(rebuilt_data)) => {
-                if is_schlib_data_stream(&path) {
+                if is_schlib_data_stream(&path, &all_paths) {
                     compare_schlib_data_streams(&path, orig_data, rebuilt_data, &mut report);
                 } else if is_text_stream(orig_data) && is_text_stream(rebuilt_data) {
                     compare_text_streams(&path, orig_data, rebuilt_data, &mut report);
@@ -359,10 +371,10 @@ pub fn compare_cfb_files(original: &[u8], rebuilt: &[u8]) -> CfbDiffReport {
                 }
             }
             (Some(_), None) => {
-                report.only_in_original.push(path);
+                report.only_in_original.push(path.clone());
             }
             (None, Some(_)) => {
-                report.only_in_rebuilt.push(path);
+                report.only_in_rebuilt.push(path.clone());
             }
             (None, None) => unreachable!(),
         }

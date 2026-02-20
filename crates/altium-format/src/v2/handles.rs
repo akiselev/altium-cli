@@ -466,6 +466,15 @@ pub struct PcbFootprintHandle {
     pub(crate) group_id: GroupId,
 }
 
+/// Raw footprint storage-level data that is not modeled by typed primitive
+/// records but still participates in on-disk fidelity.
+#[derive(Clone, Debug, Default)]
+pub struct PcbFootprintStoragePassthrough {
+    pub raw_pattern_name_block: Vec<u8>,
+    pub raw_header: Vec<u8>,
+    pub extra_streams: std::collections::HashMap<String, Vec<u8>>,
+}
+
 impl PcbFootprintHandle {
     pub fn new(store: DocRef, group_id: GroupId) -> Self {
         Self { store, group_id }
@@ -556,6 +565,41 @@ impl PcbFootprintHandle {
             crate::v2::store::GroupMeta::PcbFootprint { name, .. } => name.clone(),
             _ => String::new(),
         }
+    }
+
+    /// Returns storage-level passthrough bytes for this footprint.
+    pub fn storage_passthrough(&self) -> PcbFootprintStoragePassthrough {
+        let store = self.store.borrow();
+        let group = &store.groups[self.group_id];
+        match &group.meta {
+            crate::v2::store::GroupMeta::PcbFootprint {
+                raw_pattern_name_block,
+                raw_header,
+                ..
+            } => PcbFootprintStoragePassthrough {
+                raw_pattern_name_block: raw_pattern_name_block.clone(),
+                raw_header: raw_header.clone(),
+                extra_streams: group.extra_streams.clone(),
+            },
+            _ => PcbFootprintStoragePassthrough::default(),
+        }
+    }
+
+    /// Overwrite storage-level passthrough bytes for this footprint.
+    pub fn set_storage_passthrough(&self, data: PcbFootprintStoragePassthrough) {
+        let mut store = self.store.borrow_mut();
+        let group = &mut store.groups[self.group_id];
+        if let crate::v2::store::GroupMeta::PcbFootprint {
+            raw_pattern_name_block,
+            raw_header,
+            ..
+        } = &mut group.meta
+        {
+            *raw_pattern_name_block = data.raw_pattern_name_block;
+            *raw_header = data.raw_header;
+        }
+        group.extra_streams = data.extra_streams;
+        store.mark_semantic_ids_dirty();
     }
 
     /// Query primitives of a given type.

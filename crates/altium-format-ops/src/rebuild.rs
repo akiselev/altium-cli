@@ -192,6 +192,39 @@ fn copy_param_nul_suffix_from_source<T: RecordType>(
     }
 }
 
+/// Replace destination param key/value entries with the full parsed key/value
+/// set from the source record, preserving source textual forms.
+fn copy_all_param_values_from_source<T: RecordType>(
+    dst: &mut T,
+    src_store: &altium_format::v2::store::DocRef,
+    rid: altium_format::v2::ids::RecordId,
+) {
+    if T::IS_BINARY {
+        return;
+    }
+
+    let src_values: Vec<(String, String)> = {
+        let store = src_store.borrow();
+        let Some(src_param) = store.record(rid).origin.as_param() else {
+            return;
+        };
+        src_param
+            .params
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
+            .collect()
+    };
+
+    let dst_params = &mut dst.origin_mut().param_mut().params;
+    let existing: Vec<String> = dst_params.iter().map(|(k, _)| k.to_string()).collect();
+    for key in existing {
+        dst_params.remove(&key);
+    }
+    for (k, v) in src_values {
+        dst_params.add(&k, &v);
+    }
+}
+
 macro_rules! copy_sch_record {
     ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $skips:expr, $context:expr) => {{
         macro_rules! emit_sch {
@@ -628,6 +661,7 @@ fn rebuild_pcblib(
 ) -> Result<(), Box<dyn Error>> {
     let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbLib::new_empty();
+    dst.set_library_extra_streams(src.library_extra_streams());
 
     let src_store = src.store().clone();
     let names = src.names();
@@ -643,11 +677,19 @@ fn rebuild_pcblib(
         };
 
         let src_meta = src_fp.read();
+        let src_meta_id = {
+            let store = src_store.borrow();
+            store.group(src_fp.group_id()).parent_id()
+        };
+        let src_passthrough = src_fp.storage_passthrough();
         let dst_fp = dst.build_footprint(&name, templates::pcb_footprint_default, |builder| {
             builder.with_metadata(|meta| {
                 meta.copy_modeled_fields_from(&src_meta);
+                copy_all_param_values_from_source(meta, &src_store, src_meta_id);
+                copy_param_nul_suffix_from_source(meta, &src_store, src_meta_id);
             });
         });
+        dst_fp.set_storage_passthrough(src_passthrough);
 
         for (type_id, rid) in src_fp.all_children() {
             let is_binary = {
