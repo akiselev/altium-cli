@@ -4,7 +4,6 @@
 //! Altium file format library for Rust — v2 API.
 
 pub mod error;
-pub mod format;
 
 pub use error::{AltiumError, Result};
 
