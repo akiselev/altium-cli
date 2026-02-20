@@ -6,22 +6,30 @@
 //! that reference them by index.
 
 use std::collections::HashMap;
-use std::io::{Cursor, Read, Seek, Write};
+use std::io::{Read, Seek, Write};
 
 use crate::error::{AltiumError, Result};
 use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
+use crate::v2::documents::schdoc_streams::{
+    SchDocAdditionalStreamMeta, SchDocFileHeaderStreamMeta, SchDocRawBlock,
+    SchDocStorageStreamMeta, parse_additional_meta_and_blocks, parse_file_header_meta_and_blocks,
+    parse_storage_meta,
+};
 use crate::v2::ids::{GroupId, RecordId};
 use crate::v2::parameters::ParameterCollection;
 use crate::v2::records::{SchBlanketRecord, is_supported_sch_record_id};
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::RecordType;
 
-const DEFAULT_SCHDOC_HEADER: &str =
-    "Protel for Windows - Schematic Capture Binary File Version 5.0";
 const STREAM_FILE_HEADER: &str = "FileHeader";
 const STREAM_ADDITIONAL: &str = "Additional";
 const STREAM_STORAGE: &str = "Storage";
-const SIZE_FLAG_MASK: u32 = 0x00FF_FFFF;
+
+struct SchDocRootStreamPaths {
+    file_header: String,
+    additional: Option<String>,
+    storage: String,
+}
 
 /// A parsed SchDoc document using the v2 DocumentStore architecture.
 ///
@@ -36,9 +44,9 @@ impl SchDoc {
     /// Create a new empty SchDoc document.
     pub fn new_empty() -> Self {
         let mut store = DocumentStore::new(DocumentMeta::SchDoc {
-            header_raw: None,
-            additional_raw: None,
-            storage_raw: None,
+            file_header_meta: SchDocFileHeaderStreamMeta::default(),
+            additional_meta: None,
+            storage_meta: SchDocStorageStreamMeta::default(),
         });
         store.set_semantic_context("dtid:schdoc", "");
         Self {
@@ -49,6 +57,67 @@ impl SchDoc {
     /// Returns a reference to the underlying document store.
     pub fn store(&self) -> &DocRef {
         &self.store
+    }
+
+    /// Returns typed `/FileHeader` stream metadata.
+    pub fn file_header_meta(&self) -> SchDocFileHeaderStreamMeta {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::SchDoc {
+                file_header_meta, ..
+            } => file_header_meta.clone(),
+            _ => SchDocFileHeaderStreamMeta::default(),
+        }
+    }
+
+    /// Replace typed `/FileHeader` stream metadata.
+    pub fn set_file_header_meta(&self, meta: SchDocFileHeaderStreamMeta) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::SchDoc {
+            file_header_meta, ..
+        } = store.meta_mut()
+        {
+            *file_header_meta = meta;
+        }
+    }
+
+    /// Returns typed `/Additional` stream metadata if the stream exists.
+    pub fn additional_meta(&self) -> Option<SchDocAdditionalStreamMeta> {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::SchDoc {
+                additional_meta, ..
+            } => additional_meta.clone(),
+            _ => None,
+        }
+    }
+
+    /// Replace typed `/Additional` stream metadata.
+    pub fn set_additional_meta(&self, meta: Option<SchDocAdditionalStreamMeta>) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::SchDoc {
+            additional_meta, ..
+        } = store.meta_mut()
+        {
+            *additional_meta = meta;
+        }
+    }
+
+    /// Returns typed `/Storage` stream metadata.
+    pub fn storage_meta(&self) -> SchDocStorageStreamMeta {
+        let store = self.store.borrow();
+        match store.meta() {
+            DocumentMeta::SchDoc { storage_meta, .. } => storage_meta.clone(),
+            _ => SchDocStorageStreamMeta::default(),
+        }
+    }
+
+    /// Replace typed `/Storage` stream metadata.
+    pub fn set_storage_meta(&self, meta: SchDocStorageStreamMeta) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::SchDoc { storage_meta, .. } = store.meta_mut() {
+            *storage_meta = meta;
+        }
     }
 
     /// Returns the stable document-level semantic ID, if computed.
@@ -63,47 +132,40 @@ impl SchDoc {
         let mut cfb = cfb::CompoundFile::open(reader)
             .map_err(|e| AltiumError::Cfb(format!("Failed to open CFB: {}", e)))?;
 
-        let mut stream = cfb
-            .open_stream(format!("/{}", STREAM_FILE_HEADER))
-            .map_err(|e| AltiumError::Cfb(format!("No FileHeader: {}", e)))?;
-        let mut data = Vec::new();
-        stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
+        let stream_paths = collect_schdoc_root_stream_paths(&cfb)?;
+        let file_header_raw = read_stream_bytes(&mut cfb, &stream_paths.file_header)?;
+        let additional_raw = match stream_paths.additional.as_ref() {
+            Some(path) => Some(read_stream_bytes(&mut cfb, path)?),
+            None => None,
+        };
+        let storage_raw = read_stream_bytes(&mut cfb, &stream_paths.storage)?;
 
-        let additional_raw = cfb
-            .open_stream(format!("/{}", STREAM_ADDITIONAL))
-            .ok()
-            .map(|mut s| {
-                let mut buf = Vec::new();
-                s.read_to_end(&mut buf).map_err(AltiumError::Io)?;
-                Ok::<Vec<u8>, AltiumError>(buf)
-            })
-            .transpose()?;
-        let storage_raw = cfb
-            .open_stream(format!("/{}", STREAM_STORAGE))
-            .ok()
-            .map(|mut s| {
-                let mut buf = Vec::new();
-                s.read_to_end(&mut buf).map_err(AltiumError::Io)?;
-                Ok::<Vec<u8>, AltiumError>(buf)
-            })
-            .transpose()?;
+        let (file_header_meta, file_header_blocks) =
+            parse_file_header_meta_and_blocks(&file_header_raw)?;
+        let (additional_meta, additional_blocks) = if let Some(raw) = additional_raw.as_ref() {
+            let (meta, blocks) = parse_additional_meta_and_blocks(raw)?;
+            (Some(meta), Some(blocks))
+        } else {
+            (None, None)
+        };
+        let storage_meta = parse_storage_meta(&storage_raw)?;
 
         let meta = DocumentMeta::SchDoc {
-            header_raw: Some(data.clone()),
-            additional_raw: additional_raw.clone(),
-            storage_raw,
+            file_header_meta,
+            additional_meta,
+            storage_meta,
         };
         let mut doc_store = DocumentStore::new(meta);
 
-        let mut key_bytes = data.clone();
+        let mut key_bytes = file_header_raw.clone();
         if let Some(additional) = &additional_raw {
             key_bytes.extend_from_slice(additional);
         }
         let doc_key = crate::v2::semantic_ids::blake3_content_hash(&key_bytes);
 
-        let mut records = parse_flat_stream(&data, STREAM_FILE_HEADER)?;
-        if let Some(additional) = &additional_raw {
-            records.extend(parse_flat_stream(additional, STREAM_ADDITIONAL)?);
+        let mut records = parse_record_blocks(&file_header_blocks, STREAM_FILE_HEADER)?;
+        if let Some(blocks) = additional_blocks {
+            records.extend(parse_record_blocks(&blocks, STREAM_ADDITIONAL)?);
         }
         group_by_owner_index(&mut doc_store, records);
 
@@ -442,48 +504,122 @@ impl SchDoc {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Parse a flat record stream into indexed `(flat_index, RecordNode)` pairs.
-fn parse_flat_stream(data: &[u8], stream_name: &str) -> Result<Vec<(usize, RecordNode)>> {
+fn collect_schdoc_root_stream_paths<R: Read + Seek>(
+    cfb: &cfb::CompoundFile<R>,
+) -> Result<SchDocRootStreamPaths> {
+    let mut file_header: Option<String> = None;
+    let mut additional: Option<String> = None;
+    let mut storage: Option<String> = None;
+
+    for entry in cfb.walk().filter(|e| e.is_stream()) {
+        let path = entry
+            .path()
+            .to_str()
+            .ok_or_else(|| AltiumError::Parse("schdoc contains non-UTF8 stream path".to_string()))?
+            .to_string();
+        let rel = path.trim_start_matches('/');
+        let mut parts = rel.split('/');
+        let root = parts.next().unwrap_or("");
+
+        if parts.next().is_some() {
+            return Err(AltiumError::Parse(format!(
+                "schdoc contains nested stream '{}'",
+                path
+            )));
+        }
+
+        if root.eq_ignore_ascii_case(STREAM_FILE_HEADER) {
+            if file_header.is_some() {
+                return Err(AltiumError::Parse(format!(
+                    "schdoc contains duplicate '{}' stream",
+                    STREAM_FILE_HEADER
+                )));
+            }
+            file_header = Some(path);
+            continue;
+        }
+        if root.eq_ignore_ascii_case(STREAM_ADDITIONAL) {
+            if additional.is_some() {
+                return Err(AltiumError::Parse(format!(
+                    "schdoc contains duplicate '{}' stream",
+                    STREAM_ADDITIONAL
+                )));
+            }
+            additional = Some(path);
+            continue;
+        }
+        if root.eq_ignore_ascii_case(STREAM_STORAGE) {
+            if storage.is_some() {
+                return Err(AltiumError::Parse(format!(
+                    "schdoc contains duplicate '{}' stream",
+                    STREAM_STORAGE
+                )));
+            }
+            storage = Some(path);
+            continue;
+        }
+
+        return Err(AltiumError::Parse(format!(
+            "schdoc contains unimplemented stream '{}'",
+            path
+        )));
+    }
+
+    let file_header = file_header.ok_or_else(|| {
+        AltiumError::Parse(format!(
+            "schdoc missing required '{}' stream",
+            STREAM_FILE_HEADER
+        ))
+    })?;
+    let storage = storage.ok_or_else(|| {
+        AltiumError::Parse(format!(
+            "schdoc missing required '{}' stream",
+            STREAM_STORAGE
+        ))
+    })?;
+
+    Ok(SchDocRootStreamPaths {
+        file_header,
+        additional,
+        storage,
+    })
+}
+
+fn read_stream_bytes<R: Read + Seek>(
+    cfb: &mut cfb::CompoundFile<R>,
+    path: &str,
+) -> Result<Vec<u8>> {
+    let mut stream = cfb
+        .open_stream(path)
+        .map_err(|e| AltiumError::Cfb(format!("Failed to open {}: {}", path, e)))?;
+    let mut data = Vec::new();
+    stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
+    Ok(data)
+}
+
+/// Parse record blocks into indexed `(flat_index, RecordNode)` pairs.
+///
+/// Block index is preserved, so the first non-record header block still affects
+/// record indices and interleaving order.
+fn parse_record_blocks(
+    blocks: &[SchDocRawBlock],
+    stream_name: &str,
+) -> Result<Vec<(usize, RecordNode)>> {
     let mut records = Vec::new();
-    let mut cursor = Cursor::new(data);
-    let total_len = data.len() as u64;
-    let mut index = 0usize;
-
-    while cursor.position() < total_len {
-        let block_offset = cursor.position() as usize;
-        let mut len_buf = [0u8; 4];
-        if Read::read_exact(&mut cursor, &mut len_buf).is_err() {
-            return Err(AltiumError::Parse(format!(
-                "schdoc {} truncated at block header offset {}",
-                stream_name, block_offset
-            )));
+    for (index, block) in blocks.iter().enumerate() {
+        if index == 0 {
+            continue;
         }
-        let size_raw = u32::from_le_bytes(len_buf);
-        let is_binary = (size_raw & !SIZE_FLAG_MASK) != 0;
-        let record_len = (size_raw & SIZE_FLAG_MASK) as usize;
+        let block_offset = block.offset;
 
-        if record_len == 0 {
-            return Err(AltiumError::Parse(format!(
-                "schdoc {} contains zero-length block at offset {}",
-                stream_name, block_offset
-            )));
-        }
-        if cursor.position() as usize + record_len > data.len() {
-            return Err(AltiumError::Parse(format!(
-                "schdoc {} block at offset {} overflows stream (len={})",
-                stream_name, block_offset, record_len
-            )));
-        }
-
-        let mut record_data = vec![0u8; record_len];
-        if Read::read_exact(&mut cursor, &mut record_data).is_err() {
-            return Err(AltiumError::Parse(format!(
-                "schdoc {} truncated while reading block at offset {}",
-                stream_name, block_offset
-            )));
-        }
-
-        if is_binary {
+        if block.flags != 0 {
+            if block.flags != 0x01 {
+                return Err(AltiumError::Parse(format!(
+                    "schdoc {} block at offset {} has unsupported binary flags {}",
+                    stream_name, block_offset, block.flags
+                )));
+            }
+            let record_data = block.payload.clone();
             if record_data.len() < 4 {
                 return Err(AltiumError::Parse(format!(
                     "schdoc {} binary block too short at offset {} (len={})",
@@ -504,8 +640,9 @@ fn parse_flat_stream(data: &[u8], stream_name: &str) -> Result<Vec<(usize, Recor
                     stream_name, record_type, block_offset
                 )));
             }
-            let mut full_raw = Vec::with_capacity(4 + record_len);
-            full_raw.extend_from_slice(&len_buf);
+            let mut full_raw = Vec::with_capacity(4 + record_data.len());
+            let header = ((block.flags as u32) << 24) | (record_data.len() as u32);
+            full_raw.extend_from_slice(&header.to_le_bytes());
             full_raw.extend_from_slice(&record_data);
             let origin =
                 RecordOrigin::Binary(crate::v2::backing_store::BinaryOrigin::new(record_data));
@@ -514,17 +651,14 @@ fn parse_flat_stream(data: &[u8], stream_name: &str) -> Result<Vec<(usize, Recor
             node.stream_name = Some(stream_name.to_string());
             records.push((index, node));
         } else {
+            let record_data = block.payload.clone();
             let param_str = super::encoding::decode_win1252(&record_data);
             let params = ParameterCollection::from_string(&param_str);
             let record_id = params.get("RECORD").map(|v| v.as_int_or(0) as u8);
 
             if record_id.is_none() || record_id == Some(0) {
-                if params.contains("HEADER") {
-                    index += 1;
-                    continue;
-                }
                 return Err(AltiumError::Parse(format!(
-                    "schdoc {} text block missing RECORD at offset {}",
+                    "schdoc {} contains unimplemented non-record text block at offset {}",
                     stream_name, block_offset
                 )));
             }
@@ -542,7 +676,6 @@ fn parse_flat_stream(data: &[u8], stream_name: &str) -> Result<Vec<(usize, Recor
             node.stream_name = Some(stream_name.to_string());
             records.push((index, node));
         }
-        index += 1;
     }
 
     Ok(records)
@@ -637,55 +770,6 @@ fn effective_stream_name(node: &RecordNode) -> &str {
         .unwrap_or_else(|| default_schdoc_stream_for_record(node.key))
 }
 
-fn parse_stream_header_params(raw: Option<&Vec<u8>>) -> Option<ParameterCollection> {
-    let raw = raw?;
-    let payload = super::encoding::parse_first_param_block(raw).unwrap_or_else(|| raw.clone());
-    let text = super::encoding::decode_win1252(&payload);
-    let params = ParameterCollection::from_string(&text);
-    if params.contains("HEADER") {
-        Some(params)
-    } else {
-        None
-    }
-}
-
-fn parse_first_block_with_prefix(raw: &[u8]) -> Option<Vec<u8>> {
-    if raw.len() < 4 {
-        return None;
-    }
-    let size_raw = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
-    if (size_raw & !SIZE_FLAG_MASK) != 0 {
-        return None;
-    }
-    let len = (size_raw & SIZE_FLAG_MASK) as usize;
-    if len == 0 || 4 + len > raw.len() {
-        return None;
-    }
-    Some(raw[0..4 + len].to_vec())
-}
-
-fn build_schdoc_header_block(
-    base: Option<ParameterCollection>,
-    weight: usize,
-    include_minor_version: bool,
-) -> Vec<u8> {
-    let mut params = base.unwrap_or_else(ParameterCollection::new);
-    if !params.contains("HEADER") {
-        params.add("HEADER", DEFAULT_SCHDOC_HEADER);
-    }
-    params.add("Weight", &weight.to_string());
-    if include_minor_version && !params.contains("MinorVersion") {
-        params.add("MinorVersion", "2");
-    }
-    super::encoding::encode_single_param_block(&params)
-}
-
-fn build_icon_storage_stream_bytes() -> Vec<u8> {
-    let mut params = ParameterCollection::new();
-    params.add("HEADER", "Icon storage");
-    super::encoding::encode_single_param_block(&params)
-}
-
 fn push_to_stream_timeline(
     stream_name: &str,
     idx: usize,
@@ -709,22 +793,22 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     let mut file_header_data = Vec::new();
     let mut additional_data = Vec::new();
     let store = doc.store.borrow();
-    let (header_params, additional_params, header_raw, additional_raw, storage_raw) =
-        match store.meta() {
-            DocumentMeta::SchDoc {
-                header_raw,
-                additional_raw,
-                storage_raw,
-                ..
-            } => (
-                parse_stream_header_params(header_raw.as_ref()),
-                parse_stream_header_params(additional_raw.as_ref()),
-                header_raw.clone(),
-                additional_raw.clone(),
-                storage_raw.clone(),
-            ),
-            _ => (None, None, None, None, None),
-        };
+    let (file_header_meta, additional_meta, storage_meta) = match store.meta() {
+        DocumentMeta::SchDoc {
+            file_header_meta,
+            additional_meta,
+            storage_meta,
+        } => (
+            file_header_meta.clone(),
+            additional_meta.clone(),
+            storage_meta.clone(),
+        ),
+        _ => (
+            SchDocFileHeaderStreamMeta::default(),
+            None,
+            SchDocStorageStreamMeta::default(),
+        ),
+    };
 
     // (original_index, insertion_order, record_id)
     let mut file_header_timeline: Vec<(usize, usize, RecordId)> = Vec::new();
@@ -789,13 +873,6 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     file_header_timeline.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     additional_timeline.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
-    let file_header_has_dirty = file_header_timeline
-        .iter()
-        .any(|(_, _, rid)| store.record(*rid).is_dirty());
-    let additional_has_dirty = additional_timeline
-        .iter()
-        .any(|(_, _, rid)| store.record(*rid).is_dirty());
-
     for (_, _, rid) in file_header_timeline.iter().copied() {
         let node = store.record(rid);
         super::schlib::write_record_to_stream(&mut file_header_data, node)?;
@@ -805,32 +882,20 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
         super::schlib::write_record_to_stream(&mut additional_data, node)?;
     }
 
-    let mut file_header_with_block = if !file_header_has_dirty {
-        header_raw
-            .as_deref()
-            .and_then(parse_first_block_with_prefix)
-            .unwrap_or_else(|| {
-                build_schdoc_header_block(header_params, file_header_timeline.len(), true)
-            })
-    } else {
-        build_schdoc_header_block(header_params, file_header_timeline.len(), true)
-    };
+    let mut file_header_with_block =
+        file_header_meta.serialize_header_block(file_header_timeline.len());
     file_header_with_block.extend_from_slice(&file_header_data);
 
-    let additional_with_block = if additional_timeline.is_empty() {
-        // Preserve an existing Additional stream header block if present.
-        additional_raw.unwrap_or_default()
+    let additional_with_block = if additional_timeline.is_empty() && additional_meta.is_none() {
+        Vec::new()
     } else {
-        let mut stream = if !additional_has_dirty {
-            additional_raw
-                .as_deref()
-                .and_then(parse_first_block_with_prefix)
-                .unwrap_or_else(|| {
-                    build_schdoc_header_block(additional_params, additional_timeline.len(), false)
-                })
+        let meta = additional_meta.unwrap_or_default();
+        let weight_override = if additional_timeline.is_empty() {
+            None
         } else {
-            build_schdoc_header_block(additional_params, additional_timeline.len(), false)
+            Some(additional_timeline.len())
         };
+        let mut stream = meta.serialize_header_block(weight_override);
         stream.extend_from_slice(&additional_data);
         stream
     };
@@ -838,7 +903,7 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     Ok(SchDocSerializedStreams {
         file_header: file_header_with_block,
         additional: additional_with_block,
-        storage: storage_raw.unwrap_or_else(build_icon_storage_stream_bytes),
+        storage: storage_meta.to_stream_bytes(),
     })
 }
 
@@ -850,15 +915,56 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
 mod tests {
     use super::*;
     use crate::v2::backing_store::RecordOrigin;
+    use std::io::{Cursor, Write};
 
     fn make_store_with_records(records: Vec<(usize, RecordNode)>) -> DocumentStore {
         let mut store = DocumentStore::new(DocumentMeta::SchDoc {
-            header_raw: None,
-            additional_raw: None,
-            storage_raw: None,
+            file_header_meta: SchDocFileHeaderStreamMeta::default(),
+            additional_meta: None,
+            storage_meta: SchDocStorageStreamMeta::default(),
         });
         group_by_owner_index(&mut store, records);
         store
+    }
+
+    fn encode_test_block(flags: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let header = ((flags as u32) << 24) | (payload.len() as u32);
+        out.extend_from_slice(&header.to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn make_schdoc_cfb_bytes(
+        file_header: &[u8],
+        additional: Option<&[u8]>,
+        storage: &[u8],
+        extra_stream: Option<(&str, &[u8])>,
+    ) -> Vec<u8> {
+        let mut cfb =
+            cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+                .unwrap();
+
+        cfb.create_stream("/FileHeader")
+            .unwrap()
+            .write_all(file_header)
+            .unwrap();
+        if let Some(additional) = additional {
+            cfb.create_stream("/Additional")
+                .unwrap()
+                .write_all(additional)
+                .unwrap();
+        }
+        cfb.create_stream("/Storage")
+            .unwrap()
+            .write_all(storage)
+            .unwrap();
+        if let Some((name, bytes)) = extra_stream {
+            cfb.create_stream(name).unwrap().write_all(bytes).unwrap();
+        }
+
+        cfb.flush().unwrap();
+        cfb.into_inner().into_inner()
     }
 
     #[test]
@@ -1138,9 +1244,31 @@ mod tests {
         let doc = SchDoc { store };
 
         let streams = flatten_to_streams(&doc).unwrap();
-        let parsed = parse_flat_stream(&streams.file_header, STREAM_FILE_HEADER).unwrap();
+        let (_, blocks) = parse_file_header_meta_and_blocks(&streams.file_header).unwrap();
+        let parsed = parse_record_blocks(&blocks, STREAM_FILE_HEADER).unwrap();
         let keys: Vec<u8> = parsed.into_iter().map(|(_, node)| node.key).collect();
         assert_eq!(keys, vec![1, 31, 2]);
+    }
+
+    #[test]
+    fn open_rejects_unimplemented_root_streams() {
+        let file_header = SchDocFileHeaderStreamMeta::default().serialize_header_block(0);
+        let storage = SchDocStorageStreamMeta::default().to_stream_bytes();
+        let bytes = make_schdoc_cfb_bytes(&file_header, None, &storage, Some(("/Unknown", b"x")));
+
+        let err = SchDoc::open(Cursor::new(bytes)).err().unwrap();
+        assert!(format!("{err}").contains("unimplemented stream"));
+    }
+
+    #[test]
+    fn open_rejects_malformed_storage_entries() {
+        let file_header = SchDocFileHeaderStreamMeta::default().serialize_header_block(0);
+        let mut storage = SchDocStorageStreamMeta::default().to_stream_bytes();
+        storage.extend_from_slice(&encode_test_block(0x00, &[0x00]));
+
+        let bytes = make_schdoc_cfb_bytes(&file_header, None, &storage, None);
+        let err = SchDoc::open(Cursor::new(bytes)).err().unwrap();
+        assert!(format!("{err}").contains("Storage block"));
     }
 
     #[test]

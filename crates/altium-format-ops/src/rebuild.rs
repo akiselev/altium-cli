@@ -726,33 +726,33 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let dst = SchDoc::new_empty();
 
     let src_store = src.store().clone();
-    // Preserve raw stream metadata for SchDoc stream header and Storage bytes.
-    let (src_header_raw, src_additional_raw, src_storage_raw) = {
+    // Preserve typed stream metadata for SchDoc stream headers and Storage entries.
+    let (src_file_header_meta, src_additional_meta, src_storage_meta) = {
         let store = src_store.borrow();
         match store.meta() {
             DocumentMeta::SchDoc {
-                header_raw,
-                additional_raw,
-                storage_raw,
+                file_header_meta,
+                additional_meta,
+                storage_meta,
             } => (
-                header_raw.clone(),
-                additional_raw.clone(),
-                storage_raw.clone(),
+                file_header_meta.clone(),
+                additional_meta.clone(),
+                storage_meta.clone(),
             ),
-            _ => (None, None, None),
+            _ => (Default::default(), None, Default::default()),
         }
     };
     {
         let mut dst_store = dst.store().borrow_mut();
         if let DocumentMeta::SchDoc {
-            header_raw,
-            additional_raw,
-            storage_raw,
+            file_header_meta,
+            additional_meta,
+            storage_meta,
         } = dst_store.meta_mut()
         {
-            *header_raw = src_header_raw;
-            *additional_raw = src_additional_raw;
-            *storage_raw = src_storage_raw;
+            *file_header_meta = src_file_header_meta;
+            *additional_meta = src_additional_meta;
+            *storage_meta = src_storage_meta;
         }
     }
 

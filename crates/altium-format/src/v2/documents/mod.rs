@@ -7,6 +7,7 @@
 pub(crate) mod encoding;
 pub mod pcblib;
 pub mod schdoc;
+pub mod schdoc_streams;
 pub mod schlib;
 pub mod section_keys;
 

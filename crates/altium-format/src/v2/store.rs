@@ -90,9 +90,9 @@ pub enum DocumentMeta {
         raw_extra_streams: HashMap<String, Vec<u8>>,
     },
     SchDoc {
-        header_raw: Option<Vec<u8>>,
-        additional_raw: Option<Vec<u8>>,
-        storage_raw: Option<Vec<u8>>,
+        file_header_meta: crate::v2::documents::schdoc_streams::SchDocFileHeaderStreamMeta,
+        additional_meta: Option<crate::v2::documents::schdoc_streams::SchDocAdditionalStreamMeta>,
+        storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta,
     },
     PcbLib {
         section_keys: crate::v2::documents::section_keys::SectionKeyList,
