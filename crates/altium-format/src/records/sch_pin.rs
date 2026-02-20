@@ -322,15 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn copy_modeled_fields_from_copies_values() {
+    fn builder_from_record_copies_values() {
         let src = SchPinRecord::from_origin(RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|Designator=7|Name=SCL|PinLength=40|",
         )));
-        let mut dst = SchPinRecord::from_origin(RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=2|Designator=1|Name=VCC|PinLength=30|",
-        )));
-
-        dst.copy_modeled_fields_from(&src);
+        let dst = SchPinRecord::builder_from(crate::templates::sch_pin_default, &src).build();
 
         assert_eq!(dst.designator(), Designator::from("7"));
         assert_eq!(dst.name(), PinName::from("SCL"));

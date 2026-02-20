@@ -18,7 +18,6 @@ mod common;
 use std::io::Cursor;
 
 use altium_format::documents::PcbLib;
-use altium_format::store::GroupMeta;
 
 use common::cfb_compare::compare_cfb_files;
 
@@ -38,50 +37,9 @@ fn destructive_roundtrip_synthiam_pcblib() {
         orig_footprint_count
     );
 
-    // Print footprint summary using the new API
-    {
-        let store = orig_lib.store().borrow();
-        for (i, &group_id) in store.group_ids().iter().enumerate() {
-            let group = store.group(group_id);
-            let prim_count = group.child_ids().len();
-
-            let (name, raw_pattern_name_block, raw_header) = match &group.meta() {
-                GroupMeta::PcbFootprint {
-                    name,
-                    raw_pattern_name_block,
-                    raw_header,
-                    ..
-                } => (
-                    name.clone(),
-                    raw_pattern_name_block.clone(),
-                    raw_header.clone(),
-                ),
-                _ => continue,
-            };
-
-            let pattern_name_len = raw_pattern_name_block.len();
-            let header_len = raw_header.len();
-
-            // Count primitives by type
-            let mut type_counts: std::collections::HashMap<u8, usize> =
-                std::collections::HashMap::new();
-            for &child_id in group.child_ids() {
-                let node = store.record(child_id);
-                *type_counts.entry(node.key).or_insert(0) += 1;
-            }
-
-            println!(
-                "  [{}] '{}': {} primitives, pattern_name={} bytes, header={} bytes",
-                i, name, prim_count, pattern_name_len, header_len
-            );
-
-            let mut type_summary: Vec<_> = type_counts.iter().collect();
-            type_summary.sort_by_key(|(k, _)| **k);
-            for (type_id, count) in &type_summary {
-                let type_name = pcb_type_name(**type_id);
-                println!("    type={} ({}): {}", type_id, type_name, count);
-            }
-        }
+    // Print footprint summary from public names API.
+    for (i, name) in orig_lib.names().iter().enumerate() {
+        println!("  [{}] '{}'", i, name);
     }
 
     // -----------------------------------------------------------------------

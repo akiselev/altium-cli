@@ -8,7 +8,6 @@ use std::path::Path;
 use crate::helpers::*;
 
 use altium_format::handles::{SchComponent, SchPin};
-use altium_format::traits::DocumentQuery;
 
 use super::{collect_net_names, collect_power_nets, get_sheet_size, open_schdoc};
 
@@ -18,7 +17,7 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
 
     if full {
         let mut components_json = Vec::new();
-        let comps = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+        let comps = doc.query_all::<SchComponent>("#1")?;
         for comp in &comps {
             let rec = comp.read();
             let pins: Vec<serde_json::Value> = comp
@@ -67,7 +66,7 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
     } else {
         let mut components: Vec<serde_json::Value> = Vec::new();
 
-        let comps = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+        let comps = doc.query_all::<SchComponent>("#1")?;
         for comp in &comps {
             let rec = comp.read();
             let designator = rec.designator().to_string();

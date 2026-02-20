@@ -8,7 +8,6 @@ use std::path::Path;
 
 use altium_format::coord::AltiumCoord;
 use altium_format::handles::PcbFootprint;
-use altium_format::traits::DocumentQuery;
 
 use crate::helpers::*;
 use crate::output::*;
@@ -89,7 +88,7 @@ pub fn cmd_pads(
 
     let mut all_pads: Vec<PadWithFootprint> = Vec::new();
 
-    let footprints = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let fp_name = fp.name();
         if let Some(ref filter) = filter_lower {
@@ -209,7 +208,7 @@ pub fn cmd_holes(path: &Path) -> Result<serde_json::Value, Box<dyn std::error::E
 
     let mut hole_info: HashMap<String, Vec<String>> = HashMap::new();
 
-    let footprints = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let fp_name = fp.name();
         let pads = extract_pads(fp);

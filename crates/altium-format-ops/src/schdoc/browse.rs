@@ -13,7 +13,6 @@ use crate::output::*;
 use altium_format::coord::AltiumCoord;
 use altium_format::handles::SchComponent;
 use altium_format::records::{SchNetLabelRecord, SchPortRecord, SchPowerRecord};
-use altium_format::traits::DocumentQuery;
 
 use super::{
     collect_net_names, format_location, get_sheet_size, is_address_bus, is_control_signal,
@@ -28,7 +27,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
     // 1. COMPONENTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<SchDocComponentRef>> = HashMap::new();
 
-    let components = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+    let components = doc.query_all::<SchComponent>("#1")?;
     for comp in &components {
         let rec = comp.read();
         let designator = rec.designator().to_string();
@@ -242,7 +241,7 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
     let pin_count = doc.count_record_type(2);
 
     let mut total_primitives = doc.component_count();
-    let components = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+    let components = doc.query_all::<SchComponent>("#1")?;
     for comp in &components {
         total_primitives += comp.children_len();
     }
@@ -278,7 +277,7 @@ pub fn cmd_components(path: &Path) -> Result<SchDocComponentList, Box<dyn std::e
 
     let mut components: Vec<SchDocComponentInfo> = Vec::new();
 
-    let comps = DocumentQuery::<SchComponent>::query_all(&doc, "#1")?;
+    let comps = doc.query_all::<SchComponent>("#1")?;
     for comp in &comps {
         let rec = comp.read();
         let designator = rec.designator().to_string();

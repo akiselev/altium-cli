@@ -16,17 +16,16 @@ use serde::{Deserialize, Serialize};
 use altium_format::documents::pcbdoc_streams::PcbDocSectionMeta;
 use altium_format::documents::{PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format::handles::{
-    PcbArcHandle, PcbComponentBodyHandle, PcbConnectionHandle, PcbFillHandle, PcbPadHandle,
-    PcbRegionHandle, PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBezierHandle,
-    SchBlanketHandle, SchBusEntryHandle, SchBusHandle, SchComponent, SchDesignatorHandle,
-    SchEllipseHandle, SchEllipticalArcHandle, SchImageHandle, SchImplementationHandle,
-    SchImplementationListHandle, SchImplementationParametersHandle, SchJunctionHandle,
-    SchLabelHandle, SchLineHandle, SchMapDefinerHandle, SchMapDefinerListHandle, SchNetLabelHandle,
-    SchNoERCHandle, SchNoteHandle, SchParameterHandle, SchPieHandle, SchPinHandle,
-    SchPolygonHandle, SchPolylineHandle, SchPortHandle, SchPowerHandle, SchRectangleHandle,
-    SchRoundRectangleHandle, SchSheetEntryHandle, SchSheetFileNameHandle, SchSheetHandle,
-    SchSheetNameHandle, SchSheetSymbolHandle, SchSymbolHandle, SchTaskHolderHandle,
-    SchTextFrameHandle, SchWireHandle,
+    PcbArcHandle, PcbComponentBodyHandle, PcbFillHandle, PcbPadHandle, PcbRegionHandle,
+    PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBusEntryHandle, SchComponent,
+    SchDesignatorHandle, SchEllipseHandle, SchEllipticalArcHandle, SchImageHandle,
+    SchImplementationHandle, SchImplementationListHandle, SchImplementationParametersHandle,
+    SchJunctionHandle, SchLabelHandle, SchLineHandle, SchMapDefinerHandle,
+    SchMapDefinerListHandle, SchNetLabelHandle, SchNoERCHandle, SchNoteHandle,
+    SchParameterHandle, SchPieHandle, SchPinHandle, SchPortHandle, SchPowerHandle,
+    SchRectangleHandle, SchRoundRectangleHandle, SchSheetEntryHandle, SchSheetFileNameHandle,
+    SchSheetHandle, SchSheetNameHandle, SchSheetSymbolHandle, SchSymbolHandle,
+    SchTaskHolderHandle, SchTextFrameHandle,
 };
 use altium_format::records::{
     PcbArcRecord, PcbComponentBodyRecord, PcbConnectionRecord, PcbFillRecord, PcbPadRecord,
@@ -40,9 +39,7 @@ use altium_format::records::{
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
     SchSheetSymbolRecord, SchSymbolRecord, SchTaskHolderRecord, SchTextFrameRecord, SchWireRecord,
 };
-use altium_format::store::DocumentMeta;
 use altium_format::templates;
-use altium_format::traits::{DocumentQuery, RecordType};
 
 use crate::cfb_diff::{CfbDiffReport, compare_cfb_files};
 
@@ -131,400 +128,299 @@ fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Bo
     Ok(output.to_path_buf())
 }
 
-/// Preserve source text-record trailing-NUL affinity for keys whose parsed
-/// value includes `\0` in the source backing store.
-fn copy_param_nul_suffix_from_source<T: RecordType>(
-    dst: &mut T,
-    src_store: &altium_format::store::DocRef,
-    rid: altium_format::ids::RecordId,
-) {
-    if T::IS_BINARY {
-        return;
-    }
-
-    let nul_values: Vec<(String, String)> = {
-        let store = src_store.borrow();
-        let Some(src_param) = store.record(rid).origin.as_param() else {
-            return;
-        };
-        src_param
-            .params
-            .iter()
-            .filter_map(|(k, v)| {
-                if v.as_str().contains('\0') {
-                    Some((k.to_string(), v.as_str().to_string()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-
-    if nul_values.is_empty() {
-        return;
-    }
-
-    let dst_params = &mut dst.origin_mut().param_mut().params;
-    for (k, v) in nul_values {
-        dst_params.add(&k, &v);
-    }
-}
-
-/// Copy full param origin from source record to destination record, preserving
-/// duplicate keys and original entry order in the parsed parameter collection.
-fn copy_param_origin_lossless_from_source<T: RecordType>(
-    dst: &mut T,
-    src_store: &altium_format::store::DocRef,
-    rid: altium_format::ids::RecordId,
-) {
-    if T::IS_BINARY {
-        return;
-    }
-
-    let src_param = {
-        let store = src_store.borrow();
-        store.record(rid).origin.as_param().cloned()
-    };
-
-    if let Some(src_param) = src_param {
-        *dst.origin_mut().param_mut() = src_param;
-    }
-}
-
-/// Replace destination param key/value entries with the full parsed key/value
-/// set from the source record, preserving source textual forms.
-fn copy_all_param_values_from_source<T: RecordType>(
-    dst: &mut T,
-    src_store: &altium_format::store::DocRef,
-    rid: altium_format::ids::RecordId,
-) {
-    if T::IS_BINARY {
-        return;
-    }
-
-    let src_values: Vec<(String, String)> = {
-        let store = src_store.borrow();
-        let Some(src_param) = store.record(rid).origin.as_param() else {
-            return;
-        };
-        src_param
-            .params
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.as_str().to_string()))
-            .collect()
-    };
-
-    let dst_params = &mut dst.origin_mut().param_mut().params;
-    let existing: Vec<String> = dst_params.iter().map(|(k, _)| k.to_string()).collect();
-    for key in existing {
-        dst_params.remove(&key);
-    }
-    for (k, v) in src_values {
-        dst_params.add(&k, &v);
-    }
-}
-
 macro_rules! copy_sch_record {
     ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
-        macro_rules! emit_sch {
-            ($dst:ident) => {{
-                copy_param_origin_lossless_from_source(&mut $dst, &$src_store, $rid);
-                $emit!($dst);
-            }};
-        }
         let copy_result: std::result::Result<(), String> = match $type_id {
-            <SchPinRecord as RecordType>::RECORD_ID => {
-                let src = SchPinHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchPinRecord::from_origin(templates::sch_pin_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+            SchPinRecord::RECORD_ID => {
+                let src = SchPinHandle::new($src_store.clone(), $rid).read_normalized();
+                let dst = SchPinRecord::builder_from(templates::sch_pin_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchArcRecord as RecordType>::RECORD_ID => {
+            SchArcRecord::RECORD_ID => {
                 let src = SchArcHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchArcRecord::from_origin(templates::sch_arc_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_geometry_encoding_from(&src);
-                emit_sch!(dst);
+                let dst = SchArcRecord::builder_from(templates::sch_arc_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchLineRecord as RecordType>::RECORD_ID => {
+            SchLineRecord::RECORD_ID => {
                 let src = SchLineHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchLineRecord::from_origin(templates::sch_line_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchLineRecord::builder_from(templates::sch_line_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchRectangleRecord as RecordType>::RECORD_ID => {
+            SchRectangleRecord::RECORD_ID => {
                 let src = SchRectangleHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchRectangleRecord::from_origin(templates::sch_rectangle_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_coordinate_encoding_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchRectangleRecord::builder_from(templates::sch_rectangle_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchBezierRecord as RecordType>::RECORD_ID => {
-                let src = SchBezierHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchBezierRecord::from_origin(templates::sch_bezier_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_vertices_from(&src);
-                emit_sch!(dst);
-                Ok(())
+            SchBezierRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support RECORD={} (Bezier vertices not fully modeled)",
+                    $context,
+                    SchBezierRecord::RECORD_ID
+                ))
             }
-            <SchPolylineRecord as RecordType>::RECORD_ID => {
-                let src = SchPolylineHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchPolylineRecord::from_origin(templates::sch_polyline_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_vertices_from(&src);
-                emit_sch!(dst);
-                Ok(())
+            SchPolylineRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support RECORD={} (Polyline vertices not fully modeled)",
+                    $context,
+                    SchPolylineRecord::RECORD_ID
+                ))
             }
-            <SchPolygonRecord as RecordType>::RECORD_ID => {
-                let src = SchPolygonHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchPolygonRecord::from_origin(templates::sch_polygon_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_vertices_from(&src);
-                emit_sch!(dst);
-                Ok(())
+            SchPolygonRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support RECORD={} (Polygon vertices not fully modeled)",
+                    $context,
+                    SchPolygonRecord::RECORD_ID
+                ))
             }
-            <SchEllipseRecord as RecordType>::RECORD_ID => {
+            SchEllipseRecord::RECORD_ID => {
                 let src = SchEllipseHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchEllipseRecord::from_origin(templates::sch_ellipse_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_coordinate_encoding_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchEllipseRecord::builder_from(templates::sch_ellipse_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchPieRecord as RecordType>::RECORD_ID => {
+            SchPieRecord::RECORD_ID => {
                 let src = SchPieHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchPieRecord::from_origin(templates::sch_pie_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_geometry_encoding_from(&src);
-                emit_sch!(dst);
+                let dst = SchPieRecord::builder_from(templates::sch_pie_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchRoundRectangleRecord as RecordType>::RECORD_ID => {
+            SchRoundRectangleRecord::RECORD_ID => {
                 let src = SchRoundRectangleHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchRoundRectangleRecord::from_origin(templates::sch_round_rectangle_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchRoundRectangleRecord::builder_from(
+                    templates::sch_round_rectangle_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchEllipticalArcRecord as RecordType>::RECORD_ID => {
+            SchEllipticalArcRecord::RECORD_ID => {
                 let src = SchEllipticalArcHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchEllipticalArcRecord::from_origin(templates::sch_elliptical_arc_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_geometry_encoding_from(&src);
-                emit_sch!(dst);
+                let dst = SchEllipticalArcRecord::builder_from(
+                    templates::sch_elliptical_arc_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchImageRecord as RecordType>::RECORD_ID => {
+            SchImageRecord::RECORD_ID => {
                 let src = SchImageHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchImageRecord::from_origin(templates::sch_image_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchImageRecord::builder_from(templates::sch_image_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchDesignatorRecord as RecordType>::RECORD_ID => {
+            SchDesignatorRecord::RECORD_ID => {
                 let src = SchDesignatorHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchDesignatorRecord::from_origin(templates::sch_designator_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchDesignatorRecord::builder_from(templates::sch_designator_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchParameterRecord as RecordType>::RECORD_ID => {
+            SchParameterRecord::RECORD_ID => {
                 let src = SchParameterHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchParameterRecord::from_origin(templates::sch_parameter_default());
-                dst.copy_modeled_fields_from(&src);
+                let mut dst =
+                    SchParameterRecord::builder_from(templates::sch_parameter_default, &src)
+                        .build();
                 dst.append_hidden_duplicate_for_export();
-                emit_sch!(dst);
+                $emit!(dst);
                 Ok(())
             }
-            <SchSymbolRecord as RecordType>::RECORD_ID => {
+            SchSymbolRecord::RECORD_ID => {
                 let src = SchSymbolHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchSymbolRecord::from_origin(templates::sch_symbol_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchSymbolRecord::builder_from(templates::sch_symbol_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchLabelRecord as RecordType>::RECORD_ID => {
+            SchLabelRecord::RECORD_ID => {
                 let src = SchLabelHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchLabelRecord::from_origin(templates::sch_label_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchLabelRecord::builder_from(templates::sch_label_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchPowerRecord as RecordType>::RECORD_ID => {
+            SchPowerRecord::RECORD_ID => {
                 let src = SchPowerHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchPowerRecord::from_origin(templates::sch_power_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchPowerRecord::builder_from(templates::sch_power_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchPortRecord as RecordType>::RECORD_ID => {
+            SchPortRecord::RECORD_ID => {
                 let src = SchPortHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchPortRecord::from_origin(templates::sch_port_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchPortRecord::builder_from(templates::sch_port_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchNoERCRecord as RecordType>::RECORD_ID => {
+            SchNoERCRecord::RECORD_ID => {
                 let src = SchNoERCHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchNoERCRecord::from_origin(templates::sch_no_erc_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchNoERCRecord::builder_from(templates::sch_no_erc_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchNetLabelRecord as RecordType>::RECORD_ID => {
+            SchNetLabelRecord::RECORD_ID => {
                 let src = SchNetLabelHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchNetLabelRecord::from_origin(templates::sch_net_label_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchNetLabelRecord::builder_from(templates::sch_net_label_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchBusRecord as RecordType>::RECORD_ID => {
-                let src = SchBusHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchBusRecord::from_origin(templates::sch_bus_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_vertices_from(&src);
-                emit_sch!(dst);
-                Ok(())
+            SchBusRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support RECORD={} (Bus vertices not fully modeled)",
+                    $context,
+                    SchBusRecord::RECORD_ID
+                ))
             }
-            <SchWireRecord as RecordType>::RECORD_ID => {
-                let src = SchWireHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchWireRecord::from_origin(templates::sch_wire_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_vertices_from(&src);
-                emit_sch!(dst);
-                Ok(())
+            SchWireRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support RECORD={} (Wire vertices not fully modeled)",
+                    $context,
+                    SchWireRecord::RECORD_ID
+                ))
             }
-            <SchTextFrameRecord as RecordType>::RECORD_ID => {
+            SchTextFrameRecord::RECORD_ID => {
                 let src = SchTextFrameHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchTextFrameRecord::from_origin(templates::sch_text_frame_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchTextFrameRecord::builder_from(templates::sch_text_frame_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchJunctionRecord as RecordType>::RECORD_ID => {
+            SchJunctionRecord::RECORD_ID => {
                 let src = SchJunctionHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchJunctionRecord::from_origin(templates::sch_junction_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchJunctionRecord::builder_from(templates::sch_junction_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchSheetRecord as RecordType>::RECORD_ID => {
+            SchSheetRecord::RECORD_ID => {
                 let src = SchSheetHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchSheetRecord::from_origin(templates::sch_sheet_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchSheetRecord::builder_from(templates::sch_sheet_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchSheetNameRecord as RecordType>::RECORD_ID => {
+            SchSheetNameRecord::RECORD_ID => {
                 let src = SchSheetNameHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchSheetNameRecord::from_origin(templates::sch_sheet_name_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchSheetNameRecord::builder_from(templates::sch_sheet_name_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchSheetFileNameRecord as RecordType>::RECORD_ID => {
+            SchSheetFileNameRecord::RECORD_ID => {
                 let src = SchSheetFileNameHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchSheetFileNameRecord::from_origin(templates::sch_sheet_filename_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchSheetFileNameRecord::builder_from(
+                    templates::sch_sheet_filename_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchBusEntryRecord as RecordType>::RECORD_ID => {
+            SchBusEntryRecord::RECORD_ID => {
                 let src = SchBusEntryHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchBusEntryRecord::from_origin(templates::sch_bus_entry_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchBusEntryRecord::builder_from(templates::sch_bus_entry_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchSheetSymbolRecord as RecordType>::RECORD_ID => {
+            SchSheetSymbolRecord::RECORD_ID => {
                 let src = SchSheetSymbolHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchSheetSymbolRecord::from_origin(templates::sch_sheet_symbol_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchSheetSymbolRecord::builder_from(
+                    templates::sch_sheet_symbol_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchSheetEntryRecord as RecordType>::RECORD_ID => {
+            SchSheetEntryRecord::RECORD_ID => {
                 let src = SchSheetEntryHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchSheetEntryRecord::from_origin(templates::sch_sheet_entry_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchSheetEntryRecord::builder_from(templates::sch_sheet_entry_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchImplementationListRecord as RecordType>::RECORD_ID => {
+            SchImplementationListRecord::RECORD_ID => {
                 let src = SchImplementationListHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchImplementationListRecord::from_origin(
-                    templates::sch_implementation_list_default(),
-                );
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchImplementationListRecord::builder_from(
+                    templates::sch_implementation_list_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchImplementationRecord as RecordType>::RECORD_ID => {
+            SchImplementationRecord::RECORD_ID => {
                 let src = SchImplementationHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
-                    SchImplementationRecord::from_origin(templates::sch_implementation_default());
-                dst.copy_modeled_fields_from(&src);
+                    SchImplementationRecord::builder_from(templates::sch_implementation_default, &src)
+                        .build();
                 dst.set_datafile_links(&src.datafile_links());
-                emit_sch!(dst);
+                $emit!(dst);
                 Ok(())
             }
-            <SchMapDefinerListRecord as RecordType>::RECORD_ID => {
+            SchMapDefinerListRecord::RECORD_ID => {
                 let src = SchMapDefinerListHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchMapDefinerListRecord::from_origin(templates::sch_map_definer_list_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchMapDefinerListRecord::builder_from(
+                    templates::sch_map_definer_list_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchMapDefinerRecord as RecordType>::RECORD_ID => {
+            SchMapDefinerRecord::RECORD_ID => {
                 let src = SchMapDefinerHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
-                    SchMapDefinerRecord::from_origin(templates::sch_map_definer_default());
-                dst.copy_modeled_fields_from(&src);
+                    SchMapDefinerRecord::builder_from(templates::sch_map_definer_default, &src)
+                        .build();
                 dst.set_implementation_designators(&src.implementation_designators());
-                emit_sch!(dst);
+                $emit!(dst);
                 Ok(())
             }
-            <SchImplementationParametersRecord as RecordType>::RECORD_ID => {
+            SchImplementationParametersRecord::RECORD_ID => {
                 let src = SchImplementationParametersHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchImplementationParametersRecord::from_origin(
-                    templates::sch_implementation_parameters_default(),
-                );
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchImplementationParametersRecord::builder_from(
+                    templates::sch_implementation_parameters_default,
+                    &src,
+                )
+                .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchNoteRecord as RecordType>::RECORD_ID => {
+            SchNoteRecord::RECORD_ID => {
                 let src = SchNoteHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchNoteRecord::from_origin(templates::sch_note_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst = SchNoteRecord::builder_from(templates::sch_note_default, &src).build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchTaskHolderRecord as RecordType>::RECORD_ID => {
+            SchTaskHolderRecord::RECORD_ID => {
                 let src = SchTaskHolderHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    SchTaskHolderRecord::from_origin(templates::sch_task_holder_default());
-                dst.copy_modeled_fields_from(&src);
-                emit_sch!(dst);
+                let dst =
+                    SchTaskHolderRecord::builder_from(templates::sch_task_holder_default, &src)
+                        .build();
+                $emit!(dst);
                 Ok(())
             }
-            <SchBlanketRecord as RecordType>::RECORD_ID => {
-                let src = SchBlanketHandle::new($src_store.clone(), $rid).read();
-                let mut dst = SchBlanketRecord::from_origin(templates::sch_blanket_default());
-                dst.copy_modeled_fields_from(&src);
-                dst.copy_vertices_from(&src);
-                emit_sch!(dst);
-                Ok(())
+            SchBlanketRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support RECORD={} (Blanket vertices not fully modeled)",
+                    $context,
+                    SchBlanketRecord::RECORD_ID
+                ))
             }
             _ => Err(format!(
                 "{}: unimplemented schematic record_id={}",
@@ -538,48 +434,62 @@ macro_rules! copy_sch_record {
 macro_rules! copy_pcb_record {
     ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
         let copy_result: std::result::Result<(), String> = match $type_id {
-            <PcbArcRecord as RecordType>::RECORD_ID => {
-                let dst = PcbArcHandle::new($src_store.clone(), $rid).read();
+            PcbArcRecord::RECORD_ID => {
+                let src = PcbArcHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbArcRecord::builder_from(templates::pcb_arc_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbPadRecord as RecordType>::RECORD_ID => {
-                let dst = PcbPadHandle::new($src_store.clone(), $rid).read();
+            PcbPadRecord::RECORD_ID => {
+                let src = PcbPadHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbPadRecord::builder_from(templates::pcb_pad_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbViaRecord as RecordType>::RECORD_ID => {
-                let dst = PcbViaHandle::new($src_store.clone(), $rid).read();
+            PcbViaRecord::RECORD_ID => {
+                let src = PcbViaHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbViaRecord::builder_from(templates::pcb_via_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbTrackRecord as RecordType>::RECORD_ID => {
-                let dst = PcbTrackHandle::new($src_store.clone(), $rid).read();
+            PcbTrackRecord::RECORD_ID => {
+                let src = PcbTrackHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbTrackRecord::builder_from(templates::pcb_track_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbTextRecord as RecordType>::RECORD_ID => {
-                let dst = PcbTextHandle::new($src_store.clone(), $rid).read();
+            PcbTextRecord::RECORD_ID => {
+                let src = PcbTextHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbTextRecord::builder_from(templates::pcb_text_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbFillRecord as RecordType>::RECORD_ID => {
-                let dst = PcbFillHandle::new($src_store.clone(), $rid).read();
+            PcbFillRecord::RECORD_ID => {
+                let src = PcbFillHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbFillRecord::builder_from(templates::pcb_fill_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbConnectionRecord as RecordType>::RECORD_ID => {
-                let dst = PcbConnectionHandle::new($src_store.clone(), $rid).read();
+            PcbConnectionRecord::RECORD_ID => {
+                Err(format!(
+                    "{}: strict rebuild does not support pcb object_id={} (no high-level template)",
+                    $context,
+                    PcbConnectionRecord::RECORD_ID
+                ))
+            }
+            PcbRegionRecord::RECORD_ID => {
+                let src = PcbRegionHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbRegionRecord::builder_from(templates::pcb_region_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
-            <PcbRegionRecord as RecordType>::RECORD_ID => {
-                let dst = PcbRegionHandle::new($src_store.clone(), $rid).read();
-                $emit!(dst);
-                Ok(())
-            }
-            <PcbComponentBodyRecord as RecordType>::RECORD_ID => {
-                let dst = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
+            PcbComponentBodyRecord::RECORD_ID => {
+                let src = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
+                let dst = PcbComponentBodyRecord::builder_from(
+                    templates::pcb_component_body_default,
+                    &src,
+                )
+                .build();
                 $emit!(dst);
                 Ok(())
             }
@@ -601,56 +511,21 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     dst.set_storage_meta(src.storage_meta());
     dst.set_redirection_streams(src.redirection_streams());
 
-    let src_store = src.store().clone();
-    let components =
-        DocumentQuery::<SchComponent>::query_all(&src, "#1").map_err(|e| e.to_string())?;
+    let components = src.query_all::<SchComponent>("#1").map_err(|e| e.to_string())?;
 
     for src_comp in components {
         let src_parent = src_comp.read();
-        let src_parent_id = {
-            let store = src_store.borrow();
-            store.group(src_comp.group_id()).parent_id()
-        };
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
-            builder.with_component(|comp| {
-                comp.copy_modeled_fields_from(&src_parent);
-                copy_param_nul_suffix_from_source(comp, &src_store, src_parent_id);
-            });
+            let rebuilt = altium_format::records::SchComponentRecord::builder_from(
+                templates::sch_component_default,
+                &src_parent,
+            )
+            .build();
+            builder.with_component(|comp| *comp = rebuilt);
         });
         dst_comp.set_sidecar_streams(src_comp.sidecar_streams());
 
         for (type_id, rid) in src_comp.all_children() {
-            let is_binary = {
-                let store = src_store.borrow();
-                store.record(rid).origin.is_binary()
-            };
-            if is_binary {
-                if type_id != <SchPinRecord as RecordType>::RECORD_ID {
-                    return Err(format!(
-                        "schlib:component-child: binary origin only supported for RECORD=2 pins, got record_id={}",
-                        type_id
-                    )
-                    .into());
-                }
-                let raw_pin = {
-                    let store = src_store.borrow();
-                    let node = store.record(rid);
-                    let Some(bin) = node.origin.as_binary() else {
-                        return Err("schlib:component-child: expected binary origin for pin".into());
-                    };
-                    bin.raw_block.clone()
-                };
-                let pin = SchPinRecord::from_legacy_binary_record_data(&raw_pin).ok_or_else(
-                    || {
-                        format!(
-                            "schlib:component-child: failed to decode legacy binary pin payload ({} bytes)",
-                            raw_pin.len()
-                        )
-                    },
-                )?;
-                dst_comp.add_child_record(pin);
-                continue;
-            }
             macro_rules! emit_child {
                 ($rec:expr) => {{
                     dst_comp.add_child_record($rec);
@@ -659,7 +534,7 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             copy_sch_record!(
                 type_id,
                 rid,
-                src_store,
+                src.store().clone(),
                 emit_child,
                 "schlib:component-child"
             )
@@ -684,7 +559,6 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     dst.set_file_version_info_meta(src.file_version_info_meta());
     dst.set_library_meta(src.library_meta());
 
-    let src_store = src.store().clone();
     let names = src.names();
     for name in names {
         let Some(src_fp) = src.find_footprint(&name) else {
@@ -696,40 +570,30 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
         };
 
         let src_meta = src_fp.read();
-        let src_meta_id = {
-            let store = src_store.borrow();
-            store.group(src_fp.group_id()).parent_id()
-        };
         let dst_fp = dst.build_footprint(&name, templates::pcb_footprint_default, |builder| {
-            builder.with_metadata(|meta| {
-                meta.copy_modeled_fields_from(&src_meta);
-                copy_all_param_values_from_source(meta, &src_store, src_meta_id);
-                copy_param_nul_suffix_from_source(meta, &src_store, src_meta_id);
-            });
+            let rebuilt = altium_format::records::PcbFootprintRecord::builder_from(
+                templates::pcb_footprint_default,
+                &src_meta,
+            )
+            .build();
+            builder.with_metadata(|meta| *meta = rebuilt);
         });
 
         for (type_id, rid) in src_fp.all_children() {
-            let is_binary = {
-                let store = src_store.borrow();
-                store.record(rid).origin.is_binary()
-            };
-            if !is_binary {
-                return Err(format!(
-                    "pcblib:primitive: object_id={} has params origin (expected binary)",
-                    type_id
-                )
-                .into());
-            }
             macro_rules! emit_prim {
                 ($rec:expr) => {{
                     dst_fp.add_primitive_record($rec);
                 }};
             }
-            copy_pcb_record!(type_id, rid, src_store, emit_prim, "pcblib:primitive")
+            copy_pcb_record!(
+                type_id,
+                rid,
+                src.store().clone(),
+                emit_prim,
+                "pcblib:primitive"
+            )
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
-
-        dst_fp.set_storage_passthrough(src_fp.storage_passthrough());
     }
 
     if let Some(parent) = out.parent() {
@@ -745,119 +609,31 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = SchDoc::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchDoc::new_empty();
 
-    let src_store = src.store().clone();
-    // Preserve typed stream metadata for SchDoc stream headers and Storage entries.
-    let (src_file_header_meta, src_additional_meta, src_storage_meta) = {
-        let store = src_store.borrow();
-        match store.meta() {
-            DocumentMeta::SchDoc {
-                file_header_meta,
-                additional_meta,
-                storage_meta,
-            } => (
-                file_header_meta.clone(),
-                additional_meta.clone(),
-                storage_meta.clone(),
-            ),
-            _ => (Default::default(), None, Default::default()),
-        }
-    };
-    {
-        let mut dst_store = dst.store().borrow_mut();
-        if let DocumentMeta::SchDoc {
-            file_header_meta,
-            additional_meta,
-            storage_meta,
-        } = dst_store.meta_mut()
-        {
-            *file_header_meta = src_file_header_meta;
-            *additional_meta = src_additional_meta;
-            *storage_meta = src_storage_meta;
-        }
-    }
+    dst.set_file_header_meta(src.file_header_meta());
+    dst.set_additional_meta(src.additional_meta());
+    dst.set_storage_meta(src.storage_meta());
 
     for src_comp in src.components() {
         let src_parent = src_comp.read();
-        let (
-            src_parent_id,
-            src_parent_original_index,
-            src_parent_stream_name,
-            src_parent_snapshot,
-            src_child_indices,
-        ) = {
-            let store = src_store.borrow();
-            let group = store.group(src_comp.group_id());
-            let parent_id = group.parent_id();
-            (
-                parent_id,
-                group.parent_original_index(),
-                store.record(parent_id).stream_name.clone(),
-                store.record(parent_id).snapshot_bytes().to_vec(),
-                group.original_indices().to_vec(),
-            )
-        };
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
-            builder.with_component(|comp| {
-                comp.copy_modeled_fields_from(&src_parent);
-                copy_param_origin_lossless_from_source(comp, &src_store, src_parent_id);
-            });
+            let rebuilt = altium_format::records::SchComponentRecord::builder_from(
+                templates::sch_component_default,
+                &src_parent,
+            )
+            .build();
+            builder.with_component(|comp| *comp = rebuilt);
         });
-        {
-            let dst_parent_id = {
-                let mut dst_store = dst.store().borrow_mut();
-                let group = dst_store.group_mut(dst_comp.group_id());
-                group.set_parent_original_index(src_parent_original_index);
-                group.parent_id()
-            };
-            let mut dst_store = dst.store().borrow_mut();
-            let dst_parent = dst_store.record_mut(dst_parent_id);
-            dst_parent.stream_name = src_parent_stream_name;
-            dst_parent.original_snapshot = src_parent_snapshot;
-            dst_parent.dirty = false;
-        }
 
-        for (child_pos, (type_id, rid)) in src_comp.all_children().into_iter().enumerate() {
-            let is_binary = {
-                let store = src_store.borrow();
-                store.record(rid).origin.is_binary()
-            };
-            if is_binary {
-                return Err(format!(
-                    "schdoc:component-child: record_id={} has binary origin (strict AD26 mode)",
-                    type_id
-                )
-                .into());
-            }
-            let src_child_stream_name = {
-                let store = src_store.borrow();
-                store.record(rid).stream_name.clone()
-            };
-            let src_child_snapshot = {
-                let store = src_store.borrow();
-                store.record(rid).snapshot_bytes().to_vec()
-            };
-            let src_child_original_index = src_child_indices
-                .get(child_pos)
-                .copied()
-                .unwrap_or(usize::MAX);
+        for (type_id, rid) in src_comp.all_children().into_iter() {
             macro_rules! emit_child {
                 ($rec:expr) => {{
-                    let dst_rid = dst_comp.add_child_record($rec);
-                    let mut dst_store = dst.store().borrow_mut();
-                    {
-                        let group = dst_store.group_mut(dst_comp.group_id());
-                        group.set_child_original_index(child_pos, src_child_original_index);
-                    }
-                    let dst_node = dst_store.record_mut(dst_rid);
-                    dst_node.stream_name = src_child_stream_name.clone();
-                    dst_node.original_snapshot = src_child_snapshot.clone();
-                    dst_node.dirty = false;
+                    dst_comp.add_child_record($rec);
                 }};
             }
             copy_sch_record!(
                 type_id,
                 rid,
-                src_store,
+                src.store().clone(),
                 emit_child,
                 "schdoc:component-child"
             )
@@ -865,42 +641,19 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    for (orphan_pos, (type_id, rid)) in src.orphan_records().into_iter().enumerate() {
-        let is_binary = {
-            let store = src_store.borrow();
-            store.record(rid).origin.is_binary()
-        };
-        if is_binary {
-            return Err(format!(
-                "schdoc:orphan: record_id={} has binary origin (strict AD26 mode)",
-                type_id
-            )
-            .into());
-        }
-        let (src_orphan_original_index, src_orphan_stream_name, src_orphan_snapshot) = {
-            let store = src_store.borrow();
-            (
-                store
-                    .orphan_original_indices()
-                    .get(orphan_pos)
-                    .copied()
-                    .unwrap_or(usize::MAX),
-                store.record(rid).stream_name.clone(),
-                store.record(rid).snapshot_bytes().to_vec(),
-            )
-        };
+    for (type_id, rid) in src.orphan_records().into_iter() {
         macro_rules! emit_orphan {
             ($rec:expr) => {{
-                let dst_rid = dst.add_orphan_record($rec);
-                let mut dst_store = dst.store().borrow_mut();
-                dst_store.set_orphan_original_index(orphan_pos, src_orphan_original_index);
-                let dst_node = dst_store.record_mut(dst_rid);
-                dst_node.stream_name = src_orphan_stream_name.clone();
-                dst_node.original_snapshot = src_orphan_snapshot.clone();
-                dst_node.dirty = false;
+                dst.add_orphan_record($rec);
             }};
         }
-        copy_sch_record!(type_id, rid, src_store, emit_orphan, "schdoc:orphan")
+        copy_sch_record!(
+            type_id,
+            rid,
+            src.store().clone(),
+            emit_orphan,
+            "schdoc:orphan"
+        )
             .map_err(|e| -> Box<dyn Error> { e.into() })?;
     }
 
@@ -916,7 +669,6 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
 fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = PcbDoc::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbDoc::new_empty();
-    let src_store = src.store().clone();
 
     let mut streams_meta = src.streams_meta();
     let primitive_section_names: Vec<String> = streams_meta
@@ -940,7 +692,13 @@ fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                         .map_err(|e| -> Box<dyn Error> { e.to_string().into() })?;
                 }};
             }
-            copy_pcb_record!(type_id, rid, src_store, emit_prim, "pcbdoc:primitive")
+            copy_pcb_record!(
+                type_id,
+                rid,
+                src.store().clone(),
+                emit_prim,
+                "pcbdoc:primitive"
+            )
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
     }
@@ -992,10 +750,6 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use altium_format::backing_store::{BinaryOrigin, FieldSpan, RecordOrigin};
-    use altium_format::documents::pcbdoc_streams::{
-        PcbDocPrimitiveSectionMeta, PcbDocSectionMeta,
-    };
     use altium_format::documents::pcblib_streams::{
         PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibFootprintSidecarStreamsMeta,
         PcbLibLibraryStorageMeta, PcbLibModelsStorageMeta, PcbLibParamTableStreamMeta,
@@ -1007,7 +761,7 @@ mod tests {
     use altium_format::documents::schlib_streams::SchLibRedirectionStreamMeta;
     use altium_format::handles::PcbFootprintStoragePassthrough;
     use altium_format::parameters::ParameterCollection;
-    use altium_format::records::{PcbConnectionRecord, PcbFootprintRecord};
+    use altium_format::records::PcbFootprintRecord;
     use altium_format::templates;
 
     #[test]
@@ -1050,65 +804,6 @@ mod tests {
             ts,
             ext
         ))
-    }
-
-    #[test]
-    fn rebuild_pcbdoc_supports_connection_primitives() {
-        let src_path = temp_file_path("PcbDoc");
-        let out_path = temp_file_path("PcbDoc");
-
-        let src = PcbDoc::new_empty();
-        let mut streams_meta = src.streams_meta();
-        streams_meta.sections.insert(
-            "Connections6".to_string(),
-            PcbDocSectionMeta::Primitive(PcbDocPrimitiveSectionMeta {
-                object_id: 7,
-                header_count: 1,
-                record_ids: Vec::new(),
-            }),
-        );
-        src.set_streams_meta(streams_meta);
-
-        let mut raw = vec![0u8; 47];
-        raw[13..17].copy_from_slice(&100_000i32.to_le_bytes());
-        raw[17..21].copy_from_slice(&200_000i32.to_le_bytes());
-        raw[21..25].copy_from_slice(&300_000i32.to_le_bytes());
-        raw[25..29].copy_from_slice(&400_000i32.to_le_bytes());
-        raw[29..33].copy_from_slice(&10_000i32.to_le_bytes());
-        raw[33] = 1;
-        raw[34] = 32;
-        raw[35..39].copy_from_slice(&11i32.to_le_bytes());
-        raw[39..43].copy_from_slice(&22i32.to_le_bytes());
-        raw[43..47].copy_from_slice(&33i32.to_le_bytes());
-        let spans = vec![
-            FieldSpan::new(0, 13),
-            FieldSpan::new(13, 4),
-            FieldSpan::new(17, 4),
-            FieldSpan::new(21, 4),
-            FieldSpan::new(25, 4),
-            FieldSpan::new(29, 4),
-            FieldSpan::new(33, 1),
-            FieldSpan::new(34, 1),
-            FieldSpan::new(35, 4),
-            FieldSpan::new(39, 4),
-            FieldSpan::new(43, 4),
-        ];
-        let conn = PcbConnectionRecord::from_origin(RecordOrigin::Binary(
-            BinaryOrigin::with_spans(raw, spans),
-        ));
-        src.add_primitive_record("Connections6", conn)
-            .expect("failed to add connection primitive");
-        src.save_file(&src_path)
-            .expect("failed to save source PcbDoc fixture");
-
-        let report = cmd_rebuild(&src_path, Some(&out_path)).expect("failed to rebuild PcbDoc");
-        assert_eq!(report.file_type, "PcbDoc");
-        assert!(report.diff.only_in_original.is_empty());
-        assert!(report.diff.only_in_rebuilt.is_empty());
-        assert!(report.diff.binary_diffs.is_empty());
-
-        let _ = fs::remove_file(&src_path);
-        let _ = fs::remove_file(&out_path);
     }
 
     #[test]
@@ -1189,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_pcblib_preserves_typed_document_and_footprint_sidecar_streams() {
+    fn rebuild_pcblib_preserves_typed_document_streams_but_not_raw_passthrough() {
         let src_path = temp_file_path("PcbLib");
         let out_path = temp_file_path("PcbLib");
 
@@ -1300,103 +995,13 @@ mod tests {
             .find_footprint("FP1")
             .expect("rebuilt footprint should exist");
         let rebuilt_pass = rebuilt_fp.storage_passthrough();
-        assert_eq!(rebuilt_pass.raw_pattern_name_block, b"FP1".to_vec());
-        assert_eq!(rebuilt_pass.raw_header, 1u32.to_le_bytes().to_vec());
-        assert_eq!(
-            rebuilt_pass
-                .sidecar_streams
-                .wide_strings
-                .as_ref()
-                .map(|m| m.entries.len()),
-            Some(1)
-        );
-        assert_eq!(
-            rebuilt_pass
-                .sidecar_streams
-                .primitive_guids
-                .as_ref()
-                .map(|m| m.entries.len()),
-            Some(1)
-        );
-        assert_eq!(
-            rebuilt_pass
-                .sidecar_streams
-                .unique_id_primitive_information
-                .as_ref()
-                .map(|m| m.entries.len()),
-            Some(1)
-        );
-        assert_eq!(
-            rebuilt_pass
-                .sidecar_streams
-                .extended_primitive_information
-                .as_ref()
-                .map(|m| m.entries.len()),
-            Some(1)
+        assert!(
+            rebuilt_pass.sidecar_streams.wide_strings.is_none(),
+            "strict rebuild should not passthrough sidecar streams"
         );
 
         let _ = fs::remove_file(&src_path);
         let _ = fs::remove_file(&out_path);
     }
 
-    #[test]
-    fn rebuild_schlib_accepts_legacy_binary_pin_children() {
-        let src_path = temp_file_path("SchLib");
-        let out_path = temp_file_path("SchLib");
-
-        let src = SchLib::new_empty();
-        let comp = src.build_component(templates::sch_component_default, |builder| {
-            builder.with_component(|record| {
-                record.set_lib_reference("BINPIN");
-                record.set_component_description("binary pin fixture");
-                record.set_part_count(1);
-            });
-            builder.add_pin(templates::sch_pin_default, |pin| {
-                pin.set_designator("1");
-                pin.set_name("IO1");
-            });
-        });
-
-        // Force the pin child origin to binary to mirror real AD SchLib files.
-        let pin_rid = comp
-            .all_children()
-            .into_iter()
-            .find(|(record_id, _)| *record_id == <SchPinRecord as RecordType>::RECORD_ID)
-            .map(|(_, rid)| rid)
-            .expect("component should contain a pin child");
-        let pin_raw = SchPinHandle::new(src.store().clone(), pin_rid)
-            .read()
-            .to_legacy_binary_record_data();
-        {
-            let mut store = src.store().borrow_mut();
-            let node = store.record_mut(pin_rid);
-            node.origin = altium_format::backing_store::RecordOrigin::Binary(
-                altium_format::backing_store::BinaryOrigin::new(pin_raw),
-            );
-            node.mark_dirty();
-        }
-
-        src.save_file(&src_path)
-            .expect("failed to save source SchLib fixture");
-        rebuild_schlib(&src_path, &out_path)
-            .expect("rebuild should decode and accept binary pin children");
-
-        let rebuilt = SchLib::open_file(&out_path).expect("failed to open rebuilt SchLib fixture");
-        let rebuilt_gid = rebuilt
-            .find_component("BINPIN")
-            .expect("rebuilt component should exist");
-        let rebuilt_pin_count = {
-            let store = rebuilt.store().borrow();
-            let group = store.group(rebuilt_gid);
-            group
-                .child_ids()
-                .iter()
-                .filter(|&&rid| store.record(rid).key == <SchPinRecord as RecordType>::RECORD_ID)
-                .count()
-        };
-        assert_eq!(rebuilt_pin_count, 1);
-
-        let _ = fs::remove_file(&src_path);
-        let _ = fs::remove_file(&out_path);
-    }
 }

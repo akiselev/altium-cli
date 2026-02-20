@@ -520,9 +520,29 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         }
     };
 
+    let record_id_expr = match macro_attrs.kind {
+        RecordKind::Sch => {
+            let id = macro_attrs.record_id.unwrap();
+            let id_lit = proc_macro2::Literal::u8_unsuffixed(id);
+            quote! { #id_lit }
+        }
+        RecordKind::Pcb => {
+            let obj_id = macro_attrs.object_id.as_ref().unwrap();
+            quote! { crate::pcb::enums::PcbObjectId::#obj_id as u8 }
+        }
+    };
+
+    let is_binary_expr = match macro_attrs.codec {
+        Codec::Binary => quote! { true },
+        Codec::Params => quote! { false },
+    };
+
     // Generate constructors
     let constructors = quote! {
         impl #struct_name {
+            pub const RECORD_ID: u8 = #record_id_expr;
+            pub const IS_BINARY: bool = #is_binary_expr;
+
             pub fn from_origin(origin: crate::backing_store::RecordOrigin) -> Self {
                 Self { origin }
             }
@@ -579,7 +599,6 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
 fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<TokenStream> {
     let mut methods = Vec::new();
-    let mut copy_stmts = Vec::new();
 
     for field in fields {
         if field.attrs.skip {
@@ -611,9 +630,6 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
                     self.#setter_name(value);
                     result
                 }
-            });
-            copy_stmts.push(quote! {
-                self.#setter_name(src.#getter_name());
             });
         } else if let Some(ref key) = field.attrs.key {
             // Standard param key-based accessor
@@ -679,9 +695,6 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
                     result
                 }
             });
-            copy_stmts.push(quote! {
-                self.#setter_name(src.#getter_name());
-            });
         }
         // If neither key nor codec_fn, the field has no param accessor (e.g. header, trailing)
     }
@@ -689,16 +702,6 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
     Ok(quote! {
         impl #struct_name {
             #(#methods)*
-
-            pub fn copy_modeled_fields_from(&mut self, src: &Self) {
-                #(#copy_stmts)*
-            }
-        }
-
-        impl crate::traits::ModeledFieldCopy for #struct_name {
-            fn copy_modeled_fields_from(&mut self, src: &Self) {
-                #struct_name::copy_modeled_fields_from(self, src);
-            }
         }
     })
 }
@@ -712,7 +715,6 @@ fn gen_binary_sequential_accessors(
     fields: &[FieldInfo],
 ) -> Result<TokenStream> {
     let mut methods = Vec::new();
-    let mut copy_stmts = Vec::new();
     let mut current_offset: usize = 0;
 
     for field in fields {
@@ -748,26 +750,12 @@ fn gen_binary_sequential_accessors(
                 #write_expr
             }
         });
-        copy_stmts.push(quote! {
-            self.#setter_name(src.#getter_name());
-        });
-
         current_offset += type_size;
     }
 
     Ok(quote! {
         impl #struct_name {
             #(#methods)*
-
-            pub fn copy_modeled_fields_from(&mut self, src: &Self) {
-                #(#copy_stmts)*
-            }
-        }
-
-        impl crate::traits::ModeledFieldCopy for #struct_name {
-            fn copy_modeled_fields_from(&mut self, src: &Self) {
-                #struct_name::copy_modeled_fields_from(self, src);
-            }
         }
     })
 }
@@ -779,7 +767,6 @@ fn gen_binary_sequential_accessors(
 fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<TokenStream> {
     let mut constants = Vec::new();
     let mut methods = Vec::new();
-    let mut copy_stmts = Vec::new();
     let mut field_index: usize = 0;
 
     for field in fields {
@@ -813,10 +800,6 @@ fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Res
                 #write_expr
             }
         });
-        copy_stmts.push(quote! {
-            self.#setter_name(src.#getter_name());
-        });
-
         field_index += 1;
     }
 
@@ -824,16 +807,6 @@ fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Res
         impl #struct_name {
             #(#constants)*
             #(#methods)*
-
-            pub fn copy_modeled_fields_from(&mut self, src: &Self) {
-                #(#copy_stmts)*
-            }
-        }
-
-        impl crate::traits::ModeledFieldCopy for #struct_name {
-            fn copy_modeled_fields_from(&mut self, src: &Self) {
-                #struct_name::copy_modeled_fields_from(self, src);
-            }
         }
     })
 }
@@ -1080,6 +1053,7 @@ fn gen_builder(
     let builder_name = format_ident!("{}Builder", struct_name);
 
     let mut builder_methods = Vec::new();
+    let mut from_record_stmts = Vec::new();
 
     for field in fields {
         if field.attrs.skip {
@@ -1119,6 +1093,9 @@ fn gen_builder(
         };
 
         builder_methods.push(method);
+        from_record_stmts.push(quote! {
+            self.record.#setter_name(src.#field_name());
+        });
     }
 
     Ok(quote! {
@@ -1133,6 +1110,11 @@ fn gen_builder(
                 }
             }
 
+            pub fn from_record(mut self, src: &#struct_name) -> Self {
+                #(#from_record_stmts)*
+                self
+            }
+
             #(#builder_methods)*
 
             pub fn build(self) -> #struct_name {
@@ -1143,6 +1125,13 @@ fn gen_builder(
         impl #struct_name {
             pub fn builder(template: fn() -> crate::backing_store::RecordOrigin) -> #builder_name {
                 #builder_name::new(template)
+            }
+
+            pub fn builder_from(
+                template: fn() -> crate::backing_store::RecordOrigin,
+                src: &#struct_name,
+            ) -> #builder_name {
+                #builder_name::new(template).from_record(src)
             }
         }
     })

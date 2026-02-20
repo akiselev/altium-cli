@@ -10,7 +10,6 @@ use altium_format::handles::{
     SchArcHandle, SchComponent, SchComponentHandle, SchLabelHandle, SchLineHandle, SchPin,
     SchPinHandle, SchRectangleHandle,
 };
-use altium_format::traits::DocumentQuery;
 
 use crate::helpers::*;
 use crate::output::*;
@@ -83,7 +82,7 @@ pub fn cmd_pins(
 
     let mut all_pins: Vec<PinWithComponent> = Vec::new();
 
-    let components = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         if let Some(ref filter) = filter_lower {
             if comp.lib_ref().to_lowercase() != *filter {

@@ -37,19 +37,11 @@ fn destructive_roundtrip_synthiam_schlib() {
         orig_component_count
     );
 
-    // Print component summary using the new entries() API
+    // Print component summary using the public entries() API
     let entries = orig_lib.entries();
-    let store = orig_lib.store().borrow();
     for (i, entry) in entries.iter().enumerate() {
-        let group_id = store.group_ids()[i];
-        let group = store.group(group_id);
-        let child_count = group.child_ids().len();
-        println!(
-            "  [{}] {} ({}) - {} children",
-            i, entry.lib_ref, entry.description, child_count
-        );
+        println!("  [{}] {} ({})", i, entry.lib_ref, entry.description);
     }
-    drop(store);
 
     // Print header info
     let header = orig_lib.header();
@@ -160,24 +152,5 @@ fn record_type_name(id: u8) -> &'static str {
         209 => "Note",
         225 => "Blanket",
         _ => "Unknown",
-    }
-}
-
-/// Print a summary of record type distribution for a component's children.
-#[allow(dead_code)]
-fn print_record_type_summary(
-    store: &altium_format::store::DocumentStore,
-    child_ids: &[altium_format::ids::RecordId],
-) {
-    let mut type_counts: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
-    for &id in child_ids {
-        let key = store.record(id).key;
-        *type_counts.entry(key).or_insert(0) += 1;
-    }
-    let mut type_summary: Vec<_> = type_counts.iter().collect();
-    type_summary.sort_by_key(|(k, _)| **k);
-    for (record_id, count) in &type_summary {
-        let name = record_type_name(**record_id);
-        println!("    RECORD={} ({}): {}", record_id, name, count);
     }
 }

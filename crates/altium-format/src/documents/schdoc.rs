@@ -241,6 +241,70 @@ impl SchDoc {
             .collect()
     }
 
+    /// Query for a single schematic component handle.
+    pub fn query_component(&self, q: &str) -> Result<crate::handles::SchComponentHandle> {
+        <Self as crate::traits::DocumentQuery<crate::handles::SchComponent>>::query(self, q)
+    }
+
+    /// Query for all schematic component handles matching `q`.
+    pub fn query_all_components(&self, q: &str) -> Result<Vec<crate::handles::SchComponentHandle>> {
+        <Self as crate::traits::DocumentQuery<crate::handles::SchComponent>>::query_all(self, q)
+    }
+
+    /// Query for a single record handle of type `T` across component parents,
+    /// children, and orphan records.
+    pub fn query<T: crate::traits::HandleFamily>(&self, q: &str) -> Result<T::Handle> {
+        let matches = self.query_all::<T>(q)?;
+        match matches.len() {
+            0 => Err(AltiumError::NoMatch(q.to_string())),
+            1 => Ok(matches.into_iter().next().expect("single element")),
+            n => Err(AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    /// Query for all record handles of type `T` across component parents,
+    /// children, and orphan records.
+    pub fn query_all<T: crate::traits::HandleFamily>(&self, q: &str) -> Result<Vec<T::Handle>> {
+        use crate::query::eval::evaluate;
+        let parsed = crate::query::parse(q)?;
+
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
+
+        for &gid in store.group_ids() {
+            let group = store.group(gid);
+            let parent_id = group.parent_id();
+            let parent = store.record(parent_id);
+            if parent.key == T::record_id() && parent.origin.is_binary() == T::is_binary() {
+                let all = std::slice::from_ref(parent);
+                if !evaluate(&parsed, all).is_empty() {
+                    handles.push(T::try_make_handle(self.store.clone(), parent_id)?);
+                }
+            }
+            for &cid in group.child_ids() {
+                let child = store.record(cid);
+                if child.key == T::record_id() && child.origin.is_binary() == T::is_binary() {
+                    let all = std::slice::from_ref(child);
+                    if !evaluate(&parsed, all).is_empty() {
+                        handles.push(T::try_make_handle(self.store.clone(), cid)?);
+                    }
+                }
+            }
+        }
+
+        for &oid in store.orphan_ids() {
+            let orphan = store.record(oid);
+            if orphan.key == T::record_id() && orphan.origin.is_binary() == T::is_binary() {
+                let all = std::slice::from_ref(orphan);
+                if !evaluate(&parsed, all).is_empty() {
+                    handles.push(T::try_make_handle(self.store.clone(), oid)?);
+                }
+            }
+        }
+
+        Ok(handles)
+    }
+
     /// Returns orphan records in stable flat-stream order as `(record_id, record_ref)`.
     pub fn orphan_records(&self) -> Vec<(u8, RecordId)> {
         let store = self.store.borrow();

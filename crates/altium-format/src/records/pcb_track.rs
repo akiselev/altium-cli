@@ -167,17 +167,13 @@ mod tests {
     }
 
     #[test]
-    fn copy_modeled_fields_from_copies_binary_fields() {
+    fn builder_from_record_copies_binary_fields() {
         let mut src_data = vec![0u8; 49];
         src_data[13..17].copy_from_slice(&111_000i32.to_le_bytes());
         src_data[29..33].copy_from_slice(&12_000i32.to_le_bytes());
         src_data[35] = 1;
         let src = PcbTrackRecord::from_origin(parse_track(&src_data).unwrap());
-
-        let dst_data = vec![0u8; 49];
-        let mut dst = PcbTrackRecord::from_origin(parse_track(&dst_data).unwrap());
-
-        dst.copy_modeled_fields_from(&src);
+        let dst = PcbTrackRecord::builder_from(crate::templates::pcb_track_default, &src).build();
 
         assert_eq!(dst.start_x().to_raw(), 111_000);
         assert_eq!(dst.width().to_raw(), 12_000);

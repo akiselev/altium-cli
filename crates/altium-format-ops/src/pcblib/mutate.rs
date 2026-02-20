@@ -6,10 +6,8 @@
 
 use std::path::Path;
 
-use altium_format::backing_store::RecordNode;
 use altium_format::coord::{AltiumCoord, PcbCoord};
 use altium_format::records::PcbPadRecord;
-use altium_format::traits::{FromOrigin, RecordType};
 
 use crate::helpers::*;
 
@@ -19,8 +17,8 @@ use super::{find_footprint_by_name, mm_to_raw, open_pcblib};
 const BLANK_PCBLIB_TEMPLATE: &[u8] =
     include_bytes!("../../../altium-format/data/blank/PcbLib1.PcbLib");
 
-/// Build a pad RecordNode from parameters.
-fn build_pad_node(
+/// Build a typed pad record from parameters.
+fn build_pad_record(
     x: PcbCoord,
     y: PcbCoord,
     w: PcbCoord,
@@ -28,7 +26,7 @@ fn build_pad_node(
     hole: PcbCoord,
     shape: u8,
     layer: u8,
-) -> RecordNode {
+) -> PcbPadRecord {
     let origin = altium_format::templates::pcb_pad_default();
     let mut pad = PcbPadRecord::from_origin(origin);
     pad.set_position_x(x);
@@ -45,7 +43,7 @@ fn build_pad_node(
     pad.set_bot_shape(shape);
     pad.set_is_plated(hole.to_raw() > 0);
     pad.set_layer(layer);
-    RecordNode::new(PcbPadRecord::RECORD_ID, pad.into_origin())
+    pad
 }
 
 /// Creates an empty PcbLib file at the given path.
@@ -114,8 +112,8 @@ pub fn cmd_add_pad(
     let shape_byte = parse_shape(shape);
     let layer: u8 = if hole_raw.to_raw() > 0 { 74 } else { 1 };
 
-    let node = build_pad_node(x_raw, y_raw, w_raw, h_raw, hole_raw, shape_byte, layer);
-    fp.add_record(node);
+    let pad = build_pad_record(x_raw, y_raw, w_raw, h_raw, hole_raw, shape_byte, layer);
+    fp.add_primitive_record(pad);
 
     lib.save_file(path).map_err(|e| e.to_string())?;
 
@@ -406,7 +404,7 @@ pub fn cmd_add_pad_row(
             (x_offset as i64, y_offset as i64 + offset_along)
         };
 
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(px as i32),
             PcbCoord::from_raw(py as i32),
             PcbCoord::from_raw(pw_raw),
@@ -415,7 +413,7 @@ pub fn cmd_add_pad_row(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -474,7 +472,7 @@ pub fn cmd_add_dual_row(
     // Left side: pads 1..N (bottom to top)
     for i in 0..pads_per_side {
         let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(-half_spacing),
             PcbCoord::from_raw(y as i32),
             PcbCoord::from_raw(pw_raw),
@@ -483,13 +481,13 @@ pub fn cmd_add_dual_row(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     // Right side: pads N+1..2N (top to bottom, standard IC numbering)
     for i in 0..pads_per_side {
         let y = (total_span / 2) - pitch_raw as i64 * i as i64;
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(half_spacing),
             PcbCoord::from_raw(y as i32),
             PcbCoord::from_raw(pw_raw),
@@ -498,7 +496,7 @@ pub fn cmd_add_dual_row(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -543,7 +541,7 @@ pub fn cmd_add_quad_pads(
     // Side 1: Bottom (left to right)
     for i in 0..pads_per_side {
         let x = -(total_span / 2) + pitch_raw as i64 * i as i64;
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(x as i32),
             PcbCoord::from_raw(-half_span),
             PcbCoord::from_raw(pw_raw),
@@ -552,13 +550,13 @@ pub fn cmd_add_quad_pads(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     // Side 2: Right (bottom to top)
     for i in 0..pads_per_side {
         let y = -(total_span / 2) + pitch_raw as i64 * i as i64;
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(half_span),
             PcbCoord::from_raw(y as i32),
             PcbCoord::from_raw(ph_raw), // rotated
@@ -567,13 +565,13 @@ pub fn cmd_add_quad_pads(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     // Side 3: Top (right to left)
     for i in 0..pads_per_side {
         let x = (total_span / 2) - pitch_raw as i64 * i as i64;
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(x as i32),
             PcbCoord::from_raw(half_span),
             PcbCoord::from_raw(pw_raw),
@@ -582,13 +580,13 @@ pub fn cmd_add_quad_pads(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     // Side 4: Left (top to bottom)
     for i in 0..pads_per_side {
         let y = (total_span / 2) - pitch_raw as i64 * i as i64;
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(-half_span),
             PcbCoord::from_raw(y as i32),
             PcbCoord::from_raw(ph_raw), // rotated
@@ -597,7 +595,7 @@ pub fn cmd_add_quad_pads(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -660,7 +658,7 @@ pub fn cmd_add_pad_grid(
 
     let zero_hole = PcbCoord::from_raw(0);
     for &(x, y) in &positions {
-        let node = build_pad_node(
+        let node = build_pad_record(
             PcbCoord::from_raw(x as i32),
             PcbCoord::from_raw(y as i32),
             PcbCoord::from_raw(diam_raw),
@@ -669,7 +667,7 @@ pub fn cmd_add_pad_grid(
             shape_byte,
             layer,
         );
-        fp.add_record(node);
+        fp.add_primitive_record(node);
     }
 
     lib.save_file(path).map_err(|e| e.to_string())?;

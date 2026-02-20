@@ -51,14 +51,7 @@ pub fn cmd_add_component(
         });
     });
 
-    // Clear raw header to force rebuild
-    {
-        let mut store = lib.store().borrow_mut();
-        if let altium_format::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
-        {
-            *raw_header = None;
-        }
-    }
+    lib.invalidate_cached_header();
 
     // Write back
     lib.save_file(path).map_err(|e| e.to_string())?;
@@ -86,30 +79,20 @@ pub fn cmd_add_pin(
     let electrical = parse_electrical_type(electrical_type);
 
     // Build pin record from template
-    use altium_format::backing_store::RecordNode;
     use altium_format::newtypes::{Designator, PinName};
     use altium_format::records::SchPinRecord;
     use altium_format::templates;
-    use altium_format::traits::{FromOrigin, RecordType};
 
     let pin_origin = templates::sch_pin_default();
-    let mut pin_rec = SchPinRecord::from_origin(pin_origin.clone());
+    let mut pin_rec = SchPinRecord::from_origin(pin_origin);
     pin_rec.set_designator(Designator::from(designator));
     pin_rec.set_name(PinName::from(name));
     pin_rec.set_electrical(electrical);
-    let node = RecordNode::new(SchPinRecord::RECORD_ID, pin_rec.into_origin());
 
     let comp = SchComponentHandle::new(lib.store().clone(), group_id);
-    comp.add_record(node);
+    comp.add_child_record(pin_rec);
 
-    // Clear raw header to force rebuild
-    {
-        let mut store = lib.store().borrow_mut();
-        if let altium_format::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
-        {
-            *raw_header = None;
-        }
-    }
+    lib.invalidate_cached_header();
 
     // Write back
     lib.save_file(path).map_err(|e| e.to_string())?;

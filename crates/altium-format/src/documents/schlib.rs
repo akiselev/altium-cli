@@ -218,6 +218,22 @@ impl SchLib {
         }
     }
 
+    /// Invalidates cached raw header passthrough so save regenerates the
+    /// header from typed metadata.
+    pub fn invalidate_cached_header(&self) {
+        let mut store = self.store.borrow_mut();
+        if let DocumentMeta::SchLib {
+            raw_header,
+            raw_header_params,
+            ..
+        } = &mut store.meta
+        {
+            *raw_header = None;
+            *raw_header_params = None;
+            store.mark_semantic_ids_dirty();
+        }
+    }
+
     /// Returns the stable document-level semantic ID, if computed.
     pub fn document_id(&self) -> Option<crate::semantic_ids::SemanticId> {
         let mut store = self.store.borrow_mut();
@@ -745,6 +761,58 @@ impl SchLib {
                 }
             })
             .collect()
+    }
+
+    /// Query for a single schematic component handle.
+    pub fn query_component(&self, q: &str) -> Result<crate::handles::SchComponentHandle> {
+        <Self as crate::traits::DocumentQuery<crate::handles::SchComponent>>::query(self, q)
+    }
+
+    /// Query for all schematic component handles matching `q`.
+    pub fn query_all_components(&self, q: &str) -> Result<Vec<crate::handles::SchComponentHandle>> {
+        <Self as crate::traits::DocumentQuery<crate::handles::SchComponent>>::query_all(self, q)
+    }
+
+    /// Query for a single record handle of type `T` across component parents
+    /// and children.
+    pub fn query<T: HandleFamily>(&self, q: &str) -> Result<T::Handle> {
+        let matches = self.query_all::<T>(q)?;
+        match matches.len() {
+            0 => Err(AltiumError::NoMatch(q.to_string())),
+            1 => Ok(matches.into_iter().next().expect("single element")),
+            n => Err(AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    /// Query for all record handles of type `T` across component parents and
+    /// children.
+    pub fn query_all<T: HandleFamily>(&self, q: &str) -> Result<Vec<T::Handle>> {
+        use crate::query::eval::evaluate;
+        let parsed = crate::query::parse(q)?;
+
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
+        for &gid in store.group_ids() {
+            let group = store.group(gid);
+            let parent_id = group.parent_id();
+            let parent = store.record(parent_id);
+            if parent.key == T::record_id() && parent.origin.is_binary() == T::is_binary() {
+                let all = std::slice::from_ref(parent);
+                if !evaluate(&parsed, all).is_empty() {
+                    handles.push(T::try_make_handle(self.store.clone(), parent_id)?);
+                }
+            }
+            for &cid in group.child_ids() {
+                let child = store.record(cid);
+                if child.key == T::record_id() && child.origin.is_binary() == T::is_binary() {
+                    let all = std::slice::from_ref(child);
+                    if !evaluate(&parsed, all).is_empty() {
+                        handles.push(T::try_make_handle(self.store.clone(), cid)?);
+                    }
+                }
+            }
+        }
+        Ok(handles)
     }
 
     /// Returns component entries derived from store group metadata.

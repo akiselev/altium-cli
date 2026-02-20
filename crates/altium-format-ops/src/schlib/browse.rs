@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use altium_format::handles::{SchComponent, SchPin};
-use altium_format::traits::DocumentQuery;
 
 use crate::categorization::categorize_component;
 use crate::helpers::*;
@@ -22,7 +21,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     // 1. COMPONENTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<ComponentSummary>> = HashMap::new();
 
-    let components = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         let category = categorize_component(&comp.lib_ref(), &comp.description());
         let pin_count = comp.child_count::<SchPin>();
@@ -78,7 +77,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     let mut total_pins = 0;
     let mut pin_types: HashMap<&'static str, usize> = HashMap::new();
 
-    let components = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         let pins = comp.children::<SchPin>();
         for pin_handle in &pins {
@@ -98,7 +97,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     // 3. MULTI-PART COMPONENTS
     let mut multi_part_components: Vec<ComponentSummary> = Vec::new();
 
-    let components = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         if comp.part_count() > 1 {
             multi_part_components.push(ComponentSummary {
@@ -114,7 +113,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     // 4. LARGEST COMPONENTS (by pin count)
     let mut by_pins: Vec<ComponentSummary> = Vec::new();
 
-    let components = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         by_pins.push(ComponentSummary {
             name: comp.lib_ref(),
@@ -147,7 +146,7 @@ pub fn cmd_list(path: &Path) -> Result<SchLibComponentList, Box<dyn std::error::
 
     let mut components: Vec<ComponentSummary> = Vec::new();
 
-    let results = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let results = lib.query_all::<SchComponent>("#1")?;
     for comp in &results {
         components.push(ComponentSummary {
             name: comp.lib_ref(),
@@ -179,7 +178,7 @@ pub fn cmd_search(
 
     let mut matches: Vec<ComponentSummary> = Vec::new();
 
-    let results = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let results = lib.query_all::<SchComponent>("#1")?;
     for comp in &results {
         let name = comp.lib_ref().to_lowercase();
         let desc = comp.description().to_lowercase();
@@ -233,7 +232,7 @@ pub fn cmd_info(path: &Path) -> Result<SchLibInfo, Box<dyn std::error::Error>> {
     let mut total_primitives = 0;
     let mut multi_part_count = 0;
 
-    let components = DocumentQuery::<SchComponent>::query_all(&lib, "#1")?;
+    let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         let counts = count_primitives(comp);
         for (name, count) in counts {

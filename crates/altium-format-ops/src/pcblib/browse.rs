@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use altium_format::handles::{PcbFootprint, PcbPad};
-use altium_format::traits::DocumentQuery;
 
 use crate::helpers::*;
 use crate::output::*;
@@ -22,7 +21,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     // 1. FOOTPRINTS BY CATEGORY
     let mut categories: HashMap<&'static str, Vec<FootprintSummaryExt>> = HashMap::new();
 
-    let footprints = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let fp_name = fp.name();
         let fp_rec = fp.read();
@@ -148,7 +147,7 @@ pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::
     let lib = open_pcblib(path)?;
 
     let mut fps: Vec<FootprintSummaryExt> = Vec::new();
-    let footprints = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let fp_name = fp.name();
         let fp_rec = fp.read();
@@ -180,7 +179,7 @@ pub fn cmd_search(
 
     let mut matches: Vec<FootprintSummaryExt> = Vec::new();
 
-    let footprints = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let fp_name = fp.name();
         let fp_rec = fp.read();
@@ -231,7 +230,7 @@ pub fn cmd_info(path: &Path) -> Result<PcbLibInfo, Box<dyn std::error::Error>> {
     let mut primitive_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut total_primitives = 0;
 
-    let footprints = DocumentQuery::<PcbFootprint>::query_all(&lib, "#0")?;
+    let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let counts = count_primitives(fp);
         for (name, count) in counts {

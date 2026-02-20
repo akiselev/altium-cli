@@ -1220,6 +1220,58 @@ impl PcbLib {
             .collect()
     }
 
+    /// Query for a single footprint handle.
+    pub fn query_footprint(&self, q: &str) -> Result<crate::handles::PcbFootprintHandle> {
+        <Self as crate::traits::DocumentQuery<crate::handles::PcbFootprint>>::query(self, q)
+    }
+
+    /// Query for all footprint handles matching `q`.
+    pub fn query_all_footprints(&self, q: &str) -> Result<Vec<crate::handles::PcbFootprintHandle>> {
+        <Self as crate::traits::DocumentQuery<crate::handles::PcbFootprint>>::query_all(self, q)
+    }
+
+    /// Query for a single record handle of type `T` across footprint metadata
+    /// records and primitives.
+    pub fn query<T: HandleFamily>(&self, q: &str) -> Result<T::Handle> {
+        let matches = self.query_all::<T>(q)?;
+        match matches.len() {
+            0 => Err(AltiumError::NoMatch(q.to_string())),
+            1 => Ok(matches.into_iter().next().expect("single element")),
+            n => Err(AltiumError::AmbiguousMatch(n, q.to_string())),
+        }
+    }
+
+    /// Query for all record handles of type `T` across footprint metadata
+    /// records and primitives.
+    pub fn query_all<T: HandleFamily>(&self, q: &str) -> Result<Vec<T::Handle>> {
+        use crate::query::eval::evaluate;
+        let parsed = crate::query::parse(q)?;
+
+        let store = self.store.borrow();
+        let mut handles = Vec::new();
+        for &gid in store.group_ids() {
+            let group = store.group(gid);
+            let parent_id = group.parent_id();
+            let parent = store.record(parent_id);
+            if parent.key == T::record_id() && parent.origin.is_binary() == T::is_binary() {
+                let all = std::slice::from_ref(parent);
+                if !evaluate(&parsed, all).is_empty() {
+                    handles.push(T::try_make_handle(self.store.clone(), parent_id)?);
+                }
+            }
+            for &cid in group.child_ids() {
+                let child = store.record(cid);
+                if child.key == T::record_id() && child.origin.is_binary() == T::is_binary() {
+                    let all = std::slice::from_ref(child);
+                    if !evaluate(&parsed, all).is_empty() {
+                        handles.push(T::try_make_handle(self.store.clone(), cid)?);
+                    }
+                }
+            }
+        }
+        Ok(handles)
+    }
+
     /// Find a footprint by name (case-insensitive), returns a handle.
     pub fn find_footprint(&self, name: &str) -> Option<PcbFootprintHandle> {
         let store = self.store.borrow();

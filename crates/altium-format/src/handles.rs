@@ -129,6 +129,28 @@ impl_record_handle!(SchBlanketHandle, SchBlanketRecord);
 impl_record_handle!(SchTaskHolderHandle, SchTaskHolderRecord);
 impl_record_handle!(SchComponentRecordHandle, SchComponentRecord);
 
+impl SchPinHandle {
+    /// Read a pin record regardless of whether its backing origin is param
+    /// text or legacy binary.
+    pub fn read_normalized(&self) -> SchPinRecord {
+        let store = self.store.borrow();
+        let node = &store.records[self.id];
+        match &node.origin {
+            crate::backing_store::RecordOrigin::Param(_) => {
+                SchPinRecord::from_origin(node.origin.clone())
+            }
+            crate::backing_store::RecordOrigin::Binary(b) => {
+                SchPinRecord::from_legacy_binary_record_data(&b.raw_block).unwrap_or_else(|| {
+                    panic!(
+                        "failed to decode legacy binary pin payload ({} bytes)",
+                        b.raw_block.len()
+                    )
+                })
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PCB record handles
 // ---------------------------------------------------------------------------
