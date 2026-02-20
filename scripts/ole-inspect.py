@@ -542,6 +542,14 @@ def cmd_text(args: argparse.Namespace) -> int:
                 k = param["key"]
                 key_counts[k] += 1
 
+    if args.records:
+        if args.max_records is None:
+            selected_records = all_records
+        else:
+            selected_records = all_records[: args.max_records]
+    else:
+        selected_records = []
+
     output: dict[str, Any] = {
         "file": str(path),
         "read_error": read_error,
@@ -552,7 +560,7 @@ def cmd_text(args: argparse.Namespace) -> int:
         "total_text_records": len(all_records),
         "record_id_counts": dict(sorted(record_counts.items())),
         "top_keys": key_counts.most_common(args.top_keys),
-        "records": all_records[: args.max_records] if args.records else [],
+        "records": selected_records,
     }
 
     if args.json:
@@ -664,6 +672,11 @@ def cmd_pcb(args: argparse.Namespace) -> int:
         by_stream[sp] = ids
         counts.update(ids)
 
+    if args.max_ids_per_stream is None:
+        stream_ids = {k: v for k, v in by_stream.items()}
+    else:
+        stream_ids = {k: v[: args.max_ids_per_stream] for k, v in by_stream.items()}
+
     output = {
         "file": str(path),
         "read_error": read_error,
@@ -672,7 +685,7 @@ def cmd_pcb(args: argparse.Namespace) -> int:
         "parse_issue_count": sum(len(v) for v in parse_issues.values()),
         "parse_issues": dict(sorted(parse_issues.items())),
         "object_id_counts": dict(sorted(counts.items())),
-        "streams": {k: v[: args.max_ids_per_stream] for k, v in by_stream.items()},
+        "streams": stream_ids,
     }
     if args.json:
         print(json.dumps(output, indent=2 if args.pretty else None))
@@ -1117,7 +1130,7 @@ def cmd_everything(args: argparse.Namespace) -> int:
         top_keys=30,
         records=False,
         show_params=False,
-        max_records=20,
+        max_records=None,
     )
     status |= cmd_text(text_args)
 
@@ -1127,7 +1140,7 @@ def cmd_everything(args: argparse.Namespace) -> int:
         stream=args.stream,
         json=False,
         pretty=False,
-        max_ids_per_stream=100,
+        max_ids_per_stream=None,
         stream_ids=True,
     )
     status |= cmd_pcb(pcb_args)
@@ -1161,9 +1174,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp_text.add_argument("path", help="Path to an Altium OLE file.")
     sp_text.add_argument("--stream", help="Substring filter for stream path.")
     sp_text.add_argument("--top-keys", type=int, default=40, help="Number of most common keys to show.")
-    sp_text.add_argument("--records", action="store_true", help="Include sample records.")
+    sp_text.add_argument("--records", action="store_true", help="Include parsed records.")
     sp_text.add_argument("--show-params", action="store_true", help="When used with --records, print all key/value pairs.")
-    sp_text.add_argument("--max-records", type=int, default=30, help="Max sample records.")
+    sp_text.add_argument(
+        "--max-records",
+        type=int,
+        default=None,
+        help="Max records to include when --records is set (default: all).",
+    )
     add_json_flags(sp_text)
     sp_text.set_defaults(func=cmd_text)
 
@@ -1171,7 +1189,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_pcb.add_argument("path", help="Path to a .PcbDoc or .PcbLib file.")
     sp_pcb.add_argument("--stream", help="Substring filter for stream path.")
     sp_pcb.add_argument("--stream-ids", action="store_true", help="Show per-stream object ID lists.")
-    sp_pcb.add_argument("--max-ids-per-stream", type=int, default=200, help="Cap per-stream ID list output.")
+    sp_pcb.add_argument(
+        "--max-ids-per-stream",
+        type=int,
+        default=None,
+        help="Max IDs to include per stream when --stream-ids is set (default: all).",
+    )
     add_json_flags(sp_pcb)
     sp_pcb.set_defaults(func=cmd_pcb)
 
