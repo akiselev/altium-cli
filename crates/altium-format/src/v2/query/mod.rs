@@ -55,9 +55,9 @@ pub fn parse(query: &str) -> crate::Result<AqlQuery> {
 /// matched `Rule::query` pair. We unwrap that outer pair and then look for
 /// the `Rule::expr` child inside it.
 fn build_query(mut pairs: pest::iterators::Pairs<'_, Rule>) -> crate::Result<AqlQuery> {
-    let query_pair = pairs.next().ok_or_else(|| {
-        crate::AltiumError::Query("empty parse result".into())
-    })?;
+    let query_pair = pairs
+        .next()
+        .ok_or_else(|| crate::AltiumError::Query("empty parse result".into()))?;
     for pair in query_pair.into_inner() {
         if pair.as_rule() == Rule::expr {
             return Ok(AqlQuery {
@@ -111,9 +111,9 @@ fn build_term(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlTerm> {
 /// A factor is either `NOT factor` (recursive) or a `selector`.
 fn build_factor(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlFactor> {
     let mut inner_pairs = pair.into_inner();
-    let first = inner_pairs.next().ok_or_else(|| {
-        crate::AltiumError::Query("expected content inside factor".into())
-    })?;
+    let first = inner_pairs
+        .next()
+        .ok_or_else(|| crate::AltiumError::Query("expected content inside factor".into()))?;
     match first.as_rule() {
         Rule::factor => {
             // This is the `NOT ~ factor` branch — the keyword "NOT" was
@@ -131,9 +131,10 @@ fn build_factor(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlFacto
 ///
 /// The grammar defines: `selector = { compound_selector | element_type | pattern }`
 fn build_selector(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlSelector> {
-    let inner = pair.into_inner().next().ok_or_else(|| {
-        crate::AltiumError::Query("expected content inside selector".into())
-    })?;
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| crate::AltiumError::Query("expected content inside selector".into()))?;
     match inner.as_rule() {
         Rule::compound_selector => build_compound_selector(inner),
         Rule::element_type => Ok(AqlSelector::ElementType(parse_element_type(inner)?)),
@@ -148,9 +149,7 @@ fn build_selector(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlSel
 }
 
 /// Build an [`AqlSelector::Compound`] from a `Rule::compound_selector` pair.
-fn build_compound_selector(
-    pair: pest::iterators::Pair<'_, Rule>,
-) -> crate::Result<AqlSelector> {
+fn build_compound_selector(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlSelector> {
     let mut base: Option<AqlSelector> = None;
     let mut filters: Vec<AqlAttrFilter> = Vec::new();
 
@@ -169,9 +168,8 @@ fn build_compound_selector(
         }
     }
 
-    let base = base.ok_or_else(|| {
-        crate::AltiumError::Query("compound selector missing base".into())
-    })?;
+    let base =
+        base.ok_or_else(|| crate::AltiumError::Query("compound selector missing base".into()))?;
 
     if filters.is_empty() {
         // Degenerate compound — return the bare selector.
@@ -186,9 +184,10 @@ fn build_compound_selector(
 
 /// Build an [`AqlPattern`] from a `Rule::pattern` pair.
 fn build_pattern(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlPattern> {
-    let inner = pair.into_inner().next().ok_or_else(|| {
-        crate::AltiumError::Query("expected content inside pattern".into())
-    })?;
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| crate::AltiumError::Query("expected content inside pattern".into()))?;
     match inner.as_rule() {
         Rule::designator_pat => build_designator_pattern(inner),
         Rule::net_pat => {
@@ -240,9 +239,7 @@ fn build_pattern(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlPatt
                 .to_owned();
             let pin = parts
                 .next()
-                .ok_or_else(|| {
-                    crate::AltiumError::Query("missing pin in pin pattern".into())
-                })?
+                .ok_or_else(|| crate::AltiumError::Query("missing pin in pin pattern".into()))?
                 .as_str()
                 .to_owned();
             Ok(AqlPattern::Pin(comp, pin))
@@ -259,9 +256,7 @@ fn build_pattern(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlPatt
 /// `designator_pat = @{ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* ~ ("*" | "??" | "?")? }`
 ///
 /// So we get the entire matched text as a single string and split it ourselves.
-fn build_designator_pattern(
-    pair: pest::iterators::Pair<'_, Rule>,
-) -> crate::Result<AqlPattern> {
+fn build_designator_pattern(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlPattern> {
     let text = pair.as_str();
 
     // Determine suffix type and split.
@@ -305,9 +300,7 @@ fn extract_alpha_prefix(s: &str) -> &str {
 }
 
 /// Parse an `element_type` rule into [`AqlElementType`].
-fn parse_element_type(
-    pair: pest::iterators::Pair<'_, Rule>,
-) -> crate::Result<AqlElementType> {
+fn parse_element_type(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlElementType> {
     let text = pair.as_str().to_ascii_lowercase();
     match text.as_str() {
         "component" => Ok(AqlElementType::Component),
@@ -394,9 +387,10 @@ fn parse_attr_op(s: &str) -> crate::Result<AqlAttrOp> {
 
 /// Build an [`AqlAttrValue`] from a `Rule::attr_value` pair.
 fn build_attr_value(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlAttrValue> {
-    let inner = pair.into_inner().next().ok_or_else(|| {
-        crate::AltiumError::Query("expected value inside attr_value".into())
-    })?;
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| crate::AltiumError::Query("expected value inside attr_value".into()))?;
     match inner.as_rule() {
         Rule::coord_value => {
             let text = inner.as_str();
@@ -413,9 +407,7 @@ fn build_attr_value(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlA
                 )));
             };
             let num: f64 = num_str.parse().map_err(|e| {
-                crate::AltiumError::Query(format!(
-                    "invalid number in coord '{num_str}': {e}"
-                ))
+                crate::AltiumError::Query(format!("invalid number in coord '{num_str}': {e}"))
             })?;
             Ok(AqlAttrValue::Coord(num, unit.to_owned()))
         }
@@ -427,10 +419,7 @@ fn build_attr_value(pair: pest::iterators::Pair<'_, Rule>) -> crate::Result<AqlA
         }
         Rule::number => {
             let num: f64 = inner.as_str().parse().map_err(|e| {
-                crate::AltiumError::Query(format!(
-                    "invalid number '{}': {e}",
-                    inner.as_str()
-                ))
+                crate::AltiumError::Query(format!("invalid number '{}': {e}", inner.as_str()))
             })?;
             Ok(AqlAttrValue::Number(num))
         }
@@ -580,9 +569,9 @@ mod tests {
     fn parse_element_type_component() {
         let q = parse("component").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(
-                AqlSelector::ElementType(AqlElementType::Component),
-            ))) => {}
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::ElementType(
+                AqlElementType::Component,
+            )))) => {}
             other => panic!("unexpected AST: {other:?}"),
         }
     }
@@ -591,9 +580,9 @@ mod tests {
     fn parse_element_type_case_insensitive() {
         let q = parse("COMPONENT").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(
-                AqlSelector::ElementType(AqlElementType::Component),
-            ))) => {}
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::ElementType(
+                AqlElementType::Component,
+            )))) => {}
             other => panic!("unexpected AST: {other:?}"),
         }
     }
@@ -602,9 +591,7 @@ mod tests {
     fn parse_attr_filter() {
         let q = parse("component[value=10K]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert!(matches!(
                     *c.base,
                     AqlSelector::ElementType(AqlElementType::Component)
@@ -612,9 +599,7 @@ mod tests {
                 assert_eq!(c.filters.len(), 1);
                 assert_eq!(c.filters[0].field, "value");
                 assert_eq!(c.filters[0].op, AqlAttrOp::Eq);
-                assert!(
-                    matches!(&c.filters[0].value, AqlAttrValue::String(s) if s == "10K")
-                );
+                assert!(matches!(&c.filters[0].value, AqlAttrValue::String(s) if s == "10K"));
             }
             other => panic!("unexpected AST: {other:?}"),
         }
@@ -624,9 +609,7 @@ mod tests {
     fn parse_attr_filter_coord() {
         let q = parse("track[width>=10mil]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert!(matches!(
                     *c.base,
                     AqlSelector::ElementType(AqlElementType::Track)
@@ -650,9 +633,7 @@ mod tests {
     fn parse_attr_filter_number() {
         let q = parse("component[x>1000]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert_eq!(c.filters[0].field, "x");
                 assert_eq!(c.filters[0].op, AqlAttrOp::Gt);
                 match &c.filters[0].value {
@@ -670,9 +651,7 @@ mod tests {
     fn parse_attr_filter_quoted_string() {
         let q = parse(r#"component[description="high power"]"#).unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert_eq!(c.filters[0].field, "description");
                 assert_eq!(c.filters[0].op, AqlAttrOp::Eq);
                 assert!(matches!(
@@ -688,9 +667,7 @@ mod tests {
     fn parse_attr_filter_boolean() {
         let q = parse("component[locked=true]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert!(matches!(&c.filters[0].value, AqlAttrValue::Bool(true)));
             }
             other => panic!("unexpected AST: {other:?}"),
@@ -701,9 +678,7 @@ mod tests {
     fn parse_multiple_attr_filters() {
         let q = parse("component[x>=1000][x<=3000]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert_eq!(c.filters.len(), 2);
                 assert_eq!(c.filters[0].field, "x");
                 assert_eq!(c.filters[0].op, AqlAttrOp::Gte);
@@ -718,9 +693,7 @@ mod tests {
     fn parse_compound() {
         let q = parse("component[value=10K]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert!(matches!(
                     *c.base,
                     AqlSelector::ElementType(AqlElementType::Component)
@@ -803,9 +776,7 @@ mod tests {
         // Designator pattern with attribute filter.
         let q = parse("R*[value=10K]").unwrap();
         match &q.expr {
-            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(
-                c,
-            )))) => {
+            AqlExpr::Term(AqlTerm::Factor(AqlFactor::Selector(AqlSelector::Compound(c)))) => {
                 assert!(matches!(
                     &*c.base,
                     AqlSelector::Pattern(AqlPattern::Designator(d)) if d.prefix == "R"

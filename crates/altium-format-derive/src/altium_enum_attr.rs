@@ -33,10 +33,7 @@ impl Parse for AltiumEnumArgs {
         if !input.is_empty() {
             let ident: Ident = input.parse()?;
             if ident != "fallback" {
-                return Err(syn::Error::new_spanned(
-                    ident,
-                    "expected `fallback`",
-                ));
+                return Err(syn::Error::new_spanned(ident, "expected `fallback`"));
             }
             input.parse::<Token![=]>()?;
             let lit: LitStr = input.parse()?;

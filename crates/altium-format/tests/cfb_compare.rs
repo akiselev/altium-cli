@@ -58,6 +58,21 @@ fn text_param_value_diff_detected() {
 }
 
 #[test]
+fn text_param_duplicate_occurrence_diff_detected() {
+    let orig = make_cfb(&[("/FileHeader", b"|A=1|A=2|B=3|")]);
+    let rebuilt = make_cfb(&[("/FileHeader", b"|A=2|B=3|")]);
+    let report = compare_cfb_files(&orig, &rebuilt);
+    assert!(!report.is_match());
+    assert_eq!(report.text_diffs.len(), 1);
+    assert!(
+        report.text_diffs[0]
+            .param_diffs
+            .iter()
+            .any(|(k, _, _)| k == "A")
+    );
+}
+
+#[test]
 fn missing_stream_detected() {
     let orig = make_cfb(&[("/FileHeader", b"|A=1|"), ("/Extra", b"|X=Y|")]);
     let rebuilt = make_cfb(&[("/FileHeader", b"|A=1|")]);
@@ -86,11 +101,7 @@ fn is_text_heuristic_works() {
 
 #[test]
 fn diff_count_sums_all_differences() {
-    let orig = make_cfb(&[
-        ("/A", b"|X=1|"),
-        ("/B", &[0x00, 0x01]),
-        ("/C", b"|Y=2|"),
-    ]);
+    let orig = make_cfb(&[("/A", b"|X=1|"), ("/B", &[0x00, 0x01]), ("/C", b"|Y=2|")]);
     let rebuilt = make_cfb(&[("/A", b"|X=99|"), ("/B", &[0x00, 0xFF])]);
     let report = compare_cfb_files(&orig, &rebuilt);
     assert_eq!(report.diff_count(), 3); // 1 text diff + 1 binary diff + 1 only_in_original

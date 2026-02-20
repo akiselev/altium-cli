@@ -2,16 +2,16 @@
 
 // Foundation
 pub mod backing_store;
-pub mod coord;
-pub mod traits;
-pub mod newtypes;
 pub mod binary_helpers;
+pub mod coord;
+pub mod newtypes;
+pub mod traits;
 
 // ID types and store
-pub mod ids;
-pub mod store;
 pub mod handles;
+pub mod ids;
 pub mod semantic_ids;
+pub mod store;
 
 // PCB-specific types (enums, etc.)
 pub mod pcb;
@@ -26,8 +26,8 @@ pub mod documents;
 pub mod query;
 
 // Templates & builders
-pub mod templates;
 pub mod builders;
+pub mod templates;
 
 // ParameterCollection (from v1, self-contained)
 pub mod parameters;

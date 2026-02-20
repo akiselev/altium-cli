@@ -1,8 +1,8 @@
 //! Schematic polygon record (RECORD=7).
 
-use altium_format_derive::altium_record;
-use crate::v2::newtypes::UniqueId;
 use super::enums::*;
+use crate::v2::newtypes::UniqueId;
+use altium_format_derive::altium_record;
 
 /// Schematic polygon record -- RECORD=7.
 ///
@@ -47,7 +47,6 @@ pub struct SchPolygonRecord {
 
     // Vertices are skipped for now -- handled in later phases
     // vertices: Vec<(SchCoord, SchCoord)>,
-
     #[altium(key = "UniqueID")]
     unique_id: UniqueId,
 }

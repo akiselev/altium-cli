@@ -35,6 +35,12 @@ pub struct DocumentStore {
     pub(crate) group_semantic_ids: HashMap<GroupId, crate::v2::semantic_ids::SemanticId>,
     /// Stable semantic IDs for each record.
     pub(crate) record_semantic_ids: HashMap<RecordId, crate::v2::semantic_ids::SemanticId>,
+    /// True when semantic IDs need recomputation after a mutation.
+    pub(crate) semantic_ids_dirty: bool,
+    /// Stored semantic ID document type key (e.g. "dtid:schlib").
+    pub(crate) semantic_dtid: Option<String>,
+    /// Stored semantic document key input (e.g. unique ID or content hash).
+    pub(crate) semantic_doc_key: Option<String>,
 }
 
 /// Data for a single group (component or footprint).
@@ -79,6 +85,7 @@ pub enum DocumentMeta {
         minor_version: i32,
         unique_id: String,
         raw_header: Option<Vec<u8>>,
+        raw_header_params: Option<crate::v2::parameters::ParameterCollection>,
         section_keys: crate::v2::documents::section_keys::SectionKeyList,
         raw_extra_streams: HashMap<String, Vec<u8>>,
     },
@@ -105,6 +112,9 @@ impl DocumentStore {
             document_id: None,
             group_semantic_ids: HashMap::new(),
             record_semantic_ids: HashMap::new(),
+            semantic_ids_dirty: false,
+            semantic_dtid: None,
+            semantic_doc_key: None,
         }
     }
 
@@ -176,19 +186,38 @@ impl DocumentStore {
     }
 
     /// Returns the semantic ID for a group, if computed.
-    pub fn group_semantic_id(
-        &self,
-        id: GroupId,
-    ) -> Option<&crate::v2::semantic_ids::SemanticId> {
+    pub fn group_semantic_id(&self, id: GroupId) -> Option<&crate::v2::semantic_ids::SemanticId> {
         self.group_semantic_ids.get(&id)
     }
 
     /// Returns the semantic ID for a record, if computed.
-    pub fn record_semantic_id(
-        &self,
-        id: RecordId,
-    ) -> Option<&crate::v2::semantic_ids::SemanticId> {
+    pub fn record_semantic_id(&self, id: RecordId) -> Option<&crate::v2::semantic_ids::SemanticId> {
         self.record_semantic_ids.get(&id)
+    }
+
+    /// Mark semantic IDs stale after a mutation.
+    pub fn mark_semantic_ids_dirty(&mut self) {
+        self.semantic_ids_dirty = true;
+    }
+
+    /// Configure semantic ID computation inputs for this document.
+    pub fn set_semantic_context(&mut self, dtid: &str, doc_key: &str) {
+        self.semantic_dtid = Some(dtid.to_string());
+        self.semantic_doc_key = Some(doc_key.to_string());
+    }
+
+    /// Recompute semantic IDs on demand if marked dirty.
+    pub fn ensure_semantic_ids(&mut self) {
+        if !self.semantic_ids_dirty {
+            return;
+        }
+        let Some(dtid) = self.semantic_dtid.clone() else {
+            return;
+        };
+        let Some(doc_key) = self.semantic_doc_key.clone() else {
+            return;
+        };
+        crate::v2::semantic_ids::compute_all_ids(self, &dtid, &doc_key);
     }
 }
 

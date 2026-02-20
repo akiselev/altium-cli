@@ -1,7 +1,7 @@
 //! Bus entry record (RECORD=37).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Bus entry record — connection point between a bus and a wire.
 ///

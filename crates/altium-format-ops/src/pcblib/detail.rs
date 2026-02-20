@@ -14,8 +14,8 @@ use crate::helpers::*;
 use crate::output::*;
 
 use super::{
-    compute_bounding_box, count_primitives, extract_pads,
-    find_footprint_by_name, open_pcblib, TYPE_PAD,
+    TYPE_PAD, compute_bounding_box, count_primitives, extract_pads, find_footprint_by_name,
+    open_pcblib,
 };
 
 /// Returns detailed information about a single footprint.
@@ -204,9 +204,7 @@ pub fn cmd_primitives(
 }
 
 /// Analyze hole sizes across the library.
-pub fn cmd_holes(
-    path: &Path,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+pub fn cmd_holes(path: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let lib = open_pcblib(path)?;
 
     let mut hole_info: HashMap<String, Vec<String>> = HashMap::new();
@@ -217,8 +215,7 @@ pub fn cmd_holes(
         let pads = extract_pads(fp);
         for pad in &pads {
             if pad.record.hole_size().to_raw() > 0 {
-                let hole_str =
-                    format!("{:.3}mm", pad.record.hole_size().to_mm());
+                let hole_str = format!("{:.3}mm", pad.record.hole_size().to_mm());
                 hole_info
                     .entry(hole_str)
                     .or_default()

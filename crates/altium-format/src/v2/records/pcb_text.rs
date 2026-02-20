@@ -6,8 +6,8 @@
 //!
 //! Uses custom parse/serialize functions stubbed for Phase 4.
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::PcbCoord;
+use altium_format_derive::altium_record;
 
 #[altium_record(kind = "pcb", object_id = Text, codec = "binary",
     parse_fn = "parse_text", serialize_fn = "serialize_text")]
@@ -47,8 +47,8 @@ pub struct PcbTextRecord {
 ///
 /// Typed fields are extracted from subrecord 1 at fixed offsets.
 pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
     if data.len() < 4 {
         return Err(AltiumError::Parse(
@@ -57,9 +57,7 @@ pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store:
     }
 
     // Subrecord 1: main text data
-    let sub1_len = u32::from_le_bytes(
-        data[0..4].try_into().unwrap(),
-    ) as usize;
+    let sub1_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
     let sub1_start = 4; // after length prefix
     if sub1_start + sub1_len > data.len() {
         return Err(AltiumError::Parse(
@@ -68,7 +66,8 @@ pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store:
     }
     if sub1_len < 40 {
         return Err(AltiumError::Parse(format!(
-            "text subrecord 1 too short: {} bytes (need >= 40)", sub1_len
+            "text subrecord 1 too short: {} bytes (need >= 40)",
+            sub1_len
         )));
     }
 
@@ -76,39 +75,39 @@ pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store:
     // Byte 0-12: PcbCommonHeader (13 bytes), then typed fields
     let s = sub1_start;
     let mut spans = vec![
-        FieldSpan::new(s + 13, 4),  // 0: position_x
-        FieldSpan::new(s + 17, 4),  // 1: position_y
-        FieldSpan::new(s + 21, 4),  // 2: height
-        FieldSpan::new(s + 25, 2),  // 3: stroke_font_type
-        FieldSpan::new(s + 27, 8),  // 4: rotation
-        FieldSpan::new(s + 35, 1),  // 5: is_mirrored
-        FieldSpan::new(s + 36, 4),  // 6: stroke_width
+        FieldSpan::new(s + 13, 4), // 0: position_x
+        FieldSpan::new(s + 17, 4), // 1: position_y
+        FieldSpan::new(s + 21, 4), // 2: height
+        FieldSpan::new(s + 25, 2), // 3: stroke_font_type
+        FieldSpan::new(s + 27, 8), // 4: rotation
+        FieldSpan::new(s + 35, 1), // 5: is_mirrored
+        FieldSpan::new(s + 36, 4), // 6: stroke_width
     ];
 
     // Extended fields (if subrecord 1 >= 46 bytes)
     if sub1_len >= 46 {
-        spans.push(FieldSpan::new(s + 43, 1));  // 7: font_type
-        spans.push(FieldSpan::new(s + 44, 1));  // 8: is_bold
-        spans.push(FieldSpan::new(s + 45, 1));  // 9: is_italic
+        spans.push(FieldSpan::new(s + 43, 1)); // 7: font_type
+        spans.push(FieldSpan::new(s + 44, 1)); // 8: is_bold
+        spans.push(FieldSpan::new(s + 45, 1)); // 9: is_italic
     } else {
         // Fallback spans for missing extended fields
-        spans.push(FieldSpan::new(s + 35, 1));  // 7: font_type (fallback)
-        spans.push(FieldSpan::new(s + 35, 1));  // 8: is_bold (fallback)
-        spans.push(FieldSpan::new(s + 35, 1));  // 9: is_italic (fallback)
+        spans.push(FieldSpan::new(s + 35, 1)); // 7: font_type (fallback)
+        spans.push(FieldSpan::new(s + 35, 1)); // 8: is_bold (fallback)
+        spans.push(FieldSpan::new(s + 35, 1)); // 9: is_italic (fallback)
     }
 
     if sub1_len > 110 {
         spans.push(FieldSpan::new(s + 110, 1)); // 10: is_inverted
     } else {
-        spans.push(FieldSpan::new(s + 35, 1));  // 10: fallback
+        spans.push(FieldSpan::new(s + 35, 1)); // 10: fallback
     }
 
     if sub1_len >= 46 {
-        spans.push(FieldSpan::new(s + 40, 1));  // 11: is_comment
-        spans.push(FieldSpan::new(s + 41, 1));  // 12: is_designator
+        spans.push(FieldSpan::new(s + 40, 1)); // 11: is_comment
+        spans.push(FieldSpan::new(s + 41, 1)); // 12: is_designator
     } else {
-        spans.push(FieldSpan::new(s + 35, 1));  // 11: fallback
-        spans.push(FieldSpan::new(s + 35, 1));  // 12: fallback
+        spans.push(FieldSpan::new(s + 35, 1)); // 11: fallback
+        spans.push(FieldSpan::new(s + 35, 1)); // 12: fallback
     }
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
@@ -159,19 +158,19 @@ mod tests {
         data[32] = 1;
 
         let spans = vec![
-            FieldSpan::new(0, 4),   // position_x
-            FieldSpan::new(4, 4),   // position_y
-            FieldSpan::new(8, 4),   // height
-            FieldSpan::new(12, 2),  // stroke_font_type
-            FieldSpan::new(14, 8),  // rotation
-            FieldSpan::new(22, 1),  // is_mirrored
-            FieldSpan::new(23, 4),  // stroke_width
-            FieldSpan::new(27, 1),  // font_type
-            FieldSpan::new(28, 1),  // is_bold
-            FieldSpan::new(29, 1),  // is_italic
-            FieldSpan::new(30, 1),  // is_inverted
-            FieldSpan::new(31, 1),  // is_comment
-            FieldSpan::new(32, 1),  // is_designator
+            FieldSpan::new(0, 4),  // position_x
+            FieldSpan::new(4, 4),  // position_y
+            FieldSpan::new(8, 4),  // height
+            FieldSpan::new(12, 2), // stroke_font_type
+            FieldSpan::new(14, 8), // rotation
+            FieldSpan::new(22, 1), // is_mirrored
+            FieldSpan::new(23, 4), // stroke_width
+            FieldSpan::new(27, 1), // font_type
+            FieldSpan::new(28, 1), // is_bold
+            FieldSpan::new(29, 1), // is_italic
+            FieldSpan::new(30, 1), // is_inverted
+            FieldSpan::new(31, 1), // is_comment
+            FieldSpan::new(32, 1), // is_designator
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))

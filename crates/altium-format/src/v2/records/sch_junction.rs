@@ -1,7 +1,7 @@
 //! Junction record (RECORD=29).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Junction record — wire/bus connection point on a schematic.
 ///

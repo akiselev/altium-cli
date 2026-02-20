@@ -1,8 +1,8 @@
 //! Schematic bezier record (RECORD=5).
 
-use altium_format_derive::altium_record;
-use crate::v2::newtypes::UniqueId;
 use super::enums::*;
+use crate::v2::newtypes::UniqueId;
+use altium_format_derive::altium_record;
 
 /// Schematic bezier curve record -- RECORD=5.
 ///
@@ -38,7 +38,6 @@ pub struct SchBezierRecord {
 
     // Vertices are skipped for now -- handled in later phases
     // vertices: Vec<(SchCoord, SchCoord)>,
-
     #[altium(key = "UniqueID")]
     unique_id: UniqueId,
 }
@@ -61,9 +60,7 @@ mod tests {
 
     #[test]
     fn roundtrip_bezier_setter() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=5|LineWidth=1|Color=255|",
-        ));
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=5|LineWidth=1|Color=255|"));
         let mut rec = SchBezierRecord::from_origin(origin);
         rec.set_line_width(Size::Large);
         assert_eq!(rec.line_width(), Size::Large);

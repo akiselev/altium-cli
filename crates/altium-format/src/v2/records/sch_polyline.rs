@@ -1,8 +1,8 @@
 //! Schematic polyline record (RECORD=6).
 
-use altium_format_derive::altium_record;
-use crate::v2::newtypes::UniqueId;
 use super::enums::*;
+use crate::v2::newtypes::UniqueId;
+use altium_format_derive::altium_record;
 
 /// Schematic polyline record -- RECORD=6.
 ///
@@ -50,7 +50,6 @@ pub struct SchPolylineRecord {
 
     // Vertices are skipped for now -- handled in later phases
     // vertices: Vec<(SchCoord, SchCoord)>,
-
     #[altium(key = "UniqueID")]
     unique_id: UniqueId,
 }
@@ -75,9 +74,7 @@ mod tests {
 
     #[test]
     fn roundtrip_polyline_setter() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=6|LineWidth=1|Color=255|",
-        ));
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=6|LineWidth=1|Color=255|"));
         let mut rec = SchPolylineRecord::from_origin(origin);
         rec.set_start_line_shape(LineShape::SolidArrow);
         assert_eq!(rec.start_line_shape(), LineShape::SolidArrow);

@@ -1,7 +1,7 @@
 //! IEEE Symbol record (RECORD=3).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// IEEE Symbol record — graphical symbol marker on a schematic.
 ///

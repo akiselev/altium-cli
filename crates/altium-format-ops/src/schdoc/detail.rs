@@ -47,8 +47,7 @@ pub fn cmd_netlist(
     });
 
     net_labels.sort_by(|a, b| {
-        alphanumeric_sort(&a.net_name, &b.net_name)
-            .then_with(|| a.location.cmp(&b.location))
+        alphanumeric_sort(&a.net_name, &b.net_name).then_with(|| a.location.cmp(&b.location))
     });
 
     let total = net_labels.len();

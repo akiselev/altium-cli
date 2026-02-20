@@ -1,9 +1,9 @@
 //! Schematic parameter record (RECORD=41).
 
-use altium_format_derive::altium_record;
+use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::{Description, UniqueId};
-use super::enums::*;
+use altium_format_derive::altium_record;
 
 /// Schematic parameter record -- RECORD=41.
 ///
@@ -111,9 +111,7 @@ mod tests {
 
     #[test]
     fn roundtrip_parameter_setter() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=41|Name=Value|Text=100k|",
-        ));
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=41|Name=Value|Text=100k|"));
         let mut rec = SchParameterRecord::from_origin(origin);
         rec.set_text("200k".to_string());
         assert_eq!(rec.text(), "200k");

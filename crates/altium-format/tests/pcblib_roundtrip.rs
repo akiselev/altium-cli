@@ -51,7 +51,11 @@ fn destructive_roundtrip_synthiam_pcblib() {
                     raw_pattern_name_block,
                     raw_header,
                     ..
-                } => (name.clone(), raw_pattern_name_block.clone(), raw_header.clone()),
+                } => (
+                    name.clone(),
+                    raw_pattern_name_block.clone(),
+                    raw_header.clone(),
+                ),
                 _ => continue,
             };
 
@@ -92,8 +96,8 @@ fn destructive_roundtrip_synthiam_pcblib() {
     // -----------------------------------------------------------------------
     // 3. Re-open from the saved buffer
     // -----------------------------------------------------------------------
-    let reloaded_lib = PcbLib::open(Cursor::new(rebuilt_bytes.clone()))
-        .expect("Failed to re-open saved PcbLib");
+    let reloaded_lib =
+        PcbLib::open(Cursor::new(rebuilt_bytes.clone())).expect("Failed to re-open saved PcbLib");
     let reloaded_count = reloaded_lib.footprint_count();
     println!("Re-opened PcbLib: {} footprints", reloaded_count);
 
@@ -108,11 +112,9 @@ fn destructive_roundtrip_synthiam_pcblib() {
     // 5. Structural assertions (these SHOULD pass)
     // -----------------------------------------------------------------------
     assert_eq!(
-        reloaded_count,
-        orig_footprint_count,
+        reloaded_count, orig_footprint_count,
         "Footprint count mismatch after round-trip: original={}, reloaded={}",
-        orig_footprint_count,
-        reloaded_count
+        orig_footprint_count, reloaded_count
     );
 
     // Verify footprint names are preserved
@@ -121,6 +123,16 @@ fn destructive_roundtrip_synthiam_pcblib() {
     assert_eq!(
         orig_names, reloaded_names,
         "Footprint names changed after round-trip"
+    );
+
+    // Regression guard: system storages (e.g. FileVersionInfo) must not be
+    // misclassified as footprints that synthesize Parameters streams.
+    assert!(
+        !report
+            .only_in_rebuilt
+            .iter()
+            .any(|p| p == "/FileVersionInfo/Parameters"),
+        "Unexpected synthesized /FileVersionInfo/Parameters stream"
     );
 
     // Log summary

@@ -201,10 +201,7 @@ fn matches_pattern<Q: Queryable>(pattern: &AqlPattern, record: &Q) -> bool {
 }
 
 /// Check if a designator string matches a [`DesignatorPattern`].
-fn matches_designator_pattern(
-    dp: &super::ast::DesignatorPattern,
-    designator: &str,
-) -> bool {
+fn matches_designator_pattern(dp: &super::ast::DesignatorPattern, designator: &str) -> bool {
     // Case-insensitive prefix check.
     let prefix_len = dp.prefix.len();
     if designator.len() < prefix_len {
@@ -238,12 +235,10 @@ fn matches_attr_filter<Q: Queryable>(filter: &AqlAttrFilter, record: &Q) -> bool
             hay.to_ascii_lowercase()
                 .contains(&needle.to_ascii_lowercase())
         }),
-        AqlAttrOp::StartsWith => {
-            compare_string_op(&field_val, &filter.value, |hay, needle| {
-                hay.to_ascii_lowercase()
-                    .starts_with(&needle.to_ascii_lowercase())
-            })
-        }
+        AqlAttrOp::StartsWith => compare_string_op(&field_val, &filter.value, |hay, needle| {
+            hay.to_ascii_lowercase()
+                .starts_with(&needle.to_ascii_lowercase())
+        }),
         AqlAttrOp::EndsWith => compare_string_op(&field_val, &filter.value, |hay, needle| {
             hay.to_ascii_lowercase()
                 .ends_with(&needle.to_ascii_lowercase())
@@ -268,9 +263,7 @@ fn matches_attr_filter<Q: Queryable>(filter: &AqlAttrFilter, record: &Q) -> bool
 /// value.
 fn compare_eq(field: &QueryFieldValue, query_val: &AqlAttrValue) -> bool {
     match (field, query_val) {
-        (QueryFieldValue::String(a), AqlAttrValue::String(b)) => {
-            a.eq_ignore_ascii_case(b)
-        }
+        (QueryFieldValue::String(a), AqlAttrValue::String(b)) => a.eq_ignore_ascii_case(b),
         (QueryFieldValue::Int(a), AqlAttrValue::Number(b)) => (*a as f64 - b).abs() < 0.5,
         (QueryFieldValue::Float(a), AqlAttrValue::Number(b)) => (a - b).abs() < f64::EPSILON,
         (QueryFieldValue::Bool(a), AqlAttrValue::Bool(b)) => a == b,
@@ -283,9 +276,10 @@ fn compare_eq(field: &QueryFieldValue, query_val: &AqlAttrValue) -> bool {
             (a - b).abs() < 0.01
         }
         // Cross-type: try to parse string as number for comparison.
-        (QueryFieldValue::String(a), AqlAttrValue::Number(b)) => {
-            a.parse::<f64>().map(|n| (n - b).abs() < 0.5).unwrap_or(false)
-        }
+        (QueryFieldValue::String(a), AqlAttrValue::Number(b)) => a
+            .parse::<f64>()
+            .map(|n| (n - b).abs() < 0.5)
+            .unwrap_or(false),
         (QueryFieldValue::Int(a), AqlAttrValue::String(b)) => {
             b.parse::<i32>().map(|n| *a == n).unwrap_or(false)
         }
@@ -364,9 +358,9 @@ fn attr_value_to_f64(v: &AqlAttrValue) -> Option<f64> {
 fn coord_to_mils(value: f64, unit: &str) -> f64 {
     match unit {
         "mil" => value,
-        "mm" => value / 0.0254,   // 1 mil = 0.0254 mm
-        "in" => value * 1000.0,    // 1 in = 1000 mil
-        _ => value, // unknown unit — treat as mils
+        "mm" => value / 0.0254, // 1 mil = 0.0254 mm
+        "in" => value * 1000.0, // 1 in = 1000 mil
+        _ => value,             // unknown unit — treat as mils
     }
 }
 
@@ -436,20 +430,13 @@ mod tests {
 
     // Track record with width in mils.
     fn track_record(width_mils: f64) -> MockRecord {
-        MockRecord::new(
-            102,
-            vec![("width", QueryFieldValue::Coord(width_mils))],
-        )
+        MockRecord::new(102, vec![("width", QueryFieldValue::Coord(width_mils))])
     }
 
     #[test]
     fn eval_designator_exact() {
         let q = parse("U1").unwrap();
-        let records = vec![
-            component("U1"),
-            component("U2"),
-            component("R1"),
-        ];
+        let records = vec![component("U1"), component("U2"), component("R1")];
         let result = evaluate(&q, &records);
         assert_eq!(result, vec![0]);
     }
@@ -547,11 +534,7 @@ mod tests {
     #[test]
     fn eval_attr_gt() {
         let q = parse("track[width>=10mil]").unwrap();
-        let records = vec![
-            track_record(5.0),
-            track_record(10.0),
-            track_record(20.0),
-        ];
+        let records = vec![track_record(5.0), track_record(10.0), track_record(20.0)];
         let result = evaluate(&q, &records);
         assert_eq!(result, vec![1, 2]);
     }
@@ -559,11 +542,7 @@ mod tests {
     #[test]
     fn eval_attr_lt() {
         let q = parse("track[width<10mil]").unwrap();
-        let records = vec![
-            track_record(5.0),
-            track_record(10.0),
-            track_record(20.0),
-        ];
+        let records = vec![track_record(5.0), track_record(10.0), track_record(20.0)];
         let result = evaluate(&q, &records);
         assert_eq!(result, vec![0]);
     }
@@ -589,11 +568,7 @@ mod tests {
     fn eval_not() {
         // NOT R* — matches everything that is not an R-series designator.
         let q = parse("NOT R*").unwrap();
-        let records = vec![
-            component("R1"),
-            component("U1"),
-            component("C1"),
-        ];
+        let records = vec![component("R1"), component("U1"), component("C1")];
         let result = evaluate(&q, &records);
         assert_eq!(result, vec![1, 2]);
     }
@@ -606,10 +581,7 @@ mod tests {
             component_with_value("R1", "10K"),
             component_with_value("R2", "100K"),
             // Non-component record with value 10K — should not match.
-            MockRecord::new(
-                2,
-                vec![("value", QueryFieldValue::String("10K".into()))],
-            ),
+            MockRecord::new(2, vec![("value", QueryFieldValue::String("10K".into()))]),
         ];
         let result = evaluate(&q, &records);
         assert_eq!(result, vec![0]);
@@ -645,9 +617,12 @@ mod tests {
         // "component AND [value=10K]" using explicit AND syntax.
         let q = parse("component AND R*").unwrap();
         let records = vec![
-            component("R1"),  // record_id=1 (component) AND designator starts with R
-            component("U1"),  // record_id=1 but designator starts with U
-            MockRecord::new(2, vec![("designator", QueryFieldValue::String("R2".into()))]),
+            component("R1"), // record_id=1 (component) AND designator starts with R
+            component("U1"), // record_id=1 but designator starts with U
+            MockRecord::new(
+                2,
+                vec![("designator", QueryFieldValue::String("R2".into()))],
+            ),
         ];
         let result = evaluate(&q, &records);
         // R1: component(id=1) AND R*(designator=R1) => matches
@@ -660,11 +635,7 @@ mod tests {
     fn eval_coord_mm() {
         // 0.254mm = 10mil, so track[width>=0.254mm] should behave like track[width>=10mil]
         let q = parse("track[width>=0.254mm]").unwrap();
-        let records = vec![
-            track_record(5.0),
-            track_record(10.0),
-            track_record(20.0),
-        ];
+        let records = vec![track_record(5.0), track_record(10.0), track_record(20.0)];
         let result = evaluate(&q, &records);
         assert_eq!(result, vec![1, 2]);
     }
@@ -711,7 +682,10 @@ mod tests {
         let records = vec![
             MockRecord::new(
                 1,
-                vec![("comment", QueryFieldValue::String("DNP review needed".into()))],
+                vec![(
+                    "comment",
+                    QueryFieldValue::String("DNP review needed".into()),
+                )],
             ),
             MockRecord::new(
                 1,

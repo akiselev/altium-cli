@@ -4,8 +4,8 @@
 //! Key fields: PATTERN, SOURCEDESIGNATOR, X/Y location, ROTATION, LAYER,
 //! NAMEON, COMMENTON, GROUPNUM, HEIGHT, DESCRIPTION, etc.
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::PcbCoord;
+use altium_format_derive::altium_record;
 
 #[altium_record(kind = "pcb", object_id = Component, codec = "params")]
 pub struct PcbFootprintRecord {
@@ -84,9 +84,7 @@ mod tests {
 
     #[test]
     fn footprint_read_flags() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|PATTERN=QFP-44|NAMEON=T|COMMENTON=F|",
-        ));
+        let origin = RecordOrigin::Param(ParamOrigin::new("|PATTERN=QFP-44|NAMEON=T|COMMENTON=F|"));
         let rec = PcbFootprintRecord::from_origin(origin);
 
         assert!(rec.name_on());

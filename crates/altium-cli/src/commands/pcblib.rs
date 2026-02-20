@@ -515,7 +515,15 @@ pub fn run(cmd: &PcbLibCommands, format: &str) -> Result<(), Box<dyn std::error:
         }
         PcbLibCommands::Measure { path, footprint } => {
             // Use "summary" type for overview measurement
-            pcblib::cmd_measure(path, footprint, "summary", None, None, None, format == "json")?;
+            pcblib::cmd_measure(
+                path,
+                footprint,
+                "summary",
+                None,
+                None,
+                None,
+                format == "json",
+            )?;
         }
         PcbLibCommands::Json { path, full } => {
             let result = pcblib::cmd_json(path, *full)?;
@@ -547,15 +555,7 @@ pub fn run(cmd: &PcbLibCommands, format: &str) -> Result<(), Box<dyn std::error:
             hole,
         } => {
             pcblib::cmd_add_pad(
-                path,
-                footprint,
-                designator,
-                *x,
-                *y,
-                *width,
-                *height,
-                shape,
-                *hole,
+                path, footprint, designator, *x, *y, *width, *height, shape, *hole,
             )?;
         }
         PcbLibCommands::AddSilkscreen {
@@ -625,7 +625,11 @@ pub fn run(cmd: &PcbLibCommands, format: &str) -> Result<(), Box<dyn std::error:
         } => {
             pcblib::cmd_render_png(path, footprint, output.clone(), *scale, *width)?;
         }
-        PcbLibCommands::AddJson { path, file, input_json } => {
+        PcbLibCommands::AddJson {
+            path,
+            file,
+            input_json,
+        } => {
             pcblib::cmd_add_json(path, file.clone(), input_json.clone())?;
         }
         PcbLibCommands::AddPadRow {

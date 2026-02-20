@@ -1,9 +1,9 @@
 //! Schematic component record (RECORD=1).
 
-use altium_format_derive::altium_record;
+use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::{Designator, LibReference, UniqueId};
-use super::enums::*;
+use altium_format_derive::altium_record;
 
 /// Schematic component record -- RECORD=1.
 ///

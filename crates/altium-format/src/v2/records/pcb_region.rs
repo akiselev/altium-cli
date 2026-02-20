@@ -40,24 +40,25 @@ pub struct PcbRegionRecord {
 /// - u32 num_outline_vertices + vertex data
 /// - hole vertex lists
 pub(crate) fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
     if data.len() < 22 {
         return Err(AltiumError::Parse(format!(
-            "region data too short: {} bytes (need >= 22)", data.len()
+            "region data too short: {} bytes (need >= 22)",
+            data.len()
         )));
     }
 
     // Fields in the common header (offsets 0-12)
     let spans = vec![
-        FieldSpan::new(0, 1),   // 0: layer
-        FieldSpan::new(1, 2),   // 1: flags
-        FieldSpan::new(3, 2),   // 2: net
-        FieldSpan::new(5, 2),   // 3: polygon_ref
-        FieldSpan::new(7, 2),   // 4: component_ref
+        FieldSpan::new(0, 1), // 0: layer
+        FieldSpan::new(1, 2), // 1: flags
+        FieldSpan::new(3, 2), // 2: net
+        FieldSpan::new(5, 2), // 3: polygon_ref
+        FieldSpan::new(7, 2), // 4: component_ref
         // After 13-byte header + 5-byte extra = offset 18
-        FieldSpan::new(18, 2),  // 5: hole_count
+        FieldSpan::new(18, 2), // 5: hole_count
         // num_outline_vertices: located after header(13) + extra(5) +
         // hole_count(2) + padding(2) + prop_len(4) + props + ...
         // We need to compute this dynamically
@@ -79,9 +80,8 @@ fn find_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::Fiel
 
     // Read prop_len and skip properties
     if offset + 4 <= data.len() {
-        let prop_len = u32::from_le_bytes(
-            data[offset..offset + 4].try_into().unwrap_or([0; 4]),
-        ) as usize;
+        let prop_len =
+            u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap_or([0; 4])) as usize;
         offset += 4 + prop_len;
     }
 
@@ -124,13 +124,13 @@ mod tests {
         data[11..15].copy_from_slice(&4u32.to_le_bytes());
 
         let spans = vec![
-            FieldSpan::new(0, 1),   // layer
-            FieldSpan::new(1, 2),   // flags
-            FieldSpan::new(3, 2),   // net
-            FieldSpan::new(5, 2),   // polygon_ref
-            FieldSpan::new(7, 2),   // component_ref
-            FieldSpan::new(9, 2),   // hole_count
-            FieldSpan::new(11, 4),  // num_outline_vertices
+            FieldSpan::new(0, 1),  // layer
+            FieldSpan::new(1, 2),  // flags
+            FieldSpan::new(3, 2),  // net
+            FieldSpan::new(5, 2),  // polygon_ref
+            FieldSpan::new(7, 2),  // component_ref
+            FieldSpan::new(9, 2),  // hole_count
+            FieldSpan::new(11, 4), // num_outline_vertices
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))

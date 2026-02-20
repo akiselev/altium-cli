@@ -70,9 +70,7 @@ pub fn cmd_add_footprint(
     let lib = open_pcblib(path)?;
 
     if lib.find_footprint(name).is_some() {
-        return Err(
-            format!("Footprint '{}' already exists in library", name).into(),
-        );
+        return Err(format!("Footprint '{}' already exists in library", name).into());
     }
 
     let desc = description.as_deref().unwrap_or("").to_string();
@@ -142,9 +140,11 @@ pub fn cmd_add_silkscreen(
     _y2: f64,
     _width: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    Err("Adding silkscreen tracks to existing footprints is not yet supported \
+    Err(
+        "Adding silkscreen tracks to existing footprints is not yet supported \
          through the public API. Use build_footprint() for new footprints that include tracks."
-        .into())
+            .into(),
+    )
 }
 
 /// Adds a silkscreen arc to a footprint.
@@ -181,7 +181,7 @@ pub fn cmd_gen_chip(
                 "Unknown chip size '{}'. Supported: 0201, 0402, 0603, 0805, 1206, 1210",
                 size
             )
-            .into())
+            .into());
         }
     };
 
@@ -194,7 +194,7 @@ pub fn cmd_gen_chip(
                 "Unknown density '{}'. Supported: most, nominal, least",
                 density
             )
-            .into())
+            .into());
         }
     };
 
@@ -207,9 +207,7 @@ pub fn cmd_gen_chip(
     {
         let lib = open_pcblib(path)?;
         if lib.find_footprint(&fp_name).is_some() {
-            return Err(
-                format!("Footprint '{}' already exists in library", fp_name).into(),
-            );
+            return Err(format!("Footprint '{}' already exists in library", fp_name).into());
         }
     }
 
@@ -347,17 +345,7 @@ pub fn cmd_add_json(
                 let shape = pad_json["shape"].as_str().unwrap_or("rectangular");
                 let hole = pad_json["hole"].as_f64().unwrap_or(0.0);
 
-                cmd_add_pad(
-                    path,
-                    name,
-                    designator,
-                    x,
-                    y,
-                    width,
-                    height,
-                    shape,
-                    hole,
-                )?;
+                cmd_add_pad(path, name, designator, x, y, width, height, shape, hole)?;
             }
         }
 
@@ -401,10 +389,7 @@ pub fn cmd_add_pad_row(
     let shape_byte = parse_shape(shape);
     let layer: u8 = if hole_raw > 0 { 74 } else { 1 };
 
-    let is_horizontal = matches!(
-        direction.to_lowercase().as_str(),
-        "horizontal" | "h" | "x"
-    );
+    let is_horizontal = matches!(direction.to_lowercase().as_str(), "horizontal" | "h" | "x");
 
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
@@ -663,8 +648,7 @@ pub fn cmd_add_pad_grid(
         for col in 0..cols {
             let x = -(x_span / 2) + pitch_raw as i64 * col as i64;
             if skip_radius_sq > 0.0 {
-                let dist_sq =
-                    (x as f64) * (x as f64) + (y as f64) * (y as f64);
+                let dist_sq = (x as f64) * (x as f64) + (y as f64) * (y as f64);
                 if dist_sq < skip_radius_sq {
                     continue;
                 }

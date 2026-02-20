@@ -12,7 +12,8 @@ use altium_format::v2::handles::SchComponentHandle;
 use super::open_schlib;
 
 /// Embedded blank SchLib template.
-const BLANK_SCHLIB_TEMPLATE: &[u8] = include_bytes!("../../../altium-format/data/blank/Schlib1.SchLib");
+const BLANK_SCHLIB_TEMPLATE: &[u8] =
+    include_bytes!("../../../altium-format/data/blank/Schlib1.SchLib");
 
 /// Creates an empty SchLib file at the given path.
 pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -53,8 +54,7 @@ pub fn cmd_add_component(
     // Clear raw header to force rebuild
     {
         let mut store = lib.store().borrow_mut();
-        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } =
-            store.meta_mut()
+        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
         {
             *raw_header = None;
         }
@@ -105,8 +105,7 @@ pub fn cmd_add_pin(
     // Clear raw header to force rebuild
     {
         let mut store = lib.store().borrow_mut();
-        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } =
-            store.meta_mut()
+        if let altium_format::v2::store::DocumentMeta::SchLib { raw_header, .. } = store.meta_mut()
         {
             *raw_header = None;
         }

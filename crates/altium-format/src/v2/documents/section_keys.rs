@@ -41,12 +41,14 @@ impl SectionKeyList {
         let mut suffix = 1u32;
         let mut candidate = base.clone();
         while self.key_set.contains(&candidate)
-            || (candidate.len() >= 30
-                && candidate.chars().nth(30).map_or(false, |c| c == ' '))
+            || (candidate.len() >= 30 && candidate.chars().nth(30).map_or(false, |c| c == ' '))
         {
             let suffix_str = suffix.to_string();
             if base.len() + suffix_str.len() > max_key_length {
-                base = name.chars().take(max_key_length - suffix_str.len()).collect();
+                base = name
+                    .chars()
+                    .take(max_key_length - suffix_str.len())
+                    .collect();
             }
             candidate = format!("{}{}", base, suffix_str);
             suffix += 1;

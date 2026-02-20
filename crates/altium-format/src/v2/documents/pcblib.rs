@@ -30,6 +30,8 @@ use super::section_keys::SectionKeyList;
 const STREAM_PARAMETERS: &str = "Parameters";
 const STREAM_HEADER: &str = "Header";
 const STREAM_DATA: &str = "Data";
+const TOP_LEVEL_SYSTEM_STORAGES: &[&str] =
+    &["SectionKeys", "FileHeader", "Library", "FileVersionInfo"];
 
 /// A parsed PcbLib document using the v2 DocumentStore architecture.
 ///
@@ -48,13 +50,17 @@ impl PcbLib {
 
     /// Returns the stable document-level semantic ID, if computed.
     pub fn document_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
-        self.store.borrow().document_id().cloned()
+        let mut store = self.store.borrow_mut();
+        store.ensure_semantic_ids();
+        store.document_id().cloned()
     }
 
     /// Open a PcbLib from a reader.
     pub fn open<R: Read + Seek>(mut reader: R) -> Result<Self> {
         let mut raw_bytes = Vec::new();
-        reader.read_to_end(&mut raw_bytes).map_err(AltiumError::Io)?;
+        reader
+            .read_to_end(&mut raw_bytes)
+            .map_err(AltiumError::Io)?;
         let doc_key = crate::v2::semantic_ids::blake3_content_hash(&raw_bytes);
 
         let mut cfb = cfb::CompoundFile::open(Cursor::new(raw_bytes))
@@ -76,7 +82,7 @@ impl PcbLib {
             })
             .filter_map(|e| {
                 let name = e.path().file_name()?.to_str()?.to_string();
-                if name == "SectionKeys" || name == "FileHeader" || name == "Library" {
+                if TOP_LEVEL_SYSTEM_STORAGES.contains(&name.as_str()) {
                     return None;
                 }
                 Some(name)
@@ -132,10 +138,7 @@ impl PcbLib {
                 let param_str = String::from_utf8_lossy(&data).to_string();
                 RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new(&param_str)))
             } else {
-                RecordNode::new(
-                    0,
-                    RecordOrigin::Param(ParamOrigin::new("|PATTERN=|")),
-                )
+                RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new("|PATTERN=|")))
             };
 
             // Read Header stream
@@ -164,10 +167,7 @@ impl PcbLib {
             let mut extra_streams: HashMap<String, Vec<u8>> = HashMap::new();
             for stream_path in &all_stream_paths {
                 if let Some(rest) = stream_path.strip_prefix(&storage_prefix) {
-                    if rest == STREAM_PARAMETERS
-                        || rest == STREAM_HEADER
-                        || rest == STREAM_DATA
-                    {
+                    if rest == STREAM_PARAMETERS || rest == STREAM_HEADER || rest == STREAM_DATA {
                         continue;
                     }
                     if let Ok(mut stream) = cfb.open_stream(stream_path) {
@@ -190,8 +190,7 @@ impl PcbLib {
             }
 
             // Build original_indices parallel to primitive_order (index within children vec)
-            let original_indices: Vec<usize> =
-                primitive_order.iter().map(|r| r.index).collect();
+            let original_indices: Vec<usize> = primitive_order.iter().map(|r| r.index).collect();
 
             let group_data = GroupData {
                 parent: parent_id,
@@ -227,10 +226,14 @@ impl PcbLib {
         let mut cfb = cfb::CompoundFile::create(writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
-        let store = self.store.borrow();
+        let mut store = self.store.borrow_mut();
+        store.ensure_semantic_ids();
 
         // Write library-level extra streams (FileHeader, Library/*, etc.)
-        if let DocumentMeta::PcbLib { raw_extra_streams, .. } = store.meta() {
+        if let DocumentMeta::PcbLib {
+            raw_extra_streams, ..
+        } = store.meta()
+        {
             let mut created_storages: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut sorted_extras: Vec<_> = raw_extra_streams.iter().collect();
@@ -239,7 +242,10 @@ impl PcbLib {
                 let full_path = format!("/{}", rel_path);
                 ensure_parent_storages(&mut cfb, &full_path, &mut created_storages)?;
                 let mut stream = cfb.create_stream(&full_path).map_err(|e| {
-                    AltiumError::Cfb(format!("Failed to create extra stream {}: {}", full_path, e))
+                    AltiumError::Cfb(format!(
+                        "Failed to create extra stream {}: {}",
+                        full_path, e
+                    ))
                 })?;
                 stream.write_all(data).map_err(AltiumError::Io)?;
             }
@@ -264,9 +270,8 @@ impl PcbLib {
                 };
 
             let storage_path = format!("/{}", name);
-            cfb.create_storage(&storage_path).map_err(|e| {
-                AltiumError::Cfb(format!("Failed to create storage: {}", e))
-            })?;
+            cfb.create_storage(&storage_path)
+                .map_err(|e| AltiumError::Cfb(format!("Failed to create storage: {}", e)))?;
 
             // Write Parameters stream
             let params_path = format!("/{}/{}", name, STREAM_PARAMETERS);
@@ -274,16 +279,16 @@ impl PcbLib {
                 RecordOrigin::Param(p) => p.params.to_param_string().into_bytes(),
                 _ => Vec::new(),
             };
-            let mut stream = cfb.create_stream(&params_path).map_err(|e| {
-                AltiumError::Cfb(format!("Failed to create Parameters: {}", e))
-            })?;
+            let mut stream = cfb
+                .create_stream(&params_path)
+                .map_err(|e| AltiumError::Cfb(format!("Failed to create Parameters: {}", e)))?;
             stream.write_all(&params_data).map_err(AltiumError::Io)?;
 
             // Write Header stream
             let header_path = format!("/{}/{}", name, STREAM_HEADER);
-            let mut stream = cfb.create_stream(&header_path).map_err(|e| {
-                AltiumError::Cfb(format!("Failed to create Header: {}", e))
-            })?;
+            let mut stream = cfb
+                .create_stream(&header_path)
+                .map_err(|e| AltiumError::Cfb(format!("Failed to create Header: {}", e)))?;
             if raw_header.is_empty() {
                 let count = group.children.len() as u32;
                 stream
@@ -302,9 +307,9 @@ impl PcbLib {
                 &original_primitive_order,
                 &primitives,
             )?;
-            let mut stream = cfb.create_stream(&data_path).map_err(|e| {
-                AltiumError::Cfb(format!("Failed to create Data: {}", e))
-            })?;
+            let mut stream = cfb
+                .create_stream(&data_path)
+                .map_err(|e| AltiumError::Cfb(format!("Failed to create Data: {}", e)))?;
             stream.write_all(&data).map_err(AltiumError::Io)?;
 
             // Write per-footprint extra streams
@@ -413,8 +418,7 @@ impl PcbLib {
             child_ids.push(id);
         }
 
-        let original_indices: Vec<usize> =
-            primitive_refs.iter().map(|r| r.index).collect();
+        let original_indices: Vec<usize> = primitive_refs.iter().map(|r| r.index).collect();
 
         let group_data = GroupData {
             parent: parent_id,
@@ -430,6 +434,7 @@ impl PcbLib {
             },
         };
         store.insert_group(group_data);
+        store.mark_semantic_ids_dirty();
     }
 }
 
@@ -485,10 +490,7 @@ impl DocumentQuery<crate::v2::handles::PcbFootprint> for PcbLib {
 
 impl PcbLib {
     /// Query a single child record of type `T` across all footprint groups.
-    pub fn query_child<T: HandleFamily>(
-        &self,
-        q: &str,
-    ) -> crate::error::Result<T::Handle> {
+    pub fn query_child<T: HandleFamily>(&self, q: &str) -> crate::error::Result<T::Handle> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
@@ -509,7 +511,7 @@ impl PcbLib {
 
         match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => Ok(T::make_handle(self.store.clone(), matches[0])),
+            1 => T::try_make_handle(self.store.clone(), matches[0]),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
@@ -531,7 +533,7 @@ impl PcbLib {
                 if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
                     let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
-                        handles.push(T::make_handle(self.store.clone(), child_id));
+                        handles.push(T::try_make_handle(self.store.clone(), child_id)?);
                     }
                 }
             }
@@ -554,17 +556,17 @@ pub(crate) fn ensure_parent_storages<F: Read + Write + Seek>(
     path: &str,
     created: &mut std::collections::HashSet<String>,
 ) -> Result<()> {
-    let parts: Vec<&str> = path
-        .trim_start_matches('/')
-        .split('/')
-        .collect();
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     // Walk all ancestors (skip the final component which is the stream itself).
     let mut current = String::new();
     for part in &parts[..parts.len().saturating_sub(1)] {
         current = format!("{}/{}", current, part);
         if created.insert(current.clone()) {
-            // Ignore AlreadyExists errors — the storage may already exist.
-            let _ = cfb.create_storage(&current);
+            if let Err(err) = cfb.create_storage(&current) {
+                if err.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(AltiumError::Io(err));
+                }
+            }
         }
     }
     Ok(())
@@ -636,9 +638,7 @@ fn parse_multi_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> RecordOri
 ///   - For single-subrecord types: 4 bytes LE length + data
 ///   - For multi-subrecord types (Pad=6, Text=2): N sequential
 ///     (4 bytes LE length + data) blocks stored together
-fn parse_pcb_data_stream(
-    data: &[u8],
-) -> Result<(Vec<RecordNode>, Vec<PcbPrimitiveRef>, Vec<u8>)> {
+fn parse_pcb_data_stream(data: &[u8]) -> Result<(Vec<RecordNode>, Vec<PcbPrimitiveRef>, Vec<u8>)> {
     let mut cursor = Cursor::new(data);
     let mut primitives = Vec::new();
     let mut primitive_order = Vec::new();
@@ -951,10 +951,7 @@ mod tests {
 
         for &name in fp_names {
             let param_str = format!("|PATTERN={}|DESCRIPTION={}|", name, name);
-            let metadata = RecordNode::new(
-                0,
-                RecordOrigin::Param(ParamOrigin::new(&param_str)),
-            );
+            let metadata = RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new(&param_str)));
             let parent_id = store.insert_record(metadata);
 
             let group_data = GroupData {
@@ -986,15 +983,19 @@ mod tests {
         };
         let mut store = DocumentStore::new(doc_meta);
 
-        let metadata = RecordNode::new(
-            0,
-            RecordOrigin::Param(ParamOrigin::new("|PATTERN=SOT-23|")),
-        );
+        let metadata =
+            RecordNode::new(0, RecordOrigin::Param(ParamOrigin::new("|PATTERN=SOT-23|")));
         let parent_id = store.insert_record(metadata);
 
         let pad_block = vec![0u8; 40];
-        let pad0 = RecordNode::new(2, RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())));
-        let pad1 = RecordNode::new(2, RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())));
+        let pad0 = RecordNode::new(
+            2,
+            RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())),
+        );
+        let pad1 = RecordNode::new(
+            2,
+            RecordOrigin::Binary(BinaryOrigin::new(pad_block.clone())),
+        );
         let track = RecordNode::new(4, RecordOrigin::Binary(BinaryOrigin::new(vec![0u8; 35])));
 
         let pad0_id = store.insert_record(pad0);
@@ -1057,8 +1058,8 @@ mod tests {
         use crate::v2::traits::DocumentQuery;
 
         let lib = make_test_lib(&["SOT-23", "QFP-48", "DIP-8"]);
-        let results = DocumentQuery::<crate::v2::handles::PcbFootprint>::query_all(&lib, "#0")
-            .unwrap();
+        let results =
+            DocumentQuery::<crate::v2::handles::PcbFootprint>::query_all(&lib, "#0").unwrap();
         assert_eq!(results.len(), 3);
     }
 
@@ -1067,8 +1068,7 @@ mod tests {
         use crate::v2::traits::DocumentQuery;
 
         let lib = make_test_lib(&["SOT-23"]);
-        let handle = DocumentQuery::<crate::v2::handles::PcbFootprint>::query(&lib, "#0")
-            .unwrap();
+        let handle = DocumentQuery::<crate::v2::handles::PcbFootprint>::query(&lib, "#0").unwrap();
         assert_eq!(handle.name(), "SOT-23");
     }
 
@@ -1077,12 +1077,8 @@ mod tests {
         use crate::v2::traits::DocumentQuery;
 
         let lib = make_test_lib(&["SOT-23"]);
-        let result =
-            DocumentQuery::<crate::v2::handles::PcbFootprint>::query(&lib, "NONEXISTENT");
-        assert!(matches!(
-            result,
-            Err(crate::error::AltiumError::NoMatch(_))
-        ));
+        let result = DocumentQuery::<crate::v2::handles::PcbFootprint>::query(&lib, "NONEXISTENT");
+        assert!(matches!(result, Err(crate::error::AltiumError::NoMatch(_))));
     }
 
     #[test]
@@ -1133,5 +1129,57 @@ mod tests {
         let lib = make_test_lib(&["SOT-23", "DIP-8"]);
         let buf = Cursor::new(Vec::new());
         lib.save(buf).unwrap();
+    }
+
+    #[test]
+    fn file_version_info_storage_not_treated_as_footprint() {
+        use std::io::Cursor;
+
+        let mut cfb = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+
+        cfb.create_storage("/SOT-23").unwrap();
+        cfb.create_stream("/SOT-23/Header")
+            .unwrap()
+            .write_all(&1u32.to_le_bytes())
+            .unwrap();
+        cfb.create_stream("/SOT-23/Parameters")
+            .unwrap()
+            .write_all(b"|PATTERN=SOT-23|")
+            .unwrap();
+        let mut data = Vec::new();
+        data.extend_from_slice(&6u32.to_le_bytes());
+        data.extend_from_slice(b"SOT-23");
+        cfb.create_stream("/SOT-23/Data")
+            .unwrap()
+            .write_all(&data)
+            .unwrap();
+
+        // System storage with Data/Header that must not be classified as a footprint.
+        cfb.create_storage("/FileVersionInfo").unwrap();
+        cfb.create_stream("/FileVersionInfo/Header")
+            .unwrap()
+            .write_all(&1u32.to_le_bytes())
+            .unwrap();
+        cfb.create_stream("/FileVersionInfo/Data")
+            .unwrap()
+            .write_all(b"|COUNT=1|")
+            .unwrap();
+
+        cfb.flush().unwrap();
+        let bytes = cfb.into_inner().into_inner();
+
+        let lib = PcbLib::open(Cursor::new(bytes)).unwrap();
+        assert_eq!(lib.footprint_count(), 1);
+        assert_eq!(lib.names(), vec!["SOT-23"]);
+
+        let store = lib.store.borrow();
+        let extras = match store.meta() {
+            DocumentMeta::PcbLib {
+                raw_extra_streams, ..
+            } => raw_extra_streams,
+            _ => unreachable!(),
+        };
+        assert!(extras.contains_key("FileVersionInfo/Data"));
+        assert!(extras.contains_key("FileVersionInfo/Header"));
     }
 }

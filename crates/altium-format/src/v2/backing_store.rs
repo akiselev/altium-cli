@@ -546,19 +546,25 @@ mod tests {
         // Create a binary origin with some data and field spans.
         let data = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
         let spans = vec![
-            FieldSpan::new(0, 2),  // bytes [0x01, 0x02]
-            FieldSpan::new(2, 4),  // bytes [0x03, 0x04, 0x05, 0x06]
-            FieldSpan::new(6, 2),  // bytes [0x07, 0x08]
+            FieldSpan::new(0, 2), // bytes [0x01, 0x02]
+            FieldSpan::new(2, 4), // bytes [0x03, 0x04, 0x05, 0x06]
+            FieldSpan::new(6, 2), // bytes [0x07, 0x08]
         ];
         let origin = BinaryOrigin::with_spans(data.clone(), spans);
 
         // Verify field spans extract correctly.
-        assert_eq!(origin.field_spans[0].slice(&origin.raw_block), &[0x01, 0x02]);
+        assert_eq!(
+            origin.field_spans[0].slice(&origin.raw_block),
+            &[0x01, 0x02]
+        );
         assert_eq!(
             origin.field_spans[1].slice(&origin.raw_block),
             &[0x03, 0x04, 0x05, 0x06]
         );
-        assert_eq!(origin.field_spans[2].slice(&origin.raw_block), &[0x07, 0x08]);
+        assert_eq!(
+            origin.field_spans[2].slice(&origin.raw_block),
+            &[0x07, 0x08]
+        );
 
         // Verify end() calculation.
         assert_eq!(origin.field_spans[0].end(), 2);
@@ -619,11 +625,7 @@ mod tests {
         let node1 = RecordNode::new(1, origin1);
         let node2 = RecordNode::new(2, origin2);
 
-        let mut stream = StreamNode::new(
-            "FileHeader".to_string(),
-            vec![],
-            vec![node1, node2],
-        );
+        let mut stream = StreamNode::new("FileHeader".to_string(), vec![], vec![node1, node2]);
 
         // No records dirty.
         assert!(!stream.is_dirty());
@@ -640,10 +642,7 @@ mod tests {
         let deserialized: ParamOrigin = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.raw_record_text, original.raw_record_text);
-        assert_eq!(
-            deserialized.params.get("NAME").unwrap().as_str(),
-            "Test"
-        );
+        assert_eq!(deserialized.params.get("NAME").unwrap().as_str(), "Test");
     }
 
     #[test]

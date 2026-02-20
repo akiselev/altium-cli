@@ -70,16 +70,11 @@ pub fn cmd_render_ascii(
         let size_x = pad.record.top_size_x().to_raw();
         let size_y = pad.record.top_size_y().to_raw();
 
-        let cx =
-            ((pos_x - min_x) as f64 / range_x * (w - 1) as f64) as usize;
-        let cy = h
-            - 1
-            - ((pos_y - min_y) as f64 / range_y * (h - 1) as f64) as usize;
+        let cx = ((pos_x - min_x) as f64 / range_x * (w - 1) as f64) as usize;
+        let cy = h - 1 - ((pos_y - min_y) as f64 / range_y * (h - 1) as f64) as usize;
 
-        let half_w = (size_x as f64 / range_x * (w - 1) as f64 / 2.0)
-            .max(0.5) as usize;
-        let half_h = (size_y as f64 / range_y * (h - 1) as f64 / 2.0)
-            .max(0.5) as usize;
+        let half_w = (size_x as f64 / range_x * (w - 1) as f64 / 2.0).max(0.5) as usize;
+        let half_h = (size_y as f64 / range_y * (h - 1) as f64 / 2.0).max(0.5) as usize;
 
         let x_start = cx.saturating_sub(half_w);
         let x_end = (cx + half_w).min(w - 1);

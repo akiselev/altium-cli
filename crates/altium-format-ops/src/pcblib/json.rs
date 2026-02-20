@@ -14,10 +14,7 @@ use crate::output::*;
 use super::{extract_pads, open_pcblib};
 
 /// Serializes the library to JSON for LLM processing or external analysis.
-pub fn cmd_json(
-    path: &Path,
-    full: bool,
-) -> Result<PcbLibJson, Box<dyn std::error::Error>> {
+pub fn cmd_json(path: &Path, full: bool) -> Result<PcbLibJson, Box<dyn std::error::Error>> {
     let lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 
@@ -39,14 +36,8 @@ pub fn cmd_json(
                     .map(|pad| PadJsonData {
                         designator: pad.designator.clone(),
                         shape: pad.shape_name().to_string(),
-                        size_x: format!(
-                            "{:.3}mm",
-                            pad.record.top_size_x().to_mm()
-                        ),
-                        size_y: format!(
-                            "{:.3}mm",
-                            pad.record.top_size_y().to_mm()
-                        ),
+                        size_x: format!("{:.3}mm", pad.record.top_size_x().to_mm()),
+                        size_y: format!("{:.3}mm", pad.record.top_size_y().to_mm()),
                         hole_size: pad.hole_string(),
                         layer: pad.layer_name().to_string(),
                     })

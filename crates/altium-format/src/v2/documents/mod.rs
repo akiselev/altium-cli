@@ -4,12 +4,12 @@
 //! using the v2 backing-store architecture. Documents handle reading from and
 //! writing to CFB (Compound File Binary) format.
 
-pub mod section_keys;
-pub mod schlib;
-pub mod schdoc;
 pub mod pcblib;
+pub mod schdoc;
+pub mod schlib;
+pub mod section_keys;
 
-pub use section_keys::SectionKeyList;
-pub use schlib::{SchLib, SchLibHeader, SchLibComponentEntry};
-pub use schdoc::SchDoc;
 pub use pcblib::PcbLib;
+pub use schdoc::SchDoc;
+pub use schlib::{SchLib, SchLibComponentEntry, SchLibHeader};
+pub use section_keys::SectionKeyList;

@@ -30,10 +30,10 @@ pub fn cmd_measure(
     let mut min_pitch = f64::MAX;
     for i in 0..pads.len() {
         for j in (i + 1)..pads.len() {
-            let dx = (pads[i].record.position_x().to_raw()
-                - pads[j].record.position_x().to_raw()) as f64;
-            let dy = (pads[i].record.position_y().to_raw()
-                - pads[j].record.position_y().to_raw()) as f64;
+            let dx = (pads[i].record.position_x().to_raw() - pads[j].record.position_x().to_raw())
+                as f64;
+            let dy = (pads[i].record.position_y().to_raw() - pads[j].record.position_y().to_raw())
+                as f64;
             let dist = (dx * dx + dy * dy).sqrt();
             if dist > 0.0 && dist < min_pitch {
                 min_pitch = dist;
@@ -59,7 +59,10 @@ pub fn cmd_measure(
             "smd_pads": pads.iter().filter(|p| p.is_smd()).count(),
             "th_pads": pads.iter().filter(|p| !p.is_smd()).count(),
         });
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     } else {
         println!("Footprint: {}", fp_name);
         println!("Pad count: {}", pads.len());

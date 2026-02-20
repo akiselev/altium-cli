@@ -14,8 +14,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Cursor;
 
-use altium_format::v2::parameters::ParameterCollection;
-
 /// Report of differences between two CFB files.
 #[derive(Debug, Default)]
 pub struct CfbDiffReport {
@@ -55,13 +53,21 @@ impl fmt::Display for CfbDiffReport {
         writeln!(f, "Matched streams: {}", self.matched.len())?;
 
         if !self.only_in_original.is_empty() {
-            writeln!(f, "\n--- Only in original ({}) ---", self.only_in_original.len())?;
+            writeln!(
+                f,
+                "\n--- Only in original ({}) ---",
+                self.only_in_original.len()
+            )?;
             for s in &self.only_in_original {
                 writeln!(f, "  {}", s)?;
             }
         }
         if !self.only_in_rebuilt.is_empty() {
-            writeln!(f, "\n--- Only in rebuilt ({}) ---", self.only_in_rebuilt.len())?;
+            writeln!(
+                f,
+                "\n--- Only in rebuilt ({}) ---",
+                self.only_in_rebuilt.len()
+            )?;
             for s in &self.only_in_rebuilt {
                 writeln!(f, "  {}", s)?;
             }
@@ -76,7 +82,11 @@ impl fmt::Display for CfbDiffReport {
             }
         }
         if !self.binary_diffs.is_empty() {
-            writeln!(f, "\n--- Binary stream diffs ({}) ---", self.binary_diffs.len())?;
+            writeln!(
+                f,
+                "\n--- Binary stream diffs ({}) ---",
+                self.binary_diffs.len()
+            )?;
             for diff in &self.binary_diffs {
                 writeln!(
                     f,
@@ -84,7 +94,8 @@ impl fmt::Display for CfbDiffReport {
                     diff.stream_name,
                     diff.original_len,
                     diff.rebuilt_len,
-                    diff.first_diff_offset.map_or("N/A".to_string(), |o| o.to_string()),
+                    diff.first_diff_offset
+                        .map_or("N/A".to_string(), |o| o.to_string()),
                 )?;
             }
         }
@@ -142,6 +153,24 @@ fn is_schlib_data_stream(path: &str) -> bool {
     } else {
         false
     }
+}
+
+/// Parse raw pipe-delimited params preserving duplicate key occurrences.
+///
+/// Keys are normalized to uppercase to match Altium's case-insensitive lookup
+/// behavior. Values are kept in encounter order.
+fn parse_params_with_duplicates(text: &str) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for entry in text.split('|').filter(|s| !s.is_empty()) {
+        let entry = entry.trim_end_matches(&['\r', '\n'] as &[char]);
+        let (k, v) = if let Some(eq) = entry.find('=') {
+            (&entry[..eq], &entry[eq + 1..])
+        } else {
+            ("", entry)
+        };
+        out.entry(k.to_uppercase()).or_default().push(v.to_string());
+    }
+    out
 }
 
 /// Size flag mask: low 24 bits = length, upper bits = mode flag.
@@ -214,55 +243,50 @@ fn compare_schlib_data_streams(
                 } else if is_binary_orig {
                     // Binary record: byte-level comparison
                     if orig.data != rebuilt.data {
-                        let first_diff = orig.data.iter().zip(rebuilt.data.iter())
+                        let first_diff = orig
+                            .data
+                            .iter()
+                            .zip(rebuilt.data.iter())
                             .position(|(a, b)| a != b);
                         diffs.push((
                             format!("Record[{}].binary", i),
                             Some(format!("{} bytes", orig.data.len())),
-                            Some(format!("{} bytes, first_diff={:?}", rebuilt.data.len(), first_diff)),
+                            Some(format!(
+                                "{} bytes, first_diff={:?}",
+                                rebuilt.data.len(),
+                                first_diff
+                            )),
                         ));
                     }
                 } else {
                     // Text record: parameter-level comparison
                     let orig_text = String::from_utf8_lossy(&orig.data);
                     let rebuilt_text = String::from_utf8_lossy(&rebuilt.data);
-                    let orig_params = ParameterCollection::from_string(&orig_text);
-                    let rebuilt_params = ParameterCollection::from_string(&rebuilt_text);
+                    let orig_params = parse_params_with_duplicates(&orig_text);
+                    let rebuilt_params = parse_params_with_duplicates(&rebuilt_text);
 
                     let mut all_keys: BTreeSet<String> = BTreeSet::new();
-                    for (k, _) in orig_params.iter() {
-                        all_keys.insert(k.to_string());
-                    }
-                    for (k, _) in rebuilt_params.iter() {
-                        all_keys.insert(k.to_string());
-                    }
+                    all_keys.extend(orig_params.keys().cloned());
+                    all_keys.extend(rebuilt_params.keys().cloned());
 
                     for key in &all_keys {
-                        let orig_val = orig_params.get(key).map(|v| v.as_str().to_string());
-                        let rebuilt_val = rebuilt_params.get(key).map(|v| v.as_str().to_string());
+                        let orig_val = orig_params.get(key).cloned();
+                        let rebuilt_val = rebuilt_params.get(key).cloned();
                         if orig_val != rebuilt_val {
                             diffs.push((
                                 format!("Record[{}].{}", i, key),
-                                orig_val,
-                                rebuilt_val,
+                                orig_val.map(|vals| vals.join("||")),
+                                rebuilt_val.map(|vals| vals.join("||")),
                             ));
                         }
                     }
                 }
             }
             (Some(_), None) => {
-                diffs.push((
-                    format!("Record[{}]", i),
-                    Some("present".to_string()),
-                    None,
-                ));
+                diffs.push((format!("Record[{}]", i), Some("present".to_string()), None));
             }
             (None, Some(_)) => {
-                diffs.push((
-                    format!("Record[{}]", i),
-                    None,
-                    Some("present".to_string()),
-                ));
+                diffs.push((format!("Record[{}]", i), None, Some("present".to_string())));
             }
             (None, None) => unreachable!(),
         }
@@ -373,24 +397,24 @@ fn compare_text_streams(
     let orig_text = String::from_utf8_lossy(orig_data);
     let rebuilt_text = String::from_utf8_lossy(rebuilt_data);
 
-    let orig_params = ParameterCollection::from_string(&orig_text);
-    let rebuilt_params = ParameterCollection::from_string(&rebuilt_text);
+    let orig_params = parse_params_with_duplicates(&orig_text);
+    let rebuilt_params = parse_params_with_duplicates(&rebuilt_text);
 
     // Collect all keys from both collections
     let mut all_keys: BTreeSet<String> = BTreeSet::new();
-    for (k, _) in orig_params.iter() {
-        all_keys.insert(k.to_string());
-    }
-    for (k, _) in rebuilt_params.iter() {
-        all_keys.insert(k.to_string());
-    }
+    all_keys.extend(orig_params.keys().cloned());
+    all_keys.extend(rebuilt_params.keys().cloned());
 
     let mut diffs = Vec::new();
     for key in &all_keys {
-        let orig_val = orig_params.get(key).map(|v| v.as_str().to_string());
-        let rebuilt_val = rebuilt_params.get(key).map(|v| v.as_str().to_string());
+        let orig_val = orig_params.get(key).cloned();
+        let rebuilt_val = rebuilt_params.get(key).cloned();
         if orig_val != rebuilt_val {
-            diffs.push((key.clone(), orig_val, rebuilt_val));
+            diffs.push((
+                key.clone(),
+                orig_val.map(|vals| vals.join("||")),
+                rebuilt_val.map(|vals| vals.join("||")),
+            ));
         }
     }
 

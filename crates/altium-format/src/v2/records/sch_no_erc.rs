@@ -1,7 +1,7 @@
 //! NoERC marker record (RECORD=22).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// NoERC marker record — suppresses electrical rule check errors at a location.
 ///

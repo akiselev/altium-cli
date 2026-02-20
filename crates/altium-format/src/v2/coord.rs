@@ -22,9 +22,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Each coordinate type has a fixed number of internal units per mil, allowing
 /// type-safe conversions between physical units and the raw integer representation.
-pub trait AltiumCoord:
-    Copy + Sized + PartialEq + Eq + PartialOrd + Ord + std::fmt::Debug
-{
+pub trait AltiumCoord: Copy + Sized + PartialEq + Eq + PartialOrd + Ord + std::fmt::Debug {
     /// Number of raw internal units per mil (thousandth of an inch).
     const UNITS_PER_MIL: i32;
 

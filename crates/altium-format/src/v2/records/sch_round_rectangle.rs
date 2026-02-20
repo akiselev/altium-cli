@@ -1,9 +1,9 @@
 //! Schematic round rectangle record (RECORD=10).
 
-use altium_format_derive::altium_record;
+use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::UniqueId;
-use super::enums::*;
+use altium_format_derive::altium_record;
 
 /// Schematic round rectangle record -- RECORD=10.
 ///

@@ -12,9 +12,9 @@
 //! ```
 //! Total: 37 bytes for the sequential portion.
 
-use altium_format_derive::altium_record;
 use crate::v2::binary_helpers::PcbCommonHeader;
 use crate::v2::coord::PcbCoord;
+use altium_format_derive::altium_record;
 
 #[altium_record(kind = "pcb", object_id = Fill, codec = "binary")]
 pub struct PcbFillRecord {

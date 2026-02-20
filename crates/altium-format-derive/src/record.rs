@@ -17,14 +17,14 @@ pub fn derive_record(input: DeriveInput) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     name,
                     "AltiumRecord only supports structs with named fields",
-                ))
+                ));
             }
         },
         _ => {
             return Err(syn::Error::new_spanned(
                 name,
                 "AltiumRecord only supports structs",
-            ))
+            ));
         }
     };
 
@@ -596,16 +596,46 @@ fn generate_to_binary(
             let (write_expr, size) = match binary_ty.as_str() {
                 "i8" => (quote! { writer.write_i8(self.#field_name)? }, 1),
                 "u8" => (quote! { writer.write_u8(self.#field_name)? }, 1),
-                "i16le" => (quote! { writer.write_i16::<byteorder::LittleEndian>(self.#field_name)? }, 2),
-                "u16le" => (quote! { writer.write_u16::<byteorder::LittleEndian>(self.#field_name)? }, 2),
-                "i32le" => (quote! { writer.write_i32::<byteorder::LittleEndian>(self.#field_name)? }, 4),
-                "u32le" => (quote! { writer.write_u32::<byteorder::LittleEndian>(self.#field_name)? }, 4),
-                "i64le" => (quote! { writer.write_i64::<byteorder::LittleEndian>(self.#field_name)? }, 8),
-                "u64le" => (quote! { writer.write_u64::<byteorder::LittleEndian>(self.#field_name)? }, 8),
-                "f32le" => (quote! { writer.write_f32::<byteorder::LittleEndian>(self.#field_name)? }, 4),
-                "f64le" => (quote! { writer.write_f64::<byteorder::LittleEndian>(self.#field_name)? }, 8),
-                "bool" => (quote! { writer.write_u8(if self.#field_name { 1 } else { 0 })? }, 1),
-                _ => (quote! { crate::traits::ToBinary::write_to(&self.#field_name, writer)? }, 0),
+                "i16le" => (
+                    quote! { writer.write_i16::<byteorder::LittleEndian>(self.#field_name)? },
+                    2,
+                ),
+                "u16le" => (
+                    quote! { writer.write_u16::<byteorder::LittleEndian>(self.#field_name)? },
+                    2,
+                ),
+                "i32le" => (
+                    quote! { writer.write_i32::<byteorder::LittleEndian>(self.#field_name)? },
+                    4,
+                ),
+                "u32le" => (
+                    quote! { writer.write_u32::<byteorder::LittleEndian>(self.#field_name)? },
+                    4,
+                ),
+                "i64le" => (
+                    quote! { writer.write_i64::<byteorder::LittleEndian>(self.#field_name)? },
+                    8,
+                ),
+                "u64le" => (
+                    quote! { writer.write_u64::<byteorder::LittleEndian>(self.#field_name)? },
+                    8,
+                ),
+                "f32le" => (
+                    quote! { writer.write_f32::<byteorder::LittleEndian>(self.#field_name)? },
+                    4,
+                ),
+                "f64le" => (
+                    quote! { writer.write_f64::<byteorder::LittleEndian>(self.#field_name)? },
+                    8,
+                ),
+                "bool" => (
+                    quote! { writer.write_u8(if self.#field_name { 1 } else { 0 })? },
+                    1,
+                ),
+                _ => (
+                    quote! { crate::traits::ToBinary::write_to(&self.#field_name, writer)? },
+                    0,
+                ),
             };
             field_writes.push(write_expr);
             if size > 0 {
@@ -667,12 +697,9 @@ fn generate_sch_primitive(
         }
     } else {
         // Look for direct owner_index field
-        let direct_field = fields
-            .iter()
-            .find(|(name, _, attrs)| {
-                *name == "owner_index"
-                    || attrs.param.as_deref() == Some("OWNERINDEX")
-            });
+        let direct_field = fields.iter().find(|(name, _, attrs)| {
+            *name == "owner_index" || attrs.param.as_deref() == Some("OWNERINDEX")
+        });
 
         if let Some((field_name, _, _)) = direct_field {
             quote! {

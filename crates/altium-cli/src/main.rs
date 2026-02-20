@@ -2,7 +2,9 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::commands::{pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, schdoc::SchDocCommands, schlib::SchLibCommands};
+use crate::commands::{
+    pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, schdoc::SchDocCommands, schlib::SchLibCommands,
+};
 
 #[derive(Parser)]
 #[command(name = "altium-cli")]
@@ -60,7 +62,6 @@ enum Commands {
 
     // TODO: prjpcb and intlib commands disabled pending v2 migration
     // of their underlying document types.
-
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell)

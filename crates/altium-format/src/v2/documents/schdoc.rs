@@ -34,7 +34,9 @@ impl SchDoc {
 
     /// Returns the stable document-level semantic ID, if computed.
     pub fn document_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
-        self.store.borrow().document_id().cloned()
+        let mut store = self.store.borrow_mut();
+        store.ensure_semantic_ids();
+        store.document_id().cloned()
     }
 
     /// Open a SchDoc from a reader.
@@ -73,6 +75,10 @@ impl SchDoc {
 
     /// Save a SchDoc to a writer.
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
+        {
+            let mut store = self.store.borrow_mut();
+            store.ensure_semantic_ids();
+        }
         let mut cfb = cfb::CompoundFile::create(writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
@@ -135,9 +141,7 @@ impl SchDoc {
             .iter()
             .find(|&&rid| store.record(rid).key == id)
             .map(|&rid| {
-                crate::v2::records::SchSheetRecord::from_origin(
-                    store.record(rid).origin.clone(),
-                )
+                crate::v2::records::SchSheetRecord::from_origin(store.record(rid).origin.clone())
             })
     }
 
@@ -149,11 +153,7 @@ impl SchDoc {
     /// Iterate all records of a given type across group children and orphans.
     ///
     /// Passes a cloned `RecordNode` for each matching record.
-    pub fn for_each_record_of_type(
-        &self,
-        record_id: u8,
-        mut f: impl FnMut(&RecordNode),
-    ) {
+    pub fn for_each_record_of_type(&self, record_id: u8, mut f: impl FnMut(&RecordNode)) {
         let store = self.store.borrow();
 
         for &gid in store.group_ids() {
@@ -180,10 +180,7 @@ impl SchDoc {
 // ---------------------------------------------------------------------------
 
 impl crate::v2::traits::DocumentQuery<crate::v2::handles::SchComponent> for SchDoc {
-    fn query(
-        &self,
-        q: &str,
-    ) -> crate::error::Result<crate::v2::handles::SchComponentHandle> {
+    fn query(&self, q: &str) -> crate::error::Result<crate::v2::handles::SchComponentHandle> {
         use crate::v2::query::eval::evaluate;
         let parsed = crate::v2::query::parse(q)?;
 
@@ -228,12 +225,7 @@ impl crate::v2::traits::DocumentQuery<crate::v2::handles::SchComponent> for SchD
 
         let handles = indices
             .into_iter()
-            .map(|i| {
-                crate::v2::handles::SchComponentHandle::new(
-                    self.store.clone(),
-                    group_ids[i],
-                )
-            })
+            .map(|i| crate::v2::handles::SchComponentHandle::new(self.store.clone(), group_ids[i]))
             .collect();
 
         Ok(handles)
@@ -275,7 +267,7 @@ impl SchDoc {
 
         match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => Ok(T::make_handle(self.store.clone(), matches[0])),
+            1 => T::try_make_handle(self.store.clone(), matches[0]),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
@@ -307,8 +299,8 @@ impl SchDoc {
 
         let handles = matches
             .into_iter()
-            .map(|id| T::make_handle(self.store.clone(), id))
-            .collect();
+            .map(|id| T::try_make_handle(self.store.clone(), id))
+            .collect::<crate::error::Result<Vec<_>>>()?;
 
         Ok(handles)
     }
@@ -361,9 +353,8 @@ fn parse_flat_stream(data: &[u8]) -> Result<Vec<(usize, RecordNode)>> {
             let mut full_raw = Vec::with_capacity(4 + record_len);
             full_raw.extend_from_slice(&len_buf);
             full_raw.extend_from_slice(&record_data);
-            let origin = RecordOrigin::Binary(
-                crate::v2::backing_store::BinaryOrigin::new(record_data),
-            );
+            let origin =
+                RecordOrigin::Binary(crate::v2::backing_store::BinaryOrigin::new(record_data));
             let mut node = RecordNode::new(record_type, origin);
             node.original_snapshot = full_raw;
             records.push((index, node));
@@ -440,7 +431,9 @@ fn group_by_owner_index(store: &mut DocumentStore, records: Vec<(usize, RecordNo
 
         if owner_index >= 0 && (owner_index as usize) < group_entries.len() {
             let child_id = store.insert_record(node);
-            group_entries[owner_index as usize].2.push((flat_idx, child_id));
+            group_entries[owner_index as usize]
+                .2
+                .push((flat_idx, child_id));
         } else {
             let child_id = store.insert_record(node);
             store.orphan_records.push(child_id);
@@ -458,60 +451,49 @@ fn group_by_owner_index(store: &mut DocumentStore, records: Vec<(usize, RecordNo
     }
 }
 
-/// A top-level entry in the flat stream: either a group (parent + children)
-/// or an orphan record. Sorted by original index to preserve interleaving.
-enum FlatEntry {
-    Group(GroupId),
-    Orphan(usize), // index into orphan_records
-}
-
 /// Flatten the document back to a sequential record stream for writing.
 ///
-/// Groups and orphans are interleaved according to their original flat-stream
-/// indices so that the output order matches the input order.
+/// All records (parents, children, orphans) are emitted in flat-stream index
+/// order so parent/child interleaving is preserved.
 fn flatten_to_stream(doc: &SchDoc) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     let store = doc.store.borrow();
 
-    // Collect all top-level entries with their original indices.
-    let mut entries: Vec<(usize, FlatEntry)> = Vec::new();
+    // (original_index, insertion_order, record_id)
+    let mut timeline: Vec<(usize, usize, RecordId)> = Vec::new();
+    let mut insertion_order = 0usize;
 
     for &gid in store.group_ids() {
         let group = store.group(gid);
-        let idx = group.parent_original_index.unwrap_or(usize::MAX);
-        entries.push((idx, FlatEntry::Group(gid)));
+        let parent_idx = group.parent_original_index.unwrap_or(usize::MAX);
+        timeline.push((parent_idx, insertion_order, group.parent_id()));
+        insertion_order += 1;
+
+        for (pos, &cid) in group.child_ids().iter().enumerate() {
+            let idx = group
+                .original_indices
+                .get(pos)
+                .copied()
+                .unwrap_or(usize::MAX);
+            timeline.push((idx, insertion_order, cid));
+            insertion_order += 1;
+        }
     }
 
-    for (i, _) in store.orphan_ids().iter().enumerate() {
+    for (pos, &oid) in store.orphan_ids().iter().enumerate() {
         let idx = store
             .orphan_original_indices
-            .get(i)
+            .get(pos)
             .copied()
             .unwrap_or(usize::MAX);
-        entries.push((idx, FlatEntry::Orphan(i)));
+        timeline.push((idx, insertion_order, oid));
+        insertion_order += 1;
     }
 
-    // Sort by original index to preserve the original interleaving.
-    entries.sort_by_key(|(idx, _)| *idx);
-
-    for (_, entry) in entries {
-        match entry {
-            FlatEntry::Group(gid) => {
-                let group = store.group(gid);
-                let parent = store.record(group.parent_id());
-                super::schlib::write_record_to_stream(&mut output, parent)?;
-
-                for &cid in group.child_ids() {
-                    let child = store.record(cid);
-                    super::schlib::write_record_to_stream(&mut output, child)?;
-                }
-            }
-            FlatEntry::Orphan(i) => {
-                let oid = store.orphan_ids()[i];
-                let orphan = store.record(oid);
-                super::schlib::write_record_to_stream(&mut output, orphan)?;
-            }
-        }
+    timeline.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    for (_, _, rid) in timeline {
+        let node = store.record(rid);
+        super::schlib::write_record_to_stream(&mut output, node)?;
     }
 
     Ok(output)
@@ -546,18 +528,14 @@ mod tests {
                 1,
                 RecordNode::new(
                     2,
-                    RecordOrigin::Param(ParamOrigin::new(
-                        "|RECORD=2|OWNERINDEX=0|NAME=VCC|",
-                    )),
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|OWNERINDEX=0|NAME=VCC|")),
                 ),
             ),
             (
                 2,
                 RecordNode::new(
                     2,
-                    RecordOrigin::Param(ParamOrigin::new(
-                        "|RECORD=2|OWNERINDEX=0|NAME=GND|",
-                    )),
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|OWNERINDEX=0|NAME=GND|")),
                 ),
             ),
             (
@@ -571,9 +549,7 @@ mod tests {
                 4,
                 RecordNode::new(
                     2,
-                    RecordOrigin::Param(ParamOrigin::new(
-                        "|RECORD=2|OWNERINDEX=1|NAME=1|",
-                    )),
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|OWNERINDEX=1|NAME=1|")),
                 ),
             ),
         ];
@@ -599,10 +575,7 @@ mod tests {
             ),
             (
                 1,
-                RecordNode::new(
-                    34,
-                    RecordOrigin::Param(ParamOrigin::new("|RECORD=34|")),
-                ),
+                RecordNode::new(34, RecordOrigin::Param(ParamOrigin::new("|RECORD=34|"))),
             ),
         ];
 
@@ -634,15 +607,11 @@ mod tests {
             ),
             (
                 1,
-                RecordNode::new(
-                    31,
-                    RecordOrigin::Param(ParamOrigin::new("|RECORD=31|")),
-                ),
+                RecordNode::new(31, RecordOrigin::Param(ParamOrigin::new("|RECORD=31|"))),
             ),
         ];
 
-        let store =
-            std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
+        let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
         let doc = SchDoc { store };
 
         assert_eq!(doc.component_count(), 1);
@@ -663,31 +632,23 @@ mod tests {
                 1,
                 RecordNode::new(
                     2,
-                    RecordOrigin::Param(ParamOrigin::new(
-                        "|RECORD=2|OWNERINDEX=0|NAME=VCC|",
-                    )),
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|OWNERINDEX=0|NAME=VCC|")),
                 ),
             ),
             (
                 2,
                 RecordNode::new(
                     2,
-                    RecordOrigin::Param(ParamOrigin::new(
-                        "|RECORD=2|OWNERINDEX=0|NAME=GND|",
-                    )),
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=2|OWNERINDEX=0|NAME=GND|")),
                 ),
             ),
             (
                 3,
-                RecordNode::new(
-                    31,
-                    RecordOrigin::Param(ParamOrigin::new("|RECORD=31|")),
-                ),
+                RecordNode::new(31, RecordOrigin::Param(ParamOrigin::new("|RECORD=31|"))),
             ),
         ];
 
-        let store =
-            std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
+        let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
         let doc = SchDoc { store };
 
         assert_eq!(doc.count_record_type(1), 1);
@@ -725,13 +686,10 @@ mod tests {
             ),
         ];
 
-        let store =
-            std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
+        let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
         let doc = SchDoc { store };
 
-        let handle =
-            DocumentQuery::<crate::v2::handles::SchComponent>::query(&doc, "U1")
-                .unwrap();
+        let handle = DocumentQuery::<crate::v2::handles::SchComponent>::query(&doc, "U1").unwrap();
         let comp = handle.read();
         assert_eq!(&*comp.designator(), "U1");
     }
@@ -757,13 +715,11 @@ mod tests {
             ),
         ];
 
-        let store =
-            std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
+        let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
         let doc = SchDoc { store };
 
         let handles =
-            DocumentQuery::<crate::v2::handles::SchComponent>::query_all(&doc, "#1")
-                .unwrap();
+            DocumentQuery::<crate::v2::handles::SchComponent>::query_all(&doc, "#1").unwrap();
         assert_eq!(handles.len(), 2);
     }
 
@@ -797,13 +753,46 @@ mod tests {
             ),
         ];
 
-        let store =
-            std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
+        let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
         let doc = SchDoc { store };
 
         let handles = doc
             .query_all_children::<crate::v2::handles::SchPin>("pin")
             .unwrap();
         assert_eq!(handles.len(), 2);
+    }
+
+    #[test]
+    fn flatten_preserves_parent_child_orphan_interleaving() {
+        let records = vec![
+            (
+                10,
+                RecordNode::new(
+                    1,
+                    RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=U1|")),
+                ),
+            ),
+            (
+                20,
+                RecordNode::new(31, RecordOrigin::Param(ParamOrigin::new("|RECORD=31|"))),
+            ),
+            (
+                30,
+                RecordNode::new(
+                    2,
+                    RecordOrigin::Param(ParamOrigin::new(
+                        "|RECORD=2|OWNERINDEX=0|NAME=VCC|DESIGNATOR=1|",
+                    )),
+                ),
+            ),
+        ];
+
+        let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
+        let doc = SchDoc { store };
+
+        let out = flatten_to_stream(&doc).unwrap();
+        let parsed = parse_flat_stream(&out).unwrap();
+        let keys: Vec<u8> = parsed.into_iter().map(|(_, node)| node.key).collect();
+        assert_eq!(keys, vec![1, 31, 2]);
     }
 }

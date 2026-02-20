@@ -13,7 +13,7 @@
 //! - `AltiumEnum` - Derive for enum value mapping
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{DeriveInput, parse_macro_input};
 
 mod altium_enum_attr;
 mod altium_record;

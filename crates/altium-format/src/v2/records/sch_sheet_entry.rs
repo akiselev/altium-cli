@@ -1,7 +1,7 @@
 //! Sheet entry record (RECORD=40).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Sheet entry record — port-like entry on a sheet symbol.
 ///

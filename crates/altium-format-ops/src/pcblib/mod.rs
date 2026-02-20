@@ -135,7 +135,10 @@ pub(super) fn find_footprint_by_name(
 /// Extract all pad data from a footprint handle.
 pub(super) fn extract_pads(fp: &PcbFootprintHandle) -> Vec<PadData> {
     let pad_handles = fp.children::<PcbPad>();
-    pad_handles.iter().map(|h| PadData::from_record(h.read())).collect()
+    pad_handles
+        .iter()
+        .map(|h| PadData::from_record(h.read()))
+        .collect()
 }
 
 /// Count primitives by type using the handle.
@@ -156,10 +159,7 @@ pub(super) fn categorize_footprint(name: &str, description: &str) -> &'static st
     if name_lower.contains("bga") || desc_lower.contains("bga") {
         return "BGA";
     }
-    if name_lower.contains("qfp")
-        || name_lower.contains("tqfp")
-        || name_lower.contains("lqfp")
-    {
+    if name_lower.contains("qfp") || name_lower.contains("tqfp") || name_lower.contains("lqfp") {
         return "QFP";
     }
     if name_lower.contains("qfn") || name_lower.contains("dfn") {
@@ -325,10 +325,7 @@ mod tests {
         rec2.set_top_size_y(PcbCoord::from_mm(0.5));
         rec2.set_layer(1);
 
-        let pads = vec![
-            PadData::from_record(rec1),
-            PadData::from_record(rec2),
-        ];
+        let pads = vec![PadData::from_record(rec1), PadData::from_record(rec2)];
 
         let bb = compute_bounding_box(&pads);
         assert!(bb.width.contains("2.5"));

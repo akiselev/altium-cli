@@ -19,14 +19,14 @@ pub fn derive_base(input: DeriveInput) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     name,
                     "AltiumBase only supports structs with named fields",
-                ))
+                ));
             }
         },
         _ => {
             return Err(syn::Error::new_spanned(
                 name,
                 "AltiumBase only supports structs",
-            ))
+            ));
         }
     };
 
@@ -175,9 +175,7 @@ pub fn derive_base(input: DeriveInput) -> syn::Result<TokenStream> {
 
     // Generate special methods for SchPrimitiveBase
     let special_methods = if base_name == "SchPrimitiveBase" {
-        let has_owner_index = field_info
-            .iter()
-            .any(|(name, _, _)| *name == "owner_index");
+        let has_owner_index = field_info.iter().any(|(name, _, _)| *name == "owner_index");
 
         if has_owner_index {
             quote! {
@@ -199,9 +197,7 @@ pub fn derive_base(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let special_self_impls = if base_name == "SchPrimitiveBase" {
-        let has_owner_index = field_info
-            .iter()
-            .any(|(name, _, _)| *name == "owner_index");
+        let has_owner_index = field_info.iter().any(|(name, _, _)| *name == "owner_index");
 
         if has_owner_index {
             quote! {

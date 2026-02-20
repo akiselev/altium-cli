@@ -1,7 +1,7 @@
 //! Text frame record (RECORD=28).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Text frame record — bordered text region on a schematic.
 ///

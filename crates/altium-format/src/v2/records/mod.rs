@@ -14,46 +14,46 @@ pub mod enums;
 // Schematic record types (Track 3A)
 // ---------------------------------------------------------------------------
 
-pub mod sch_component;
-pub mod sch_pin;
-pub mod sch_bezier;
-pub mod sch_polyline;
-pub mod sch_polygon;
-pub mod sch_ellipse;
-pub mod sch_pie;
-pub mod sch_round_rectangle;
-pub mod sch_elliptical_arc;
 pub mod sch_arc;
-pub mod sch_line;
-pub mod sch_rectangle;
-pub mod sch_image;
+pub mod sch_bezier;
+pub mod sch_component;
 pub mod sch_designator;
+pub mod sch_ellipse;
+pub mod sch_elliptical_arc;
+pub mod sch_image;
+pub mod sch_line;
 pub mod sch_parameter;
+pub mod sch_pie;
+pub mod sch_pin;
+pub mod sch_polygon;
+pub mod sch_polyline;
+pub mod sch_rectangle;
+pub mod sch_round_rectangle;
 
 // ---------------------------------------------------------------------------
 // Schematic record types (Track 3B)
 // ---------------------------------------------------------------------------
 
-pub mod sch_symbol;
-pub mod sch_label;
-pub mod sch_power;
-pub mod sch_port;
-pub mod sch_no_erc;
-pub mod sch_net_label;
-pub mod sch_bus;
-pub mod sch_wire;
-pub mod sch_text_frame;
-pub mod sch_junction;
-pub mod sch_sheet;
-pub mod sch_sheet_name;
-pub mod sch_sheet_filename;
-pub mod sch_bus_entry;
-pub mod sch_sheet_symbol;
-pub mod sch_sheet_entry;
-pub mod sch_implementation_list;
-pub mod sch_implementation;
-pub mod sch_note;
 pub mod sch_blanket;
+pub mod sch_bus;
+pub mod sch_bus_entry;
+pub mod sch_implementation;
+pub mod sch_implementation_list;
+pub mod sch_junction;
+pub mod sch_label;
+pub mod sch_net_label;
+pub mod sch_no_erc;
+pub mod sch_note;
+pub mod sch_port;
+pub mod sch_power;
+pub mod sch_sheet;
+pub mod sch_sheet_entry;
+pub mod sch_sheet_filename;
+pub mod sch_sheet_name;
+pub mod sch_sheet_symbol;
+pub mod sch_symbol;
+pub mod sch_text_frame;
+pub mod sch_wire;
 
 // ---------------------------------------------------------------------------
 // Re-exports: enums
@@ -65,84 +65,84 @@ pub use enums::*;
 // Re-exports: schematic record types
 // ---------------------------------------------------------------------------
 
-pub use sch_component::SchComponentRecord;
-pub use sch_pin::SchPinRecord;
-pub use sch_bezier::SchBezierRecord;
-pub use sch_polyline::SchPolylineRecord;
-pub use sch_polygon::SchPolygonRecord;
-pub use sch_ellipse::SchEllipseRecord;
-pub use sch_pie::SchPieRecord;
-pub use sch_round_rectangle::SchRoundRectangleRecord;
-pub use sch_elliptical_arc::SchEllipticalArcRecord;
 pub use sch_arc::SchArcRecord;
-pub use sch_line::SchLineRecord;
-pub use sch_rectangle::SchRectangleRecord;
-pub use sch_image::SchImageRecord;
+pub use sch_bezier::SchBezierRecord;
+pub use sch_component::SchComponentRecord;
 pub use sch_designator::SchDesignatorRecord;
+pub use sch_ellipse::SchEllipseRecord;
+pub use sch_elliptical_arc::SchEllipticalArcRecord;
+pub use sch_image::SchImageRecord;
+pub use sch_line::SchLineRecord;
 pub use sch_parameter::SchParameterRecord;
+pub use sch_pie::SchPieRecord;
+pub use sch_pin::SchPinRecord;
+pub use sch_polygon::SchPolygonRecord;
+pub use sch_polyline::SchPolylineRecord;
+pub use sch_rectangle::SchRectangleRecord;
+pub use sch_round_rectangle::SchRoundRectangleRecord;
 
 // ---------------------------------------------------------------------------
 // Re-exports: schematic record types (Track 3B)
 // ---------------------------------------------------------------------------
 
-pub use sch_symbol::SchSymbolRecord;
-pub use sch_label::SchLabelRecord;
-pub use sch_power::SchPowerRecord;
-pub use sch_port::SchPortRecord;
-pub use sch_no_erc::SchNoERCRecord;
-pub use sch_net_label::SchNetLabelRecord;
-pub use sch_bus::SchBusRecord;
-pub use sch_wire::SchWireRecord;
-pub use sch_text_frame::SchTextFrameRecord;
-pub use sch_junction::SchJunctionRecord;
-pub use sch_sheet::SchSheetRecord;
-pub use sch_sheet_name::SchSheetNameRecord;
-pub use sch_sheet_filename::SchSheetFileNameRecord;
-pub use sch_bus_entry::SchBusEntryRecord;
-pub use sch_sheet_symbol::SchSheetSymbolRecord;
-pub use sch_sheet_entry::SchSheetEntryRecord;
-pub use sch_implementation_list::SchImplementationListRecord;
-pub use sch_implementation::SchImplementationRecord;
-pub use sch_note::SchNoteRecord;
 pub use sch_blanket::SchBlanketRecord;
+pub use sch_bus::SchBusRecord;
+pub use sch_bus_entry::SchBusEntryRecord;
+pub use sch_implementation::SchImplementationRecord;
+pub use sch_implementation_list::SchImplementationListRecord;
+pub use sch_junction::SchJunctionRecord;
+pub use sch_label::SchLabelRecord;
+pub use sch_net_label::SchNetLabelRecord;
+pub use sch_no_erc::SchNoERCRecord;
+pub use sch_note::SchNoteRecord;
+pub use sch_port::SchPortRecord;
+pub use sch_power::SchPowerRecord;
+pub use sch_sheet::SchSheetRecord;
+pub use sch_sheet_entry::SchSheetEntryRecord;
+pub use sch_sheet_filename::SchSheetFileNameRecord;
+pub use sch_sheet_name::SchSheetNameRecord;
+pub use sch_sheet_symbol::SchSheetSymbolRecord;
+pub use sch_symbol::SchSymbolRecord;
+pub use sch_text_frame::SchTextFrameRecord;
+pub use sch_wire::SchWireRecord;
 
 // ---------------------------------------------------------------------------
 // PCB record types (Track 3C)
 // ---------------------------------------------------------------------------
 
-pub mod pcb_track;
 pub mod pcb_arc;
-pub mod pcb_fill;
-pub mod pcb_pad;
-pub mod pcb_via;
-pub mod pcb_text;
-pub mod pcb_region;
 pub mod pcb_component_body;
+pub mod pcb_fill;
 pub mod pcb_footprint;
+pub mod pcb_pad;
+pub mod pcb_region;
+pub mod pcb_text;
+pub mod pcb_track;
+pub mod pcb_via;
 
 // ---------------------------------------------------------------------------
 // Re-exports: PCB record types
 // ---------------------------------------------------------------------------
 
-pub use pcb_track::PcbTrackRecord;
 pub use pcb_arc::PcbArcRecord;
-pub use pcb_fill::PcbFillRecord;
-pub use pcb_pad::PcbPadRecord;
-pub use pcb_via::PcbViaRecord;
-pub use pcb_text::PcbTextRecord;
-pub use pcb_region::PcbRegionRecord;
 pub use pcb_component_body::PcbComponentBodyRecord;
+pub use pcb_fill::PcbFillRecord;
 pub use pcb_footprint::PcbFootprintRecord;
+pub use pcb_pad::PcbPadRecord;
+pub use pcb_region::PcbRegionRecord;
+pub use pcb_text::PcbTextRecord;
+pub use pcb_track::PcbTrackRecord;
+pub use pcb_via::PcbViaRecord;
 
 // ---------------------------------------------------------------------------
 // Re-exports: PCB custom parse functions
 // ---------------------------------------------------------------------------
 
-pub(crate) use pcb_pad::parse_pad;
-pub(crate) use pcb_via::parse_via;
-pub(crate) use pcb_text::parse_text;
-pub(crate) use pcb_region::parse_region;
 pub(crate) use pcb_component_body::parse_component_body;
+pub(crate) use pcb_pad::parse_pad;
+pub(crate) use pcb_region::parse_region;
+pub(crate) use pcb_text::parse_text;
+pub(crate) use pcb_via::parse_via;
 
 // ---------------------------------------------------------------------------
 // Utility functions

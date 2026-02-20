@@ -112,9 +112,7 @@ impl Designator {
     /// - `"U10"` -> `Some(10)`
     /// - `"R?"` -> `None`
     pub fn number(&self) -> Option<u32> {
-        let start = self
-            .0
-            .find(|c: char| c.is_ascii_digit())?;
+        let start = self.0.find(|c: char| c.is_ascii_digit())?;
         self.0[start..].parse().ok()
     }
 
@@ -241,9 +239,8 @@ impl_string_newtype!(NetName);
 
 /// Common power net prefixes in Altium schematics.
 const POWER_NET_PREFIXES: &[&str] = &[
-    "VCC", "VDD", "VEE", "VSS", "GND", "DGND", "AGND", "PGND",
-    "+3V3", "+5V", "+12V", "-12V", "+3.3V", "+1.8V", "+2.5V",
-    "3V3", "5V", "12V",
+    "VCC", "VDD", "VEE", "VSS", "GND", "DGND", "AGND", "PGND", "+3V3", "+5V", "+12V", "-12V",
+    "+3.3V", "+1.8V", "+2.5V", "3V3", "5V", "12V",
 ];
 
 impl NetName {

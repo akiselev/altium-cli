@@ -8,7 +8,7 @@
 //! - **SGID** (Stream Group ID): identifies a component or footprint group
 //! - **RID** (Record Instance ID): identifies an individual record
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -47,20 +47,14 @@ fn blake3_128_hex(input: &str) -> String {
     let hash = blake3::hash(input.as_bytes());
     let bytes = hash.as_bytes();
     // First 16 bytes = 128 bits
-    bytes[..16]
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect()
+    bytes[..16].iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Compute blake3 hash of raw bytes, return lowercase hex (for doc_key).
 pub fn blake3_content_hash(data: &[u8]) -> String {
     let hash = blake3::hash(data);
     let bytes = hash.as_bytes();
-    bytes[..16]
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect()
+    bytes[..16].iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -109,12 +103,7 @@ const VOLATILE_KEYS: &[&str] = &[
 /// 1. UNIQUEID parameter if present and non-empty
 /// 2. For pins (RECORD=2): `<owner_anchor>:pin:<pin_index>`
 /// 3. Semantic fingerprint (blake3 of canonical sorted params, excluding volatile keys)
-fn sch_record_anchor(
-    origin: &RecordOrigin,
-    record_key: u8,
-    owner_anchor: Option<&str>,
-    child_index: usize,
-) -> String {
+fn sch_record_anchor(origin: &RecordOrigin, record_key: u8) -> String {
     if let Some(param) = origin.as_param() {
         // 1. UNIQUEID
         if let Some(uid) = param.params.get("UNIQUEID") {
@@ -124,10 +113,20 @@ fn sch_record_anchor(
             }
         }
 
-        // 2. Pin index anchor
+        // 2. Pin semantic anchor (order-independent)
         if record_key == 2 {
-            if let Some(owner) = owner_anchor {
-                return format!("{}:pin:{}", owner, child_index);
+            let designator = param
+                .params
+                .get("DESIGNATOR")
+                .map(|v| v.as_str().trim().to_lowercase())
+                .unwrap_or_default();
+            let name = param
+                .params
+                .get("NAME")
+                .map(|v| v.as_str().trim().to_lowercase())
+                .unwrap_or_default();
+            if !designator.is_empty() || !name.is_empty() {
+                return format!("pin:{}:{}", designator, name);
             }
         }
 
@@ -135,8 +134,8 @@ fn sch_record_anchor(
         return sch_semantic_fingerprint(&param.params);
     }
 
-    // Binary schematic records (rare) — use index-based fallback
-    format!("data:index:{}", child_index)
+    // Binary schematic records (rare) — use content hash fallback
+    format!("bin:{}", record_origin_hash(origin))
 }
 
 /// Compute a semantic fingerprint for a schematic param record.
@@ -163,28 +162,15 @@ fn sch_semantic_fingerprint(params: &crate::v2::parameters::ParameterCollection)
 /// Extract the anchor string for a PCB record.
 ///
 /// Fallback: `data:index:<primitive_index>:hash:<blake3_128(raw_block)>`
-fn pcb_record_anchor(origin: &RecordOrigin, child_index: usize) -> String {
-    match origin {
-        RecordOrigin::Binary(b) => {
-            let hash = blake3_content_hash(&b.raw_block);
-            format!("data:index:{}:hash:{}", child_index, hash)
-        }
-        RecordOrigin::Param(p) => {
-            let hash = blake3_content_hash(p.raw_record_text.as_bytes());
-            format!("data:index:{}:hash:{}", child_index, hash)
-        }
-    }
+fn pcb_record_anchor(origin: &RecordOrigin) -> String {
+    format!("data:hash:{}", record_origin_hash(origin))
 }
 
 /// Extract the group anchor for a SchLib or SchDoc component.
 ///
 /// SchLib: UNIQUEID from component record if present, else canonical LibRef (lowercased).
 /// SchDoc: UNIQUEID from component record if present, else semantic fingerprint.
-fn sch_group_anchor(
-    store: &DocumentStore,
-    group_id: GroupId,
-    is_schlib: bool,
-) -> String {
+fn sch_group_anchor(store: &DocumentStore, group_id: GroupId, is_schlib: bool) -> String {
     let group = store.group(group_id);
     let parent = store.record(group.parent_id());
 
@@ -208,37 +194,70 @@ fn sch_group_anchor(
         return sch_semantic_fingerprint(&param.params);
     }
 
-    // Binary parent (shouldn't happen for schematic) — use group index
-    format!("group:{:?}", group_id)
+    // Binary parent (shouldn't happen for schematic) — use content hash fallback
+    let parent = store.record(group.parent_id());
+    format!("group:{}", record_origin_hash(&parent.origin))
 }
 
 /// Extract the group anchor for a PcbLib footprint.
 ///
 /// PATTERN name (lowercased). Duplicate names get `:dup2`, `:dup3` suffixes.
-fn pcb_group_anchors(store: &DocumentStore) -> HashMap<GroupId, String> {
-    let mut anchors = HashMap::new();
-    let mut name_counts: HashMap<String, usize> = HashMap::new();
+fn record_origin_hash(origin: &RecordOrigin) -> String {
+    match origin {
+        RecordOrigin::Binary(b) => blake3_content_hash(&b.raw_block),
+        RecordOrigin::Param(p) => blake3_content_hash(p.raw_record_text.as_bytes()),
+    }
+}
 
-    for &gid in store.group_ids() {
-        let group = store.group(gid);
-        let name_lower = match &group.meta() {
-            GroupMeta::PcbFootprint { name, .. } => name.to_lowercase(),
-            _ => continue,
-        };
+fn group_disambiguator(store: &DocumentStore, gid: GroupId) -> String {
+    let group = store.group(gid);
+    let parent = store.record(group.parent_id());
+    let parent_hash = record_origin_hash(&parent.origin);
 
-        let count = name_counts.entry(name_lower.clone()).or_insert(0);
-        *count += 1;
+    let mut child_hashes: Vec<String> = group
+        .child_ids()
+        .iter()
+        .map(|&cid| {
+            let rec = store.record(cid);
+            format!("{}:{}", rec.key, record_origin_hash(&rec.origin))
+        })
+        .collect();
+    child_hashes.sort();
 
-        let anchor = if *count == 1 {
-            name_lower
-        } else {
-            format!("{}:dup{}", name_lower, count)
-        };
+    let canonical = format!("p={}|c={}", parent_hash, child_hashes.join(","));
+    blake3_128_hex(&canonical)
+}
 
-        anchors.insert(gid, anchor);
+fn disambiguate_group_anchors(
+    store: &DocumentStore,
+    base_anchors: &HashMap<GroupId, String>,
+) -> HashMap<GroupId, String> {
+    let mut by_anchor: BTreeMap<String, Vec<GroupId>> = BTreeMap::new();
+    for (&gid, anchor) in base_anchors {
+        by_anchor.entry(anchor.clone()).or_default().push(gid);
     }
 
-    anchors
+    let mut final_anchors = HashMap::new();
+    for (anchor, gids) in by_anchor {
+        if gids.len() == 1 {
+            final_anchors.insert(gids[0], anchor);
+            continue;
+        }
+
+        let mut ranked: Vec<(String, GroupId)> = gids
+            .into_iter()
+            .map(|gid| (group_disambiguator(store, gid), gid))
+            .collect();
+        ranked.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1)))
+        });
+
+        for (idx, (_, gid)) in ranked.into_iter().enumerate() {
+            final_anchors.insert(gid, format!("{}:dup{}", anchor, idx + 1));
+        }
+    }
+    final_anchors
 }
 
 // ---------------------------------------------------------------------------
@@ -253,28 +272,35 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
     let is_pcb = dtid.contains("pcb");
     let is_schlib = dtid == "dtid:schlib";
 
+    store.set_semantic_context(dtid, doc_key);
+    store.group_semantic_ids.clear();
+    store.record_semantic_ids.clear();
+
     // 1. Compute DID
     let did = compute_did(dtid, doc_key);
     store.document_id = Some(did.clone());
 
     // 2. Compute SGIDs for each group
     let group_ids: Vec<GroupId> = store.group_ids().to_vec();
-
-    // For PCB, compute all anchors at once (handles duplicate names)
-    let pcb_anchors = if is_pcb {
-        pcb_group_anchors(store)
-    } else {
-        HashMap::new()
-    };
+    let mut base_group_anchors: HashMap<GroupId, String> = HashMap::new();
+    for &gid in &group_ids {
+        let base_anchor = if is_pcb {
+            let group = store.group(gid);
+            match &group.meta() {
+                GroupMeta::PcbFootprint { name, .. } => name.to_lowercase(),
+                _ => continue,
+            }
+        } else {
+            sch_group_anchor(store, gid, is_schlib)
+        };
+        base_group_anchors.insert(gid, base_anchor);
+    }
+    let group_anchors = disambiguate_group_anchors(store, &base_group_anchors);
 
     // Build group anchors and SGIDs
     let mut group_anchor_map: HashMap<GroupId, String> = HashMap::new();
     for &gid in &group_ids {
-        let anchor = if is_pcb {
-            pcb_anchors.get(&gid).cloned().unwrap_or_default()
-        } else {
-            sch_group_anchor(store, gid, is_schlib)
-        };
+        let anchor = group_anchors.get(&gid).cloned().unwrap_or_default();
 
         let group_key = if is_pcb {
             format!("footprint:{}", anchor)
@@ -288,7 +314,7 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
     }
 
     // 3. Compute RIDs for all records
-    let mut all_rids: Vec<(RecordId, SemanticId)> = Vec::new();
+    let mut all_rids: Vec<(RecordId, SemanticId, String)> = Vec::new();
 
     for &gid in &group_ids {
         let sgid_str = store
@@ -309,16 +335,22 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
             format!("rtid:sch:record:{}", parent_key)
         };
         let parent_anchor = if is_pcb {
-            pcb_record_anchor(&parent_origin, 0)
+            pcb_record_anchor(&parent_origin)
         } else {
-            sch_record_anchor(&parent_origin, parent_key, None, 0)
+            sch_record_anchor(&parent_origin, parent_key)
         };
         let parent_rid = compute_rid(&sgid_str, &parent_rtid, &parent_anchor);
-        all_rids.push((parent_id, parent_rid));
+        let parent_tie = format!(
+            "{}:{}:{}",
+            parent_rtid,
+            parent_anchor,
+            record_origin_hash(&parent_origin)
+        );
+        all_rids.push((parent_id, parent_rid, parent_tie));
 
         // Child records
         let child_ids: Vec<RecordId> = store.group(gid).child_ids().to_vec();
-        for (i, &child_id) in child_ids.iter().enumerate() {
+        for &child_id in &child_ids {
             let child_key = store.record(child_id).key;
             let child_origin = store.record(child_id).origin.clone();
             let rtid = if is_pcb {
@@ -327,18 +359,25 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
                 format!("rtid:sch:record:{}", child_key)
             };
             let record_anchor = if is_pcb {
-                pcb_record_anchor(&child_origin, i + 1)
+                pcb_record_anchor(&child_origin)
             } else {
-                sch_record_anchor(&child_origin, child_key, Some(&group_anchor), i)
+                sch_record_anchor(&child_origin, child_key)
             };
             let rid = compute_rid(&sgid_str, &rtid, &record_anchor);
-            all_rids.push((child_id, rid));
+            let tie = format!(
+                "{}:{}:{}:{}",
+                group_anchor,
+                rtid,
+                record_anchor,
+                record_origin_hash(&child_origin)
+            );
+            all_rids.push((child_id, rid, tie));
         }
     }
 
     // Orphan records
     let orphan_ids: Vec<RecordId> = store.orphan_ids().to_vec();
-    for (i, &oid) in orphan_ids.iter().enumerate() {
+    for &oid in &orphan_ids {
         let key = store.record(oid).key;
         let origin = store.record(oid).origin.clone();
         let rtid = if is_pcb {
@@ -347,32 +386,45 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
             format!("rtid:sch:record:{}", key)
         };
         let record_anchor = if is_pcb {
-            pcb_record_anchor(&origin, i)
+            pcb_record_anchor(&origin)
         } else {
-            sch_record_anchor(&origin, key, None, i)
+            sch_record_anchor(&origin, key)
         };
         let rid = compute_rid(&did.0, &rtid, &record_anchor);
-        all_rids.push((oid, rid));
+        let tie = format!(
+            "orphan:{}:{}:{}",
+            rtid,
+            record_anchor,
+            record_origin_hash(&origin)
+        );
+        all_rids.push((oid, rid, tie));
     }
 
-    // 4. Collision detection: append :dup2, :dup3 for duplicates
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    let mut final_rids: Vec<(RecordId, SemanticId)> = Vec::with_capacity(all_rids.len());
-
-    for (record_id, rid) in all_rids {
-        let count = seen.entry(rid.0.clone()).or_insert(0);
-        *count += 1;
-        let final_rid = if *count == 1 {
-            rid
-        } else {
-            SemanticId(format!("{}:dup{}", rid.0, count))
-        };
-        final_rids.push((record_id, final_rid));
+    // 4. Collision detection with deterministic tie-break ordering.
+    let mut by_rid: BTreeMap<String, Vec<(RecordId, String)>> = BTreeMap::new();
+    for (record_id, rid, tie) in all_rids {
+        by_rid
+            .entry(rid.0.clone())
+            .or_default()
+            .push((record_id, tie));
     }
 
-    for (record_id, rid) in final_rids {
-        store.record_semantic_ids.insert(record_id, rid);
+    for (rid_str, mut entries) in by_rid {
+        entries.sort_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then(format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+        });
+        for (idx, (record_id, _)) in entries.into_iter().enumerate() {
+            let final_rid = if idx == 0 {
+                SemanticId(rid_str.clone())
+            } else {
+                SemanticId(format!("{}:dup{}", rid_str, idx + 1))
+            };
+            store.record_semantic_ids.insert(record_id, final_rid);
+        }
     }
+
+    store.semantic_ids_dirty = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +491,7 @@ mod tests {
             minor_version: 0,
             unique_id: "test".to_string(),
             raw_header: None,
+            raw_header_params: None,
             section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
             raw_extra_streams: HashMap::new(),
         });
@@ -466,47 +519,45 @@ mod tests {
 
         compute_all_ids(&mut store, "dtid:schlib", "test");
 
-        // Both records should have RIDs, and one should have :dup2
+        // Both records should have unique RIDs, with no collision suffixes required.
         let rids: Vec<&SemanticId> = store.record_semantic_ids.values().collect();
+        assert_eq!(rids.len(), 2);
+
+        let unique: std::collections::HashSet<&str> = rids.iter().map(|r| r.as_str()).collect();
+        assert_eq!(unique.len(), rids.len(), "RIDs must be unique");
+
         let dup_count = rids.iter().filter(|r| r.as_str().contains(":dup")).count();
-        assert!(dup_count >= 1, "Expected at least one :dup suffix");
+        assert_eq!(dup_count, 0, "No RID collision suffixes should be needed");
     }
 
     #[test]
     fn sch_record_anchor_uses_uniqueid() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=2|UNIQUEID=ABC123|NAME=VCC|",
-        ));
-        let anchor = sch_record_anchor(&origin, 2, Some("comp"), 0);
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|UNIQUEID=ABC123|NAME=VCC|"));
+        let anchor = sch_record_anchor(&origin, 2);
         assert_eq!(anchor, "ABC123");
     }
 
     #[test]
     fn sch_record_anchor_pin_fallback() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=2|NAME=VCC|",
-        ));
-        let anchor = sch_record_anchor(&origin, 2, Some("comp_anchor"), 3);
-        assert_eq!(anchor, "comp_anchor:pin:3");
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|NAME=VCC|DESIGNATOR=1|"));
+        let anchor = sch_record_anchor(&origin, 2);
+        assert_eq!(anchor, "pin:1:vcc");
     }
 
     #[test]
     fn sch_record_anchor_fingerprint_fallback() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=4|X1=100|Y1=200|",
-        ));
-        let anchor = sch_record_anchor(&origin, 4, None, 0);
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=4|X1=100|Y1=200|"));
+        let anchor = sch_record_anchor(&origin, 4);
         // Should be a blake3 hash (32 hex chars)
         assert_eq!(anchor.len(), 32);
     }
 
     #[test]
     fn pcb_record_anchor_format() {
-        let origin = RecordOrigin::Binary(
-            crate::v2::backing_store::BinaryOrigin::new(vec![0xAA; 10]),
-        );
-        let anchor = pcb_record_anchor(&origin, 5);
-        assert!(anchor.starts_with("data:index:5:hash:"));
+        let origin =
+            RecordOrigin::Binary(crate::v2::backing_store::BinaryOrigin::new(vec![0xAA; 10]));
+        let anchor = pcb_record_anchor(&origin);
+        assert!(anchor.starts_with("data:hash:"));
     }
 
     #[test]
@@ -541,6 +592,7 @@ mod tests {
             minor_version: 0,
             unique_id: "LIB-UID".to_string(),
             raw_header: None,
+            raw_header_params: None,
             section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
             raw_extra_streams: HashMap::new(),
         });
@@ -596,5 +648,120 @@ mod tests {
         let did_str = did.as_str().to_string();
         compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
         assert_eq!(store.document_id.as_ref().unwrap().as_str(), did_str);
+    }
+
+    #[test]
+    fn rid_stable_under_child_reorder() {
+        let mut store = DocumentStore::new(DocumentMeta::SchLib {
+            header_text: String::new(),
+            weight: 0,
+            minor_version: 0,
+            unique_id: "LIB-UID".to_string(),
+            raw_header: None,
+            raw_header_params: None,
+            section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        });
+
+        let comp = RecordNode::new(
+            1,
+            RecordOrigin::Param(ParamOrigin::new(
+                "|RECORD=1|UNIQUEID=COMP1|LIBREFERENCE=U1|",
+            )),
+        );
+        let pin_a = RecordNode::new(
+            2,
+            RecordOrigin::Param(ParamOrigin::new(
+                "|RECORD=2|UNIQUEID=PINA|NAME=A|DESIGNATOR=1|",
+            )),
+        );
+        let pin_b = RecordNode::new(
+            2,
+            RecordOrigin::Param(ParamOrigin::new(
+                "|RECORD=2|UNIQUEID=PINB|NAME=B|DESIGNATOR=2|",
+            )),
+        );
+
+        let comp_id = store.insert_record(comp);
+        let pin_a_id = store.insert_record(pin_a);
+        let pin_b_id = store.insert_record(pin_b);
+
+        let gid = store.insert_group(GroupData {
+            parent: comp_id,
+            children: vec![pin_a_id, pin_b_id],
+            original_indices: vec![1, 2],
+            parent_original_index: None,
+            extra_streams: HashMap::new(),
+            meta: GroupMeta::SchComponent {
+                lib_ref: "U1".to_string(),
+                description: String::new(),
+                part_count: 1,
+                section_key: String::new(),
+            },
+        });
+
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        let before_a = store.record_semantic_ids[&pin_a_id].as_str().to_string();
+        let before_b = store.record_semantic_ids[&pin_b_id].as_str().to_string();
+
+        {
+            let group = store.group_mut(gid);
+            group.children.swap(0, 1);
+        }
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        let after_a = store.record_semantic_ids[&pin_a_id].as_str().to_string();
+        let after_b = store.record_semantic_ids[&pin_b_id].as_str().to_string();
+
+        assert_eq!(before_a, after_a);
+        assert_eq!(before_b, after_b);
+    }
+
+    #[test]
+    fn lazy_recompute_after_mutation() {
+        let mut store = DocumentStore::new(DocumentMeta::SchLib {
+            header_text: String::new(),
+            weight: 0,
+            minor_version: 0,
+            unique_id: "LIB-UID".to_string(),
+            raw_header: None,
+            raw_header_params: None,
+            section_keys: crate::v2::documents::section_keys::SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        });
+
+        let comp = RecordNode::new(
+            1,
+            RecordOrigin::Param(ParamOrigin::new(
+                "|RECORD=1|UNIQUEID=COMP1|LIBREFERENCE=U1|",
+            )),
+        );
+        let comp_id = store.insert_record(comp);
+        store.insert_group(GroupData {
+            parent: comp_id,
+            children: vec![],
+            original_indices: vec![],
+            parent_original_index: None,
+            extra_streams: HashMap::new(),
+            meta: GroupMeta::SchComponent {
+                lib_ref: "U1".to_string(),
+                description: String::new(),
+                part_count: 1,
+                section_key: String::new(),
+            },
+        });
+
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        let before = store.record_semantic_ids[&comp_id].as_str().to_string();
+
+        let rec = store.record_mut(comp_id);
+        rec.origin = RecordOrigin::Param(ParamOrigin::new(
+            "|RECORD=1|UNIQUEID=COMP2|LIBREFERENCE=U1|",
+        ));
+        rec.mark_dirty();
+        store.mark_semantic_ids_dirty();
+        store.ensure_semantic_ids();
+
+        let after = store.record_semantic_ids[&comp_id].as_str().to_string();
+        assert_ne!(before, after);
     }
 }

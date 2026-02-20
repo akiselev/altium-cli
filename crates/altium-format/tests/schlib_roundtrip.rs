@@ -68,8 +68,8 @@ fn destructive_roundtrip_synthiam_schlib() {
     // -----------------------------------------------------------------------
     // 3. Re-open from the saved buffer
     // -----------------------------------------------------------------------
-    let reloaded_lib = SchLib::open(Cursor::new(rebuilt_bytes.clone()))
-        .expect("Failed to re-open saved SchLib");
+    let reloaded_lib =
+        SchLib::open(Cursor::new(rebuilt_bytes.clone())).expect("Failed to re-open saved SchLib");
     let reloaded_count = reloaded_lib.component_count();
     println!("Re-opened SchLib: {} components", reloaded_count);
 
@@ -84,11 +84,9 @@ fn destructive_roundtrip_synthiam_schlib() {
     // 5. Structural assertions (these SHOULD pass)
     // -----------------------------------------------------------------------
     assert_eq!(
-        reloaded_count,
-        orig_component_count,
+        reloaded_count, orig_component_count,
         "Component count mismatch after round-trip: original={}, reloaded={}",
-        orig_component_count,
-        reloaded_count
+        orig_component_count, reloaded_count
     );
 
     // Verify component names are preserved
@@ -97,6 +95,15 @@ fn destructive_roundtrip_synthiam_schlib() {
     assert_eq!(
         orig_names, reloaded_names,
         "Component names changed after round-trip"
+    );
+
+    // Regression guard: FileHeader patching should preserve header semantics.
+    assert!(
+        !report
+            .text_diffs
+            .iter()
+            .any(|d| d.stream_name == "/FileHeader"),
+        "Unexpected /FileHeader text diff after round-trip"
     );
 
     // Log summary
@@ -157,9 +164,11 @@ fn record_type_name(id: u8) -> &'static str {
 
 /// Print a summary of record type distribution for a component's children.
 #[allow(dead_code)]
-fn print_record_type_summary(store: &altium_format::v2::store::DocumentStore, child_ids: &[altium_format::v2::ids::RecordId]) {
-    let mut type_counts: std::collections::HashMap<u8, usize> =
-        std::collections::HashMap::new();
+fn print_record_type_summary(
+    store: &altium_format::v2::store::DocumentStore,
+    child_ids: &[altium_format::v2::ids::RecordId],
+) {
+    let mut type_counts: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
     for &id in child_ids {
         let key = store.record(id).key;
         *type_counts.entry(key).or_insert(0) += 1;

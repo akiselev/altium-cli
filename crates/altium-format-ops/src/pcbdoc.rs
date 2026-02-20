@@ -241,10 +241,7 @@ pub fn cmd_settings(
 
 /// Shows the layer stack.
 #[allow(unused_variables)]
-pub fn cmd_layers(
-    path: &Path,
-    all: bool,
-) -> Result<PcbDocLayers, Box<dyn std::error::Error>> {
+pub fn cmd_layers(path: &Path, all: bool) -> Result<PcbDocLayers, Box<dyn std::error::Error>> {
     stub_err()
 }
 
@@ -360,10 +357,7 @@ pub fn cmd_set_outline_rect(
 
 /// Sets the board outline from a vertex string.
 #[allow(unused_variables)]
-pub fn cmd_set_outline(
-    path: &Path,
-    vertices: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_set_outline(path: &Path, vertices: &str) -> Result<(), Box<dyn std::error::Error>> {
     stub_err()
 }
 
@@ -558,10 +552,7 @@ pub fn cmd_add_component(
 
 /// Adds a net to the PCB document.
 #[allow(unused_variables)]
-pub fn cmd_add_net(
-    path: &Path,
-    name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_add_net(path: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     stub_err()
 }
 
@@ -603,9 +594,6 @@ pub fn cmd_modify_rule(
 
 /// Deletes a design rule by name.
 #[allow(unused_variables)]
-pub fn cmd_delete_rule(
-    path: &Path,
-    name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_delete_rule(path: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     stub_err()
 }

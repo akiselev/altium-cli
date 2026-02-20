@@ -12,9 +12,7 @@ use altium_format::v2::traits::DocumentQuery;
 use crate::helpers::*;
 use crate::output::*;
 
-use super::{
-    categorize_footprint, count_primitives, extract_pads, open_pcblib,
-};
+use super::{categorize_footprint, count_primitives, extract_pads, open_pcblib};
 
 /// Returns library overview with statistics and footprint category breakdown.
 pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::Error>> {

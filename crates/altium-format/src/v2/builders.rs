@@ -4,13 +4,11 @@
 //! function, then configure it via typed `&mut Record` closures. External code
 //! never sees `RecordOrigin` or `RecordNode`.
 
-use crate::v2::backing_store::{
-    PcbPrimitiveRef, RecordNode, RecordOrigin,
-};
+use crate::v2::backing_store::{PcbPrimitiveRef, RecordNode, RecordOrigin};
 use crate::v2::records::{
-    SchComponentRecord, SchPinRecord, SchArcRecord, SchLineRecord, SchRectangleRecord,
-    SchLabelRecord, SchDesignatorRecord, SchParameterRecord, SchSymbolRecord,
-    PcbFootprintRecord, PcbPadRecord, PcbTrackRecord, PcbArcRecord,
+    PcbArcRecord, PcbFootprintRecord, PcbPadRecord, PcbTrackRecord, SchArcRecord,
+    SchComponentRecord, SchDesignatorRecord, SchLabelRecord, SchLineRecord, SchParameterRecord,
+    SchPinRecord, SchRectangleRecord, SchSymbolRecord,
 };
 use crate::v2::traits::RecordType;
 
@@ -46,12 +44,11 @@ impl ComponentBuilder {
     pub fn new(template: fn() -> RecordOrigin) -> Self {
         let origin = template();
         let key = match &origin {
-            RecordOrigin::Param(p) => {
-                p.params
-                    .get("RECORD")
-                    .map(|v| v.as_int_or(0) as u8)
-                    .unwrap_or(1)
-            }
+            RecordOrigin::Param(p) => p
+                .params
+                .get("RECORD")
+                .map(|v| v.as_int_or(0) as u8)
+                .unwrap_or(1),
             _ => 1,
         };
         Self {
@@ -61,10 +58,7 @@ impl ComponentBuilder {
     }
 
     /// Modify the component record via a typed closure.
-    pub fn with_component(
-        &mut self,
-        f: impl FnOnce(&mut SchComponentRecord),
-    ) -> &mut Self {
+    pub fn with_component(&mut self, f: impl FnOnce(&mut SchComponentRecord)) -> &mut Self {
         let mut record = SchComponentRecord::from_origin(self.component.origin.clone());
         f(&mut record);
         self.component.origin = record.origin().clone();
@@ -229,10 +223,7 @@ impl FootprintBuilder {
     }
 
     /// Modify the footprint metadata via a typed closure.
-    pub fn with_metadata(
-        &mut self,
-        f: impl FnOnce(&mut PcbFootprintRecord),
-    ) -> &mut Self {
+    pub fn with_metadata(&mut self, f: impl FnOnce(&mut PcbFootprintRecord)) -> &mut Self {
         let mut record = PcbFootprintRecord::from_origin(self.metadata.origin.clone());
         f(&mut record);
         self.metadata.origin = record.origin().clone();
@@ -306,8 +297,8 @@ mod tests {
     use super::*;
     use crate::v2::coord::{AltiumCoord, PcbCoord};
     use crate::v2::newtypes::{Designator, LibReference, PinName};
-    use crate::v2::records::enums::PinElectricalType;
     use crate::v2::records::SchPinRecord;
+    use crate::v2::records::enums::PinElectricalType;
     use crate::v2::templates;
 
     #[test]
@@ -360,7 +351,8 @@ mod tests {
 
     #[test]
     fn footprint_builder_basic() {
-        let (metadata, primitives, _refs) = FootprintBuilder::new(templates::pcb_footprint_default).build();
+        let (metadata, primitives, _refs) =
+            FootprintBuilder::new(templates::pcb_footprint_default).build();
 
         assert_eq!(metadata.key, 0);
         assert!(primitives.is_empty());

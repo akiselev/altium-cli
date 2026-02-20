@@ -18,15 +18,12 @@ pub fn derive_enum(input: DeriveInput) -> syn::Result<TokenStream> {
             return Err(syn::Error::new_spanned(
                 name,
                 "AltiumEnum only supports enums",
-            ))
+            ));
         }
     };
 
     // Get the integer representation type
-    let repr_ty = container_attrs
-        .format
-        .as_deref()
-        .unwrap_or("i32");
+    let repr_ty = container_attrs.format.as_deref().unwrap_or("i32");
     let repr_ident = format_ident!("{}", repr_ty);
 
     // Collect variant information
@@ -41,7 +38,14 @@ pub fn derive_enum(input: DeriveInput) -> syn::Result<TokenStream> {
         let value = if let Some(v) = attrs.value {
             next_value = v + 1;
             v
-        } else if let Some((_, syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(int_lit), .. }))) = &variant.discriminant {
+        } else if let Some((
+            _,
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(int_lit),
+                ..
+            }),
+        )) = &variant.discriminant
+        {
             // Parse discriminant value
             let v: i64 = int_lit.base10_parse()?;
             next_value = v + 1;
@@ -68,7 +72,7 @@ pub fn derive_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     &variant.ident,
                     "AltiumEnum only supports unit variants",
-                ))
+                ));
             }
         }
 

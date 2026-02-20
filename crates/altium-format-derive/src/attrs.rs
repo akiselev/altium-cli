@@ -49,7 +49,10 @@ impl ContainerAttrs {
                 } else {
                     return Err(meta.error(format!(
                         "unknown container attribute: {}",
-                        meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                        meta.path
+                            .get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_default()
                     )));
                 }
                 Ok(())
@@ -196,7 +199,10 @@ impl FieldAttrs {
                 } else {
                     return Err(meta.error(format!(
                         "unknown field attribute: {}",
-                        meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                        meta.path
+                            .get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_default()
                     )));
                 }
                 Ok(())
@@ -215,8 +221,12 @@ impl FieldAttrs {
     /// Check if this field is a binary-based field
     #[allow(dead_code)]
     pub fn is_binary_field(&self) -> bool {
-        self.binary_ty.is_some() || self.coord_point || self.coord ||
-        self.string_block || self.pascal_string || self.array_size.is_some()
+        self.binary_ty.is_some()
+            || self.coord_point
+            || self.coord
+            || self.string_block
+            || self.pascal_string
+            || self.array_size.is_some()
     }
 }
 
@@ -248,7 +258,10 @@ impl VariantAttrs {
                 } else {
                     return Err(meta.error(format!(
                         "unknown variant attribute: {}",
-                        meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                        meta.path
+                            .get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_default()
                     )));
                 }
                 Ok(())

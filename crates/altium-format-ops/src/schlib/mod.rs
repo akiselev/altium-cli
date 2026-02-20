@@ -89,10 +89,7 @@ mod tests {
             parse_electrical_type("Output"),
             PinElectricalType::Output
         ));
-        assert!(matches!(
-            parse_electrical_type("IO"),
-            PinElectricalType::IO
-        ));
+        assert!(matches!(parse_electrical_type("IO"), PinElectricalType::IO));
         assert!(matches!(
             parse_electrical_type("bidirectional"),
             PinElectricalType::IO

@@ -1,9 +1,9 @@
 //! Schematic ellipse record (RECORD=8).
 
-use altium_format_derive::altium_record;
+use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::UniqueId;
-use super::enums::*;
+use altium_format_derive::altium_record;
 
 /// Schematic ellipse record -- RECORD=8.
 ///

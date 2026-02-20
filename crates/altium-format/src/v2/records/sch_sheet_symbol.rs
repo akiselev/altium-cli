@@ -1,7 +1,7 @@
 //! Sheet symbol record (RECORD=39).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Sheet symbol record — hierarchical sheet symbol on a schematic.
 ///

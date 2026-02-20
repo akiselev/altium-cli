@@ -452,10 +452,7 @@ bitflags::bitflags! {
 }
 
 impl crate::v2::traits::ParamCodec for PinConglomerateFlags {
-    fn read(
-        params: &crate::v2::parameters::ParameterCollection,
-        key: &str,
-    ) -> Option<Self> {
+    fn read(params: &crate::v2::parameters::ParameterCollection, key: &str) -> Option<Self> {
         params
             .get(key)
             .map(|v| Self::from_bits_truncate(v.as_int_or(0) as u32))
@@ -500,7 +497,10 @@ mod tests {
         assert_eq!(IeeeSymbol::from_int(8), IeeeSymbol::PostponedOutput);
         assert_eq!(IeeeSymbol::from_int(17), IeeeSymbol::OpenCollectorPullup);
         assert_eq!(IeeeSymbol::from_int(33), IeeeSymbol::LeftRightSignalFlow);
-        assert_eq!(IeeeSymbol::from_int(34), IeeeSymbol::BiDirectionalSignalFlow);
+        assert_eq!(
+            IeeeSymbol::from_int(34),
+            IeeeSymbol::BiDirectionalSignalFlow
+        );
         assert_eq!(IeeeSymbol::PostponedOutput.to_int(), 8);
         assert_eq!(IeeeSymbol::OpenCollectorPullup.to_int(), 17);
         // Unknown sparse value falls back to first variant
@@ -536,7 +536,10 @@ mod tests {
 
     #[test]
     fn text_justification_all_values() {
-        assert_eq!(TextJustification::from_int(0), TextJustification::BottomLeft);
+        assert_eq!(
+            TextJustification::from_int(0),
+            TextJustification::BottomLeft
+        );
         assert_eq!(TextJustification::from_int(4), TextJustification::Center);
         assert_eq!(TextJustification::from_int(8), TextJustification::TopRight);
     }

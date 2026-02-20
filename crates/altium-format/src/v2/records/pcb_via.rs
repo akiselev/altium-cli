@@ -10,8 +10,8 @@
 //!
 //! Uses custom parse/serialize functions stubbed for Phase 4.
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::PcbCoord;
+use altium_format_derive::altium_record;
 
 #[altium_record(kind = "pcb", object_id = Via, codec = "binary",
     parse_fn = "parse_via", serialize_fn = "serialize_via")]
@@ -39,24 +39,25 @@ pub struct PcbViaRecord {
 /// Via data is a single block with core fields at fixed offsets.
 /// Optional extended fields are present when the data is long enough.
 pub(crate) fn parse_via(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
     if data.len() < 31 {
         return Err(AltiumError::Parse(format!(
-            "via data too short: {} bytes (need >= 31)", data.len()
+            "via data too short: {} bytes (need >= 31)",
+            data.len()
         )));
     }
 
     // Core fields at fixed offsets (from v1 PcbVia::from_bytes)
     // Byte 0-12: PcbCommonHeader (13 bytes)
     let mut spans = vec![
-        FieldSpan::new(13, 4),  // 0: position_x
-        FieldSpan::new(17, 4),  // 1: position_y
-        FieldSpan::new(21, 4),  // 2: diameter
-        FieldSpan::new(25, 4),  // 3: hole_size
-        FieldSpan::new(29, 1),  // 4: layer_start
-        FieldSpan::new(30, 1),  // 5: layer_end
+        FieldSpan::new(13, 4), // 0: position_x
+        FieldSpan::new(17, 4), // 1: position_y
+        FieldSpan::new(21, 4), // 2: diameter
+        FieldSpan::new(25, 4), // 3: hole_size
+        FieldSpan::new(29, 1), // 4: layer_start
+        FieldSpan::new(30, 1), // 5: layer_end
     ];
 
     // via_mode at offset 74 (if data is long enough)
@@ -112,14 +113,14 @@ mod tests {
         data[19] = 0;
 
         let spans = vec![
-            FieldSpan::new(0, 4),   // position_x
-            FieldSpan::new(4, 4),   // position_y
-            FieldSpan::new(8, 4),   // diameter
-            FieldSpan::new(12, 4),  // hole_size
-            FieldSpan::new(16, 1),  // layer_start
-            FieldSpan::new(17, 1),  // layer_end
-            FieldSpan::new(18, 1),  // via_mode
-            FieldSpan::new(19, 1),  // soldermask_expansion_manual
+            FieldSpan::new(0, 4),  // position_x
+            FieldSpan::new(4, 4),  // position_y
+            FieldSpan::new(8, 4),  // diameter
+            FieldSpan::new(12, 4), // hole_size
+            FieldSpan::new(16, 1), // layer_start
+            FieldSpan::new(17, 1), // layer_end
+            FieldSpan::new(18, 1), // via_mode
+            FieldSpan::new(19, 1), // soldermask_expansion_manual
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))

@@ -1,8 +1,8 @@
 //! Schematic pie record (RECORD=9).
 
-use altium_format_derive::altium_record;
-use crate::v2::coord::SchCoord;
 use super::enums::*;
+use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Schematic pie record -- RECORD=9.
 ///

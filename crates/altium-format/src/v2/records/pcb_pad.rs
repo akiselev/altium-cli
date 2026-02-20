@@ -12,8 +12,8 @@
 //! 5. Main pad data (172 bytes in AD26)
 //! 6. Per-layer stack data (596/628/651 bytes)
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::PcbCoord;
+use altium_format_derive::altium_record;
 
 #[altium_record(kind = "pcb", object_id = Pad, codec = "binary",
     parse_fn = "parse_pad", serialize_fn = "serialize_pad")]
@@ -61,20 +61,19 @@ pub struct PcbPadRecord {
 /// Each subrecord is length-prefixed with u32. The typed fields are
 /// extracted from subrecord 5 (main pad core data) at fixed offsets.
 pub(crate) fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
     use crate::error::AltiumError;
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
     // Walk through 4 string subrecords to find subrecord 5's data offset
     let mut offset = 0usize;
     for i in 0..4 {
         if offset + 4 > data.len() {
             return Err(AltiumError::Parse(format!(
-                "pad data too short reading subrecord {} length", i + 1
+                "pad data too short reading subrecord {} length",
+                i + 1
             )));
         }
-        let sub_len = u32::from_le_bytes(
-            data[offset..offset + 4].try_into().unwrap(),
-        ) as usize;
+        let sub_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4 + sub_len;
     }
 
@@ -84,9 +83,7 @@ pub(crate) fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::
             "pad data too short for subrecord 5 length".into(),
         ));
     }
-    let core_len = u32::from_le_bytes(
-        data[offset..offset + 4].try_into().unwrap(),
-    ) as usize;
+    let core_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
     let core_start = offset + 4; // skip length prefix
     if core_start + core_len > data.len() {
         return Err(AltiumError::Parse(
@@ -95,7 +92,8 @@ pub(crate) fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::
     }
     if core_len < 94 {
         return Err(AltiumError::Parse(format!(
-            "pad core too short: {} bytes (need >= 94)", core_len
+            "pad core too short: {} bytes (need >= 94)",
+            core_len
         )));
     }
 
@@ -103,24 +101,24 @@ pub(crate) fn parse_pad(data: &[u8]) -> crate::Result<crate::v2::backing_store::
     // Byte 0-12: PcbCommonHeader (13 bytes), then typed fields follow
     let s = core_start; // base offset into raw_block
     let spans = vec![
-        FieldSpan::new(s + 13, 4),  // 0: position_x
-        FieldSpan::new(s + 17, 4),  // 1: position_y
-        FieldSpan::new(s + 21, 4),  // 2: top_size_x
-        FieldSpan::new(s + 25, 4),  // 3: top_size_y
-        FieldSpan::new(s + 29, 4),  // 4: mid_size_x
-        FieldSpan::new(s + 33, 4),  // 5: mid_size_y
-        FieldSpan::new(s + 37, 4),  // 6: bot_size_x
-        FieldSpan::new(s + 41, 4),  // 7: bot_size_y
-        FieldSpan::new(s + 45, 4),  // 8: hole_size
-        FieldSpan::new(s + 49, 1),  // 9: top_shape
-        FieldSpan::new(s + 50, 1),  // 10: mid_shape
-        FieldSpan::new(s + 51, 1),  // 11: bot_shape
-        FieldSpan::new(s + 52, 8),  // 12: rotation
-        FieldSpan::new(s + 60, 1),  // 13: is_plated
-        FieldSpan::new(s + 62, 1),  // 14: pad_mode (offset 62, byte 61 is padding)
-        FieldSpan::new(s + 86, 4),  // 15: paste_mask_expansion
-        FieldSpan::new(s + 90, 4),  // 16: solder_mask_expansion
-        FieldSpan::new(s + 0, 1),   // 17: layer (byte 0 of common header)
+        FieldSpan::new(s + 13, 4), // 0: position_x
+        FieldSpan::new(s + 17, 4), // 1: position_y
+        FieldSpan::new(s + 21, 4), // 2: top_size_x
+        FieldSpan::new(s + 25, 4), // 3: top_size_y
+        FieldSpan::new(s + 29, 4), // 4: mid_size_x
+        FieldSpan::new(s + 33, 4), // 5: mid_size_y
+        FieldSpan::new(s + 37, 4), // 6: bot_size_x
+        FieldSpan::new(s + 41, 4), // 7: bot_size_y
+        FieldSpan::new(s + 45, 4), // 8: hole_size
+        FieldSpan::new(s + 49, 1), // 9: top_shape
+        FieldSpan::new(s + 50, 1), // 10: mid_shape
+        FieldSpan::new(s + 51, 1), // 11: bot_shape
+        FieldSpan::new(s + 52, 8), // 12: rotation
+        FieldSpan::new(s + 60, 1), // 13: is_plated
+        FieldSpan::new(s + 62, 1), // 14: pad_mode (offset 62, byte 61 is padding)
+        FieldSpan::new(s + 86, 4), // 15: paste_mask_expansion
+        FieldSpan::new(s + 90, 4), // 16: solder_mask_expansion
+        FieldSpan::new(s + 0, 1),  // 17: layer (byte 0 of common header)
     ];
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
@@ -150,9 +148,7 @@ impl PcbPadRecord {
             if data.len() < 4 {
                 return String::new();
             }
-            let name_len = u32::from_le_bytes(
-                data[0..4].try_into().unwrap_or([0; 4]),
-            ) as usize;
+            let name_len = u32::from_le_bytes(data[0..4].try_into().unwrap_or([0; 4])) as usize;
             if 4 + name_len > data.len() {
                 return String::new();
             }
@@ -221,24 +217,24 @@ mod tests {
         data[57] = 74; // MultiLayer
 
         let spans = vec![
-            FieldSpan::new(0, 4),   // position_x
-            FieldSpan::new(4, 4),   // position_y
-            FieldSpan::new(8, 4),   // top_size_x
-            FieldSpan::new(12, 4),  // top_size_y
-            FieldSpan::new(16, 4),  // mid_size_x
-            FieldSpan::new(20, 4),  // mid_size_y
-            FieldSpan::new(24, 4),  // bot_size_x
-            FieldSpan::new(28, 4),  // bot_size_y
-            FieldSpan::new(32, 4),  // hole_size
-            FieldSpan::new(36, 1),  // top_shape
-            FieldSpan::new(37, 1),  // mid_shape
-            FieldSpan::new(38, 1),  // bot_shape
-            FieldSpan::new(39, 8),  // rotation
-            FieldSpan::new(47, 1),  // is_plated
-            FieldSpan::new(48, 1),  // pad_mode
-            FieldSpan::new(49, 4),  // paste_mask_expansion
-            FieldSpan::new(53, 4),  // solder_mask_expansion
-            FieldSpan::new(57, 1),  // layer
+            FieldSpan::new(0, 4),  // position_x
+            FieldSpan::new(4, 4),  // position_y
+            FieldSpan::new(8, 4),  // top_size_x
+            FieldSpan::new(12, 4), // top_size_y
+            FieldSpan::new(16, 4), // mid_size_x
+            FieldSpan::new(20, 4), // mid_size_y
+            FieldSpan::new(24, 4), // bot_size_x
+            FieldSpan::new(28, 4), // bot_size_y
+            FieldSpan::new(32, 4), // hole_size
+            FieldSpan::new(36, 1), // top_shape
+            FieldSpan::new(37, 1), // mid_shape
+            FieldSpan::new(38, 1), // bot_shape
+            FieldSpan::new(39, 8), // rotation
+            FieldSpan::new(47, 1), // is_plated
+            FieldSpan::new(48, 1), // pad_mode
+            FieldSpan::new(49, 4), // paste_mask_expansion
+            FieldSpan::new(53, 4), // solder_mask_expansion
+            FieldSpan::new(57, 1), // layer
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))

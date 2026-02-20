@@ -30,7 +30,8 @@ macro_rules! impl_record_handle {
             }
 
             pub fn semantic_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
-                let store = self.store.borrow();
+                let mut store = self.store.borrow_mut();
+                store.ensure_semantic_ids();
                 store.record_semantic_id(self.id).cloned()
             }
 
@@ -45,6 +46,7 @@ macro_rules! impl_record_handle {
                 let node = &mut store.records[self.id];
                 node.origin = <$record as FromOrigin>::into_origin(record);
                 node.mark_dirty();
+                store.mark_semantic_ids_dirty();
             }
         }
     };
@@ -61,8 +63,8 @@ macro_rules! impl_handle_family {
             type Record = $record;
             type Handle = $handle;
 
-            fn make_handle(store: DocRef, id: RecordId) -> Self::Handle {
-                <$handle>::new(store, id)
+            fn try_make_handle(store: DocRef, id: RecordId) -> crate::error::Result<Self::Handle> {
+                Ok(<$handle>::new(store, id))
             }
         }
     };
@@ -75,13 +77,12 @@ macro_rules! impl_handle_family {
 use crate::v2::records::{
     SchArcRecord, SchBezierRecord, SchBlanketRecord, SchBusEntryRecord, SchBusRecord,
     SchComponentRecord, SchDesignatorRecord, SchEllipseRecord, SchEllipticalArcRecord,
-    SchImageRecord, SchImplementationListRecord, SchImplementationRecord,
-    SchJunctionRecord, SchLabelRecord, SchLineRecord, SchNetLabelRecord, SchNoERCRecord,
-    SchNoteRecord, SchParameterRecord, SchPieRecord, SchPolygonRecord, SchPolylineRecord,
+    SchImageRecord, SchImplementationListRecord, SchImplementationRecord, SchJunctionRecord,
+    SchLabelRecord, SchLineRecord, SchNetLabelRecord, SchNoERCRecord, SchNoteRecord,
+    SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord, SchPolylineRecord,
     SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
     SchSheetSymbolRecord, SchSymbolRecord, SchTextFrameRecord, SchWireRecord,
-    SchPinRecord,
 };
 
 impl_record_handle!(SchPinHandle, SchPinRecord);
@@ -125,8 +126,8 @@ impl_record_handle!(SchComponentRecordHandle, SchComponentRecord);
 // ---------------------------------------------------------------------------
 
 use crate::v2::records::{
-    PcbArcRecord, PcbComponentBodyRecord, PcbFillRecord, PcbFootprintRecord,
-    PcbPadRecord, PcbRegionRecord, PcbTextRecord, PcbTrackRecord, PcbViaRecord,
+    PcbArcRecord, PcbComponentBodyRecord, PcbFillRecord, PcbFootprintRecord, PcbPadRecord,
+    PcbRegionRecord, PcbTextRecord, PcbTrackRecord, PcbViaRecord,
 };
 
 impl_record_handle!(PcbTrackHandle, PcbTrackRecord);
@@ -152,8 +153,16 @@ impl_handle_family!(SchPolyline, SchPolylineRecord, SchPolylineHandle);
 impl_handle_family!(SchPolygon, SchPolygonRecord, SchPolygonHandle);
 impl_handle_family!(SchEllipse, SchEllipseRecord, SchEllipseHandle);
 impl_handle_family!(SchPie, SchPieRecord, SchPieHandle);
-impl_handle_family!(SchRoundRectangle, SchRoundRectangleRecord, SchRoundRectangleHandle);
-impl_handle_family!(SchEllipticalArc, SchEllipticalArcRecord, SchEllipticalArcHandle);
+impl_handle_family!(
+    SchRoundRectangle,
+    SchRoundRectangleRecord,
+    SchRoundRectangleHandle
+);
+impl_handle_family!(
+    SchEllipticalArc,
+    SchEllipticalArcRecord,
+    SchEllipticalArcHandle
+);
 impl_handle_family!(SchImage, SchImageRecord, SchImageHandle);
 impl_handle_family!(SchDesignator, SchDesignatorRecord, SchDesignatorHandle);
 impl_handle_family!(SchParameter, SchParameterRecord, SchParameterHandle);
@@ -169,12 +178,24 @@ impl_handle_family!(SchTextFrame, SchTextFrameRecord, SchTextFrameHandle);
 impl_handle_family!(SchJunction, SchJunctionRecord, SchJunctionHandle);
 impl_handle_family!(SchSheet, SchSheetRecord, SchSheetHandle);
 impl_handle_family!(SchSheetName, SchSheetNameRecord, SchSheetNameHandle);
-impl_handle_family!(SchSheetFileName, SchSheetFileNameRecord, SchSheetFileNameHandle);
+impl_handle_family!(
+    SchSheetFileName,
+    SchSheetFileNameRecord,
+    SchSheetFileNameHandle
+);
 impl_handle_family!(SchBusEntry, SchBusEntryRecord, SchBusEntryHandle);
 impl_handle_family!(SchSheetSymbol, SchSheetSymbolRecord, SchSheetSymbolHandle);
 impl_handle_family!(SchSheetEntry, SchSheetEntryRecord, SchSheetEntryHandle);
-impl_handle_family!(SchImplementationList, SchImplementationListRecord, SchImplementationListHandle);
-impl_handle_family!(SchImplementation, SchImplementationRecord, SchImplementationHandle);
+impl_handle_family!(
+    SchImplementationList,
+    SchImplementationListRecord,
+    SchImplementationListHandle
+);
+impl_handle_family!(
+    SchImplementation,
+    SchImplementationRecord,
+    SchImplementationHandle
+);
 impl_handle_family!(SchNote, SchNoteRecord, SchNoteHandle);
 impl_handle_family!(SchBlanket, SchBlanketRecord, SchBlanketHandle);
 
@@ -189,8 +210,16 @@ impl_handle_family!(PcbPad, PcbPadRecord, PcbPadHandle);
 impl_handle_family!(PcbVia, PcbViaRecord, PcbViaHandle);
 impl_handle_family!(PcbText, PcbTextRecord, PcbTextHandle);
 impl_handle_family!(PcbRegion, PcbRegionRecord, PcbRegionHandle);
-impl_handle_family!(PcbComponentBody, PcbComponentBodyRecord, PcbComponentBodyHandle);
-impl_handle_family!(PcbFootprintMetadata, PcbFootprintRecord, PcbFootprintMetadataHandle);
+impl_handle_family!(
+    PcbComponentBody,
+    PcbComponentBodyRecord,
+    PcbComponentBodyHandle
+);
+impl_handle_family!(
+    PcbFootprintMetadata,
+    PcbFootprintRecord,
+    PcbFootprintMetadataHandle
+);
 
 // ---------------------------------------------------------------------------
 // Group handles
@@ -214,7 +243,8 @@ impl SchComponentHandle {
 
     /// Returns the stable semantic ID for this component group, if computed.
     pub fn semantic_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
-        let store = self.store.borrow();
+        let mut store = self.store.borrow_mut();
+        store.ensure_semantic_ids();
         store.group_semantic_id(self.group_id).cloned()
     }
 
@@ -256,6 +286,7 @@ impl SchComponentHandle {
             *description = new_description;
             *part_count = new_part_count;
         }
+        store.mark_semantic_ids_dirty();
     }
 
     /// Get handles to all children of a given type.
@@ -269,7 +300,7 @@ impl SchComponentHandle {
                 let rec = &store.records[id];
                 rec.key == T::record_id() && rec.origin.is_binary() == T::is_binary()
             })
-            .map(|&id| T::make_handle(self.store.clone(), id))
+            .filter_map(|&id| T::try_make_handle(self.store.clone(), id).ok())
             .collect()
     }
 
@@ -355,7 +386,7 @@ impl SchComponentHandle {
 
         match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => Ok(T::make_handle(self.store.clone(), matches[0])),
+            1 => T::try_make_handle(self.store.clone(), matches[0]),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
@@ -373,7 +404,7 @@ impl SchComponentHandle {
             if rec.key == T::record_id() && rec.origin.is_binary() == T::is_binary() {
                 let all = std::slice::from_ref(rec);
                 if !evaluate(&parsed, all).is_empty() {
-                    handles.push(T::make_handle(self.store.clone(), id));
+                    handles.push(T::try_make_handle(self.store.clone(), id)?);
                 }
             }
         }
@@ -391,6 +422,9 @@ impl SchComponentHandle {
         let record_id = store.insert_record(node);
         let group = &mut store.groups[self.group_id];
         group.children.push(record_id);
+        // Maintain parallel index vector for SchDoc flattening.
+        group.original_indices.push(usize::MAX);
+        store.mark_semantic_ids_dirty();
         record_id
     }
 }
@@ -413,7 +447,8 @@ impl PcbFootprintHandle {
 
     /// Returns the stable semantic ID for this footprint group, if computed.
     pub fn semantic_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
-        let store = self.store.borrow();
+        let mut store = self.store.borrow_mut();
+        store.ensure_semantic_ids();
         store.group_semantic_id(self.group_id).cloned()
     }
 
@@ -433,6 +468,7 @@ impl PcbFootprintHandle {
         let node = &mut store.records[parent_id];
         node.origin = record.into_origin();
         node.mark_dirty();
+        store.mark_semantic_ids_dirty();
     }
 
     /// Get handles to all primitives of a given type.
@@ -446,7 +482,7 @@ impl PcbFootprintHandle {
                 let rec = &store.records[id];
                 rec.key == T::record_id() && rec.origin.is_binary() == T::is_binary()
             })
-            .map(|&id| T::make_handle(self.store.clone(), id))
+            .filter_map(|&id| T::try_make_handle(self.store.clone(), id).ok())
             .collect()
     }
 
@@ -512,7 +548,7 @@ impl PcbFootprintHandle {
 
         match matches.len() {
             0 => Err(crate::error::AltiumError::NoMatch(q.to_string())),
-            1 => Ok(T::make_handle(self.store.clone(), matches[0])),
+            1 => T::try_make_handle(self.store.clone(), matches[0]),
             n => Err(crate::error::AltiumError::AmbiguousMatch(n, q.to_string())),
         }
     }
@@ -530,7 +566,7 @@ impl PcbFootprintHandle {
             if rec.key == T::record_id() && rec.origin.is_binary() == T::is_binary() {
                 let all = std::slice::from_ref(rec);
                 if !evaluate(&parsed, all).is_empty() {
-                    handles.push(T::make_handle(self.store.clone(), id));
+                    handles.push(T::try_make_handle(self.store.clone(), id)?);
                 }
             }
         }
@@ -567,6 +603,8 @@ impl PcbFootprintHandle {
             original_primitive_order.push(PcbPrimitiveRef::new(type_id, child_index));
         }
 
+        store.mark_semantic_ids_dirty();
+
         record_id
     }
 }
@@ -580,21 +618,20 @@ impl HandleFamily for SchComponent {
     type Record = SchComponentRecord;
     type Handle = SchComponentHandle;
 
-    fn make_handle(store: DocRef, id: RecordId) -> Self::Handle {
+    fn try_make_handle(store: DocRef, id: RecordId) -> crate::error::Result<Self::Handle> {
         // The id passed here is the parent record id. Find which group owns it.
         let borrowed = store.borrow();
         for &gid in borrowed.group_ids() {
             let group = borrowed.group(gid);
             if group.parent == id {
                 drop(borrowed);
-                return SchComponentHandle::new(store, gid);
+                return Ok(SchComponentHandle::new(store, gid));
             }
         }
-        panic!(
-            "SchComponent::make_handle: no group owns record {:?}. \
-             This indicates an invalid RecordId was passed.",
+        Err(crate::error::AltiumError::InvalidRecord(format!(
+            "SchComponent handle: no group owns record {:?}",
             id
-        );
+        )))
     }
 }
 
@@ -603,20 +640,19 @@ impl HandleFamily for PcbFootprint {
     type Record = PcbFootprintRecord;
     type Handle = PcbFootprintHandle;
 
-    fn make_handle(store: DocRef, id: RecordId) -> Self::Handle {
+    fn try_make_handle(store: DocRef, id: RecordId) -> crate::error::Result<Self::Handle> {
         // The id passed here is the parent record id. Find which group owns it.
         let borrowed = store.borrow();
         for &gid in borrowed.group_ids() {
             let group = borrowed.group(gid);
             if group.parent == id {
                 drop(borrowed);
-                return PcbFootprintHandle::new(store, gid);
+                return Ok(PcbFootprintHandle::new(store, gid));
             }
         }
-        panic!(
-            "PcbFootprint::make_handle: no group owns record {:?}. \
-             This indicates an invalid RecordId was passed.",
+        Err(crate::error::AltiumError::InvalidRecord(format!(
+            "PcbFootprint handle: no group owns record {:?}",
             id
-        );
+        )))
     }
 }

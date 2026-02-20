@@ -33,9 +33,8 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=44|OWNERINDEX=1|OWNERPARTID=1|",
-        ));
+        let origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=44|OWNERINDEX=1|OWNERPARTID=1|"));
         let rec = SchImplementationListRecord::from_origin(origin);
         assert_eq!(rec.owner_index(), 1);
         assert_eq!(rec.owner_part_id(), 1);

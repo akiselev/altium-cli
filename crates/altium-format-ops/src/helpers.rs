@@ -152,7 +152,9 @@ pub fn pcb_layer_name(layer: u8) -> &'static str {
 }
 
 /// Get the electrical type name for display.
-pub fn electrical_type_name(electrical: altium_format::v2::records::enums::PinElectricalType) -> &'static str {
+pub fn electrical_type_name(
+    electrical: altium_format::v2::records::enums::PinElectricalType,
+) -> &'static str {
     use altium_format::v2::records::enums::PinElectricalType;
     match electrical {
         PinElectricalType::Input => "Input",
@@ -204,9 +206,7 @@ pub fn parse_dimension(s: &str) -> Result<i32, Box<dyn std::error::Error>> {
         Ok(PcbCoord::from_mils(inches * 1000.0).to_raw())
     } else {
         // Default to mm
-        let mm: f64 = s
-            .parse()
-            .map_err(|_| format!("Invalid dimension: {}", s))?;
+        let mm: f64 = s.parse().map_err(|_| format!("Invalid dimension: {}", s))?;
         Ok(PcbCoord::from_mm(mm).to_raw())
     }
 }
@@ -237,10 +237,7 @@ mod tests {
     fn test_alphanumeric_sort_mixed() {
         let mut items = vec!["PIN10", "PIN2", "PIN1", "PIN20", "VCC", "GND"];
         items.sort_by(|a, b| alphanumeric_sort(a, b));
-        assert_eq!(
-            items,
-            vec!["GND", "PIN1", "PIN2", "PIN10", "PIN20", "VCC"]
-        );
+        assert_eq!(items, vec!["GND", "PIN1", "PIN2", "PIN10", "PIN20", "VCC"]);
     }
 
     #[test]

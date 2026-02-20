@@ -1,9 +1,9 @@
 //! Schematic designator record (RECORD=34).
 
-use altium_format_derive::altium_record;
+use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::{Description, UniqueId};
-use super::enums::*;
+use altium_format_derive::altium_record;
 
 /// Schematic designator record -- RECORD=34.
 ///
@@ -112,9 +112,7 @@ mod tests {
 
     #[test]
     fn roundtrip_designator_setter() {
-        let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=34|Name=Designator|Text=U1|",
-        ));
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=34|Name=Designator|Text=U1|"));
         let mut rec = SchDesignatorRecord::from_origin(origin);
         rec.set_text("U2".to_string());
         assert_eq!(rec.text(), "U2");

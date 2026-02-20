@@ -1,7 +1,7 @@
 //! Net label record (RECORD=25).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Net label record — assigns a net name to a wire/bus connection point.
 ///

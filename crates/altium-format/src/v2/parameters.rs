@@ -62,7 +62,11 @@ impl ParameterValue {
 
     /// Gets the value as an integer, or a default on parse failure.
     pub fn as_int_or(&self, default: i32) -> i32 {
-        self.data.trim().trim_matches('\0').parse().unwrap_or(default)
+        self.data
+            .trim()
+            .trim_matches('\0')
+            .parse()
+            .unwrap_or(default)
     }
 
     /// Parses the value as a double.
@@ -72,7 +76,11 @@ impl ParameterValue {
 
     /// Gets the value as a double, or a default on parse failure.
     pub fn as_double_or(&self, default: f64) -> f64 {
-        self.data.trim().trim_matches('\0').parse().unwrap_or(default)
+        self.data
+            .trim()
+            .trim_matches('\0')
+            .parse()
+            .unwrap_or(default)
     }
 
     /// Parses the value as a boolean.
@@ -159,6 +167,12 @@ pub struct ParameterCollection {
     use_long_booleans: bool,
     /// Raw suffix appended after normal params (for duplicate keys like ISHIDDEN).
     raw_suffix: Option<String>,
+    /// Parsed entries in encounter order (preserves duplicate keys).
+    parsed_entries: Vec<(String, String)>,
+    /// Whether to serialize using `parsed_entries` for lossless round-trip.
+    preserve_entry_order: bool,
+    /// Whether the parsed input ended with the entry separator.
+    had_trailing_separator: bool,
 }
 
 impl ParameterCollection {
@@ -181,6 +195,10 @@ impl ParameterCollection {
             parameters: IndexMap::new(),
             use_long_booleans: false,
             raw_suffix: None,
+            parsed_entries: Vec::new(),
+            preserve_entry_order: true,
+            had_trailing_separator: data
+                .ends_with(ENTRY_SEPARATORS.get(level).copied().unwrap_or('|')),
         };
         collection.parse_data(data);
         collection
@@ -218,6 +236,10 @@ impl ParameterCollection {
                 (key, value)
             };
 
+            if self.preserve_entry_order {
+                self.parsed_entries
+                    .push((final_key.clone(), final_value.clone()));
+            }
             self.add_internal(&final_key, &final_value);
         }
     }
@@ -275,11 +297,15 @@ impl ParameterCollection {
 
     /// Adds a string value.
     pub fn add(&mut self, key: &str, value: &str) {
+        self.preserve_entry_order = false;
+        self.had_trailing_separator = false;
         self.add_internal(key, value);
     }
 
     /// Adds an integer value.
     pub fn add_int(&mut self, key: &str, value: i32) {
+        self.preserve_entry_order = false;
+        self.had_trailing_separator = false;
         if value != 0 {
             self.add_internal(key, &value.to_string());
         }
@@ -287,6 +313,8 @@ impl ParameterCollection {
 
     /// Adds a double value with specified decimal places.
     pub fn add_double(&mut self, key: &str, value: f64, decimals: usize) {
+        self.preserve_entry_order = false;
+        self.had_trailing_separator = false;
         if value != 0.0 {
             let formatted = format!("{:.prec$}", value, prec = decimals);
             self.add_internal(key, &formatted);
@@ -295,6 +323,8 @@ impl ParameterCollection {
 
     /// Adds a boolean value.
     pub fn add_bool(&mut self, key: &str, value: bool) {
+        self.preserve_entry_order = false;
+        self.had_trailing_separator = false;
         if value {
             let s = if self.use_long_booleans { "TRUE" } else { "T" };
             self.add_internal(key, s);
@@ -303,6 +333,8 @@ impl ParameterCollection {
 
     /// Removes a parameter by key.
     pub fn remove(&mut self, key: &str) {
+        self.preserve_entry_order = false;
+        self.had_trailing_separator = false;
         let upper = key.to_uppercase();
         self.parameters.swap_remove(&upper);
         self.keys.retain(|k| k != &upper);
@@ -350,6 +382,22 @@ impl ParameterCollection {
     pub fn to_param_string(&self) -> String {
         let separator = ENTRY_SEPARATORS.get(self.level).copied().unwrap_or('|');
         let mut result = String::new();
+
+        if self.preserve_entry_order {
+            for (key, value) in &self.parsed_entries {
+                result.push(separator);
+                result.push_str(key);
+                result.push(KEY_VALUE_SEPARATOR);
+                result.push_str(value);
+            }
+            if self.had_trailing_separator {
+                result.push(separator);
+            }
+            if let Some(suffix) = &self.raw_suffix {
+                result.push_str(suffix);
+            }
+            return result;
+        }
 
         for (key, value) in self.iter() {
             result.push(separator);
@@ -427,5 +475,12 @@ mod tests {
         let s = params.to_param_string();
         assert!(s.contains("|RECORD=1"));
         assert!(s.contains("|NAME=Test"));
+    }
+
+    #[test]
+    fn test_duplicate_keys_preserved_on_parse_serialize() {
+        let raw = "|A=1|A=2|B=3|";
+        let params = ParameterCollection::from_string(raw);
+        assert_eq!(params.to_param_string(), raw);
     }
 }

@@ -192,8 +192,7 @@ pub fn read_pascal_string(data: &[u8], offset: usize) -> (&str, usize) {
     let len = data[offset] as usize;
     let start = offset + 1;
     let end = start + len;
-    let s = std::str::from_utf8(&data[start..end])
-        .expect("pascal string contains invalid UTF-8");
+    let s = std::str::from_utf8(&data[start..end]).expect("pascal string contains invalid UTF-8");
     (s, 1 + len)
 }
 
@@ -209,8 +208,8 @@ pub fn read_pascal_string_u32(data: &[u8], offset: usize) -> (&str, usize) {
     let len = read_u32_le(data, offset) as usize;
     let start = offset + 4;
     let end = start + len;
-    let s = std::str::from_utf8(&data[start..end])
-        .expect("pascal string (u32) contains invalid UTF-8");
+    let s =
+        std::str::from_utf8(&data[start..end]).expect("pascal string (u32) contains invalid UTF-8");
     (s, 4 + len)
 }
 
@@ -360,12 +359,7 @@ mod tests {
         ];
         for &v in &values {
             write_pcb_coord(&mut buf, 2, v);
-            assert_eq!(
-                read_pcb_coord(&buf, 2),
-                v,
-                "roundtrip failed for {:?}",
-                v
-            );
+            assert_eq!(read_pcb_coord(&buf, 2), v, "roundtrip failed for {:?}", v);
         }
     }
 

@@ -81,11 +81,7 @@ macro_rules! impl_altium_enum_codec {
                 params.get(key).map(|v| Self::from_int(v.as_int_or(0)))
             }
 
-            fn write(
-                &self,
-                params: &mut $crate::v2::parameters::ParameterCollection,
-                key: &str,
-            ) {
+            fn write(&self, params: &mut $crate::v2::parameters::ParameterCollection, key: &str) {
                 use $crate::v2::traits::AltiumEnum;
                 params.add_int(key, self.to_int());
             }
@@ -215,10 +211,7 @@ impl ParamCodec for SchCoord {
     fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
         let int_val = params.get(key)?.as_int_or(0);
         let frac_key = format!("{}_FRAC", key);
-        let frac_val = params
-            .get(&frac_key)
-            .map(|v| v.as_int_or(0))
-            .unwrap_or(0);
+        let frac_val = params.get(&frac_key).map(|v| v.as_int_or(0)).unwrap_or(0);
         Some(SchCoord::from_dxp_parts(int_val, frac_val))
     }
 
@@ -233,9 +226,7 @@ impl ParamCodec for SchCoord {
 
 impl ParamCodec for PcbCoord {
     fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params
-            .get(key)
-            .map(|v| PcbCoord::from_raw(v.as_int_or(0)))
+        params.get(key).map(|v| PcbCoord::from_raw(v.as_int_or(0)))
     }
 
     fn write(&self, params: &mut ParameterCollection, key: &str) {
@@ -301,8 +292,18 @@ pub trait HandleFamily {
     /// The handle type (Clone, holds DocRef + RecordId).
     type Handle: Clone;
 
+    /// Fallibly construct a handle from a store reference and record id.
+    fn try_make_handle(
+        store: crate::v2::store::DocRef,
+        id: crate::v2::ids::RecordId,
+    ) -> crate::error::Result<Self::Handle>;
+
     /// Construct a handle from a store reference and record id.
-    fn make_handle(store: crate::v2::store::DocRef, id: crate::v2::ids::RecordId) -> Self::Handle;
+    ///
+    /// Prefer `try_make_handle` in fallible/query paths.
+    fn make_handle(store: crate::v2::store::DocRef, id: crate::v2::ids::RecordId) -> Self::Handle {
+        Self::try_make_handle(store, id).expect("invalid handle construction")
+    }
 
     /// Convenience: returns the record ID from the associated record type.
     fn record_id() -> u8 {

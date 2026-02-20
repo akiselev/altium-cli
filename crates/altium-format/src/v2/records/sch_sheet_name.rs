@@ -1,7 +1,7 @@
 //! Sheet name record (RECORD=32).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Sheet name record — displays the name of a sheet symbol.
 ///

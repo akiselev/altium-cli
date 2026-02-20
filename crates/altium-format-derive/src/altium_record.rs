@@ -7,10 +7,10 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{
+    Attribute, Error, Expr, ExprLit, Fields, Ident, ItemStruct, Lit, Meta, Result, Token, Type,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Attribute, Error, Expr, ExprLit, Fields, Ident, ItemStruct, Lit, Meta, Result, Token, Type,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,8 +67,10 @@ impl Parse for MacroAttrs {
                                 other => {
                                     return Err(Error::new(
                                         nv.value.span(),
-                                        format!("unknown kind: {other:?}, expected \"sch\" or \"pcb\""),
-                                    ))
+                                        format!(
+                                            "unknown kind: {other:?}, expected \"sch\" or \"pcb\""
+                                        ),
+                                    ));
                                 }
                             });
                         }
@@ -105,7 +107,7 @@ impl Parse for MacroAttrs {
                                         format!(
                                             "unknown codec: {other:?}, expected \"params\" or \"binary\""
                                         ),
-                                    ))
+                                    ));
                                 }
                             });
                         }
@@ -304,7 +306,7 @@ fn binary_read_expr(ty: &Type, offset: usize) -> Result<TokenStream> {
             return Err(Error::new(
                 ty.span(),
                 "unsupported type for binary sequential layout",
-            ))
+            ));
         }
     };
     let ident_str = path
@@ -315,21 +317,41 @@ fn binary_read_expr(ty: &Type, offset: usize) -> Result<TokenStream> {
         .to_string();
     let offset_lit = proc_macro2::Literal::usize_unsuffixed(offset);
     let tokens = match ident_str.as_str() {
-        "u8" => quote! { crate::v2::binary_helpers::read_u8(&self.origin.binary().raw_block, #offset_lit) },
-        "i8" => quote! { crate::v2::binary_helpers::read_i8(&self.origin.binary().raw_block, #offset_lit) },
-        "bool" => quote! { crate::v2::binary_helpers::read_bool(&self.origin.binary().raw_block, #offset_lit) },
-        "u16" => quote! { crate::v2::binary_helpers::read_u16_le(&self.origin.binary().raw_block, #offset_lit) },
-        "i16" => quote! { crate::v2::binary_helpers::read_i16_le(&self.origin.binary().raw_block, #offset_lit) },
-        "u32" => quote! { crate::v2::binary_helpers::read_u32_le(&self.origin.binary().raw_block, #offset_lit) },
-        "i32" => quote! { crate::v2::binary_helpers::read_i32_le(&self.origin.binary().raw_block, #offset_lit) },
-        "PcbCoord" => quote! { crate::v2::binary_helpers::read_pcb_coord(&self.origin.binary().raw_block, #offset_lit) },
-        "f64" => quote! { crate::v2::binary_helpers::read_f64_le(&self.origin.binary().raw_block, #offset_lit) },
-        "PcbCommonHeader" => quote! { crate::v2::binary_helpers::PcbCommonHeader::read(&self.origin.binary().raw_block, #offset_lit) },
+        "u8" => {
+            quote! { crate::v2::binary_helpers::read_u8(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "i8" => {
+            quote! { crate::v2::binary_helpers::read_i8(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "bool" => {
+            quote! { crate::v2::binary_helpers::read_bool(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "u16" => {
+            quote! { crate::v2::binary_helpers::read_u16_le(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "i16" => {
+            quote! { crate::v2::binary_helpers::read_i16_le(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "u32" => {
+            quote! { crate::v2::binary_helpers::read_u32_le(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "i32" => {
+            quote! { crate::v2::binary_helpers::read_i32_le(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "PcbCoord" => {
+            quote! { crate::v2::binary_helpers::read_pcb_coord(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "f64" => {
+            quote! { crate::v2::binary_helpers::read_f64_le(&self.origin.binary().raw_block, #offset_lit) }
+        }
+        "PcbCommonHeader" => {
+            quote! { crate::v2::binary_helpers::PcbCommonHeader::read(&self.origin.binary().raw_block, #offset_lit) }
+        }
         other => {
             return Err(Error::new(
                 ty.span(),
                 format!("unsupported binary type: {other}"),
-            ))
+            ));
         }
     };
     Ok(tokens)
@@ -343,7 +365,7 @@ fn binary_write_expr(ty: &Type, offset: usize) -> Result<TokenStream> {
             return Err(Error::new(
                 ty.span(),
                 "unsupported type for binary sequential layout",
-            ))
+            ));
         }
     };
     let ident_str = path
@@ -354,21 +376,41 @@ fn binary_write_expr(ty: &Type, offset: usize) -> Result<TokenStream> {
         .to_string();
     let offset_lit = proc_macro2::Literal::usize_unsuffixed(offset);
     let tokens = match ident_str.as_str() {
-        "u8" => quote! { crate::v2::binary_helpers::write_u8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "i8" => quote! { crate::v2::binary_helpers::write_i8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "bool" => quote! { crate::v2::binary_helpers::write_bool(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "u16" => quote! { crate::v2::binary_helpers::write_u16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "i16" => quote! { crate::v2::binary_helpers::write_i16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "u32" => quote! { crate::v2::binary_helpers::write_u32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "i32" => quote! { crate::v2::binary_helpers::write_i32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "PcbCoord" => quote! { crate::v2::binary_helpers::write_pcb_coord(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "f64" => quote! { crate::v2::binary_helpers::write_f64_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) },
-        "PcbCommonHeader" => quote! { value.write(&mut self.origin.binary_mut().raw_block, #offset_lit) },
+        "u8" => {
+            quote! { crate::v2::binary_helpers::write_u8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "i8" => {
+            quote! { crate::v2::binary_helpers::write_i8(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "bool" => {
+            quote! { crate::v2::binary_helpers::write_bool(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "u16" => {
+            quote! { crate::v2::binary_helpers::write_u16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "i16" => {
+            quote! { crate::v2::binary_helpers::write_i16_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "u32" => {
+            quote! { crate::v2::binary_helpers::write_u32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "i32" => {
+            quote! { crate::v2::binary_helpers::write_i32_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "PcbCoord" => {
+            quote! { crate::v2::binary_helpers::write_pcb_coord(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "f64" => {
+            quote! { crate::v2::binary_helpers::write_f64_le(&mut self.origin.binary_mut().raw_block, #offset_lit, value) }
+        }
+        "PcbCommonHeader" => {
+            quote! { value.write(&mut self.origin.binary_mut().raw_block, #offset_lit) }
+        }
         other => {
             return Err(Error::new(
                 ty.span(),
                 format!("unsupported binary type for write: {other}"),
-            ))
+            ));
         }
     };
     Ok(tokens)
@@ -387,7 +429,13 @@ fn is_string_newtype(ty: &Type) -> bool {
     };
     matches!(
         ident_str.as_str(),
-        "String" | "Designator" | "LibReference" | "NetName" | "UniqueId" | "Description" | "PinName"
+        "String"
+            | "Designator"
+            | "LibReference"
+            | "NetName"
+            | "UniqueId"
+            | "Description"
+            | "PinName"
     )
 }
 
@@ -409,7 +457,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
             return Err(Error::new(
                 input.span(),
                 "altium_record requires a struct with named fields",
-            ))
+            ));
         }
     };
 
@@ -644,10 +692,7 @@ fn gen_binary_sequential_accessors(
 // Binary custom parser accessor generation (with field_spans)
 // ---------------------------------------------------------------------------
 
-fn gen_binary_custom_accessors(
-    struct_name: &Ident,
-    fields: &[FieldInfo],
-) -> Result<TokenStream> {
+fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<TokenStream> {
     let mut constants = Vec::new();
     let mut methods = Vec::new();
     let mut field_index: usize = 0;
@@ -659,10 +704,7 @@ fn gen_binary_custom_accessors(
 
         let field_name = &field.name;
         let field_ty = &field.ty;
-        let const_name = format_ident!(
-            "FIELD_{}",
-            field_name.to_string().to_uppercase()
-        );
+        let const_name = format_ident!("FIELD_{}", field_name.to_string().to_uppercase());
         let getter_name = format_ident!("{}", field_name);
         let setter_name = format_ident!("set_{}", field_name);
 
@@ -706,7 +748,7 @@ fn binary_custom_read_expr(ty: &Type, field_index: usize) -> Result<TokenStream>
             return Err(Error::new(
                 ty.span(),
                 "unsupported type for binary custom layout",
-            ))
+            ));
         }
     };
     let ident_str = path
@@ -782,7 +824,7 @@ fn binary_custom_read_expr(ty: &Type, field_index: usize) -> Result<TokenStream>
             return Err(Error::new(
                 ty.span(),
                 format!("unsupported binary type for custom read: {other}"),
-            ))
+            ));
         }
     };
     Ok(tokens)
@@ -796,7 +838,7 @@ fn binary_custom_write_expr(ty: &Type, field_index: usize) -> Result<TokenStream
             return Err(Error::new(
                 ty.span(),
                 "unsupported type for binary custom layout",
-            ))
+            ));
         }
     };
     let ident_str = path
@@ -882,7 +924,7 @@ fn binary_custom_write_expr(ty: &Type, field_index: usize) -> Result<TokenStream
             return Err(Error::new(
                 ty.span(),
                 format!("unsupported binary type for custom write: {other}"),
-            ))
+            ));
         }
     };
     Ok(tokens)

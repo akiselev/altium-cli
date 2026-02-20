@@ -138,10 +138,7 @@ fn param_value_to_query_value(value: &ParameterValue, key: &str) -> QueryFieldVa
         "TRANSPARENT",
         "ISNOTACCESIBLE",
     ];
-    if BOOL_KEYS
-        .iter()
-        .any(|&k| k.eq_ignore_ascii_case(key))
-    {
+    if BOOL_KEYS.iter().any(|&k| k.eq_ignore_ascii_case(key)) {
         return QueryFieldValue::Bool(value.as_bool_or(false));
     }
 
@@ -159,10 +156,7 @@ fn param_value_to_query_value(value: &ParameterValue, key: &str) -> QueryFieldVa
         "X2",
         "Y2",
     ];
-    if COORD_KEYS
-        .iter()
-        .any(|&k| k.eq_ignore_ascii_case(key))
-    {
+    if COORD_KEYS.iter().any(|&k| k.eq_ignore_ascii_case(key)) {
         return QueryFieldValue::Coord(value.as_int_or(0) as f64);
     }
 
@@ -181,10 +175,7 @@ fn param_value_to_query_value(value: &ParameterValue, key: &str) -> QueryFieldVa
         "COLOR",
         "AREACOLOR",
     ];
-    if INT_KEYS
-        .iter()
-        .any(|&k| k.eq_ignore_ascii_case(key))
-    {
+    if INT_KEYS.iter().any(|&k| k.eq_ignore_ascii_case(key)) {
         return QueryFieldValue::Int(value.as_int_or(0));
     }
 
@@ -229,7 +220,7 @@ fn binary_field_lookup(field: &str, binary: &BinaryOrigin) -> Option<QueryFieldV
 mod tests {
     use super::*;
     use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
-    use crate::v2::query::eval::{evaluate, Queryable};
+    use crate::v2::query::eval::{Queryable, evaluate};
     use crate::v2::query::parse;
 
     #[test]
@@ -289,18 +280,12 @@ mod tests {
     #[test]
     fn record_node_query_element_type() {
         let nodes = vec![
-            RecordNode::new(
-                1,
-                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|")),
-            ),
+            RecordNode::new(1, RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"))),
             RecordNode::new(
                 2,
                 RecordOrigin::Param(ParamOrigin::new("|RECORD=2|NAME=VCC|")),
             ),
-            RecordNode::new(
-                1,
-                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|")),
-            ),
+            RecordNode::new(1, RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"))),
         ];
 
         let q = parse("component").unwrap();
@@ -313,15 +298,11 @@ mod tests {
         let nodes = vec![
             RecordNode::new(
                 1,
-                RecordOrigin::Param(ParamOrigin::new(
-                    "|RECORD=1|DESIGNATOR=R1|COMMENT=10K|",
-                )),
+                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=R1|COMMENT=10K|")),
             ),
             RecordNode::new(
                 1,
-                RecordOrigin::Param(ParamOrigin::new(
-                    "|RECORD=1|DESIGNATOR=R2|COMMENT=100K|",
-                )),
+                RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=R2|COMMENT=100K|")),
             ),
         ];
 
@@ -374,7 +355,8 @@ mod tests {
 
     #[test]
     fn record_node_coord_field() {
-        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|LOCATION.X=100|LOCATION.Y=200|"));
+        let origin =
+            RecordOrigin::Param(ParamOrigin::new("|RECORD=1|LOCATION.X=100|LOCATION.Y=200|"));
         let node = RecordNode::new(1, origin);
 
         match node.get_field("x") {

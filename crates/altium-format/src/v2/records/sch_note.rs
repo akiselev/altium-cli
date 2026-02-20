@@ -1,7 +1,7 @@
 //! Note record (RECORD=209).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Note record — annotative note box on a schematic.
 ///

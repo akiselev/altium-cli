@@ -1,7 +1,7 @@
 //! Sheet record (RECORD=31).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Sheet record — document-level settings for a schematic sheet.
 ///

@@ -7,10 +7,10 @@
 //! It depends on `altium-format` and uses ONLY its public API — no internal
 //! backing store types are accessed.
 
-pub mod output;
 pub mod categorization;
 pub mod helpers;
-pub mod schlib;
+pub mod output;
+pub mod pcbdoc;
 pub mod pcblib;
 pub mod schdoc;
-pub mod pcbdoc;
+pub mod schlib;

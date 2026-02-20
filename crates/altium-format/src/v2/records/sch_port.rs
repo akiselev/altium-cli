@@ -1,7 +1,7 @@
 //! Port record (RECORD=18).
 
-use altium_format_derive::altium_record;
 use crate::v2::coord::SchCoord;
+use altium_format_derive::altium_record;
 
 /// Port record — hierarchical port connection on a schematic.
 ///

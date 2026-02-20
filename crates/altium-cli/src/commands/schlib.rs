@@ -145,7 +145,11 @@ pub fn run(cmd: &SchLibCommands, format: &str) -> Result<(), Box<dyn std::error:
             let result = schlib::cmd_info(path)?;
             output::print(&TextWrapper(result), format)?;
         }
-        SchLibCommands::Component { path, name, primitives } => {
+        SchLibCommands::Component {
+            path,
+            name,
+            primitives,
+        } => {
             let result = schlib::cmd_component(path, name, *primitives)?;
             output::print(&TextWrapper(result), format)?;
         }
@@ -160,10 +164,20 @@ pub fn run(cmd: &SchLibCommands, format: &str) -> Result<(), Box<dyn std::error:
         SchLibCommands::Create { path } => {
             schlib::cmd_create(path)?;
         }
-        SchLibCommands::AddComponent { path, name, description } => {
+        SchLibCommands::AddComponent {
+            path,
+            name,
+            description,
+        } => {
             schlib::cmd_add_component(path, name, description.clone())?;
         }
-        SchLibCommands::AddPin { path, component, designator, name, electrical_type } => {
+        SchLibCommands::AddPin {
+            path,
+            component,
+            designator,
+            name,
+            electrical_type,
+        } => {
             schlib::cmd_add_pin(path, component, designator, name, electrical_type)?;
         }
         SchLibCommands::Json { path, full } => {

@@ -177,9 +177,7 @@ pub(super) fn is_data_bus(name: &str) -> bool {
 /// Check if a net name looks like an address bus signal.
 pub(super) fn is_address_bus(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.starts_with("a0")
-        || lower.starts_with("a[")
-        || lower.starts_with("addr")
+    lower.starts_with("a0") || lower.starts_with("a[") || lower.starts_with("addr")
 }
 
 /// Check if a net name looks like a control signal.

@@ -32,24 +32,27 @@ pub struct PcbComponentBodyRecord {
 ///
 /// Structurally identical to Region (same binary header + parametric +
 /// vertices), just with a different object type ID (12 vs 11).
-pub(crate) fn parse_component_body(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
-    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
+pub(crate) fn parse_component_body(
+    data: &[u8],
+) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::error::AltiumError;
+    use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
     if data.len() < 22 {
         return Err(AltiumError::Parse(format!(
-            "component body data too short: {} bytes (need >= 22)", data.len()
+            "component body data too short: {} bytes (need >= 22)",
+            data.len()
         )));
     }
 
     // Same layout as Region: header(13) + extra(5) + hole_count(2) + padding(2)
     let spans = vec![
-        FieldSpan::new(0, 1),   // 0: layer
-        FieldSpan::new(1, 2),   // 1: flags
-        FieldSpan::new(3, 2),   // 2: net
-        FieldSpan::new(5, 2),   // 3: polygon_ref
-        FieldSpan::new(7, 2),   // 4: component_ref
-        FieldSpan::new(18, 2),  // 5: hole_count
+        FieldSpan::new(0, 1),                      // 0: layer
+        FieldSpan::new(1, 2),                      // 1: flags
+        FieldSpan::new(3, 2),                      // 2: net
+        FieldSpan::new(5, 2),                      // 3: polygon_ref
+        FieldSpan::new(7, 2),                      // 4: component_ref
+        FieldSpan::new(18, 2),                     // 5: hole_count
         find_body_outline_vertex_count_span(data), // 6: num_outline_vertices
     ];
 
@@ -68,9 +71,8 @@ fn find_body_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store:
 
     // Read prop_len and skip properties
     if offset + 4 <= data.len() {
-        let prop_len = u32::from_le_bytes(
-            data[offset..offset + 4].try_into().unwrap_or([0; 4]),
-        ) as usize;
+        let prop_len =
+            u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap_or([0; 4])) as usize;
         offset += 4 + prop_len;
     }
 
@@ -114,13 +116,13 @@ mod tests {
         data[11..15].copy_from_slice(&8u32.to_le_bytes());
 
         let spans = vec![
-            FieldSpan::new(0, 1),   // layer
-            FieldSpan::new(1, 2),   // flags
-            FieldSpan::new(3, 2),   // net
-            FieldSpan::new(5, 2),   // polygon_ref
-            FieldSpan::new(7, 2),   // component_ref
-            FieldSpan::new(9, 2),   // hole_count
-            FieldSpan::new(11, 4),  // num_outline_vertices
+            FieldSpan::new(0, 1),  // layer
+            FieldSpan::new(1, 2),  // flags
+            FieldSpan::new(3, 2),  // net
+            FieldSpan::new(5, 2),  // polygon_ref
+            FieldSpan::new(7, 2),  // component_ref
+            FieldSpan::new(9, 2),  // hole_count
+            FieldSpan::new(11, 4), // num_outline_vertices
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))

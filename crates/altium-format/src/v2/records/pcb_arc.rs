@@ -14,9 +14,9 @@
 //! ```
 //! Total: 47 bytes for the sequential portion.
 
-use altium_format_derive::altium_record;
 use crate::v2::binary_helpers::PcbCommonHeader;
 use crate::v2::coord::PcbCoord;
+use altium_format_derive::altium_record;
 
 #[altium_record(kind = "pcb", object_id = Arc, codec = "binary")]
 pub struct PcbArcRecord {
