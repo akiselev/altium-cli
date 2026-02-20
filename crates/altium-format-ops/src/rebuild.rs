@@ -13,28 +13,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use altium_format::v2::documents::{PcbLib, SchDoc, SchLib};
+use altium_format::v2::documents::pcbdoc_streams::PcbDocSectionMeta;
+use altium_format::v2::documents::{PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format::v2::handles::{
-    PcbArcHandle, PcbComponentBodyHandle, PcbFillHandle, PcbPadHandle, PcbRegionHandle,
-    PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBezierHandle, SchBlanketHandle,
-    SchBusEntryHandle, SchBusHandle, SchComponent, SchDesignatorHandle, SchEllipseHandle,
-    SchEllipticalArcHandle, SchImageHandle, SchImplementationHandle, SchImplementationListHandle,
-    SchImplementationParametersHandle, SchJunctionHandle, SchLabelHandle, SchLineHandle,
-    SchMapDefinerHandle, SchMapDefinerListHandle, SchNetLabelHandle, SchNoERCHandle, SchNoteHandle,
-    SchParameterHandle, SchPieHandle, SchPinHandle, SchPolygonHandle, SchPolylineHandle,
-    SchPortHandle, SchPowerHandle, SchRectangleHandle, SchRoundRectangleHandle,
-    SchSheetEntryHandle, SchSheetFileNameHandle, SchSheetHandle, SchSheetNameHandle,
-    SchSheetSymbolHandle, SchSymbolHandle, SchTaskHolderHandle, SchTextFrameHandle, SchWireHandle,
+    PcbArcHandle, PcbComponentBodyHandle, PcbConnectionHandle, PcbFillHandle, PcbPadHandle,
+    PcbRegionHandle, PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBezierHandle,
+    SchBlanketHandle, SchBusEntryHandle, SchBusHandle, SchComponent, SchDesignatorHandle,
+    SchEllipseHandle, SchEllipticalArcHandle, SchImageHandle, SchImplementationHandle,
+    SchImplementationListHandle, SchImplementationParametersHandle, SchJunctionHandle,
+    SchLabelHandle, SchLineHandle, SchMapDefinerHandle, SchMapDefinerListHandle, SchNetLabelHandle,
+    SchNoERCHandle, SchNoteHandle, SchParameterHandle, SchPieHandle, SchPinHandle,
+    SchPolygonHandle, SchPolylineHandle, SchPortHandle, SchPowerHandle, SchRectangleHandle,
+    SchRoundRectangleHandle, SchSheetEntryHandle, SchSheetFileNameHandle, SchSheetHandle,
+    SchSheetNameHandle, SchSheetSymbolHandle, SchSymbolHandle, SchTaskHolderHandle,
+    SchTextFrameHandle, SchWireHandle,
 };
 use altium_format::v2::records::{
-    PcbArcRecord, PcbComponentBodyRecord, PcbFillRecord, PcbPadRecord, PcbRegionRecord,
-    PcbTextRecord, PcbTrackRecord, PcbViaRecord, SchArcRecord, SchBezierRecord, SchBlanketRecord,
-    SchBusEntryRecord, SchBusRecord, SchDesignatorRecord, SchEllipseRecord, SchEllipticalArcRecord,
-    SchImageRecord, SchImplementationListRecord, SchImplementationParametersRecord,
-    SchImplementationRecord, SchJunctionRecord, SchLabelRecord, SchLineRecord,
-    SchMapDefinerListRecord, SchMapDefinerRecord, SchNetLabelRecord, SchNoERCRecord, SchNoteRecord,
-    SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord, SchPolylineRecord,
-    SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
+    PcbArcRecord, PcbComponentBodyRecord, PcbConnectionRecord, PcbFillRecord, PcbPadRecord,
+    PcbRegionRecord, PcbTextRecord, PcbTrackRecord, PcbViaRecord, SchArcRecord, SchBezierRecord,
+    SchBlanketRecord, SchBusEntryRecord, SchBusRecord, SchDesignatorRecord, SchEllipseRecord,
+    SchEllipticalArcRecord, SchImageRecord, SchImplementationListRecord,
+    SchImplementationParametersRecord, SchImplementationRecord, SchJunctionRecord, SchLabelRecord,
+    SchLineRecord, SchMapDefinerListRecord, SchMapDefinerRecord, SchNetLabelRecord, SchNoERCRecord,
+    SchNoteRecord, SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord,
+    SchPolylineRecord, SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
     SchSheetSymbolRecord, SchSymbolRecord, SchTaskHolderRecord, SchTextFrameRecord, SchWireRecord,
 };
@@ -537,58 +539,47 @@ macro_rules! copy_pcb_record {
     ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
         let copy_result: std::result::Result<(), String> = match $type_id {
             <PcbArcRecord as RecordType>::RECORD_ID => {
-                let src = PcbArcHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbArcRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbArcHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbPadRecord as RecordType>::RECORD_ID => {
-                let src = PcbPadHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbPadRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbPadHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbViaRecord as RecordType>::RECORD_ID => {
-                let src = PcbViaHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbViaRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbViaHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbTrackRecord as RecordType>::RECORD_ID => {
-                let src = PcbTrackHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbTrackRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbTrackHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbTextRecord as RecordType>::RECORD_ID => {
-                let src = PcbTextHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbTextRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbTextHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbFillRecord as RecordType>::RECORD_ID => {
-                let src = PcbFillHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbFillRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbFillHandle::new($src_store.clone(), $rid).read();
+                $emit!(dst);
+                Ok(())
+            }
+            <PcbConnectionRecord as RecordType>::RECORD_ID => {
+                let dst = PcbConnectionHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbRegionRecord as RecordType>::RECORD_ID => {
-                let src = PcbRegionHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbRegionRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbRegionHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
             <PcbComponentBodyRecord as RecordType>::RECORD_ID => {
-                let src = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbComponentBodyRecord::from_origin(src.origin().clone());
-                dst.copy_modeled_fields_from(&src);
+                let dst = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
                 $emit!(dst);
                 Ok(())
             }
@@ -922,16 +913,53 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
+    let src = PcbDoc::open_file(path).map_err(|e| e.to_string())?;
+    let dst = PcbDoc::new_empty();
+    let src_store = src.store().clone();
+
+    let mut streams_meta = src.streams_meta();
+    let primitive_section_names: Vec<String> = streams_meta
+        .sections
+        .iter_mut()
+        .filter_map(|(section_name, section_meta)| match section_meta {
+            PcbDocSectionMeta::Primitive(primitive_meta) => {
+                primitive_meta.record_ids.clear();
+                Some(section_name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    dst.set_streams_meta(streams_meta);
+
+    for section_name in primitive_section_names {
+        for (type_id, rid) in src.primitive_records(&section_name) {
+            macro_rules! emit_prim {
+                ($rec:expr) => {{
+                    dst.add_primitive_record(&section_name, $rec)
+                        .map_err(|e| -> Box<dyn Error> { e.to_string().into() })?;
+                }};
+            }
+            copy_pcb_record!(type_id, rid, src_store, emit_prim, "pcbdoc:primitive")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        }
+    }
+
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    dst.save_file(out).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Rebuild a supported Altium document from high-level types and diff against
 /// the original CFB stream layout.
 pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, Box<dyn Error>> {
     let Some(file_type) = classify_extension(path) else {
         return Err(format!("Unsupported file extension for {}", path.display()).into());
     };
-
-    if file_type == "PcbDoc" {
-        return Err("PcbDoc v2 rebuild is not implemented yet".into());
-    }
 
     let _panic_hook_silencer = PanicHookSilencer::install();
 
@@ -941,6 +969,7 @@ pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, 
         "SchLib" => rebuild_schlib(path, &rebuilt_path)?,
         "PcbLib" => rebuild_pcblib(path, &rebuilt_path)?,
         "SchDoc" => rebuild_schdoc(path, &rebuilt_path)?,
+        "PcbDoc" => rebuild_pcbdoc(path, &rebuilt_path)?,
         _ => return Err(format!("Unsupported file type: {}", file_type).into()),
     };
 
@@ -963,18 +992,22 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use altium_format::v2::backing_store::{BinaryOrigin, FieldSpan, RecordOrigin};
+    use altium_format::v2::documents::pcbdoc_streams::{
+        PcbDocPrimitiveSectionMeta, PcbDocSectionMeta,
+    };
     use altium_format::v2::documents::pcblib_streams::{
         PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibFootprintSidecarStreamsMeta,
         PcbLibLibraryStorageMeta, PcbLibModelsStorageMeta, PcbLibParamTableStreamMeta,
         PcbLibPrimitiveGuidEntry, PcbLibPrimitiveGuidsStreamMeta, PcbLibWideStringsStreamMeta,
     };
-    use altium_format::v2::documents::schdoc_streams::{SchDocStorageEntry, SchDocStorageStreamMeta};
-    use altium_format::v2::documents::schlib_streams::{
-        SchLibRedirectionStreamMeta,
+    use altium_format::v2::documents::schdoc_streams::{
+        SchDocStorageEntry, SchDocStorageStreamMeta,
     };
+    use altium_format::v2::documents::schlib_streams::SchLibRedirectionStreamMeta;
     use altium_format::v2::handles::PcbFootprintStoragePassthrough;
     use altium_format::v2::parameters::ParameterCollection;
-    use altium_format::v2::records::PcbFootprintRecord;
+    use altium_format::v2::records::{PcbConnectionRecord, PcbFootprintRecord};
     use altium_format::v2::templates;
 
     #[test]
@@ -986,11 +1019,10 @@ mod tests {
     }
 
     #[test]
-    fn pcbdoc_returns_not_implemented() {
+    fn pcbdoc_rebuild_requires_existing_source_file() {
         let err = cmd_rebuild(Path::new("dummy.PcbDoc"), None).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("PcbDoc v2 rebuild is not implemented yet"),
+            err.to_string().contains("I/O error"),
             "unexpected error: {}",
             err
         );
@@ -1018,6 +1050,65 @@ mod tests {
             ts,
             ext
         ))
+    }
+
+    #[test]
+    fn rebuild_pcbdoc_supports_connection_primitives() {
+        let src_path = temp_file_path("PcbDoc");
+        let out_path = temp_file_path("PcbDoc");
+
+        let src = PcbDoc::new_empty();
+        let mut streams_meta = src.streams_meta();
+        streams_meta.sections.insert(
+            "Connections6".to_string(),
+            PcbDocSectionMeta::Primitive(PcbDocPrimitiveSectionMeta {
+                object_id: 7,
+                header_count: 1,
+                record_ids: Vec::new(),
+            }),
+        );
+        src.set_streams_meta(streams_meta);
+
+        let mut raw = vec![0u8; 47];
+        raw[13..17].copy_from_slice(&100_000i32.to_le_bytes());
+        raw[17..21].copy_from_slice(&200_000i32.to_le_bytes());
+        raw[21..25].copy_from_slice(&300_000i32.to_le_bytes());
+        raw[25..29].copy_from_slice(&400_000i32.to_le_bytes());
+        raw[29..33].copy_from_slice(&10_000i32.to_le_bytes());
+        raw[33] = 1;
+        raw[34] = 32;
+        raw[35..39].copy_from_slice(&11i32.to_le_bytes());
+        raw[39..43].copy_from_slice(&22i32.to_le_bytes());
+        raw[43..47].copy_from_slice(&33i32.to_le_bytes());
+        let spans = vec![
+            FieldSpan::new(0, 13),
+            FieldSpan::new(13, 4),
+            FieldSpan::new(17, 4),
+            FieldSpan::new(21, 4),
+            FieldSpan::new(25, 4),
+            FieldSpan::new(29, 4),
+            FieldSpan::new(33, 1),
+            FieldSpan::new(34, 1),
+            FieldSpan::new(35, 4),
+            FieldSpan::new(39, 4),
+            FieldSpan::new(43, 4),
+        ];
+        let conn = PcbConnectionRecord::from_origin(RecordOrigin::Binary(
+            BinaryOrigin::with_spans(raw, spans),
+        ));
+        src.add_primitive_record("Connections6", conn)
+            .expect("failed to add connection primitive");
+        src.save_file(&src_path)
+            .expect("failed to save source PcbDoc fixture");
+
+        let report = cmd_rebuild(&src_path, Some(&out_path)).expect("failed to rebuild PcbDoc");
+        assert_eq!(report.file_type, "PcbDoc");
+        assert!(report.diff.only_in_original.is_empty());
+        assert!(report.diff.only_in_rebuilt.is_empty());
+        assert!(report.diff.binary_diffs.is_empty());
+
+        let _ = fs::remove_file(&src_path);
+        let _ = fs::remove_file(&out_path);
     }
 
     #[test]
@@ -1066,7 +1157,10 @@ mod tests {
         rebuild_schlib(&src_path, &out_path).expect("failed to rebuild SchLib fixture");
 
         let rebuilt = SchLib::open_file(&out_path).expect("failed to open rebuilt SchLib fixture");
-        assert_eq!(rebuilt.storage_meta().entries.len(), storage_meta.entries.len());
+        assert_eq!(
+            rebuilt.storage_meta().entries.len(),
+            storage_meta.entries.len()
+        );
         assert_eq!(
             rebuilt
                 .storage_meta()
@@ -1078,7 +1172,10 @@ mod tests {
                 .first()
                 .map(|e| e.compressed_data.clone())
         );
-        assert_eq!(rebuilt.redirection_streams().len(), redirection_streams.len());
+        assert_eq!(
+            rebuilt.redirection_streams().len(),
+            redirection_streams.len()
+        );
         assert_eq!(
             rebuilt
                 .redirection_streams()
@@ -1189,15 +1286,13 @@ mod tests {
         assert_eq!(rebuilt.file_header_meta().key, "ZZZZZZZZ");
         assert_eq!(rebuilt.section_keys().len(), section_keys.len());
         assert_eq!(rebuilt.section_keys().get_key("FP1"), "FP1K");
-        assert_eq!(rebuilt.file_version_info_meta().data, b"version-info".to_vec());
+        assert_eq!(
+            rebuilt.file_version_info_meta().data,
+            b"version-info".to_vec()
+        );
         assert_eq!(rebuilt.library_meta().data, b"library-data".to_vec());
         assert_eq!(
-            rebuilt
-                .library_meta()
-                .models
-                .entries
-                .get(&0)
-                .cloned(),
+            rebuilt.library_meta().models.entries.get(&0).cloned(),
             Some(b"model-0".to_vec())
         );
 

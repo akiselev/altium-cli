@@ -1,7 +1,8 @@
 //! PCB Region record type for the v2 API.
 //!
 //! The region record is a hybrid binary+parametric format:
-//! - 18-byte binary header (layer, flags, net, polygon, component, skip5, holecount, skip2)
+//! - 13-byte common header
+//! - 5-byte extension header (observed: byte 1 carries hole count for AD26 data)
 //! - Parametric properties (`|KEY=VALUE|` text)
 //! - Outline vertices (f64 x, f64 y pairs)
 //! - Hole vertex lists
@@ -34,9 +35,7 @@ pub struct PcbRegionRecord {
 /// Structure:
 /// - 13-byte PcbCommonHeader (layer, flags, net, polygon, component, ref4, ref5)
 /// - 5-byte extra header
-/// - 2-byte hole_count
-/// - 2-byte padding
-/// - u32 prop_len + parametric properties (null-terminated)
+/// - u32 prop_len (at offset 18) + parametric properties
 /// - u32 num_outline_vertices + vertex data
 /// - hole vertex lists
 pub(crate) fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
@@ -57,12 +56,13 @@ pub(crate) fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_stor
         FieldSpan::new(3, 2), // 2: net
         FieldSpan::new(5, 2), // 3: polygon_ref
         FieldSpan::new(7, 2), // 4: component_ref
-        // After 13-byte header + 5-byte extra = offset 18
-        FieldSpan::new(18, 2), // 5: hole_count
+        // In observed AD26 payloads, hole count is stored in the extension
+        // header byte at offset 14 (with a zero high byte).
+        FieldSpan::new(14, 2), // 5: hole_count
         // num_outline_vertices: located after header(13) + extra(5) +
-        // hole_count(2) + padding(2) + prop_len(4) + props + ...
+        // prop_len(4) + props ...
         // We need to compute this dynamically
-        find_outline_vertex_count_span(data), // 6: num_outline_vertices
+        find_outline_vertex_count_span(data)?, // 6: num_outline_vertices
     ];
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
@@ -71,27 +71,41 @@ pub(crate) fn parse_region(data: &[u8]) -> crate::Result<crate::v2::backing_stor
 }
 
 /// Find the FieldSpan for num_outline_vertices within region data.
-#[allow(dead_code)]
-fn find_outline_vertex_count_span(data: &[u8]) -> crate::v2::backing_store::FieldSpan {
+fn find_outline_vertex_count_span(
+    data: &[u8],
+) -> crate::Result<crate::v2::backing_store::FieldSpan> {
+    use crate::error::AltiumError;
     use crate::v2::backing_store::FieldSpan;
 
-    // Skip: 13 (header) + 5 (extra) + 2 (hole_count) + 2 (padding) = 22
-    let mut offset = 22usize;
+    // Skip common header + extension header to reach prop_len.
+    let mut offset = 18usize;
+
+    if offset + 4 > data.len() {
+        return Err(AltiumError::Parse(
+            "region data missing prop_len field".to_string(),
+        ));
+    }
 
     // Read prop_len and skip properties
-    if offset + 4 <= data.len() {
-        let prop_len =
-            u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap_or([0; 4])) as usize;
-        offset += 4 + prop_len;
+    let prop_len =
+        u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap_or([0; 4])) as usize;
+    offset += 4;
+    if offset + prop_len > data.len() {
+        return Err(AltiumError::Parse(format!(
+            "region data prop_len={} exceeds payload",
+            prop_len
+        )));
     }
+    offset += prop_len;
 
     // Now at num_outline_vertices (u32)
-    if offset + 4 <= data.len() {
-        FieldSpan::new(offset, 4)
-    } else {
-        // Fallback: point to a safe location
-        FieldSpan::new(0, 1)
+    if offset + 4 > data.len() {
+        return Err(AltiumError::Parse(
+            "region data missing num_outline_vertices field".to_string(),
+        ));
     }
+
+    Ok(FieldSpan::new(offset, 4))
 }
 
 /// Serialize region data back to binary.
@@ -118,10 +132,12 @@ mod tests {
         data[5..7].copy_from_slice(&0u16.to_le_bytes());
         // component_ref at offset 7
         data[7..9].copy_from_slice(&3u16.to_le_bytes());
-        // hole_count at offset 9
-        data[9..11].copy_from_slice(&2u16.to_le_bytes());
-        // num_outline_vertices at offset 11
-        data[11..15].copy_from_slice(&4u32.to_le_bytes());
+        // hole_count at extension offset 14
+        data[14..16].copy_from_slice(&2u16.to_le_bytes());
+        // prop_len at offset 18
+        data[18..22].copy_from_slice(&4u32.to_le_bytes());
+        // num_outline_vertices after props: 18 + 4 + 4 = 26
+        data[26..30].copy_from_slice(&4u32.to_le_bytes());
 
         let spans = vec![
             FieldSpan::new(0, 1),  // layer
@@ -129,8 +145,8 @@ mod tests {
             FieldSpan::new(3, 2),  // net
             FieldSpan::new(5, 2),  // polygon_ref
             FieldSpan::new(7, 2),  // component_ref
-            FieldSpan::new(9, 2),  // hole_count
-            FieldSpan::new(11, 4), // num_outline_vertices
+            FieldSpan::new(14, 2), // hole_count
+            FieldSpan::new(26, 4), // num_outline_vertices
         ];
 
         RecordOrigin::Binary(BinaryOrigin::with_spans(data, spans))

@@ -350,7 +350,8 @@ mod tests {
             }],
         };
 
-        let data = serialize_component_embedded_stream(&meta, "U1/PinFrac", STREAM_PIN_FRAC).unwrap();
+        let data =
+            serialize_component_embedded_stream(&meta, "U1/PinFrac", STREAM_PIN_FRAC).unwrap();
         let parsed = parse_component_embedded_stream(&data, "U1/PinFrac", STREAM_PIN_FRAC).unwrap();
         assert_eq!(parsed.header, STREAM_PIN_FRAC);
         assert_eq!(parsed.entries.len(), 1);
@@ -371,7 +372,8 @@ mod tests {
         };
 
         let data = serialize_component_embedded_stream(&meta, "U1/PinFrac", "Other").unwrap();
-        let err = parse_component_embedded_stream(&data, "U1/PinFrac", STREAM_PIN_FRAC).unwrap_err();
+        let err =
+            parse_component_embedded_stream(&data, "U1/PinFrac", STREAM_PIN_FRAC).unwrap_err();
         assert!(format!("{err}").contains("unexpected HEADER"));
     }
 }

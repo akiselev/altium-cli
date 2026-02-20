@@ -28,8 +28,8 @@ use super::encoding::{
 };
 use super::schdoc_streams::parse_storage_meta;
 use super::schlib_streams::{
-    SchLibComponentSidecarStreamsMeta, SchLibRedirectionStreamMeta, STREAM_PIN_FRAC,
-    STREAM_PIN_PACKAGE_LENGTH, STREAM_PIN_SYMBOL_LINE_WIDTH, STREAM_PIN_TEXT_DATA,
+    STREAM_PIN_FRAC, STREAM_PIN_PACKAGE_LENGTH, STREAM_PIN_SYMBOL_LINE_WIDTH, STREAM_PIN_TEXT_DATA,
+    SchLibComponentSidecarStreamsMeta, SchLibRedirectionStreamMeta,
     parse_component_embedded_stream, parse_redirection_stream, serialize_component_embedded_stream,
     serialize_redirection_stream,
 };
@@ -261,8 +261,9 @@ impl SchLib {
             .collect();
 
         // Parse typed SchLib non-component streams.
-        let mut storage_meta: Option<crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta> =
-            None;
+        let mut storage_meta: Option<
+            crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta,
+        > = None;
         let mut redirection_streams: BTreeMap<String, SchLibRedirectionStreamMeta> =
             BTreeMap::new();
 
@@ -1756,8 +1757,9 @@ mod tests {
 
     #[test]
     fn schlib_open_rejects_unknown_root_stream() {
-        let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
-            .unwrap();
+        let mut cfb =
+            cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+                .unwrap();
 
         let mut header = cfb.create_stream("/FileHeader").unwrap();
         header
@@ -1822,8 +1824,10 @@ mod tests {
             Ok(_) => panic!("expected SchLib::open to fail"),
             Err(err) => err,
         };
-        assert!(format!("{err}")
-            .to_ascii_lowercase()
-            .contains("unimplemented stream"));
+        assert!(
+            format!("{err}")
+                .to_ascii_lowercase()
+                .contains("unimplemented stream")
+        );
     }
 }

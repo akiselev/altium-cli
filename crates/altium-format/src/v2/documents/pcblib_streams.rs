@@ -251,8 +251,8 @@ fn parse_section_key_string(data: &[u8], pos: &mut usize, label: &str) -> Result
             label
         )));
     }
-    let block_len = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]])
-        as usize;
+    let block_len =
+        u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]) as usize;
     *pos += 4;
     if block_len == 0 {
         return Err(AltiumError::Parse(format!(
@@ -422,7 +422,10 @@ fn decode_param_block(
     stream_path: &str,
     block_index: usize,
 ) -> Result<ParameterCollection> {
-    let text_end = payload.iter().position(|b| *b == 0).unwrap_or(payload.len());
+    let text_end = payload
+        .iter()
+        .position(|b| *b == 0)
+        .unwrap_or(payload.len());
     if payload[text_end..].iter().any(|b| *b != 0) {
         return Err(AltiumError::Parse(format!(
             "pcblib stream '{}' block {} has non-zero bytes after NUL terminator",
@@ -433,10 +436,7 @@ fn decode_param_block(
     Ok(ParameterCollection::from_string(&text))
 }
 
-fn encode_param_blocks(
-    entries: &[ParameterCollection],
-    stream_path: &str,
-) -> Result<Vec<u8>> {
+fn encode_param_blocks(entries: &[ParameterCollection], stream_path: &str) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for (i, params) in entries.iter().enumerate() {
         let mut payload = encode_win1252(&params.to_param_string());
@@ -490,12 +490,12 @@ pub(crate) fn parse_primitive_guids_stream(
     stream_prefix: &str,
 ) -> Result<PcbLibPrimitiveGuidsStreamMeta> {
     let count = parse_u32_header_stream(header_data, &format!("{stream_prefix}/Header"))? as usize;
-    let expected_len = count
-        .checked_mul(24)
-        .ok_or_else(|| AltiumError::Parse(format!(
+    let expected_len = count.checked_mul(24).ok_or_else(|| {
+        AltiumError::Parse(format!(
             "pcblib stream '{}/Data' entry count overflow: {}",
             stream_prefix, count
-        )))?;
+        ))
+    })?;
     if data.len() != expected_len {
         return Err(AltiumError::Parse(format!(
             "pcblib stream '{}/Data' expected {} bytes for {} entries, got {}",
@@ -639,15 +639,11 @@ mod tests {
         let mut p0 = ParameterCollection::new();
         p0.add("PRIMITIVEINDEX", "0");
         let meta = PcbLibParamTableStreamMeta { entries: vec![p0] };
-        let (_header, data) = serialize_param_table_stream(&meta, "U1/UniqueIDPrimitiveInformation")
-            .unwrap();
+        let (_header, data) =
+            serialize_param_table_stream(&meta, "U1/UniqueIDPrimitiveInformation").unwrap();
         let bad_header = 2u32.to_le_bytes().to_vec();
-        let err = parse_param_table_stream(
-            &bad_header,
-            &data,
-            "U1/UniqueIDPrimitiveInformation",
-        )
-        .unwrap_err();
+        let err = parse_param_table_stream(&bad_header, &data, "U1/UniqueIDPrimitiveInformation")
+            .unwrap_err();
         assert!(format!("{err}").contains("header count"));
     }
 }

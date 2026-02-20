@@ -72,8 +72,7 @@ pub enum GroupMeta {
         raw_pattern_name_block: Vec<u8>,
         original_primitive_order: Vec<PcbPrimitiveRef>,
         raw_header: Vec<u8>,
-        sidecar_streams:
-            crate::v2::documents::pcblib_streams::PcbLibFootprintSidecarStreamsMeta,
+        sidecar_streams: crate::v2::documents::pcblib_streams::PcbLibFootprintSidecarStreamsMeta,
     },
     SchDocComponent,
 }
@@ -89,10 +88,8 @@ pub enum DocumentMeta {
         raw_header_params: Option<crate::v2::parameters::ParameterCollection>,
         section_keys: crate::v2::documents::section_keys::SectionKeyList,
         storage_meta: crate::v2::documents::schdoc_streams::SchDocStorageStreamMeta,
-        redirection_streams: BTreeMap<
-            String,
-            crate::v2::documents::schlib_streams::SchLibRedirectionStreamMeta,
-        >,
+        redirection_streams:
+            BTreeMap<String, crate::v2::documents::schlib_streams::SchLibRedirectionStreamMeta>,
     },
     SchDoc {
         file_header_meta: crate::v2::documents::schdoc_streams::SchDocFileHeaderStreamMeta,
@@ -102,9 +99,11 @@ pub enum DocumentMeta {
     PcbLib {
         section_keys: crate::v2::documents::section_keys::SectionKeyList,
         file_header_meta: crate::v2::documents::pcblib_streams::PcbLibFileHeaderStreamMeta,
-        file_version_info_meta:
-            crate::v2::documents::pcblib_streams::PcbLibCountedDataStreamMeta,
+        file_version_info_meta: crate::v2::documents::pcblib_streams::PcbLibCountedDataStreamMeta,
         library_meta: crate::v2::documents::pcblib_streams::PcbLibLibraryStorageMeta,
+    },
+    PcbDoc {
+        streams_meta: crate::v2::documents::pcbdoc_streams::PcbDocStreamsMeta,
     },
     Empty,
 }

@@ -134,12 +134,13 @@ impl_record_handle!(SchComponentRecordHandle, SchComponentRecord);
 // ---------------------------------------------------------------------------
 
 use crate::v2::records::{
-    PcbArcRecord, PcbComponentBodyRecord, PcbFillRecord, PcbFootprintRecord, PcbPadRecord,
-    PcbRegionRecord, PcbTextRecord, PcbTrackRecord, PcbViaRecord,
+    PcbArcRecord, PcbComponentBodyRecord, PcbConnectionRecord, PcbFillRecord, PcbFootprintRecord,
+    PcbPadRecord, PcbRegionRecord, PcbTextRecord, PcbTrackRecord, PcbViaRecord,
 };
 
 impl_record_handle!(PcbTrackHandle, PcbTrackRecord);
 impl_record_handle!(PcbArcHandle, PcbArcRecord);
+impl_record_handle!(PcbConnectionHandle, PcbConnectionRecord);
 impl_record_handle!(PcbFillHandle, PcbFillRecord);
 impl_record_handle!(PcbPadHandle, PcbPadRecord);
 impl_record_handle!(PcbViaHandle, PcbViaRecord);
@@ -225,6 +226,7 @@ impl_handle_family!(SchTaskHolder, SchTaskHolderRecord, SchTaskHolderHandle);
 
 impl_handle_family!(PcbTrack, PcbTrackRecord, PcbTrackHandle);
 impl_handle_family!(PcbArc, PcbArcRecord, PcbArcHandle);
+impl_handle_family!(PcbConnection, PcbConnectionRecord, PcbConnectionHandle);
 impl_handle_family!(PcbFill, PcbFillRecord, PcbFillHandle);
 impl_handle_family!(PcbPad, PcbPadRecord, PcbPadHandle);
 impl_handle_family!(PcbVia, PcbViaRecord, PcbViaHandle);
@@ -393,9 +395,9 @@ impl SchComponentHandle {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         match &group.meta {
-            crate::v2::store::GroupMeta::SchComponent { sidecar_streams, .. } => {
-                sidecar_streams.clone()
-            }
+            crate::v2::store::GroupMeta::SchComponent {
+                sidecar_streams, ..
+            } => sidecar_streams.clone(),
             _ => crate::v2::documents::schlib_streams::SchLibComponentSidecarStreamsMeta::default(),
         }
     }
@@ -407,7 +409,10 @@ impl SchComponentHandle {
     ) {
         let mut store = self.store.borrow_mut();
         let group = &mut store.groups[self.group_id];
-        if let crate::v2::store::GroupMeta::SchComponent { sidecar_streams, .. } = &mut group.meta {
+        if let crate::v2::store::GroupMeta::SchComponent {
+            sidecar_streams, ..
+        } = &mut group.meta
+        {
             *sidecar_streams = streams;
             store.mark_semantic_ids_dirty();
         }

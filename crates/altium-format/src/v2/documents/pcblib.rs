@@ -20,19 +20,19 @@ use crate::v2::backing_store::{ParamOrigin, PcbPrimitiveRef, RecordNode, RecordO
 use crate::v2::handles::PcbFootprintHandle;
 use crate::v2::ids::RecordId;
 use crate::v2::records::{
-    parse_arc, parse_component_body, parse_fill, parse_pad, parse_region, parse_text, parse_track,
-    parse_via,
+    parse_arc, parse_component_body, parse_connection, parse_fill, parse_pad, parse_region,
+    parse_text, parse_track, parse_via,
 };
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::{DocumentQuery, HandleFamily};
 
 use super::pcblib_streams::{
-    PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibLibraryStorageMeta,
-    PcbLibFootprintSidecarStreamsMeta, PcbLibModelsStorageMeta, parse_file_header_stream,
+    PcbLibCountedDataStreamMeta, PcbLibFileHeaderStreamMeta, PcbLibFootprintSidecarStreamsMeta,
+    PcbLibLibraryStorageMeta, PcbLibModelsStorageMeta, parse_file_header_stream,
     parse_param_table_stream, parse_primitive_guids_stream, parse_section_keys_stream,
     parse_u32_header_stream, parse_wide_strings_stream, serialize_param_table_stream,
-    serialize_primitive_guids_stream, serialize_section_keys_stream,
-    serialize_u32_header_stream, serialize_wide_strings_stream,
+    serialize_primitive_guids_stream, serialize_section_keys_stream, serialize_u32_header_stream,
+    serialize_wide_strings_stream,
 };
 use super::section_keys::SectionKeyList;
 
@@ -547,10 +547,13 @@ impl PcbLib {
         let file_header_path = path_file_header.ok_or_else(|| {
             AltiumError::Parse("pcblib missing required '/FileHeader' stream".to_string())
         })?;
-        let file_header_meta = parse_file_header_stream(&read_stream_bytes(&mut cfb, &file_header_path)?)?;
+        let file_header_meta =
+            parse_file_header_stream(&read_stream_bytes(&mut cfb, &file_header_path)?)?;
 
         let fvi_header_path = path_fvi_header.ok_or_else(|| {
-            AltiumError::Parse("pcblib missing required '/FileVersionInfo/Header' stream".to_string())
+            AltiumError::Parse(
+                "pcblib missing required '/FileVersionInfo/Header' stream".to_string(),
+            )
         })?;
         let fvi_data_path = path_fvi_data.ok_or_else(|| {
             AltiumError::Parse("pcblib missing required '/FileVersionInfo/Data' stream".to_string())
@@ -570,7 +573,9 @@ impl PcbLib {
             AltiumError::Parse("pcblib missing required '/Library/Data' stream".to_string())
         })?;
         let lib_embedded_fonts_path = path_lib_embedded_fonts.ok_or_else(|| {
-            AltiumError::Parse("pcblib missing required '/Library/EmbeddedFonts' stream".to_string())
+            AltiumError::Parse(
+                "pcblib missing required '/Library/EmbeddedFonts' stream".to_string(),
+            )
         })?;
         let lib_cptoc_header_path = path_lib_cptoc_header.ok_or_else(|| {
             AltiumError::Parse(
@@ -593,7 +598,9 @@ impl PcbLib {
             )
         })?;
         let lib_models_header_path = path_lib_models_header.ok_or_else(|| {
-            AltiumError::Parse("pcblib missing required '/Library/Models/Header' stream".to_string())
+            AltiumError::Parse(
+                "pcblib missing required '/Library/Models/Header' stream".to_string(),
+            )
         })?;
         let lib_models_data_path = path_lib_models_data.ok_or_else(|| {
             AltiumError::Parse("pcblib missing required '/Library/Models/Data' stream".to_string())
@@ -856,11 +863,12 @@ impl PcbLib {
                 (Some(header_path), Some(data_path)) => {
                     let header_data = read_stream_bytes(&mut cfb, &header_path)?;
                     let data = read_stream_bytes(&mut cfb, &data_path)?;
-                    sidecar_streams.unique_id_primitive_information = Some(parse_param_table_stream(
-                        &header_data,
-                        &data,
-                        &format!("{storage_name}/{STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION}"),
-                    )?);
+                    sidecar_streams.unique_id_primitive_information =
+                        Some(parse_param_table_stream(
+                            &header_data,
+                            &data,
+                            &format!("{storage_name}/{STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION}"),
+                        )?);
                 }
                 (None, None) => {}
                 _ => {
@@ -875,11 +883,12 @@ impl PcbLib {
                 (Some(header_path), Some(data_path)) => {
                     let header_data = read_stream_bytes(&mut cfb, &header_path)?;
                     let data = read_stream_bytes(&mut cfb, &data_path)?;
-                    sidecar_streams.extended_primitive_information = Some(parse_param_table_stream(
-                        &header_data,
-                        &data,
-                        &format!("{storage_name}/{STREAM_EXTENDED_PRIMITIVE_INFORMATION}"),
-                    )?);
+                    sidecar_streams.extended_primitive_information =
+                        Some(parse_param_table_stream(
+                            &header_data,
+                            &data,
+                            &format!("{storage_name}/{STREAM_EXTENDED_PRIMITIVE_INFORMATION}"),
+                        )?);
                 }
                 (None, None) => {}
                 _ => {
@@ -990,13 +999,21 @@ impl PcbLib {
             write_system_stream("Library/Data", &library_meta.data)?;
             write_system_stream("Library/EmbeddedFonts", &library_meta.embedded_fonts)?;
 
-            let toc_header = serialize_u32_header_stream(library_meta.component_params_toc.header_count);
+            let toc_header =
+                serialize_u32_header_stream(library_meta.component_params_toc.header_count);
             write_system_stream("Library/ComponentParamsTOC/Header", &toc_header)?;
-            write_system_stream("Library/ComponentParamsTOC/Data", &library_meta.component_params_toc.data)?;
+            write_system_stream(
+                "Library/ComponentParamsTOC/Data",
+                &library_meta.component_params_toc.data,
+            )?;
 
-            let layer_header = serialize_u32_header_stream(library_meta.layer_kind_mapping.header_count);
+            let layer_header =
+                serialize_u32_header_stream(library_meta.layer_kind_mapping.header_count);
             write_system_stream("Library/LayerKindMapping/Header", &layer_header)?;
-            write_system_stream("Library/LayerKindMapping/Data", &library_meta.layer_kind_mapping.data)?;
+            write_system_stream(
+                "Library/LayerKindMapping/Data",
+                &library_meta.layer_kind_mapping.data,
+            )?;
 
             let models_header = serialize_u32_header_stream(library_meta.models.header_count);
             write_system_stream("Library/Models/Header", &models_header)?;
@@ -1008,11 +1025,18 @@ impl PcbLib {
             let models_no_embed_header =
                 serialize_u32_header_stream(library_meta.models_no_embed.header_count);
             write_system_stream("Library/ModelsNoEmbed/Header", &models_no_embed_header)?;
-            write_system_stream("Library/ModelsNoEmbed/Data", &library_meta.models_no_embed.data)?;
+            write_system_stream(
+                "Library/ModelsNoEmbed/Data",
+                &library_meta.models_no_embed.data,
+            )?;
 
-            let pad_via_header = serialize_u32_header_stream(library_meta.pad_via_library.header_count);
+            let pad_via_header =
+                serialize_u32_header_stream(library_meta.pad_via_library.header_count);
             write_system_stream("Library/PadViaLibrary/Header", &pad_via_header)?;
-            write_system_stream("Library/PadViaLibrary/Data", &library_meta.pad_via_library.data)?;
+            write_system_stream(
+                "Library/PadViaLibrary/Data",
+                &library_meta.pad_via_library.data,
+            )?;
 
             let textures_header = serialize_u32_header_stream(library_meta.textures.header_count);
             write_system_stream("Library/Textures/Header", &textures_header)?;
@@ -1027,23 +1051,22 @@ impl PcbLib {
                 original_primitive_order,
                 raw_header,
                 sidecar_streams,
-            ) =
-                match &group.meta {
-                    GroupMeta::PcbFootprint {
-                        name,
-                        raw_pattern_name_block,
-                        original_primitive_order,
-                        raw_header,
-                        sidecar_streams,
-                    } => (
-                        name.clone(),
-                        raw_pattern_name_block.clone(),
-                        original_primitive_order.clone(),
-                        raw_header.clone(),
-                        sidecar_streams.clone(),
-                    ),
-                    _ => continue,
-                };
+            ) = match &group.meta {
+                GroupMeta::PcbFootprint {
+                    name,
+                    raw_pattern_name_block,
+                    original_primitive_order,
+                    raw_header,
+                    sidecar_streams,
+                } => (
+                    name.clone(),
+                    raw_pattern_name_block.clone(),
+                    original_primitive_order.clone(),
+                    raw_header.clone(),
+                    sidecar_streams.clone(),
+                ),
+                _ => continue,
+            };
 
             let storage_path = format!("/{}", name);
             cfb.create_storage(&storage_path)
@@ -1117,8 +1140,14 @@ impl PcbLib {
                 if let Some(primitive_guids) = &sidecar_streams.primitive_guids {
                     let (header_bytes, data_bytes) =
                         serialize_primitive_guids_stream(primitive_guids)?;
-                    write_sidecar(&format!("{STREAM_PRIMITIVE_GUIDS}/{STREAM_HEADER}"), &header_bytes)?;
-                    write_sidecar(&format!("{STREAM_PRIMITIVE_GUIDS}/{STREAM_DATA}"), &data_bytes)?;
+                    write_sidecar(
+                        &format!("{STREAM_PRIMITIVE_GUIDS}/{STREAM_HEADER}"),
+                        &header_bytes,
+                    )?;
+                    write_sidecar(
+                        &format!("{STREAM_PRIMITIVE_GUIDS}/{STREAM_DATA}"),
+                        &data_bytes,
+                    )?;
                 }
 
                 if let Some(unique_id_info) = &sidecar_streams.unique_id_primitive_information {
@@ -1134,10 +1163,7 @@ impl PcbLib {
                         &header_bytes,
                     )?;
                     write_sidecar(
-                        &format!(
-                            "{}/{}",
-                            STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION, STREAM_DATA
-                        ),
+                        &format!("{}/{}", STREAM_UNIQUE_ID_PRIMITIVE_INFORMATION, STREAM_DATA),
                         &data_bytes,
                     )?;
                 }
@@ -1148,7 +1174,10 @@ impl PcbLib {
                         &format!("{name}/{STREAM_EXTENDED_PRIMITIVE_INFORMATION}"),
                     )?;
                     write_sidecar(
-                        &format!("{}/{}", STREAM_EXTENDED_PRIMITIVE_INFORMATION, STREAM_HEADER),
+                        &format!(
+                            "{}/{}",
+                            STREAM_EXTENDED_PRIMITIVE_INFORMATION, STREAM_HEADER
+                        ),
                         &header_bytes,
                     )?;
                     write_sidecar(
@@ -1404,7 +1433,10 @@ pub(crate) fn ensure_parent_storages<F: Read + Write + Seek>(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-fn read_stream_bytes<F: Read + Seek>(cfb: &mut cfb::CompoundFile<F>, path: &str) -> Result<Vec<u8>> {
+fn read_stream_bytes<F: Read + Seek>(
+    cfb: &mut cfb::CompoundFile<F>,
+    path: &str,
+) -> Result<Vec<u8>> {
     let mut stream = cfb
         .open_stream(path)
         .map_err(|e| AltiumError::Cfb(format!("Failed to open {}: {}", path, e)))?;
@@ -1436,6 +1468,7 @@ fn parse_single_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> Result<R
         3 => parse_via(&block_data),
         4 => parse_track(&block_data),
         6 => parse_fill(&block_data),
+        7 => parse_connection(&block_data),
         11 => parse_region(&block_data),
         12 => parse_component_body(&block_data),
         _ => Err(AltiumError::Parse(format!(
@@ -1889,13 +1922,16 @@ mod tests {
     }
 
     fn write_minimal_system_streams<W: Read + Write + Seek>(cfb: &mut cfb::CompoundFile<W>) {
-        let mut created_storages: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut created_storages: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut write_stream = |path: &str, data: &[u8]| {
             ensure_parent_storages(cfb, path, &mut created_storages).unwrap();
             cfb.create_stream(path).unwrap().write_all(data).unwrap();
         };
 
-        let file_header = PcbLibFileHeaderStreamMeta::default().to_stream_bytes().unwrap();
+        let file_header = PcbLibFileHeaderStreamMeta::default()
+            .to_stream_bytes()
+            .unwrap();
         write_stream("/FileHeader", &file_header);
 
         write_stream("/FileVersionInfo/Header", &1u32.to_le_bytes());
@@ -2101,9 +2137,11 @@ mod tests {
             Ok(_) => panic!("expected PcbLib::open to fail"),
             Err(err) => err,
         };
-        assert!(format!("{err}")
-            .to_ascii_lowercase()
-            .contains("unimplemented stream"));
+        assert!(
+            format!("{err}")
+                .to_ascii_lowercase()
+                .contains("unimplemented stream")
+        );
     }
 
     #[test]
@@ -2129,8 +2167,10 @@ mod tests {
             Ok(_) => panic!("expected PcbLib::open to fail"),
             Err(err) => err,
         };
-        assert!(format!("{err}")
-            .to_ascii_lowercase()
-            .contains("unimplemented stream"));
+        assert!(
+            format!("{err}")
+                .to_ascii_lowercase()
+                .contains("unimplemented stream")
+        );
     }
 }

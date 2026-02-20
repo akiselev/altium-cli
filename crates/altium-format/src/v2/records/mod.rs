@@ -120,6 +120,7 @@ pub use sch_wire::SchWireRecord;
 
 pub mod pcb_arc;
 pub mod pcb_component_body;
+pub mod pcb_connection;
 pub mod pcb_fill;
 pub mod pcb_footprint;
 pub mod pcb_pad;
@@ -134,6 +135,7 @@ pub mod pcb_via;
 
 pub use pcb_arc::PcbArcRecord;
 pub use pcb_component_body::PcbComponentBodyRecord;
+pub use pcb_connection::PcbConnectionRecord;
 pub use pcb_fill::PcbFillRecord;
 pub use pcb_footprint::PcbFootprintRecord;
 pub use pcb_pad::PcbPadRecord;
@@ -148,6 +150,7 @@ pub use pcb_via::PcbViaRecord;
 
 pub(crate) use pcb_arc::parse_arc;
 pub(crate) use pcb_component_body::parse_component_body;
+pub(crate) use pcb_connection::parse_connection;
 pub(crate) use pcb_fill::parse_fill;
 pub(crate) use pcb_pad::parse_pad;
 pub(crate) use pcb_region::parse_region;
