@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 
+use encoding_rs::WINDOWS_1252;
+
 use crate::error::{AltiumError, Result};
 use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
 use crate::v2::ids::GroupId;
@@ -843,6 +845,27 @@ fn parse_alias_list(alias_list: &str) -> Vec<String> {
         .collect()
 }
 
+/// Decode raw bytes as Windows-1252 into a Rust String.
+///
+/// Altium files use Windows-1252 encoding for text records. Using this
+/// instead of `String::from_utf8_lossy` preserves all byte values as
+/// proper Unicode characters (e.g. `\xb5` → µ) instead of replacing
+/// them with U+FFFD.
+pub(super) fn decode_win1252(bytes: &[u8]) -> String {
+    let (text, _, _) = WINDOWS_1252.decode(bytes);
+    text.into_owned()
+}
+
+/// Encode a Rust String back to Windows-1252 bytes.
+///
+/// This is the inverse of `decode_win1252` — characters that originated
+/// from Windows-1252 bytes are mapped back to their original single-byte
+/// values, enabling byte-perfect round-tripping.
+pub(super) fn encode_win1252(s: &str) -> Vec<u8> {
+    let (bytes, _, _) = WINDOWS_1252.encode(s);
+    bytes.into_owned()
+}
+
 fn parse_first_param_block(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() < 4 {
         return None;
@@ -859,7 +882,7 @@ fn parse_first_param_block(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn encode_single_param_block(params: &ParameterCollection) -> Vec<u8> {
-    let mut payload = params.to_param_string().into_bytes();
+    let mut payload = encode_win1252(&params.to_param_string());
     payload.push(0);
     let mut out = Vec::with_capacity(payload.len() + 4);
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -898,7 +921,7 @@ fn read_file_header<F: Read + Seek>(
     stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
 
     let payload = parse_first_param_block(&data).unwrap_or_else(|| data.clone());
-    let text = String::from_utf8_lossy(&payload);
+    let text = decode_win1252(&payload);
     let params = ParameterCollection::from_string(&text);
 
     let header = SchLibHeader {
@@ -966,7 +989,7 @@ fn read_section_keys<F: Read + Seek>(cfb: &mut cfb::CompoundFile<F>) -> Result<S
         let mut data = Vec::new();
         stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
         let payload = parse_first_param_block(&data).unwrap_or(data);
-        let text = String::from_utf8_lossy(&payload);
+        let text = decode_win1252(&payload);
         let params = ParameterCollection::from_string(&text);
         let count = params.get("KeyCount").map(|v| v.as_int_or(0)).unwrap_or(0);
         for i in 0..count {
@@ -1178,7 +1201,7 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
             node.original_snapshot = full_raw;
             records.push(node);
         } else {
-            let param_str = String::from_utf8_lossy(&record_data).to_string();
+            let param_str = decode_win1252(&record_data);
             let params = ParameterCollection::from_string(&param_str);
             let record_id = params
                 .get("RECORD")
@@ -1208,10 +1231,11 @@ pub(super) fn write_record_to_stream(output: &mut Vec<u8>, node: &RecordNode) ->
         // Re-serialize from origin
         match &node.origin {
             RecordOrigin::Param(p) => {
-                let bytes = p.params.to_param_string();
+                let text = p.params.to_param_string();
+                let bytes = encode_win1252(&text);
                 let len = bytes.len() as u32;
                 output.extend_from_slice(&len.to_le_bytes());
-                output.extend_from_slice(bytes.as_bytes());
+                output.extend_from_slice(&bytes);
             }
             RecordOrigin::Binary(b) => {
                 let len = (b.raw_block.len() as u32) | 0x0100_0000; // set binary flag

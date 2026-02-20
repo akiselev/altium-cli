@@ -435,7 +435,7 @@ fn parse_flat_stream(data: &[u8]) -> Result<Vec<(usize, RecordNode)>> {
             node.original_snapshot = full_raw;
             records.push((index, node));
         } else {
-            let param_str = String::from_utf8_lossy(&record_data).to_string();
+            let param_str = super::schlib::decode_win1252(&record_data);
             let params = ParameterCollection::from_string(&param_str);
             let record_id = params
                 .get("RECORD")
