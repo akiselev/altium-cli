@@ -77,8 +77,9 @@ macro_rules! impl_handle_family {
 use crate::v2::records::{
     SchArcRecord, SchBezierRecord, SchBlanketRecord, SchBusEntryRecord, SchBusRecord,
     SchComponentRecord, SchDesignatorRecord, SchEllipseRecord, SchEllipticalArcRecord,
-    SchImageRecord, SchImplementationListRecord, SchImplementationRecord, SchJunctionRecord,
-    SchLabelRecord, SchLineRecord, SchNetLabelRecord, SchNoERCRecord, SchNoteRecord,
+    SchImageRecord, SchImplementationListRecord, SchImplementationParametersRecord,
+    SchImplementationRecord, SchJunctionRecord, SchLabelRecord, SchLineRecord,
+    SchMapDefinerListRecord, SchMapDefinerRecord, SchNetLabelRecord, SchNoERCRecord, SchNoteRecord,
     SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord, SchPolylineRecord,
     SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
@@ -117,6 +118,12 @@ impl_record_handle!(SchSheetSymbolHandle, SchSheetSymbolRecord);
 impl_record_handle!(SchSheetEntryHandle, SchSheetEntryRecord);
 impl_record_handle!(SchImplementationListHandle, SchImplementationListRecord);
 impl_record_handle!(SchImplementationHandle, SchImplementationRecord);
+impl_record_handle!(SchMapDefinerListHandle, SchMapDefinerListRecord);
+impl_record_handle!(SchMapDefinerHandle, SchMapDefinerRecord);
+impl_record_handle!(
+    SchImplementationParametersHandle,
+    SchImplementationParametersRecord
+);
 impl_record_handle!(SchNoteHandle, SchNoteRecord);
 impl_record_handle!(SchBlanketHandle, SchBlanketRecord);
 impl_record_handle!(SchComponentRecordHandle, SchComponentRecord);
@@ -195,6 +202,17 @@ impl_handle_family!(
     SchImplementation,
     SchImplementationRecord,
     SchImplementationHandle
+);
+impl_handle_family!(
+    SchMapDefinerList,
+    SchMapDefinerListRecord,
+    SchMapDefinerListHandle
+);
+impl_handle_family!(SchMapDefiner, SchMapDefinerRecord, SchMapDefinerHandle);
+impl_handle_family!(
+    SchImplementationParameters,
+    SchImplementationParametersRecord,
+    SchImplementationParametersHandle
 );
 impl_handle_family!(SchNote, SchNoteRecord, SchNoteHandle);
 impl_handle_family!(SchBlanket, SchBlanketRecord, SchBlanketHandle);

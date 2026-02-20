@@ -170,6 +170,17 @@ pub fn cmd_primitives(
     let child_info = comp.all_children();
 
     for (type_id, record_id) in child_info {
+        let is_binary = {
+            let store = lib.store().borrow();
+            store.record(record_id).origin.is_binary()
+        };
+        if is_binary {
+            primitives.push(PrimitiveInfo::Other {
+                primitive_type: format!("{} (binary)", sch_record_type_name(type_id)),
+            });
+            continue;
+        }
+
         match type_id {
             2 => {
                 // Pin
@@ -237,8 +248,8 @@ pub fn cmd_primitives(
                     y: coord_to_mils(label.location_y()),
                 });
             }
-            // Skip Component, Parameter, Implementation records for primitive listing
-            1 | 41 | 44 | 45 => {}
+            // Skip non-graphical container/metadata records for primitive listing
+            1 | 41 | 44 | 45 | 46 | 47 | 48 => {}
             _ => {
                 primitives.push(PrimitiveInfo::Other {
                     primitive_type: sch_record_type_name(type_id).to_string(),

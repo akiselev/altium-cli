@@ -20,9 +20,10 @@ use altium_format::v2::handles::{
     PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBezierHandle, SchBlanketHandle,
     SchBusEntryHandle, SchBusHandle, SchComponent, SchDesignatorHandle, SchEllipseHandle,
     SchEllipticalArcHandle, SchImageHandle, SchImplementationHandle, SchImplementationListHandle,
-    SchJunctionHandle, SchLabelHandle, SchLineHandle, SchNetLabelHandle, SchNoERCHandle,
-    SchNoteHandle, SchParameterHandle, SchPieHandle, SchPinHandle, SchPolygonHandle,
-    SchPolylineHandle, SchPortHandle, SchPowerHandle, SchRectangleHandle, SchRoundRectangleHandle,
+    SchImplementationParametersHandle, SchJunctionHandle, SchLabelHandle, SchLineHandle,
+    SchMapDefinerHandle, SchMapDefinerListHandle, SchNetLabelHandle, SchNoERCHandle, SchNoteHandle,
+    SchParameterHandle, SchPieHandle, SchPinHandle, SchPolygonHandle, SchPolylineHandle,
+    SchPortHandle, SchPowerHandle, SchRectangleHandle, SchRoundRectangleHandle,
     SchSheetEntryHandle, SchSheetFileNameHandle, SchSheetHandle, SchSheetNameHandle,
     SchSheetSymbolHandle, SchSymbolHandle, SchTextFrameHandle, SchWireHandle,
 };
@@ -30,8 +31,9 @@ use altium_format::v2::records::{
     PcbArcRecord, PcbComponentBodyRecord, PcbFillRecord, PcbPadRecord, PcbRegionRecord,
     PcbTextRecord, PcbTrackRecord, PcbViaRecord, SchArcRecord, SchBezierRecord, SchBlanketRecord,
     SchBusEntryRecord, SchBusRecord, SchDesignatorRecord, SchEllipseRecord, SchEllipticalArcRecord,
-    SchImageRecord, SchImplementationListRecord, SchImplementationRecord, SchJunctionRecord,
-    SchLabelRecord, SchLineRecord, SchNetLabelRecord, SchNoERCRecord, SchNoteRecord,
+    SchImageRecord, SchImplementationListRecord, SchImplementationParametersRecord,
+    SchImplementationRecord, SchJunctionRecord, SchLabelRecord, SchLineRecord,
+    SchMapDefinerListRecord, SchMapDefinerRecord, SchNetLabelRecord, SchNoERCRecord, SchNoteRecord,
     SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord, SchPolylineRecord,
     SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
@@ -330,6 +332,29 @@ macro_rules! copy_sch_record {
                 let src = SchImplementationHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchImplementationRecord::from_origin(templates::sch_implementation_default());
+                dst.copy_modeled_fields_from(&src);
+                $emit!(dst);
+            }
+            <SchMapDefinerListRecord as RecordType>::RECORD_ID => {
+                let src = SchMapDefinerListHandle::new($src_store.clone(), $rid).read();
+                let mut dst =
+                    SchMapDefinerListRecord::from_origin(templates::sch_map_definer_list_default());
+                dst.copy_modeled_fields_from(&src);
+                $emit!(dst);
+            }
+            <SchMapDefinerRecord as RecordType>::RECORD_ID => {
+                let src = SchMapDefinerHandle::new($src_store.clone(), $rid).read();
+                let mut dst =
+                    SchMapDefinerRecord::from_origin(templates::sch_map_definer_default());
+                dst.copy_modeled_fields_from(&src);
+                dst.set_implementation_designators(&src.implementation_designators());
+                $emit!(dst);
+            }
+            <SchImplementationParametersRecord as RecordType>::RECORD_ID => {
+                let src = SchImplementationParametersHandle::new($src_store.clone(), $rid).read();
+                let mut dst = SchImplementationParametersRecord::from_origin(
+                    templates::sch_implementation_parameters_default(),
+                );
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }

@@ -207,6 +207,20 @@ pub fn sch_implementation_default() -> RecordOrigin {
     ))
 }
 
+pub fn sch_map_definer_list_default() -> RecordOrigin {
+    RecordOrigin::Param(ParamOrigin::new("|RECORD=46|OWNERINDEX=0|INDEXINSHEET=0|"))
+}
+
+pub fn sch_map_definer_default() -> RecordOrigin {
+    RecordOrigin::Param(ParamOrigin::new(
+        "|RECORD=47|OWNERINDEX=0|DESINTF=|DESIMPCOUNT=0|",
+    ))
+}
+
+pub fn sch_implementation_parameters_default() -> RecordOrigin {
+    RecordOrigin::Param(ParamOrigin::new("|RECORD=48|OWNERINDEX=0|INDEXINSHEET=0|"))
+}
+
 pub fn sch_note_default() -> RecordOrigin {
     RecordOrigin::Param(ParamOrigin::new(
         "|RECORD=209|OWNERINDEX=0|OWNERPARTID=-1|LOCATION.X=0|LOCATION.Y=0|COLOR=128|FONTID=1|TEXT=|AUTHOR=|",

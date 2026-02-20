@@ -115,6 +115,9 @@ mod tests {
         assert_eq!(sch_record_type_name(14), "Rectangle");
         assert_eq!(sch_record_type_name(12), "Arc");
         assert_eq!(sch_record_type_name(41), "Parameter");
+        assert_eq!(sch_record_type_name(46), "MapDefinerList");
+        assert_eq!(sch_record_type_name(47), "MapDefiner");
+        assert_eq!(sch_record_type_name(48), "ImplementationParameters");
         assert_eq!(sch_record_type_name(200), "Unknown");
     }
 }
