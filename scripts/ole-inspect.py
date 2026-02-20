@@ -45,7 +45,7 @@ MODEL_PCB_OBJECT_IDS = {1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14}
 # Current v2 record coverage (crates/altium-format/src/v2/records)
 IMPLEMENTED_SCH_RECORD_IDS = {
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 22, 25, 26, 27, 28, 29, 30, 31,
-    32, 33, 34, 37, 39, 40, 41, 44, 45, 209, 215,
+    32, 33, 34, 37, 39, 40, 41, 44, 45, 46, 47, 48, 209, 215,
 }
 IMPLEMENTED_PCB_OBJECT_IDS = {1, 2, 3, 4, 5, 6, 9, 11, 12}
 
@@ -97,14 +97,18 @@ def _hex_preview(data: bytes, max_len: int = 24) -> str:
 def _is_probably_text(data: bytes) -> bool:
     if not data:
         return True
+    # Altium uses pipes and equals for parameters.
+    # Null bytes are often used for padding but we allow them in printable sum.
     printable = sum(
-        1 for b in data if (32 <= b <= 126) or b in (9, 10, 13, 0) or (160 <= b <= 255)
+        1 for b in data if (32 <= b <= 126) or b in (0, 9, 10, 13) or (160 <= b <= 255)
     )
     ratio = printable / len(data)
-    if ratio < 0.80:
+    # Heuristic: Altium parameter blocks are very high in printable chars
+    if ratio < 0.60:
         return False
-    sample = _decode_text(data[: min(4096, len(data))])
-    return ("|" in sample and "=" in sample) or ratio > 0.92
+    sample = _decode_text(data[: min(8192, len(data))])
+    # Must have pipes to be considered Altium param text
+    return "|" in sample
 
 
 def _classify_stream(path: str, data: bytes) -> str:
@@ -188,21 +192,47 @@ def _inspect_compressed_payload(payload: bytes) -> tuple[bool, str | None, int |
 
 
 def parse_param_records(data: bytes) -> list[dict[str, str]]:
-    text = _decode_text(data).replace("\x00", "\n")
+    # Rust mirrors: don't replace \x00 with \n, and don't splitlines.
+    # Altium records are usually one block of pipes.
+    text = _decode_text(data)
     records: list[dict[str, str]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or "|" not in line or "=" not in line:
-            continue
-        rec: dict[str, str] = {}
-        for seg in line.split("|"):
-            seg = seg.strip()
-            if not seg or "=" not in seg:
-                continue
+    
+    # Handle %UTF8% prefix decoding similarly to Rust's decode_utf8_from_win1252
+    def decode_value(k: str, v: str) -> tuple[str, str]:
+        if k.startswith("%UTF8%"):
+            real_key = k[6:]
+            try:
+                # Re-encode to win1252 then decode as utf8
+                raw = v.encode("windows-1252", errors="replace")
+                return real_key, raw.decode("utf-8", errors="replace")
+            except Exception:
+                return real_key, v
+        return k, v
+
+    # If the text has many records separated by some other means, we might need more logic,
+    # but usually it's one record per size-prefixed block or one stream = one record.
+    # We'll split by '|' but be careful about empty segments.
+    # Some blocks might contain multiple records (rare in libraries, common in docs if not using blocks).
+    
+    # Heuristic: if we see multiple "RECORD=" it might be multiple records in one block
+    raw_segments = [s.strip() for s in text.split("|") if s.strip()]
+    
+    current_rec: dict[str, str] = {}
+    for seg in raw_segments:
+        if "=" in seg:
             k, v = seg.split("=", 1)
-            rec[k] = v
-        if rec:
-            records.append(rec)
+            k, v = decode_value(k, v)
+            # If we hit a new RECORD= and already have one, start a new record
+            if k.upper() == "RECORD" and "RECORD" in current_rec:
+                records.append(current_rec)
+                current_rec = {}
+            current_rec[k] = v
+        else:
+            # Solo value (key is empty string, like Rust)
+            current_rec[""] = seg
+            
+    if current_rec:
+        records.append(current_rec)
     return records
 
 
@@ -222,9 +252,10 @@ def parse_pcblib_data_object_ids(data: bytes) -> tuple[list[int], str | None]:
     while pos < len(data):
         type_id = data[pos]
         pos += 1
-        if type_id > 25:
-            return ids, f"type-out-of-range:{type_id}"
+        # Increased range to be more future-proof, Altium uses up to ~220 for some sch records
+        # but PCB IDs are usually smaller. Let's allow up to 255.
         ids.append(type_id)
+        # Pad=2 (6 subrecords), Text=5 (2 subrecords)
         n = 6 if type_id == 2 else 2 if type_id == 5 else 1
         for _ in range(n):
             if pos + 4 > len(data):
@@ -364,11 +395,15 @@ def cmd_blocks(args: argparse.Namespace) -> int:
 def _collect_text_records_for_stream(path: str, data: bytes) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     blocks, err = parse_size_prefixed_blocks(data)
+    
+    # Force text parsing if it's a known text stream
+    is_known_text = _classify_stream(path, data) == "text"
+
     if err is None and blocks:
         for b in blocks:
             block_data_start = b.offset + 4
             payload = data[block_data_start : block_data_start + b.size]
-            if not _is_probably_text(payload):
+            if not is_known_text and not _is_probably_text(payload):
                 continue
             for rec in parse_param_records(payload):
                 record_id = None
@@ -388,7 +423,7 @@ def _collect_text_records_for_stream(path: str, data: bytes) -> list[dict[str, A
         return records
 
     # Fallback: whole stream as text
-    if _is_probably_text(data):
+    if is_known_text or _is_probably_text(data):
         for rec in parse_param_records(data):
             record_id = None
             if "RECORD" in rec:
@@ -472,7 +507,8 @@ def _collect_pcb_object_ids(
     if ext == ".pcblib" and lower.endswith("/data"):
         parent = path.rsplit("/", 1)[0] if "/" in path else ""
         if all_stream_names is not None:
-            if f"{parent}/Parameters" not in all_stream_names or f"{parent}/Header" not in all_stream_names:
+            # Typical PcbLib footprint storage must have Parameters or Header
+            if f"{parent}/Parameters" not in all_stream_names and f"{parent}/Header" not in all_stream_names:
                 return ids
         parsed, err = parse_pcblib_data_object_ids(data)
         if err is not None:
@@ -482,32 +518,19 @@ def _collect_pcb_object_ids(
     blocks, err = parse_size_prefixed_blocks(data)
     if err is not None or not blocks:
         return ids
-    if ext == ".pcbdoc" and _classify_stream(path, data) != "binary":
+        
+    # In PcbDoc, any binary stream that has size-prefixed blocks is a candidate for primitive objects
+    if ext == ".pcbdoc" and _classify_stream(path, data) == "binary":
+        for bi, b in enumerate(blocks):
+            block_data_start = b.offset + 4
+            payload = data[block_data_start : block_data_start + b.size]
+            if not payload:
+                continue
+            # Block0 in PcbDoc binary streams is often u32 count, not an object ID
+            if bi == 0 and len(payload) == 4:
+                continue
+            ids.append(payload[0])
         return ids
-
-    is_probably_primitive_stream = (
-        lower.endswith("/data")
-        and any(
-            tok in lower
-            for tok in (
-                "tracks6", "arcs6", "fills6", "pads6", "vias6",
-                "texts6", "regions6", "polygons6", "dimensions6", "coordinates6",
-                "componentbodies6", "primitives6",
-            )
-        )
-    )
-    if not is_probably_primitive_stream and ext != ".pcbdoc":
-        return ids
-
-    for bi, b in enumerate(blocks):
-        block_data_start = b.offset + 4
-        payload = data[block_data_start : block_data_start + b.size]
-        if not payload:
-            continue
-        # PcbDoc primitive streams often have block0 = u32 count.
-        if bi == 0 and len(payload) == 4 and ext == ".pcbdoc":
-            continue
-        ids.append(payload[0])
 
     return ids
 
