@@ -46,15 +46,27 @@ impl PcbLib {
         &self.store
     }
 
+    /// Returns the stable document-level semantic ID, if computed.
+    pub fn document_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
+        self.store.borrow().document_id().cloned()
+    }
+
     /// Open a PcbLib from a reader.
-    pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
-        let mut cfb = cfb::CompoundFile::open(reader)
+    pub fn open<R: Read + Seek>(mut reader: R) -> Result<Self> {
+        let mut raw_bytes = Vec::new();
+        reader.read_to_end(&mut raw_bytes).map_err(AltiumError::Io)?;
+        let doc_key = crate::v2::semantic_ids::blake3_content_hash(&raw_bytes);
+
+        let mut cfb = cfb::CompoundFile::open(Cursor::new(raw_bytes))
             .map_err(|e| AltiumError::Cfb(format!("Failed to open CFB: {}", e)))?;
 
         let section_keys = read_pcb_section_keys(&mut cfb)?;
 
         // Enumerate top-level storages to find footprints.
-        let entries: Vec<String> = cfb
+        // A storage is only treated as a footprint if it has a Data stream
+        // (the defining characteristic). Storages without Data are captured
+        // as library-level extra streams instead.
+        let candidate_entries: Vec<String> = cfb
             .walk()
             .filter(|e| {
                 e.is_storage()
@@ -68,6 +80,15 @@ impl PcbLib {
                     return None;
                 }
                 Some(name)
+            })
+            .collect();
+
+        // Only keep storages that have a Data stream.
+        let entries: Vec<String> = candidate_entries
+            .into_iter()
+            .filter(|name| {
+                let data_path = format!("/{}/{}", name, STREAM_DATA);
+                cfb.open_stream(&data_path).is_ok()
             })
             .collect();
 
@@ -176,6 +197,7 @@ impl PcbLib {
                 parent: parent_id,
                 children: child_ids,
                 original_indices,
+                parent_original_index: None,
                 extra_streams,
                 meta: GroupMeta::PcbFootprint {
                     name: storage_name.clone(),
@@ -186,6 +208,8 @@ impl PcbLib {
             };
             store.insert_group(group_data);
         }
+
+        crate::v2::semantic_ids::compute_all_ids(&mut store, "dtid:pcblib", &doc_key);
 
         Ok(PcbLib {
             store: Rc::new(RefCell::new(store)),
@@ -213,16 +237,11 @@ impl PcbLib {
             sorted_extras.sort_by_key(|(k, _)| (*k).clone());
             for (rel_path, data) in &sorted_extras {
                 let full_path = format!("/{}", rel_path);
-                if let Some(slash_pos) = rel_path.find('/') {
-                    let parent = &rel_path[..slash_pos];
-                    let parent_path = format!("/{}", parent);
-                    if created_storages.insert(parent_path.clone()) {
-                        let _ = cfb.create_storage(&parent_path);
-                    }
-                }
-                if let Ok(mut stream) = cfb.create_stream(&full_path) {
-                    let _ = stream.write_all(data);
-                }
+                ensure_parent_storages(&mut cfb, &full_path, &mut created_storages)?;
+                let mut stream = cfb.create_stream(&full_path).map_err(|e| {
+                    AltiumError::Cfb(format!("Failed to create extra stream {}: {}", full_path, e))
+                })?;
+                stream.write_all(data).map_err(AltiumError::Io)?;
             }
         }
 
@@ -289,10 +308,21 @@ impl PcbLib {
             stream.write_all(&data).map_err(AltiumError::Io)?;
 
             // Write per-footprint extra streams
-            for (rel_path, data) in &group.extra_streams {
-                let full_path = format!("/{}/{}", name, rel_path);
-                if let Ok(mut stream) = cfb.create_stream(&full_path) {
-                    let _ = stream.write_all(data);
+            {
+                let mut created_storages: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                // The footprint storage itself is already created above.
+                created_storages.insert(storage_path.clone());
+                for (rel_path, data) in &group.extra_streams {
+                    let full_path = format!("/{}/{}", name, rel_path);
+                    ensure_parent_storages(&mut cfb, &full_path, &mut created_storages)?;
+                    let mut stream = cfb.create_stream(&full_path).map_err(|e| {
+                        AltiumError::Cfb(format!(
+                            "Failed to create extra stream {}: {}",
+                            full_path, e
+                        ))
+                    })?;
+                    stream.write_all(data).map_err(AltiumError::Io)?;
                 }
             }
         }
@@ -390,6 +420,7 @@ impl PcbLib {
             parent: parent_id,
             children: child_ids,
             original_indices,
+            parent_original_index: None,
             extra_streams: HashMap::new(),
             meta: GroupMeta::PcbFootprint {
                 name: name.to_string(),
@@ -508,6 +539,35 @@ impl PcbLib {
 
         Ok(handles)
     }
+}
+
+// ---------------------------------------------------------------------------
+// CFB storage helpers
+// ---------------------------------------------------------------------------
+
+/// Ensure all ancestor storages for a given path exist in the CFB file.
+///
+/// For example, given `/A/B/C/stream`, this creates `/A`, `/A/B`, and
+/// `/A/B/C` if they don't already exist.
+pub(crate) fn ensure_parent_storages<F: Read + Write + Seek>(
+    cfb: &mut cfb::CompoundFile<F>,
+    path: &str,
+    created: &mut std::collections::HashSet<String>,
+) -> Result<()> {
+    let parts: Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .collect();
+    // Walk all ancestors (skip the final component which is the stream itself).
+    let mut current = String::new();
+    for part in &parts[..parts.len().saturating_sub(1)] {
+        current = format!("{}/{}", current, part);
+        if created.insert(current.clone()) {
+            // Ignore AlreadyExists errors — the storage may already exist.
+            let _ = cfb.create_storage(&current);
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -901,6 +961,7 @@ mod tests {
                 parent: parent_id,
                 children: Vec::new(),
                 original_indices: Vec::new(),
+                parent_original_index: None,
                 extra_streams: HashMap::new(),
                 meta: GroupMeta::PcbFootprint {
                     name: name.to_string(),
@@ -944,6 +1005,7 @@ mod tests {
             parent: parent_id,
             children: vec![pad0_id, pad1_id, track_id],
             original_indices: vec![0, 1, 2],
+            parent_original_index: None,
             extra_streams: HashMap::new(),
             meta: GroupMeta::PcbFootprint {
                 name: "SOT-23".to_string(),

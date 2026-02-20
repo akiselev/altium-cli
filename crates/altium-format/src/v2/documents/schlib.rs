@@ -104,6 +104,11 @@ impl SchLib {
         &self.store
     }
 
+    /// Returns the stable document-level semantic ID, if computed.
+    pub fn document_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
+        self.store.borrow().document_id().cloned()
+    }
+
     /// Open a SchLib from a reader (CFB compound file).
     pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
         let mut cfb = cfb::CompoundFile::open(reader)
@@ -214,6 +219,7 @@ impl SchLib {
                 parent: parent_id,
                 children: child_ids,
                 original_indices,
+                parent_original_index: None,
                 extra_streams,
                 meta: GroupMeta::SchComponent {
                     lib_ref: entry.lib_ref.clone(),
@@ -225,6 +231,12 @@ impl SchLib {
 
             store.insert_group(group_data);
         }
+
+        crate::v2::semantic_ids::compute_all_ids(
+            &mut store,
+            "dtid:schlib",
+            &header.unique_id,
+        );
 
         Ok(SchLib {
             store: Rc::new(RefCell::new(store)),
@@ -302,15 +314,10 @@ impl SchLib {
             section_keys.add_key(&safe, 30);
         }
 
-        // 2. Write FileHeader
-        if let Some(raw) = &raw_header {
-            let mut stream = cfb
-                .create_stream(format!("/{}", STREAM_FILE_HEADER))
-                .map_err(|e| {
-                    AltiumError::Cfb(format!("Failed to create FileHeader: {}", e))
-                })?;
-            stream.write_all(raw).map_err(AltiumError::Io)?;
-        } else {
+        // 2. Write FileHeader — always rebuild from current store data so
+        // that mutations (e.g. renamed components) are reflected.
+        {
+            let _ = raw_header; // deliberately unused; always rebuild
             let header = SchLibHeader {
                 header_text,
                 weight,
@@ -356,10 +363,24 @@ impl SchLib {
             stream.write_all(&data_bytes).map_err(AltiumError::Io)?;
 
             // Write per-component extra streams
-            for (rel_path, extra_data) in &group.extra_streams {
-                let full_path = format!("/{}/{}", section_key, rel_path);
-                if let Ok(mut stream) = cfb.create_stream(&full_path) {
-                    let _ = stream.write_all(extra_data);
+            {
+                let mut created_storages: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                created_storages.insert(storage_path.clone());
+                for (rel_path, extra_data) in &group.extra_streams {
+                    let full_path = format!("/{}/{}", section_key, rel_path);
+                    super::pcblib::ensure_parent_storages(
+                        &mut cfb,
+                        &full_path,
+                        &mut created_storages,
+                    )?;
+                    let mut stream = cfb.create_stream(&full_path).map_err(|e| {
+                        AltiumError::Cfb(format!(
+                            "Failed to create extra stream {}: {}",
+                            full_path, e
+                        ))
+                    })?;
+                    stream.write_all(extra_data).map_err(AltiumError::Io)?;
                 }
             }
 
@@ -374,16 +395,18 @@ impl SchLib {
             sorted_extras.sort_by_key(|(k, _)| (*k).clone());
             for (rel_path, data) in &sorted_extras {
                 let full_path = format!("/{}", rel_path);
-                if let Some(slash_pos) = rel_path.find('/') {
-                    let parent = &rel_path[..slash_pos];
-                    let parent_path = format!("/{}", parent);
-                    if created_storages.insert(parent_path.clone()) {
-                        let _ = cfb.create_storage(&parent_path);
-                    }
-                }
-                if let Ok(mut stream) = cfb.create_stream(&full_path) {
-                    let _ = stream.write_all(data);
-                }
+                super::pcblib::ensure_parent_storages(
+                    &mut cfb,
+                    &full_path,
+                    &mut created_storages,
+                )?;
+                let mut stream = cfb.create_stream(&full_path).map_err(|e| {
+                    AltiumError::Cfb(format!(
+                        "Failed to create extra stream {}: {}",
+                        full_path, e
+                    ))
+                })?;
+                stream.write_all(data).map_err(AltiumError::Io)?;
             }
         }
 
@@ -527,6 +550,7 @@ impl SchLib {
             parent: parent_id,
             children: child_ids,
             original_indices: Vec::new(),
+            parent_original_index: None,
             extra_streams: HashMap::new(),
             meta: GroupMeta::SchComponent {
                 lib_ref,
@@ -620,7 +644,7 @@ impl SchLib {
             let group = store.group(group_id);
             for &child_id in group.child_ids() {
                 let node = store.record(child_id);
-                if node.key == T::record_id() {
+                if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
                     let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
                         matches.push(child_id);
@@ -651,7 +675,7 @@ impl SchLib {
             let group = store.group(group_id);
             for &child_id in group.child_ids() {
                 let node = store.record(child_id);
-                if node.key == T::record_id() {
+                if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
                     let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
                         handles.push(T::make_handle(self.store.clone(), child_id));
@@ -980,6 +1004,7 @@ mod tests {
                 parent: parent_id,
                 children: Vec::new(),
                 original_indices: Vec::new(),
+                parent_original_index: None,
                 extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: name.to_string(),
@@ -1044,6 +1069,7 @@ mod tests {
                 parent: parent_id,
                 children: vec![child_id],
                 original_indices: vec![1],
+                parent_original_index: None,
                 extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: "R1".to_string(),
@@ -1188,6 +1214,7 @@ mod tests {
                 parent: parent_id,
                 children: child_ids,
                 original_indices,
+                parent_original_index: None,
                 extra_streams: HashMap::new(),
                 meta: GroupMeta::SchComponent {
                     lib_ref: comp_name.to_string(),

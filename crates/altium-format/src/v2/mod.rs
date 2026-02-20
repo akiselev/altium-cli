@@ -11,6 +11,7 @@ pub mod binary_helpers;
 pub mod ids;
 pub mod store;
 pub mod handles;
+pub mod semantic_ids;
 
 // PCB-specific types (enums, etc.)
 pub mod pcb;

@@ -29,6 +29,11 @@ macro_rules! impl_record_handle {
                 self.id
             }
 
+            pub fn semantic_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
+                let store = self.store.borrow();
+                store.record_semantic_id(self.id).cloned()
+            }
+
             pub fn read(&self) -> $record {
                 let store = self.store.borrow();
                 let node = &store.records[self.id];
@@ -207,6 +212,12 @@ impl SchComponentHandle {
         self.group_id
     }
 
+    /// Returns the stable semantic ID for this component group, if computed.
+    pub fn semantic_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
+        let store = self.store.borrow();
+        store.group_semantic_id(self.group_id).cloned()
+    }
+
     /// Read the parent component record.
     pub fn read(&self) -> SchComponentRecord {
         let store = self.store.borrow();
@@ -216,13 +227,35 @@ impl SchComponentHandle {
     }
 
     /// Write the parent component record.
+    ///
+    /// Also syncs the GroupMeta fields (lib_ref, description, part_count)
+    /// so that save() produces a coherent FileHeader.
     pub fn write(&self, record: SchComponentRecord) {
+        // Extract metadata fields before consuming the record.
+        let new_lib_ref = record.lib_reference().to_string();
+        let new_description = record.component_description().to_string();
+        let new_part_count = record.part_count() as i32;
+
         let mut store = self.store.borrow_mut();
         let group = &store.groups[self.group_id];
         let parent_id = group.parent;
         let node = &mut store.records[parent_id];
         node.origin = record.into_origin();
         node.mark_dirty();
+
+        // Sync GroupMeta so save() reads current values.
+        let group = &mut store.groups[self.group_id];
+        if let crate::v2::store::GroupMeta::SchComponent {
+            ref mut lib_ref,
+            ref mut description,
+            ref mut part_count,
+            ..
+        } = group.meta
+        {
+            *lib_ref = new_lib_ref;
+            *description = new_description;
+            *part_count = new_part_count;
+        }
     }
 
     /// Get handles to all children of a given type.
@@ -350,7 +383,10 @@ impl SchComponentHandle {
 
     /// Insert a new record into the store and append it to this component's
     /// children list. Returns the new record's [`RecordId`].
-    pub fn add_record(&self, node: crate::v2::backing_store::RecordNode) -> RecordId {
+    pub fn add_record(&self, mut node: crate::v2::backing_store::RecordNode) -> RecordId {
+        // Programmatically-added records must re-serialize from their current
+        // origin, not from the stale template snapshot.
+        node.mark_dirty();
         let mut store = self.store.borrow_mut();
         let record_id = store.insert_record(node);
         let group = &mut store.groups[self.group_id];
@@ -373,6 +409,12 @@ impl PcbFootprintHandle {
 
     pub fn group_id(&self) -> GroupId {
         self.group_id
+    }
+
+    /// Returns the stable semantic ID for this footprint group, if computed.
+    pub fn semantic_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
+        let store = self.store.borrow();
+        store.group_semantic_id(self.group_id).cloned()
     }
 
     /// Read the footprint metadata record.
@@ -501,10 +543,13 @@ impl PcbFootprintHandle {
     /// so it is included during serialization.
     ///
     /// Returns the new record's [`RecordId`].
-    pub fn add_record(&self, node: crate::v2::backing_store::RecordNode) -> RecordId {
+    pub fn add_record(&self, mut node: crate::v2::backing_store::RecordNode) -> RecordId {
         use crate::v2::backing_store::PcbPrimitiveRef;
         use crate::v2::store::GroupMeta;
 
+        // Programmatically-added records must re-serialize from their current
+        // origin, not from the stale template snapshot.
+        node.mark_dirty();
         let mut store = self.store.borrow_mut();
         let type_id = node.key;
         let record_id = store.insert_record(node);
@@ -535,12 +580,21 @@ impl HandleFamily for SchComponent {
     type Record = SchComponentRecord;
     type Handle = SchComponentHandle;
 
-    fn make_handle(_store: DocRef, _id: RecordId) -> Self::Handle {
-        // Note: for group handles, the id passed here is the parent record id.
-        // We need to find the group that owns this record. This is a convenience
-        // path; the primary creation path is via document query methods.
-        // For now, panic — callers should use SchComponentHandle::new directly.
-        panic!("SchComponent handles should be created via document queries, not make_handle")
+    fn make_handle(store: DocRef, id: RecordId) -> Self::Handle {
+        // The id passed here is the parent record id. Find which group owns it.
+        let borrowed = store.borrow();
+        for &gid in borrowed.group_ids() {
+            let group = borrowed.group(gid);
+            if group.parent == id {
+                drop(borrowed);
+                return SchComponentHandle::new(store, gid);
+            }
+        }
+        panic!(
+            "SchComponent::make_handle: no group owns record {:?}. \
+             This indicates an invalid RecordId was passed.",
+            id
+        );
     }
 }
 
@@ -549,7 +603,20 @@ impl HandleFamily for PcbFootprint {
     type Record = PcbFootprintRecord;
     type Handle = PcbFootprintHandle;
 
-    fn make_handle(_store: DocRef, _id: RecordId) -> Self::Handle {
-        panic!("PcbFootprint handles should be created via document queries, not make_handle")
+    fn make_handle(store: DocRef, id: RecordId) -> Self::Handle {
+        // The id passed here is the parent record id. Find which group owns it.
+        let borrowed = store.borrow();
+        for &gid in borrowed.group_ids() {
+            let group = borrowed.group(gid);
+            if group.parent == id {
+                drop(borrowed);
+                return PcbFootprintHandle::new(store, gid);
+            }
+        }
+        panic!(
+            "PcbFootprint::make_handle: no group owns record {:?}. \
+             This indicates an invalid RecordId was passed.",
+            id
+        );
     }
 }

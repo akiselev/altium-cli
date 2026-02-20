@@ -25,7 +25,16 @@ pub struct DocumentStore {
     pub(crate) groups: SlotMap<GroupId, GroupData>,
     pub(crate) group_order: Vec<GroupId>,
     pub(crate) orphan_records: Vec<RecordId>,
+    /// Original flat-stream indices for orphan records (parallel to orphan_records).
+    /// Used by SchDoc to preserve interleaving order on save.
+    pub(crate) orphan_original_indices: Vec<usize>,
     pub(crate) meta: DocumentMeta,
+    /// Stable document-level semantic ID.
+    pub(crate) document_id: Option<crate::v2::semantic_ids::SemanticId>,
+    /// Stable semantic IDs for each group (component/footprint).
+    pub(crate) group_semantic_ids: HashMap<GroupId, crate::v2::semantic_ids::SemanticId>,
+    /// Stable semantic IDs for each record.
+    pub(crate) record_semantic_ids: HashMap<RecordId, crate::v2::semantic_ids::SemanticId>,
 }
 
 /// Data for a single group (component or footprint).
@@ -36,6 +45,9 @@ pub struct GroupData {
     pub(crate) children: Vec<RecordId>,
     /// Original indices of the children for round-trip serialization.
     pub(crate) original_indices: Vec<usize>,
+    /// Original flat-stream index of the parent record (used by SchDoc for
+    /// preserving interleaving order on save). `None` for library types.
+    pub(crate) parent_original_index: Option<usize>,
     /// Extra CFB streams preserved for round-trip.
     pub(crate) extra_streams: HashMap<String, Vec<u8>>,
     /// Group-type-specific metadata.
@@ -88,7 +100,11 @@ impl DocumentStore {
             groups: SlotMap::with_key(),
             group_order: Vec::new(),
             orphan_records: Vec::new(),
+            orphan_original_indices: Vec::new(),
             meta,
+            document_id: None,
+            group_semantic_ids: HashMap::new(),
+            record_semantic_ids: HashMap::new(),
         }
     }
 
@@ -152,6 +168,27 @@ impl DocumentStore {
     /// Returns the orphan record IDs.
     pub fn orphan_ids(&self) -> &[RecordId] {
         &self.orphan_records
+    }
+
+    /// Returns the document-level semantic ID, if computed.
+    pub fn document_id(&self) -> Option<&crate::v2::semantic_ids::SemanticId> {
+        self.document_id.as_ref()
+    }
+
+    /// Returns the semantic ID for a group, if computed.
+    pub fn group_semantic_id(
+        &self,
+        id: GroupId,
+    ) -> Option<&crate::v2::semantic_ids::SemanticId> {
+        self.group_semantic_ids.get(&id)
+    }
+
+    /// Returns the semantic ID for a record, if computed.
+    pub fn record_semantic_id(
+        &self,
+        id: RecordId,
+    ) -> Option<&crate::v2::semantic_ids::SemanticId> {
+        self.record_semantic_ids.get(&id)
     }
 }
 

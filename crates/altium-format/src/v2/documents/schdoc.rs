@@ -32,6 +32,11 @@ impl SchDoc {
         &self.store
     }
 
+    /// Returns the stable document-level semantic ID, if computed.
+    pub fn document_id(&self) -> Option<crate::v2::semantic_ids::SemanticId> {
+        self.store.borrow().document_id().cloned()
+    }
+
     /// Open a SchDoc from a reader.
     pub fn open<R: Read + Seek>(reader: R) -> Result<Self> {
         let mut cfb = cfb::CompoundFile::open(reader)
@@ -48,8 +53,12 @@ impl SchDoc {
         };
         let mut doc_store = DocumentStore::new(meta);
 
+        let doc_key = crate::v2::semantic_ids::blake3_content_hash(&data);
+
         let records = parse_flat_stream(&data)?;
         group_by_owner_index(&mut doc_store, records);
+
+        crate::v2::semantic_ids::compute_all_ids(&mut doc_store, "dtid:schdoc", &doc_key);
 
         Ok(SchDoc {
             store: std::rc::Rc::new(std::cell::RefCell::new(doc_store)),
@@ -253,8 +262,8 @@ impl SchDoc {
         for &gid in store.group_ids() {
             let group = store.group(gid);
             for &cid in group.child_ids() {
-                if store.record(cid).key == T::record_id() {
-                    let node = store.record(cid);
+                let node = store.record(cid);
+                if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
                     let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
                         matches.push(cid);
@@ -285,8 +294,8 @@ impl SchDoc {
         for &gid in store.group_ids() {
             let group = store.group(gid);
             for &cid in group.child_ids() {
-                if store.record(cid).key == T::record_id() {
-                    let node = store.record(cid);
+                let node = store.record(cid);
+                if node.key == T::record_id() && node.origin.is_binary() == T::is_binary() {
                     let all = std::slice::from_ref(node);
                     if !evaluate(&parsed, all).is_empty() {
                         matches.push(cid);
@@ -404,12 +413,13 @@ fn group_by_owner_index(store: &mut DocumentStore, records: Vec<(usize, RecordNo
     let mut group_entries: Vec<(GroupId, RecordId, Vec<(usize, RecordId)>)> =
         Vec::with_capacity(component_records.len());
 
-    for (_flat_idx, comp_node) in component_records {
+    for (flat_idx, comp_node) in component_records {
         let parent_id = store.insert_record(comp_node);
         let group_data = GroupData {
             parent: parent_id,
             children: Vec::new(),
             original_indices: Vec::new(),
+            parent_original_index: Some(flat_idx),
             extra_streams: HashMap::new(),
             meta: GroupMeta::SchDocComponent,
         };
@@ -434,6 +444,7 @@ fn group_by_owner_index(store: &mut DocumentStore, records: Vec<(usize, RecordNo
         } else {
             let child_id = store.insert_record(node);
             store.orphan_records.push(child_id);
+            store.orphan_original_indices.push(flat_idx);
         }
     }
 
@@ -447,25 +458,60 @@ fn group_by_owner_index(store: &mut DocumentStore, records: Vec<(usize, RecordNo
     }
 }
 
+/// A top-level entry in the flat stream: either a group (parent + children)
+/// or an orphan record. Sorted by original index to preserve interleaving.
+enum FlatEntry {
+    Group(GroupId),
+    Orphan(usize), // index into orphan_records
+}
+
 /// Flatten the document back to a sequential record stream for writing.
+///
+/// Groups and orphans are interleaved according to their original flat-stream
+/// indices so that the output order matches the input order.
 fn flatten_to_stream(doc: &SchDoc) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     let store = doc.store.borrow();
 
+    // Collect all top-level entries with their original indices.
+    let mut entries: Vec<(usize, FlatEntry)> = Vec::new();
+
     for &gid in store.group_ids() {
         let group = store.group(gid);
-        let parent = store.record(group.parent_id());
-        super::schlib::write_record_to_stream(&mut output, parent)?;
-
-        for &cid in group.child_ids() {
-            let child = store.record(cid);
-            super::schlib::write_record_to_stream(&mut output, child)?;
-        }
+        let idx = group.parent_original_index.unwrap_or(usize::MAX);
+        entries.push((idx, FlatEntry::Group(gid)));
     }
 
-    for &oid in store.orphan_ids() {
-        let orphan = store.record(oid);
-        super::schlib::write_record_to_stream(&mut output, orphan)?;
+    for (i, _) in store.orphan_ids().iter().enumerate() {
+        let idx = store
+            .orphan_original_indices
+            .get(i)
+            .copied()
+            .unwrap_or(usize::MAX);
+        entries.push((idx, FlatEntry::Orphan(i)));
+    }
+
+    // Sort by original index to preserve the original interleaving.
+    entries.sort_by_key(|(idx, _)| *idx);
+
+    for (_, entry) in entries {
+        match entry {
+            FlatEntry::Group(gid) => {
+                let group = store.group(gid);
+                let parent = store.record(group.parent_id());
+                super::schlib::write_record_to_stream(&mut output, parent)?;
+
+                for &cid in group.child_ids() {
+                    let child = store.record(cid);
+                    super::schlib::write_record_to_stream(&mut output, child)?;
+                }
+            }
+            FlatEntry::Orphan(i) => {
+                let oid = store.orphan_ids()[i];
+                let orphan = store.record(oid);
+                super::schlib::write_record_to_stream(&mut output, orphan)?;
+            }
+        }
     }
 
     Ok(output)

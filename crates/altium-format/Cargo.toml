@@ -41,6 +41,7 @@ resvg = "0.44"
 thiserror = "2.0.17"
 uuid = { version = "1.19", features = ["v4"] }
 base64 = "0.22.1"
+blake3 = "1"
 pest = "2.7"
 pest_derive = "2.7"
 schemars = "0.8"

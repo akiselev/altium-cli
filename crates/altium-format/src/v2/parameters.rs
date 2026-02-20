@@ -57,22 +57,22 @@ impl ParameterValue {
 
     /// Parses the value as an integer.
     pub fn as_int(&self) -> Result<i32, std::num::ParseIntError> {
-        self.data.trim().parse()
+        self.data.trim().trim_matches('\0').parse()
     }
 
     /// Gets the value as an integer, or a default on parse failure.
     pub fn as_int_or(&self, default: i32) -> i32 {
-        self.data.trim().parse().unwrap_or(default)
+        self.data.trim().trim_matches('\0').parse().unwrap_or(default)
     }
 
     /// Parses the value as a double.
     pub fn as_double(&self) -> Result<f64, std::num::ParseFloatError> {
-        self.data.trim().parse()
+        self.data.trim().trim_matches('\0').parse()
     }
 
     /// Gets the value as a double, or a default on parse failure.
     pub fn as_double_or(&self, default: f64) -> f64 {
-        self.data.trim().parse().unwrap_or(default)
+        self.data.trim().trim_matches('\0').parse().unwrap_or(default)
     }
 
     /// Parses the value as a boolean.
