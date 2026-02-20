@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import difflib
+import re
 import sys
 from typing import Optional
 
@@ -67,21 +68,21 @@ def _is_text_stream(path: str, data: bytes) -> bool:
     if lower in BINARY_STREAM_NAMES:
         return False
 
-    # Explicit suffix match
-    if lower in TEXT_STREAM_SUFFIXES:
-        # Even "data" streams can be binary (e.g. Tracks6/Data).
-        # Check content: if >80% of bytes are printable ASCII/latin1, treat as text.
-        pass
-
     if len(data) == 0:
-        return True  # empty is "text" for display purposes
+        return True
 
     # Content heuristic: count printable + whitespace bytes
+    # Include Latin-1 extended range (160-255)
     printable = sum(
-        1 for b in data if (0x20 <= b < 0x7F) or b in (0x09, 0x0A, 0x0D, 0x00)
+        1 for b in data if (0x20 <= b < 0x7F) or b in (0x09, 0x0A, 0x0D, 0x00) or (0xA0 <= b <= 0xFF)
     )
     ratio = printable / len(data)
-    return ratio > 0.80
+    
+    if ratio < 0.60:
+        return False
+        
+    sample = _decode_text(data[: min(8192, len(data))])
+    return "|" in sample
 
 
 # ---------------------------------------------------------------------------
@@ -124,31 +125,46 @@ def _color(text: str, code: str) -> str:
 
 def _decode_text(data: bytes) -> str:
     """Decode an Altium text stream, handling null bytes and Windows-1252."""
-    # Strip trailing nulls, replace interior nulls with newlines (record separators)
-    text = data.replace(b"\x00", b"\n")
+    # Handle interior nulls as record separators for SchDoc
+    text_bytes = data.replace(b"\x00", b"\n")
     try:
-        return text.decode("windows-1252")
+        text = text_bytes.decode("windows-1252")
     except Exception:
-        return text.decode("latin-1", errors="replace")
+        text = text_bytes.decode("latin-1", errors="replace")
+        
+    # Handle %UTF8% prefix decoding similarly to Rust's ParameterCollection
+    if "%UTF8%" in text:
+        def replace_utf8(m):
+            k = m.group(1)
+            v = m.group(2)
+            try:
+                # Re-encode to win1252 then decode as utf8
+                raw = v.encode("windows-1252", errors="replace")
+                return f"|{k}={raw.decode('utf-8', errors='replace')}"
+            except Exception:
+                return m.group(0)
+        
+        text = re.sub(r"\|%UTF8%([^=|=]+)=([^|]*)", replace_utf8, text)
+        
+    return text
 
 
 def _parse_records(text: str) -> list[list[str]]:
     """Parse decoded text into a list of records, each a list of |KEY=VALUE properties.
 
     Altium text streams consist of null-separated (now newline-separated after
-    decode) record blocks.  Each block is a pipe-delimited parameter string
-    like ``|RECORD=1|NAME=foo|X=100``.
-
-    Returns a list of records, where each record is a list of ``|KEY=VALUE``
-    strings (one per property).
+    decode) record blocks. Each block is a pipe-delimited parameter string.
     """
     records: list[list[str]] = []
     for raw_line in text.splitlines():
+        if not raw_line:
+            continue
         props: list[str] = []
+        # Rust's ParameterCollection splits by separator and filters out empty strings.
+        # However, it does NOT strip() each segment.
         for part in raw_line.split("|"):
-            stripped = part.strip()
-            if stripped:
-                props.append(f"|{stripped}")
+            if part:
+                props.append(f"|{part}")
         if props:
             records.append(props)
     return records
