@@ -28,3 +28,6 @@ target
 
 # Scenarios files
 /scenarios/
+
+# Python cache files
+__pycache__/
