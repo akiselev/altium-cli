@@ -9,8 +9,12 @@ use serde::Serialize;
 
 use crate::output::{self, TextFormat};
 
-pub fn run(path: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let report = altium_format_ops::rebuild::cmd_rebuild(path)?;
+pub fn run(
+    path: &Path,
+    output: Option<&Path>,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = altium_format_ops::rebuild::cmd_rebuild(path, output)?;
     output::print(&TextWrapper(report), format)
 }
 

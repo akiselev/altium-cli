@@ -108,6 +108,27 @@ fn make_temp_rebuild_path(src: &Path) -> Result<PathBuf, Box<dyn Error>> {
     Ok(std::env::temp_dir().join(format!("{}-rebuild-{}-{}.{}", stem, pid, ts, ext)))
 }
 
+fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Box<dyn Error>> {
+    let Some(output) = output else {
+        return make_temp_rebuild_path(src);
+    };
+
+    let src_abs = if src.is_absolute() {
+        src.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(src)
+    };
+    let out_abs = if output.is_absolute() {
+        output.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(output)
+    };
+    if src_abs == out_abs {
+        return Err("output path must differ from source path".into());
+    }
+    Ok(output.to_path_buf())
+}
+
 fn add_skip(
     skips: &mut BTreeMap<(String, u8, String), usize>,
     context: &str,
@@ -448,8 +469,9 @@ macro_rules! copy_pcb_record {
 
 fn rebuild_schlib(
     path: &Path,
+    out: &Path,
     skips: &mut BTreeMap<(String, u8, String), usize>,
-) -> Result<PathBuf, Box<dyn Error>> {
+) -> Result<(), Box<dyn Error>> {
     let src = SchLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchLib::new_empty();
 
@@ -527,15 +549,20 @@ fn rebuild_schlib(
         }
     }
 
-    let out = make_temp_rebuild_path(path)?;
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
     dst.save_file(&out).map_err(|e| e.to_string())?;
-    Ok(out)
+    Ok(())
 }
 
 fn rebuild_pcblib(
     path: &Path,
+    out: &Path,
     skips: &mut BTreeMap<(String, u8, String), usize>,
-) -> Result<PathBuf, Box<dyn Error>> {
+) -> Result<(), Box<dyn Error>> {
     let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbLib::new_empty();
 
@@ -599,15 +626,20 @@ fn rebuild_pcblib(
         }
     }
 
-    let out = make_temp_rebuild_path(path)?;
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
     dst.save_file(&out).map_err(|e| e.to_string())?;
-    Ok(out)
+    Ok(())
 }
 
 fn rebuild_schdoc(
     path: &Path,
+    out: &Path,
     skips: &mut BTreeMap<(String, u8, String), usize>,
-) -> Result<PathBuf, Box<dyn Error>> {
+) -> Result<(), Box<dyn Error>> {
     let src = SchDoc::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchDoc::new_empty();
 
@@ -732,14 +764,18 @@ fn rebuild_schdoc(
         }
     }
 
-    let out = make_temp_rebuild_path(path)?;
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
     dst.save_file(&out).map_err(|e| e.to_string())?;
-    Ok(out)
+    Ok(())
 }
 
 /// Rebuild a supported Altium document from high-level types and diff against
 /// the original CFB stream layout.
-pub fn cmd_rebuild(path: &Path) -> Result<RebuildReport, Box<dyn Error>> {
+pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, Box<dyn Error>> {
     let Some(file_type) = classify_extension(path) else {
         return Err(format!("Unsupported file extension for {}", path.display()).into());
     };
@@ -751,11 +787,12 @@ pub fn cmd_rebuild(path: &Path) -> Result<RebuildReport, Box<dyn Error>> {
     let _panic_hook_silencer = PanicHookSilencer::install();
 
     let mut skips: BTreeMap<(String, u8, String), usize> = BTreeMap::new();
+    let rebuilt_path = resolve_rebuild_path(path, output)?;
 
-    let rebuilt_path = match file_type {
-        "SchLib" => rebuild_schlib(path, &mut skips)?,
-        "PcbLib" => rebuild_pcblib(path, &mut skips)?,
-        "SchDoc" => rebuild_schdoc(path, &mut skips)?,
+    match file_type {
+        "SchLib" => rebuild_schlib(path, &rebuilt_path, &mut skips)?,
+        "PcbLib" => rebuild_pcblib(path, &rebuilt_path, &mut skips)?,
+        "SchDoc" => rebuild_schdoc(path, &rebuilt_path, &mut skips)?,
         _ => return Err(format!("Unsupported file type: {}", file_type).into()),
     };
 
@@ -786,10 +823,21 @@ mod tests {
 
     #[test]
     fn pcbdoc_returns_not_implemented() {
-        let err = cmd_rebuild(Path::new("dummy.PcbDoc")).unwrap_err();
+        let err = cmd_rebuild(Path::new("dummy.PcbDoc"), None).unwrap_err();
         assert!(
             err.to_string()
                 .contains("PcbDoc v2 rebuild is not implemented yet"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn output_path_must_differ_from_source_path() {
+        let err =
+            resolve_rebuild_path(Path::new("a.SchLib"), Some(Path::new("a.SchLib"))).unwrap_err();
+        assert!(
+            err.to_string().contains("output path must differ"),
             "unexpected error: {}",
             err
         );

@@ -66,6 +66,9 @@ enum Commands {
     Rebuild {
         /// Path to .SchLib/.PcbLib/.SchDoc/.PcbDoc file
         path: PathBuf,
+        /// Optional output path for rebuilt file (defaults to temp file)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     // TODO: prjpcb and intlib commands disabled pending v2 migration
@@ -100,8 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::SchDoc { command } => {
             crate::commands::schdoc::run(&command, format)?;
         }
-        Commands::Rebuild { path } => {
-            crate::commands::rebuild::run(&path, format)?;
+        Commands::Rebuild { path, output } => {
+            crate::commands::rebuild::run(&path, output.as_deref(), format)?;
         }
         Commands::Completions { shell } => {
             use clap::CommandFactory;
