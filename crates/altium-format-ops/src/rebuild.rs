@@ -153,193 +153,249 @@ fn finalize_skips(skips: BTreeMap<(String, u8, String), usize>) -> Vec<SkippedRe
         .collect()
 }
 
+/// Preserve source text-record trailing-NUL affinity for keys whose parsed
+/// value includes `\0` in the source backing store.
+fn copy_param_nul_suffix_from_source<T: RecordType>(
+    dst: &mut T,
+    src_store: &altium_format::v2::store::DocRef,
+    rid: altium_format::v2::ids::RecordId,
+) {
+    if T::IS_BINARY {
+        return;
+    }
+
+    let nul_values: Vec<(String, String)> = {
+        let store = src_store.borrow();
+        let Some(src_param) = store.record(rid).origin.as_param() else {
+            return;
+        };
+        src_param
+            .params
+            .iter()
+            .filter_map(|(k, v)| {
+                if v.as_str().contains('\0') {
+                    Some((k.to_string(), v.as_str().to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    if nul_values.is_empty() {
+        return;
+    }
+
+    let dst_params = &mut dst.origin_mut().param_mut().params;
+    for (k, v) in nul_values {
+        dst_params.add(&k, &v);
+    }
+}
+
 macro_rules! copy_sch_record {
     ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $skips:expr, $context:expr) => {{
+        macro_rules! emit_sch {
+            ($dst:ident) => {{
+                copy_param_nul_suffix_from_source(&mut $dst, &$src_store, $rid);
+                $emit!($dst);
+            }};
+        }
         match $type_id {
             <SchPinRecord as RecordType>::RECORD_ID => {
                 let src = SchPinHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPinRecord::from_origin(templates::sch_pin_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchArcRecord as RecordType>::RECORD_ID => {
                 let src = SchArcHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchArcRecord::from_origin(templates::sch_arc_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_geometry_encoding_from(&src);
+                emit_sch!(dst);
             }
             <SchLineRecord as RecordType>::RECORD_ID => {
                 let src = SchLineHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchLineRecord::from_origin(templates::sch_line_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchRectangleRecord as RecordType>::RECORD_ID => {
                 let src = SchRectangleHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchRectangleRecord::from_origin(templates::sch_rectangle_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_coordinate_encoding_from(&src);
+                emit_sch!(dst);
             }
             <SchBezierRecord as RecordType>::RECORD_ID => {
                 let src = SchBezierHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchBezierRecord::from_origin(templates::sch_bezier_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_vertices_from(&src);
+                emit_sch!(dst);
             }
             <SchPolylineRecord as RecordType>::RECORD_ID => {
                 let src = SchPolylineHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPolylineRecord::from_origin(templates::sch_polyline_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_vertices_from(&src);
+                emit_sch!(dst);
             }
             <SchPolygonRecord as RecordType>::RECORD_ID => {
                 let src = SchPolygonHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPolygonRecord::from_origin(templates::sch_polygon_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_vertices_from(&src);
+                emit_sch!(dst);
             }
             <SchEllipseRecord as RecordType>::RECORD_ID => {
                 let src = SchEllipseHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchEllipseRecord::from_origin(templates::sch_ellipse_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_coordinate_encoding_from(&src);
+                emit_sch!(dst);
             }
             <SchPieRecord as RecordType>::RECORD_ID => {
                 let src = SchPieHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPieRecord::from_origin(templates::sch_pie_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_geometry_encoding_from(&src);
+                emit_sch!(dst);
             }
             <SchRoundRectangleRecord as RecordType>::RECORD_ID => {
                 let src = SchRoundRectangleHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchRoundRectangleRecord::from_origin(templates::sch_round_rectangle_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchEllipticalArcRecord as RecordType>::RECORD_ID => {
                 let src = SchEllipticalArcHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchEllipticalArcRecord::from_origin(templates::sch_elliptical_arc_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_geometry_encoding_from(&src);
+                emit_sch!(dst);
             }
             <SchImageRecord as RecordType>::RECORD_ID => {
                 let src = SchImageHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchImageRecord::from_origin(templates::sch_image_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchDesignatorRecord as RecordType>::RECORD_ID => {
                 let src = SchDesignatorHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchDesignatorRecord::from_origin(templates::sch_designator_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchParameterRecord as RecordType>::RECORD_ID => {
                 let src = SchParameterHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchParameterRecord::from_origin(templates::sch_parameter_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.append_hidden_duplicate_for_export();
+                emit_sch!(dst);
             }
             <SchSymbolRecord as RecordType>::RECORD_ID => {
                 let src = SchSymbolHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchSymbolRecord::from_origin(templates::sch_symbol_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchLabelRecord as RecordType>::RECORD_ID => {
                 let src = SchLabelHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchLabelRecord::from_origin(templates::sch_label_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchPowerRecord as RecordType>::RECORD_ID => {
                 let src = SchPowerHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPowerRecord::from_origin(templates::sch_power_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchPortRecord as RecordType>::RECORD_ID => {
                 let src = SchPortHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPortRecord::from_origin(templates::sch_port_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchNoERCRecord as RecordType>::RECORD_ID => {
                 let src = SchNoERCHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchNoERCRecord::from_origin(templates::sch_no_erc_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchNetLabelRecord as RecordType>::RECORD_ID => {
                 let src = SchNetLabelHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchNetLabelRecord::from_origin(templates::sch_net_label_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchBusRecord as RecordType>::RECORD_ID => {
                 let src = SchBusHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchBusRecord::from_origin(templates::sch_bus_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_vertices_from(&src);
+                emit_sch!(dst);
             }
             <SchWireRecord as RecordType>::RECORD_ID => {
                 let src = SchWireHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchWireRecord::from_origin(templates::sch_wire_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_vertices_from(&src);
+                emit_sch!(dst);
             }
             <SchTextFrameRecord as RecordType>::RECORD_ID => {
                 let src = SchTextFrameHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchTextFrameRecord::from_origin(templates::sch_text_frame_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchJunctionRecord as RecordType>::RECORD_ID => {
                 let src = SchJunctionHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchJunctionRecord::from_origin(templates::sch_junction_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchSheetRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchSheetRecord::from_origin(templates::sch_sheet_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchSheetNameRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetNameHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchSheetNameRecord::from_origin(templates::sch_sheet_name_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchSheetFileNameRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetFileNameHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchSheetFileNameRecord::from_origin(templates::sch_sheet_filename_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchBusEntryRecord as RecordType>::RECORD_ID => {
                 let src = SchBusEntryHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchBusEntryRecord::from_origin(templates::sch_bus_entry_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchSheetSymbolRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetSymbolHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchSheetSymbolRecord::from_origin(templates::sch_sheet_symbol_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchSheetEntryRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetEntryHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchSheetEntryRecord::from_origin(templates::sch_sheet_entry_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchImplementationListRecord as RecordType>::RECORD_ID => {
                 let src = SchImplementationListHandle::new($src_store.clone(), $rid).read();
@@ -347,7 +403,7 @@ macro_rules! copy_sch_record {
                     templates::sch_implementation_list_default(),
                 );
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchImplementationRecord as RecordType>::RECORD_ID => {
                 let src = SchImplementationHandle::new($src_store.clone(), $rid).read();
@@ -355,14 +411,14 @@ macro_rules! copy_sch_record {
                     SchImplementationRecord::from_origin(templates::sch_implementation_default());
                 dst.copy_modeled_fields_from(&src);
                 dst.set_datafile_links(&src.datafile_links());
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchMapDefinerListRecord as RecordType>::RECORD_ID => {
                 let src = SchMapDefinerListHandle::new($src_store.clone(), $rid).read();
                 let mut dst =
                     SchMapDefinerListRecord::from_origin(templates::sch_map_definer_list_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchMapDefinerRecord as RecordType>::RECORD_ID => {
                 let src = SchMapDefinerHandle::new($src_store.clone(), $rid).read();
@@ -370,7 +426,7 @@ macro_rules! copy_sch_record {
                     SchMapDefinerRecord::from_origin(templates::sch_map_definer_default());
                 dst.copy_modeled_fields_from(&src);
                 dst.set_implementation_designators(&src.implementation_designators());
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchImplementationParametersRecord as RecordType>::RECORD_ID => {
                 let src = SchImplementationParametersHandle::new($src_store.clone(), $rid).read();
@@ -378,19 +434,20 @@ macro_rules! copy_sch_record {
                     templates::sch_implementation_parameters_default(),
                 );
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchNoteRecord as RecordType>::RECORD_ID => {
                 let src = SchNoteHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchNoteRecord::from_origin(templates::sch_note_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                emit_sch!(dst);
             }
             <SchBlanketRecord as RecordType>::RECORD_ID => {
                 let src = SchBlanketHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchBlanketRecord::from_origin(templates::sch_blanket_default());
                 dst.copy_modeled_fields_from(&src);
-                $emit!(dst);
+                dst.copy_vertices_from(&src);
+                emit_sch!(dst);
             }
             _ => {
                 add_skip(
@@ -485,9 +542,14 @@ fn rebuild_schlib(
 
     for src_comp in components {
         let src_parent = src_comp.read();
+        let src_parent_id = {
+            let store = src_store.borrow();
+            store.group(src_comp.group_id()).parent_id()
+        };
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
             builder.with_component(|comp| {
                 comp.copy_modeled_fields_from(&src_parent);
+                copy_param_nul_suffix_from_source(comp, &src_store, src_parent_id);
             });
         });
 
@@ -648,9 +710,14 @@ fn rebuild_schdoc(
 
     for src_comp in src.components() {
         let src_parent = src_comp.read();
+        let src_parent_id = {
+            let store = src_store.borrow();
+            store.group(src_comp.group_id()).parent_id()
+        };
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
             builder.with_component(|comp| {
                 comp.copy_modeled_fields_from(&src_parent);
+                copy_param_nul_suffix_from_source(comp, &src_store, src_parent_id);
             });
         });
 

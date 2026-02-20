@@ -3,6 +3,7 @@
 use super::enums::*;
 use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::{Description, UniqueId};
+use crate::v2::traits::RecordType;
 use altium_format_derive::altium_record;
 
 /// Schematic parameter record -- RECORD=41.
@@ -88,6 +89,19 @@ pub struct SchParameterRecord {
 
     #[altium(key = "IsImageParameter")]
     is_image_parameter: bool,
+}
+
+impl SchParameterRecord {
+    /// AD writes `IsHidden=T` twice for many parameter records. Preserve this
+    /// quirk in rebuilt output to minimize stream diffs.
+    pub fn append_hidden_duplicate_for_export(&mut self) {
+        if self.is_hidden() {
+            self.origin_mut()
+                .param_mut()
+                .params
+                .add_raw_suffix("|ISHIDDEN=T");
+        }
+    }
 }
 
 #[cfg(test)]

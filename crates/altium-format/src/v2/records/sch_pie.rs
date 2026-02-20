@@ -57,6 +57,41 @@ pub struct SchPieRecord {
     is_solid: bool,
 }
 
+impl SchPieRecord {
+    /// Copies location/radius DXP parts and angle text values exactly from
+    /// `src`, preserving non-canonical splits and source float formatting.
+    pub fn copy_geometry_encoding_from(&mut self, src: &Self) {
+        use crate::v2::traits::RecordType;
+
+        const KEYS: &[&str] = &[
+            "LOCATION.X",
+            "LOCATION.X_FRAC",
+            "LOCATION.Y",
+            "LOCATION.Y_FRAC",
+            "RADIUS",
+            "RADIUS_FRAC",
+            "STARTANGLE",
+            "ENDANGLE",
+        ];
+
+        let src_params = &src.origin().param().params;
+        let mut to_copy: Vec<(String, String)> = Vec::new();
+        for &key in KEYS {
+            if let Some(v) = src_params.get(key) {
+                to_copy.push((key.to_string(), v.as_str().to_string()));
+            }
+        }
+
+        let dst_params = &mut self.origin_mut().param_mut().params;
+        for &key in KEYS {
+            dst_params.remove(key);
+        }
+        for (k, v) in to_copy {
+            dst_params.add(&k, &v);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
