@@ -5,6 +5,7 @@ use crate::v2::coord::SchCoord;
 use crate::v2::newtypes::{Designator, PinName, UniqueId};
 use crate::v2::traits::{AltiumEnum, RecordType};
 use altium_format_derive::altium_record;
+use encoding_rs::WINDOWS_1252;
 
 /// Schematic pin record -- RECORD=2.
 ///
@@ -231,6 +232,64 @@ impl SchPinRecord {
         }
 
         Some(rec)
+    }
+
+    /// Encode this pin as a legacy SchLib binary `RECORD=2` payload.
+    ///
+    /// This mirrors AD's param serializer binary mode for SchLib pin records:
+    /// fixed prefix fields plus short-string payloads up through `DefaultValue`.
+    pub fn to_legacy_binary_record_data(&self) -> Vec<u8> {
+        fn write_u8(out: &mut Vec<u8>, v: u8) {
+            out.push(v);
+        }
+        fn write_i16_le(out: &mut Vec<u8>, v: i16) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        fn write_i32_le(out: &mut Vec<u8>, v: i32) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        fn write_u32_le(out: &mut Vec<u8>, v: u32) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        fn write_lp_string(out: &mut Vec<u8>, s: &str) {
+            // AD truncates dynamic strings to 254 chars in binary mode.
+            let (bytes, _, _) = WINDOWS_1252.encode(s);
+            let mut bytes = bytes.into_owned();
+            if bytes.len() > 254 {
+                bytes.truncate(254);
+            }
+            out.push(bytes.len() as u8);
+            out.extend_from_slice(&bytes);
+        }
+
+        let mut out = Vec::with_capacity(64);
+        write_u8(&mut out, Self::RECORD_ID);
+        write_i32_le(&mut out, self.owner_index());
+        write_i16_le(&mut out, self.owner_part_id());
+        write_u8(&mut out, self.owner_part_display_mode());
+        write_u8(&mut out, self.symbol_inner_edge().to_int() as u8);
+        write_u8(&mut out, self.symbol_outer_edge().to_int() as u8);
+        write_u8(&mut out, self.symbol_inner().to_int() as u8);
+        write_u8(&mut out, self.symbol_outer().to_int() as u8);
+        write_lp_string(&mut out, &self.description());
+        write_u8(&mut out, self.formal_type().to_int() as u8);
+        write_u8(&mut out, self.electrical().to_int() as u8);
+        write_u8(&mut out, self.pin_conglomerate());
+
+        let (pin_len_whole, _) = self.pin_length().to_binary_parts();
+        let (loc_x_whole, _) = self.location_x().to_binary_parts();
+        let (loc_y_whole, _) = self.location_y().to_binary_parts();
+        write_i16_le(&mut out, pin_len_whole);
+        write_i16_le(&mut out, loc_x_whole);
+        write_i16_le(&mut out, loc_y_whole);
+
+        write_u32_le(&mut out, self.color());
+        write_lp_string(&mut out, &self.name().to_string());
+        write_lp_string(&mut out, &self.designator().to_string());
+        write_lp_string(&mut out, &self.swap_id_pin());
+        write_lp_string(&mut out, &self.swap_id_part());
+        write_lp_string(&mut out, &self.default_value());
+        out
     }
 }
 

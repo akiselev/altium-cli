@@ -354,6 +354,7 @@ macro_rules! copy_sch_record {
                 let mut dst =
                     SchImplementationRecord::from_origin(templates::sch_implementation_default());
                 dst.copy_modeled_fields_from(&src);
+                dst.set_datafile_links(&src.datafile_links());
                 $emit!(dst);
             }
             <SchMapDefinerListRecord as RecordType>::RECORD_ID => {

@@ -18,8 +18,9 @@ use crate::error::{AltiumError, Result};
 use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
 use crate::v2::ids::GroupId;
 use crate::v2::parameters::ParameterCollection;
+use crate::v2::records::{SchComponentRecord, SchPinRecord};
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
-use crate::v2::traits::HandleFamily;
+use crate::v2::traits::{HandleFamily, RecordType};
 
 use super::section_keys::SectionKeyList;
 
@@ -44,6 +45,8 @@ pub struct SchLibHeader {
     pub unique_id: String,
     /// Raw bytes of the FileHeader stream (for identity write-back).
     pub raw: Option<Vec<u8>>,
+    /// Parsed FileHeader parameters preserved for unknown-key round-tripping.
+    pub raw_params: Option<ParameterCollection>,
 }
 
 impl SchLibHeader {
@@ -72,6 +75,8 @@ pub struct SchLibComponentEntry {
     pub description: String,
     /// Number of parts in the component.
     pub part_count: i32,
+    /// Alias names for the component.
+    pub aliases: Vec<String>,
 }
 
 impl SchLibComponentEntry {
@@ -88,6 +93,11 @@ impl SchLibComponentEntry {
     /// Number of parts.
     pub fn part_count(&self) -> i32 {
         self.part_count
+    }
+
+    /// Component aliases.
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
     }
 }
 
@@ -144,7 +154,7 @@ impl SchLib {
             *minor_version = header.minor_version;
             *unique_id = header.unique_id.clone();
             *raw_header = None;
-            *raw_header_params = None;
+            *raw_header_params = header.raw_params.clone();
             did_doc_key = Some(unique_id.clone());
             store.mark_semantic_ids_dirty();
         }
@@ -173,11 +183,8 @@ impl SchLib {
 
         // 1. Read FileHeader
         let mut component_entries: Vec<SchLibComponentEntry> = Vec::new();
-        let header = read_file_header(&mut cfb, &mut component_entries)?;
-        let header_params = header.raw.as_ref().map(|raw| {
-            let text = String::from_utf8_lossy(raw);
-            ParameterCollection::from_string(&text)
-        });
+        let (header, parsed_header_params) = read_file_header(&mut cfb, &mut component_entries)?;
+        let header_params = Some(parsed_header_params);
 
         // 2. Read SectionKeys
         let section_keys = read_section_keys(&mut cfb)?;
@@ -353,7 +360,7 @@ impl SchLib {
         let mut cfb = cfb::CompoundFile::create(writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
-        // Collect component entries from group metadata
+        // Collect component entries from current store state.
         let mut component_entries: Vec<SchLibComponentEntry> = Vec::new();
         for &group_id in store.group_ids() {
             let group = store.group(group_id);
@@ -361,13 +368,15 @@ impl SchLib {
                 GroupMeta::SchComponent {
                     lib_ref,
                     description,
-                    part_count,
                     ..
                 } => {
+                    let parent_node = store.record(group.parent_id());
+                    let comp_rec = SchComponentRecord::from_origin(parent_node.origin.clone());
                     component_entries.push(SchLibComponentEntry {
                         lib_ref: lib_ref.clone(),
                         description: description.clone(),
-                        part_count: *part_count,
+                        part_count: comp_rec.part_count() as i32,
+                        aliases: parse_alias_list(&comp_rec.alias_list().to_string()),
                     });
                 }
                 _ => {}
@@ -379,6 +388,10 @@ impl SchLib {
         for entry in &component_entries {
             let safe = sanitize_cfb_name(&entry.lib_ref);
             section_keys.add_key(&safe, 30);
+            for alias in &entry.aliases {
+                let safe_alias = sanitize_cfb_name(alias);
+                section_keys.add_key(&safe_alias, 30);
+            }
         }
 
         // 2. Write FileHeader — always rebuild from current store data so
@@ -392,12 +405,13 @@ impl SchLib {
                 minor_version,
                 unique_id,
                 raw: None,
+                raw_params: raw_header_params.clone(),
             };
             write_file_header(
                 &mut cfb,
                 &header,
                 &component_entries,
-                raw_header_params.as_ref(),
+                header.raw_params.as_ref(),
             )?;
         }
 
@@ -422,10 +436,10 @@ impl SchLib {
             // Build data stream from store records
             let parent_node = store.record(group.parent_id());
             let mut data_bytes = Vec::new();
-            write_record_to_stream(&mut data_bytes, parent_node)?;
+            write_record_to_schlib_stream(&mut data_bytes, parent_node)?;
             for &child_id in group.child_ids() {
                 let child_node = store.record(child_id);
-                write_record_to_stream(&mut data_bytes, child_node)?;
+                write_record_to_schlib_stream(&mut data_bytes, child_node)?;
             }
 
             let data_path = format!("/{}/{}", section_key, STREAM_DATA);
@@ -456,10 +470,59 @@ impl SchLib {
                 }
             }
 
-            let _ = i; // suppress unused warning
+            // Emit alias redirection streams when they are not already present in
+            // preserved raw extra streams.
+            if let Some(entry) = component_entries.get(i) {
+                let mut created_storages: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                let mut emitted_redirections: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for alias in &entry.aliases {
+                    if alias.eq_ignore_ascii_case(&lib_ref) {
+                        continue;
+                    }
+                    let alias_safe = sanitize_cfb_name(alias);
+                    let alias_key = section_keys.get_key(&alias_safe).to_string();
+                    let rel = format!("{}/Redirection", alias_key);
+                    let rel_key = rel.to_ascii_lowercase();
+                    if !emitted_redirections.insert(rel_key) {
+                        continue;
+                    }
+                    if has_library_extra_stream(&raw_extra_streams, &rel) {
+                        continue;
+                    }
+                    let full_path = format!("/{}", rel);
+                    super::pcblib::ensure_parent_storages(
+                        &mut cfb,
+                        &full_path,
+                        &mut created_storages,
+                    )?;
+                    let mut stream = cfb.create_stream(&full_path).map_err(|e| {
+                        AltiumError::Cfb(format!(
+                            "Failed to create redirection stream {}: {}",
+                            full_path, e
+                        ))
+                    })?;
+                    let data = build_section_redirection_stream_bytes(&lib_ref);
+                    stream.write_all(&data).map_err(AltiumError::Io)?;
+                }
+            }
         }
 
-        // 5. Write library-level extra streams
+        // 5. Write /Storage if not already preserved as raw extra data.
+        if !raw_extra_streams
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("Storage"))
+        {
+            let mut stream = cfb
+                .create_stream("/Storage")
+                .map_err(|e| AltiumError::Cfb(format!("Failed to create /Storage: {}", e)))?;
+            stream
+                .write_all(&build_icon_storage_stream_bytes())
+                .map_err(AltiumError::Io)?;
+        }
+
+        // 6. Write library-level extra streams
         {
             let mut created_storages: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
@@ -524,11 +587,16 @@ impl SchLib {
                         description,
                         part_count,
                         ..
-                    } => Some(SchLibComponentEntry {
-                        lib_ref: lib_ref.clone(),
-                        description: description.clone(),
-                        part_count: *part_count,
-                    }),
+                    } => {
+                        let parent_node = store.record(group.parent_id());
+                        let comp_rec = SchComponentRecord::from_origin(parent_node.origin.clone());
+                        Some(SchLibComponentEntry {
+                            lib_ref: lib_ref.clone(),
+                            description: description.clone(),
+                            part_count: *part_count,
+                            aliases: parse_alias_list(&comp_rec.alias_list().to_string()),
+                        })
+                    }
                     _ => None,
                 }
             })
@@ -545,6 +613,7 @@ impl SchLib {
                 minor_version,
                 unique_id,
                 raw_header,
+                raw_header_params,
                 ..
             } => SchLibHeader {
                 header_text: header_text.clone(),
@@ -552,6 +621,7 @@ impl SchLib {
                 minor_version: *minor_version,
                 unique_id: unique_id.clone(),
                 raw: raw_header.clone(),
+                raw_params: raw_header_params.clone(),
             },
             _ => SchLibHeader::default(),
         }
@@ -601,6 +671,7 @@ impl SchLib {
             crate::v2::records::SchComponentRecord::from_origin(component.origin.clone());
         let lib_ref = comp_record.lib_reference().to_string();
         let description = comp_record.component_description().to_string();
+        let part_count = comp_record.part_count() as i32;
 
         let mut store = self.store.borrow_mut();
 
@@ -620,7 +691,7 @@ impl SchLib {
             meta: GroupMeta::SchComponent {
                 lib_ref,
                 description,
-                part_count: 1,
+                part_count,
                 section_key: String::new(),
             },
         };
@@ -755,14 +826,70 @@ impl SchLib {
 
 /// Replace characters that are invalid in CFB storage names.
 fn sanitize_cfb_name(name: &str) -> String {
-    name.replace('/', "_")
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '!' => '_',
+            _ => c,
+        })
+        .collect()
+}
+
+fn parse_alias_list(alias_list: &str) -> Vec<String> {
+    alias_list
+        .split(',')
+        .map(|s| s.trim().trim_matches('"'))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn parse_first_param_block(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() < 4 {
+        return None;
+    }
+    let raw_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    if (raw_len & !SIZE_FLAG_MASK) != 0 {
+        return None;
+    }
+    let len = (raw_len & SIZE_FLAG_MASK) as usize;
+    if len == 0 || 4 + len > data.len() {
+        return None;
+    }
+    Some(data[4..4 + len].to_vec())
+}
+
+fn encode_single_param_block(params: &ParameterCollection) -> Vec<u8> {
+    let mut payload = params.to_param_string().into_bytes();
+    payload.push(0);
+    let mut out = Vec::with_capacity(payload.len() + 4);
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&payload);
+    out
+}
+
+fn build_section_redirection_stream_bytes(section_name: &str) -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+    params.add("SECTIONNAME", section_name);
+    encode_single_param_block(&params)
+}
+
+fn build_icon_storage_stream_bytes() -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+    params.add("HEADER", "Icon storage");
+    encode_single_param_block(&params)
+}
+
+fn has_library_extra_stream(raw_extra_streams: &HashMap<String, Vec<u8>>, rel_path: &str) -> bool {
+    raw_extra_streams
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case(rel_path))
 }
 
 /// Read and parse the FileHeader stream.
 fn read_file_header<F: Read + Seek>(
     cfb: &mut cfb::CompoundFile<F>,
     entries: &mut Vec<SchLibComponentEntry>,
-) -> Result<SchLibHeader> {
+) -> Result<(SchLibHeader, ParameterCollection)> {
     let path = format!("/{}", STREAM_FILE_HEADER);
     let mut stream = cfb
         .open_stream(&path)
@@ -770,7 +897,8 @@ fn read_file_header<F: Read + Seek>(
     let mut data = Vec::new();
     stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
 
-    let text = String::from_utf8_lossy(&data);
+    let payload = parse_first_param_block(&data).unwrap_or_else(|| data.clone());
+    let text = String::from_utf8_lossy(&payload);
     let params = ParameterCollection::from_string(&text);
 
     let header = SchLibHeader {
@@ -788,6 +916,7 @@ fn read_file_header<F: Read + Seek>(
             .map(|v| v.as_str().to_string())
             .unwrap_or_default(),
         raw: Some(data),
+        raw_params: Some(params.clone()),
     };
 
     let comp_count = params.get("CompCount").map(|v| v.as_int_or(0)).unwrap_or(0);
@@ -804,15 +933,30 @@ fn read_file_header<F: Read + Seek>(
             .get(&format!("PartCount{}", i))
             .map(|v| v.as_int_or(1))
             .unwrap_or(1);
+        let alias_count = params
+            .get(&format!("AliasCount{}", i))
+            .map(|v| v.as_int_or(0))
+            .unwrap_or(0)
+            .max(0);
+        let mut aliases = Vec::with_capacity(alias_count as usize);
+        for j in 0..alias_count {
+            if let Some(v) = params.get(&format!("Comp{}Alias{}", i, j)) {
+                let alias = v.as_str().to_string();
+                if !alias.is_empty() {
+                    aliases.push(alias);
+                }
+            }
+        }
 
         entries.push(SchLibComponentEntry {
             lib_ref,
             description,
             part_count,
+            aliases,
         });
     }
 
-    Ok(header)
+    Ok((header, params))
 }
 
 /// Read the SectionKeys stream if present.
@@ -821,12 +965,15 @@ fn read_section_keys<F: Read + Seek>(cfb: &mut cfb::CompoundFile<F>) -> Result<S
     if let Ok(mut stream) = cfb.open_stream(format!("/{}", STREAM_SECTION_KEYS)) {
         let mut data = Vec::new();
         stream.read_to_end(&mut data).map_err(AltiumError::Io)?;
-        let text = String::from_utf8_lossy(&data);
+        let payload = parse_first_param_block(&data).unwrap_or(data);
+        let text = String::from_utf8_lossy(&payload);
         let params = ParameterCollection::from_string(&text);
         let count = params.get("KeyCount").map(|v| v.as_int_or(0)).unwrap_or(0);
         for i in 0..count {
             if let (Some(name_val), Some(key_val)) = (
-                params.get(&format!("Key{}", i)),
+                params
+                    .get(&format!("LibRef{}", i))
+                    .or_else(|| params.get(&format!("Key{}", i))),
                 params.get(&format!("SectionKey{}", i)),
             ) {
                 let name = name_val.as_str().to_string();
@@ -880,6 +1027,22 @@ fn write_file_header<F: Read + Write + Seek>(
             .is_some()
         {
             to_remove.push(key.to_string());
+            continue;
+        }
+        if key
+            .strip_prefix("ALIASCOUNT")
+            .and_then(|s| s.parse::<usize>().ok())
+            .is_some()
+        {
+            to_remove.push(key.to_string());
+            continue;
+        }
+        if let Some(rest) = key.strip_prefix("COMP") {
+            let digit_count = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+            if digit_count > 0 && rest[digit_count..].starts_with("ALIAS") {
+                to_remove.push(key.to_string());
+                continue;
+            }
         }
     }
     for key in to_remove {
@@ -890,7 +1053,11 @@ fn write_file_header<F: Read + Write + Seek>(
     params.add("HEADER", &header.header_text);
     params.add("WEIGHT", &header.weight.to_string());
     params.add("MINORVERSION", &header.minor_version.to_string());
-    params.add("UNIQUEID", &header.unique_id);
+    if !header.unique_id.is_empty() || params.contains("UNIQUEID") {
+        params.add("UNIQUEID", &header.unique_id);
+    } else {
+        params.remove("UNIQUEID");
+    }
     params.add("COMPCOUNT", &entries.len().to_string());
 
     for (i, entry) in entries.iter().enumerate() {
@@ -899,14 +1066,23 @@ fn write_file_header<F: Read + Write + Seek>(
             params.add(&format!("COMPDESCR{}", i), &entry.description);
         }
         params.add(&format!("PARTCOUNT{}", i), &entry.part_count.to_string());
+        if !entry.aliases.is_empty() {
+            params.add(
+                &format!("ALIASCOUNT{}", i),
+                &entry.aliases.len().to_string(),
+            );
+            for (j, alias) in entry.aliases.iter().enumerate() {
+                params.add(&format!("COMP{}ALIAS{}", i, j), alias);
+            }
+        }
     }
 
-    let data = params.to_param_string();
+    let data = encode_single_param_block(&params);
     let path = format!("/{}", STREAM_FILE_HEADER);
     let mut stream = cfb
         .create_stream(&path)
         .map_err(|e| AltiumError::Cfb(format!("Failed to create FileHeader: {}", e)))?;
-    stream.write_all(data.as_bytes()).map_err(AltiumError::Io)?;
+    stream.write_all(&data).map_err(AltiumError::Io)?;
     Ok(())
 }
 
@@ -921,15 +1097,15 @@ fn write_section_keys<F: Read + Write + Seek>(
     let mut params = ParameterCollection::new();
     params.add("KeyCount", &keys.len().to_string());
     for (i, (name, key)) in keys.iter().enumerate() {
-        params.add(&format!("Key{}", i), name);
+        params.add(&format!("LibRef{}", i), name);
         params.add(&format!("SectionKey{}", i), key);
     }
-    let data = params.to_param_string();
+    let data = encode_single_param_block(&params);
     let path = format!("/{}", STREAM_SECTION_KEYS);
     let mut stream = cfb
         .create_stream(&path)
         .map_err(|e| AltiumError::Cfb(format!("Failed to create SectionKeys: {}", e)))?;
-    stream.write_all(data.as_bytes()).map_err(AltiumError::Io)?;
+    stream.write_all(&data).map_err(AltiumError::Io)?;
     Ok(())
 }
 
@@ -1058,6 +1234,20 @@ pub(super) fn write_record_to_stream(output: &mut Vec<u8>, node: &RecordNode) ->
         }
     }
     Ok(())
+}
+
+fn write_record_to_schlib_stream(output: &mut Vec<u8>, node: &RecordNode) -> Result<()> {
+    if node.key == SchPinRecord::RECORD_ID {
+        if let Some(param) = node.origin.as_param() {
+            let pin = SchPinRecord::from_origin(RecordOrigin::Param(param.clone()));
+            let raw = pin.to_legacy_binary_record_data();
+            let len = (raw.len() as u32) | 0x0100_0000;
+            output.extend_from_slice(&len.to_le_bytes());
+            output.extend_from_slice(&raw);
+            return Ok(());
+        }
+    }
+    write_record_to_stream(output, node)
 }
 
 // ---------------------------------------------------------------------------

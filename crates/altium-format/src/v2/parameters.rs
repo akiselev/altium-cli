@@ -87,7 +87,7 @@ impl ParameterValue {
     ///
     /// Accepts: "T", "TRUE" (true), "F", "FALSE" (false)
     pub fn as_bool(&self) -> Result<bool, &'static str> {
-        let s = self.data.trim().to_uppercase();
+        let s = self.data.trim().trim_matches('\0').to_uppercase();
         if TRUE_VALUES.contains(&s.as_str()) {
             Ok(true)
         } else if FALSE_VALUES.contains(&s.as_str()) || s.is_empty() {
