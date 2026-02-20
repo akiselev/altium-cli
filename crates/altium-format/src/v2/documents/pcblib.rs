@@ -21,7 +21,10 @@ use crate::v2::backing_store::{
 };
 use crate::v2::handles::PcbFootprintHandle;
 use crate::v2::ids::RecordId;
-use crate::v2::records::{parse_component_body, parse_pad, parse_region, parse_text, parse_via};
+use crate::v2::records::{
+    parse_arc, parse_component_body, parse_fill, parse_pad, parse_region, parse_text, parse_track,
+    parse_via,
+};
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::{DocumentQuery, HandleFamily};
 
@@ -641,34 +644,37 @@ fn subrecord_count(type_id: u8) -> usize {
 
 /// Build a `RecordOrigin` for a single-subrecord PCB primitive.
 ///
-/// For types that have custom parse functions (Via=3, Region=11,
-/// ComponentBody=12), calls the appropriate parser to populate field_spans.
-/// Falls back to a plain `BinaryOrigin` if parsing fails or the type is
-/// unknown.
-fn parse_single_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> RecordOrigin {
+/// For types that have custom parse functions (Arc=1, Via=3, Track=4,
+/// Fill=6, Region=11, ComponentBody=12), calls the appropriate parser to
+/// populate field_spans. Unknown types are preserved as raw binary.
+fn parse_single_subrecord_origin(
+    type_byte: u8,
+    block_data: Vec<u8>,
+) -> Result<RecordOrigin> {
     match type_byte {
-        3 => parse_via(&block_data)
-            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
-        11 => parse_region(&block_data)
-            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
-        12 => parse_component_body(&block_data)
-            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
-        _ => RecordOrigin::Binary(BinaryOrigin::new(block_data)),
+        1 => parse_arc(&block_data),
+        3 => parse_via(&block_data),
+        4 => parse_track(&block_data),
+        6 => parse_fill(&block_data),
+        11 => parse_region(&block_data),
+        12 => parse_component_body(&block_data),
+        _ => Ok(RecordOrigin::Binary(BinaryOrigin::new(block_data))),
     }
 }
 
 /// Build a `RecordOrigin` for a multi-subrecord PCB primitive.
 ///
 /// For types that have custom parse functions (Pad=2, Text=5), calls the
-/// appropriate parser to populate field_spans. Falls back to a plain
-/// `BinaryOrigin` if parsing fails.
-fn parse_multi_subrecord_origin(type_byte: u8, block_data: Vec<u8>) -> RecordOrigin {
+/// appropriate parser to populate field_spans. Unknown types are preserved as
+/// raw binary.
+fn parse_multi_subrecord_origin(
+    type_byte: u8,
+    block_data: Vec<u8>,
+) -> Result<RecordOrigin> {
     match type_byte {
-        2 => parse_pad(&block_data)
-            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
-        5 => parse_text(&block_data)
-            .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(block_data))),
-        _ => RecordOrigin::Binary(BinaryOrigin::new(block_data)),
+        2 => parse_pad(&block_data),
+        5 => parse_text(&block_data),
+        _ => Ok(RecordOrigin::Binary(BinaryOrigin::new(block_data))),
     }
 }
 
@@ -688,77 +694,64 @@ fn parse_pcb_data_stream(data: &[u8]) -> Result<(Vec<RecordNode>, Vec<PcbPrimiti
     let mut primitive_order = Vec::new();
 
     // Read pattern name block (length-prefixed)
-    let pattern_name_block = if data.len() >= 4 {
+    let pattern_name_block = if data.is_empty() {
+        Vec::new()
+    } else {
+        if data.len() < 4 {
+            return Err(AltiumError::UnexpectedEof);
+        }
         let str_len = cursor
             .read_u32::<LittleEndian>()
             .map_err(|_| AltiumError::UnexpectedEof)? as usize;
-        if str_len > 0 && cursor.position() as usize + str_len <= data.len() {
-            let mut buf = vec![0u8; str_len];
-            cursor.read_exact(&mut buf).map_err(AltiumError::Io)?;
-            buf
-        } else {
-            Vec::new()
+        if cursor.position() as usize + str_len > data.len() {
+            return Err(AltiumError::UnexpectedEof);
         }
-    } else {
-        Vec::new()
+        let mut buf = vec![0u8; str_len];
+        cursor.read_exact(&mut buf).map_err(AltiumError::Io)?;
+        buf
     };
 
     // Read binary primitives
     while (cursor.position() as usize) < data.len() {
-        let type_byte = match cursor.read_u8() {
-            Ok(b) => b,
-            Err(_) => break,
-        };
+        let type_byte = cursor.read_u8().map_err(|_| AltiumError::UnexpectedEof)?;
 
         let n = subrecord_count(type_byte);
 
         if n == 1 {
             // Single subrecord: read u32 len + data, store data only
-            let block_len = match cursor.read_u32::<LittleEndian>() {
-                Ok(l) => l as usize,
-                Err(_) => break,
-            };
+            let block_len = cursor
+                .read_u32::<LittleEndian>()
+                .map_err(|_| AltiumError::UnexpectedEof)? as usize;
 
             if cursor.position() as usize + block_len > data.len() {
-                break;
+                return Err(AltiumError::UnexpectedEof);
             }
 
             let mut block_data = vec![0u8; block_len];
-            if cursor.read_exact(&mut block_data).is_err() {
-                break;
-            }
+            cursor.read_exact(&mut block_data).map_err(AltiumError::Io)?;
 
             let index = primitives.len();
-            let origin = parse_single_subrecord_origin(type_byte, block_data);
+            let origin = parse_single_subrecord_origin(type_byte, block_data)?;
             primitives.push(RecordNode::new(type_byte, origin));
             primitive_order.push(PcbPrimitiveRef::new(type_byte, index));
         } else {
             // Multi-subrecord: read N sequential (u32 len + data) blocks,
             // store ALL bytes including u32 prefixes as one raw_block
             let start = cursor.position() as usize;
-            let mut ok = true;
             for _ in 0..n {
-                let sub_len = match cursor.read_u32::<LittleEndian>() {
-                    Ok(l) => l as usize,
-                    Err(_) => {
-                        ok = false;
-                        break;
-                    }
-                };
+                let sub_len = cursor
+                    .read_u32::<LittleEndian>()
+                    .map_err(|_| AltiumError::UnexpectedEof)? as usize;
                 if cursor.position() as usize + sub_len > data.len() {
-                    ok = false;
-                    break;
+                    return Err(AltiumError::UnexpectedEof);
                 }
                 cursor.set_position(cursor.position() + sub_len as u64);
-            }
-            if !ok {
-                break;
             }
             let end = cursor.position() as usize;
             let block_data = data[start..end].to_vec();
 
             let index = primitives.len();
-            let origin = parse_multi_subrecord_origin(type_byte, block_data);
+            let origin = parse_multi_subrecord_origin(type_byte, block_data)?;
             primitives.push(RecordNode::new(type_byte, origin));
             primitive_order.push(PcbPrimitiveRef::new(type_byte, index));
         }
@@ -868,12 +861,12 @@ mod tests {
         data.extend_from_slice(name);
         // Track primitive: type=4
         data.push(4);
-        data.extend_from_slice(&8u32.to_le_bytes());
-        data.extend_from_slice(&[0u8; 8]);
+        data.extend_from_slice(&49u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 49]);
         // Arc primitive: type=1 (single subrecord)
         data.push(1);
-        data.extend_from_slice(&12u32.to_le_bytes());
-        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&60u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 60]);
 
         let (prims, order, _) = parse_pcb_data_stream(&data).unwrap();
         assert_eq!(prims.len(), 2);
@@ -882,6 +875,36 @@ mod tests {
         assert_eq!(order.len(), 2);
         assert_eq!(order[0].type_id, 4);
         assert_eq!(order[1].type_id, 1);
+    }
+
+    #[test]
+    fn known_type_parse_failure_is_error() {
+        let mut data = Vec::new();
+        let name = b"BAD";
+        data.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        data.extend_from_slice(name);
+
+        // Track payload is intentionally too short for typed parsing.
+        data.push(4);
+        data.extend_from_slice(&8u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 8]);
+
+        assert!(parse_pcb_data_stream(&data).is_err());
+    }
+
+    #[test]
+    fn truncated_primitive_payload_is_error() {
+        let mut data = Vec::new();
+        let name = b"TRUNC";
+        data.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        data.extend_from_slice(name);
+
+        // Unknown primitive type still must honor declared length framing.
+        data.push(99);
+        data.extend_from_slice(&10u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 2]);
+
+        assert!(parse_pcb_data_stream(&data).is_err());
     }
 
     #[test]
@@ -899,8 +922,8 @@ mod tests {
             data.extend_from_slice(&(sub.len() as u32).to_le_bytes());
             data.extend_from_slice(&sub);
         }
-        // Subrecord 5: core data (16 bytes)
-        let core = vec![0xAA; 16];
+        // Subrecord 5: core data (minimum valid size for parser = 94 bytes)
+        let core = vec![0xAA; 94];
         data.extend_from_slice(&(core.len() as u32).to_le_bytes());
         data.extend_from_slice(&core);
         // Subrecord 6: stack data (8 bytes)
@@ -916,8 +939,8 @@ mod tests {
 
         // The raw_block should contain all 6 subrecords with u32 prefixes
         let raw = prims[0].origin.as_binary().unwrap();
-        // 4*(4+2) + (4+16) + (4+8) = 24 + 20 + 12 = 56
-        assert_eq!(raw.raw_block.len(), 56);
+        // 4*(4+2) + (4+94) + (4+8) = 24 + 98 + 12 = 134
+        assert_eq!(raw.raw_block.len(), 134);
 
         // Round-trip via build_pcb_data_stream
         let prim_refs: Vec<&RecordNode> = prims.iter().collect();
@@ -925,7 +948,7 @@ mod tests {
         let (prims2, _, _) = parse_pcb_data_stream(&rebuilt).unwrap();
         assert_eq!(prims2.len(), 1);
         assert_eq!(prims2[0].key, 2);
-        assert_eq!(prims2[0].origin.as_binary().unwrap().raw_block.len(), 56);
+        assert_eq!(prims2[0].origin.as_binary().unwrap().raw_block.len(), 134);
     }
 
     #[test]
@@ -963,7 +986,7 @@ mod tests {
 
     #[test]
     fn build_stream_roundtrip() {
-        let block_data = vec![0xAA; 10];
+        let block_data = vec![0xAA; 49];
         let prim = RecordNode::new(
             4,
             RecordOrigin::Binary(BinaryOrigin::new(block_data.clone())),

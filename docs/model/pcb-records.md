@@ -194,33 +194,42 @@ A typical through-hole pad:
 A single line segment of routed copper.
 
 ```rust
-// crates/altium-format/src/records/pcb/track.rs
-#[derive(AltiumRecord)]
-#[altium(format = "binary")]
-pub struct PcbTrack {
-    #[altium(flatten)]
-    pub common: PcbPrimitiveCommon,
-    #[altium(coord_point)]
-    pub start: CoordPoint,          // Start coordinate
-    #[altium(coord_point)]
-    pub end: CoordPoint,            // End coordinate
-    #[altium(coord)]
-    pub width: Coord,               // Track width
-    #[altium(unknown_binary)]
-    pub unknown: Vec<u8>,           // 16 bytes: net ID, rule refs, etc.
+// crates/altium-format/src/v2/records/pcb_track.rs
+pub struct PcbTrackRecord {
+    pub header: PcbCommonHeader,     // 13-byte common header
+    pub start_x: PcbCoord,
+    pub start_y: PcbCoord,
+    pub end_x: PcbCoord,
+    pub end_y: PcbCoord,
+    pub width: PcbCoord,
+    pub subpoly_index: u16,
+    pub user_routed: bool,           // AD26+
+    pub union_index: i32,            // AD26+
+    pub track_kind: u8,              // AD26+
+    pub layer_enum_index: i32,       // AD26+
+    pub keepout_restrictions: i32,   // AD26+
 }
 ```
 
 Binary layout:
 ```
-[PcbPrimitiveCommon]    layer(u8) + flags(u16) + unique_id
+[13-byte common header]
 [i32 start_x]
 [i32 start_y]
 [i32 end_x]
 [i32 end_y]
 [i32 width]
-[16 bytes unknown]      net ID, rule references
+[u16 subpoly_index]
+[u8 user_routed]           AD26+
+[i32 union_index]          AD26+
+[u8 track_kind]            AD26+
+[i32 layer_enum_index]     AD26+
+[i32 keepout_restrictions] AD26+
 ```
+
+Observed sizes:
+- Legacy: 35 bytes
+- AD26: 49 bytes
 
 ### PcbVia (Object ID 3)
 
@@ -254,7 +263,12 @@ Via types are determined by `from_layer` and `to_layer`:
 A circular arc on a copper or mechanical layer.
 
 Fields include: `location` (center), `radius`, `start_angle`, `end_angle`,
-`width` (trace width of the arc).
+`width` (trace width of the arc), plus AD26 trailing fields
+(`user_routed`, `union_index`, `layer_enum_index`, `keepout_restrictions`).
+
+Observed sizes:
+- Legacy: 47 bytes
+- AD26: 60 bytes
 
 ### PcbText (Object ID 5)
 
@@ -273,7 +287,12 @@ Key fields:
 ### PcbFill (Object ID 6)
 
 A solid rectangular copper fill. Defined by two corner coordinates and a
-rotation angle.
+rotation angle, plus AD26 trailing fields (`user_routed`, `union_index`,
+`layer_enum_index`, `keepout_restrictions`).
+
+Observed sizes:
+- Legacy: 37 bytes
+- AD26: 50 bytes
 
 ### PcbPolygon (Object ID 10)
 

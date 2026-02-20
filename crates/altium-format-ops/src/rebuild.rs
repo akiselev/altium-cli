@@ -499,50 +499,49 @@ macro_rules! copy_pcb_record {
         match $type_id {
             <PcbArcRecord as RecordType>::RECORD_ID => {
                 let src = PcbArcHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbArcRecord::from_origin(templates::pcb_arc_default());
+                let mut dst = PcbArcRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbPadRecord as RecordType>::RECORD_ID => {
                 let src = PcbPadHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbPadRecord::from_origin(templates::pcb_pad_default());
+                let mut dst = PcbPadRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbViaRecord as RecordType>::RECORD_ID => {
                 let src = PcbViaHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbViaRecord::from_origin(templates::pcb_via_default());
+                let mut dst = PcbViaRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbTrackRecord as RecordType>::RECORD_ID => {
                 let src = PcbTrackHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbTrackRecord::from_origin(templates::pcb_track_default());
+                let mut dst = PcbTrackRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbTextRecord as RecordType>::RECORD_ID => {
                 let src = PcbTextHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbTextRecord::from_origin(templates::pcb_text_default());
+                let mut dst = PcbTextRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbFillRecord as RecordType>::RECORD_ID => {
                 let src = PcbFillHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbFillRecord::from_origin(templates::pcb_fill_default());
+                let mut dst = PcbFillRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbRegionRecord as RecordType>::RECORD_ID => {
                 let src = PcbRegionHandle::new($src_store.clone(), $rid).read();
-                let mut dst = PcbRegionRecord::from_origin(templates::pcb_region_default());
+                let mut dst = PcbRegionRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }
             <PcbComponentBodyRecord as RecordType>::RECORD_ID => {
                 let src = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
-                let mut dst =
-                    PcbComponentBodyRecord::from_origin(templates::pcb_component_body_default());
+                let mut dst = PcbComponentBodyRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
             }

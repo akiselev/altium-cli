@@ -238,8 +238,8 @@ pub fn sch_blanket_default() -> RecordOrigin {
 // ---------------------------------------------------------------------------
 
 pub fn pcb_track_default() -> RecordOrigin {
-    // 13-byte common header + 22 track-specific bytes (start_x, start_y, end_x, end_y, width, subpoly_index)
-    let mut data = vec![0u8; 35];
+    // AD26 layout: 13-byte common header + 22 base bytes + 14 trailing bytes.
+    let mut data = vec![0u8; 49];
     // Common header: net=0xFFFF (no net), polygon_ref=0x0000, component_ref=0xFFFF
     data[3] = 0xFF;
     data[4] = 0xFF; // net
@@ -249,13 +249,14 @@ pub fn pcb_track_default() -> RecordOrigin {
     data[10] = 0xFF; // ref4
     data[11] = 0xFF;
     data[12] = 0xFF; // ref5
-    RecordOrigin::Binary(BinaryOrigin::new(data))
+    crate::v2::records::parse_track(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_arc_default() -> RecordOrigin {
-    // 13-byte common header + 34 arc-specific bytes
+    // AD26 layout: 13-byte common header + 34 base bytes + 13 trailing bytes.
     // center_x(4) + center_y(4) + radius(4) + start_angle(8) + end_angle(8) + width(4) + subpoly_index(2)
-    let mut data = vec![0u8; 47];
+    let mut data = vec![0u8; 60];
     data[3] = 0xFF;
     data[4] = 0xFF; // net
     data[7] = 0xFF;
@@ -264,13 +265,14 @@ pub fn pcb_arc_default() -> RecordOrigin {
     data[10] = 0xFF;
     data[11] = 0xFF;
     data[12] = 0xFF;
-    RecordOrigin::Binary(BinaryOrigin::new(data))
+    crate::v2::records::parse_arc(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_fill_default() -> RecordOrigin {
-    // 13-byte common header + 24 fill-specific bytes
+    // AD26 layout: 13-byte common header + 24 base bytes + 13 trailing bytes.
     // (corner1_x, corner1_y, corner2_x, corner2_y, rotation f64)
-    let mut data = vec![0u8; 37];
+    let mut data = vec![0u8; 50];
     data[3] = 0xFF;
     data[4] = 0xFF;
     data[7] = 0xFF;
@@ -279,7 +281,8 @@ pub fn pcb_fill_default() -> RecordOrigin {
     data[10] = 0xFF;
     data[11] = 0xFF;
     data[12] = 0xFF;
-    RecordOrigin::Binary(BinaryOrigin::new(data))
+    crate::v2::records::parse_fill(&data)
+        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
 }
 
 pub fn pcb_pad_default() -> RecordOrigin {
@@ -288,11 +291,11 @@ pub fn pcb_pad_default() -> RecordOrigin {
     // Pad format: 6 subrecords, each prefixed with u32 length.
     // 1. Designator string (empty)
     // 2-4. Empty strings
-    // 5. Core data (172 bytes)
-    // 6. Stack data (596 bytes)
-    let core_len: usize = 172;
-    let stack_len: usize = 596;
-    // Total: 4×4 (string length prefixes) + 4 (core length) + 172 + 4 (stack length) + 596
+    // 5. Core data (202 bytes in current AD26 libraries)
+    // 6. Stack data (often empty in AD26 exports unless explicit layer stack is stored)
+    let core_len: usize = 202;
+    let stack_len: usize = 0;
+    // Total: 4×4 (string length prefixes) + 4 (core length) + core + 4 (stack length) + stack
     let total = 16 + 4 + core_len + 4 + stack_len;
     let mut data = vec![0u8; total];
 
@@ -318,7 +321,7 @@ pub fn pcb_pad_default() -> RecordOrigin {
     data[s + 11] = 0xFF;
     data[s + 12] = 0xFF; // ref5
 
-    // Subrecord 6 length at offset 20 + 172 = 192
+    // Subrecord 6 length at offset 20 + core_len
     let stack_offset = 20 + core_len;
     data[stack_offset..stack_offset + 4].copy_from_slice(&(stack_len as u32).to_le_bytes());
 
@@ -366,9 +369,9 @@ pub fn pcb_via_default() -> RecordOrigin {
 
 pub fn pcb_text_default() -> RecordOrigin {
     // Two-subrecord format:
-    // 1) u32 len + main text block (min 40 bytes)
+    // 1) u32 len + main text block (252 bytes in AD26)
     // 2) u32 len + text bytes (empty by default)
-    let sub1_len: usize = 40;
+    let sub1_len: usize = 252;
     let mut data = vec![0u8; 4 + sub1_len + 4];
     data[0..4].copy_from_slice(&(sub1_len as u32).to_le_bytes());
     let s = 4usize; // subrecord 1 payload start

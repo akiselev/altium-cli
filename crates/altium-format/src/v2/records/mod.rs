@@ -145,9 +145,12 @@ pub use pcb_via::PcbViaRecord;
 // ---------------------------------------------------------------------------
 
 pub(crate) use pcb_component_body::parse_component_body;
+pub(crate) use pcb_arc::parse_arc;
+pub(crate) use pcb_fill::parse_fill;
 pub(crate) use pcb_pad::parse_pad;
 pub(crate) use pcb_region::parse_region;
 pub(crate) use pcb_text::parse_text;
+pub(crate) use pcb_track::parse_track;
 pub(crate) use pcb_via::parse_via;
 
 // ---------------------------------------------------------------------------
