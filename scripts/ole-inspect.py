@@ -45,7 +45,7 @@ MODEL_PCB_OBJECT_IDS = {1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14}
 # Current v2 record coverage (crates/altium-format/src/v2/records)
 IMPLEMENTED_SCH_RECORD_IDS = {
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 22, 25, 26, 27, 28, 29, 30, 31,
-    32, 33, 34, 37, 39, 40, 41, 44, 45, 46, 47, 48, 209, 215,
+    32, 33, 34, 37, 39, 41, 43, 44, 45, 46, 47, 48, 209, 225,
 }
 IMPLEMENTED_PCB_OBJECT_IDS = {1, 2, 3, 4, 5, 6, 9, 11, 12}
 
@@ -401,12 +401,17 @@ def cmd_blocks(args: argparse.Namespace) -> int:
         blocks, err = parse_size_prefixed_blocks(data)
         if args.only_valid and err is not None:
             continue
+        if args.max_blocks is None:
+            selected_blocks = [asdict(b) for b in blocks]
+        else:
+            selected_blocks = [asdict(b) for b in blocks[: args.max_blocks]]
+
         stream_entry: dict[str, Any] = {
             "path": sp,
             "size": len(data),
             "kind": _classify_stream(sp, data),
             "block_parse_error": err,
-            "blocks": [asdict(b) for b in blocks[: args.max_blocks]],
+            "blocks": selected_blocks,
         }
         result["streams"].append(stream_entry)
     for sp, err in sorted(stream_read_errors.items()):
@@ -1165,7 +1170,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_blocks.add_argument("path", help="Path to an Altium OLE file.")
     sp_blocks.add_argument("--stream", help="Substring filter for stream path.")
     sp_blocks.add_argument("--only-valid", action="store_true", help="Show only streams that parse cleanly as block streams.")
-    sp_blocks.add_argument("--max-blocks", type=int, default=2000, help="Max blocks to show per stream.")
+    sp_blocks.add_argument(
+        "--max-blocks",
+        type=int,
+        default=None,
+        help="Max blocks to show per stream (default: all).",
+    )
     sp_blocks.add_argument("--preview", action="store_true", help="Show payload text/hex previews.")
     add_json_flags(sp_blocks)
     sp_blocks.set_defaults(func=cmd_blocks)
@@ -1219,7 +1229,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_everything = sub.add_parser("everything", help="Run container+blocks+text+pcb for one file.")
     sp_everything.add_argument("path", help="Path to an Altium OLE file.")
     sp_everything.add_argument("--stream", help="Substring filter for stream path.")
-    sp_everything.add_argument("--max-blocks", type=int, default=120, help="Max blocks printed per stream.")
+    sp_everything.add_argument(
+        "--max-blocks",
+        type=int,
+        default=None,
+        help="Max blocks printed per stream (default: all).",
+    )
     sp_everything.set_defaults(func=cmd_everything)
 
     return p
