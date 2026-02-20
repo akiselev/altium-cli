@@ -8,9 +8,11 @@
 //! backing store types are accessed.
 
 pub mod categorization;
+pub mod cfb_diff;
 pub mod helpers;
 pub mod output;
 pub mod pcbdoc;
 pub mod pcblib;
+pub mod rebuild;
 pub mod schdoc;
 pub mod schlib;

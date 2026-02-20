@@ -27,6 +27,15 @@ pub struct SchDoc {
 }
 
 impl SchDoc {
+    /// Create a new empty SchDoc document.
+    pub fn new_empty() -> Self {
+        let mut store = DocumentStore::new(DocumentMeta::SchDoc { header_raw: None });
+        store.set_semantic_context("dtid:schdoc", "");
+        Self {
+            store: std::rc::Rc::new(std::cell::RefCell::new(store)),
+        }
+    }
+
     /// Returns a reference to the underlying document store.
     pub fn store(&self) -> &DocRef {
         &self.store
@@ -103,6 +112,73 @@ impl SchDoc {
     /// Returns the number of components (groups) in the document.
     pub fn component_count(&self) -> usize {
         self.store.borrow().group_count()
+    }
+
+    /// Returns component handles in stable group order.
+    pub fn components(&self) -> Vec<crate::v2::handles::SchComponentHandle> {
+        let store = self.store.borrow();
+        store
+            .group_ids()
+            .iter()
+            .map(|&gid| crate::v2::handles::SchComponentHandle::new(self.store.clone(), gid))
+            .collect()
+    }
+
+    /// Returns orphan records in stable flat-stream order as `(record_id, record_ref)`.
+    pub fn orphan_records(&self) -> Vec<(u8, RecordId)> {
+        let store = self.store.borrow();
+        store
+            .orphan_ids()
+            .iter()
+            .map(|&rid| (store.record(rid).key, rid))
+            .collect()
+    }
+
+    /// Add a new orphan record using high-level typed record APIs only.
+    pub fn add_orphan_record<R>(&self, record: R) -> RecordId
+    where
+        R: crate::v2::traits::FromOrigin + crate::v2::traits::RecordType,
+    {
+        let mut store = self.store.borrow_mut();
+        let mut node = RecordNode::new(R::RECORD_ID, record.into_origin());
+        node.mark_dirty();
+        let rid = store.insert_record(node);
+        store.orphan_records.push(rid);
+        store.orphan_original_indices.push(usize::MAX);
+        store.mark_semantic_ids_dirty();
+        rid
+    }
+
+    /// Build and add a new component using the high-level component builder.
+    pub fn build_component(
+        &self,
+        template: fn() -> RecordOrigin,
+        build: impl FnOnce(&mut crate::v2::builders::ComponentBuilder),
+    ) -> crate::v2::handles::SchComponentHandle {
+        let mut builder = crate::v2::builders::ComponentBuilder::new(template);
+        build(&mut builder);
+
+        let (component, children) = builder.build();
+
+        let mut store = self.store.borrow_mut();
+        let parent_id = store.insert_record(component);
+        let mut child_ids = Vec::with_capacity(children.len());
+        for child in children {
+            let id = store.insert_record(child);
+            child_ids.push(id);
+        }
+        let child_len = child_ids.len();
+
+        let group_id = store.insert_group(GroupData {
+            parent: parent_id,
+            children: child_ids,
+            original_indices: vec![usize::MAX; child_len],
+            parent_original_index: None,
+            extra_streams: HashMap::new(),
+            meta: GroupMeta::SchDocComponent,
+        });
+        store.mark_semantic_ids_dirty();
+        crate::v2::handles::SchComponentHandle::new(self.store.clone(), group_id)
     }
 
     /// Count all records of a given type across groups and orphans.
@@ -794,5 +870,32 @@ mod tests {
         let parsed = parse_flat_stream(&out).unwrap();
         let keys: Vec<u8> = parsed.into_iter().map(|(_, node)| node.key).collect();
         assert_eq!(keys, vec![1, 31, 2]);
+    }
+
+    #[test]
+    fn new_empty_build_component_and_orphan() {
+        use crate::v2::newtypes::Designator;
+        use crate::v2::records::SchWireRecord;
+        use crate::v2::templates;
+
+        let doc = SchDoc::new_empty();
+        let comp = doc.build_component(templates::sch_component_default, |builder| {
+            builder.with_component(|c| {
+                c.set_designator(Designator::from("U1"));
+            });
+            builder.add_pin(templates::sch_pin_default, |p| {
+                p.set_designator(Designator::from("1"));
+            });
+        });
+
+        assert_eq!(doc.component_count(), 1);
+        assert_eq!(comp.children_len(), 1);
+
+        let orphan = SchWireRecord::from_origin(templates::sch_wire_default());
+        doc.add_orphan_record(orphan);
+        assert_eq!(doc.orphan_count(), 1);
+
+        let orphan_types: Vec<u8> = doc.orphan_records().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(orphan_types, vec![27]);
     }
 }

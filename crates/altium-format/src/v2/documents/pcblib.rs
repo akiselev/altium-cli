@@ -43,6 +43,18 @@ pub struct PcbLib {
 }
 
 impl PcbLib {
+    /// Create a new empty PcbLib document.
+    pub fn new_empty() -> Self {
+        let mut store = DocumentStore::new(DocumentMeta::PcbLib {
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        });
+        store.set_semantic_context("dtid:pcblib", "");
+        Self {
+            store: Rc::new(RefCell::new(store)),
+        }
+    }
+
     /// Returns a reference to the underlying document store.
     pub fn store(&self) -> &DocRef {
         &self.store
@@ -403,7 +415,7 @@ impl PcbLib {
         name: &str,
         template: fn() -> RecordOrigin,
         build: impl FnOnce(&mut crate::v2::builders::FootprintBuilder),
-    ) {
+    ) -> PcbFootprintHandle {
         let mut builder = crate::v2::builders::FootprintBuilder::new(template);
         build(&mut builder);
         let (metadata, primitives, primitive_refs) = builder.build();
@@ -433,8 +445,9 @@ impl PcbLib {
                 raw_header: Vec::new(),
             },
         };
-        store.insert_group(group_data);
+        let group_id = store.insert_group(group_data);
         store.mark_semantic_ids_dirty();
+        PcbFootprintHandle::new(self.store.clone(), group_id)
     }
 }
 

@@ -99,9 +99,58 @@ pub struct SchLib {
 }
 
 impl SchLib {
+    /// Create a new empty SchLib document.
+    pub fn new_empty() -> Self {
+        let mut store = DocumentStore::new(DocumentMeta::SchLib {
+            header_text: String::new(),
+            weight: 0,
+            minor_version: 0,
+            unique_id: String::new(),
+            raw_header: None,
+            raw_header_params: None,
+            section_keys: SectionKeyList::new(),
+            raw_extra_streams: HashMap::new(),
+        });
+        store.set_semantic_context("dtid:schlib", "");
+        Self {
+            store: Rc::new(RefCell::new(store)),
+        }
+    }
+
     /// Returns a reference to the underlying document store.
     pub fn store(&self) -> &DocRef {
         &self.store
+    }
+
+    /// Replace library header metadata used when writing `/FileHeader`.
+    ///
+    /// Raw header passthrough fields are intentionally cleared so subsequent
+    /// saves re-emit header text from modeled values.
+    pub fn set_header(&self, header: &SchLibHeader) {
+        let mut store = self.store.borrow_mut();
+        let mut did_doc_key: Option<String> = None;
+        if let DocumentMeta::SchLib {
+            header_text,
+            weight,
+            minor_version,
+            unique_id,
+            raw_header,
+            raw_header_params,
+            ..
+        } = &mut store.meta
+        {
+            *header_text = header.header_text.clone();
+            *weight = header.weight;
+            *minor_version = header.minor_version;
+            *unique_id = header.unique_id.clone();
+            *raw_header = None;
+            *raw_header_params = None;
+            did_doc_key = Some(unique_id.clone());
+            store.mark_semantic_ids_dirty();
+        }
+        if let Some(doc_key) = did_doc_key {
+            store.set_semantic_context("dtid:schlib", &doc_key);
+        }
     }
 
     /// Returns the stable document-level semantic ID, if computed.
@@ -541,7 +590,7 @@ impl SchLib {
         &self,
         template: fn() -> RecordOrigin,
         build: impl FnOnce(&mut crate::v2::builders::ComponentBuilder),
-    ) {
+    ) -> crate::v2::handles::SchComponentHandle {
         let mut builder = crate::v2::builders::ComponentBuilder::new(template);
         build(&mut builder);
 
@@ -576,8 +625,9 @@ impl SchLib {
             },
         };
 
-        store.insert_group(group_data);
+        let group_id = store.insert_group(group_data);
         store.mark_semantic_ids_dirty();
+        crate::v2::handles::SchComponentHandle::new(self.store.clone(), group_id)
     }
 }
 

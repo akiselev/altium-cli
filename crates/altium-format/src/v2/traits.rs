@@ -276,6 +276,16 @@ pub trait FromOrigin: Sized {
     fn into_origin(self) -> RecordOrigin;
 }
 
+/// Copy all modeled (getter/setter-backed) fields from `src` into `self`.
+///
+/// Implemented by `#[altium_record]` types. This enables from-scratch rebuild
+/// flows that transfer only high-level modeled data without reusing raw backing
+/// data blobs.
+pub trait ModeledFieldCopy: Sized {
+    /// Copy modeled fields from `src` to `self`.
+    fn copy_modeled_fields_from(&mut self, src: &Self);
+}
+
 // ---------------------------------------------------------------------------
 // HandleFamily trait
 // ---------------------------------------------------------------------------

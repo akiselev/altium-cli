@@ -7,5 +7,6 @@
 
 pub mod pcbdoc;
 pub mod pcblib;
+pub mod rebuild;
 pub mod schdoc;
 pub mod schlib;

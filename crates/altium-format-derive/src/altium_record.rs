@@ -539,6 +539,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
 fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<TokenStream> {
     let mut methods = Vec::new();
+    let mut copy_stmts = Vec::new();
 
     for field in fields {
         if field.attrs.skip {
@@ -570,6 +571,9 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
                     self.#setter_name(value);
                     result
                 }
+            });
+            copy_stmts.push(quote! {
+                self.#setter_name(src.#getter_name());
             });
         } else if let Some(ref key) = field.attrs.key {
             // Standard param key-based accessor
@@ -622,6 +626,9 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
                     result
                 }
             });
+            copy_stmts.push(quote! {
+                self.#setter_name(src.#getter_name());
+            });
         }
         // If neither key nor codec_fn, the field has no param accessor (e.g. header, trailing)
     }
@@ -629,6 +636,16 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
     Ok(quote! {
         impl #struct_name {
             #(#methods)*
+
+            pub fn copy_modeled_fields_from(&mut self, src: &Self) {
+                #(#copy_stmts)*
+            }
+        }
+
+        impl crate::v2::traits::ModeledFieldCopy for #struct_name {
+            fn copy_modeled_fields_from(&mut self, src: &Self) {
+                #struct_name::copy_modeled_fields_from(self, src);
+            }
         }
     })
 }
@@ -642,6 +659,7 @@ fn gen_binary_sequential_accessors(
     fields: &[FieldInfo],
 ) -> Result<TokenStream> {
     let mut methods = Vec::new();
+    let mut copy_stmts = Vec::new();
     let mut current_offset: usize = 0;
 
     for field in fields {
@@ -677,6 +695,9 @@ fn gen_binary_sequential_accessors(
                 #write_expr
             }
         });
+        copy_stmts.push(quote! {
+            self.#setter_name(src.#getter_name());
+        });
 
         current_offset += type_size;
     }
@@ -684,6 +705,16 @@ fn gen_binary_sequential_accessors(
     Ok(quote! {
         impl #struct_name {
             #(#methods)*
+
+            pub fn copy_modeled_fields_from(&mut self, src: &Self) {
+                #(#copy_stmts)*
+            }
+        }
+
+        impl crate::v2::traits::ModeledFieldCopy for #struct_name {
+            fn copy_modeled_fields_from(&mut self, src: &Self) {
+                #struct_name::copy_modeled_fields_from(self, src);
+            }
         }
     })
 }
@@ -695,6 +726,7 @@ fn gen_binary_sequential_accessors(
 fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<TokenStream> {
     let mut constants = Vec::new();
     let mut methods = Vec::new();
+    let mut copy_stmts = Vec::new();
     let mut field_index: usize = 0;
 
     for field in fields {
@@ -728,6 +760,9 @@ fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Res
                 #write_expr
             }
         });
+        copy_stmts.push(quote! {
+            self.#setter_name(src.#getter_name());
+        });
 
         field_index += 1;
     }
@@ -736,6 +771,16 @@ fn gen_binary_custom_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Res
         impl #struct_name {
             #(#constants)*
             #(#methods)*
+
+            pub fn copy_modeled_fields_from(&mut self, src: &Self) {
+                #(#copy_stmts)*
+            }
+        }
+
+        impl crate::v2::traits::ModeledFieldCopy for #struct_name {
+            fn copy_modeled_fields_from(&mut self, src: &Self) {
+                #struct_name::copy_modeled_fields_from(self, src);
+            }
         }
     })
 }

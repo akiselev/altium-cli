@@ -1,6 +1,7 @@
 //! Altium CLI - Command-line tool for inspecting and manipulating Altium files.
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 use crate::commands::{
     pcbdoc::PcbDocCommands, pcblib::PcbLibCommands, schdoc::SchDocCommands, schlib::SchLibCommands,
@@ -60,6 +61,13 @@ enum Commands {
         command: SchDocCommands,
     },
 
+    /// Rebuild file from high-level records and diff OLE streams
+    #[command(name = "rebuild")]
+    Rebuild {
+        /// Path to .SchLib/.PcbLib/.SchDoc/.PcbDoc file
+        path: PathBuf,
+    },
+
     // TODO: prjpcb and intlib commands disabled pending v2 migration
     // of their underlying document types.
     /// Generate shell completions
@@ -91,6 +99,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::SchDoc { command } => {
             crate::commands::schdoc::run(&command, format)?;
+        }
+        Commands::Rebuild { path } => {
+            crate::commands::rebuild::run(&path, format)?;
         }
         Commands::Completions { shell } => {
             use clap::CommandFactory;

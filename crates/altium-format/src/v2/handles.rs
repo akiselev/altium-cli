@@ -6,7 +6,7 @@
 
 use crate::v2::ids::{GroupId, RecordId};
 use crate::v2::store::DocRef;
-use crate::v2::traits::{FromOrigin, HandleFamily};
+use crate::v2::traits::{FromOrigin, HandleFamily, RecordType};
 
 // ---------------------------------------------------------------------------
 // Record handle macro
@@ -427,6 +427,18 @@ impl SchComponentHandle {
         store.mark_semantic_ids_dirty();
         record_id
     }
+
+    /// Insert a typed child record using high-level record APIs only.
+    ///
+    /// The record is converted into its backing origin internally and inserted
+    /// as a new child of this component.
+    pub fn add_child_record<R>(&self, record: R) -> RecordId
+    where
+        R: FromOrigin + RecordType,
+    {
+        let node = crate::v2::backing_store::RecordNode::new(R::RECORD_ID, record.into_origin());
+        self.add_record(node)
+    }
 }
 
 /// Handle to a PCB footprint group (metadata + primitives).
@@ -606,6 +618,18 @@ impl PcbFootprintHandle {
         store.mark_semantic_ids_dirty();
 
         record_id
+    }
+
+    /// Insert a typed primitive record using high-level record APIs only.
+    ///
+    /// The record is converted into its backing origin internally and inserted
+    /// as a new primitive of this footprint.
+    pub fn add_primitive_record<R>(&self, record: R) -> RecordId
+    where
+        R: FromOrigin + RecordType,
+    {
+        let node = crate::v2::backing_store::RecordNode::new(R::RECORD_ID, record.into_origin());
+        self.add_record(node)
     }
 }
 

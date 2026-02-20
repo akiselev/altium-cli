@@ -98,4 +98,21 @@ mod tests {
         assert_eq!(header.layer, 1);
         assert_eq!(header.net, 7);
     }
+
+    #[test]
+    fn copy_modeled_fields_from_copies_binary_fields() {
+        let mut src_data = vec![0u8; 35];
+        src_data[13..17].copy_from_slice(&111_000i32.to_le_bytes());
+        src_data[29..33].copy_from_slice(&12_000i32.to_le_bytes());
+        let src = PcbTrackRecord::from_origin(RecordOrigin::Binary(BinaryOrigin::new(src_data)));
+
+        let dst_data = vec![0u8; 35];
+        let mut dst =
+            PcbTrackRecord::from_origin(RecordOrigin::Binary(BinaryOrigin::new(dst_data)));
+
+        dst.copy_modeled_fields_from(&src);
+
+        assert_eq!(dst.start_x().to_raw(), 111_000);
+        assert_eq!(dst.width().to_raw(), 12_000);
+    }
 }

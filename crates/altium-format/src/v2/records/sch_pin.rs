@@ -158,4 +158,19 @@ mod tests {
         rec.set_name(PinName::from("GND"));
         assert_eq!(rec.name(), PinName::from("GND"));
     }
+
+    #[test]
+    fn copy_modeled_fields_from_copies_values() {
+        let src = SchPinRecord::from_origin(RecordOrigin::Param(ParamOrigin::new(
+            "|RECORD=2|Designator=7|Name=SCL|PinLength=40|",
+        )));
+        let mut dst = SchPinRecord::from_origin(RecordOrigin::Param(ParamOrigin::new(
+            "|RECORD=2|Designator=1|Name=VCC|PinLength=30|",
+        )));
+
+        dst.copy_modeled_fields_from(&src);
+
+        assert_eq!(dst.designator(), Designator::from("7"));
+        assert_eq!(dst.name(), PinName::from("SCL"));
+    }
 }
