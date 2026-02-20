@@ -26,4 +26,3 @@ altium-cli (binary: CLI interface, output formatting)
 **Versioning:** Synchronized versions (all crates at same version for initial releases).
 
 
-We are currently in the process of a large refactoring, moving from the v1 API to the V2 api. If there are any inconsistencies in the v2 plan as you are implementing it, ask me about the inconsistency and give me tradeoffs/pros/cons about the decision.
