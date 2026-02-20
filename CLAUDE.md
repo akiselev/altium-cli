@@ -40,3 +40,5 @@ When working on unimplemented record types, make sure to reference both the C# c
 The altium-format implementation details like ParamCollection, the FromOrigin/ToOrigin traits, and so on, MUST BE KEPT PRIVATE TO THE CRATE. THEY ARE IMPLEMENTATION DETAILS THAT MUST NOT BE EXPOSED TO THE OPS CRATE.
 
 The ENTIRE POINT OF THE REBUILD COMMANDS AND ROUND TRIPPING IS TO MAKE SURE OUR FILE FORMAT IS COMPLETE AND FULLY SUPPORTS THE ALTIUM FILE FORMAT. AVOID SILENTLY USING DEFAULTS AND UNWRAP_OR AND STUFF LIKE THAT. IF AN OPERATION CAN FAIL, THAT FUNCTION MUST ALWAYS RETURN Result<T, AltiumError>
+
+The REBUILD OPS COMMANDS MUST TEST THE TYPES! It must not use helpers, it should use the Builder and other high level types DIRECTLY.

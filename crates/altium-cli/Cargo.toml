@@ -14,6 +14,9 @@ authors = ["Alexander Kiselev <alex@akiselev.com>"]
 keywords = ["altium", "eda", "pcb", "schematic", "cli"]
 categories = ["command-line-utilities"]
 
+[lints]
+workspace = true
+
 [dependencies]
 altium-format = { version = "0.1.0", path = "../altium-format" }
 altium-format-ops = { version = "0.1.0", path = "../altium-format-ops" }

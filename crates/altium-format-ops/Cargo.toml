@@ -10,6 +10,9 @@ repository = "https://github.com/akiselev/altium-cli"
 homepage = "https://github.com/akiselev/altium-cli"
 authors = ["Alexander Kiselev <alex@akiselev.com>"]
 
+[lints]
+workspace = true
+
 [dependencies]
 altium-format = { version = "0.1.8", path = "../altium-format" }
 serde = { version = "1.0", features = ["derive"] }
