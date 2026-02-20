@@ -154,10 +154,11 @@ fn record_type_name(id: u8) -> &'static str {
         39 => "SheetSymbol",
         40 => "SheetEntry",
         41 => "Parameter",
+        43 => "TaskHolder",
         44 => "ImplementationList",
         45 => "Implementation",
         209 => "Note",
-        215 => "Blanket",
+        225 => "Blanket",
         _ => "Unknown",
     }
 }

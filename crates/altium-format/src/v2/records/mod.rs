@@ -55,6 +55,7 @@ pub mod sch_sheet_filename;
 pub mod sch_sheet_name;
 pub mod sch_sheet_symbol;
 pub mod sch_symbol;
+pub mod sch_task_holder;
 pub mod sch_text_frame;
 pub mod sch_wire;
 
@@ -109,6 +110,7 @@ pub use sch_sheet_filename::SchSheetFileNameRecord;
 pub use sch_sheet_name::SchSheetNameRecord;
 pub use sch_sheet_symbol::SchSheetSymbolRecord;
 pub use sch_symbol::SchSymbolRecord;
+pub use sch_task_holder::SchTaskHolderRecord;
 pub use sch_text_frame::SchTextFrameRecord;
 pub use sch_wire::SchWireRecord;
 
@@ -160,6 +162,16 @@ pub(crate) use pcb_via::parse_via;
 /// Get the record ID from a parameter collection.
 pub fn record_id_for_params(params: &crate::v2::parameters::ParameterCollection) -> Option<u8> {
     params.get("RECORD").map(|v| v.as_int_or(0) as u8)
+}
+
+/// Returns true when the schematic record ID has a typed v2 model.
+pub(crate) fn is_supported_sch_record_id(record_id: u8) -> bool {
+    matches!(
+        record_id,
+        1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 11 | 12 | 13 | 14 | 17 | 18 | 22 | 25 | 26 | 27
+            | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 37 | 39 | 41 | 43 | 44 | 45 | 46 | 47 | 48
+            | 209 | 225
+    )
 }
 
 // ---------------------------------------------------------------------------

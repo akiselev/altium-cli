@@ -37,14 +37,14 @@ pub struct PcbViaRecord {
 /// Parse via data from the raw binary block.
 ///
 /// Via data is a single block with core fields at fixed offsets.
-/// Optional extended fields are present when the data is long enough.
+/// Strict AD26 parser requires extended fields.
 pub(crate) fn parse_via(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::error::AltiumError;
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
-    if data.len() < 31 {
+    if data.len() < 75 {
         return Err(AltiumError::Parse(format!(
-            "via data too short: {} bytes (need >= 31)",
+            "via data too short: {} bytes (need >= 75 for AD26)",
             data.len()
         )));
     }
@@ -60,20 +60,8 @@ pub(crate) fn parse_via(data: &[u8]) -> crate::Result<crate::v2::backing_store::
         FieldSpan::new(30, 1), // 5: layer_end
     ];
 
-    // via_mode at offset 74 (if data is long enough)
-    if data.len() > 74 {
-        spans.push(FieldSpan::new(74, 1)); // 6: via_mode
-    } else {
-        // Point to a safe zero byte at end of core
-        spans.push(FieldSpan::new(30, 1)); // 6: via_mode (fallback, reads layer_end)
-    }
-
-    // soldermask_expansion_manual at offset 66 bit 1
-    if data.len() > 66 {
-        spans.push(FieldSpan::new(66, 1)); // 7: soldermask_expansion_manual
-    } else {
-        spans.push(FieldSpan::new(30, 1)); // 7: fallback
-    }
+    spans.push(FieldSpan::new(74, 1)); // 6: via_mode
+    spans.push(FieldSpan::new(66, 1)); // 7: soldermask_expansion_manual
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
         BinaryOrigin::with_spans(data.to_vec(), spans),

@@ -1,7 +1,7 @@
 //! PCB Text record type for the v2 API.
 //!
 //! The text record consists of 2 subrecords:
-//! 1. Main text data (252 bytes in AD26, minimum 40)
+//! 1. Main text data (252 bytes in AD26, minimum 111 for modeled fields)
 //! 2. Text string (variable length, null-terminated ASCII)
 //!
 //! Uses custom parse/serialize functions stubbed for Phase 4.
@@ -42,7 +42,7 @@ pub struct PcbTextRecord {
 
 /// Parse text data from the raw binary block (2 subrecords).
 ///
-/// Subrecord 1: Main text data (u32 len + data, 252 bytes in AD26, min 40)
+/// Subrecord 1: Main text data (u32 len + data, 252 bytes in AD26, min 111)
 /// Subrecord 2: Text string (u32 len + null-terminated ASCII)
 ///
 /// Typed fields are extracted from subrecord 1 at fixed offsets.
@@ -64,9 +64,9 @@ pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store:
             "text subrecord 1 extends beyond data".into(),
         ));
     }
-    if sub1_len < 40 {
+    if sub1_len < 111 {
         return Err(AltiumError::Parse(format!(
-            "text subrecord 1 too short: {} bytes (need >= 40)",
+            "text subrecord 1 too short: {} bytes (need >= 111 for AD26)",
             sub1_len
         )));
     }
@@ -84,31 +84,12 @@ pub(crate) fn parse_text(data: &[u8]) -> crate::Result<crate::v2::backing_store:
         FieldSpan::new(s + 36, 4), // 6: stroke_width
     ];
 
-    // Extended fields (if subrecord 1 >= 46 bytes)
-    if sub1_len >= 46 {
-        spans.push(FieldSpan::new(s + 43, 1)); // 7: font_type
-        spans.push(FieldSpan::new(s + 44, 1)); // 8: is_bold
-        spans.push(FieldSpan::new(s + 45, 1)); // 9: is_italic
-    } else {
-        // Fallback spans for missing extended fields
-        spans.push(FieldSpan::new(s + 35, 1)); // 7: font_type (fallback)
-        spans.push(FieldSpan::new(s + 35, 1)); // 8: is_bold (fallback)
-        spans.push(FieldSpan::new(s + 35, 1)); // 9: is_italic (fallback)
-    }
-
-    if sub1_len > 110 {
-        spans.push(FieldSpan::new(s + 110, 1)); // 10: is_inverted
-    } else {
-        spans.push(FieldSpan::new(s + 35, 1)); // 10: fallback
-    }
-
-    if sub1_len >= 46 {
-        spans.push(FieldSpan::new(s + 40, 1)); // 11: is_comment
-        spans.push(FieldSpan::new(s + 41, 1)); // 12: is_designator
-    } else {
-        spans.push(FieldSpan::new(s + 35, 1)); // 11: fallback
-        spans.push(FieldSpan::new(s + 35, 1)); // 12: fallback
-    }
+    spans.push(FieldSpan::new(s + 43, 1)); // 7: font_type
+    spans.push(FieldSpan::new(s + 44, 1)); // 8: is_bold
+    spans.push(FieldSpan::new(s + 45, 1)); // 9: is_italic
+    spans.push(FieldSpan::new(s + 110, 1)); // 10: is_inverted
+    spans.push(FieldSpan::new(s + 40, 1)); // 11: is_comment
+    spans.push(FieldSpan::new(s + 41, 1)); // 12: is_designator
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
         BinaryOrigin::with_spans(data.to_vec(), spans),

@@ -6,7 +6,6 @@
 //! Rebuilds supported Altium documents into a temp file using typed record
 //! getters/setters and templates, then diffs original vs rebuilt CFB streams.
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +24,7 @@ use altium_format::v2::handles::{
     SchParameterHandle, SchPieHandle, SchPinHandle, SchPolygonHandle, SchPolylineHandle,
     SchPortHandle, SchPowerHandle, SchRectangleHandle, SchRoundRectangleHandle,
     SchSheetEntryHandle, SchSheetFileNameHandle, SchSheetHandle, SchSheetNameHandle,
-    SchSheetSymbolHandle, SchSymbolHandle, SchTextFrameHandle, SchWireHandle,
+    SchSheetSymbolHandle, SchSymbolHandle, SchTaskHolderHandle, SchTextFrameHandle, SchWireHandle,
 };
 use altium_format::v2::records::{
     PcbArcRecord, PcbComponentBodyRecord, PcbFillRecord, PcbPadRecord, PcbRegionRecord,
@@ -37,7 +36,7 @@ use altium_format::v2::records::{
     SchParameterRecord, SchPieRecord, SchPinRecord, SchPolygonRecord, SchPolylineRecord,
     SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
-    SchSheetSymbolRecord, SchSymbolRecord, SchTextFrameRecord, SchWireRecord,
+    SchSheetSymbolRecord, SchSymbolRecord, SchTaskHolderRecord, SchTextFrameRecord, SchWireRecord,
 };
 use altium_format::v2::templates;
 use altium_format::v2::traits::{DocumentQuery, RecordType};
@@ -129,30 +128,6 @@ fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Bo
     Ok(output.to_path_buf())
 }
 
-fn add_skip(
-    skips: &mut BTreeMap<(String, u8, String), usize>,
-    context: &str,
-    record_id: u8,
-    reason: &str,
-) {
-    let key = (context.to_string(), record_id, reason.to_string());
-    *skips.entry(key).or_insert(0) += 1;
-}
-
-fn finalize_skips(skips: BTreeMap<(String, u8, String), usize>) -> Vec<SkippedRecordSummary> {
-    skips
-        .into_iter()
-        .map(
-            |((context, record_id, reason), count)| SkippedRecordSummary {
-                context,
-                record_id,
-                reason,
-                count,
-            },
-        )
-        .collect()
-}
-
 /// Preserve source text-record trailing-NUL affinity for keys whose parsed
 /// value includes `\0` in the source backing store.
 fn copy_param_nul_suffix_from_source<T: RecordType>(
@@ -226,19 +201,20 @@ fn copy_all_param_values_from_source<T: RecordType>(
 }
 
 macro_rules! copy_sch_record {
-    ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $skips:expr, $context:expr) => {{
+    ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
         macro_rules! emit_sch {
             ($dst:ident) => {{
                 copy_param_nul_suffix_from_source(&mut $dst, &$src_store, $rid);
                 $emit!($dst);
             }};
         }
-        match $type_id {
+        let copy_result: std::result::Result<(), String> = match $type_id {
             <SchPinRecord as RecordType>::RECORD_ID => {
                 let src = SchPinHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPinRecord::from_origin(templates::sch_pin_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchArcRecord as RecordType>::RECORD_ID => {
                 let src = SchArcHandle::new($src_store.clone(), $rid).read();
@@ -246,12 +222,14 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_geometry_encoding_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchLineRecord as RecordType>::RECORD_ID => {
                 let src = SchLineHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchLineRecord::from_origin(templates::sch_line_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchRectangleRecord as RecordType>::RECORD_ID => {
                 let src = SchRectangleHandle::new($src_store.clone(), $rid).read();
@@ -259,6 +237,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_coordinate_encoding_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchBezierRecord as RecordType>::RECORD_ID => {
                 let src = SchBezierHandle::new($src_store.clone(), $rid).read();
@@ -266,6 +245,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_vertices_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchPolylineRecord as RecordType>::RECORD_ID => {
                 let src = SchPolylineHandle::new($src_store.clone(), $rid).read();
@@ -273,6 +253,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_vertices_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchPolygonRecord as RecordType>::RECORD_ID => {
                 let src = SchPolygonHandle::new($src_store.clone(), $rid).read();
@@ -280,6 +261,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_vertices_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchEllipseRecord as RecordType>::RECORD_ID => {
                 let src = SchEllipseHandle::new($src_store.clone(), $rid).read();
@@ -287,6 +269,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_coordinate_encoding_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchPieRecord as RecordType>::RECORD_ID => {
                 let src = SchPieHandle::new($src_store.clone(), $rid).read();
@@ -294,6 +277,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_geometry_encoding_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchRoundRectangleRecord as RecordType>::RECORD_ID => {
                 let src = SchRoundRectangleHandle::new($src_store.clone(), $rid).read();
@@ -301,6 +285,7 @@ macro_rules! copy_sch_record {
                     SchRoundRectangleRecord::from_origin(templates::sch_round_rectangle_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchEllipticalArcRecord as RecordType>::RECORD_ID => {
                 let src = SchEllipticalArcHandle::new($src_store.clone(), $rid).read();
@@ -309,18 +294,21 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_geometry_encoding_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchImageRecord as RecordType>::RECORD_ID => {
                 let src = SchImageHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchImageRecord::from_origin(templates::sch_image_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchDesignatorRecord as RecordType>::RECORD_ID => {
                 let src = SchDesignatorHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchDesignatorRecord::from_origin(templates::sch_designator_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchParameterRecord as RecordType>::RECORD_ID => {
                 let src = SchParameterHandle::new($src_store.clone(), $rid).read();
@@ -328,42 +316,49 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.append_hidden_duplicate_for_export();
                 emit_sch!(dst);
+                Ok(())
             }
             <SchSymbolRecord as RecordType>::RECORD_ID => {
                 let src = SchSymbolHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchSymbolRecord::from_origin(templates::sch_symbol_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchLabelRecord as RecordType>::RECORD_ID => {
                 let src = SchLabelHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchLabelRecord::from_origin(templates::sch_label_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchPowerRecord as RecordType>::RECORD_ID => {
                 let src = SchPowerHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPowerRecord::from_origin(templates::sch_power_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchPortRecord as RecordType>::RECORD_ID => {
                 let src = SchPortHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchPortRecord::from_origin(templates::sch_port_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchNoERCRecord as RecordType>::RECORD_ID => {
                 let src = SchNoERCHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchNoERCRecord::from_origin(templates::sch_no_erc_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchNetLabelRecord as RecordType>::RECORD_ID => {
                 let src = SchNetLabelHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchNetLabelRecord::from_origin(templates::sch_net_label_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchBusRecord as RecordType>::RECORD_ID => {
                 let src = SchBusHandle::new($src_store.clone(), $rid).read();
@@ -371,6 +366,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_vertices_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchWireRecord as RecordType>::RECORD_ID => {
                 let src = SchWireHandle::new($src_store.clone(), $rid).read();
@@ -378,30 +374,35 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_vertices_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchTextFrameRecord as RecordType>::RECORD_ID => {
                 let src = SchTextFrameHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchTextFrameRecord::from_origin(templates::sch_text_frame_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchJunctionRecord as RecordType>::RECORD_ID => {
                 let src = SchJunctionHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchJunctionRecord::from_origin(templates::sch_junction_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchSheetRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchSheetRecord::from_origin(templates::sch_sheet_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchSheetNameRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetNameHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchSheetNameRecord::from_origin(templates::sch_sheet_name_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchSheetFileNameRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetFileNameHandle::new($src_store.clone(), $rid).read();
@@ -409,12 +410,14 @@ macro_rules! copy_sch_record {
                     SchSheetFileNameRecord::from_origin(templates::sch_sheet_filename_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchBusEntryRecord as RecordType>::RECORD_ID => {
                 let src = SchBusEntryHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchBusEntryRecord::from_origin(templates::sch_bus_entry_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchSheetSymbolRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetSymbolHandle::new($src_store.clone(), $rid).read();
@@ -422,6 +425,7 @@ macro_rules! copy_sch_record {
                     SchSheetSymbolRecord::from_origin(templates::sch_sheet_symbol_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchSheetEntryRecord as RecordType>::RECORD_ID => {
                 let src = SchSheetEntryHandle::new($src_store.clone(), $rid).read();
@@ -429,6 +433,7 @@ macro_rules! copy_sch_record {
                     SchSheetEntryRecord::from_origin(templates::sch_sheet_entry_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchImplementationListRecord as RecordType>::RECORD_ID => {
                 let src = SchImplementationListHandle::new($src_store.clone(), $rid).read();
@@ -437,6 +442,7 @@ macro_rules! copy_sch_record {
                 );
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchImplementationRecord as RecordType>::RECORD_ID => {
                 let src = SchImplementationHandle::new($src_store.clone(), $rid).read();
@@ -445,6 +451,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.set_datafile_links(&src.datafile_links());
                 emit_sch!(dst);
+                Ok(())
             }
             <SchMapDefinerListRecord as RecordType>::RECORD_ID => {
                 let src = SchMapDefinerListHandle::new($src_store.clone(), $rid).read();
@@ -452,6 +459,7 @@ macro_rules! copy_sch_record {
                     SchMapDefinerListRecord::from_origin(templates::sch_map_definer_list_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchMapDefinerRecord as RecordType>::RECORD_ID => {
                 let src = SchMapDefinerHandle::new($src_store.clone(), $rid).read();
@@ -460,6 +468,7 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.set_implementation_designators(&src.implementation_designators());
                 emit_sch!(dst);
+                Ok(())
             }
             <SchImplementationParametersRecord as RecordType>::RECORD_ID => {
                 let src = SchImplementationParametersHandle::new($src_store.clone(), $rid).read();
@@ -468,12 +477,22 @@ macro_rules! copy_sch_record {
                 );
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
             <SchNoteRecord as RecordType>::RECORD_ID => {
                 let src = SchNoteHandle::new($src_store.clone(), $rid).read();
                 let mut dst = SchNoteRecord::from_origin(templates::sch_note_default());
                 dst.copy_modeled_fields_from(&src);
                 emit_sch!(dst);
+                Ok(())
+            }
+            <SchTaskHolderRecord as RecordType>::RECORD_ID => {
+                let src = SchTaskHolderHandle::new($src_store.clone(), $rid).read();
+                let mut dst =
+                    SchTaskHolderRecord::from_origin(templates::sch_task_holder_default());
+                dst.copy_modeled_fields_from(&src);
+                emit_sch!(dst);
+                Ok(())
             }
             <SchBlanketRecord as RecordType>::RECORD_ID => {
                 let src = SchBlanketHandle::new($src_store.clone(), $rid).read();
@@ -481,86 +500,88 @@ macro_rules! copy_sch_record {
                 dst.copy_modeled_fields_from(&src);
                 dst.copy_vertices_from(&src);
                 emit_sch!(dst);
+                Ok(())
             }
-            _ => {
-                add_skip(
-                    $skips,
-                    $context,
-                    $type_id,
-                    "no typed template copier implemented",
-                );
-            }
-        }
+            _ => Err(format!(
+                "{}: unimplemented schematic record_id={}",
+                $context, $type_id
+            )),
+        };
+        copy_result
     }};
 }
 
 macro_rules! copy_pcb_record {
-    ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $skips:expr, $context:expr) => {{
-        match $type_id {
+    ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
+        let copy_result: std::result::Result<(), String> = match $type_id {
             <PcbArcRecord as RecordType>::RECORD_ID => {
                 let src = PcbArcHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbArcRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbPadRecord as RecordType>::RECORD_ID => {
                 let src = PcbPadHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbPadRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbViaRecord as RecordType>::RECORD_ID => {
                 let src = PcbViaHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbViaRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbTrackRecord as RecordType>::RECORD_ID => {
                 let src = PcbTrackHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbTrackRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbTextRecord as RecordType>::RECORD_ID => {
                 let src = PcbTextHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbTextRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbFillRecord as RecordType>::RECORD_ID => {
                 let src = PcbFillHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbFillRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbRegionRecord as RecordType>::RECORD_ID => {
                 let src = PcbRegionHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbRegionRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
             <PcbComponentBodyRecord as RecordType>::RECORD_ID => {
                 let src = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
                 let mut dst = PcbComponentBodyRecord::from_origin(src.origin().clone());
                 dst.copy_modeled_fields_from(&src);
                 $emit!(dst);
+                Ok(())
             }
-            _ => {
-                add_skip(
-                    $skips,
-                    $context,
-                    $type_id,
-                    "no typed template copier implemented",
-                );
-            }
-        }
+            _ => Err(format!(
+                "{}: unimplemented pcb object_id={}",
+                $context, $type_id
+            )),
+        };
+        copy_result
     }};
 }
 
 fn rebuild_schlib(
     path: &Path,
     out: &Path,
-    skips: &mut BTreeMap<(String, u8, String), usize>,
 ) -> Result<(), Box<dyn Error>> {
     let src = SchLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchLib::new_empty();
@@ -591,56 +612,19 @@ fn rebuild_schlib(
                 store.record(rid).origin.is_binary()
             };
             if is_binary {
-                if type_id == <SchPinRecord as RecordType>::RECORD_ID {
-                    let decoded = {
-                        let store = src_store.borrow();
-                        store.record(rid).origin.as_binary().and_then(|b| {
-                            SchPinRecord::from_legacy_binary_record_data(&b.raw_block)
-                        })
-                    };
-                    if let Some(pin) = decoded {
-                        dst_comp.add_child_record(pin);
-                    } else {
-                        add_skip(
-                            skips,
-                            "schlib:component-child",
-                            type_id,
-                            "failed to decode legacy binary sch pin",
-                        );
-                    }
-                } else {
-                    add_skip(
-                        skips,
-                        "schlib:component-child",
-                        type_id,
-                        "record origin is binary but schematic copier expects params",
-                    );
-                }
-                continue;
+                return Err(format!(
+                    "schlib:component-child: record_id={} has binary origin (strict AD26 mode)",
+                    type_id
+                )
+                .into());
             }
             macro_rules! emit_child {
                 ($rec:expr) => {{
                     dst_comp.add_child_record($rec);
                 }};
             }
-            let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                copy_sch_record!(
-                    type_id,
-                    rid,
-                    src_store,
-                    emit_child,
-                    skips,
-                    "schlib:component-child"
-                );
-            }));
-            if copied.is_err() {
-                add_skip(
-                    skips,
-                    "schlib:component-child",
-                    type_id,
-                    "panic while copying typed record",
-                );
-            }
+            copy_sch_record!(type_id, rid, src_store, emit_child, "schlib:component-child")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
     }
 
@@ -656,23 +640,19 @@ fn rebuild_schlib(
 fn rebuild_pcblib(
     path: &Path,
     out: &Path,
-    skips: &mut BTreeMap<(String, u8, String), usize>,
 ) -> Result<(), Box<dyn Error>> {
     let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbLib::new_empty();
-    dst.set_library_extra_streams(src.library_extra_streams());
 
     let src_store = src.store().clone();
     let names = src.names();
     for name in names {
         let Some(src_fp) = src.find_footprint(&name) else {
-            add_skip(
-                skips,
-                "pcblib:footprint",
-                0,
-                "footprint not found by name during rebuild",
-            );
-            continue;
+            return Err(format!(
+                "pcblib:footprint: footprint '{}' not found by name during rebuild",
+                name
+            )
+            .into());
         };
 
         let src_meta = src_fp.read();
@@ -680,7 +660,6 @@ fn rebuild_pcblib(
             let store = src_store.borrow();
             store.group(src_fp.group_id()).parent_id()
         };
-        let src_passthrough = src_fp.storage_passthrough();
         let dst_fp = dst.build_footprint(&name, templates::pcb_footprint_default, |builder| {
             builder.with_metadata(|meta| {
                 meta.copy_modeled_fields_from(&src_meta);
@@ -688,7 +667,6 @@ fn rebuild_pcblib(
                 copy_param_nul_suffix_from_source(meta, &src_store, src_meta_id);
             });
         });
-        dst_fp.set_storage_passthrough(src_passthrough);
 
         for (type_id, rid) in src_fp.all_children() {
             let is_binary = {
@@ -696,37 +674,19 @@ fn rebuild_pcblib(
                 store.record(rid).origin.is_binary()
             };
             if !is_binary {
-                add_skip(
-                    skips,
-                    "pcblib:primitive",
-                    type_id,
-                    "record origin is params but pcb copier expects binary",
-                );
-                continue;
+                return Err(format!(
+                    "pcblib:primitive: object_id={} has params origin (expected binary)",
+                    type_id
+                )
+                .into());
             }
             macro_rules! emit_prim {
                 ($rec:expr) => {{
                     dst_fp.add_primitive_record($rec);
                 }};
             }
-            let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                copy_pcb_record!(
-                    type_id,
-                    rid,
-                    src_store,
-                    emit_prim,
-                    skips,
-                    "pcblib:primitive"
-                );
-            }));
-            if copied.is_err() {
-                add_skip(
-                    skips,
-                    "pcblib:primitive",
-                    type_id,
-                    "panic while copying typed record",
-                );
-            }
+            copy_pcb_record!(type_id, rid, src_store, emit_prim, "pcblib:primitive")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
     }
 
@@ -742,7 +702,6 @@ fn rebuild_pcblib(
 fn rebuild_schdoc(
     path: &Path,
     out: &Path,
-    skips: &mut BTreeMap<(String, u8, String), usize>,
 ) -> Result<(), Box<dyn Error>> {
     let src = SchDoc::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchDoc::new_empty();
@@ -768,56 +727,19 @@ fn rebuild_schdoc(
                 store.record(rid).origin.is_binary()
             };
             if is_binary {
-                if type_id == <SchPinRecord as RecordType>::RECORD_ID {
-                    let decoded = {
-                        let store = src_store.borrow();
-                        store.record(rid).origin.as_binary().and_then(|b| {
-                            SchPinRecord::from_legacy_binary_record_data(&b.raw_block)
-                        })
-                    };
-                    if let Some(pin) = decoded {
-                        dst_comp.add_child_record(pin);
-                    } else {
-                        add_skip(
-                            skips,
-                            "schdoc:component-child",
-                            type_id,
-                            "failed to decode legacy binary sch pin",
-                        );
-                    }
-                } else {
-                    add_skip(
-                        skips,
-                        "schdoc:component-child",
-                        type_id,
-                        "record origin is binary but schematic copier expects params",
-                    );
-                }
-                continue;
+                return Err(format!(
+                    "schdoc:component-child: record_id={} has binary origin (strict AD26 mode)",
+                    type_id
+                )
+                .into());
             }
             macro_rules! emit_child {
                 ($rec:expr) => {{
                     dst_comp.add_child_record($rec);
                 }};
             }
-            let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                copy_sch_record!(
-                    type_id,
-                    rid,
-                    src_store,
-                    emit_child,
-                    skips,
-                    "schdoc:component-child"
-                );
-            }));
-            if copied.is_err() {
-                add_skip(
-                    skips,
-                    "schdoc:component-child",
-                    type_id,
-                    "panic while copying typed record",
-                );
-            }
+            copy_sch_record!(type_id, rid, src_store, emit_child, "schdoc:component-child")
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
         }
     }
 
@@ -827,50 +749,19 @@ fn rebuild_schdoc(
             store.record(rid).origin.is_binary()
         };
         if is_binary {
-            if type_id == <SchPinRecord as RecordType>::RECORD_ID {
-                let decoded =
-                    {
-                        let store = src_store.borrow();
-                        store.record(rid).origin.as_binary().and_then(|b| {
-                            SchPinRecord::from_legacy_binary_record_data(&b.raw_block)
-                        })
-                    };
-                if let Some(pin) = decoded {
-                    dst.add_orphan_record(pin);
-                } else {
-                    add_skip(
-                        skips,
-                        "schdoc:orphan",
-                        type_id,
-                        "failed to decode legacy binary sch pin",
-                    );
-                }
-            } else {
-                add_skip(
-                    skips,
-                    "schdoc:orphan",
-                    type_id,
-                    "record origin is binary but schematic copier expects params",
-                );
-            }
-            continue;
+            return Err(format!(
+                "schdoc:orphan: record_id={} has binary origin (strict AD26 mode)",
+                type_id
+            )
+            .into());
         }
         macro_rules! emit_orphan {
             ($rec:expr) => {{
                 dst.add_orphan_record($rec);
             }};
         }
-        let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            copy_sch_record!(type_id, rid, src_store, emit_orphan, skips, "schdoc:orphan");
-        }));
-        if copied.is_err() {
-            add_skip(
-                skips,
-                "schdoc:orphan",
-                type_id,
-                "panic while copying typed record",
-            );
-        }
+        copy_sch_record!(type_id, rid, src_store, emit_orphan, "schdoc:orphan")
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
     }
 
     if let Some(parent) = out.parent() {
@@ -895,13 +786,12 @@ pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, 
 
     let _panic_hook_silencer = PanicHookSilencer::install();
 
-    let mut skips: BTreeMap<(String, u8, String), usize> = BTreeMap::new();
     let rebuilt_path = resolve_rebuild_path(path, output)?;
 
     match file_type {
-        "SchLib" => rebuild_schlib(path, &rebuilt_path, &mut skips)?,
-        "PcbLib" => rebuild_pcblib(path, &rebuilt_path, &mut skips)?,
-        "SchDoc" => rebuild_schdoc(path, &rebuilt_path, &mut skips)?,
+        "SchLib" => rebuild_schlib(path, &rebuilt_path)?,
+        "PcbLib" => rebuild_pcblib(path, &rebuilt_path)?,
+        "SchDoc" => rebuild_schdoc(path, &rebuilt_path)?,
         _ => return Err(format!("Unsupported file type: {}", file_type).into()),
     };
 
@@ -913,7 +803,7 @@ pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, 
         file_type: file_type.to_string(),
         source_path: path.display().to_string(),
         rebuilt_path: rebuilt_path.display().to_string(),
-        skipped_records: finalize_skips(skips),
+        skipped_records: Vec::new(),
         diff,
     })
 }

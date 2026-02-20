@@ -271,6 +271,9 @@ pub struct RecordNode {
     pub original_snapshot: Vec<u8>,
     /// Whether this record has been modified since parsing.
     pub dirty: bool,
+    /// Origin stream name for formats with multiple record streams (e.g. SchDoc).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_name: Option<String>,
 }
 
 impl RecordNode {
@@ -285,6 +288,7 @@ impl RecordNode {
             origin,
             original_snapshot: snapshot,
             dirty: false,
+            stream_name: None,
         }
     }
 

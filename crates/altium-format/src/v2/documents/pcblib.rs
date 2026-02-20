@@ -16,9 +16,7 @@ use std::rc::Rc;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::error::{AltiumError, Result};
-use crate::v2::backing_store::{
-    BinaryOrigin, ParamOrigin, PcbPrimitiveRef, RecordNode, RecordOrigin,
-};
+use crate::v2::backing_store::{ParamOrigin, PcbPrimitiveRef, RecordNode, RecordOrigin};
 use crate::v2::handles::PcbFootprintHandle;
 use crate::v2::ids::RecordId;
 use crate::v2::records::{
@@ -646,7 +644,7 @@ fn subrecord_count(type_id: u8) -> usize {
 ///
 /// For types that have custom parse functions (Arc=1, Via=3, Track=4,
 /// Fill=6, Region=11, ComponentBody=12), calls the appropriate parser to
-/// populate field_spans. Unknown types are preserved as raw binary.
+/// populate field_spans.
 fn parse_single_subrecord_origin(
     type_byte: u8,
     block_data: Vec<u8>,
@@ -658,15 +656,17 @@ fn parse_single_subrecord_origin(
         6 => parse_fill(&block_data),
         11 => parse_region(&block_data),
         12 => parse_component_body(&block_data),
-        _ => Ok(RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        _ => Err(AltiumError::Parse(format!(
+            "unimplemented PCB primitive object_id={} in single-subrecord stream",
+            type_byte
+        ))),
     }
 }
 
 /// Build a `RecordOrigin` for a multi-subrecord PCB primitive.
 ///
 /// For types that have custom parse functions (Pad=2, Text=5), calls the
-/// appropriate parser to populate field_spans. Unknown types are preserved as
-/// raw binary.
+/// appropriate parser to populate field_spans.
 fn parse_multi_subrecord_origin(
     type_byte: u8,
     block_data: Vec<u8>,
@@ -674,7 +674,10 @@ fn parse_multi_subrecord_origin(
     match type_byte {
         2 => parse_pad(&block_data),
         5 => parse_text(&block_data),
-        _ => Ok(RecordOrigin::Binary(BinaryOrigin::new(block_data))),
+        _ => Err(AltiumError::Parse(format!(
+            "unimplemented PCB primitive object_id={} in multi-subrecord stream",
+            type_byte
+        ))),
     }
 }
 

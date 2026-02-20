@@ -18,7 +18,7 @@ use crate::error::{AltiumError, Result};
 use crate::v2::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
 use crate::v2::ids::GroupId;
 use crate::v2::parameters::ParameterCollection;
-use crate::v2::records::{SchComponentRecord, SchPinRecord};
+use crate::v2::records::{SchComponentRecord, SchPinRecord, is_supported_sch_record_id};
 use crate::v2::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
 use crate::v2::traits::{HandleFamily, RecordType};
 
@@ -1115,37 +1115,59 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
     let total_len = data.len() as u64;
 
     while cursor.position() < total_len {
+        let block_offset = cursor.position() as usize;
         let mut len_buf = [0u8; 4];
         if Read::read_exact(&mut cursor, &mut len_buf).is_err() {
-            break;
+            return Err(AltiumError::Parse(format!(
+                "schlib data stream truncated at block header offset {}",
+                block_offset
+            )));
         }
         let size_raw = u32::from_le_bytes(len_buf);
         let is_binary = (size_raw & !SIZE_FLAG_MASK) != 0;
         let record_len = (size_raw & SIZE_FLAG_MASK) as usize;
 
         if record_len == 0 {
-            continue;
+            return Err(AltiumError::Parse(format!(
+                "schlib data stream has zero-length block at offset {}",
+                block_offset
+            )));
         }
         if cursor.position() as usize + record_len > data.len() {
-            break;
+            return Err(AltiumError::Parse(format!(
+                "schlib data stream block at offset {} overflows stream (len={})",
+                block_offset, record_len
+            )));
         }
 
         let mut record_data = vec![0u8; record_len];
         if Read::read_exact(&mut cursor, &mut record_data).is_err() {
-            break;
+            return Err(AltiumError::Parse(format!(
+                "schlib data stream truncated while reading block at offset {}",
+                block_offset
+            )));
         }
 
         if is_binary {
-            let record_type = if record_data.len() >= 4 {
-                u32::from_le_bytes([
-                    record_data[0],
-                    record_data[1],
-                    record_data[2],
-                    record_data[3],
-                ]) as u8
-            } else {
-                0
-            };
+            if record_data.len() < 4 {
+                return Err(AltiumError::Parse(format!(
+                    "schlib binary block too short at offset {} (len={})",
+                    block_offset,
+                    record_data.len()
+                )));
+            }
+            let record_type = u32::from_le_bytes([
+                record_data[0],
+                record_data[1],
+                record_data[2],
+                record_data[3],
+            ]) as u8;
+            if !is_supported_sch_record_id(record_type) {
+                return Err(AltiumError::Parse(format!(
+                    "schlib contains unimplemented schematic record_id={} at offset {}",
+                    record_type, block_offset
+                )));
+            }
             let mut full_raw = Vec::with_capacity(4 + record_len);
             full_raw.extend_from_slice(&len_buf);
             full_raw.extend_from_slice(&record_data);
@@ -1162,9 +1184,21 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
                 .map(|v| v.as_int_or(0) as u8)
                 .unwrap_or(0);
 
-            // Skip header markers (RECORD=0)
+            // Skip stream header blocks without a record payload.
             if record_id == 0 {
-                continue;
+                if params.contains("HEADER") {
+                    continue;
+                }
+                return Err(AltiumError::Parse(format!(
+                    "schlib text block missing RECORD at offset {}",
+                    block_offset
+                )));
+            }
+            if !is_supported_sch_record_id(record_id) {
+                return Err(AltiumError::Parse(format!(
+                    "schlib contains unimplemented schematic record_id={} at offset {}",
+                    record_id, block_offset
+                )));
             }
 
             let origin = RecordOrigin::Param(ParamOrigin::new(&param_str));

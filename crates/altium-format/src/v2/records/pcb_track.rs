@@ -17,7 +17,7 @@
 //!  45      4    keepout_restrictions (i32, AD26+)
 //! ```
 //!
-//! Legacy records can be shorter (35 bytes). AD26 tracks are 49 bytes.
+//! AD26 tracks are 49 bytes.
 
 use crate::v2::binary_helpers::PcbCommonHeader;
 use crate::v2::coord::PcbCoord;
@@ -43,14 +43,14 @@ pub struct PcbTrackRecord {
 
 /// Parse track data from the raw binary block.
 ///
-/// Supports both legacy (35-byte) and AD26 (49-byte) layouts.
+/// Strict AD26 parser: requires 49-byte layout.
 pub(crate) fn parse_track(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::error::AltiumError;
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
-    if data.len() < 35 {
+    if data.len() < 49 {
         return Err(AltiumError::Parse(format!(
-            "track data too short: {} bytes (need >= 35)",
+            "track data too short: {} bytes (need >= 49 for AD26)",
             data.len()
         )));
     }
@@ -65,21 +65,11 @@ pub(crate) fn parse_track(data: &[u8]) -> crate::Result<crate::v2::backing_store
         FieldSpan::new(33, 2),  // 6: subpoly_index
     ];
 
-    if data.len() >= 49 {
-        spans.push(FieldSpan::new(35, 1)); // 7: user_routed
-        spans.push(FieldSpan::new(36, 4)); // 8: union_index
-        spans.push(FieldSpan::new(40, 1)); // 9: track_kind
-        spans.push(FieldSpan::new(41, 4)); // 10: layer_enum_index
-        spans.push(FieldSpan::new(45, 4)); // 11: keepout_restrictions
-    } else {
-        // Legacy fallback spans: keep typed accessors available without
-        // requiring AD26-only trailing bytes.
-        spans.push(FieldSpan::new(34, 1)); // 7: user_routed (fallback)
-        spans.push(FieldSpan::new(29, 4)); // 8: union_index (fallback)
-        spans.push(FieldSpan::new(34, 1)); // 9: track_kind (fallback)
-        spans.push(FieldSpan::new(29, 4)); // 10: layer_enum_index (fallback)
-        spans.push(FieldSpan::new(29, 4)); // 11: keepout_restrictions (fallback)
-    }
+    spans.push(FieldSpan::new(35, 1)); // 7: user_routed
+    spans.push(FieldSpan::new(36, 4)); // 8: union_index
+    spans.push(FieldSpan::new(40, 1)); // 9: track_kind
+    spans.push(FieldSpan::new(41, 4)); // 10: layer_enum_index
+    spans.push(FieldSpan::new(45, 4)); // 11: keepout_restrictions
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
         BinaryOrigin::with_spans(data.to_vec(), spans),
@@ -195,12 +185,12 @@ mod tests {
     }
 
     #[test]
-    fn track_legacy_layout_still_parses() {
+    fn track_legacy_layout_errors() {
         let mut data = vec![0u8; 35];
         data[13..17].copy_from_slice(&100_000i32.to_le_bytes());
 
-        let rec = PcbTrackRecord::from_origin(parse_track(&data).unwrap());
-        assert_eq!(rec.start_x().to_raw(), 100_000);
+        let err = parse_track(&data).unwrap_err();
+        assert!(err.to_string().contains("need >= 49"));
     }
 
     #[test]

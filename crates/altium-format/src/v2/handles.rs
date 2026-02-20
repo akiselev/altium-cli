@@ -84,6 +84,7 @@ use crate::v2::records::{
     SchPortRecord, SchPowerRecord, SchRectangleRecord, SchRoundRectangleRecord,
     SchSheetEntryRecord, SchSheetFileNameRecord, SchSheetNameRecord, SchSheetRecord,
     SchSheetSymbolRecord, SchSymbolRecord, SchTextFrameRecord, SchWireRecord,
+    SchTaskHolderRecord,
 };
 
 impl_record_handle!(SchPinHandle, SchPinRecord);
@@ -126,6 +127,7 @@ impl_record_handle!(
 );
 impl_record_handle!(SchNoteHandle, SchNoteRecord);
 impl_record_handle!(SchBlanketHandle, SchBlanketRecord);
+impl_record_handle!(SchTaskHolderHandle, SchTaskHolderRecord);
 impl_record_handle!(SchComponentRecordHandle, SchComponentRecord);
 
 // ---------------------------------------------------------------------------
@@ -216,6 +218,7 @@ impl_handle_family!(
 );
 impl_handle_family!(SchNote, SchNoteRecord, SchNoteHandle);
 impl_handle_family!(SchBlanket, SchBlanketRecord, SchBlanketHandle);
+impl_handle_family!(SchTaskHolder, SchTaskHolderRecord, SchTaskHolderHandle);
 
 // ---------------------------------------------------------------------------
 // PCB handle families

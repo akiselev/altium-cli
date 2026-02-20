@@ -91,6 +91,8 @@ pub enum DocumentMeta {
     },
     SchDoc {
         header_raw: Option<Vec<u8>>,
+        additional_raw: Option<Vec<u8>>,
+        storage_raw: Option<Vec<u8>>,
     },
     PcbLib {
         section_keys: crate::v2::documents::section_keys::SectionKeyList,

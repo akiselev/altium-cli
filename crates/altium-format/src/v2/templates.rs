@@ -167,6 +167,12 @@ pub fn sch_parameter_default() -> RecordOrigin {
     ))
 }
 
+pub fn sch_task_holder_default() -> RecordOrigin {
+    RecordOrigin::Param(ParamOrigin::new(
+        "|RECORD=43|INDEXINSHEET=0|OWNERPARTID=-1|LOCATION.X=0|LOCATION.Y=0|COLOR=255|ORIENTATION=0|NAME=|",
+    ))
+}
+
 pub fn sch_bus_entry_default() -> RecordOrigin {
     RecordOrigin::Param(ParamOrigin::new(
         "|RECORD=37|OWNERPARTID=-1|LOCATION.X=0|LOCATION.Y=0|CORNER.X=5|CORNER.Y=5|COLOR=128|LINEWIDTH=1|",
@@ -229,7 +235,7 @@ pub fn sch_note_default() -> RecordOrigin {
 
 pub fn sch_blanket_default() -> RecordOrigin {
     RecordOrigin::Param(ParamOrigin::new(
-        "|RECORD=255|OWNERINDEX=0|OWNERPARTID=-1|LOCATION.X=0|LOCATION.Y=0|CORNER.X=10|CORNER.Y=10|COLOR=128|LINEWIDTH=1|",
+        "|RECORD=225|OWNERINDEX=0|OWNERPARTID=-1|LOCATION.X=0|LOCATION.Y=0|CORNER.X=10|CORNER.Y=10|COLOR=128|LINEWIDTH=1|",
     ))
 }
 
@@ -250,7 +256,7 @@ pub fn pcb_track_default() -> RecordOrigin {
     data[11] = 0xFF;
     data[12] = 0xFF; // ref5
     crate::v2::records::parse_track(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_track_default must produce a valid AD26 track origin")
 }
 
 pub fn pcb_arc_default() -> RecordOrigin {
@@ -266,7 +272,7 @@ pub fn pcb_arc_default() -> RecordOrigin {
     data[11] = 0xFF;
     data[12] = 0xFF;
     crate::v2::records::parse_arc(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_arc_default must produce a valid AD26 arc origin")
 }
 
 pub fn pcb_fill_default() -> RecordOrigin {
@@ -282,7 +288,7 @@ pub fn pcb_fill_default() -> RecordOrigin {
     data[11] = 0xFF;
     data[12] = 0xFF;
     crate::v2::records::parse_fill(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_fill_default must produce a valid AD26 fill origin")
 }
 
 pub fn pcb_pad_default() -> RecordOrigin {
@@ -364,7 +370,7 @@ pub fn pcb_via_default() -> RecordOrigin {
     data[11] = 0xFF;
     data[12] = 0xFF;
     crate::v2::records::parse_via(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_via_default must produce a valid AD26 via origin")
 }
 
 pub fn pcb_text_default() -> RecordOrigin {
@@ -385,7 +391,7 @@ pub fn pcb_text_default() -> RecordOrigin {
     data[s + 11] = 0xFF;
     data[s + 12] = 0xFF;
     crate::v2::records::parse_text(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_text_default must produce a valid AD26 text origin")
 }
 
 pub fn pcb_region_default() -> RecordOrigin {
@@ -404,7 +410,7 @@ pub fn pcb_region_default() -> RecordOrigin {
     // prop_len at 22..26 = 0 (already zero)
     // num_outline_vertices at 26..30 = 0 (already zero)
     crate::v2::records::parse_region(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_region_default must produce a valid region origin")
 }
 
 pub fn pcb_component_body_default() -> RecordOrigin {
@@ -420,7 +426,7 @@ pub fn pcb_component_body_default() -> RecordOrigin {
     data[11] = 0xFF;
     data[12] = 0xFF;
     crate::v2::records::parse_component_body(&data)
-        .unwrap_or_else(|_| RecordOrigin::Binary(BinaryOrigin::new(data)))
+        .expect("pcb_component_body_default must produce a valid component body origin")
 }
 
 pub fn pcb_footprint_default() -> RecordOrigin {

@@ -1,15 +1,15 @@
-//! Blanket record (RECORD=215).
+//! Blanket record (RECORD=225).
 
 use crate::v2::coord::SchCoord;
 use altium_format_derive::altium_record;
 
 /// Blanket record — region overlay for grouping/annotation on a schematic.
 ///
-/// Corresponds to `BlanketData` / `ExportBlanket` in the v1 API (ObjectId::Blanket = 215).
+/// Corresponds to `BlanketData` / `ExportBlanket` in the v1 API.
 ///
 /// Note: vertices (`Vec<(i32,i32)>`) are skipped in this phase and will be
 /// handled with custom codec logic in a later phase.
-#[altium_record(kind = "sch", record_id = 215, codec = "params")]
+#[altium_record(kind = "sch", record_id = 225, codec = "params")]
 pub struct SchBlanketRecord {
     // --- GraphicalObjectBase (flattened) ---
     #[altium(key = "OWNERINDEX")]
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn roundtrip() {
         let origin = RecordOrigin::Param(ParamOrigin::new(
-            "|RECORD=215|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|CORNER.X=500|CORNER.Y=600|LINEWIDTH=1|COLOR=0|AREACOLOR=16777215|COLLAPSED=F|LINESTYLE=0|UNIQUEID=ABCD1234|",
+            "|RECORD=225|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|CORNER.X=500|CORNER.Y=600|LINEWIDTH=1|COLOR=0|AREACOLOR=16777215|COLLAPSED=F|LINESTYLE=0|UNIQUEID=ABCD1234|",
         ));
         let rec = SchBlanketRecord::from_origin(origin);
         assert_eq!(rec.line_width(), 1);
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn setter() {
-        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=215|LINESTYLE=0|"));
+        let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=225|LINESTYLE=0|"));
         let mut rec = SchBlanketRecord::from_origin(origin);
         rec.set_line_style(1);
         assert_eq!(rec.line_style(), 1);

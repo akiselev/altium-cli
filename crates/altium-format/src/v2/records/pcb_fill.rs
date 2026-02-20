@@ -15,7 +15,7 @@
 //!  46      4    keepout_restrictions (i32, AD26+)
 //! ```
 //!
-//! Legacy records can be shorter (37 bytes). AD26 fills are 50 bytes.
+//! AD26 fills are 50 bytes.
 
 use crate::v2::binary_helpers::PcbCommonHeader;
 use crate::v2::coord::PcbCoord;
@@ -39,14 +39,14 @@ pub struct PcbFillRecord {
 
 /// Parse fill data from the raw binary block.
 ///
-/// Supports both legacy (37-byte) and AD26 (50-byte) layouts.
+/// Strict AD26 parser: requires 50-byte layout.
 pub(crate) fn parse_fill(data: &[u8]) -> crate::Result<crate::v2::backing_store::RecordOrigin> {
     use crate::error::AltiumError;
     use crate::v2::backing_store::{BinaryOrigin, FieldSpan};
 
-    if data.len() < 37 {
+    if data.len() < 50 {
         return Err(AltiumError::Parse(format!(
-            "fill data too short: {} bytes (need >= 37)",
+            "fill data too short: {} bytes (need >= 50 for AD26)",
             data.len()
         )));
     }
@@ -60,18 +60,10 @@ pub(crate) fn parse_fill(data: &[u8]) -> crate::Result<crate::v2::backing_store:
         FieldSpan::new(29, 8),  // 5: rotation
     ];
 
-    if data.len() >= 50 {
-        spans.push(FieldSpan::new(37, 1)); // 6: user_routed
-        spans.push(FieldSpan::new(38, 4)); // 7: union_index
-        spans.push(FieldSpan::new(42, 4)); // 8: layer_enum_index
-        spans.push(FieldSpan::new(46, 4)); // 9: keepout_restrictions
-    } else {
-        // Legacy fallback spans for AD26-only fields.
-        spans.push(FieldSpan::new(36, 1)); // 6: user_routed (fallback)
-        spans.push(FieldSpan::new(29, 4)); // 7: union_index (fallback)
-        spans.push(FieldSpan::new(29, 4)); // 8: layer_enum_index (fallback)
-        spans.push(FieldSpan::new(29, 4)); // 9: keepout_restrictions (fallback)
-    }
+    spans.push(FieldSpan::new(37, 1)); // 6: user_routed
+    spans.push(FieldSpan::new(38, 4)); // 7: union_index
+    spans.push(FieldSpan::new(42, 4)); // 8: layer_enum_index
+    spans.push(FieldSpan::new(46, 4)); // 9: keepout_restrictions
 
     Ok(crate::v2::backing_store::RecordOrigin::Binary(
         BinaryOrigin::with_spans(data.to_vec(), spans),
