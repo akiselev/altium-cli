@@ -113,10 +113,10 @@ mod tests {
             "|RECORD=31|FONTIDCOUNT=2|USEMBCS=T|ISBOC=F|SHEETSTYLE=0|BORDERON=T|TITLEBLOCKON=T|COLOR=16777215|AREACOLOR=16777215|SNAPGRIDON=T|VISIBLEGRIDON=T|USECUSTOMSHEET=F|SHOWHIDDENPINS=F|REFERENCEZONESON=T|ALWAYSSHOWCD=F|",
         ));
         let rec = SchSheetRecord::from_origin(origin);
-        assert_eq!(rec.font_id_count(), 2);
-        assert!(rec.use_mbcs());
-        assert!(rec.border_on());
-        assert!(rec.title_block_on());
+        assert_eq!(rec.font_id_count().unwrap(), 2);
+        assert!(rec.use_mbcs().unwrap());
+        assert!(rec.border_on().unwrap());
+        assert!(rec.title_block_on().unwrap());
     }
 
     #[test]
@@ -124,8 +124,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=31|SHEETSTYLE=0|"));
         let mut rec = SchSheetRecord::from_origin(origin);
         rec.set_sheet_style(1);
-        assert_eq!(rec.sheet_style(), 1);
+        assert_eq!(rec.sheet_style().unwrap(), 1);
         rec.set_border_on(false);
-        assert!(!rec.border_on());
+        assert!(!rec.border_on().unwrap());
     }
 }

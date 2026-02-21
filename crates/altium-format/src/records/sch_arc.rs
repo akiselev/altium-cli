@@ -101,8 +101,8 @@ mod tests {
             "|RECORD=12|Location.X=100|Location.Y=200|Radius=50|StartAngle=0.000000|EndAngle=360.000000|Color=255|LineWidth=1|",
         ));
         let rec = SchArcRecord::from_origin(origin);
-        assert_eq!(rec.color(), 255);
-        assert_eq!(rec.line_width(), Size::Small);
+        assert_eq!(rec.color().unwrap(), 255);
+        assert_eq!(rec.line_width().unwrap(), Size::Small);
     }
 
     #[test]
@@ -112,6 +112,6 @@ mod tests {
         ));
         let mut rec = SchArcRecord::from_origin(origin);
         rec.set_color(128);
-        assert_eq!(rec.color(), 128);
+        assert_eq!(rec.color().unwrap(), 128);
     }
 }

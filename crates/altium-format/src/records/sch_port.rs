@@ -76,10 +76,10 @@ mod tests {
             "|RECORD=18|OWNERINDEX=1|STYLE=2|IOTYPE=3|ALIGNMENT=0|LOCATION.X=100|LOCATION.Y=200|COLOR=0|FONTID=1|AREACOLOR=16777215|TEXTCOLOR=0|NAME=DataPort|UNIQUEID=ABCD1234|HEIGHT=10|BORDERWIDTH=1|AUTOSIZE=T|",
         ));
         let rec = SchPortRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.name(), "DataPort");
-        assert_eq!(rec.io_type(), 3);
-        assert!(rec.auto_size());
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.name().unwrap(), "DataPort");
+        assert_eq!(rec.io_type().unwrap(), 3);
+        assert!(rec.auto_size().unwrap());
     }
 
     #[test]
@@ -87,6 +87,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=18|NAME=OldPort|"));
         let mut rec = SchPortRecord::from_origin(origin);
         rec.set_name("NewPort".to_string());
-        assert_eq!(rec.name(), "NewPort");
+        assert_eq!(rec.name().unwrap(), "NewPort");
     }
 }

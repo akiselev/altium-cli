@@ -56,9 +56,9 @@ mod tests {
             "|RECORD=25|OWNERINDEX=0|OWNERPARTID=1|LOCATION.X=100|LOCATION.Y=200|ORIENTATION=0|JUSTIFICATION=0|COLOR=0|FONTID=1|TEXT=VCC|ISMIRRORED=F|UNIQUEID=ABCD1234|",
         ));
         let rec = SchNetLabelRecord::from_origin(origin);
-        assert_eq!(rec.text(), "VCC");
-        assert_eq!(rec.font_id(), 1);
-        assert!(!rec.is_mirrored());
+        assert_eq!(rec.text().unwrap(), "VCC");
+        assert_eq!(rec.font_id().unwrap(), 1);
+        assert!(!rec.is_mirrored().unwrap());
     }
 
     #[test]
@@ -66,6 +66,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=25|TEXT=NET1|"));
         let mut rec = SchNetLabelRecord::from_origin(origin);
         rec.set_text("NET2".to_string());
-        assert_eq!(rec.text(), "NET2");
+        assert_eq!(rec.text().unwrap(), "NET2");
     }
 }

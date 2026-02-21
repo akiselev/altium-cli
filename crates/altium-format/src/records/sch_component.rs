@@ -181,11 +181,11 @@ mod tests {
             "|RECORD=1|LibReference=Resistor|ComponentDescription=100k Resistor|PartCount=1|Location.X=100|Location.Y=200|UniqueID=ABCD1234|Color=128|",
         ));
         let rec = SchComponentRecord::from_origin(origin);
-        assert_eq!(rec.lib_reference(), LibReference::from("Resistor"));
-        assert_eq!(rec.component_description(), "100k Resistor");
-        assert_eq!(rec.part_count(), 1);
-        assert_eq!(rec.color(), 128);
-        assert_eq!(rec.unique_id(), UniqueId::from("ABCD1234"));
+        assert_eq!(rec.lib_reference().unwrap(), LibReference::from("Resistor"));
+        assert_eq!(rec.component_description().unwrap(), "100k Resistor");
+        assert_eq!(rec.part_count().unwrap(), 1);
+        assert_eq!(rec.color().unwrap(), 128);
+        assert_eq!(rec.unique_id().unwrap(), UniqueId::from("ABCD1234"));
     }
 
     #[test]
@@ -195,9 +195,9 @@ mod tests {
         ));
         let mut rec = SchComponentRecord::from_origin(origin);
         rec.set_lib_reference(LibReference::from("Capacitor"));
-        assert_eq!(rec.lib_reference(), LibReference::from("Capacitor"));
+        assert_eq!(rec.lib_reference().unwrap(), LibReference::from("Capacitor"));
         rec.set_part_count(2);
-        assert_eq!(rec.part_count(), 2);
+        assert_eq!(rec.part_count().unwrap(), 2);
     }
 
     #[test]
@@ -207,10 +207,10 @@ mod tests {
 
         // `part_id_locked` is emitted with explicit defaults.
         rec.set_part_id_locked(false);
-        assert_eq!(rec.try_part_id_locked(), Some(false));
+        assert_eq!(rec.try_part_id_locked().unwrap(), Some(false));
 
         // `designator_locked` remains sparse by default.
         rec.set_designator_locked(false);
-        assert_eq!(rec.try_designator_locked(), None);
+        assert_eq!(rec.try_designator_locked().unwrap(), None);
     }
 }

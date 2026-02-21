@@ -30,8 +30,8 @@ mod tests {
         let origin =
             RecordOrigin::Param(ParamOrigin::new("|RECORD=46|OWNERINDEX=11|INDEXINSHEET=2|"));
         let rec = SchMapDefinerListRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 11);
-        assert_eq!(rec.index_in_sheet(), 2);
+        assert_eq!(rec.owner_index().unwrap(), 11);
+        assert_eq!(rec.index_in_sheet().unwrap(), 2);
     }
 
     #[test]
@@ -40,7 +40,7 @@ mod tests {
         let mut rec = SchMapDefinerListRecord::from_origin(origin);
         rec.set_owner_index(9);
         rec.set_index_in_sheet(3);
-        assert_eq!(rec.owner_index(), 9);
-        assert_eq!(rec.index_in_sheet(), 3);
+        assert_eq!(rec.owner_index().unwrap(), 9);
+        assert_eq!(rec.index_in_sheet().unwrap(), 3);
     }
 }

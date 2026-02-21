@@ -201,10 +201,10 @@ mod tests {
             "|RECORD=225|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|CORNER.X=500|CORNER.Y=600|LINEWIDTH=1|COLOR=0|AREACOLOR=16777215|COLLAPSED=F|LINESTYLE=0|UNIQUEID=ABCD1234|",
         ));
         let rec = SchBlanketRecord::from_origin(origin);
-        assert_eq!(rec.line_width(), 1);
-        assert_eq!(rec.line_style(), 0);
-        assert!(!rec.collapsed());
-        assert_eq!(rec.unique_id(), "ABCD1234");
+        assert_eq!(rec.line_width().unwrap(), 1);
+        assert_eq!(rec.line_style().unwrap(), 0);
+        assert!(!rec.collapsed().unwrap());
+        assert_eq!(rec.unique_id().unwrap(), "ABCD1234");
     }
 
     #[test]
@@ -212,8 +212,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=225|LINESTYLE=0|"));
         let mut rec = SchBlanketRecord::from_origin(origin);
         rec.set_line_style(1);
-        assert_eq!(rec.line_style(), 1);
+        assert_eq!(rec.line_style().unwrap(), 1);
         rec.set_collapsed(true);
-        assert!(rec.collapsed());
+        assert!(rec.collapsed().unwrap());
     }
 }

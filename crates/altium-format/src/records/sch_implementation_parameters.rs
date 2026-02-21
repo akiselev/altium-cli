@@ -34,9 +34,9 @@ mod tests {
             "|RECORD=48|OWNERINDEX=105|OWNERPARTID=0|INDEXINSHEET=0|",
         ));
         let rec = SchImplementationParametersRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 105);
-        assert_eq!(rec.owner_part_id(), 0);
-        assert_eq!(rec.index_in_sheet(), 0);
+        assert_eq!(rec.owner_index().unwrap(), 105);
+        assert_eq!(rec.owner_part_id().unwrap(), 0);
+        assert_eq!(rec.index_in_sheet().unwrap(), 0);
     }
 
     #[test]
@@ -45,7 +45,7 @@ mod tests {
         let mut rec = SchImplementationParametersRecord::from_origin(origin);
         rec.set_owner_index(10);
         rec.set_owner_part_id(2);
-        assert_eq!(rec.owner_index(), 10);
-        assert_eq!(rec.owner_part_id(), 2);
+        assert_eq!(rec.owner_index().unwrap(), 10);
+        assert_eq!(rec.owner_part_id().unwrap(), 2);
     }
 }

@@ -78,9 +78,9 @@ mod tests {
             "|RECORD=30|Location.X=10|Location.Y=20|Corner.X=100|Corner.Y=200|KeepAspect=T|EmbedImage=T|FileName=logo.png|",
         ));
         let rec = SchImageRecord::from_origin(origin);
-        assert!(rec.keep_aspect());
-        assert!(rec.embed_image());
-        assert_eq!(rec.file_name(), "logo.png");
+        assert!(rec.keep_aspect().unwrap());
+        assert!(rec.embed_image().unwrap());
+        assert_eq!(rec.file_name().unwrap(), "logo.png");
     }
 
     #[test]
@@ -90,8 +90,8 @@ mod tests {
         ));
         let mut rec = SchImageRecord::from_origin(origin);
         rec.set_file_name("new.png".to_string());
-        assert_eq!(rec.file_name(), "new.png");
+        assert_eq!(rec.file_name().unwrap(), "new.png");
         rec.set_keep_aspect(true);
-        assert!(rec.keep_aspect());
+        assert!(rec.keep_aspect().unwrap());
     }
 }

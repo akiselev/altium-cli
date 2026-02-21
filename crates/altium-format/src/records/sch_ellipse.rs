@@ -106,9 +106,9 @@ mod tests {
             "|RECORD=8|Location.X=100|Location.Y=200|Radius=50|SecondaryRadius=30|IsSolid=T|Color=255|AreaColor=128|",
         ));
         let rec = SchEllipseRecord::from_origin(origin);
-        assert!(rec.is_solid());
-        assert_eq!(rec.color(), 255);
-        assert_eq!(rec.area_color(), 128);
+        assert!(rec.is_solid().unwrap());
+        assert_eq!(rec.color().unwrap(), 255);
+        assert_eq!(rec.area_color().unwrap(), 128);
     }
 
     #[test]
@@ -118,6 +118,6 @@ mod tests {
         ));
         let mut rec = SchEllipseRecord::from_origin(origin);
         rec.set_is_solid(true);
-        assert!(rec.is_solid());
+        assert!(rec.is_solid().unwrap());
     }
 }

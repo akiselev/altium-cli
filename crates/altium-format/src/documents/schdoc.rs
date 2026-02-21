@@ -1199,7 +1199,7 @@ mod tests {
 
         let handle = DocumentQuery::<crate::handles::SchComponent>::query(&doc, "U1").unwrap();
         let comp = handle.read();
-        assert_eq!(&*comp.designator(), "U1");
+        assert_eq!(&*comp.designator().unwrap(), "U1");
     }
 
     #[test]

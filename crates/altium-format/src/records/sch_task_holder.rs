@@ -33,9 +33,9 @@ mod tests {
             "|RECORD=43|INDEXINSHEET=41|OWNERPARTID=-1|LOCATION.X=175|LOCATION.Y=1275|COLOR=255|NAME=DIFFPAIR|",
         ));
         let rec = SchTaskHolderRecord::from_origin(origin);
-        assert_eq!(rec.index_in_sheet(), 41);
-        assert_eq!(rec.owner_part_id(), -1);
-        assert_eq!(rec.color(), 255);
-        assert_eq!(rec.name(), "DIFFPAIR");
+        assert_eq!(rec.index_in_sheet().unwrap(), 41);
+        assert_eq!(rec.owner_part_id().unwrap(), -1);
+        assert_eq!(rec.color().unwrap(), 255);
+        assert_eq!(rec.name().unwrap(), "DIFFPAIR");
     }
 }

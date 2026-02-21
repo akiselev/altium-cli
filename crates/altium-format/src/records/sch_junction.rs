@@ -49,10 +49,10 @@ mod tests {
             "|RECORD=29|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|SIZE=1|COLOR=128|LOCKED=F|UNIQUEID=ABCD1234|",
         ));
         let rec = SchJunctionRecord::from_origin(origin);
-        assert_eq!(rec.size(), 1);
-        assert_eq!(rec.color(), 128);
-        assert!(!rec.locked());
-        assert_eq!(rec.unique_id(), "ABCD1234");
+        assert_eq!(rec.size().unwrap(), 1);
+        assert_eq!(rec.color().unwrap(), 128);
+        assert!(!rec.locked().unwrap());
+        assert_eq!(rec.unique_id().unwrap(), "ABCD1234");
     }
 
     #[test]
@@ -60,8 +60,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=29|SIZE=1|"));
         let mut rec = SchJunctionRecord::from_origin(origin);
         rec.set_size(3);
-        assert_eq!(rec.size(), 3);
+        assert_eq!(rec.size().unwrap(), 3);
         rec.set_locked(true);
-        assert!(rec.locked());
+        assert!(rec.locked().unwrap());
     }
 }

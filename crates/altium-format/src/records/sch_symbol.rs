@@ -55,10 +55,10 @@ mod tests {
             "|RECORD=3|OWNERINDEX=1|OWNERPARTID=1|SYMBOL=1|LOCATION.X=100|LOCATION.Y=200|SCALEFACTOR=1|ORIENTATION=0|LINEWIDTH=1|COLOR=128|MIRROR=F|",
         ));
         let rec = SchSymbolRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.symbol(), 1);
-        assert_eq!(rec.color(), 128);
-        assert!(!rec.is_mirrored());
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.symbol().unwrap(), 1);
+        assert_eq!(rec.color().unwrap(), 128);
+        assert!(!rec.is_mirrored().unwrap());
     }
 
     #[test]
@@ -66,8 +66,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=3|OWNERINDEX=1|"));
         let mut rec = SchSymbolRecord::from_origin(origin);
         rec.set_symbol(5);
-        assert_eq!(rec.symbol(), 5);
+        assert_eq!(rec.symbol().unwrap(), 5);
         rec.set_is_mirrored(true);
-        assert!(rec.is_mirrored());
+        assert!(rec.is_mirrored().unwrap());
     }
 }

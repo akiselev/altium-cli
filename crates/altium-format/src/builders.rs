@@ -329,12 +329,12 @@ mod tests {
 
         // Verify the pin data was actually written through the typed closure
         let pin0 = SchPinRecord::from_origin(children[0].origin.clone());
-        assert_eq!(pin0.name(), PinName::from("VCC"));
-        assert_eq!(pin0.designator(), Designator::from("1"));
+        assert_eq!(pin0.name().unwrap(), PinName::from("VCC"));
+        assert_eq!(pin0.designator().unwrap(), Designator::from("1"));
 
         let pin1 = SchPinRecord::from_origin(children[1].origin.clone());
-        assert_eq!(pin1.name(), PinName::from("GND"));
-        assert_eq!(pin1.designator(), Designator::from("2"));
+        assert_eq!(pin1.name().unwrap(), PinName::from("GND"));
+        assert_eq!(pin1.designator().unwrap(), Designator::from("2"));
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
         let (comp, _children) = builder.build();
 
         let record = SchComponentRecord::from_origin(comp.origin.clone());
-        assert_eq!(record.lib_reference(), LibReference::from("LM358"));
+        assert_eq!(record.lib_reference().unwrap(), LibReference::from("LM358"));
     }
 
     #[test]
@@ -394,7 +394,7 @@ mod tests {
         let (metadata, _, _) = builder.build();
 
         let record = PcbFootprintRecord::from_origin(metadata.origin.clone());
-        assert_eq!(record.pattern(), "SOIC-8");
+        assert_eq!(record.pattern().unwrap(), "SOIC-8");
     }
 
     #[test]
@@ -415,9 +415,9 @@ mod tests {
     fn template_sch_pin_roundtrip() {
         let origin = templates::sch_pin_default();
         let record = SchPinRecord::from_origin(origin);
-        assert_eq!(record.electrical(), PinElectricalType::Passive);
-        assert_eq!(&*record.name(), "");
-        assert_eq!(&*record.designator(), "");
+        assert_eq!(record.electrical().unwrap(), PinElectricalType::Passive);
+        assert_eq!(&*record.name().unwrap(), "");
+        assert_eq!(&*record.designator().unwrap(), "");
     }
 
     #[test]
@@ -488,15 +488,15 @@ mod tests {
 
         // Verify component
         let comp = SchComponentRecord::from_origin(component.origin.clone());
-        assert_eq!(comp.lib_reference(), LibReference::from("Resistor"));
+        assert_eq!(comp.lib_reference().unwrap(), LibReference::from("Resistor"));
 
         // Verify children
         assert_eq!(children.len(), 2);
         let pin0 = SchPinRecord::from_origin(children[0].origin.clone());
-        assert_eq!(pin0.designator(), Designator::from("1"));
-        assert_eq!(pin0.electrical(), PinElectricalType::Passive);
+        assert_eq!(pin0.designator().unwrap(), Designator::from("1"));
+        assert_eq!(pin0.electrical().unwrap(), PinElectricalType::Passive);
 
         let pin1 = SchPinRecord::from_origin(children[1].origin.clone());
-        assert_eq!(pin1.designator(), Designator::from("2"));
+        assert_eq!(pin1.designator().unwrap(), Designator::from("2"));
     }
 }

@@ -28,22 +28,25 @@ pub fn cmd_netlist(
 
     doc.for_each_record_of_type(25, |node| {
         let rec = SchNetLabelRecord::from_origin(node.origin.clone());
-        let text = rec.text();
-        if text.is_empty() {
-            return;
-        }
-
-        if let Some(ref pattern) = filter_lower {
-            if !text.to_lowercase().contains(pattern) {
+        if let Ok(text) = rec.text() {
+            if text.is_empty() {
                 return;
             }
-        }
 
-        *net_counts.entry(text.clone()).or_insert(0) += 1;
-        net_labels.push(NetLabelInfo {
-            net_name: text,
-            location: format_location(rec.location_x(), rec.location_y()),
-        });
+            if let Some(ref pattern) = filter_lower {
+                if !text.to_lowercase().contains(pattern) {
+                    return;
+                }
+            }
+
+            *net_counts.entry(text.clone()).or_insert(0) += 1;
+            if let (Ok(x), Ok(y)) = (rec.location_x(), rec.location_y()) {
+                net_labels.push(NetLabelInfo {
+                    net_name: text,
+                    location: format_location(x, y),
+                });
+            }
+        }
     });
 
     net_labels.sort_by(|a, b| {
@@ -82,14 +85,15 @@ pub fn cmd_ports(path: &Path) -> Result<SchDocPortList, Box<dyn std::error::Erro
 
     doc.for_each_record_of_type(18, |node| {
         let rec = SchPortRecord::from_origin(node.origin.clone());
-        let name = rec.name();
-        let io_type = rec.io_type();
-
-        ports.push(PortInfo {
-            name,
-            io_type: port_io_type_name(io_type).to_string(),
-            location: format_location(rec.location_x(), rec.location_y()),
-        });
+        if let (Ok(name), Ok(io_type), Ok(x), Ok(y)) =
+            (rec.name(), rec.io_type(), rec.location_x(), rec.location_y())
+        {
+            ports.push(PortInfo {
+                name,
+                io_type: port_io_type_name(io_type).to_string(),
+                location: format_location(x, y),
+            });
+        }
     });
 
     ports.sort_by(|a, b| alphanumeric_sort(&a.name, &b.name));
@@ -111,18 +115,19 @@ pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerList, Box<dyn std::error:
 
     doc.for_each_record_of_type(17, |node| {
         let rec = SchPowerRecord::from_origin(node.origin.clone());
-        let text = rec.text();
-        let style = rec.style();
+        if let (Ok(text), Ok(style), Ok(x), Ok(y)) =
+            (rec.text(), rec.style(), rec.location_x(), rec.location_y())
+        {
+            if !text.is_empty() {
+                *net_counts.entry(text.clone()).or_insert(0) += 1;
+            }
 
-        if !text.is_empty() {
-            *net_counts.entry(text.clone()).or_insert(0) += 1;
+            power_objects.push(PowerObjectInfo {
+                net: text,
+                style: power_style_name(style).to_string(),
+                location: format_location(x, y),
+            });
         }
-
-        power_objects.push(PowerObjectInfo {
-            net: text,
-            style: power_style_name(style).to_string(),
-            location: format_location(rec.location_x(), rec.location_y()),
-        });
     });
 
     power_objects.sort_by(|a, b| {

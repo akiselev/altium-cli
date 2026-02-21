@@ -186,7 +186,7 @@ mod tests {
         let mut params = ParameterCollection::new();
         TestOrientation::Right.write(&mut params, "ORIENTATION");
 
-        let read_back = TestOrientation::read(&params, "ORIENTATION");
+        let read_back = TestOrientation::read(&params, "ORIENTATION").unwrap();
         assert_eq!(read_back, Some(TestOrientation::Right));
     }
 
@@ -255,8 +255,8 @@ mod tests {
         use crate::backing_store::{ParamOrigin, RecordOrigin};
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=99|NAME=Test|VALUE=42|"));
         let rec = TestRecord::from_origin(origin);
-        assert_eq!(rec.name(), "Test");
-        assert_eq!(rec.value(), 42);
+        assert_eq!(rec.name().unwrap(), "Test");
+        assert_eq!(rec.value().unwrap(), 42);
     }
 
     #[test]
@@ -264,9 +264,9 @@ mod tests {
         use crate::backing_store::{ParamOrigin, RecordOrigin};
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=99|NAME=Hello|"));
         let rec = TestRecord::from_origin(origin);
-        assert_eq!(rec.try_name(), Some("Hello".to_string()));
+        assert_eq!(rec.try_name().unwrap(), Some("Hello".to_string()));
         // VALUE is missing, try_getter should return None
-        assert_eq!(rec.try_value(), None);
+        assert_eq!(rec.try_value().unwrap(), None);
     }
 
     #[test]
@@ -275,9 +275,9 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=99|NAME=Test|VALUE=42|"));
         let mut rec = TestRecord::from_origin(origin);
         rec.set_name("Updated".to_string());
-        assert_eq!(rec.name(), "Updated");
+        assert_eq!(rec.name().unwrap(), "Updated");
         rec.set_value(100);
-        assert_eq!(rec.value(), 100);
+        assert_eq!(rec.value().unwrap(), 100);
     }
 
     #[test]
@@ -290,8 +290,8 @@ mod tests {
             *n = "Modified".to_string();
             old
         });
-        assert_eq!(old_name, "Test");
-        assert_eq!(rec.name(), "Modified");
+        assert_eq!(old_name.unwrap(), "Test");
+        assert_eq!(rec.name().unwrap(), "Modified");
     }
 
     #[test]
@@ -304,8 +304,8 @@ mod tests {
             .name("Built".to_string())
             .value(77)
             .build();
-        assert_eq!(rec.name(), "Built");
-        assert_eq!(rec.value(), 77);
+        assert_eq!(rec.name().unwrap(), "Built");
+        assert_eq!(rec.value().unwrap(), 77);
     }
 
     #[test]
@@ -327,8 +327,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=99|"));
         let rec = TestRecord::from_origin(origin);
         // Getters should return default values for missing keys
-        assert_eq!(rec.name(), ""); // String::default()
-        assert_eq!(rec.value(), 0); // i32::default()
+        assert_eq!(rec.name().unwrap(), ""); // String::default()
+        assert_eq!(rec.value().unwrap(), 0); // i32::default()
     }
 
     // -----------------------------------------------------------------------
@@ -349,7 +349,7 @@ mod tests {
         use crate::backing_store::{ParamOrigin, RecordOrigin};
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=98|VISIBLE=T|"));
         let rec = TestRecordWithSkip::from_origin(origin);
-        assert!(rec.visible());
+        assert!(rec.visible().unwrap());
         // _internal should have no getter/setter generated
     }
 }

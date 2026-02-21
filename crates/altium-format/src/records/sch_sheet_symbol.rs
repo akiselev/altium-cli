@@ -77,10 +77,10 @@ mod tests {
             "|RECORD=39|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|XSIZE=300|YSIZE=400|LINEWIDTH=1|COLOR=0|AREACOLOR=16777215|ISSOLID=T|SHOWHIDDENFIELDS=F|UNIQUEID=ABCD1234|SYMBOLTYPE=Normal|DESIGNITEMID=MyDesign|",
         ));
         let rec = SchSheetSymbolRecord::from_origin(origin);
-        assert!(rec.is_solid());
-        assert!(!rec.show_hidden_fields());
-        assert_eq!(rec.unique_id(), "ABCD1234");
-        assert_eq!(rec.symbol_type(), "Normal");
+        assert!(rec.is_solid().unwrap());
+        assert!(!rec.show_hidden_fields().unwrap());
+        assert_eq!(rec.unique_id().unwrap(), "ABCD1234");
+        assert_eq!(rec.symbol_type().unwrap(), "Normal");
     }
 
     #[test]
@@ -88,6 +88,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=39|UNIQUEID=OLD|"));
         let mut rec = SchSheetSymbolRecord::from_origin(origin);
         rec.set_unique_id("NEW12345".to_string());
-        assert_eq!(rec.unique_id(), "NEW12345");
+        assert_eq!(rec.unique_id().unwrap(), "NEW12345");
     }
 }

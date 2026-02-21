@@ -43,8 +43,11 @@ macro_rules! impl_string_newtype {
         }
 
         impl ParamCodec for $name {
-            fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-                params.get(key).map(|v| Self(v.as_str().to_string()))
+            fn read(
+                params: &ParameterCollection,
+                key: &str,
+            ) -> Result<Option<Self>, $crate::error::AltiumError> {
+                Ok(params.get(key).map(|v| Self(v.as_str().to_string())))
             }
 
             fn write(&self, params: &mut ParameterCollection, key: &str) {

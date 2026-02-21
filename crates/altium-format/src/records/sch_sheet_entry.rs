@@ -71,10 +71,10 @@ mod tests {
             "|RECORD=40|OWNERINDEX=1|SIDE=0|DISTANCEFROMTOP=50|COLOR=0|AREACOLOR=16777215|TEXTCOLOR=0|TEXTFONTID=1|NAME=DataIn|IOTYPE=2|STYLE=1|UNIQUEID=ABCD1234|",
         ));
         let rec = SchSheetEntryRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.name(), "DataIn");
-        assert_eq!(rec.io_type(), 2);
-        assert_eq!(rec.style(), 1);
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.name().unwrap(), "DataIn");
+        assert_eq!(rec.io_type().unwrap(), 2);
+        assert_eq!(rec.style().unwrap(), 1);
     }
 
     #[test]
@@ -82,8 +82,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=40|NAME=OldEntry|"));
         let mut rec = SchSheetEntryRecord::from_origin(origin);
         rec.set_name("NewEntry".to_string());
-        assert_eq!(rec.name(), "NewEntry");
+        assert_eq!(rec.name().unwrap(), "NewEntry");
         rec.set_io_type(3);
-        assert_eq!(rec.io_type(), 3);
+        assert_eq!(rec.io_type().unwrap(), 3);
     }
 }

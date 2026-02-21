@@ -36,8 +36,8 @@ mod tests {
         let origin =
             RecordOrigin::Param(ParamOrigin::new("|RECORD=44|OWNERINDEX=1|OWNERPARTID=1|"));
         let rec = SchImplementationListRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.owner_part_id(), 1);
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.owner_part_id().unwrap(), 1);
     }
 
     #[test]
@@ -45,6 +45,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=44|OWNERINDEX=1|"));
         let mut rec = SchImplementationListRecord::from_origin(origin);
         rec.set_owner_index(5);
-        assert_eq!(rec.owner_index(), 5);
+        assert_eq!(rec.owner_index().unwrap(), 5);
     }
 }

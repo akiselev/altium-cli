@@ -309,11 +309,11 @@ impl SchComponentHandle {
     ///
     /// Also syncs the GroupMeta fields (lib_ref, description, part_count)
     /// so that save() produces a coherent FileHeader.
-    pub fn write(&self, record: SchComponentRecord) {
+    pub fn write(&self, record: SchComponentRecord) -> crate::error::Result<()> {
         // Extract metadata fields before consuming the record.
-        let new_lib_ref = record.lib_reference().to_string();
-        let new_description = record.component_description().to_string();
-        let new_part_count = record.part_count() as i32;
+        let new_lib_ref = record.lib_reference()?.to_string();
+        let new_description = record.component_description()?.to_string();
+        let new_part_count = record.part_count()? as i32;
 
         let mut store = self.store.borrow_mut();
         let group = &store.groups[self.group_id];
@@ -336,6 +336,7 @@ impl SchComponentHandle {
             *part_count = new_part_count;
         }
         store.mark_semantic_ids_dirty();
+        Ok(())
     }
 
     /// Get handles to all children of a given type.

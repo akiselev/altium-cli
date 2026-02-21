@@ -47,7 +47,8 @@ pub fn cmd_add_component(
             comp.set_lib_reference(LibReference::from(name));
             comp.set_component_description(description.unwrap_or_default());
         });
-    });
+    })
+    .map_err(|e| e.to_string())?;
 
     lib.invalidate_cached_header();
 

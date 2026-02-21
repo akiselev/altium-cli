@@ -38,7 +38,7 @@ fn destructive_roundtrip_synthiam_schlib() {
     );
 
     // Print component summary using the public entries() API
-    let entries = orig_lib.entries();
+    let entries = orig_lib.entries().expect("Failed to read component entries");
     for (i, entry) in entries.iter().enumerate() {
         println!("  [{}] {} ({})", i, entry.lib_ref, entry.description);
     }

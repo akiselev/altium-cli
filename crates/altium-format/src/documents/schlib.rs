@@ -549,8 +549,8 @@ impl SchLib {
                     component_entries.push(SchLibComponentEntry {
                         lib_ref: lib_ref.clone(),
                         description: description.clone(),
-                        part_count: comp_rec.part_count() as i32,
-                        aliases: parse_alias_list(&comp_rec.alias_list().to_string()),
+                        part_count: comp_rec.part_count()? as i32,
+                        aliases: parse_alias_list(&comp_rec.alias_list()?.to_string()),
                     });
                 }
                 _ => {}
@@ -810,33 +810,29 @@ impl SchLib {
     }
 
     /// Returns component entries derived from store group metadata.
-    pub fn entries(&self) -> Vec<SchLibComponentEntry> {
+    pub fn entries(&self) -> Result<Vec<SchLibComponentEntry>> {
         let store = self.store.borrow();
-        store
-            .group_ids()
-            .iter()
-            .filter_map(|&gid| {
-                let group = store.group(gid);
-                match &group.meta {
-                    GroupMeta::SchComponent {
-                        lib_ref,
-                        description,
-                        part_count,
-                        ..
-                    } => {
-                        let parent_node = store.record(group.parent_id());
-                        let comp_rec = SchComponentRecord::from_origin(parent_node.origin.clone());
-                        Some(SchLibComponentEntry {
-                            lib_ref: lib_ref.clone(),
-                            description: description.clone(),
-                            part_count: *part_count,
-                            aliases: parse_alias_list(&comp_rec.alias_list().to_string()),
-                        })
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
+        let mut entries = Vec::new();
+        for &gid in store.group_ids() {
+            let group = store.group(gid);
+            if let GroupMeta::SchComponent {
+                lib_ref,
+                description,
+                part_count,
+                ..
+            } = &group.meta
+            {
+                let parent_node = store.record(group.parent_id());
+                let comp_rec = SchComponentRecord::from_origin(parent_node.origin.clone());
+                entries.push(SchLibComponentEntry {
+                    lib_ref: lib_ref.clone(),
+                    description: description.clone(),
+                    part_count: *part_count,
+                    aliases: parse_alias_list(&comp_rec.alias_list()?.to_string()),
+                });
+            }
+        }
+        Ok(entries)
     }
 
     /// Returns the library header derived from store metadata.
@@ -910,7 +906,7 @@ impl SchLib {
         &self,
         template: fn() -> RecordOrigin,
         build: impl FnOnce(&mut crate::builders::ComponentBuilder),
-    ) -> crate::handles::SchComponentHandle {
+    ) -> Result<crate::handles::SchComponentHandle> {
         let mut builder = crate::builders::ComponentBuilder::new(template);
         build(&mut builder);
 
@@ -918,9 +914,9 @@ impl SchLib {
 
         // Extract lib_ref and description from the built component record
         let comp_record = crate::records::SchComponentRecord::from_origin(component.origin.clone());
-        let lib_ref = comp_record.lib_reference().to_string();
-        let description = comp_record.component_description().to_string();
-        let part_count = comp_record.part_count() as i32;
+        let lib_ref = comp_record.lib_reference()?.to_string();
+        let description = comp_record.component_description()?.to_string();
+        let part_count = comp_record.part_count()? as i32;
 
         let mut store = self.store.borrow_mut();
 
@@ -947,7 +943,7 @@ impl SchLib {
 
         let group_id = store.insert_group(group_data);
         store.mark_semantic_ids_dirty();
-        crate::handles::SchComponentHandle::new(self.store.clone(), group_id)
+        Ok(crate::handles::SchComponentHandle::new(self.store.clone(), group_id))
     }
 }
 
@@ -1478,7 +1474,7 @@ fn write_record_to_schlib_stream(output: &mut Vec<u8>, node: &RecordNode) -> Res
     if node.key == SchPinRecord::RECORD_ID {
         if let Some(param) = node.origin.as_param() {
             let pin = SchPinRecord::from_origin(RecordOrigin::Param(param.clone()));
-            let raw = pin.to_legacy_binary_record_data();
+            let raw = pin.to_legacy_binary_record_data()?;
             let len = (raw.len() as u32) | 0x0100_0000;
             output.extend_from_slice(&len.to_le_bytes());
             output.extend_from_slice(&raw);
@@ -1679,7 +1675,7 @@ mod tests {
         let handle = DocumentQuery::<SchComponent>::query(&lib, "R1").unwrap();
         let mut rec = handle.read();
         rec.set_lib_reference(LibReference::from("R_MODIFIED"));
-        handle.write(rec);
+        handle.write(rec).unwrap();
 
         // Verify the record is now dirty
         let store = lib.store.borrow();
@@ -1753,7 +1749,7 @@ mod tests {
 
         let handle = lib.query_child::<SchPin>("pin[designator=1]").unwrap();
         let rec = handle.read();
-        assert_eq!(&*rec.name(), "PIN1");
+        assert_eq!(&*rec.name().unwrap(), "PIN1");
     }
 
     #[test]
@@ -1877,7 +1873,7 @@ mod tests {
             builder.with_component(|comp| {
                 comp.set_lib_reference(LibReference::from("U1"));
             });
-        });
+        }).expect("build_component failed");
 
         let mut out = Cursor::new(Vec::new());
         lib.save(&mut out).unwrap();

@@ -183,9 +183,9 @@ mod tests {
             "|RECORD=5|LineWidth=2|Color=255|UniqueID=ABCD1234|",
         ));
         let rec = SchBezierRecord::from_origin(origin);
-        assert_eq!(rec.line_width(), Size::Medium);
-        assert_eq!(rec.color(), 255);
-        assert_eq!(rec.unique_id(), UniqueId::from("ABCD1234"));
+        assert_eq!(rec.line_width().unwrap(), Size::Medium);
+        assert_eq!(rec.color().unwrap(), 255);
+        assert_eq!(rec.unique_id().unwrap(), UniqueId::from("ABCD1234"));
     }
 
     #[test]
@@ -193,6 +193,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=5|LineWidth=1|Color=255|"));
         let mut rec = SchBezierRecord::from_origin(origin);
         rec.set_line_width(Size::Large);
-        assert_eq!(rec.line_width(), Size::Large);
+        assert_eq!(rec.line_width().unwrap(), Size::Large);
     }
 }

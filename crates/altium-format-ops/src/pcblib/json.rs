@@ -23,7 +23,7 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<PcbLibJson, Box<dyn std::erro
     for fp in &fp_handles {
         let fp_name = fp.name();
         let fp_rec = fp.read();
-        let description = fp_rec.description();
+        let description = fp_rec.description()?;
         let pad_count = fp.child_count::<PcbPad>();
         let primitive_count = fp.children_len();
 

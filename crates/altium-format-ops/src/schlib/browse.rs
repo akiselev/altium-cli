@@ -83,8 +83,10 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
         for pin_handle in &pins {
             let pin = pin_handle.read();
             total_pins += 1;
-            let type_name = electrical_type_name(pin.electrical());
-            *pin_types.entry(type_name).or_insert(0) += 1;
+            if let Ok(electrical) = pin.electrical() {
+                let type_name = electrical_type_name(electrical);
+                *pin_types.entry(type_name).or_insert(0) += 1;
+            }
         }
     }
 

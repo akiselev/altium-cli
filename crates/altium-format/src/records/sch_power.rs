@@ -60,10 +60,10 @@ mod tests {
             "|RECORD=17|OWNERINDEX=1|OWNERPARTID=1|STYLE=4|SHOWNETNAME=T|LOCATION.X=100|LOCATION.Y=200|ORIENTATION=0|COLOR=128|TEXT=GND|UNIQUEID=ABCD1234|",
         ));
         let rec = SchPowerRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.style(), 4);
-        assert!(rec.show_net_name());
-        assert_eq!(rec.text(), "GND");
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.style().unwrap(), 4);
+        assert!(rec.show_net_name().unwrap());
+        assert_eq!(rec.text().unwrap(), "GND");
     }
 
     #[test]
@@ -71,9 +71,9 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=17|TEXT=VCC|"));
         let mut rec = SchPowerRecord::from_origin(origin);
         rec.set_text("GND".to_string());
-        assert_eq!(rec.text(), "GND");
+        assert_eq!(rec.text().unwrap(), "GND");
         rec.set_style(1);
-        assert_eq!(rec.style(), 1);
+        assert_eq!(rec.style().unwrap(), 1);
     }
 
     #[test]
@@ -83,10 +83,10 @@ mod tests {
 
         // `show_net_name` is marked emit="with_default": false is explicitly emitted.
         rec.set_show_net_name(false);
-        assert_eq!(rec.try_show_net_name(), Some(false));
+        assert_eq!(rec.try_show_net_name().unwrap(), Some(false));
 
         // `graphically_locked` uses sparse default: false is omitted.
         rec.set_graphically_locked(false);
-        assert_eq!(rec.try_graphically_locked(), None);
+        assert_eq!(rec.try_graphically_locked().unwrap(), None);
     }
 }

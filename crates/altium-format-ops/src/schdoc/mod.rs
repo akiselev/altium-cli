@@ -91,7 +91,11 @@ pub(super) fn port_io_type_name(io_type: i32) -> &'static str {
 /// Extract the sheet size string from the document.
 pub(super) fn get_sheet_size(doc: &SchDoc) -> String {
     if let Some(rec) = doc.sheet_record() {
-        sheet_size_name(rec.sheet_style() as i32).to_string()
+        if let Ok(style) = rec.sheet_style() {
+            sheet_size_name(style as i32).to_string()
+        } else {
+            "Unknown".to_string()
+        }
     } else {
         "Unknown".to_string()
     }
@@ -102,9 +106,10 @@ pub(super) fn collect_net_names(doc: &SchDoc) -> Vec<String> {
     let mut nets: HashMap<String, bool> = HashMap::new();
     doc.for_each_record_of_type(25, |node| {
         let rec = SchNetLabelRecord::from_origin(node.origin.clone());
-        let text = rec.text();
-        if !text.is_empty() {
-            nets.insert(text, true);
+        if let Ok(text) = rec.text() {
+            if !text.is_empty() {
+                nets.insert(text, true);
+            }
         }
     });
     let mut result: Vec<String> = nets.into_keys().collect();
@@ -117,9 +122,10 @@ pub(super) fn collect_power_nets(doc: &SchDoc) -> Vec<String> {
     let mut nets: HashMap<String, bool> = HashMap::new();
     doc.for_each_record_of_type(17, |node| {
         let rec = SchPowerRecord::from_origin(node.origin.clone());
-        let text = rec.text();
-        if !text.is_empty() {
-            nets.insert(text, true);
+        if let Ok(text) = rec.text() {
+            if !text.is_empty() {
+                nets.insert(text, true);
+            }
         }
     });
     let mut result: Vec<String> = nets.into_keys().collect();

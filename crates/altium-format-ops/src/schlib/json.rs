@@ -22,19 +22,23 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
             let mut pins: Vec<serde_json::Value> = Vec::new();
             for pin_handle in &pin_handles {
                 let pin = pin_handle.read();
+                let designator = pin.designator()?.to_string();
+                let name = pin.name()?.to_string();
+                let electrical = pin.electrical()? as i32;
                 pins.push(serde_json::json!({
-                    "designator": pin.designator().to_string(),
-                    "name": pin.name().to_string(),
-                    "electrical": pin.electrical() as i32,
+                    "designator": designator,
+                    "name": name,
+                    "electrical": electrical,
                 }));
             }
             let primitive_count = comp.children_len();
             let rec = comp.read();
+            let display_mode_count = rec.display_mode_count()?;
             components.push(serde_json::json!({
                 "name": comp.lib_ref(),
                 "description": comp.description(),
                 "part_count": comp.part_count(),
-                "display_mode_count": rec.display_mode_count(),
+                "display_mode_count": display_mode_count,
                 "pin_count": pin_handles.len(),
                 "primitive_count": primitive_count,
                 "pins": pins,

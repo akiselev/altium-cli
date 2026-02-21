@@ -194,9 +194,20 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
             fn read(
                 params: &crate::parameters::ParameterCollection,
                 key: &str,
-            ) -> Option<Self> {
+            ) -> Result<Option<Self>, crate::error::AltiumError> {
                 use crate::traits::AltiumEnum;
-                params.get(key).map(|v| Self::from_int(v.as_int_or(0)))
+                match params.get(key) {
+                    None => Ok(None),
+                    Some(v) => {
+                        let int_val = v.as_int().map_err(|_| {
+                            crate::error::AltiumError::InvalidParameter(format!(
+                                "{}: expected integer",
+                                key
+                            ))
+                        })?;
+                        Ok(Some(Self::from_int(int_val)))
+                    }
+                }
             }
 
             fn write(

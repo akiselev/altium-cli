@@ -16,6 +16,7 @@
 //! `to_dxp_parts`, `from_raw`, and `to_raw` methods.
 
 use crate::backing_store::RecordOrigin;
+use crate::error::AltiumError;
 use crate::parameters::ParameterCollection;
 
 // ---------------------------------------------------------------------------
@@ -41,8 +42,9 @@ pub enum ParamEmitPolicy {
 pub trait ParamCodec: Sized {
     /// Read a value from `params` under the given `key`.
     ///
-    /// Returns `None` if the key is absent from the collection.
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self>;
+    /// Returns `Ok(None)` if the key is absent from the collection.
+    /// Returns `Err` if the key is present but the value cannot be parsed.
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError>;
 
     /// Write this value into `params` under the given `key`.
     fn write(&self, params: &mut ParameterCollection, key: &str) {
@@ -100,9 +102,23 @@ pub trait AltiumEnum: Sized {
 macro_rules! impl_altium_enum_codec {
     ($ty:ty) => {
         impl $crate::traits::ParamCodec for $ty {
-            fn read(params: &$crate::parameters::ParameterCollection, key: &str) -> Option<Self> {
+            fn read(
+                params: &$crate::parameters::ParameterCollection,
+                key: &str,
+            ) -> Result<Option<Self>, $crate::error::AltiumError> {
                 use $crate::traits::AltiumEnum;
-                params.get(key).map(|v| Self::from_int(v.as_int_or(0)))
+                match params.get(key) {
+                    None => Ok(None),
+                    Some(v) => {
+                        let int_val = v.as_int().map_err(|_| {
+                            $crate::error::AltiumError::InvalidParameter(format!(
+                                "{}: expected integer",
+                                key
+                            ))
+                        })?;
+                        Ok(Some(Self::from_int(int_val)))
+                    }
+                }
             }
 
             fn write(&self, params: &mut $crate::parameters::ParameterCollection, key: &str) {
@@ -142,8 +158,8 @@ macro_rules! impl_altium_enum_codec {
 // -- String --
 
 impl ParamCodec for String {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_str().to_string())
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        Ok(params.get(key).map(|v| v.as_str().to_string()))
     }
 
     fn write_with_policy(
@@ -169,8 +185,13 @@ impl ParamCodec for String {
 // -- i32 --
 
 impl ParamCodec for i32 {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_int_or(0))
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => Ok(Some(v.as_int().map_err(|_| {
+                AltiumError::InvalidParameter(format!("{key}: expected integer"))
+            })?)),
+        }
     }
 
     fn write_with_policy(
@@ -196,8 +217,21 @@ impl ParamCodec for i32 {
 // -- i16 (cast through i32) --
 
 impl ParamCodec for i16 {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_int_or(0) as i16)
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => {
+                let int_val = v.as_int().map_err(|_| {
+                    AltiumError::InvalidParameter(format!("{key}: expected integer"))
+                })?;
+                let val = i16::try_from(int_val).map_err(|_| {
+                    AltiumError::InvalidParameter(format!(
+                        "{key}: value {int_val} out of i16 range"
+                    ))
+                })?;
+                Ok(Some(val))
+            }
+        }
     }
 
     fn write_with_policy(
@@ -224,8 +258,21 @@ impl ParamCodec for i16 {
 // -- u8 (cast through i32) --
 
 impl ParamCodec for u8 {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_int_or(0) as u8)
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => {
+                let int_val = v.as_int().map_err(|_| {
+                    AltiumError::InvalidParameter(format!("{key}: expected integer"))
+                })?;
+                let val = u8::try_from(int_val).map_err(|_| {
+                    AltiumError::InvalidParameter(format!(
+                        "{key}: value {int_val} out of u8 range"
+                    ))
+                })?;
+                Ok(Some(val))
+            }
+        }
     }
 
     fn write_with_policy(
@@ -252,8 +299,16 @@ impl ParamCodec for u8 {
 // -- u32 (cast through i32, for color values etc.) --
 
 impl ParamCodec for u32 {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_int_or(0) as u32)
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => {
+                let int_val = v.as_int().map_err(|_| {
+                    AltiumError::InvalidParameter(format!("{key}: expected integer"))
+                })?;
+                Ok(Some(int_val as u32))
+            }
+        }
     }
 
     fn write_with_policy(
@@ -280,8 +335,13 @@ impl ParamCodec for u32 {
 // -- bool (T/F string format) --
 
 impl ParamCodec for bool {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_bool_or(false))
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => Ok(Some(v.as_bool().map_err(|_| {
+                AltiumError::InvalidParameter(format!("{key}: expected boolean (T/F)"))
+            })?)),
+        }
     }
 
     fn write_with_policy(
@@ -307,8 +367,13 @@ impl ParamCodec for bool {
 // -- f64 --
 
 impl ParamCodec for f64 {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| v.as_double_or(0.0))
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => Ok(Some(v.as_double().map_err(|_| {
+                AltiumError::InvalidParameter(format!("{key}: expected floating-point number"))
+            })?)),
+        }
     }
 
     fn write_with_policy(
@@ -334,12 +399,12 @@ impl ParamCodec for f64 {
 // -- Option<T: ParamCodec> --
 
 impl<T: ParamCodec> ParamCodec for Option<T> {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        // Always returns Some — the outer Option represents "did the codec run",
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        // Always returns Ok(Some(...)) — the outer Option represents "did the codec run",
         // the inner Option represents "was the key present".
-        // If the key is missing, returns Some(None).
+        // If the key is missing, returns Ok(Some(None)).
         // If the key is present, delegates to T::read and wraps in Some.
-        Some(T::read(params, key))
+        Ok(Some(T::read(params, key)?))
     }
 
     fn write_with_policy(
@@ -362,11 +427,21 @@ impl<T: ParamCodec> ParamCodec for Option<T> {
 use crate::coord::{AltiumCoord, PcbCoord, SchCoord};
 
 impl ParamCodec for SchCoord {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        let int_val = params.get(key)?.as_int_or(0);
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        let base = match params.get(key) {
+            None => return Ok(None),
+            Some(v) => v.as_int().map_err(|_| {
+                AltiumError::InvalidParameter(format!("{key}: expected integer"))
+            })?,
+        };
         let frac_key = format!("{}_FRAC", key);
-        let frac_val = params.get(&frac_key).map(|v| v.as_int_or(0)).unwrap_or(0);
-        Some(SchCoord::from_dxp_parts(int_val, frac_val))
+        let frac_val = match params.get(&frac_key) {
+            None => 0,
+            Some(v) => v.as_int().map_err(|_| {
+                AltiumError::InvalidParameter(format!("{frac_key}: expected integer"))
+            })?,
+        };
+        Ok(Some(SchCoord::from_dxp_parts(base, frac_val)))
     }
 
     fn write_with_policy(
@@ -404,8 +479,16 @@ impl ParamCodec for SchCoord {
 }
 
 impl ParamCodec for PcbCoord {
-    fn read(params: &ParameterCollection, key: &str) -> Option<Self> {
-        params.get(key).map(|v| PcbCoord::from_raw(v.as_int_or(0)))
+    fn read(params: &ParameterCollection, key: &str) -> Result<Option<Self>, AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => {
+                let raw = v.as_int().map_err(|_| {
+                    AltiumError::InvalidParameter(format!("{key}: expected integer"))
+                })?;
+                Ok(Some(PcbCoord::from_raw(raw)))
+            }
+        }
     }
 
     fn write_with_policy(
@@ -545,11 +628,11 @@ mod tests {
         value.write(&mut params, "LIBREFERENCE");
 
         // Read back
-        let read_back = String::read(&params, "LIBREFERENCE");
+        let read_back = String::read(&params, "LIBREFERENCE").unwrap();
         assert_eq!(read_back, Some("Resistor".to_string()));
 
-        // Missing key returns None
-        let missing = String::read(&params, "NONEXISTENT");
+        // Missing key returns Ok(None)
+        let missing = String::read(&params, "NONEXISTENT").unwrap();
         assert_eq!(missing, None);
     }
 
@@ -562,11 +645,11 @@ mod tests {
         value.write(&mut params, "RECORD");
 
         // Read back
-        let read_back = i32::read(&params, "RECORD");
+        let read_back = i32::read(&params, "RECORD").unwrap();
         assert_eq!(read_back, Some(42));
 
-        // Missing key returns None
-        let missing = i32::read(&params, "NONEXISTENT");
+        // Missing key returns Ok(None)
+        let missing = i32::read(&params, "NONEXISTENT").unwrap();
         assert_eq!(missing, None);
     }
 
@@ -574,12 +657,21 @@ mod tests {
     fn param_codec_int_zero() {
         let mut params = ParameterCollection::new();
 
-        // Write zero — add_int skips zero values, so reading back gives None.
+        // Write zero — add_int skips zero values, so reading back gives Ok(None).
         let value: i32 = 0;
         value.write(&mut params, "OFFSET");
 
-        let read_back = i32::read(&params, "OFFSET");
+        let read_back = i32::read(&params, "OFFSET").unwrap();
         assert_eq!(read_back, None);
+    }
+
+    #[test]
+    fn param_codec_int_corrupt() {
+        let mut params = ParameterCollection::new();
+        params.add("BAD", "abc");
+
+        let result = i32::read(&params, "BAD");
+        assert!(result.is_err(), "corrupt integer should return Err");
     }
 
     #[test]
@@ -589,7 +681,7 @@ mod tests {
         let value: i16 = -123;
         value.write(&mut params, "ROTATION");
 
-        let read_back = i16::read(&params, "ROTATION");
+        let read_back = i16::read(&params, "ROTATION").unwrap();
         assert_eq!(read_back, Some(-123));
     }
 
@@ -600,8 +692,8 @@ mod tests {
         let value: u8 = 255;
         value.write(&mut params, "LAYER");
 
-        let read_back = u8::read(&params, "LAYER");
-        // 255 written as i32 (255), read as i32 (255), cast to u8 (255)
+        let read_back = u8::read(&params, "LAYER").unwrap();
+        // 255 written as i32 (255), read as i32 (255), converted to u8 (255)
         assert_eq!(read_back, Some(255));
     }
 
@@ -612,7 +704,7 @@ mod tests {
         let value: u32 = 0x00FF8040;
         value.write(&mut params, "COLOR");
 
-        let read_back = u32::read(&params, "COLOR");
+        let read_back = u32::read(&params, "COLOR").unwrap();
         assert_eq!(read_back, Some(0x00FF8040));
     }
 
@@ -622,16 +714,16 @@ mod tests {
 
         // Write true
         true.write(&mut params, "VISIBLE");
-        let read_back = bool::read(&params, "VISIBLE");
+        let read_back = bool::read(&params, "VISIBLE").unwrap();
         assert_eq!(read_back, Some(true));
 
-        // Write false
+        // Write false (sparse: removed)
         false.write(&mut params, "LOCKED");
-        let read_back = bool::read(&params, "LOCKED");
+        let read_back = bool::read(&params, "LOCKED").unwrap();
         assert_eq!(read_back, None);
 
-        // Missing key returns None
-        let missing = bool::read(&params, "NONEXISTENT");
+        // Missing key returns Ok(None)
+        let missing = bool::read(&params, "NONEXISTENT").unwrap();
         assert_eq!(missing, None);
     }
 
@@ -639,7 +731,7 @@ mod tests {
     fn param_codec_bool_with_default() {
         let mut params = ParameterCollection::new();
         false.write_with_policy(&mut params, "LOCKED", ParamEmitPolicy::WithDefault);
-        let read_back = bool::read(&params, "LOCKED");
+        let read_back = bool::read(&params, "LOCKED").unwrap();
         assert_eq!(read_back, Some(false));
     }
 
@@ -650,7 +742,7 @@ mod tests {
         let value: f64 = 3.141593;
         value.write(&mut params, "ANGLE");
 
-        let read_back = f64::read(&params, "ANGLE");
+        let read_back = f64::read(&params, "ANGLE").unwrap();
         assert!(read_back.is_some());
         let diff = (read_back.unwrap() - 3.141593).abs();
         assert!(diff < 1e-5, "f64 roundtrip error: {diff}");
@@ -664,7 +756,7 @@ mod tests {
         let value: f64 = 0.0;
         value.write(&mut params, "SCALE");
 
-        let read_back = f64::read(&params, "SCALE");
+        let read_back = f64::read(&params, "SCALE").unwrap();
         assert_eq!(read_back, None);
     }
 
@@ -676,12 +768,12 @@ mod tests {
         let value: Option<String> = Some("hello".to_string());
         value.write(&mut params, "DESC");
 
-        // Read back — returns Some(Some("hello"))
-        let read_back = Option::<String>::read(&params, "DESC");
+        // Read back — returns Ok(Some(Some("hello")))
+        let read_back = Option::<String>::read(&params, "DESC").unwrap();
         assert_eq!(read_back, Some(Some("hello".to_string())));
 
-        // Missing key — returns Some(None)
-        let missing = Option::<String>::read(&params, "NONEXISTENT");
+        // Missing key — returns Ok(Some(None))
+        let missing = Option::<String>::read(&params, "NONEXISTENT").unwrap();
         assert_eq!(missing, Some(None));
 
         // Write None — key should not be added
@@ -696,10 +788,10 @@ mod tests {
         let mut params = ParameterCollection::new();
         params.add("COUNT", "5");
 
-        let read_back = Option::<i32>::read(&params, "COUNT");
+        let read_back = Option::<i32>::read(&params, "COUNT").unwrap();
         assert_eq!(read_back, Some(Some(5)));
 
-        let missing = Option::<i32>::read(&params, "MISSING");
+        let missing = Option::<i32>::read(&params, "MISSING").unwrap();
         assert_eq!(missing, Some(None));
     }
 
@@ -745,19 +837,28 @@ mod tests {
         let value = TestOrientation::Right;
         value.write(&mut params, "ORIENTATION");
 
-        let read_back = TestOrientation::read(&params, "ORIENTATION");
+        let read_back = TestOrientation::read(&params, "ORIENTATION").unwrap();
         assert_eq!(read_back, Some(TestOrientation::Right));
 
         // Unknown value
         params.add("ORIENTATION", "99");
-        let read_back = TestOrientation::read(&params, "ORIENTATION");
+        let read_back = TestOrientation::read(&params, "ORIENTATION").unwrap();
         assert_eq!(read_back, Some(TestOrientation::Unknown(99)));
     }
 
     #[test]
     fn param_codec_altium_enum_missing() {
         let params = ParameterCollection::new();
-        let read_back = TestOrientation::read(&params, "ORIENTATION");
+        let read_back = TestOrientation::read(&params, "ORIENTATION").unwrap();
         assert_eq!(read_back, None);
+    }
+
+    #[test]
+    fn param_codec_altium_enum_corrupt() {
+        let mut params = ParameterCollection::new();
+        params.add("ORIENTATION", "not_a_number");
+
+        let result = TestOrientation::read(&params, "ORIENTATION");
+        assert!(result.is_err(), "corrupt enum value should return Err");
     }
 }

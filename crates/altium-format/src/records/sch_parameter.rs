@@ -94,13 +94,14 @@ pub struct SchParameterRecord {
 impl SchParameterRecord {
     /// AD writes `IsHidden=T` twice for many parameter records. Preserve this
     /// quirk in rebuilt output to minimize stream diffs.
-    pub fn append_hidden_duplicate_for_export(&mut self) {
-        if self.is_hidden() {
+    pub fn append_hidden_duplicate_for_export(&mut self) -> crate::error::Result<()> {
+        if self.is_hidden()? {
             self.origin_mut()
                 .param_mut()
                 .params
                 .add_raw_suffix("|ISHIDDEN=T");
         }
+        Ok(())
     }
 }
 
@@ -110,26 +111,28 @@ mod tests {
     use crate::backing_store::{ParamOrigin, RecordOrigin};
 
     #[test]
-    fn roundtrip_parameter_getter() {
+    fn roundtrip_parameter_getter() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=41|Location.X=100|Location.Y=200|Name=Value|Text=100k|ParamType=0|IsHidden=F|FontID=1|Color=128|ShowName=T|",
         ));
         let rec = SchParameterRecord::from_origin(origin);
-        assert_eq!(rec.name(), "Value");
-        assert_eq!(rec.text(), "100k");
-        assert_eq!(rec.param_type(), ParameterType::String);
-        assert!(!rec.is_hidden());
-        assert!(rec.show_name());
-        assert_eq!(rec.font_id(), 1);
+        assert_eq!(rec.name()?, "Value");
+        assert_eq!(rec.text()?, "100k");
+        assert_eq!(rec.param_type()?, ParameterType::String);
+        assert!(!rec.is_hidden()?);
+        assert!(rec.show_name()?);
+        assert_eq!(rec.font_id()?, 1);
+        Ok(())
     }
 
     #[test]
-    fn roundtrip_parameter_setter() {
+    fn roundtrip_parameter_setter() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=41|Name=Value|Text=100k|"));
         let mut rec = SchParameterRecord::from_origin(origin);
         rec.set_text("200k".to_string());
-        assert_eq!(rec.text(), "200k");
+        assert_eq!(rec.text()?, "200k");
         rec.set_is_hidden(true);
-        assert!(rec.is_hidden());
+        assert!(rec.is_hidden()?);
+        Ok(())
     }
 }

@@ -104,10 +104,10 @@ mod tests {
             "|RECORD=34|Location.X=100|Location.Y=200|Name=Designator|Text=U1|FontID=1|Color=128|ShowName=F|OverrideNotAutoPosition=T|",
         ));
         let rec = SchDesignatorRecord::from_origin(origin);
-        assert_eq!(rec.name(), "Designator");
-        assert_eq!(rec.text(), "U1");
-        assert!(!rec.show_name());
-        assert!(rec.override_not_auto_position());
+        assert_eq!(rec.name().unwrap(), "Designator");
+        assert_eq!(rec.text().unwrap(), "U1");
+        assert!(!rec.show_name().unwrap());
+        assert!(rec.override_not_auto_position().unwrap());
     }
 
     #[test]
@@ -115,8 +115,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=34|Name=Designator|Text=U1|"));
         let mut rec = SchDesignatorRecord::from_origin(origin);
         rec.set_text("U2".to_string());
-        assert_eq!(rec.text(), "U2");
+        assert_eq!(rec.text().unwrap(), "U2");
         rec.set_override_not_auto_position(true);
-        assert!(rec.override_not_auto_position());
+        assert!(rec.override_not_auto_position().unwrap());
     }
 }

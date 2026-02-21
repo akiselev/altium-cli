@@ -191,9 +191,9 @@ mod tests {
             "|RECORD=27|OWNERINDEX=1|OWNERPARTID=1|LINEWIDTH=1|COLOR=8388608|LOCATIONCOUNT=2|X1=100|Y1=200|X2=300|Y2=400|UNIQUEID=ABCD1234|",
         ));
         let rec = SchWireRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.line_width(), 1);
-        assert_eq!(rec.unique_id(), "ABCD1234");
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.line_width().unwrap(), 1);
+        assert_eq!(rec.unique_id().unwrap(), "ABCD1234");
     }
 
     #[test]
@@ -201,8 +201,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=27|OWNERINDEX=1|"));
         let mut rec = SchWireRecord::from_origin(origin);
         rec.set_owner_index(2);
-        assert_eq!(rec.owner_index(), 2);
+        assert_eq!(rec.owner_index().unwrap(), 2);
         rec.set_color(0x00FF00);
-        assert_eq!(rec.color(), 0x00FF00);
+        assert_eq!(rec.color().unwrap(), 0x00FF00);
     }
 }

@@ -63,9 +63,9 @@ mod tests {
         ));
         let rec = PcbFootprintRecord::from_origin(origin);
 
-        assert_eq!(rec.pattern(), "SOT-23");
-        assert_eq!(rec.description(), "Small transistor");
-        assert_eq!(rec.source_designator(), "Q1");
+        assert_eq!(rec.pattern().unwrap(), "SOT-23");
+        assert_eq!(rec.description().unwrap(), "Small transistor");
+        assert_eq!(rec.source_designator().unwrap(), "Q1");
     }
 
     #[test]
@@ -75,11 +75,11 @@ mod tests {
         ));
         let rec = PcbFootprintRecord::from_origin(origin);
 
-        assert_eq!(rec.location_x().to_raw(), 100_000);
-        assert_eq!(rec.location_y().to_raw(), 200_000);
-        assert!((rec.rotation() - 90.0).abs() < 1e-3);
-        assert_eq!(rec.layer(), 1);
-        assert_eq!(rec.height().to_raw(), 50_000);
+        assert_eq!(rec.location_x().unwrap().to_raw(), 100_000);
+        assert_eq!(rec.location_y().unwrap().to_raw(), 200_000);
+        assert!((rec.rotation().unwrap() - 90.0).abs() < 1e-3);
+        assert_eq!(rec.layer().unwrap(), 1);
+        assert_eq!(rec.height().unwrap().to_raw(), 50_000);
     }
 
     #[test]
@@ -87,8 +87,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|PATTERN=QFP-44|NAMEON=T|COMMENTON=F|"));
         let rec = PcbFootprintRecord::from_origin(origin);
 
-        assert!(rec.name_on());
-        assert!(!rec.comment_on());
+        assert!(rec.name_on().unwrap());
+        assert!(!rec.comment_on().unwrap());
     }
 
     #[test]
@@ -99,16 +99,16 @@ mod tests {
         let mut rec = PcbFootprintRecord::from_origin(origin);
 
         rec.set_pattern("SOT-23-5".to_string());
-        assert_eq!(rec.pattern(), "SOT-23-5");
+        assert_eq!(rec.pattern().unwrap(), "SOT-23-5");
 
         rec.set_location_x(PcbCoord::from_raw(500_000));
-        assert_eq!(rec.location_x().to_raw(), 500_000);
+        assert_eq!(rec.location_x().unwrap().to_raw(), 500_000);
 
         rec.set_rotation(45.0);
-        assert!((rec.rotation() - 45.0).abs() < 1e-3);
+        assert!((rec.rotation().unwrap() - 45.0).abs() < 1e-3);
 
         rec.set_name_on(true);
-        assert!(rec.name_on());
+        assert!(rec.name_on().unwrap());
     }
 
     #[test]
@@ -117,11 +117,11 @@ mod tests {
         let rec = PcbFootprintRecord::from_origin(origin);
 
         // Missing fields should return defaults
-        assert_eq!(rec.source_designator(), "");
-        assert_eq!(rec.description(), "");
-        assert_eq!(rec.location_x().to_raw(), 0);
-        assert_eq!(rec.layer(), 0);
-        assert!(!rec.name_on());
+        assert_eq!(rec.source_designator().unwrap(), "");
+        assert_eq!(rec.description().unwrap(), "");
+        assert_eq!(rec.location_x().unwrap().to_raw(), 0);
+        assert_eq!(rec.layer().unwrap(), 0);
+        assert!(!rec.name_on().unwrap());
     }
 
     #[test]
@@ -138,9 +138,9 @@ mod tests {
             .layer(1)
             .build();
 
-        assert_eq!(rec.pattern(), "BGA-256");
-        assert_eq!(rec.description(), "256-ball BGA package");
-        assert_eq!(rec.location_x().to_raw(), 1_000_000);
-        assert_eq!(rec.layer(), 1);
+        assert_eq!(rec.pattern().unwrap(), "BGA-256");
+        assert_eq!(rec.description().unwrap(), "256-ball BGA package");
+        assert_eq!(rec.location_x().unwrap().to_raw(), 1_000_000);
+        assert_eq!(rec.layer().unwrap(), 1);
     }
 }

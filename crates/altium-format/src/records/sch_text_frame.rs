@@ -72,10 +72,10 @@ mod tests {
             "|RECORD=28|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|CORNER.X=500|CORNER.Y=600|LINEWIDTH=1|COLOR=0|AREACOLOR=16777215|TEXTCOLOR=0|FONTID=1|ISSOLID=T|SHOWBORDER=T|ALIGNMENT=0|WORDWRAP=T|CLIPTORECT=T|TEXT=Hello World|UNIQUEID=ABCD1234|",
         ));
         let rec = SchTextFrameRecord::from_origin(origin);
-        assert_eq!(rec.text(), "Hello World");
-        assert!(rec.is_solid());
-        assert!(rec.show_border());
-        assert!(rec.word_wrap());
+        assert_eq!(rec.text().unwrap(), "Hello World");
+        assert!(rec.is_solid().unwrap());
+        assert!(rec.show_border().unwrap());
+        assert!(rec.word_wrap().unwrap());
     }
 
     #[test]
@@ -83,8 +83,8 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=28|TEXT=Old|"));
         let mut rec = SchTextFrameRecord::from_origin(origin);
         rec.set_text("New".to_string());
-        assert_eq!(rec.text(), "New");
+        assert_eq!(rec.text().unwrap(), "New");
         rec.set_is_solid(false);
-        assert!(!rec.is_solid());
+        assert!(!rec.is_solid().unwrap());
     }
 }

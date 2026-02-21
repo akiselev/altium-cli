@@ -195,11 +195,11 @@ mod tests {
             "|RECORD=6|LineWidth=1|LineStyle=2|StartLineShape=1|EndLineShape=2|LineShapeSize=1|Color=128|",
         ));
         let rec = SchPolylineRecord::from_origin(origin);
-        assert_eq!(rec.line_width(), Size::Small);
-        assert_eq!(rec.line_style(), LineStyle::Dotted);
-        assert_eq!(rec.start_line_shape(), LineShape::Arrow);
-        assert_eq!(rec.end_line_shape(), LineShape::SolidArrow);
-        assert_eq!(rec.color(), 128);
+        assert_eq!(rec.line_width().unwrap(), Size::Small);
+        assert_eq!(rec.line_style().unwrap(), LineStyle::Dotted);
+        assert_eq!(rec.start_line_shape().unwrap(), LineShape::Arrow);
+        assert_eq!(rec.end_line_shape().unwrap(), LineShape::SolidArrow);
+        assert_eq!(rec.color().unwrap(), 128);
     }
 
     #[test]
@@ -207,6 +207,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=6|LineWidth=1|Color=255|"));
         let mut rec = SchPolylineRecord::from_origin(origin);
         rec.set_start_line_shape(LineShape::SolidArrow);
-        assert_eq!(rec.start_line_shape(), LineShape::SolidArrow);
+        assert_eq!(rec.start_line_shape().unwrap(), LineShape::SolidArrow);
     }
 }

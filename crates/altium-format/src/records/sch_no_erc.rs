@@ -54,10 +54,10 @@ mod tests {
             "|RECORD=22|OWNERINDEX=1|OWNERPARTID=1|LOCATION.X=100|LOCATION.Y=200|COLOR=255|ORIENTATION=0|SYMBOL=0|ISACTIVE=T|SUPPRESSALL=F|UNIQUEID=ABCD1234|",
         ));
         let rec = SchNoERCRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.symbol(), 0);
-        assert!(rec.is_active());
-        assert!(!rec.suppress_all());
+        assert_eq!(rec.owner_index().unwrap(), 1);
+        assert_eq!(rec.symbol().unwrap(), 0);
+        assert!(rec.is_active().unwrap());
+        assert!(!rec.suppress_all().unwrap());
     }
 
     #[test]
@@ -65,9 +65,9 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=22|SYMBOL=0|"));
         let mut rec = SchNoERCRecord::from_origin(origin);
         rec.set_symbol(1);
-        assert_eq!(rec.symbol(), 1);
+        assert_eq!(rec.symbol().unwrap(), 1);
         rec.set_is_active(false);
-        assert!(!rec.is_active());
+        assert!(!rec.is_active().unwrap());
     }
 
     #[test]
@@ -76,7 +76,7 @@ mod tests {
         let mut rec = SchNoERCRecord::from_origin(origin);
         rec.set_is_active(false);
         rec.set_suppress_all(false);
-        assert_eq!(rec.try_is_active(), Some(false));
-        assert_eq!(rec.try_suppress_all(), Some(false));
+        assert_eq!(rec.try_is_active().unwrap(), Some(false));
+        assert_eq!(rec.try_suppress_all().unwrap(), Some(false));
     }
 }

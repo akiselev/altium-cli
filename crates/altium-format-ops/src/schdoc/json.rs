@@ -20,24 +20,26 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
         let comps = doc.query_all::<SchComponent>("#1")?;
         for comp in &comps {
             let rec = comp.read();
-            let pins: Vec<serde_json::Value> = comp
-                .children::<SchPin>()
-                .iter()
-                .map(|p| {
-                    let pr = p.read();
-                    serde_json::json!({
-                        "designator": pr.designator().to_string(),
-                        "name": pr.name().to_string(),
-                    })
-                })
-                .collect();
+            let mut pins_json = Vec::new();
+            for p in comp.children::<SchPin>().iter() {
+                let pr = p.read();
+                let designator = pr.designator()?.to_string();
+                let name = pr.name()?.to_string();
+                pins_json.push(serde_json::json!({
+                    "designator": designator,
+                    "name": name,
+                }));
+            }
+            let designator = rec.designator()?.to_string();
+            let lib_reference = rec.lib_reference()?.to_string();
+            let description = rec.component_description()?.to_string();
             components_json.push(serde_json::json!({
-                "designator": rec.designator().to_string(),
-                "lib_reference": rec.lib_reference().to_string(),
-                "description": rec.component_description(),
-                "pin_count": pins.len(),
+                "designator": designator,
+                "lib_reference": lib_reference,
+                "description": description,
+                "pin_count": pins_json.len(),
                 "child_count": comp.children_len(),
-                "pins": pins,
+                "pins": pins_json,
             }));
         }
 
@@ -69,13 +71,14 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
         let comps = doc.query_all::<SchComponent>("#1")?;
         for comp in &comps {
             let rec = comp.read();
-            let designator = rec.designator().to_string();
+            let designator = rec.designator()?.to_string();
+            let lib_reference = rec.lib_reference()?.to_string();
             let pin_count = comp.child_count::<SchPin>();
             let child_count = comp.children_len();
 
             components.push(serde_json::json!({
                 "designator": designator,
-                "lib_reference": rec.lib_reference().to_string(),
+                "lib_reference": lib_reference,
                 "pin_count": pin_count,
                 "child_count": child_count,
             }));

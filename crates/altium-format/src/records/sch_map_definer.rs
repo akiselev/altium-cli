@@ -30,10 +30,10 @@ pub struct SchMapDefinerRecord {
 
 impl SchMapDefinerRecord {
     /// Returns all implementation-side designators (`DESIMPn`) in order.
-    pub fn implementation_designators(&self) -> Vec<String> {
+    pub fn implementation_designators(&self) -> crate::error::Result<Vec<String>> {
         use crate::traits::RecordType;
         let params = &self.origin().param().params;
-        let count = self.designator_implementation_count().max(0) as usize;
+        let count = self.designator_implementation_count()?.max(0) as usize;
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
             let key = format!("DESIMP{}", i);
@@ -43,7 +43,7 @@ impl SchMapDefinerRecord {
                 .unwrap_or_default();
             out.push(value);
         }
-        out
+        Ok(out)
     }
 
     /// Replaces all implementation-side designators (`DESIMPn`), updating
@@ -78,31 +78,33 @@ mod tests {
     use crate::backing_store::{ParamOrigin, RecordOrigin};
 
     #[test]
-    fn roundtrip() {
+    fn roundtrip() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=47|OWNERINDEX=24|DESINTF=3|DESIMPCOUNT=2|DESIMP0=3|DESIMP1=A3|",
         ));
         let rec = SchMapDefinerRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 24);
-        assert_eq!(rec.designator_interface(), "3");
-        assert_eq!(rec.designator_implementation_count(), 2);
+        assert_eq!(rec.owner_index()?, 24);
+        assert_eq!(rec.designator_interface()?, "3");
+        assert_eq!(rec.designator_implementation_count()?, 2);
         assert_eq!(
-            rec.implementation_designators(),
+            rec.implementation_designators()?,
             vec!["3".to_string(), "A3".to_string()]
         );
+        Ok(())
     }
 
     #[test]
-    fn setter() {
+    fn setter() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=47|DESINTF=1|DESIMPCOUNT=1|"));
         let mut rec = SchMapDefinerRecord::from_origin(origin);
         rec.set_designator_interface("P1".to_string());
         rec.set_implementation_designators(&["A1".to_string(), "B1".to_string()]);
-        assert_eq!(rec.designator_interface(), "P1");
-        assert_eq!(rec.designator_implementation_count(), 2);
+        assert_eq!(rec.designator_interface()?, "P1");
+        assert_eq!(rec.designator_implementation_count()?, 2);
         assert_eq!(
-            rec.implementation_designators(),
+            rec.implementation_designators()?,
             vec!["A1".to_string(), "B1".to_string()]
         );
+        Ok(())
     }
 }

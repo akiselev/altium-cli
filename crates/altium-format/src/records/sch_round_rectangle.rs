@@ -75,8 +75,8 @@ mod tests {
             "|RECORD=10|Location.X=10|Location.Y=20|Corner.X=100|Corner.Y=200|CornerXRadius=5|CornerYRadius=5|IsSolid=T|Color=255|AreaColor=128|",
         ));
         let rec = SchRoundRectangleRecord::from_origin(origin);
-        assert!(rec.is_solid());
-        assert_eq!(rec.color(), 255);
+        assert!(rec.is_solid().unwrap());
+        assert_eq!(rec.color().unwrap(), 255);
     }
 
     #[test]
@@ -86,6 +86,6 @@ mod tests {
         ));
         let mut rec = SchRoundRectangleRecord::from_origin(origin);
         rec.set_is_solid(true);
-        assert!(rec.is_solid());
+        assert!(rec.is_solid().unwrap());
     }
 }

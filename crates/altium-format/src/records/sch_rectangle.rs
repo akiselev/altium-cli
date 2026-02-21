@@ -109,10 +109,10 @@ mod tests {
             "|RECORD=14|Location.X=10|Location.Y=20|Corner.X=100|Corner.Y=200|IsSolid=T|Transparent=F|Color=255|AreaColor=16777215|LineWidth=1|",
         ));
         let rec = SchRectangleRecord::from_origin(origin);
-        assert!(rec.is_solid());
-        assert!(!rec.transparent());
-        assert_eq!(rec.color(), 255);
-        assert_eq!(rec.area_color(), 16777215);
+        assert!(rec.is_solid().unwrap());
+        assert!(!rec.transparent().unwrap());
+        assert_eq!(rec.color().unwrap(), 255);
+        assert_eq!(rec.area_color().unwrap(), 16777215);
     }
 
     #[test]
@@ -122,8 +122,8 @@ mod tests {
         ));
         let mut rec = SchRectangleRecord::from_origin(origin);
         rec.set_is_solid(true);
-        assert!(rec.is_solid());
+        assert!(rec.is_solid().unwrap());
         rec.set_transparent(true);
-        assert!(rec.transparent());
+        assert!(rec.transparent().unwrap());
     }
 }

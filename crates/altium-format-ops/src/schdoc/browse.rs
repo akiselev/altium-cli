@@ -30,9 +30,9 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
     let components = doc.query_all::<SchComponent>("#1")?;
     for comp in &components {
         let rec = comp.read();
-        let designator = rec.designator().to_string();
-        let lib_reference = rec.lib_reference().to_string();
-        let description = rec.component_description();
+        let designator = rec.designator()?.to_string();
+        let lib_reference = rec.lib_reference()?.to_string();
+        let description = rec.component_description()?.to_string();
         let category = categorize_component(&lib_reference, &description);
         let comp_ref = SchDocComponentRef {
             designator,
@@ -85,24 +85,26 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
 
     doc.for_each_record_of_type(17, |node| {
         let rec = SchPowerRecord::from_origin(node.origin.clone());
-        let text = rec.text();
-        if !text.is_empty() {
-            if is_ground_net(&text) {
-                *ground_net_counts.entry(text).or_insert(0) += 1;
-            } else {
-                *power_net_counts.entry(text).or_insert(0) += 1;
+        if let Ok(text) = rec.text() {
+            if !text.is_empty() {
+                if is_ground_net(&text) {
+                    *ground_net_counts.entry(text).or_insert(0) += 1;
+                } else {
+                    *power_net_counts.entry(text).or_insert(0) += 1;
+                }
             }
         }
     });
 
     doc.for_each_record_of_type(25, |node| {
         let rec = SchNetLabelRecord::from_origin(node.origin.clone());
-        let text = rec.text();
-        if !text.is_empty() {
-            if is_ground_net(&text) {
-                *ground_net_counts.entry(text).or_insert(0) += 1;
-            } else if is_power_rail(&text) {
-                *power_net_counts.entry(text).or_insert(0) += 1;
+        if let Ok(text) = rec.text() {
+            if !text.is_empty() {
+                if is_ground_net(&text) {
+                    *ground_net_counts.entry(text).or_insert(0) += 1;
+                } else if is_power_rail(&text) {
+                    *power_net_counts.entry(text).or_insert(0) += 1;
+                }
             }
         }
     });
@@ -126,14 +128,14 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
 
     doc.for_each_record_of_type(18, |node| {
         let rec = SchPortRecord::from_origin(node.origin.clone());
-        let name = rec.name();
-        let io_type = rec.io_type();
-        if !name.is_empty() {
-            match io_type {
-                1 => outputs.push(name),
-                2 => inputs.push(name),
-                3 => bidirectional.push(name),
-                _ => unspecified.push(name),
+        if let (Ok(name), Ok(io_type)) = (rec.name(), rec.io_type()) {
+            if !name.is_empty() {
+                match io_type {
+                    1 => outputs.push(name),
+                    2 => inputs.push(name),
+                    3 => bidirectional.push(name),
+                    _ => unspecified.push(name),
+                }
             }
         }
     });
@@ -209,14 +211,14 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
 
     // 1. SHEET INFO
     let sheet_info = if let Some(rec) = doc.sheet_record() {
-        let size_style = rec.sheet_style() as i32;
+        let size_style = rec.sheet_style()? as i32;
         let size = sheet_size_name(size_style).to_string();
-        let fonts_defined = rec.font_id_count();
+        let fonts_defined = rec.font_id_count()?;
 
         let custom_dimensions = if size_style >= 18 {
             Some((
-                format!("{:.1}", rec.custom_x().to_mils()),
-                format!("{:.1}", rec.custom_y().to_mils()),
+                format!("{:.1}", rec.custom_x()?.to_mils()),
+                format!("{:.1}", rec.custom_y()?.to_mils()),
             ))
         } else {
             None
@@ -280,14 +282,14 @@ pub fn cmd_components(path: &Path) -> Result<SchDocComponentList, Box<dyn std::e
     let comps = doc.query_all::<SchComponent>("#1")?;
     for comp in &comps {
         let rec = comp.read();
-        let designator = rec.designator().to_string();
+        let designator = rec.designator()?.to_string();
 
         components.push(SchDocComponentInfo {
             designator,
-            lib_reference: rec.lib_reference().to_string(),
-            description: rec.component_description(),
-            location: format_location(rec.location_x(), rec.location_y()),
-            parts: rec.part_count() as i32,
+            lib_reference: rec.lib_reference()?.to_string(),
+            description: rec.component_description()?.to_string(),
+            location: format_location(rec.location_x()?, rec.location_y()?),
+            parts: rec.part_count()? as i32,
             child_count: Some(comp.children_len()),
         });
     }

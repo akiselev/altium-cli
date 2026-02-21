@@ -452,10 +452,22 @@ bitflags::bitflags! {
 }
 
 impl crate::traits::ParamCodec for PinConglomerateFlags {
-    fn read(params: &crate::parameters::ParameterCollection, key: &str) -> Option<Self> {
-        params
-            .get(key)
-            .map(|v| Self::from_bits_truncate(v.as_int_or(0) as u32))
+    fn read(
+        params: &crate::parameters::ParameterCollection,
+        key: &str,
+    ) -> Result<Option<Self>, crate::error::AltiumError> {
+        match params.get(key) {
+            None => Ok(None),
+            Some(v) => {
+                let int_val = v.as_int().map_err(|_| {
+                    crate::error::AltiumError::InvalidParameter(format!(
+                        "{}: expected integer",
+                        key
+                    ))
+                })?;
+                Ok(Some(Self::from_bits_truncate(int_val as u32)))
+            }
+        }
     }
 
     fn write(&self, params: &mut crate::parameters::ParameterCollection, key: &str) {
@@ -522,7 +534,7 @@ mod tests {
     fn enum_param_codec_roundtrip() {
         let mut params = ParameterCollection::new();
         PinElectricalType::IO.write(&mut params, "Electrical");
-        let read_back = PinElectricalType::read(&params, "Electrical");
+        let read_back = PinElectricalType::read(&params, "Electrical").unwrap();
         assert_eq!(read_back, Some(PinElectricalType::IO));
     }
 
@@ -561,7 +573,7 @@ mod tests {
         let flags = PinConglomerateFlags::PIN_HIDDEN | PinConglomerateFlags::SHOW_NAME;
         let mut params = ParameterCollection::new();
         flags.write(&mut params, "PinConglomerate");
-        let read_back = PinConglomerateFlags::read(&params, "PinConglomerate");
+        let read_back = PinConglomerateFlags::read(&params, "PinConglomerate").unwrap();
         assert_eq!(read_back, Some(flags));
     }
 

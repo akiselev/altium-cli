@@ -25,7 +25,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     for fp in &footprints {
         let fp_name = fp.name();
         let fp_rec = fp.read();
-        let description = fp_rec.description();
+        let description = fp_rec.description()?;
         let pad_count = fp.child_count::<PcbPad>();
         let category = categorize_footprint(&fp_name, &description);
 
@@ -110,7 +110,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     for fp in &footprints {
         let fp_name = fp.name();
         let fp_rec = fp.read();
-        let description = fp_rec.description();
+        let description = fp_rec.description()?;
         let pad_count = fp.child_count::<PcbPad>();
         by_pads.push((fp_name, description, pad_count));
     }
@@ -153,7 +153,7 @@ pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::
         let fp_rec = fp.read();
         fps.push(FootprintSummaryExt {
             name: fp_name,
-            description: fp_rec.description(),
+            description: fp_rec.description()?,
             pad_count: fp.child_count::<PcbPad>(),
         });
     }
@@ -183,7 +183,7 @@ pub fn cmd_search(
     for fp in &footprints {
         let fp_name = fp.name();
         let fp_rec = fp.read();
-        let desc = fp_rec.description();
+        let desc = fp_rec.description()?;
         let name_lower = fp_name.to_lowercase();
         let desc_lower = desc.to_lowercase();
 

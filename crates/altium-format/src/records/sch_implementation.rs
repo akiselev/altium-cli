@@ -68,12 +68,12 @@ pub struct SchImplementationRecord {
 
 impl SchImplementationRecord {
     /// Returns dynamic `ModelDatafile{n}` links.
-    pub fn datafile_links(&self) -> Vec<SchImplementationDatafileLink> {
+    pub fn datafile_links(&self) -> crate::error::Result<Vec<SchImplementationDatafileLink>> {
         let Some(param) = self.origin().as_param() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let params = &param.params;
-        let count = self.datafile_count().max(0) as usize;
+        let count = self.datafile_count()?.max(0) as usize;
         let mut links = Vec::with_capacity(count);
         for i in 0..count {
             let idx = i.to_string();
@@ -84,7 +84,7 @@ impl SchImplementationRecord {
             let entity = params
                 .get(&format!("ModelDatafileEntity{}", idx))
                 .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| self.model_name().to_string());
+                .unwrap_or_else(|| self.model_name().map(|s| s.to_string()).unwrap_or_default());
             let kind = params
                 .get(&format!("ModelDatafileKind{}", idx))
                 .map(|v| v.as_str().to_string())
@@ -95,7 +95,7 @@ impl SchImplementationRecord {
                 kind,
             });
         }
-        links
+        Ok(links)
     }
 
     /// Replaces dynamic `ModelDatafile{n}` links and updates `DatafileCount`.
@@ -158,42 +158,45 @@ mod tests {
     use crate::backing_store::{ParamOrigin, RecordOrigin};
 
     #[test]
-    fn roundtrip() {
+    fn roundtrip() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=45|OWNERINDEX=1|DESCRIPTION=Footprint|USECOMPONENTLIBRARY=T|MODELNAME=DIP-8|MODELTYPE=PCBLIB|DATAFILECOUNT=0|ISCURRENT=T|INTEGRATEDMODEL=F|DATABASEMODEL=F|UNIQUEID=ABCD1234|",
         ));
         let rec = SchImplementationRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 1);
-        assert_eq!(rec.model_name(), "DIP-8");
-        assert_eq!(rec.model_type(), "PCBLIB");
-        assert!(rec.is_current());
-        assert!(rec.use_component_library());
+        assert_eq!(rec.owner_index()?, 1);
+        assert_eq!(rec.model_name()?, "DIP-8");
+        assert_eq!(rec.model_type()?, "PCBLIB");
+        assert!(rec.is_current()?);
+        assert!(rec.use_component_library()?);
+        Ok(())
     }
 
     #[test]
-    fn setter() {
+    fn setter() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=45|MODELNAME=SOT-23|"));
         let mut rec = SchImplementationRecord::from_origin(origin);
         rec.set_model_name("QFP-44".to_string());
-        assert_eq!(rec.model_name(), "QFP-44");
+        assert_eq!(rec.model_name()?, "QFP-44");
         rec.set_is_current(false);
-        assert!(!rec.is_current());
+        assert!(!rec.is_current()?);
+        Ok(())
     }
 
     #[test]
-    fn dynamic_datafile_links_roundtrip() {
+    fn dynamic_datafile_links_roundtrip() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=45|MODELNAME=DIP8|DATAFILECOUNT=2|MODELDATAFILE0=foo.PcbLib|MODELDATAFILEENTITY0=DIP8|MODELDATAFILEKIND0=PCBLIB|MODELDATAFILE1=bar.step|MODELDATAFILEENTITY1=MECH|MODELDATAFILEKIND1=STEP|",
         ));
         let rec = SchImplementationRecord::from_origin(origin);
-        let links = rec.datafile_links();
+        let links = rec.datafile_links()?;
         assert_eq!(links.len(), 2);
         assert_eq!(links[0].location, "foo.PcbLib");
         assert_eq!(links[1].kind, "STEP");
+        Ok(())
     }
 
     #[test]
-    fn set_dynamic_datafile_links_updates_params() {
+    fn set_dynamic_datafile_links_updates_params() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=45|MODELNAME=DIP8|DATAFILECOUNT=1|MODELDATAFILE0=old|MODELDATAFILEENTITY0=old|MODELDATAFILEKIND0=old|",
         ));
@@ -203,8 +206,9 @@ mod tests {
             entity: "DIP8".to_string(),
             kind: "PCBLIB".to_string(),
         }]);
-        let links = rec.datafile_links();
+        let links = rec.datafile_links()?;
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].location, "new.PcbLib");
+        Ok(())
     }
 }

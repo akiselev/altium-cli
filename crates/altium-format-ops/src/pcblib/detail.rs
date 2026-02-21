@@ -27,9 +27,9 @@ pub fn cmd_footprint(
     let fp = find_footprint_by_name(&lib, name)?;
 
     let fp_rec = fp.read();
-    let pattern = fp_rec.pattern();
-    let description = fp_rec.description();
-    let height = format!("{:.3}mm", fp_rec.height().to_mm());
+    let pattern = fp_rec.pattern()?;
+    let description = fp_rec.description()?;
+    let height = format!("{:.3}mm", fp_rec.height()?.to_mm());
     let total_prims = fp.children_len();
 
     let pads = extract_pads(&fp);

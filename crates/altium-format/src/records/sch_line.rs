@@ -66,9 +66,9 @@ mod tests {
             "|RECORD=13|Location.X=10|Location.Y=20|Corner.X=100|Corner.Y=200|LineWidth=2|LineStyle=1|Color=255|",
         ));
         let rec = SchLineRecord::from_origin(origin);
-        assert_eq!(rec.line_width(), Size::Medium);
-        assert_eq!(rec.line_style(), LineStyle::Dashed);
-        assert_eq!(rec.color(), 255);
+        assert_eq!(rec.line_width().unwrap(), Size::Medium);
+        assert_eq!(rec.line_style().unwrap(), LineStyle::Dashed);
+        assert_eq!(rec.color().unwrap(), 255);
     }
 
     #[test]
@@ -78,6 +78,6 @@ mod tests {
         ));
         let mut rec = SchLineRecord::from_origin(origin);
         rec.set_line_style(LineStyle::Dotted);
-        assert_eq!(rec.line_style(), LineStyle::Dotted);
+        assert_eq!(rec.line_style().unwrap(), LineStyle::Dotted);
     }
 }

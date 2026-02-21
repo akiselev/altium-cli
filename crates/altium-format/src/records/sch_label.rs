@@ -58,10 +58,10 @@ mod tests {
             "|RECORD=4|OWNERINDEX=0|OWNERPARTID=1|LOCATION.X=100|LOCATION.Y=200|ORIENTATION=1|JUSTIFICATION=0|COLOR=0|FONTID=1|TEXT=Hello|ISMIRRORED=F|UNIQUEID=ABCD1234|",
         ));
         let rec = SchLabelRecord::from_origin(origin);
-        assert_eq!(rec.owner_index(), 0);
-        assert_eq!(rec.text(), "Hello");
-        assert_eq!(rec.font_id(), 1);
-        assert!(!rec.is_mirrored());
+        assert_eq!(rec.owner_index().unwrap(), 0);
+        assert_eq!(rec.text().unwrap(), "Hello");
+        assert_eq!(rec.font_id().unwrap(), 1);
+        assert!(!rec.is_mirrored().unwrap());
     }
 
     #[test]
@@ -69,6 +69,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=4|TEXT=Old|"));
         let mut rec = SchLabelRecord::from_origin(origin);
         rec.set_text("New".to_string());
-        assert_eq!(rec.text(), "New");
+        assert_eq!(rec.text().unwrap(), "New");
     }
 }

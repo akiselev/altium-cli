@@ -68,8 +68,8 @@ mod tests {
             "|RECORD=33|OWNERINDEX=1|LOCATION.X=100|LOCATION.Y=200|ORIENTATION=0|JUSTIFICATION=0|COLOR=0|FONTID=1|ISHIDDEN=F|TEXT=Sheet1.SchDoc|ISMIRRORED=F|NOTAUTOPOSITION=F|UNIQUEID=ABCD1234|",
         ));
         let rec = SchSheetFileNameRecord::from_origin(origin);
-        assert_eq!(rec.text(), "Sheet1.SchDoc");
-        assert!(!rec.is_hidden());
+        assert_eq!(rec.text().unwrap(), "Sheet1.SchDoc");
+        assert!(!rec.is_hidden().unwrap());
     }
 
     #[test]
@@ -77,6 +77,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=33|TEXT=Old.SchDoc|"));
         let mut rec = SchSheetFileNameRecord::from_origin(origin);
         rec.set_text("New.SchDoc".to_string());
-        assert_eq!(rec.text(), "New.SchDoc");
+        assert_eq!(rec.text().unwrap(), "New.SchDoc");
     }
 }

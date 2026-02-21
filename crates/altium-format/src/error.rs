@@ -33,6 +33,10 @@ pub enum AltiumError {
     #[error("Missing required data: {0}")]
     MissingData(String),
 
+    /// Missing required parameter (key present in schema but absent from file).
+    #[error("Missing parameter: {0}")]
+    MissingParameter(String),
+
     /// Decompression error (zlib).
     #[error("Decompression error: {0}")]
     Decompression(String),

@@ -670,16 +670,37 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
                 }
             };
 
-            methods.push(quote! {
-                pub fn #getter_name(&self) -> #field_ty {
-                    <#field_ty as crate::traits::ParamCodec>::read(
-                        &self.origin.param().params,
-                        #key,
-                    )
-                    .unwrap_or_default()
+            let getter_body = match field.attrs.emit_policy {
+                Some(EmitPolicyAttr::WithDefault) => {
+                    // with_default fields must always be present; absence is an error
+                    quote! {
+                        pub fn #getter_name(&self) -> crate::error::Result<#field_ty> {
+                            <#field_ty as crate::traits::ParamCodec>::read(
+                                &self.origin.param().params,
+                                #key,
+                            )?
+                            .ok_or_else(|| crate::error::AltiumError::MissingParameter(#key.to_string()))
+                        }
+                    }
                 }
+                _ => {
+                    // sparse (default): absent key → default value
+                    quote! {
+                        pub fn #getter_name(&self) -> crate::error::Result<#field_ty> {
+                            Ok(<#field_ty as crate::traits::ParamCodec>::read(
+                                &self.origin.param().params,
+                                #key,
+                            )?
+                            .unwrap_or_default())
+                        }
+                    }
+                }
+            };
 
-                pub fn #try_getter_name(&self) -> Option<#field_ty> {
+            methods.push(quote! {
+                #getter_body
+
+                pub fn #try_getter_name(&self) -> crate::error::Result<Option<#field_ty>> {
                     <#field_ty as crate::traits::ParamCodec>::read(
                         &self.origin.param().params,
                         #key,
@@ -688,11 +709,11 @@ fn gen_param_accessors(struct_name: &Ident, fields: &[FieldInfo]) -> Result<Toke
 
                 #setter_body
 
-                pub fn #updater_name<R>(&mut self, f: impl FnOnce(&mut #field_ty) -> R) -> R {
-                    let mut value = self.#getter_name();
+                pub fn #updater_name<R>(&mut self, f: impl FnOnce(&mut #field_ty) -> R) -> crate::error::Result<R> {
+                    let mut value = self.#getter_name()?;
                     let result = f(&mut value);
                     self.#setter_name(value);
-                    result
+                    Ok(result)
                 }
             });
         }
@@ -1093,10 +1114,62 @@ fn gen_builder(
         };
 
         builder_methods.push(method);
-        from_record_stmts.push(quote! {
-            self.record.#setter_name(src.#field_name());
-        });
+
+        // For param-based records, getters return Result<T>, so from_record needs `?`.
+        // For emit="with_default" fields, use try_ getter with unwrap_or_default because the
+        // source file may predate this field (older Altium versions omit it).
+        let try_getter_name = format_ident!("try_{}", field_name);
+        let from_record_call = if macro_attrs.codec == Codec::Params && field.attrs.key.is_some() {
+            match field.attrs.emit_policy {
+                Some(EmitPolicyAttr::WithDefault) => {
+                    quote! { self.record.#setter_name(src.#try_getter_name()?.unwrap_or_default()); }
+                }
+                _ => {
+                    quote! { self.record.#setter_name(src.#field_name()?); }
+                }
+            }
+        } else {
+            quote! { self.record.#setter_name(src.#field_name()); }
+        };
+        from_record_stmts.push(from_record_call);
     }
+
+    // For param-based records, from_record returns Result because getters are fallible
+    let from_record_method = if macro_attrs.codec == Codec::Params {
+        quote! {
+            pub fn from_record(mut self, src: &#struct_name) -> crate::error::Result<Self> {
+                #(#from_record_stmts)*
+                Ok(self)
+            }
+        }
+    } else {
+        quote! {
+            pub fn from_record(mut self, src: &#struct_name) -> Self {
+                #(#from_record_stmts)*
+                self
+            }
+        }
+    };
+
+    let builder_from_method = if macro_attrs.codec == Codec::Params {
+        quote! {
+            pub fn builder_from(
+                template: fn() -> crate::backing_store::RecordOrigin,
+                src: &#struct_name,
+            ) -> crate::error::Result<#builder_name> {
+                #builder_name::new(template).from_record(src)
+            }
+        }
+    } else {
+        quote! {
+            pub fn builder_from(
+                template: fn() -> crate::backing_store::RecordOrigin,
+                src: &#struct_name,
+            ) -> #builder_name {
+                #builder_name::new(template).from_record(src)
+            }
+        }
+    };
 
     Ok(quote! {
         pub struct #builder_name {
@@ -1110,10 +1183,7 @@ fn gen_builder(
                 }
             }
 
-            pub fn from_record(mut self, src: &#struct_name) -> Self {
-                #(#from_record_stmts)*
-                self
-            }
+            #from_record_method
 
             #(#builder_methods)*
 
@@ -1127,12 +1197,7 @@ fn gen_builder(
                 #builder_name::new(template)
             }
 
-            pub fn builder_from(
-                template: fn() -> crate::backing_store::RecordOrigin,
-                src: &#struct_name,
-            ) -> #builder_name {
-                #builder_name::new(template).from_record(src)
-            }
+            #builder_from_method
         }
     })
 }

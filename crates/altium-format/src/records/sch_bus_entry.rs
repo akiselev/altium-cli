@@ -51,9 +51,9 @@ mod tests {
             "|RECORD=37|OWNERINDEX=0|LOCATION.X=100|LOCATION.Y=200|CORNER.X=120|CORNER.Y=220|LINEWIDTH=1|COLOR=8388608|UNIQUEID=ABCD1234|",
         ));
         let rec = SchBusEntryRecord::from_origin(origin);
-        assert_eq!(rec.line_width(), 1);
-        assert_eq!(rec.color(), 8388608);
-        assert_eq!(rec.unique_id(), "ABCD1234");
+        assert_eq!(rec.line_width().unwrap(), 1);
+        assert_eq!(rec.color().unwrap(), 8388608);
+        assert_eq!(rec.unique_id().unwrap(), "ABCD1234");
     }
 
     #[test]
@@ -61,6 +61,6 @@ mod tests {
         let origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=37|LINEWIDTH=1|"));
         let mut rec = SchBusEntryRecord::from_origin(origin);
         rec.set_line_width(2);
-        assert_eq!(rec.line_width(), 2);
+        assert_eq!(rec.line_width().unwrap(), 2);
     }
 }

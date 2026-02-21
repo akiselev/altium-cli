@@ -238,7 +238,7 @@ impl SchPinRecord {
     ///
     /// This mirrors AD's param serializer binary mode for SchLib pin records:
     /// fixed prefix fields plus short-string payloads up through `DefaultValue`.
-    pub fn to_legacy_binary_record_data(&self) -> Vec<u8> {
+    pub fn to_legacy_binary_record_data(&self) -> crate::error::Result<Vec<u8>> {
         fn write_u8(out: &mut Vec<u8>, v: u8) {
             out.push(v);
         }
@@ -264,32 +264,32 @@ impl SchPinRecord {
 
         let mut out = Vec::with_capacity(64);
         write_u8(&mut out, Self::RECORD_ID);
-        write_i32_le(&mut out, self.owner_index());
-        write_i16_le(&mut out, self.owner_part_id());
-        write_u8(&mut out, self.owner_part_display_mode());
-        write_u8(&mut out, self.symbol_inner_edge().to_int() as u8);
-        write_u8(&mut out, self.symbol_outer_edge().to_int() as u8);
-        write_u8(&mut out, self.symbol_inner().to_int() as u8);
-        write_u8(&mut out, self.symbol_outer().to_int() as u8);
-        write_lp_string(&mut out, &self.description());
-        write_u8(&mut out, self.formal_type().to_int() as u8);
-        write_u8(&mut out, self.electrical().to_int() as u8);
-        write_u8(&mut out, self.pin_conglomerate());
+        write_i32_le(&mut out, self.owner_index()?);
+        write_i16_le(&mut out, self.owner_part_id()?);
+        write_u8(&mut out, self.owner_part_display_mode()?);
+        write_u8(&mut out, self.symbol_inner_edge()?.to_int() as u8);
+        write_u8(&mut out, self.symbol_outer_edge()?.to_int() as u8);
+        write_u8(&mut out, self.symbol_inner()?.to_int() as u8);
+        write_u8(&mut out, self.symbol_outer()?.to_int() as u8);
+        write_lp_string(&mut out, &self.description()?);
+        write_u8(&mut out, self.formal_type()?.to_int() as u8);
+        write_u8(&mut out, self.electrical()?.to_int() as u8);
+        write_u8(&mut out, self.pin_conglomerate()?);
 
-        let (pin_len_whole, _) = self.pin_length().to_binary_parts();
-        let (loc_x_whole, _) = self.location_x().to_binary_parts();
-        let (loc_y_whole, _) = self.location_y().to_binary_parts();
+        let (pin_len_whole, _) = self.pin_length()?.to_binary_parts();
+        let (loc_x_whole, _) = self.location_x()?.to_binary_parts();
+        let (loc_y_whole, _) = self.location_y()?.to_binary_parts();
         write_i16_le(&mut out, pin_len_whole);
         write_i16_le(&mut out, loc_x_whole);
         write_i16_le(&mut out, loc_y_whole);
 
-        write_u32_le(&mut out, self.color());
-        write_lp_string(&mut out, &self.name().to_string());
-        write_lp_string(&mut out, &self.designator().to_string());
-        write_lp_string(&mut out, &self.swap_id_pin());
-        write_lp_string(&mut out, &self.swap_id_part());
-        write_lp_string(&mut out, &self.default_value());
-        out
+        write_u32_le(&mut out, self.color()?);
+        write_lp_string(&mut out, &self.name()?.to_string());
+        write_lp_string(&mut out, &self.designator()?.to_string());
+        write_lp_string(&mut out, &self.swap_id_pin()?);
+        write_lp_string(&mut out, &self.swap_id_part()?);
+        write_lp_string(&mut out, &self.default_value()?);
+        Ok(out)
     }
 }
 
@@ -299,41 +299,44 @@ mod tests {
     use crate::backing_store::{ParamOrigin, RecordOrigin};
 
     #[test]
-    fn roundtrip_pin_getter() {
+    fn roundtrip_pin_getter() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|Designator=1|Name=VCC|PinLength=30|Location.X=100|Location.Y=200|Electrical=7|",
         ));
         let rec = SchPinRecord::from_origin(origin);
-        assert_eq!(rec.designator(), Designator::from("1"));
-        assert_eq!(rec.name(), PinName::from("VCC"));
-        assert_eq!(rec.electrical(), PinElectricalType::Power);
+        assert_eq!(rec.designator()?, Designator::from("1"));
+        assert_eq!(rec.name()?, PinName::from("VCC"));
+        assert_eq!(rec.electrical()?, PinElectricalType::Power);
+        Ok(())
     }
 
     #[test]
-    fn roundtrip_pin_setter() {
+    fn roundtrip_pin_setter() -> crate::error::Result<()> {
         let origin = RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|Designator=1|Name=VCC|PinLength=30|",
         ));
         let mut rec = SchPinRecord::from_origin(origin);
         rec.set_designator(Designator::from("2"));
-        assert_eq!(rec.designator(), Designator::from("2"));
+        assert_eq!(rec.designator()?, Designator::from("2"));
         rec.set_name(PinName::from("GND"));
-        assert_eq!(rec.name(), PinName::from("GND"));
+        assert_eq!(rec.name()?, PinName::from("GND"));
+        Ok(())
     }
 
     #[test]
-    fn builder_from_record_copies_values() {
+    fn builder_from_record_copies_values() -> crate::error::Result<()> {
         let src = SchPinRecord::from_origin(RecordOrigin::Param(ParamOrigin::new(
             "|RECORD=2|Designator=7|Name=SCL|PinLength=40|",
         )));
-        let dst = SchPinRecord::builder_from(crate::templates::sch_pin_default, &src).build();
+        let dst = SchPinRecord::builder_from(crate::templates::sch_pin_default, &src).unwrap().build();
 
-        assert_eq!(dst.designator(), Designator::from("7"));
-        assert_eq!(dst.name(), PinName::from("SCL"));
+        assert_eq!(dst.designator()?, Designator::from("7"));
+        assert_eq!(dst.name()?, PinName::from("SCL"));
+        Ok(())
     }
 
     #[test]
-    fn parse_legacy_binary_pin() {
+    fn parse_legacy_binary_pin() -> crate::error::Result<()> {
         // Binary payload from Synthiam.SchLib pin record.
         let data: [u8; 33] = [
             0x02, 0x00, 0x00, 0x00, // record id + owner_index low bytes
@@ -361,8 +364,9 @@ mod tests {
 
         let rec =
             SchPinRecord::from_legacy_binary_record_data(&data).expect("binary pin should decode");
-        assert_eq!(rec.designator(), Designator::from("1"));
-        assert_eq!(rec.name(), PinName::from("1"));
-        assert_eq!(rec.owner_part_id(), 1);
+        assert_eq!(rec.designator()?, Designator::from("1"));
+        assert_eq!(rec.name()?, PinName::from("1"));
+        assert_eq!(rec.owner_part_id()?, 1);
+        Ok(())
     }
 }

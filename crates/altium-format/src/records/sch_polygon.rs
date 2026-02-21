@@ -192,10 +192,10 @@ mod tests {
             "|RECORD=7|LineWidth=1|Color=255|AreaColor=16777215|IsSolid=T|Transparent=F|",
         ));
         let rec = SchPolygonRecord::from_origin(origin);
-        assert!(rec.is_solid());
-        assert!(!rec.transparent());
-        assert_eq!(rec.color(), 255);
-        assert_eq!(rec.area_color(), 16777215);
+        assert!(rec.is_solid().unwrap());
+        assert!(!rec.transparent().unwrap());
+        assert_eq!(rec.color().unwrap(), 255);
+        assert_eq!(rec.area_color().unwrap(), 16777215);
     }
 
     #[test]
@@ -205,6 +205,6 @@ mod tests {
         ));
         let mut rec = SchPolygonRecord::from_origin(origin);
         rec.set_is_solid(true);
-        assert!(rec.is_solid());
+        assert!(rec.is_solid().unwrap());
     }
 }
