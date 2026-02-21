@@ -166,7 +166,7 @@ impl SchPinRecord {
             let len = read_u8(data, pos)? as usize;
             let s = data.get(*pos..*pos + len)?;
             *pos += len;
-            Some(String::from_utf8_lossy(s).to_string())
+            Some(crate::documents::encoding::decode_win1252(s))
         }
 
         let mut pos = 0usize;

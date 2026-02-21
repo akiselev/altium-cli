@@ -152,7 +152,7 @@ impl PcbPadRecord {
             if 4 + name_len > data.len() {
                 return String::new();
             }
-            String::from_utf8_lossy(&data[4..4 + name_len])
+            crate::documents::encoding::decode_win1252(&data[4..4 + name_len])
                 .trim_end_matches('\0')
                 .to_string()
         } else {

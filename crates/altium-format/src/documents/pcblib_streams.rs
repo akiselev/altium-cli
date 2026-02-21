@@ -97,7 +97,7 @@ pub(crate) fn parse_file_header_stream(data: &[u8]) -> Result<PcbLibFileHeaderSt
             "pcblib FileHeader overflows while reading header text".to_string(),
         ));
     }
-    let header_text = String::from_utf8_lossy(&data[pos..pos + header_len]).to_string();
+    let header_text = decode_win1252(&data[pos..pos + header_len]);
     pos += header_len;
 
     let parse_version_and_key = |start: usize| -> Result<(f64, String)> {
@@ -140,7 +140,7 @@ pub(crate) fn parse_file_header_stream(data: &[u8]) -> Result<PcbLibFileHeaderSt
                 "pcblib FileHeader has unexpected trailing bytes".to_string(),
             ));
         }
-        let key = String::from_utf8_lossy(&data[p..p + key_len]).to_string();
+        let key = decode_win1252(&data[p..p + key_len]);
         Ok((file_version, key))
     };
 
@@ -277,7 +277,7 @@ fn parse_section_key_string(data: &[u8], pos: &mut usize, label: &str) -> Result
         )));
     }
 
-    Ok(String::from_utf8_lossy(&payload[1..]).to_string())
+    Ok(decode_win1252(&payload[1..]))
 }
 
 fn encode_section_key_string(value: &str) -> Result<Vec<u8>> {
