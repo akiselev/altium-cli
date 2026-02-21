@@ -106,23 +106,3 @@ fn destructive_roundtrip_synthiam_pcblib() {
     println!("Only in rebuilt: {}", report.only_in_rebuilt.len());
 }
 
-/// Map PCB primitive type IDs to human-readable names.
-fn pcb_type_name(id: u8) -> &'static str {
-    match id {
-        0 => "NoObject",
-        1 => "Arc",
-        2 => "Pad",
-        3 => "Via",
-        4 => "Track",
-        5 => "Text",
-        6 => "Fill",
-        7 => "Connection",
-        8 => "Net",
-        9 => "Component",
-        10 => "Polygon",
-        11 => "Region",
-        12 => "ComponentBody",
-        13 => "Dimension",
-        _ => "Unknown",
-    }
-}

@@ -18,7 +18,6 @@ use crate::ids::{GroupId, RecordId};
 use crate::parameters::ParameterCollection;
 use crate::records::{SchBlanketRecord, is_supported_sch_record_id};
 use crate::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
-use crate::traits::RecordType;
 
 const STREAM_FILE_HEADER: &str = "FileHeader";
 const STREAM_ADDITIONAL: &str = "Additional";
@@ -384,7 +383,6 @@ impl SchDoc {
 
     /// Returns the sheet record (RECORD=31) if present.
     pub fn sheet_record(&self) -> Option<crate::records::SchSheetRecord> {
-        use crate::traits::RecordType;
         let id = crate::records::SchSheetRecord::RECORD_ID;
         let store = self.store.borrow();
         store

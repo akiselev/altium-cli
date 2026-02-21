@@ -3,7 +3,7 @@
 use super::enums::*;
 use crate::coord::SchCoord;
 use crate::newtypes::{Designator, PinName, UniqueId};
-use crate::traits::{AltiumEnum, RecordType};
+use crate::traits::AltiumEnum;
 use altium_format_derive::altium_record;
 use encoding_rs::WINDOWS_1252;
 

@@ -30,6 +30,7 @@ pub enum ParamEmitPolicy {
     /// Always emit value, even if it is a default (e.g. false/zero/empty).
     WithDefault,
     /// Never emit this key.
+    #[allow(dead_code)]
     Never,
 }
 

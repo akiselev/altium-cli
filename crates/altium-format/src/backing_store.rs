@@ -9,11 +9,6 @@
 //! - **`RecordOrigin`**: Either parameter-based (schematic) or binary (PCB)
 //! - **`RecordNode`**: A single record with its origin, dirty tracking, and
 //!   original snapshot for identity writes
-//! - **`ComponentGroup`**: A schematic component and its child records
-//! - **`FootprintGroup`**: A PCB footprint with metadata and primitives
-//! - **`StreamNode`**: A named OLE stream containing a list of records
-
-use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -312,73 +307,6 @@ impl RecordNode {
 }
 
 // ---------------------------------------------------------------------------
-// ComponentGroup — schematic component with children
-// ---------------------------------------------------------------------------
-
-/// A schematic component record and its child records.
-///
-/// In Altium schematic files, a component (RECORD=1) owns a sequence of
-/// child records (pins, labels, etc.). This struct groups them together
-/// and tracks their original indices for faithful round-trip serialization.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ComponentGroup {
-    /// The component record itself (typically RECORD=1).
-    pub component: RecordNode,
-    /// Child records belonging to this component (pins, labels, etc.).
-    pub children: Vec<RecordNode>,
-    /// Original indices of the children in the flat record list.
-    pub original_indices: Vec<usize>,
-    /// Extra CFB streams in this component's storage (not Data), preserved for round-trip.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub raw_extra_streams: HashMap<String, Vec<u8>>,
-}
-
-impl ComponentGroup {
-    /// Creates a new `ComponentGroup`.
-    pub fn new(
-        component: RecordNode,
-        children: Vec<RecordNode>,
-        original_indices: Vec<usize>,
-    ) -> Self {
-        Self {
-            component,
-            children,
-            original_indices,
-            raw_extra_streams: HashMap::new(),
-        }
-    }
-
-    /// Returns a reference to the component record.
-    pub fn component(&self) -> &RecordNode {
-        &self.component
-    }
-
-    /// Returns a mutable reference to the component record.
-    pub fn component_mut(&mut self) -> &mut RecordNode {
-        &mut self.component
-    }
-
-    /// Returns a reference to the child records.
-    pub fn children(&self) -> &[RecordNode] {
-        &self.children
-    }
-
-    /// Returns a mutable reference to the child records.
-    pub fn children_mut(&mut self) -> &mut [RecordNode] {
-        &mut self.children
-    }
-
-    /// Returns split borrows: the component and its children simultaneously.
-    ///
-    /// This is the key method that enables safe concurrent access to both
-    /// the component record and its children without requiring multiple
-    /// borrows of the same struct.
-    pub fn split_borrow(&mut self) -> (&mut RecordNode, &mut Vec<RecordNode>) {
-        (&mut self.component, &mut self.children)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // PcbPrimitiveRef — reference to a PCB primitive by type and index
 // ---------------------------------------------------------------------------
 
@@ -396,97 +324,6 @@ impl PcbPrimitiveRef {
     /// Creates a new `PcbPrimitiveRef`.
     pub fn new(type_id: u8, index: usize) -> Self {
         Self { type_id, index }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// FootprintGroup — PCB footprint with metadata and primitives
-// ---------------------------------------------------------------------------
-
-/// A PCB footprint (component pattern) with its metadata and primitives.
-///
-/// In PcbLib files, each footprint consists of:
-/// - A metadata record describing the footprint
-/// - A list of primitive records (tracks, pads, arcs, etc.)
-/// - Raw blocks preserved for identity write-back
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FootprintGroup {
-    /// Metadata record for the footprint.
-    pub metadata: RecordNode,
-    /// Primitive records making up the footprint geometry.
-    pub primitives: Vec<RecordNode>,
-    /// Raw pattern name block preserved for identity write-back.
-    pub raw_pattern_name_block: Vec<u8>,
-    /// Original ordering of primitives by type for round-trip fidelity.
-    pub original_primitive_order: Vec<PcbPrimitiveRef>,
-    /// Raw header bytes preserved for identity write-back.
-    pub raw_header: Vec<u8>,
-    /// Extra CFB streams in this footprint's storage (not Parameters/Header/Data),
-    /// preserved for round-trip.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub raw_extra_streams: HashMap<String, Vec<u8>>,
-}
-
-impl FootprintGroup {
-    /// Creates a new `FootprintGroup`.
-    pub fn new(
-        metadata: RecordNode,
-        primitives: Vec<RecordNode>,
-        raw_pattern_name_block: Vec<u8>,
-        original_primitive_order: Vec<PcbPrimitiveRef>,
-        raw_header: Vec<u8>,
-    ) -> Self {
-        Self {
-            metadata,
-            primitives,
-            raw_pattern_name_block,
-            original_primitive_order,
-            raw_header,
-            raw_extra_streams: HashMap::new(),
-        }
-    }
-
-    /// Returns split borrows: the metadata and its primitives simultaneously.
-    pub fn split_borrow(&mut self) -> (&mut RecordNode, &mut Vec<RecordNode>) {
-        (&mut self.metadata, &mut self.primitives)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// StreamId / StreamNode — OLE stream representation
-// ---------------------------------------------------------------------------
-
-/// Identifier for an OLE stream within a compound file.
-pub type StreamId = String;
-
-/// An OLE stream containing a list of records.
-///
-/// Altium files are stored in OLE Compound Files (CFB). Each stream within
-/// the file may contain one or more records. This struct preserves both
-/// the parsed records and the original bytes.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct StreamNode {
-    /// Stream identifier (path within the compound file).
-    pub id: StreamId,
-    /// Original bytes of the stream for identity write-back.
-    pub original_bytes: Vec<u8>,
-    /// Parsed records from this stream.
-    pub records: Vec<RecordNode>,
-}
-
-impl StreamNode {
-    /// Creates a new `StreamNode`.
-    pub fn new(id: StreamId, original_bytes: Vec<u8>, records: Vec<RecordNode>) -> Self {
-        Self {
-            id,
-            original_bytes,
-            records,
-        }
-    }
-
-    /// Returns true if any record in this stream is dirty.
-    pub fn is_dirty(&self) -> bool {
-        self.records.iter().any(|r| r.is_dirty())
     }
 }
 
@@ -591,55 +428,6 @@ mod tests {
     }
 
     #[test]
-    fn component_group_split_borrow() {
-        // Create a component group with a component and two children.
-        let comp_origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|DESIGNATOR=U1|"));
-        let comp = RecordNode::new(1, comp_origin);
-
-        let pin1_origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|NAME=VCC|"));
-        let pin1 = RecordNode::new(2, pin1_origin);
-
-        let pin2_origin = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|NAME=GND|"));
-        let pin2 = RecordNode::new(2, pin2_origin);
-
-        let mut group = ComponentGroup::new(comp, vec![pin1, pin2], vec![1, 2]);
-
-        // Verify we can access component and children independently.
-        assert_eq!(group.component().key, 1);
-        assert_eq!(group.children().len(), 2);
-
-        // Split borrow: modify component and children simultaneously.
-        let (component, children) = group.split_borrow();
-        component.mark_dirty();
-        children[0].mark_dirty();
-
-        // The second child should still be clean.
-        assert!(!children[1].is_dirty());
-
-        // Verify modifications stuck.
-        assert!(group.component().is_dirty());
-        assert!(group.children()[0].is_dirty());
-        assert!(!group.children()[1].is_dirty());
-    }
-
-    #[test]
-    fn stream_node_dirty_detection() {
-        let origin1 = RecordOrigin::Param(ParamOrigin::new("|RECORD=1|"));
-        let origin2 = RecordOrigin::Param(ParamOrigin::new("|RECORD=2|"));
-        let node1 = RecordNode::new(1, origin1);
-        let node2 = RecordNode::new(2, origin2);
-
-        let mut stream = StreamNode::new("FileHeader".to_string(), vec![], vec![node1, node2]);
-
-        // No records dirty.
-        assert!(!stream.is_dirty());
-
-        // Mark one record dirty.
-        stream.records[0].mark_dirty();
-        assert!(stream.is_dirty());
-    }
-
-    #[test]
     fn param_origin_serde_roundtrip() {
         let original = ParamOrigin::new("|RECORD=1|NAME=Test|");
         let json = serde_json::to_string(&original).unwrap();
@@ -674,32 +462,6 @@ mod tests {
         assert_eq!(deserialized.key, 1);
         assert!(!deserialized.is_dirty());
         assert_eq!(deserialized.snapshot_bytes(), b"|RECORD=1|VALUE=100|");
-    }
-
-    #[test]
-    fn footprint_group_construction() {
-        let meta_origin = RecordOrigin::Binary(BinaryOrigin::new(vec![0x00; 16]));
-        let meta = RecordNode::new(0, meta_origin);
-
-        let prim_origin = RecordOrigin::Binary(BinaryOrigin::new(vec![0x01; 8]));
-        let prim = RecordNode::new(4, prim_origin);
-
-        let group = FootprintGroup::new(
-            meta,
-            vec![prim],
-            b"SOT-23".to_vec(),
-            vec![PcbPrimitiveRef::new(4, 0)],
-            vec![0xAA, 0xBB],
-        );
-
-        assert_eq!(group.metadata.key, 0);
-        assert_eq!(group.primitives.len(), 1);
-        assert_eq!(group.primitives[0].key, 4);
-        assert_eq!(group.raw_pattern_name_block, b"SOT-23");
-        assert_eq!(group.original_primitive_order.len(), 1);
-        assert_eq!(group.original_primitive_order[0].type_id, 4);
-        assert_eq!(group.original_primitive_order[0].index, 0);
-        assert_eq!(group.raw_header, vec![0xAA, 0xBB]);
     }
 
     #[test]

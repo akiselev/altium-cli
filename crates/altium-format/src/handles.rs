@@ -133,7 +133,6 @@ impl_record_handle!(
 impl_record_handle!(SchNoteHandle, SchNoteRecord);
 impl_record_handle!(SchBlanketHandle, SchBlanketRecord);
 impl_record_handle!(SchTaskHolderHandle, SchTaskHolderRecord);
-impl_record_handle!(SchComponentRecordHandle, SchComponentRecord);
 
 impl SchPinHandle {
     /// Read a pin record regardless of whether its backing origin is param
