@@ -20,7 +20,7 @@ use crate::ids::GroupId;
 use crate::parameters::ParameterCollection;
 use crate::records::{SchComponentRecord, SchPinRecord, is_supported_sch_record_id};
 use crate::store::{DocRef, DocumentMeta, DocumentStore, GroupData, GroupMeta};
-use crate::traits::{HandleFamily, RecordType};
+use crate::traits::HandleFamily;
 
 use super::encoding::{
     SIZE_FLAG_MASK, decode_win1252, encode_single_param_block, encode_win1252,
@@ -137,7 +137,7 @@ impl SchLib {
     }
 
     /// Returns a reference to the underlying document store.
-    pub fn store(&self) -> &DocRef {
+    pub(crate) fn store(&self) -> &DocRef {
         &self.store
     }
 
@@ -870,7 +870,7 @@ impl SchLib {
     }
 
     /// Find a component by name (case-insensitive), returns its GroupId.
-    pub fn find_component(&self, name: &str) -> Option<GroupId> {
+    pub(crate) fn find_component(&self, name: &str) -> Option<GroupId> {
         let name_lower = name.to_lowercase();
         let store = self.store.borrow();
         store.group_ids().iter().find_map(|&gid| {
@@ -882,6 +882,17 @@ impl SchLib {
                 _ => None,
             }
         })
+    }
+
+    /// Find a component by name (case-insensitive), returns its handle.
+    pub fn find_component_handle(&self, name: &str) -> Option<crate::handles::SchComponentHandle> {
+        let gid = self.find_component(name)?;
+        Some(crate::handles::SchComponentHandle::new(self.store.clone(), gid))
+    }
+
+    /// Construct a typed handle for a record in this document's store.
+    pub fn handle_for<H: HandleFamily>(&self, rid: crate::ids::RecordId) -> Result<H::Handle> {
+        H::try_make_handle(self.store.clone(), rid)
     }
 
     /// Build and add a new component using the builder pattern.

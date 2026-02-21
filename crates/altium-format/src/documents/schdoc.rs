@@ -54,7 +54,7 @@ impl SchDoc {
     }
 
     /// Returns a reference to the underlying document store.
-    pub fn store(&self) -> &DocRef {
+    pub(crate) fn store(&self) -> &DocRef {
         &self.store
     }
 
@@ -399,6 +399,14 @@ impl SchDoc {
             .map(|&rid| {
                 crate::records::SchSheetRecord::from_origin(store.record(rid).origin.clone())
             })
+    }
+
+    /// Construct a typed handle for a record in this document's store.
+    pub fn handle_for<H: crate::traits::HandleFamily>(
+        &self,
+        rid: RecordId,
+    ) -> Result<H::Handle> {
+        H::try_make_handle(self.store.clone(), rid)
     }
 
     /// Returns the number of orphan records (records not owned by any component).

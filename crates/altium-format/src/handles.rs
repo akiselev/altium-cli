@@ -21,7 +21,7 @@ macro_rules! impl_record_handle {
         }
 
         impl $handle {
-            pub fn new(store: DocRef, id: RecordId) -> Self {
+            pub(crate) fn new(store: DocRef, id: RecordId) -> Self {
                 Self { store, id }
             }
 
@@ -33,6 +33,12 @@ macro_rules! impl_record_handle {
                 let mut store = self.store.borrow_mut();
                 store.ensure_semantic_ids();
                 store.record_semantic_id(self.id).cloned()
+            }
+
+            /// Returns `true` if this record's backing origin is binary.
+            pub fn is_binary_origin(&self) -> bool {
+                let store = self.store.borrow();
+                store.records[self.id].origin.is_binary()
             }
 
             pub fn read(&self) -> $record {
@@ -277,7 +283,7 @@ pub struct SchComponentHandle {
 }
 
 impl SchComponentHandle {
-    pub fn new(store: DocRef, group_id: GroupId) -> Self {
+    pub(crate) fn new(store: DocRef, group_id: GroupId) -> Self {
         Self { store, group_id }
     }
 
@@ -513,6 +519,17 @@ impl SchComponentHandle {
         let node = crate::backing_store::RecordNode::new(R::RECORD_ID, record.into_origin());
         self.add_record(node)
     }
+
+    /// Construct a typed handle for a record in this component's store.
+    pub fn handle_for<H: HandleFamily>(&self, rid: RecordId) -> crate::error::Result<H::Handle> {
+        H::try_make_handle(self.store.clone(), rid)
+    }
+
+    /// Returns `true` if the given record has a binary origin.
+    pub fn is_record_binary(&self, rid: RecordId) -> bool {
+        let store = self.store.borrow();
+        store.records[rid].origin.is_binary()
+    }
 }
 
 /// Handle to a PCB footprint group (metadata + primitives).
@@ -533,7 +550,7 @@ pub struct PcbFootprintStoragePassthrough {
 }
 
 impl PcbFootprintHandle {
-    pub fn new(store: DocRef, group_id: GroupId) -> Self {
+    pub(crate) fn new(store: DocRef, group_id: GroupId) -> Self {
         Self { store, group_id }
     }
 
@@ -755,6 +772,11 @@ impl PcbFootprintHandle {
     {
         let node = crate::backing_store::RecordNode::new(R::RECORD_ID, record.into_origin());
         self.add_record(node)
+    }
+
+    /// Construct a typed handle for a record in this footprint's store.
+    pub fn handle_for<H: HandleFamily>(&self, rid: RecordId) -> crate::error::Result<H::Handle> {
+        H::try_make_handle(self.store.clone(), rid)
     }
 }
 

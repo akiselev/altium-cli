@@ -74,7 +74,7 @@ impl PcbLib {
     }
 
     /// Returns a reference to the underlying document store.
-    pub fn store(&self) -> &DocRef {
+    pub(crate) fn store(&self) -> &DocRef {
         &self.store
     }
 
@@ -1270,6 +1270,14 @@ impl PcbLib {
             }
         }
         Ok(handles)
+    }
+
+    /// Construct a typed handle for a record in this document's store.
+    pub fn handle_for<H: HandleFamily>(
+        &self,
+        rid: RecordId,
+    ) -> crate::error::Result<H::Handle> {
+        H::try_make_handle(self.store.clone(), rid)
     }
 
     /// Find a footprint by name (case-insensitive), returns a handle.

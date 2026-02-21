@@ -7,8 +7,6 @@ use std::path::Path;
 
 use crate::helpers::*;
 
-use altium_format::handles::SchComponentHandle;
-
 use super::open_schlib;
 
 /// Embedded blank SchLib template.
@@ -37,7 +35,7 @@ pub fn cmd_add_component(
     let lib = open_schlib(path)?;
 
     // Check if component already exists
-    if lib.find_component(name).is_some() {
+    if lib.find_component_handle(name).is_some() {
         return Err(format!("Component '{}' already exists in library", name).into());
     }
 
@@ -71,8 +69,8 @@ pub fn cmd_add_pin(
     let lib = open_schlib(path)?;
 
     // Find component
-    let group_id = lib
-        .find_component(component)
+    let comp = lib
+        .find_component_handle(component)
         .ok_or_else(|| format!("Component '{}' not found", component))?;
 
     // Parse electrical type
@@ -89,7 +87,6 @@ pub fn cmd_add_pin(
     pin_rec.set_name(PinName::from(name));
     pin_rec.set_electrical(electrical);
 
-    let comp = SchComponentHandle::new(lib.store().clone(), group_id);
     comp.add_child_record(pin_rec);
 
     lib.invalidate_cached_header();

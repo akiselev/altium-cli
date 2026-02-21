@@ -16,16 +16,12 @@ use serde::{Deserialize, Serialize};
 use altium_format::documents::pcbdoc_streams::PcbDocSectionMeta;
 use altium_format::documents::{PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format::handles::{
-    PcbArcHandle, PcbComponentBodyHandle, PcbFillHandle, PcbPadHandle, PcbRegionHandle,
-    PcbTextHandle, PcbTrackHandle, PcbViaHandle, SchArcHandle, SchBusEntryHandle, SchComponent,
-    SchDesignatorHandle, SchEllipseHandle, SchEllipticalArcHandle, SchImageHandle,
-    SchImplementationHandle, SchImplementationListHandle, SchImplementationParametersHandle,
-    SchJunctionHandle, SchLabelHandle, SchLineHandle, SchMapDefinerHandle,
-    SchMapDefinerListHandle, SchNetLabelHandle, SchNoERCHandle, SchNoteHandle,
-    SchParameterHandle, SchPieHandle, SchPinHandle, SchPortHandle, SchPowerHandle,
-    SchRectangleHandle, SchRoundRectangleHandle, SchSheetEntryHandle, SchSheetFileNameHandle,
-    SchSheetHandle, SchSheetNameHandle, SchSheetSymbolHandle, SchSymbolHandle,
-    SchTaskHolderHandle, SchTextFrameHandle,
+    PcbArc, PcbComponentBody, PcbFill, PcbPad, PcbRegion, PcbText, PcbTrack, PcbVia, SchArc,
+    SchBusEntry, SchComponent, SchDesignator, SchEllipse, SchEllipticalArc, SchImage,
+    SchImplementation, SchImplementationList, SchImplementationParameters, SchJunction, SchLabel,
+    SchLine, SchMapDefiner, SchMapDefinerList, SchNetLabel, SchNoERC, SchNote, SchParameter,
+    SchPie, SchPin, SchPort, SchPower, SchRectangle, SchRoundRectangle, SchSheet, SchSheetEntry,
+    SchSheetFileName, SchSheetName, SchSheetSymbol, SchSymbol, SchTaskHolder, SchTextFrame,
 };
 use altium_format::records::{
     PcbArcRecord, PcbComponentBodyRecord, PcbConnectionRecord, PcbFillRecord, PcbPadRecord,
@@ -129,28 +125,28 @@ fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Bo
 }
 
 macro_rules! copy_sch_record {
-    ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
+    ($type_id:expr, $rid:expr, $parent:expr, $emit:ident, $context:expr) => {{
         let copy_result: std::result::Result<(), String> = match $type_id {
             SchPinRecord::RECORD_ID => {
-                let src = SchPinHandle::new($src_store.clone(), $rid).read_normalized();
+                let src = $parent.handle_for::<SchPin>($rid).map_err(|e| format!("{}: {}", $context, e))?.read_normalized();
                 let dst = SchPinRecord::builder_from(templates::sch_pin_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchArcRecord::RECORD_ID => {
-                let src = SchArcHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchArc>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchArcRecord::builder_from(templates::sch_arc_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchLineRecord::RECORD_ID => {
-                let src = SchLineHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchLine>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchLineRecord::builder_from(templates::sch_line_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchRectangleRecord::RECORD_ID => {
-                let src = SchRectangleHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchRectangle>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchRectangleRecord::builder_from(templates::sch_rectangle_default, &src)
                         .build();
@@ -179,20 +175,20 @@ macro_rules! copy_sch_record {
                 ))
             }
             SchEllipseRecord::RECORD_ID => {
-                let src = SchEllipseHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchEllipse>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchEllipseRecord::builder_from(templates::sch_ellipse_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchPieRecord::RECORD_ID => {
-                let src = SchPieHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchPie>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchPieRecord::builder_from(templates::sch_pie_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchRoundRectangleRecord::RECORD_ID => {
-                let src = SchRoundRectangleHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchRoundRectangle>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchRoundRectangleRecord::builder_from(
                     templates::sch_round_rectangle_default,
                     &src,
@@ -202,7 +198,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchEllipticalArcRecord::RECORD_ID => {
-                let src = SchEllipticalArcHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchEllipticalArc>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchEllipticalArcRecord::builder_from(
                     templates::sch_elliptical_arc_default,
                     &src,
@@ -212,14 +208,14 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchImageRecord::RECORD_ID => {
-                let src = SchImageHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchImage>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchImageRecord::builder_from(templates::sch_image_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchDesignatorRecord::RECORD_ID => {
-                let src = SchDesignatorHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchDesignator>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchDesignatorRecord::builder_from(templates::sch_designator_default, &src)
                         .build();
@@ -227,7 +223,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchParameterRecord::RECORD_ID => {
-                let src = SchParameterHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchParameter>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let mut dst =
                     SchParameterRecord::builder_from(templates::sch_parameter_default, &src)
                         .build();
@@ -236,39 +232,39 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchSymbolRecord::RECORD_ID => {
-                let src = SchSymbolHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchSymbol>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchSymbolRecord::builder_from(templates::sch_symbol_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchLabelRecord::RECORD_ID => {
-                let src = SchLabelHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchLabel>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchLabelRecord::builder_from(templates::sch_label_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchPowerRecord::RECORD_ID => {
-                let src = SchPowerHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchPower>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchPowerRecord::builder_from(templates::sch_power_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchPortRecord::RECORD_ID => {
-                let src = SchPortHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchPort>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchPortRecord::builder_from(templates::sch_port_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchNoERCRecord::RECORD_ID => {
-                let src = SchNoERCHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchNoERC>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchNoERCRecord::builder_from(templates::sch_no_erc_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchNetLabelRecord::RECORD_ID => {
-                let src = SchNetLabelHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchNetLabel>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchNetLabelRecord::builder_from(templates::sch_net_label_default, &src)
                         .build();
@@ -290,7 +286,7 @@ macro_rules! copy_sch_record {
                 ))
             }
             SchTextFrameRecord::RECORD_ID => {
-                let src = SchTextFrameHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchTextFrame>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchTextFrameRecord::builder_from(templates::sch_text_frame_default, &src)
                         .build();
@@ -298,20 +294,20 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchJunctionRecord::RECORD_ID => {
-                let src = SchJunctionHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchJunction>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchJunctionRecord::builder_from(templates::sch_junction_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetRecord::RECORD_ID => {
-                let src = SchSheetHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchSheet>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchSheetRecord::builder_from(templates::sch_sheet_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetNameRecord::RECORD_ID => {
-                let src = SchSheetNameHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchSheetName>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchSheetNameRecord::builder_from(templates::sch_sheet_name_default, &src)
                         .build();
@@ -319,7 +315,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchSheetFileNameRecord::RECORD_ID => {
-                let src = SchSheetFileNameHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchSheetFileName>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchSheetFileNameRecord::builder_from(
                     templates::sch_sheet_filename_default,
                     &src,
@@ -329,14 +325,14 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchBusEntryRecord::RECORD_ID => {
-                let src = SchBusEntryHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchBusEntry>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchBusEntryRecord::builder_from(templates::sch_bus_entry_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetSymbolRecord::RECORD_ID => {
-                let src = SchSheetSymbolHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchSheetSymbol>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchSheetSymbolRecord::builder_from(
                     templates::sch_sheet_symbol_default,
                     &src,
@@ -346,7 +342,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchSheetEntryRecord::RECORD_ID => {
-                let src = SchSheetEntryHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchSheetEntry>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchSheetEntryRecord::builder_from(templates::sch_sheet_entry_default, &src)
                         .build();
@@ -354,7 +350,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchImplementationListRecord::RECORD_ID => {
-                let src = SchImplementationListHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchImplementationList>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchImplementationListRecord::builder_from(
                     templates::sch_implementation_list_default,
                     &src,
@@ -364,7 +360,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchImplementationRecord::RECORD_ID => {
-                let src = SchImplementationHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchImplementation>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let mut dst =
                     SchImplementationRecord::builder_from(templates::sch_implementation_default, &src)
                         .build();
@@ -373,7 +369,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchMapDefinerListRecord::RECORD_ID => {
-                let src = SchMapDefinerListHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchMapDefinerList>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchMapDefinerListRecord::builder_from(
                     templates::sch_map_definer_list_default,
                     &src,
@@ -383,7 +379,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchMapDefinerRecord::RECORD_ID => {
-                let src = SchMapDefinerHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchMapDefiner>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let mut dst =
                     SchMapDefinerRecord::builder_from(templates::sch_map_definer_default, &src)
                         .build();
@@ -392,7 +388,7 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchImplementationParametersRecord::RECORD_ID => {
-                let src = SchImplementationParametersHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchImplementationParameters>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchImplementationParametersRecord::builder_from(
                     templates::sch_implementation_parameters_default,
                     &src,
@@ -402,13 +398,13 @@ macro_rules! copy_sch_record {
                 Ok(())
             }
             SchNoteRecord::RECORD_ID => {
-                let src = SchNoteHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchNote>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = SchNoteRecord::builder_from(templates::sch_note_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             SchTaskHolderRecord::RECORD_ID => {
-                let src = SchTaskHolderHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<SchTaskHolder>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst =
                     SchTaskHolderRecord::builder_from(templates::sch_task_holder_default, &src)
                         .build();
@@ -432,40 +428,40 @@ macro_rules! copy_sch_record {
 }
 
 macro_rules! copy_pcb_record {
-    ($type_id:expr, $rid:expr, $src_store:expr, $emit:ident, $context:expr) => {{
+    ($type_id:expr, $rid:expr, $parent:expr, $emit:ident, $context:expr) => {{
         let copy_result: std::result::Result<(), String> = match $type_id {
             PcbArcRecord::RECORD_ID => {
-                let src = PcbArcHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbArc>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbArcRecord::builder_from(templates::pcb_arc_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbPadRecord::RECORD_ID => {
-                let src = PcbPadHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbPad>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbPadRecord::builder_from(templates::pcb_pad_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbViaRecord::RECORD_ID => {
-                let src = PcbViaHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbVia>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbViaRecord::builder_from(templates::pcb_via_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbTrackRecord::RECORD_ID => {
-                let src = PcbTrackHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbTrack>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbTrackRecord::builder_from(templates::pcb_track_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbTextRecord::RECORD_ID => {
-                let src = PcbTextHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbText>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbTextRecord::builder_from(templates::pcb_text_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbFillRecord::RECORD_ID => {
-                let src = PcbFillHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbFill>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbFillRecord::builder_from(templates::pcb_fill_default, &src).build();
                 $emit!(dst);
                 Ok(())
@@ -478,13 +474,13 @@ macro_rules! copy_pcb_record {
                 ))
             }
             PcbRegionRecord::RECORD_ID => {
-                let src = PcbRegionHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbRegion>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbRegionRecord::builder_from(templates::pcb_region_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbComponentBodyRecord::RECORD_ID => {
-                let src = PcbComponentBodyHandle::new($src_store.clone(), $rid).read();
+                let src = $parent.handle_for::<PcbComponentBody>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
                 let dst = PcbComponentBodyRecord::builder_from(
                     templates::pcb_component_body_default,
                     &src,
@@ -534,7 +530,7 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             copy_sch_record!(
                 type_id,
                 rid,
-                src.store().clone(),
+                &src_comp,
                 emit_child,
                 "schlib:component-child"
             )
@@ -588,7 +584,7 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             copy_pcb_record!(
                 type_id,
                 rid,
-                src.store().clone(),
+                &src_fp,
                 emit_prim,
                 "pcblib:primitive"
             )
@@ -633,7 +629,7 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             copy_sch_record!(
                 type_id,
                 rid,
-                src.store().clone(),
+                &src_comp,
                 emit_child,
                 "schdoc:component-child"
             )
@@ -650,7 +646,7 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
         copy_sch_record!(
             type_id,
             rid,
-            src.store().clone(),
+            &src,
             emit_orphan,
             "schdoc:orphan"
         )
@@ -695,7 +691,7 @@ fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             copy_pcb_record!(
                 type_id,
                 rid,
-                src.store().clone(),
+                &src,
                 emit_prim,
                 "pcbdoc:primitive"
             )
@@ -760,6 +756,7 @@ mod tests {
     };
     use altium_format::documents::schlib_streams::SchLibRedirectionStreamMeta;
     use altium_format::handles::PcbFootprintStoragePassthrough;
+    #[allow(clippy::disallowed_types)]
     use altium_format::parameters::ParameterCollection;
     use altium_format::records::PcbFootprintRecord;
     use altium_format::templates;
@@ -807,6 +804,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_types)] // ParameterCollection used to build test fixtures
     fn rebuild_schlib_preserves_typed_document_streams() {
         let src_path = temp_file_path("SchLib");
         let out_path = temp_file_path("SchLib");
@@ -884,6 +882,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_types)] // ParameterCollection used to build test fixtures
     fn rebuild_pcblib_preserves_typed_document_streams_but_not_raw_passthrough() {
         let src_path = temp_file_path("PcbLib");
         let out_path = temp_file_path("PcbLib");

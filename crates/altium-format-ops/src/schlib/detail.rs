@@ -7,8 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use altium_format::handles::{
-    SchArcHandle, SchComponent, SchComponentHandle, SchLabelHandle, SchLineHandle, SchPin,
-    SchPinHandle, SchRectangleHandle,
+    SchArc, SchComponent, SchLabel, SchLine, SchPin, SchRectangle,
 };
 
 use crate::helpers::*;
@@ -24,11 +23,9 @@ pub fn cmd_component(
 ) -> Result<SchLibComponentDetail, Box<dyn std::error::Error>> {
     let lib = open_schlib(path)?;
 
-    let group_id = lib
-        .find_component(name)
+    let comp = lib
+        .find_component_handle(name)
         .ok_or_else(|| format!("Component '{}' not found", name))?;
-
-    let comp = SchComponentHandle::new(lib.store().clone(), group_id);
 
     let display_mode_count = comp.read().display_mode_count() as i32;
 
@@ -156,11 +153,9 @@ pub fn cmd_primitives(
 ) -> Result<SchLibPrimitiveList, Box<dyn std::error::Error>> {
     let lib = open_schlib(path)?;
 
-    let group_id = lib
-        .find_component(component)
+    let comp = lib
+        .find_component_handle(component)
         .ok_or_else(|| format!("Component '{}' not found", component))?;
-
-    let comp = SchComponentHandle::new(lib.store().clone(), group_id);
     let component_name = comp.lib_ref();
 
     let mut primitives: Vec<PrimitiveInfo> = Vec::new();
@@ -169,46 +164,13 @@ pub fn cmd_primitives(
     let child_info = comp.all_children();
 
     for (type_id, record_id) in child_info {
-        let is_binary = {
-            let store = lib.store().borrow();
-            store.record(record_id).origin.is_binary()
-        };
-        if is_binary {
-            if type_id == 2 {
-                let decoded = {
-                    let store = lib.store().borrow();
-                    store.record(record_id).origin.as_binary().and_then(|b| {
-                        altium_format::records::SchPinRecord::from_legacy_binary_record_data(
-                            &b.raw_block,
-                        )
-                    })
-                };
-                if let Some(pin) = decoded {
-                    primitives.push(PrimitiveInfo::Pin {
-                        designator: pin.designator().to_string(),
-                        name: pin.name().to_string(),
-                        electrical_type: electrical_type_name(pin.electrical()).to_string(),
-                        x: coord_to_mils(pin.location_x()),
-                        y: coord_to_mils(pin.location_y()),
-                    });
-                } else {
-                    primitives.push(PrimitiveInfo::Other {
-                        primitive_type: "Pin (binary decode failed)".to_string(),
-                    });
-                }
-            } else {
-                primitives.push(PrimitiveInfo::Other {
-                    primitive_type: format!("{} (binary)", sch_record_type_name(type_id)),
-                });
-            }
-            continue;
-        }
-
         match type_id {
             2 => {
-                // Pin
-                let pin_handle = SchPinHandle::new(lib.store().clone(), record_id);
-                let pin = pin_handle.read();
+                // Pin — read_normalized handles both binary and param origins
+                let pin = comp
+                    .handle_for::<SchPin>(record_id)
+                    .map_err(|e| format!("pin handle: {}", e))?
+                    .read_normalized();
                 primitives.push(PrimitiveInfo::Pin {
                     designator: pin.designator().to_string(),
                     name: pin.name().to_string(),
@@ -219,37 +181,61 @@ pub fn cmd_primitives(
             }
             14 => {
                 // Rectangle
-                let rect_handle = SchRectangleHandle::new(lib.store().clone(), record_id);
-                let rect = rect_handle.read();
-                primitives.push(PrimitiveInfo::Rectangle {
-                    x1: coord_to_mils(rect.location_x()),
-                    y1: coord_to_mils(rect.location_y()),
-                    x2: coord_to_mils(rect.corner_x()),
-                    y2: coord_to_mils(rect.corner_y()),
-                });
+                if comp.is_record_binary(record_id) {
+                    primitives.push(PrimitiveInfo::Other {
+                        primitive_type: "Rectangle (binary)".to_string(),
+                    });
+                } else {
+                    let rect = comp
+                        .handle_for::<SchRectangle>(record_id)
+                        .map_err(|e| format!("rect handle: {}", e))?
+                        .read();
+                    primitives.push(PrimitiveInfo::Rectangle {
+                        x1: coord_to_mils(rect.location_x()),
+                        y1: coord_to_mils(rect.location_y()),
+                        x2: coord_to_mils(rect.corner_x()),
+                        y2: coord_to_mils(rect.corner_y()),
+                    });
+                }
             }
             13 => {
                 // Line
-                let line_handle = SchLineHandle::new(lib.store().clone(), record_id);
-                let line = line_handle.read();
-                primitives.push(PrimitiveInfo::Line {
-                    x1: coord_to_mils(line.location_x()),
-                    y1: coord_to_mils(line.location_y()),
-                    x2: coord_to_mils(line.corner_x()),
-                    y2: coord_to_mils(line.corner_y()),
-                });
+                if comp.is_record_binary(record_id) {
+                    primitives.push(PrimitiveInfo::Other {
+                        primitive_type: "Line (binary)".to_string(),
+                    });
+                } else {
+                    let line = comp
+                        .handle_for::<SchLine>(record_id)
+                        .map_err(|e| format!("line handle: {}", e))?
+                        .read();
+                    primitives.push(PrimitiveInfo::Line {
+                        x1: coord_to_mils(line.location_x()),
+                        y1: coord_to_mils(line.location_y()),
+                        x2: coord_to_mils(line.corner_x()),
+                        y2: coord_to_mils(line.corner_y()),
+                    });
+                }
             }
             12 => {
                 // Arc
-                let arc_handle = SchArcHandle::new(lib.store().clone(), record_id);
-                let arc = arc_handle.read();
-                primitives.push(PrimitiveInfo::Arc {
-                    center_x: coord_to_mils(arc.location_x()),
-                    center_y: coord_to_mils(arc.location_y()),
-                    radius: coord_to_mils(arc.radius()),
-                    start_angle: arc.start_angle(),
-                    end_angle: arc.end_angle(),
-                });
+                if comp.is_record_binary(record_id) {
+                    primitives.push(PrimitiveInfo::Other {
+                        primitive_type: "Arc (binary)".to_string(),
+                    });
+                } else {
+                    let arc = comp
+                        .handle_for::<SchArc>(record_id)
+                        .map_err(|e| format!("arc handle: {}", e))?
+                        .read();
+                    primitives.push(PrimitiveInfo::Arc {
+                        center_x: coord_to_mils(arc.location_x()),
+                        center_y: coord_to_mils(arc.location_y()),
+                        radius: coord_to_mils(arc.radius()),
+                        start_angle: arc.start_angle(),
+                        end_angle: arc.end_angle(),
+                    });
+                }
             }
             7 => {
                 // Polygon
@@ -263,19 +249,32 @@ pub fn cmd_primitives(
             }
             4 => {
                 // Label
-                let label_handle = SchLabelHandle::new(lib.store().clone(), record_id);
-                let label = label_handle.read();
-                primitives.push(PrimitiveInfo::Label {
-                    text: label.text().to_string(),
-                    x: coord_to_mils(label.location_x()),
-                    y: coord_to_mils(label.location_y()),
-                });
+                if comp.is_record_binary(record_id) {
+                    primitives.push(PrimitiveInfo::Other {
+                        primitive_type: "Label (binary)".to_string(),
+                    });
+                } else {
+                    let label = comp
+                        .handle_for::<SchLabel>(record_id)
+                        .map_err(|e| format!("label handle: {}", e))?
+                        .read();
+                    primitives.push(PrimitiveInfo::Label {
+                        text: label.text().to_string(),
+                        x: coord_to_mils(label.location_x()),
+                        y: coord_to_mils(label.location_y()),
+                    });
+                }
             }
             // Skip non-graphical container/metadata records for primitive listing
             1 | 41 | 44 | 45 | 46 | 47 | 48 => {}
             _ => {
+                let suffix = if comp.is_record_binary(record_id) {
+                    " (binary)"
+                } else {
+                    ""
+                };
                 primitives.push(PrimitiveInfo::Other {
-                    primitive_type: sch_record_type_name(type_id).to_string(),
+                    primitive_type: format!("{}{}", sch_record_type_name(type_id), suffix),
                 });
             }
         }

@@ -73,7 +73,7 @@ impl PcbDoc {
     }
 
     /// Returns a reference to the underlying document store.
-    pub fn store(&self) -> &DocRef {
+    pub(crate) fn store(&self) -> &DocRef {
         &self.store
     }
 
@@ -96,6 +96,14 @@ impl PcbDoc {
             *current = streams_meta;
             store.mark_semantic_ids_dirty();
         }
+    }
+
+    /// Construct a typed handle for a record in this document's store.
+    pub fn handle_for<H: HandleFamily>(
+        &self,
+        rid: RecordId,
+    ) -> Result<H::Handle> {
+        H::try_make_handle(self.store.clone(), rid)
     }
 
     /// Returns primitive records for one section (`Tracks6`, `Pads6`, ...).

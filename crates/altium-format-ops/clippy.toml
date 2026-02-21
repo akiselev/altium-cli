@@ -33,6 +33,7 @@ disallowed-types = [
     { path = "altium_format::traits::DocumentQuery", reason = "PRIVATE: traits is an internal implementation detail. Use the high-level records/handles API." },
 
     # -- store (pub(crate) module — second line of defense) -------------------
+    { path = "altium_format::store::DocRef", reason = "PRIVATE: DocRef is an internal implementation detail. Use handle_for() and document methods instead of constructing handles from store references." },
     { path = "altium_format::store::DocumentStore", reason = "PRIVATE: store is an internal implementation detail. Use handles and documents API." },
     { path = "altium_format::store::GroupData", reason = "PRIVATE: store is an internal implementation detail. Use handles and documents API." },
     { path = "altium_format::store::GroupMeta", reason = "PRIVATE: store is an internal implementation detail. Use handles and documents API." },
