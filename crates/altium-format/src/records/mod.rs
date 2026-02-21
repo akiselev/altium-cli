@@ -11,108 +11,77 @@
 pub mod enums;
 
 // ---------------------------------------------------------------------------
-// Schematic record types (Track 3A)
+// Schematic record types
 // ---------------------------------------------------------------------------
 
-pub mod sch_arc;
-pub mod sch_bezier;
-pub mod sch_component;
-pub mod sch_designator;
-pub mod sch_ellipse;
-pub mod sch_elliptical_arc;
-pub mod sch_image;
-pub mod sch_line;
-pub mod sch_map_definer;
-pub mod sch_map_definer_list;
-pub mod sch_parameter;
-pub mod sch_pie;
-pub mod sch_pin;
-pub mod sch_polygon;
-pub mod sch_polyline;
-pub mod sch_rectangle;
-pub mod sch_round_rectangle;
+/// Declares schematic record modules, re-exports, and generates
+/// `is_supported_sch_record_id` from a single source of truth.
+macro_rules! sch_records {
+    ($( $mod:ident :: $ty:ident ),* $(,)?) => {
+        $( pub mod $mod; )*
+        $( pub use $mod::$ty; )*
 
-// ---------------------------------------------------------------------------
-// Schematic record types (Track 3B)
-// ---------------------------------------------------------------------------
+        /// Returns true when the schematic record ID has a typed v2 model.
+        pub(crate) fn is_supported_sch_record_id(record_id: u8) -> bool {
+            use $crate::traits::RecordType;
+            match record_id {
+                $( _ if record_id == <$ty as RecordType>::RECORD_ID => true, )*
+                _ => false,
+            }
+        }
+    };
+}
 
-pub mod sch_blanket;
-pub mod sch_bus;
-pub mod sch_bus_entry;
-pub mod sch_implementation;
-pub mod sch_implementation_list;
-pub mod sch_implementation_parameters;
-pub mod sch_junction;
-pub mod sch_label;
-pub mod sch_net_label;
-pub mod sch_no_erc;
-pub mod sch_note;
-pub mod sch_port;
-pub mod sch_power;
-pub mod sch_sheet;
-pub mod sch_sheet_entry;
-pub mod sch_sheet_filename;
-pub mod sch_sheet_name;
-pub mod sch_sheet_symbol;
-pub mod sch_symbol;
-pub mod sch_task_holder;
-pub mod sch_text_frame;
-pub mod sch_wire;
+sch_records! {
+    // Track 3A – drawing primitives & component structure
+    sch_arc::SchArcRecord,
+    sch_bezier::SchBezierRecord,
+    sch_component::SchComponentRecord,
+    sch_designator::SchDesignatorRecord,
+    sch_ellipse::SchEllipseRecord,
+    sch_elliptical_arc::SchEllipticalArcRecord,
+    sch_image::SchImageRecord,
+    sch_line::SchLineRecord,
+    sch_map_definer::SchMapDefinerRecord,
+    sch_map_definer_list::SchMapDefinerListRecord,
+    sch_parameter::SchParameterRecord,
+    sch_pie::SchPieRecord,
+    sch_pin::SchPinRecord,
+    sch_polygon::SchPolygonRecord,
+    sch_polyline::SchPolylineRecord,
+    sch_rectangle::SchRectangleRecord,
+    sch_round_rectangle::SchRoundRectangleRecord,
+
+    // Track 3B – connectivity, hierarchy & annotations
+    sch_blanket::SchBlanketRecord,
+    sch_bus::SchBusRecord,
+    sch_bus_entry::SchBusEntryRecord,
+    sch_implementation::SchImplementationRecord,
+    sch_implementation_list::SchImplementationListRecord,
+    sch_implementation_parameters::SchImplementationParametersRecord,
+    sch_junction::SchJunctionRecord,
+    sch_label::SchLabelRecord,
+    sch_net_label::SchNetLabelRecord,
+    sch_no_erc::SchNoERCRecord,
+    sch_note::SchNoteRecord,
+    sch_port::SchPortRecord,
+    sch_power::SchPowerRecord,
+    sch_sheet::SchSheetRecord,
+    sch_sheet_entry::SchSheetEntryRecord,
+    sch_sheet_filename::SchSheetFileNameRecord,
+    sch_sheet_name::SchSheetNameRecord,
+    sch_sheet_symbol::SchSheetSymbolRecord,
+    sch_symbol::SchSymbolRecord,
+    sch_task_holder::SchTaskHolderRecord,
+    sch_text_frame::SchTextFrameRecord,
+    sch_wire::SchWireRecord,
+}
 
 // ---------------------------------------------------------------------------
 // Re-exports: enums
 // ---------------------------------------------------------------------------
 
 pub use enums::*;
-
-// ---------------------------------------------------------------------------
-// Re-exports: schematic record types
-// ---------------------------------------------------------------------------
-
-pub use sch_arc::SchArcRecord;
-pub use sch_bezier::SchBezierRecord;
-pub use sch_component::SchComponentRecord;
-pub use sch_designator::SchDesignatorRecord;
-pub use sch_ellipse::SchEllipseRecord;
-pub use sch_elliptical_arc::SchEllipticalArcRecord;
-pub use sch_image::SchImageRecord;
-pub use sch_line::SchLineRecord;
-pub use sch_map_definer::SchMapDefinerRecord;
-pub use sch_map_definer_list::SchMapDefinerListRecord;
-pub use sch_parameter::SchParameterRecord;
-pub use sch_pie::SchPieRecord;
-pub use sch_pin::SchPinRecord;
-pub use sch_polygon::SchPolygonRecord;
-pub use sch_polyline::SchPolylineRecord;
-pub use sch_rectangle::SchRectangleRecord;
-pub use sch_round_rectangle::SchRoundRectangleRecord;
-
-// ---------------------------------------------------------------------------
-// Re-exports: schematic record types (Track 3B)
-// ---------------------------------------------------------------------------
-
-pub use sch_blanket::SchBlanketRecord;
-pub use sch_bus::SchBusRecord;
-pub use sch_bus_entry::SchBusEntryRecord;
-pub use sch_implementation::SchImplementationRecord;
-pub use sch_implementation_list::SchImplementationListRecord;
-pub use sch_implementation_parameters::SchImplementationParametersRecord;
-pub use sch_junction::SchJunctionRecord;
-pub use sch_label::SchLabelRecord;
-pub use sch_net_label::SchNetLabelRecord;
-pub use sch_no_erc::SchNoERCRecord;
-pub use sch_note::SchNoteRecord;
-pub use sch_port::SchPortRecord;
-pub use sch_power::SchPowerRecord;
-pub use sch_sheet::SchSheetRecord;
-pub use sch_sheet_entry::SchSheetEntryRecord;
-pub use sch_sheet_filename::SchSheetFileNameRecord;
-pub use sch_sheet_name::SchSheetNameRecord;
-pub use sch_sheet_symbol::SchSheetSymbolRecord;
-pub use sch_symbol::SchSymbolRecord;
-pub use sch_task_holder::SchTaskHolderRecord;
-pub use sch_text_frame::SchTextFrameRecord;
-pub use sch_wire::SchWireRecord;
 
 // ---------------------------------------------------------------------------
 // PCB record types (Track 3C)
@@ -165,49 +134,6 @@ pub(crate) use pcb_via::parse_via;
 /// Get the record ID from a parameter collection.
 pub fn record_id_for_params(params: &crate::parameters::ParameterCollection) -> Option<u8> {
     params.get("RECORD").map(|v| v.as_int_or(0) as u8)
-}
-
-/// Returns true when the schematic record ID has a typed v2 model.
-pub(crate) fn is_supported_sch_record_id(record_id: u8) -> bool {
-    matches!(
-        record_id,
-        1 | 2
-            | 3
-            | 4
-            | 5
-            | 6
-            | 7
-            | 8
-            | 9
-            | 11
-            | 12
-            | 13
-            | 14
-            | 17
-            | 18
-            | 22
-            | 25
-            | 26
-            | 27
-            | 28
-            | 29
-            | 30
-            | 31
-            | 32
-            | 33
-            | 34
-            | 37
-            | 39
-            | 41
-            | 43
-            | 44
-            | 45
-            | 46
-            | 47
-            | 48
-            | 209
-            | 225
-    )
 }
 
 // ---------------------------------------------------------------------------
