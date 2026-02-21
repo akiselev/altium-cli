@@ -227,7 +227,7 @@ macro_rules! copy_sch_record {
                 let mut dst =
                     SchParameterRecord::builder_from(templates::sch_parameter_default, &src)
                         .map_err(|e| format!("{}: {}", $context, e))?.build();
-                dst.append_hidden_duplicate_for_export();
+                dst.append_hidden_duplicate_for_export().map_err(|e| format!("{}: {}", $context, e))?;
                 $emit!(dst);
                 Ok(())
             }
