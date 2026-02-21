@@ -170,86 +170,6 @@ pub fn write_pcb_coord(data: &mut [u8], offset: usize, value: PcbCoord) {
 }
 
 // ---------------------------------------------------------------------------
-// Pascal string helpers
-// ---------------------------------------------------------------------------
-
-/// Reads a Pascal-style string from binary data.
-///
-/// Pascal strings in Altium's binary format use a length prefix followed by
-/// the string bytes (no null terminator). The length prefix is either:
-/// - 1 byte for short strings (when the first byte is less than 0xFF and the
-///   context uses 1-byte prefixes), or
-/// - 4 bytes (u32 little-endian) for longer strings.
-///
-/// This function reads a **1-byte length prefix** variant (the most common
-/// form in PCB binary records). Returns a tuple of `(string_slice, bytes_consumed)`
-/// where `bytes_consumed` includes the length prefix byte.
-///
-/// # Panics
-///
-/// Panics if `offset + 1 + len` exceeds `data.len()`.
-pub fn read_pascal_string(data: &[u8], offset: usize) -> (&str, usize) {
-    let len = data[offset] as usize;
-    let start = offset + 1;
-    let end = start + len;
-    let s = std::str::from_utf8(&data[start..end]).expect("pascal string contains invalid UTF-8");
-    (s, 1 + len)
-}
-
-/// Reads a Pascal-style string with a 4-byte (u32 LE) length prefix.
-///
-/// Returns a tuple of `(string_slice, bytes_consumed)` where `bytes_consumed`
-/// includes the 4-byte length prefix.
-///
-/// # Panics
-///
-/// Panics if `offset + 4 + len` exceeds `data.len()`.
-pub fn read_pascal_string_u32(data: &[u8], offset: usize) -> (&str, usize) {
-    let len = read_u32_le(data, offset) as usize;
-    let start = offset + 4;
-    let end = start + len;
-    let s =
-        std::str::from_utf8(&data[start..end]).expect("pascal string (u32) contains invalid UTF-8");
-    (s, 4 + len)
-}
-
-/// Writes a Pascal-style string with a 1-byte length prefix.
-///
-/// Writes the length byte followed by the string bytes into `data` starting
-/// at `offset`. Returns the number of bytes written (1 + string length).
-///
-/// # Panics
-///
-/// Panics if the string length exceeds 255 bytes, or if the destination
-/// slice is too small.
-pub fn write_pascal_string(data: &mut [u8], offset: usize, s: &str) -> usize {
-    let bytes = s.as_bytes();
-    assert!(
-        bytes.len() <= 255,
-        "pascal string too long: {} bytes (max 255)",
-        bytes.len()
-    );
-    data[offset] = bytes.len() as u8;
-    data[offset + 1..offset + 1 + bytes.len()].copy_from_slice(bytes);
-    1 + bytes.len()
-}
-
-/// Writes a Pascal-style string with a 4-byte (u32 LE) length prefix.
-///
-/// Writes the 4-byte length followed by the string bytes into `data` starting
-/// at `offset`. Returns the number of bytes written (4 + string length).
-///
-/// # Panics
-///
-/// Panics if the destination slice is too small.
-pub fn write_pascal_string_u32(data: &mut [u8], offset: usize, s: &str) -> usize {
-    let bytes = s.as_bytes();
-    write_u32_le(data, offset, bytes.len() as u32);
-    data[offset + 4..offset + 4 + bytes.len()].copy_from_slice(bytes);
-    4 + bytes.len()
-}
-
-// ---------------------------------------------------------------------------
 // PcbCommonHeader
 // ---------------------------------------------------------------------------
 
@@ -326,6 +246,87 @@ impl PcbCommonHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------------------------------------------------------------------------
+    // Pascal string helpers
+    // ---------------------------------------------------------------------------
+
+    /// Reads a Pascal-style string from binary data.
+    ///
+    /// Pascal strings in Altium's binary format use a length prefix followed by
+    /// the string bytes (no null terminator). The length prefix is either:
+    /// - 1 byte for short strings (when the first byte is less than 0xFF and the
+    ///   context uses 1-byte prefixes), or
+    /// - 4 bytes (u32 little-endian) for longer strings.
+    ///
+    /// This function reads a **1-byte length prefix** variant (the most common
+    /// form in PCB binary records). Returns a tuple of `(string_slice, bytes_consumed)`
+    /// where `bytes_consumed` includes the length prefix byte.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + 1 + len` exceeds `data.len()`.
+    pub fn read_pascal_string(data: &[u8], offset: usize) -> (&str, usize) {
+        let len = data[offset] as usize;
+        let start = offset + 1;
+        let end = start + len;
+        let s =
+            std::str::from_utf8(&data[start..end]).expect("pascal string contains invalid UTF-8");
+        (s, 1 + len)
+    }
+
+    /// Reads a Pascal-style string with a 4-byte (u32 LE) length prefix.
+    ///
+    /// Returns a tuple of `(string_slice, bytes_consumed)` where `bytes_consumed`
+    /// includes the 4-byte length prefix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + 4 + len` exceeds `data.len()`.
+    pub fn read_pascal_string_u32(data: &[u8], offset: usize) -> (&str, usize) {
+        let len = read_u32_le(data, offset) as usize;
+        let start = offset + 4;
+        let end = start + len;
+        let s = std::str::from_utf8(&data[start..end])
+            .expect("pascal string (u32) contains invalid UTF-8");
+        (s, 4 + len)
+    }
+
+    /// Writes a Pascal-style string with a 1-byte length prefix.
+    ///
+    /// Writes the length byte followed by the string bytes into `data` starting
+    /// at `offset`. Returns the number of bytes written (1 + string length).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the string length exceeds 255 bytes, or if the destination
+    /// slice is too small.
+    pub fn write_pascal_string(data: &mut [u8], offset: usize, s: &str) -> usize {
+        let bytes = s.as_bytes();
+        assert!(
+            bytes.len() <= 255,
+            "pascal string too long: {} bytes (max 255)",
+            bytes.len()
+        );
+        data[offset] = bytes.len() as u8;
+        data[offset + 1..offset + 1 + bytes.len()].copy_from_slice(bytes);
+        1 + bytes.len()
+    }
+
+    /// Writes a Pascal-style string with a 4-byte (u32 LE) length prefix.
+    ///
+    /// Writes the 4-byte length followed by the string bytes into `data` starting
+    /// at `offset`. Returns the number of bytes written (4 + string length).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the destination slice is too small.
+    pub fn write_pascal_string_u32(data: &mut [u8], offset: usize, s: &str) -> usize {
+        let bytes = s.as_bytes();
+        write_u32_le(data, offset, bytes.len() as u32);
+        data[offset + 4..offset + 4 + bytes.len()].copy_from_slice(bytes);
+        4 + bytes.len()
+    }
 
     #[test]
     fn read_write_i32() {

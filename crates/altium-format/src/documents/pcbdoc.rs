@@ -15,8 +15,8 @@ use std::rc::Rc;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use crate::error::{AltiumError, Result};
 use crate::backing_store::{RecordNode, RecordOrigin};
+use crate::error::{AltiumError, Result};
 use crate::ids::RecordId;
 use crate::records::{
     parse_arc, parse_component_body, parse_connection, parse_fill, parse_pad, parse_region,
@@ -72,11 +72,6 @@ impl PcbDoc {
         }
     }
 
-    /// Returns a reference to the underlying document store.
-    pub(crate) fn store(&self) -> &DocRef {
-        &self.store
-    }
-
     /// Returns typed stream metadata.
     pub fn streams_meta(&self) -> PcbDocStreamsMeta {
         let store = self.store.borrow();
@@ -99,10 +94,7 @@ impl PcbDoc {
     }
 
     /// Construct a typed handle for a record in this document's store.
-    pub fn handle_for<H: HandleFamily>(
-        &self,
-        rid: RecordId,
-    ) -> Result<H::Handle> {
+    pub fn handle_for<H: HandleFamily>(&self, rid: RecordId) -> Result<H::Handle> {
         H::try_make_handle(self.store.clone(), rid)
     }
 
@@ -762,9 +754,7 @@ mod tests {
     fn open_save_roundtrip_single_track_section() {
         let track_origin = templates::pcb_track_default();
         let payload = match track_origin {
-            RecordOrigin::Binary(crate::backing_store::BinaryOrigin { raw_block, .. }) => {
-                raw_block
-            }
+            RecordOrigin::Binary(crate::backing_store::BinaryOrigin { raw_block, .. }) => raw_block,
             _ => panic!("unexpected non-binary track template"),
         };
 

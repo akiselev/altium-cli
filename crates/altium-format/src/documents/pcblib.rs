@@ -15,8 +15,8 @@ use std::rc::Rc;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use crate::error::{AltiumError, Result};
 use crate::backing_store::{ParamOrigin, PcbPrimitiveRef, RecordNode, RecordOrigin};
+use crate::error::{AltiumError, Result};
 use crate::handles::PcbFootprintHandle;
 use crate::ids::RecordId;
 use crate::records::{
@@ -71,11 +71,6 @@ impl PcbLib {
         Self {
             store: Rc::new(RefCell::new(store)),
         }
-    }
-
-    /// Returns a reference to the underlying document store.
-    pub(crate) fn store(&self) -> &DocRef {
-        &self.store
     }
 
     /// Returns typed `/SectionKeys` mapping metadata.
@@ -1273,10 +1268,7 @@ impl PcbLib {
     }
 
     /// Construct a typed handle for a record in this document's store.
-    pub fn handle_for<H: HandleFamily>(
-        &self,
-        rid: RecordId,
-    ) -> crate::error::Result<H::Handle> {
+    pub fn handle_for<H: HandleFamily>(&self, rid: RecordId) -> crate::error::Result<H::Handle> {
         H::try_make_handle(self.store.clone(), rid)
     }
 
@@ -2071,8 +2063,7 @@ mod tests {
         use crate::traits::DocumentQuery;
 
         let lib = make_test_lib(&["SOT-23", "QFP-48", "DIP-8"]);
-        let results =
-            DocumentQuery::<crate::handles::PcbFootprint>::query_all(&lib, "#0").unwrap();
+        let results = DocumentQuery::<crate::handles::PcbFootprint>::query_all(&lib, "#0").unwrap();
         assert_eq!(results.len(), 3);
     }
 

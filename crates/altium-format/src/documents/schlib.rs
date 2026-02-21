@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 
-use crate::error::{AltiumError, Result};
 use crate::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
+use crate::error::{AltiumError, Result};
 use crate::ids::GroupId;
 use crate::parameters::ParameterCollection;
 use crate::records::{SchComponentRecord, SchPinRecord, is_supported_sch_record_id};
@@ -134,11 +134,6 @@ impl SchLib {
         Self {
             store: Rc::new(RefCell::new(store)),
         }
-    }
-
-    /// Returns a reference to the underlying document store.
-    pub(crate) fn store(&self) -> &DocRef {
-        &self.store
     }
 
     /// Returns typed `/Storage` stream metadata.
@@ -277,9 +272,8 @@ impl SchLib {
             .collect();
 
         // Parse typed SchLib non-component streams.
-        let mut storage_meta: Option<
-            crate::documents::schdoc_streams::SchDocStorageStreamMeta,
-        > = None;
+        let mut storage_meta: Option<crate::documents::schdoc_streams::SchDocStorageStreamMeta> =
+            None;
         let mut redirection_streams: BTreeMap<String, SchLibRedirectionStreamMeta> =
             BTreeMap::new();
 
@@ -887,7 +881,10 @@ impl SchLib {
     /// Find a component by name (case-insensitive), returns its handle.
     pub fn find_component_handle(&self, name: &str) -> Option<crate::handles::SchComponentHandle> {
         let gid = self.find_component(name)?;
-        Some(crate::handles::SchComponentHandle::new(self.store.clone(), gid))
+        Some(crate::handles::SchComponentHandle::new(
+            self.store.clone(),
+            gid,
+        ))
     }
 
     /// Construct a typed handle for a record in this document's store.
@@ -920,8 +917,7 @@ impl SchLib {
         let (component, children) = builder.build();
 
         // Extract lib_ref and description from the built component record
-        let comp_record =
-            crate::records::SchComponentRecord::from_origin(component.origin.clone());
+        let comp_record = crate::records::SchComponentRecord::from_origin(component.origin.clone());
         let lib_ref = comp_record.lib_reference().to_string();
         let description = comp_record.component_description().to_string();
         let part_count = comp_record.part_count() as i32;
@@ -986,10 +982,7 @@ impl crate::traits::DocumentQuery<crate::handles::SchComponent> for SchLib {
         }
     }
 
-    fn query_all(
-        &self,
-        q: &str,
-    ) -> crate::error::Result<Vec<crate::handles::SchComponentHandle>> {
+    fn query_all(&self, q: &str) -> crate::error::Result<Vec<crate::handles::SchComponentHandle>> {
         use crate::query::eval::evaluate;
         let parsed = crate::query::parse(q)?;
 
@@ -1405,8 +1398,7 @@ fn parse_data_stream(data: &[u8]) -> Result<Vec<RecordNode>> {
             let mut full_raw = Vec::with_capacity(4 + record_len);
             full_raw.extend_from_slice(&len_buf);
             full_raw.extend_from_slice(&record_data);
-            let origin =
-                RecordOrigin::Binary(crate::backing_store::BinaryOrigin::new(record_data));
+            let origin = RecordOrigin::Binary(crate::backing_store::BinaryOrigin::new(record_data));
             let mut node = RecordNode::new(record_type, origin);
             node.original_snapshot = full_raw;
             records.push(node);

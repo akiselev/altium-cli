@@ -7,13 +7,13 @@
 
 use std::io::{Read, Seek, Write};
 
-use crate::error::{AltiumError, Result};
 use crate::backing_store::{ParamOrigin, RecordNode, RecordOrigin};
 use crate::documents::schdoc_streams::{
     SchDocAdditionalStreamMeta, SchDocFileHeaderStreamMeta, SchDocRawBlock,
     SchDocStorageStreamMeta, parse_additional_meta_and_blocks, parse_file_header_meta_and_blocks,
     parse_storage_meta,
 };
+use crate::error::{AltiumError, Result};
 use crate::ids::{GroupId, RecordId};
 use crate::parameters::ParameterCollection;
 use crate::records::{SchBlanketRecord, is_supported_sch_record_id};
@@ -51,11 +51,6 @@ impl SchDoc {
         Self {
             store: std::rc::Rc::new(std::cell::RefCell::new(store)),
         }
-    }
-
-    /// Returns a reference to the underlying document store.
-    pub(crate) fn store(&self) -> &DocRef {
-        &self.store
     }
 
     /// Returns typed `/FileHeader` stream metadata.
@@ -402,10 +397,7 @@ impl SchDoc {
     }
 
     /// Construct a typed handle for a record in this document's store.
-    pub fn handle_for<H: crate::traits::HandleFamily>(
-        &self,
-        rid: RecordId,
-    ) -> Result<H::Handle> {
+    pub fn handle_for<H: crate::traits::HandleFamily>(&self, rid: RecordId) -> Result<H::Handle> {
         H::try_make_handle(self.store.clone(), rid)
     }
 
@@ -469,10 +461,7 @@ impl crate::traits::DocumentQuery<crate::handles::SchComponent> for SchDoc {
         }
     }
 
-    fn query_all(
-        &self,
-        q: &str,
-    ) -> crate::error::Result<Vec<crate::handles::SchComponentHandle>> {
+    fn query_all(&self, q: &str) -> crate::error::Result<Vec<crate::handles::SchComponentHandle>> {
         use crate::query::eval::evaluate;
         let parsed = crate::query::parse(q)?;
 
@@ -714,8 +703,7 @@ fn parse_record_blocks(
             let header = ((block.flags as u32) << 24) | (record_data.len() as u32);
             full_raw.extend_from_slice(&header.to_le_bytes());
             full_raw.extend_from_slice(&record_data);
-            let origin =
-                RecordOrigin::Binary(crate::backing_store::BinaryOrigin::new(record_data));
+            let origin = RecordOrigin::Binary(crate::backing_store::BinaryOrigin::new(record_data));
             let mut node = RecordNode::new(record_type, origin);
             node.original_snapshot = full_raw;
             node.stream_name = Some(stream_name.to_string());
@@ -1240,8 +1228,7 @@ mod tests {
         let store = std::rc::Rc::new(std::cell::RefCell::new(make_store_with_records(records)));
         let doc = SchDoc { store };
 
-        let handles =
-            DocumentQuery::<crate::handles::SchComponent>::query_all(&doc, "#1").unwrap();
+        let handles = DocumentQuery::<crate::handles::SchComponent>::query_all(&doc, "#1").unwrap();
         assert_eq!(handles.len(), 2);
     }
 
