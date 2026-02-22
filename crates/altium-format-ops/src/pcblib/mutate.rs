@@ -334,14 +334,28 @@ pub fn cmd_add_json(
         cmd_add_footprint(path, name, description)?;
 
         if let Some(pads) = fp_json["pads"].as_array() {
-            for pad_json in pads {
-                let designator = pad_json["designator"].as_str().unwrap_or("?");
-                let x = pad_json["x"].as_f64().unwrap_or(0.0);
-                let y = pad_json["y"].as_f64().unwrap_or(0.0);
-                let width = pad_json["width"].as_f64().unwrap_or(1.0);
-                let height = pad_json["height"].as_f64().unwrap_or(1.0);
-                let shape = pad_json["shape"].as_str().unwrap_or("rectangular");
-                let hole = pad_json["hole"].as_f64().unwrap_or(0.0);
+            for (i, pad_json) in pads.iter().enumerate() {
+                let designator = pad_json["designator"]
+                    .as_str()
+                    .ok_or_else(|| format!("Pad {} in footprint '{}': missing 'designator' field", i, name))?;
+                let x = pad_json["x"]
+                    .as_f64()
+                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'x' field", designator, name))?;
+                let y = pad_json["y"]
+                    .as_f64()
+                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'y' field", designator, name))?;
+                let width = pad_json["width"]
+                    .as_f64()
+                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'width' field", designator, name))?;
+                let height = pad_json["height"]
+                    .as_f64()
+                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'height' field", designator, name))?;
+                let shape = pad_json["shape"]
+                    .as_str()
+                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing 'shape' field", designator, name))?;
+                let hole = pad_json["hole"]
+                    .as_f64()
+                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'hole' field", designator, name))?;
 
                 cmd_add_pad(path, name, designator, x, y, width, height, shape, hole)?;
             }
