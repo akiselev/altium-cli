@@ -1,11 +1,7 @@
 ---
 name: data-review
-description: >
-    Audit the altium-cli codebase for data integrity issues: silent data corruption, dropped
-    fields, overwritten values, raw byte passthrough, untyped parameter forwarding, and
-    deserialization shortcuts. Activate when the user requests a data review, data integrity
-    audit, or wants to verify that no data is silently lost or corrupted. Can target the full
-    codebase, specific crates, or specific files.
+description: Audit the altium-cli codebase for data integrity issues: silent data corruption, dropped fields, overwritten values, raw byte passthrough, untyped parameter forwarding, and deserialization shortcuts. Activate when the user requests a data review, data integrity audit, or wants to verify that no data is silently lost or corrupted. Can target the full codebase, specific crates, or specific files.
+argument-hint: "Extra instructions"
 ---
 
 # altium-cli Data Integrity Review
@@ -207,3 +203,8 @@ file contains parameters we don't recognize, they'll be silently ignored.
 ### 6. If no violations found
 
 Explicitly state: "No data integrity violations found in the reviewed scope." and list which files were checked.
+
+
+=====
+
+Extra instructions from user: $ARGUMENTS
