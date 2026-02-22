@@ -35,6 +35,15 @@ capture, no opaque blobs. If our parser encounters data it doesn't understand, t
 bug in our code that must be fixed -- never silently skipped. These files control PCB
 fabrication; a silently dropped field could cost thousands of dollars.
 
+**NEVER skip or suppress unconsumed data**: Do NOT mark streams, records, or fields as
+"consumed" without actually parsing them. This includes any form of "skip_known",
+"ignore_remaining", or marking entries as consumed in `TrackedCfbDocument` without reading
+and parsing their contents. If a stream or field exists in the file, the parser MUST either
+fully parse it or return an error. Deferring parsing to "future milestones" by silently
+suppressing errors is forbidden — it masks bugs and violates the fail-fast invariant.
+`assert_all_consumed()` exists precisely to catch unhandled data; circumventing it defeats
+the entire safety model.
+
 **Use domain types from `altium-format-types`**: The `altium-format-types` crate defines typed
 enums and structs for every Altium concept (`PcbObjectId`, `SchRecordType`, `Color`, `Coord`,
 `UniqueId`, etc.) as well as named constants for format-level values (tag bytes, flag values,
