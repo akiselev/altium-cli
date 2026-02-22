@@ -3,6 +3,9 @@
 The SchLib loading pipeline runs in three sequential phases. This document describes the
 exact operation order for both full library loads and single-component loads.
 
+See [../../designs/low-level-api.md](../../designs/low-level-api.md) for the parsing layer
+architecture that implements this pipeline.
+
 ## Full library load
 
 ### Phase 1: ImportBaseWarehouse
@@ -153,3 +156,33 @@ When loading one component by `libraryReference`:
 Pins use `Export_Instruction(b, "BINARY")` which produces flags=0x01 blocks. All other
 primitives use `Export_Instruction(b, "RECORD")` which produces flags=0x00 blocks. This
 is why every binary block in a `Data` stream is a pin.
+
+## Low-level API layer mapping
+
+How each pipeline phase maps to the parsing layers defined in
+[low-level-api.md](../../designs/low-level-api.md):
+
+| Pipeline step | Layer 1 (CFB) | Layer 2 (Blocks) | Layer 3 (Data access) | Layer 4 (Records) |
+|---|---|---|---|---|
+| Read FileHeader | `read_stream("/FileHeader")` | `parse_blocks` | `ParameterCollection::from_bytes` | Header-specific `FromParams` |
+| Read SectionKeys | `read_stream("/SectionKeys")` | `parse_blocks` | `ParameterCollection::from_bytes` | Indexed family (`remove_indexed`) |
+| Read component Data | `read_stream("/<key>/Data")` | `parse_blocks` (mixed text+binary) | `ParameterCollection` or `BinaryReader` | `SchRecord::from_block` (dual dispatch) |
+| Read Storage images | `read_stream("/Storage")` | `parse_blocks` | `parse_embedded_object_stream` + `flate2` decompress | N/A (direct struct) |
+| Read pin sidecars | `read_stream_optional("/<key>/PinFrac")` etc. | `parse_blocks` | `parse_embedded_object_stream` + `BinaryReader` or `ParameterCollection::from_utf16le_bytes` | N/A (direct merge) |
+| Read Additional | `read_stream_optional("/<key>/Additional")` | `parse_blocks` | `ParameterCollection::from_bytes` | `SchRecord::from_block` |
+
+**Key interactions with the low-level API:**
+
+- **Mixed-format dispatch**: Component Data streams contain both text blocks (flags=0x00,
+  most record types) and binary blocks (flags=0x01, pins only). `SchRecord::from_block`
+  handles both, using `RECORD=N` for text and binary code `0x02` for binary.
+- **RECORD=0 sentinel**: `SchRecord::from_block` returns `Ok(None)` for RECORD=0 end
+  markers rather than treating them as unknown record types.
+- **Embedded object envelope**: Storage and all 9 pin sidecar streams use the `0xD0`
+  envelope format parsed by `parse_embedded_object_stream`. Pin sidecar entries are sparse
+  (addressed by pin index in the envelope id field, not by array position).
+- **UTF-16LE sidecars**: 7 of 9 pin sidecar streams encode their parameter strings in
+  UTF-16LE, requiring `ParameterCollection::from_utf16le_bytes` instead of `from_bytes`.
+- **Binary pin coordinates**: Binary pins store coordinates as i16 in DXP units (each =
+  100,000 internal units). PinFrac provides the remainder. This is distinct from PCB binary
+  coordinates which use i32 directly in internal units.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Four layers compose the parsing stack inside `altium-format`. Each layer has a single
+Five layers compose the parsing stack inside `altium-format`. Each layer has a single
 responsibility and a clean boundary with its neighbors. All types are `pub(crate)` — the
 public API surface is the document types (`SchDoc`, `PcbDoc`, etc.) and their record types,
 not the parsing machinery.
@@ -12,23 +12,40 @@ not the parsing machinery.
 │  Document Loader (SchDoc::open, PcbDoc::open, …)    │  ← public API
 │  Orchestrates layers, merges sidecars, builds trees  │
 ├─────────────────────────────────────────────────────┤
-│  Layer 4: Record Parsing                             │
+│  Layer 5: Record Parsing                             │
 │  FromParams / FromBinary traits + dispatch           │
 │  POLICY: assert_exhausted at dispatch boundary       │
 ├─────────────────────────────────────────────────────┤
-│  Layer 3: ParameterCollection / BinaryReader         │
+│  Layer 4: ParameterCollection / BinaryReader         │
 │  Structured data access with consumption tracking    │
 │  MECHANISM: remove-on-read, remaining_keys/bytes     │
 ├─────────────────────────────────────────────────────┤
-│  Layer 2: Block Stream                               │
-│  Parse block framing, decompress, iterate blocks     │
+│  Layer 3: Stream Parsers                             │
+│  Block framing, binary headers, TLV, envelopes       │
+│  Multiple format-specific parsers, not just blocks   │
+├─────────────────────────────────────────────────────┤
+│  Layer 2: Stream Consumption Tracking                │
+│  Wraps CFB access, tracks which streams are read     │
+│  POLICY: assert_all_consumed at end of loading       │
 ├─────────────────────────────────────────────────────┤
 │  Layer 1: CFB Document                               │
 │  Open file, enumerate storages/streams, read bytes   │
 └─────────────────────────────────────────────────────┘
 ```
 
-Data flows bottom-up: file → bytes → blocks → params/binary → typed records.
+Data flows bottom-up: file → tracked access → bytes → blocks/TLV/headers → params/binary → typed records.
+
+### Exhaustion at every level
+
+The fail-fast philosophy applies uniformly across all five layers:
+
+| Level | What is tracked | Exhaustion check | Error on violation |
+|---|---|---|---|
+| Layer 1 | File is valid CFB | `cfb` crate validates | `CfbError` |
+| Layer 2 | Every stream/storage in the CFB | `assert_all_consumed()` | `UnconsumedStreams` |
+| Layer 3 | Every byte in a stream | Block framing validates sizes; `Weight`/count checks | `InvalidBlockHeader`, `RecordCountMismatch` |
+| Layer 4 | Every key / every byte in a record | `assert_exhausted()` on ParameterCollection/BinaryReader | `UnknownParams`, `UnexpectedTrailingData` |
+| Layer 5 | Every record type discriminant | Dispatch match with no wildcard | `UnknownRecordType`, `UnknownObjectId` |
 
 ---
 
@@ -63,6 +80,10 @@ impl CfbDocument {
     /// List immediate child entries (storages and streams) under a path.
     /// Returns (storages, streams) as separate vectors of names.
     pub fn list_entries(&self, path: &str) -> Result<(Vec<String>, Vec<String>)>;
+
+    /// Recursively enumerate ALL entries (storages and streams) in the entire file.
+    /// Returns absolute paths like "/FileHeader", "/Board6/Data", etc.
+    pub fn enumerate_all_entries(&self) -> Result<HashSet<String>>;
 }
 ```
 
@@ -77,16 +98,163 @@ impl CfbDocument {
 
 ---
 
-## Layer 2: Block Stream
+## Layer 2: Stream Consumption Tracking
 
-**Module**: `block_stream`
+**Module**: `tracked_cfb`
 
-**Responsibility**: Parse the block framing that Altium uses within CFB streams. Every
-Altium stream (except PrjPcb text and a few raw binary sidecars) is a sequence of
-size-prefixed blocks. This layer handles the framing only, yielding individual block
-payloads tagged with their format.
+**Responsibility**: Wraps `CfbDocument` to track which streams and storages have been
+accessed during document loading. At the end of loading, `assert_all_consumed()` verifies
+that every entry in the CFB container was either explicitly read or explicitly acknowledged.
+This closes the gap between "we validate every byte within a stream" and "we validate every
+stream within a file."
 
-### Block framing format
+### Why this layer exists
+
+Without stream-level tracking, if Altium adds a new stream (e.g. a new sidecar format, a
+new metadata section, a new constraint system), our parser would silently ignore it. That
+stream might carry electrical connectivity data, design rules, or fabrication constraints.
+Silently dropping it violates the fail-fast philosophy.
+
+The principle is the same pattern used everywhere else in the stack:
+
+| What | Mechanism | Exhaustion check |
+|---|---|---|
+| Parameter keys | remove-on-read from `ParameterCollection` | `assert_exhausted()` — unknown keys are errors |
+| Binary bytes | position tracking in `BinaryReader` | `assert_exhausted()` — trailing bytes are errors |
+| Record types | dispatch match with no wildcard | unknown discriminant is an error |
+| **CFB streams** | **read/acknowledge tracking** | **`assert_all_consumed()` — unknown streams are errors** |
+
+### API
+
+```rust
+/// Wraps CfbDocument with stream/storage consumption tracking.
+///
+/// Every entry in the CFB container must be explicitly consumed (read) or
+/// acknowledged (skip_known) during document loading. After loading,
+/// assert_all_consumed() verifies nothing was missed.
+pub(crate) struct TrackedCfbDocument {
+    inner: CfbDocument,
+    /// All entries discovered at open time (recursive enumeration).
+    all_entries: HashSet<String>,
+    /// Entries that have been read or explicitly acknowledged.
+    consumed: HashSet<String>,
+}
+
+impl TrackedCfbDocument {
+    /// Open a CFB file and enumerate all entries for tracking.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let inner = CfbDocument::open(path)?;
+        let all_entries = inner.enumerate_all_entries()?;
+        Ok(Self {
+            inner,
+            all_entries,
+            consumed: HashSet::new(),
+        })
+    }
+
+    /// Read a required stream. Marks it as consumed.
+    /// Returns Err(StreamNotFound) if the stream does not exist.
+    pub fn read_stream(&mut self, path: &str) -> Result<Vec<u8>> {
+        self.consumed.insert(path.to_string());
+        self.inner.read_stream(path)
+    }
+
+    /// Read an optional stream. Marks it as consumed if it exists.
+    /// Returns Ok(None) if the stream does not exist.
+    pub fn read_stream_optional(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.consumed.insert(path.to_string());
+        self.inner.read_stream_optional(path)
+    }
+
+    /// Check whether an entry exists. Does NOT mark it as consumed.
+    pub fn exists(&self, path: &str) -> bool {
+        self.inner.exists(path)
+    }
+
+    /// List immediate child entries under a path.
+    /// Marks the parent storage as consumed (it has been inspected).
+    pub fn list_entries(&mut self, path: &str) -> Result<(Vec<String>, Vec<String>)> {
+        self.consumed.insert(path.to_string());
+        self.inner.list_entries(path)
+    }
+
+    /// Explicitly acknowledge a known stream/storage without reading it.
+    ///
+    /// Use this for entries that are:
+    /// - Known but not yet implemented (must include a TODO comment at call site)
+    /// - Known to be irrelevant for our use case (e.g. printer settings)
+    /// - Storage nodes that are implicitly consumed by reading their children
+    ///
+    /// This forces explicit acknowledgement rather than silent ignorance.
+    /// The call site documents *why* the stream is being skipped.
+    pub fn skip_known(&mut self, path: &str) {
+        self.consumed.insert(path.to_string());
+    }
+
+    /// Mark multiple entries as consumed at once.
+    /// Convenience for acknowledging a batch of known-but-unimplemented streams.
+    pub fn skip_known_many(&mut self, paths: &[&str]) {
+        for path in paths {
+            self.consumed.insert(path.to_string());
+        }
+    }
+
+    /// FAIL FAST: Error if any entry in the CFB was never consumed or acknowledged.
+    ///
+    /// Must be called at the end of every document loader. An unknown stream
+    /// could carry fabrication-critical data — we must never silently ignore it.
+    pub fn assert_all_consumed(&self) -> Result<()> {
+        let unconsumed: Vec<_> = self.all_entries
+            .difference(&self.consumed)
+            .sorted() // deterministic error messages
+            .cloned()
+            .collect();
+        if unconsumed.is_empty() {
+            Ok(())
+        } else {
+            Err(AltiumFormatError::UnconsumedStreams { paths: unconsumed })
+        }
+    }
+}
+```
+
+### How this drives the red/green workflow
+
+Stream tracking is the outermost discovery loop:
+
+1. Open a real Altium file → `assert_all_consumed()` fails, listing unknown streams
+2. Investigate what those streams contain (ghidra, hex dumps, docs)
+3. Either implement the parser (`read_stream` + full parsing) or call `skip_known` with a
+   comment explaining why it's safe to skip
+4. Run again → passes, or fails on the next unknown stream
+
+This is exactly parallel to how `assert_exhausted()` on `ParameterCollection` drives
+discovery of unknown parameter keys within records.
+
+### Storage nodes vs stream nodes
+
+CFB containers have two types of entries: storages (directories) and streams (files).
+When the document loader reads all streams under a storage (e.g. `/Arcs6/Header` and
+`/Arcs6/Data`), it must also acknowledge the storage node itself (`/Arcs6`). The
+`list_entries` method handles this automatically by marking the parent as consumed.
+The root storage `/` is always implicitly consumed.
+
+---
+
+## Layer 3: Stream Parsers
+
+**Module**: `block_stream`, `binary_headers`, `wide_strings_tlv`
+
+**Responsibility**: Parse the various stream-level formats that Altium uses within CFB
+streams. This is NOT a single format — Altium uses at least five distinct stream-level
+encodings. This layer handles framing only, yielding payloads for Layer 4.
+
+### Format A: Block-framed streams (most common)
+
+**Used by**: SchDoc/SchLib record streams, PcbDoc text sections, pin sidecar streams,
+Storage streams, all streams with pipe-delimited parameter data.
+
+Every block-framed Altium stream is a sequence of size-prefixed blocks:
 
 ```
 ┌───────────────────────────┐
@@ -99,12 +267,10 @@ payloads tagged with their format.
 ```
 
 **Important**: `0xD0` as the first byte of a binary block payload is NOT a compression
-indicator — it is the embedded object envelope marker (see Layer 3). Layer 2 does NOT
+indicator — it is the embedded object envelope marker (see Layer 4). Layer 3 does NOT
 perform decompression. Decompression is the responsibility of the embedded object
-envelope parser in Layer 3, which knows from context whether inner data is compressed
+envelope parser in Layer 4, which knows from context whether inner data is compressed
 (e.g. `/Storage` entries are zlib-compressed, pin sidecar entries are not).
-
-### Types
 
 ```rust
 /// Discriminant for block payload format.
@@ -130,17 +296,213 @@ pub(crate) struct Block {
 /// The stream is consumed sequentially. Each block's header is read,
 /// the payload extracted, and the block appended to the output vec.
 /// No decompression is performed — payloads are returned as-is.
+/// Validates that the entire stream is consumed (no trailing bytes).
 pub(crate) fn parse_blocks(stream_data: &[u8]) -> Result<Vec<Block>>;
 
 /// Parse blocks, returning an iterator for lazy consumption.
 pub(crate) fn iter_blocks(stream_data: &[u8]) -> BlockIter<'_>;
 ```
 
+### Format B: PCB binary record streams
+
+**Used by**: PcbDoc/PcbLib primitive sections (Arcs6, Pads6, Tracks6, Vias6, Texts6,
+Fills6, Connections6, Regions6, ShapeBasedRegions6, SplitPlaneRegions6, ComponentBodies6,
+ShapeBasedComponentBodies6).
+
+These are NOT block-framed. Each record is:
+
+```
+┌───────────────────────────┐
+│ u8 object_id              │  TObjectId enum value (1=Arc, 2=Pad, etc.)
+├───────────────────────────┤
+│ u32 LE record_length      │  payload size (high byte may contain flags;
+│                           │  mask with SIZE_FLAG_MASK)
+├───────────────────────────┤
+│ payload (length bytes)    │  packed little-endian binary struct
+└───────────────────────────┘
+```
+
+The section's `Header` sub-stream contains a u32 record count. The `Data` sub-stream
+contains the packed records. After parsing, the actual record count must match the
+header count — mismatch is a hard error.
+
+```rust
+/// A raw PCB binary record before dispatch.
+pub(crate) struct PcbBinaryRecord {
+    pub object_id: u8,
+    pub data: Vec<u8>,
+}
+
+/// Parse all PCB binary records from a section Data stream.
+///
+/// Validates that the stream is fully consumed (no trailing bytes).
+pub(crate) fn parse_pcb_binary_records(stream_data: &[u8]) -> Result<Vec<PcbBinaryRecord>>;
+
+/// Read the record count from a PCB section Header stream.
+/// Header is always exactly 4 bytes: u32 LE count.
+pub(crate) fn parse_pcb_section_header(header_data: &[u8]) -> Result<u32>;
+```
+
+### Format C: PCB prefixed parameter blocks
+
+**Used by**: PcbDoc sections Rules6, NewRules6, Dimensions6, Coordinates6.
+
+Similar to block-framed but with a u16 prefix before each block:
+
+```
+┌───────────────────────────┐
+│ u16 LE prefix             │  purpose varies by section
+├───────────────────────────┤
+│ u32 LE payload_size       │  length of the parameter string
+├───────────────────────────┤
+│ payload (size bytes)      │  NUL-terminated pipe-delimited parameter string
+└───────────────────────────┘
+```
+
+```rust
+/// A prefixed parameter block from Rules6/Dimensions6/etc.
+pub(crate) struct PrefixedParamBlock {
+    pub prefix: u16,
+    pub data: Vec<u8>,
+}
+
+/// Parse all prefixed parameter blocks from a section Data stream.
+pub(crate) fn parse_prefixed_param_blocks(stream_data: &[u8]) -> Result<Vec<PrefixedParamBlock>>;
+```
+
+### Format D: WideStrings6 binary TLV
+
+**Used by**: PcbDoc `/WideStrings6/Data` only. NOT block-framed.
+
+Binary type-length-value encoding for Unicode string replacement:
+
+```
+┌───────────────────────────┐
+│ type byte                 │  0x06, 0x0C, 0x12, or 0x14
+├───────────────────────────┤
+│ length field              │  u8 for type 0x06; u32 LE for others
+│                           │  0x12 stores char count, others store byte count
+├───────────────────────────┤
+│ string data               │  ASCII (0x06/0x0C), UTF-16LE (0x12), UTF-8 (0x14)
+└───────────────────────────┘
+```
+
+Each entry corresponds to a primitive by position index. The entries replace the
+ASCII text field on primitives that have Unicode characters.
+
+```rust
+/// A single WideStrings6 TLV entry.
+pub(crate) struct WideStringEntry {
+    pub text: String,
+}
+
+/// Parse the WideStrings6 binary TLV stream.
+/// Returns entries indexed by position (0-based).
+/// Validates that the entire stream is consumed.
+pub(crate) fn parse_wide_strings_tlv(stream_data: &[u8]) -> Result<Vec<WideStringEntry>>;
+```
+
+**Critical distinction**: PcbLib per-footprint `WideStrings` uses parameter-block format
+(Format A), NOT this TLV format. They are completely different encodings despite similar
+names.
+
+### Format E: Binary file headers
+
+**Used by**: PcbDoc `FileHeader`, PcbDoc `FileHeaderSix`, PcbLib `FileHeader`.
+
+These are fixed-layout binary structures, not block-framed.
+
+#### PcbDoc FileHeader (legacy, 24 bytes)
+
+```
+┌───────────────────────────┐
+│ u32 LE char_count         │  NOTE: character count, not byte count
+├───────────────────────────┤
+│ UTF-16LE string           │  "PCB 5.0 Binary File" (char_count × 2 bytes)
+└───────────────────────────┘
+```
+
+Known quirk: the u32 stores the character count (19), not the byte count (38).
+
+#### PcbDoc FileHeaderSix / PcbLib FileHeader (pascal-block format)
+
+```
+┌───────────────────────────┐
+│ u32 LE outer_length       │  total length of inner block
+├───────────────────────────┤
+│ u8 string_length          │  pascal string length
+├───────────────────────────┤
+│ ASCII string (N bytes)    │  version string
+├───────────────────────────┤
+│ f64 LE version            │  5.01 (always)
+├───────────────────────────┤
+│ u32 LE outer_length       │  total length of inner block
+├───────────────────────────┤
+│ u8 string_length          │  pascal string length
+├───────────────────────────┤
+│ ASCII string (N bytes)    │  UniqueID (8-char alpha for PcbLib, GUID for PcbDoc)
+└───────────────────────────┘
+```
+
+Version strings:
+- PcbDoc: `"PCB 6.0 Binary File"`
+- PcbLib: `"PCB 6.0 Binary Library File"`
+
+```rust
+/// Parsed PCB file header.
+pub(crate) struct PcbFileHeader {
+    pub version_string: String,
+    pub version: f64,
+    pub unique_id: String,
+}
+
+/// Parse a PcbDoc FileHeaderSix or PcbLib FileHeader (pascal-block format).
+pub(crate) fn parse_pcb_file_header(data: &[u8]) -> Result<PcbFileHeader>;
+
+/// Parse a PcbDoc legacy FileHeader (24-byte UTF-16LE format).
+pub(crate) fn parse_pcb_legacy_header(data: &[u8]) -> Result<String>;
+```
+
+### Format F: PcbLib footprint parameters
+
+**Used by**: PcbLib per-footprint `Parameters` stream.
+
+```
+┌───────────────────────────┐
+│ u32 LE payload_length     │  length of the parameter block
+├───────────────────────────┤
+│ u8 string_length          │  pascal string length (redundant with payload_length)
+├───────────────────────────┤
+│ Win-1252 param string     │  pipe-delimited key=value pairs
+└───────────────────────────┘
+```
+
+Both length fields are always consistent (pascal block pattern). After reading,
+the parameter string is parsed via `ParameterCollection::from_bytes`.
+
+### Format G: WriteBinaryBlocksData (instruction-tagged envelopes)
+
+**Used by**: SchDoc `ReuseBlocks`, `ReuseBlocksV2`, `HarnessConnectionPointConnector`.
+
+These streams use 0xD0-tagged instruction envelopes (same as embedded objects) but
+are NOT standard block-framed streams. They use the `WriteBinaryBlocksData` format
+from Delphi's `SchDataEmbeddedObject.WriteData`.
+
+Parsed via `parse_embedded_object_stream` after block framing.
+
+### Format H: SchDoc Files stream (0xE3-tagged)
+
+**Used by**: SchDoc `Files` stream only.
+
+Uses 0xE3-tagged `SchDataFileObject` entries for embedded image parameter model files
+and harness layout drawings. This is a distinct envelope format from the 0xD0 embedded
+objects.
+
 ### PcbLib pattern name prefix
 
-PcbLib footprint streams have a Pascal-string pattern name before the block sequence.
-This is not part of the block framing — it is a stream-level prefix that the document
-loader strips before passing the remaining bytes to `parse_blocks`.
+PcbLib footprint Data streams have a Pascal-string pattern name before the packed
+binary records. This is a stream-level prefix that the document loader strips before
+passing the remaining bytes to the binary record parser.
 
 ```rust
 /// Read a Pascal-string prefix (u8 length + ASCII bytes) from the start of a
@@ -148,16 +510,30 @@ loader strips before passing the remaining bytes to `parse_blocks`.
 pub(crate) fn read_pascal_prefix(data: &[u8]) -> Result<(String, &[u8])>;
 ```
 
+### Record count validation
+
+Several stream formats include an explicit record count that must be validated:
+
+| Source | Count location | Validated against |
+|---|---|---|
+| SchDoc `FileHeader` block 0 | `Weight` parameter | Number of primitive blocks that follow |
+| SchLib per-component `Data` | Loop until `RECORD=0` sentinel | N/A (sentinel-terminated) |
+| SchLib pin sidecars | `Weight` in header block | Number of 0xD0 entry blocks |
+| PcbDoc section `Header` sub-stream | u32 LE count | Number of records in `Data` sub-stream |
+| PcbLib footprint `Header` sub-stream | u32 LE count | Number of records in `Data` sub-stream |
+
+Mismatches are hard errors (`RecordCountMismatch`).
+
 ---
 
-## Layer 3: ParameterCollection / BinaryReader
+## Layer 4: ParameterCollection / BinaryReader
 
 **Module**: `param_collection`, `binary_io`
 
-**Responsibility**: Structured access to the contents of a single block. This layer
-provides the *mechanism* for consumption tracking — it knows what data has been read and
-what remains — but does not enforce any policy about unknown fields. That policy lives in
-Layer 4.
+**Responsibility**: Structured access to the contents of a single block or record payload.
+This layer provides the *mechanism* for consumption tracking — it knows what data has been
+read and what remains — but does not enforce any policy about unknown fields. That policy
+lives in Layer 5.
 
 ### ParameterCollection
 
@@ -170,6 +546,23 @@ Parameter strings appear in two encodings depending on context:
   PinPackageLength, PinPropagationDelay, PinFunctionData) and PcbLib WideStrings
 
 Both produce the same pipe-delimited `key=value` format once decoded to a Rust String.
+
+#### Parameter string syntax
+
+```
+|KEY1=VALUE1|KEY2=VALUE2|...|KEYn=VALUEn|\0
+```
+
+| Rule | Detail |
+|---|---|
+| Delimiter | `\|` between key=value pairs |
+| Escaping | `[]` decodes as `\|` (literal pipe); `{}` decodes as `=` (literal equals) |
+| Text encoding | Windows-1252 by default |
+| Unicode keys | `%UTF8%` prefix on key name indicates UTF-8 encoded value |
+| Booleans | `T`/`F` in schematic records; `TRUE`/`FALSE` in PCB text sections |
+| Key case | Case-insensitive matching; first occurrence wins for duplicates |
+| NUL terminator | Every parameter string ends with `\0` |
+| Extended records | `RECORD=254` means actual type is in `RECORDEX` (i32) |
 
 ```rust
 /// Ordered map of string key-value pairs parsed from a pipe-delimited parameter block.
@@ -187,7 +580,7 @@ impl ParameterCollection {
     ///
     /// Handles:
     /// - Windows-1252 → String conversion
-    /// - Pipe delimiter splitting
+    /// - Pipe delimiter splitting (with `[]` → `|` and `{}` → `=` unescaping)
     /// - `%UTF8%` prefix on keys (UTF-8 encoded values)
     /// - Leading/trailing pipe stripping
     /// - NUL terminator stripping
@@ -220,9 +613,13 @@ impl ParameterCollection {
 
     /// Remove a DXP fractional coordinate pair (e.g. LOCATION.X + LOCATION.X_FRAC).
     /// Reconstructs the full coordinate: integer_part * 100_000 + frac_part.
+    /// The frac key is omitted when zero; range is 0..99_999.
+    /// One DXP unit = 100,000 internal units = 10 mils.
     pub fn remove_coord(&mut self, key: &str, frac_key: &str) -> Result<Coord>;
 
     /// Remove an indexed coordinate array (X1, Y1, X2, Y2, … with COUNT key).
+    /// Also removes fractional parts (X1_FRAC, Y1_FRAC, …) when present.
+    /// Each coordinate is reconstructed as: integer * 100_000 + frac.
     pub fn remove_indexed_coords(
         &mut self,
         count_key: &str,
@@ -272,8 +669,11 @@ pub(crate) trait ToParamValue {
 
 ### BinaryReader / BinaryWriter
 
-The PCB binary serialization format. Packed little-endian structs. Used by PcbDoc primary
-sections (Arcs6, Pads6, Tracks6, etc.) and PcbLib footprint data.
+Cursor-based binary I/O for packed little-endian data. Used by:
+- **PcbDoc/PcbLib**: Primary sections (Arcs6, Pads6, Tracks6, etc.)
+- **SchLib**: Binary pin records (flags=0x01 blocks in Data streams)
+- **All file types**: Embedded object envelopes (0xD0), sidecar binary payloads (PinFrac,
+  PinTextData)
 
 ```rust
 /// Cursor over a byte slice with position tracking.
@@ -304,7 +704,9 @@ impl<'a> BinaryReader<'a> {
 
     // ── Compound reads ───────────────────────────────────────────────
 
-    /// Read a Coord (i32 LE, 10000 units = 1 mil).
+    /// Read a Coord (i32 LE in internal units, 10,000 units = 1 mil).
+    /// Used for PCB binary coordinates which store values directly in internal units.
+    /// NOTE: SchLib binary pins use i16 with different scaling (see coordinate note below).
     pub fn read_coord(&mut self) -> Result<Coord>;
 
     /// Read a CoordPoint (two consecutive i32 LE: x, y).
@@ -361,9 +763,86 @@ impl BinaryWriter {
 }
 ```
 
+### Coordinate representations
+
+There are three distinct coordinate encodings in Altium files. All ultimately produce the
+same `Coord(i32)` in internal units (10,000 = 1 mil), but they arrive via different paths:
+
+| Context | On-disk format | Reconstruction | BinaryReader method |
+|---|---|---|---|
+| **PCB binary** | i32 LE, already in internal units | value directly | `read_coord()` |
+| **Schematic text** | Two params: `KEY=N` + `KEY_FRAC=F` | `N * 100_000 + F` | N/A (ParameterCollection) |
+| **SchLib binary pins** | i16 LE in DXP units (1 DXP = 100,000 internal) | `i16 * 100_000` + PinFrac sidecar | `read_i16_le()` + post-processing |
+
+The schematic DXP base unit is `Rt_Schematic.Consts.cBaseUnit = 100_000` internal units
+(= 10 mils). The `_FRAC` part ranges 0..99,999. Binary pin coordinates are truncated to
+DXP units (i16); the PinFrac sidecar provides the remainder for full precision.
+
+`BinaryReader::read_coord()` is specifically for the PCB case (i32 directly in internal
+units). SchLib binary pin coordinates must use `read_i16_le()` and reconstruct manually.
+
+### Embedded object envelope
+
+The `0xD0` embedded object format is used by `/Storage` streams (embedded images) and all
+9 SchLib pin sidecar streams. It appears inside binary blocks (flags=0x01) as a framing
+layer that wraps stream-specific inner data.
+
+```
+0xD0          (1 byte)  embedded object tag
+id_length     (1 byte)  length of id string
+id            (N bytes) ASCII identifier (e.g. pin index "0", "15", or image filename)
+inner_header  (4 bytes) same format as block header: bits[23:0]=size, bits[31:24]=flags
+inner_data    (M bytes) format varies by stream (see below)
+```
+
+```rust
+/// A single entry parsed from a 0xD0 embedded object envelope.
+pub(crate) struct EmbeddedObject {
+    /// The identifier string (pin index for sidecars, filename for images).
+    pub id: String,
+    /// Format of the inner data (from inner_header flags).
+    pub inner_format: BlockFormat,
+    /// The inner payload bytes (NOT decompressed — caller decides based on context).
+    pub inner_data: Vec<u8>,
+}
+
+/// Parse the 0xD0 envelope from a binary block payload.
+pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject>;
+
+/// Parse a stream that uses the embedded object envelope pattern:
+/// header block (flags=0x00, params with RECORD=0 + Weight) followed by
+/// N entry blocks (flags=0x01, each containing a 0xD0 envelope).
+///
+/// Validates that the number of entry blocks matches the Weight parameter.
+///
+/// Returns the header params and the parsed envelope entries.
+pub(crate) fn parse_embedded_object_stream(
+    blocks: &[Block],
+) -> Result<(ParameterCollection, Vec<EmbeddedObject>)>;
+```
+
+**Decompression is context-dependent**: `/Storage` entries contain zlib-compressed image
+data (decompress with `flate2`). Pin sidecar entries are NOT compressed. The caller
+(document loader) knows which context it's in and decompresses accordingly.
+
+**Inner data formats by stream**:
+
+| Stream | Inner data format | Parser |
+|---|---|---|
+| `/Storage` | zlib-compressed image binary | `flate2::decompress` |
+| `PinFrac` | 12 bytes: 3 × i32 LE | `BinaryReader` |
+| `PinDesc` | u32 LE length + ASCII text | `BinaryReader` |
+| `PinTextData` | 2-22 bytes variable binary | `BinaryReader` |
+| `PinMiscData` | u32 LE length + UTF-16LE params | `ParameterCollection::from_utf16le_bytes` |
+| `PinWideText` | u32 LE length + UTF-16LE params | `ParameterCollection::from_utf16le_bytes` |
+| `PinSymbolLineWidth` | u32 LE length + UTF-16LE params | `ParameterCollection::from_utf16le_bytes` |
+| `PinPackageLength` | u32 LE length + UTF-16LE params | `ParameterCollection::from_utf16le_bytes` |
+| `PinPropagationDelay` | u32 LE length + UTF-16LE params | `ParameterCollection::from_utf16le_bytes` |
+| `PinFunctionData` | u32 LE length + UTF-16LE params | `ParameterCollection::from_utf16le_bytes` |
+
 ---
 
-## Layer 4: Record Parsing
+## Layer 5: Record Parsing
 
 **Module**: `sch::records`, `pcb::records`
 
@@ -391,19 +870,36 @@ implementations. This is because:
 ```
 Block arrives at dispatcher
     │
-    ▼
-Dispatcher reads record type discriminant (RECORD=N or object_id byte)
+    ├── Text block (flags=0x00)
+    │   │
+    │   ▼
+    │   Parse ParameterCollection from bytes
+    │   Read discriminant: RECORD=N param (schematic) or section identity (PCB)
+    │   │
+    │   ├── RECORD=0 → return None (end sentinel / header block)
+    │   ├── RECORD=254 → read RECORDEX for actual type code, dispatch
+    │   ├── RECORD=N → dispatch to RecordType::from_params(&mut params)
+    │   │               params.assert_exhausted()
+    │   │               return Ok(Some(SchRecord))
+    │   └── PCB section → dispatch to SectionType::from_params(&mut params)
+    │                      params.assert_exhausted()
+    │                      return Ok(PcbNet/PcbRule/etc.)
     │
-    ▼
-Dispatcher calls RecordType::from_params(&mut params) or ::from_binary(&mut reader)
-    │  ├─ Base types read their fields (params/reader partially consumed)
-    │  └─ Record type reads its fields (params/reader further consumed)
-    │
-    ▼
-Dispatcher calls params.assert_exhausted() / reader.assert_exhausted()
-    │
-    ▼
-Returns Result<SchRecord> or Result<PcbRecord>
+    └── Binary block (flags=0x01)
+        │
+        ▼
+        Create BinaryReader from bytes
+        Read discriminant: first byte
+        │
+        ├── Schematic: binary_code byte (0x02=Pin)
+        │   dispatch to SchPin::from_binary(&mut reader)
+        │   reader.assert_exhausted()
+        │   return Ok(Some(SchRecord::Pin))
+        │
+        └── PCB: object_id byte + u32 length → sub_reader
+            dispatch to PcbType::from_binary(&mut sub_reader)
+            sub_reader.assert_exhausted()
+            return Ok(PcbRecord)
 ```
 
 ### Parsing traits
@@ -438,6 +934,13 @@ pub(crate) trait ToBinary {
 
 ### Schematic record dispatch
 
+SchLib Data streams contain **mixed-format blocks**: text blocks (flags=0x00) for most
+record types, and binary blocks (flags=0x01) for pins. The dispatcher must handle both,
+using different discriminant mechanisms:
+
+- **Text blocks**: Record type determined by the `RECORD` parameter key
+- **Binary blocks**: Record type determined by the first byte (binary code: `0x02` = pin)
+
 ```rust
 /// All schematic primitive types.
 pub(crate) enum SchRecord {
@@ -450,32 +953,69 @@ pub(crate) enum SchRecord {
 }
 
 impl SchRecord {
-    /// Parse a single schematic record from a text block.
+    /// Parse a single schematic record from a block.
     ///
-    /// 1. Parses the block bytes into a ParameterCollection
-    /// 2. Removes the RECORD key to determine the record type
-    /// 3. Dispatches to the concrete type's FromParams
-    /// 4. Asserts the ParameterCollection is exhausted
-    /// 5. Returns the polymorphic SchRecord
-    pub fn from_block(block: &Block) -> Result<Self> {
-        assert!(block.format == BlockFormat::Text);
-        let mut params = ParameterCollection::from_bytes(&block.data)?;
-        let record_id: i32 = params.remove_required("RECORD")?;
+    /// Handles both text (flags=0x00) and binary (flags=0x01) blocks:
+    ///
+    /// - Text: parses ParameterCollection, dispatches on RECORD=N key
+    /// - Binary: reads binary code byte, dispatches on code value
+    ///
+    /// Returns Ok(None) for the RECORD=0 end-of-stream sentinel.
+    pub fn from_block(block: &Block) -> Result<Option<Self>> {
+        match block.format {
+            BlockFormat::Text => {
+                let mut params = ParameterCollection::from_bytes(&block.data)?;
+                let record_id: i32 = params.remove_required("RECORD")?;
 
-        let record = match record_id {
-            1 => SchRecord::Component(SchComponent::from_params(&mut params)?),
-            2 => SchRecord::Pin(SchPin::from_params(&mut params)?),
-            25 => SchRecord::NetLabel(SchNetLabel::from_params(&mut params)?),
-            27 => SchRecord::Wire(SchWire::from_params(&mut params)?),
-            // ... exhaustive match over all known RECORD values
-            _ => return Err(AltiumFormatError::UnknownRecordType(record_id)),
-        };
+                if record_id == 0 {
+                    // RECORD=0 is the end-of-stream sentinel, not a real record.
+                    // Remaining params (HEADER, Weight, etc.) are ignored.
+                    return Ok(None);
+                }
 
-        params.assert_exhausted()?;  // ← strict validation happens HERE
-        Ok(record)
+                // Handle extended record types (RECORD=254 → actual code in RECORDEX)
+                let effective_id = if record_id == 254 {
+                    params.remove_required::<i32>("RECORDEX")?
+                } else {
+                    record_id
+                };
+
+                let record = match effective_id {
+                    1 => SchRecord::Component(SchComponent::from_params(&mut params)?),
+                    25 => SchRecord::NetLabel(SchNetLabel::from_params(&mut params)?),
+                    27 => SchRecord::Wire(SchWire::from_params(&mut params)?),
+                    // ... exhaustive match over all known RECORD values
+                    _ => return Err(AltiumFormatError::UnknownRecordType(effective_id)),
+                };
+
+                params.assert_exhausted()?;
+                Ok(Some(record))
+            }
+            BlockFormat::Binary => {
+                let mut reader = BinaryReader::new(&block.data);
+                let binary_code = reader.read_u8()?;
+
+                let record = match binary_code {
+                    0x02 => SchRecord::Pin(SchPin::from_binary(&mut reader)?),
+                    // 0x02 is the only binary code in Data streams.
+                    // 0xD0 (embedded object) appears in Storage/sidecar streams
+                    // but those are NOT dispatched through SchRecord.
+                    _ => return Err(AltiumFormatError::UnknownBinaryCode(binary_code)),
+                };
+
+                reader.assert_exhausted()?;
+                Ok(Some(record))
+            }
+        }
     }
 }
 ```
+
+**Note on SchPin**: Pins implement BOTH `FromParams` and `FromBinary` because they can
+appear in either format. In SchLib Data streams they are always binary (flags=0x01). In
+SchDoc FileHeader streams they could theoretically appear as text (RECORD=2). The pin
+struct is the same either way — the binary format stores a subset of fields, with the
+remainder filled in from sidecar streams during post-processing.
 
 ### PCB record dispatch
 
@@ -491,31 +1031,28 @@ pub(crate) enum PcbRecord {
 }
 
 impl PcbRecord {
-    /// Parse a single PCB record from a binary block.
+    /// Parse a single PCB record from a binary record payload.
     ///
-    /// 1. Creates a BinaryReader over the block data
-    /// 2. Reads the object_id byte
-    /// 3. Reads the record length and creates a sub-reader
-    /// 4. Dispatches to the concrete type's FromBinary
-    /// 5. Asserts the sub-reader is exhausted
-    /// 6. Returns the polymorphic PcbRecord
-    pub fn from_block(block: &Block) -> Result<Self> {
-        assert!(block.format == BlockFormat::Binary);
-        let mut reader = BinaryReader::new(&block.data);
-        let object_id = reader.read_u8()?;
-        let length = reader.read_u32_le()? as usize;
-        let mut sub_reader = reader.sub_reader(length)?;
+    /// 1. Creates a BinaryReader over the record data
+    /// 2. Dispatches to the concrete type's FromBinary based on object_id
+    /// 3. Asserts the reader is exhausted
+    /// 4. Returns the polymorphic PcbRecord
+    ///
+    /// The object_id and length have already been parsed by the Layer 3
+    /// binary record parser (parse_pcb_binary_records).
+    pub fn from_record(object_id: u8, data: &[u8]) -> Result<Self> {
+        let mut reader = BinaryReader::new(data);
 
         let record = match object_id {
-            1 => PcbRecord::Arc(PcbArc::from_binary(&mut sub_reader)?),
-            2 => PcbRecord::Pad(PcbPad::from_binary(&mut sub_reader)?),
-            3 => PcbRecord::Via(PcbVia::from_binary(&mut sub_reader)?),
-            4 => PcbRecord::Track(PcbTrack::from_binary(&mut sub_reader)?),
+            1 => PcbRecord::Arc(PcbArc::from_binary(&mut reader)?),
+            2 => PcbRecord::Pad(PcbPad::from_binary(&mut reader)?),
+            3 => PcbRecord::Via(PcbVia::from_binary(&mut reader)?),
+            4 => PcbRecord::Track(PcbTrack::from_binary(&mut reader)?),
             // ... exhaustive match over all known object IDs
             _ => return Err(AltiumFormatError::UnknownObjectId(object_id)),
         };
 
-        sub_reader.assert_exhausted()?;  // ← strict validation happens HERE
+        reader.assert_exhausted()?;  // ← strict validation happens HERE
         Ok(record)
     }
 }
@@ -563,31 +1100,33 @@ Data is nested at multiple levels. Not every list is a stream of blocks — some
 embedded *within* a single block. The format uses several distinct collection patterns,
 and each is handled at a different layer.
 
-### Pattern 1: Stream of blocks (Layer 2)
+### Pattern 1: Stream of blocks (Layer 3)
 
 The most common pattern. A stream contains N blocks; each block is one record.
 
 ```
 /FileHeader stream:
-  Block 0 → header record
-  Block 1 → first primitive
-  Block 2 → second primitive
+  Block 0 → header record (RECORD=0 with HEADER, Weight, MinorVersion, UniqueID)
+  Block 1 → sheet record (RECORD=31 with font table, sheet settings)
+  Block 2 → first primitive
   ...
+  Block N → last primitive
+  Block N+1 → end sentinel (RECORD=0)
 
 /Arcs6/Data stream:
-  Block 0 → section header
-  Block 1 → first arc
-  Block 2 → second arc
+  Record 0 → section header (binary, all zeros or metadata)
+  Record 1 → first arc
+  Record 2 → second arc
   ...
 ```
 
-**Handled by**: `parse_blocks()` in Layer 2. The document loader iterates and dispatches
-each block through Layers 3+4.
+**Handled by**: `parse_blocks()` / `parse_pcb_binary_records()` in Layer 3. The document
+loader iterates and dispatches each block through Layers 4+5.
 
-**Exhaustion**: The document loader consumes all blocks. If a stream has blocks left over
-after the expected structure, that's a document-level error, not a Layer 2 concern.
+**Exhaustion**: The document loader validates record counts (Weight for schematic,
+Header count for PCB). Mismatches are hard errors.
 
-### Pattern 2: Indexed parameter families (Layer 3 + derive macros)
+### Pattern 2: Indexed parameter families (Layer 4 + derive macros)
 
 A single ParameterCollection contains a count key and N copies of a key pattern with
 numeric suffixes. This is the schematic format's way of encoding variable-length arrays
@@ -679,7 +1218,7 @@ struct Font {
 the common coordinate-array case, avoiding the overhead of a closure + format strings for
 the hot path.
 
-### Pattern 3: Comma-separated values (Layer 3)
+### Pattern 3: Comma-separated values (Layer 4)
 
 Some parameters encode a list as a single comma-separated value string.
 
@@ -700,7 +1239,7 @@ impl ParameterCollection {
 }
 ```
 
-### Pattern 4: Binary fixed-size arrays (Layer 3)
+### Pattern 4: Binary fixed-size arrays (Layer 4)
 
 PCB binary records contain fixed-length arrays of typed elements. PcbPad has 32 per-layer
 entries for size, shape, corner radius, offsets, etc.
@@ -737,7 +1276,7 @@ struct PcbPad {
 }
 ```
 
-### Pattern 5: Binary subrecords (Layer 3)
+### Pattern 5: Binary subrecords (Layer 4)
 
 Some PCB records (notably PcbPad) are internally divided into subrecords, each with its
 own length prefix. The record's total binary payload contains multiple variable-length
@@ -781,66 +1320,335 @@ subrecord boundary is known to the record type itself — it's not composition v
 This is different from the dispatcher-level exhaustion check, which validates the *outer*
 record boundary.
 
-### Pattern 6: Sidecar parallel arrays (Document loader)
+### Pattern 6: Embedded object sidecar streams (Document loader)
 
-Some data is split across parallel streams matched by index. PinFrac has one 12-byte
-record per pin; UniqueIDPrimitiveInformation has one entry per primitive.
+Some data is split across sidecar streams that use the `0xD0` embedded object envelope.
+Entries are **sparse** (only pins with non-default data get an entry) and addressed by
+**explicit pin index** in the envelope's `id` field, not by array position.
 
 ```
-/ComponentName/Data    → [pin0, pin1, pin2, ...]     ← primary records
-/ComponentName/PinFrac → [frac0, frac1, frac2, ...]  ← 12 bytes per pin
+/ComponentName/Data    → [comp, pin0, pin1, pin2, ...]  ← primary records
+/ComponentName/PinFrac → header block + entry blocks:
+                          entry "0" → 12 bytes (pin 0 frac data)
+                          entry "2" → 12 bytes (pin 2 frac data)
+                          (pin 1 has no entry — uses defaults)
 ```
 
-**Handled by**: The document loader, not Layers 1-4. The loader:
-1. Parses the primary stream into `Vec<SchRecord>` via Layers 2-4
-2. Parses the sidecar stream into `Vec<PinFracData>` (using BinaryReader directly)
-3. Merges by index: `records[i].merge_pin_frac(sidecar[i])`
+**Handled by**: The document loader using Layer 4's `parse_embedded_object_stream` helper.
+The loader:
+1. Parses the primary Data stream into records via Layers 3-5
+2. Reads each sidecar stream via `parse_embedded_object_stream`
+3. For each `EmbeddedObject`, parses `id` as pin index, parses inner data per stream type
+4. Merges into the pin record at that index
 
-The merge step is a post-processing concern. Sidecar records use the same Layer 3 types
-(BinaryReader/ParameterCollection) but bypass Layer 4's record dispatch — they have their
-own small struct types parsed directly.
+Sidecar streams bypass Layer 5's record dispatch — they use Layer 4 types directly
+(BinaryReader for PinFrac/PinTextData, ParameterCollection for UTF-16LE param streams).
 
 ```rust
-/// 12-byte per-pin fractional coordinate sidecar.
-struct PinFracEntry {
-    location_x_frac: i32,
-    location_y_frac: i32,
-    length_frac: i32,
+/// Load a pin sidecar stream and apply it to the component's pins.
+fn apply_pin_sidecar(
+    cfb: &mut TrackedCfbDocument,
+    component_key: &str,
+    stream_name: &str,
+    pins: &mut [SchPin],
+    apply: impl Fn(&EmbeddedObject, &mut SchPin) -> Result<()>,
+) -> Result<()> {
+    let stream_path = format!("/{component_key}/{stream_name}");
+    let Some(stream_data) = cfb.read_stream_optional(&stream_path)? else {
+        return Ok(()); // sidecar is optional — skip if absent
+    };
+
+    let blocks = parse_blocks(&stream_data)?;
+    let (_header, entries) = parse_embedded_object_stream(&blocks)?;
+
+    for entry in &entries {
+        let pin_index: usize = entry.id.parse().map_err(|_| {
+            AltiumFormatError::InvalidParamValue {
+                key: "embedded_object_id".into(),
+                detail: format!("expected pin index, got {:?}", entry.id),
+            }
+        })?;
+        apply(entry, &mut pins[pin_index])?;
+    }
+
+    Ok(())
 }
 
-impl FromBinary for PinFracEntry {
-    fn from_binary(reader: &mut BinaryReader<'_>) -> Result<Self> {
-        Ok(Self {
-            location_x_frac: reader.read_i32_le()?,
-            location_y_frac: reader.read_i32_le()?,
-            length_frac: reader.read_i32_le()?,
-        })
-    }
-}
+// Usage: apply PinFrac sidecar
+apply_pin_sidecar(cfb, key, "PinFrac", pins, |entry, pin| {
+    let mut reader = BinaryReader::new(&entry.inner_data);
+    pin.location_x_frac = reader.read_i32_le()?;
+    pin.location_y_frac = reader.read_i32_le()?;
+    pin.length_frac = reader.read_i32_le()?;
+    reader.assert_exhausted()
+})?;
 
-/// Parse a sidecar stream as a flat array of fixed-size records.
-fn parse_sidecar_array<T: FromBinary>(data: &[u8], record_size: usize) -> Result<Vec<T>> {
-    let mut reader = BinaryReader::new(data);
-    let mut entries = Vec::new();
-    while reader.remaining() > 0 {
-        let mut sub = reader.sub_reader(record_size)?;
-        entries.push(T::from_binary(&mut sub)?);
-        sub.assert_exhausted()?;
+// Usage: apply PinWideText sidecar (UTF-16LE params)
+apply_pin_sidecar(cfb, key, "PinWideText", pins, |entry, pin| {
+    let mut reader = BinaryReader::new(&entry.inner_data);
+    let text_len = reader.read_u32_le()? as usize;
+    let text_bytes = reader.read_bytes(text_len)?;
+    let mut params = ParameterCollection::from_utf16le_bytes(&text_bytes)?;
+    if let Some(name) = params.remove_optional::<String>("Name")? {
+        pin.name = name;
     }
-    Ok(entries)
-}
+    if let Some(desig) = params.remove_optional::<String>("Desig")? {
+        pin.designator = desig;
+    }
+    if let Some(desc) = params.remove_optional::<String>("Desc")? {
+        pin.description = desc;
+    }
+    // ... other optional keys ...
+    params.assert_exhausted()?;
+    reader.assert_exhausted()
+})?;
 ```
+
+### Pattern 7: PcbDoc global sidecar streams (Document loader)
+
+PcbDoc has its own sidecar pattern using different formats:
+- `/WideStrings6/Data`: Binary TLV (Layer 3 Format D) with type codes 0x06/0x0C/0x12/0x14
+- `/UniqueIDPrimitiveInformation/Data`: ParameterCollection blocks with `PRIMITIVEINDEX`
+- `/ExtendedPrimitiveInformation/Data`: ParameterCollection blocks with `PRIMITIVEINDEX`
+- `/PrimitiveGuids/Data`: Binary array of 24-byte structs per primitive
+
+These match by `PRIMITIVEINDEX` or position to the primitive's index in its section, not
+by 0xD0 envelope. They are parsed by the document loader using Layer 3 + Layer 4 directly.
 
 ### Summary of collection patterns
 
 | Pattern | Where | Example | Parsed by |
 |---|---|---|---|
-| Stream of blocks | Multiple blocks in stream | SchDoc primitives, PcbDoc arcs | Layer 2 `parse_blocks` + Layer 4 dispatch |
-| Indexed param family | Keys in one ParameterCollection | Vertices, font table, component index | Layer 3 `remove_indexed` + derive macro |
-| Comma-separated list | Single parameter value | Pin delay values | Layer 3 `remove_list` |
-| Binary fixed array | Contiguous in binary record | Pad per-layer shapes (×32) | Layer 3 `read_array` + derive macro |
-| Binary subrecords | Length-prefixed within record | PcbPad subrecords | Layer 3 `sub_reader` + record's `FromBinary` |
-| Sidecar parallel array | Separate stream, matched by index | PinFrac, UniqueIDs | Document loader post-processing |
+| Stream of blocks | Multiple blocks in stream | SchDoc primitives, PcbDoc text sections | Layer 3 `parse_blocks` + Layer 5 dispatch |
+| PCB binary records | Packed records in Data stream | PcbDoc arcs, pads, tracks | Layer 3 `parse_pcb_binary_records` + Layer 5 dispatch |
+| Indexed param family | Keys in one ParameterCollection | Vertices, font table, component index | Layer 4 `remove_indexed` + derive macro |
+| Comma-separated list | Single parameter value | Pin delay values | Layer 4 `remove_list` |
+| Binary fixed array | Contiguous in binary record | Pad per-layer shapes (×32) | Layer 4 `read_array` + derive macro |
+| Binary subrecords | Length-prefixed within record | PcbPad subrecords | Layer 4 `sub_reader` + record's `FromBinary` |
+| Embedded object sidecars | 0xD0 envelopes, matched by id | PinFrac, PinWideText, Storage | Layer 4 `parse_embedded_object_stream` + loader |
+| PcbDoc global sidecars | Blocks/TLV matched by index | WideStrings6, UniqueIDs, PrimitiveGuids | Layer 3 parsers + loader |
+
+---
+
+## Stream manifests: What each file type contains
+
+These tables document every stream/storage in each file type. The document loader must
+read or `skip_known` every one of them. `assert_all_consumed()` enforces this.
+
+### SchDoc streams
+
+| Stream | Format | Required | Load order |
+|---|---|---|---|
+| `/FileHeader` | Block-framed params (Format A) | Yes | 1 |
+| `/Storage` | Embedded object stream (0xD0, zlib) | Yes | 2 |
+| `/ReuseBlocks` | WriteBinaryBlocksData (Format G) | No | 3 |
+| `/ReuseBlocksV2` | WriteBinaryBlocksData (Format G) | No | 4 |
+| `/HarnessConnectionPointConnector` | WriteBinaryBlocksData (Format G) | No | 5 |
+| `/Additional` | Block-framed params (Format A) | No | 6 |
+| `/ObjectDefinitions` | Block-framed params (Format A) | No | 7 |
+| `/ReuseBlockInfos` | Block-framed params (Format A) | No | 8 |
+| `/Files` | 0xE3-tagged file objects (Format H) | No | — |
+
+**FileHeader block structure**:
+- Block 0: Header (RECORD=0, HEADER string, Weight, MinorVersion=13, UniqueID)
+- Block 1: Sheet record (RECORD=31, font table via FontIdCount, sheet settings)
+- Blocks 2..N: Schematic primitives (flat list, parent-child via OwnerIndex)
+- Final block: End sentinel (RECORD=0)
+
+`Weight` in block 0 gives the exact count of records to follow (including block 1).
+The loader must verify the actual count matches Weight.
+
+### SchLib streams
+
+**Root-level:**
+
+| Stream | Format | Required |
+|---|---|---|
+| `/FileHeader` | Single block-framed param block | Yes |
+| `/Storage` | Embedded object stream (0xD0, zlib) | Yes |
+| `/SectionKeys` | Block-framed params | No (needed if any component name > 31 chars) |
+| `/LibAdditional` | Block-framed params (header only) | No |
+
+**Per-component** (`/<SectionKey>/`):
+
+| Stream | Format | Required |
+|---|---|---|
+| `Data` | Block-framed mixed text/binary | Yes (identifies a canonical component) |
+| `Additional` | Block-framed params | No |
+| `Redirection` | Single param block | No (alias components only — replaces Data) |
+| `PinFrac` | Embedded object (binary, 12 bytes/pin) | No |
+| `PinDesc` | Embedded object (length-prefixed ASCII) | No |
+| `PinMiscData` | Embedded object (UTF-16LE params) | No |
+| `PinTextData` | Embedded object (binary, 2-22 bytes) | No |
+| `PinWideText` | Embedded object (UTF-16LE params) | No |
+| `PinSymbolLineWidth` | Embedded object (UTF-16LE params) | No |
+| `PinPackageLength` | Embedded object (UTF-16LE params) | No |
+| `PinPropagationDelay` | Embedded object (UTF-16LE params) | No |
+| `PinFunctionData` | Embedded object (UTF-16LE params) | No |
+
+**Component discovery**: Enumerate storages under root via `list_entries("/")`. A storage
+is a canonical component if it contains a `Data` stream. A storage is an alias if it
+contains a `Redirection` stream. System storages (`Storage`) are skipped.
+
+**SectionKeys mapping**: OLE storage names are limited to 31 characters. Components with
+longer names use an obfuscated key in the storage name. `/SectionKeys` maps display names
+to storage keys.
+
+**Pin sidecar load order** (must be applied in this exact sequence):
+1. PinFrac → 2. PinDesc → 3. PinMiscData → 4. PinTextData → 5. PinWideText →
+6. PinSymbolLineWidth → 7. PinPackageLength → 8. PinPropagationDelay → 9. PinFunctionData
+
+**PinWideText is authoritative**: It is loaded after PinDesc and fully replaces the
+Name/Designator/Description fields that PinDesc may have set.
+
+### PcbDoc streams
+
+**Root-level headers:**
+
+| Stream | Format | Required |
+|---|---|---|
+| `/FileHeader` | Binary 24-byte UTF-16LE (Format E) | Yes |
+| `/FileHeaderSix` | Binary pascal-block (Format E) | Yes |
+
+**Primitive sections** (binary records, Format B — each has `/Header` + `/Data`):
+
+| Storage | TObjectId | Notes |
+|---|---|---|
+| `Arcs6` | 1 (Arc) | |
+| `Pads6` | 2 (Pad) | |
+| `Vias6` | 3 (Via) | |
+| `Tracks6` | 4 (Track) | |
+| `Texts6` | 5 (Text) | |
+| `Fills6` | 6 (Fill) | |
+| `Connections6` | 7 (Connection) | Transient ratsnest data |
+| `Regions6` | 11 (Region) | |
+| `ShapeBasedRegions6` | 11 | Shape-based variant |
+| `SplitPlaneRegions6` | 11 | Split plane variant |
+| `ComponentBodies6` | 12 (ComponentBody) | |
+| `ShapeBasedComponentBodies6` | 12 | Shape-based variant |
+
+**Text parameter sections** (block-framed, Format A — each has `/Header` + `/Data`):
+
+| Storage | Content |
+|---|---|
+| `Board6` | Board-level settings, metadata, feature flags |
+| `Nets6` | Net definitions |
+| `Components6` | Component instances |
+| `Polygons6` | Polygon pour definitions |
+| `Classes6` | Object class definitions |
+| `DifferentialPairs6` | Differential pair definitions |
+| `FromTos6` | From-to/ratsnest definitions |
+| `EmbeddedBoards6` | Embedded board array definitions |
+| `Embeddeds6` | Embedded objects |
+
+**Prefixed parameter sections** (Format C — each has `/Header` + `/Data`):
+
+| Storage | Content |
+|---|---|
+| `Rules6` | Design rules |
+| `NewRules6` | Extended design rules |
+| `Dimensions6` | Dimension annotations |
+| `Coordinates6` | Coordinate annotations |
+
+**Sidecar streams** (loaded after all primitives):
+
+| Storage | Format | Content |
+|---|---|---|
+| `WideStrings6` | Binary TLV (Format D) | Unicode string replacements |
+| `UniqueIDPrimitiveInformation` | Block-framed params | Per-primitive unique IDs |
+| `ExtendedPrimitiveInformation` | Block-framed params | Mask expansion overrides |
+| `PrimitiveGuids` | Raw binary (24 bytes/entry) | Primitive GUID assignments |
+
+**Settings/metadata sections** (block-framed params):
+
+| Storage | Content |
+|---|---|
+| `Advanced Placer Options6` | Auto-placer settings |
+| `Advanced Router Options6` | Auto-router settings |
+| `Design Rule Checker Options6` | DRC settings |
+| `Pin Swap Options6` | Pin-swap settings |
+| `PadViaLibrary` | Pad/via template library |
+| `PadViaLibraryCache` | Pad/via template cache |
+| `PadViaLibraryLinks` | Pad/via template links |
+| `PinPairsSection` | Pin pair definitions |
+| `SignalClasses` | Signal class definitions |
+| `SmartUnions` | Smart union definitions |
+| `UnionRelations` | Union relation mappings |
+| `WaivedViolations` | Waived DRC violations |
+| `PrimitiveParameters` | Primitive parameter overrides |
+
+**Raw binary sections:**
+
+| Storage | Content |
+|---|---|
+| `EmbeddedFonts6` | Embedded font data |
+| `FileVersionInfo` | File version history |
+| `LayerKindMapping` | Mechanical layer kind map |
+| `ModelsNoEmbed` | Model references without embedded data |
+| `Textures` | Texture image data |
+| `UnionNames` | Union name strings |
+| `ConstraintManager` | Constraint manager data |
+
+**Models section** (special structure):
+
+| Stream | Content |
+|---|---|
+| `Models/Header` | u32 count |
+| `Models/Data` | Model metadata parameter blocks |
+| `Models/0` .. `Models/N` | Raw 3D model binary blobs (STEP etc.) |
+
+**Primary load order** (from `RegisterAllSectionsForExporting`, 23 sections):
+1-7: Board6, ECO Options6, Output Options6, Printer Options6, Gerber Options6,
+     Advanced Placer Options6, Design Rule Checker Options6
+8-17: Classes6, Nets6, Components6, Polygons6, Dimensions6, Coordinates6,
+      Connections6, Rules6, FromTos6, Embeddeds6
+18-23: Arcs6, Pads6, Vias6, Tracks6, Texts6, Fills6
+
+Then sidecars: WideStrings6 → UniqueIDPrimitiveInformation →
+ExtendedPrimitiveInformation → PrimitiveGuids
+
+### PcbLib streams
+
+**Root-level:**
+
+| Stream | Format | Required |
+|---|---|---|
+| `/FileHeader` | Binary pascal-block (Format E) | Yes |
+| `/SectionKeys` | Binary (u32 count + name/key pairs) | No |
+
+**Library-global** (`/Library/`):
+
+| Stream | Content |
+|---|---|
+| `Library/Header` | u32 count |
+| `Library/Data` | Library-wide parameter data |
+| `Library/EmbeddedFonts` | Binary font data |
+| `Library/ComponentParamsTOC/Header` + `Data` | Component parameter TOC |
+| `Library/LayerKindMapping/Header` + `Data` | Mechanical layer kind mapping |
+| `Library/Models/Header` + `Data` + `0..N` | 3D model pool |
+| `Library/ModelsNoEmbed/Header` + `Data` | Model refs without blobs |
+| `Library/PadViaLibrary/Header` + `Data` | Pad/via templates |
+| `Library/Textures/Header` + `Data` | Texture data |
+
+**Per-footprint** (`/<FootprintName>/` or obfuscated `/<Key>/`):
+
+| Stream | Format | Required |
+|---|---|---|
+| `Parameters` | Binary pascal-block params (Format F) | Yes |
+| `Header` | u32 count + version info | Yes |
+| `Data` | Pattern name prefix + packed binary records (Format B) | Yes |
+| `WideStrings` | Block-framed params (Format A, NOT binary TLV!) | No |
+| `PrimitiveGuids/Header` + `Data` | Binary, 24 bytes/entry | No |
+| `UniqueIDPrimitiveInformation/Header` + `Data` | Block-framed params | No |
+| `ExtendedPrimitiveInformation/Header` + `Data` | Block-framed params | No |
+
+**Footprint discovery**: Enumerate storages under root. A storage is a footprint if it
+is NOT one of the system names (`FileHeader`, `SectionKeys`, `Library`, `FileVersionInfo`)
+AND contains a `Data` sub-stream.
+
+**Critical format distinction**: PcbLib per-footprint `WideStrings` uses parameter-block
+format (Format A) with `ENCODEDTEXT{N}=comma,separated,integers`. This is completely
+different from PcbDoc's `WideStrings6` binary TLV (Format D).
 
 ---
 
@@ -851,50 +1659,154 @@ fn parse_sidecar_array<T: FromBinary>(data: &[u8], record_size: usize) -> Result
 ```rust
 impl SchDoc {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        // Layer 1: Open CFB container
-        let mut cfb = CfbDocument::open(path)?;
+        // Layer 1+2: Open CFB container with tracking
+        let mut cfb = TrackedCfbDocument::open(path)?;
 
-        // Layer 1: Read the FileHeader stream
+        // Layer 2+3: Read and parse the FileHeader stream
         let stream_data = cfb.read_stream("/FileHeader")?;
-
-        // Layer 2: Parse block framing
         let blocks = parse_blocks(&stream_data)?;
 
-        // Block 0 is the header record (sheet properties, font table, etc.)
-        let header = SchDocHeader::from_block(&blocks[0])?;
+        // Block 0 is the header record (Weight, MinorVersion, etc.)
+        let mut header_params = ParameterCollection::from_bytes(&blocks[0].data)?;
+        let weight: usize = header_params.remove_required("Weight")?;
+        // ... parse remaining header fields ...
+        header_params.assert_exhausted()?;
 
-        // Blocks 1+ are the schematic primitives
+        // Block 1 is the sheet record (RECORD=31, font table, etc.)
+        let sheet = SchRecord::from_block(&blocks[1])?;
+
+        // Blocks 2..N are the schematic primitives
         let mut records = Vec::new();
-        for block in &blocks[1..] {
-            // Layer 3 + 4: ParameterCollection → SchRecord (strict)
-            let record = SchRecord::from_block(block)?;
-            records.push(record);
+        for block in &blocks[2..] {
+            if let Some(record) = SchRecord::from_block(block)? {
+                records.push(record);
+            }
         }
 
+        // Validate record count matches Weight
+        if records.len() + 1 != weight {  // +1 for sheet record
+            return Err(AltiumFormatError::RecordCountMismatch {
+                section: "FileHeader".into(),
+                expected: weight,
+                actual: records.len() + 1,
+            });
+        }
+
+        // Read sidecar streams (all tracked by Layer 2)
+        let storage_data = cfb.read_stream("/Storage")?;
+        // ... parse embedded images ...
+
+        // Read optional streams (tracked even if absent)
+        let additional = cfb.read_stream_optional("/Additional")?;
+        let object_defs = cfb.read_stream_optional("/ObjectDefinitions")?;
+        let reuse_block_infos = cfb.read_stream_optional("/ReuseBlockInfos")?;
+        let reuse_blocks = cfb.read_stream_optional("/ReuseBlocks")?;
+        let reuse_blocks_v2 = cfb.read_stream_optional("/ReuseBlocksV2")?;
+        let harness = cfb.read_stream_optional("/HarnessConnectionPointConnector")?;
+        let files = cfb.read_stream_optional("/Files")?;
+        // ... parse each if present ...
+
+        // FAIL FAST: verify every stream in the CFB was accounted for
+        cfb.assert_all_consumed()?;
+
         // Post-processing: build ownership tree from OWNERINDEX values
-        // Post-processing: merge sidecar streams (/Storage, /Additional, etc.)
+        // Post-processing: validate all OwnerIndex references
 
         Ok(SchDoc { header, records })
     }
 }
 ```
 
+### Example: Loading a SchLib component
+
+```rust
+/// Load a single component from a SchLib Data stream.
+/// Demonstrates mixed text/binary block handling and sidecar merging.
+fn load_component(
+    cfb: &mut TrackedCfbDocument,
+    component_key: &str,
+    component_base_offset: usize,
+) -> Result<(SchComponent, Vec<SchRecord>)> {
+    let stream_data = cfb.read_stream(&format!("/{component_key}/Data"))?;
+    let blocks = parse_blocks(&stream_data)?;
+
+    // Block 0: SchComponent (always text, always first)
+    let mut params = ParameterCollection::from_bytes(&blocks[0].data)?;
+    let _record_id: i32 = params.remove_required("RECORD")?; // always 1
+    let component = SchComponent::from_params(&mut params)?;
+    params.assert_exhausted()?;
+
+    // Blocks 1..N: mixed text (RECORD=N) and binary (code=0x02 pins)
+    let mut records = Vec::new();
+    let mut pins = Vec::new();
+    for block in &blocks[1..] {
+        match SchRecord::from_block(block)? {
+            None => break, // RECORD=0 end sentinel
+            Some(SchRecord::Pin(pin)) => {
+                pins.push(pin);
+                records.push(SchRecord::Pin(pin));
+            }
+            Some(record) => {
+                // Adjust relative OwnerIndex to absolute
+                // record.owner_index += component_base_offset;
+                records.push(record);
+            }
+        }
+    }
+
+    // Phase 2: Apply pin sidecar streams in exact order
+    // (PinFrac, PinDesc, PinMiscData, PinTextData, PinWideText,
+    //  PinSymbolLineWidth, PinPackageLength, PinPropagationDelay, PinFunctionData)
+    apply_pin_sidecar(cfb, component_key, "PinFrac", &mut pins, |entry, pin| {
+        let mut reader = BinaryReader::new(&entry.inner_data);
+        pin.location_x += reader.read_i32_le()?; // additive frac
+        pin.location_y += reader.read_i32_le()?;
+        pin.pin_length += reader.read_i32_le()?;
+        reader.assert_exhausted()
+    })?;
+    // ... remaining 8 sidecars ...
+
+    // Read optional Additional stream
+    let _additional = cfb.read_stream_optional(
+        &format!("/{component_key}/Additional")
+    )?;
+
+    // Note: Redirection stream is checked during component discovery,
+    // not here (alias components don't have Data streams)
+
+    Ok((component, records))
+}
+```
+
 ### Example: Loading a PcbDoc section
 
 ```rust
-fn load_pcb_section(cfb: &mut CfbDocument, section: &str) -> Result<Vec<PcbRecord>> {
-    // Layer 1: Read the section stream
-    let stream_data = cfb.read_stream(&format!("/{section}/Data"))?;
+fn load_pcb_binary_section(
+    cfb: &mut TrackedCfbDocument,
+    section: &str,
+) -> Result<Vec<PcbRecord>> {
+    // Layer 2+3: Read header for expected record count
+    let header_data = cfb.read_stream(&format!("/{section}/Header"))?;
+    let expected_count = parse_pcb_section_header(&header_data)?;
 
-    // Layer 2: Parse block framing
-    let blocks = parse_blocks(&stream_data)?;
+    // Layer 2+3: Read and parse binary records
+    let data = cfb.read_stream(&format!("/{section}/Data"))?;
+    let raw_records = parse_pcb_binary_records(&data)?;
 
-    // Block 0 is typically a header block (may be text or binary)
-    // Blocks 1+ are the section records
+    // Validate record count (first record is section header, skip it)
+    let primitive_records = &raw_records[1..];
+    if primitive_records.len() != expected_count as usize {
+        return Err(AltiumFormatError::RecordCountMismatch {
+            section: section.into(),
+            expected: expected_count as usize,
+            actual: primitive_records.len(),
+        });
+    }
+
+    // Layer 5: Dispatch each record to its typed parser
     let mut records = Vec::new();
-    for block in &blocks[1..] {
-        // Layer 3 + 4: BinaryReader → PcbRecord (strict)
-        let record = PcbRecord::from_block(block)?;
+    for raw in primitive_records {
+        let record = PcbRecord::from_record(raw.object_id, &raw.data)?;
         records.push(record);
     }
 
@@ -920,25 +1832,37 @@ pub enum AltiumFormatError {
     #[error("Stream not found: {0}")]
     StreamNotFound(String),
 
-    // Layer 2
+    // Layer 2 (stream consumption tracking)
+    #[error("Unconsumed streams/storages in CFB container: {paths:?}")]
+    UnconsumedStreams { paths: Vec<String> },
+
+    // Layer 3 (stream parsing)
     #[error("Invalid block header at offset {offset}: {detail}")]
     InvalidBlockHeader { offset: usize, detail: String },
-    #[error("Decompression failed: {0}")]
-    DecompressionError(String),
+    #[error("Record count mismatch in {section}: expected {expected}, got {actual}")]
+    RecordCountMismatch { section: String, expected: usize, actual: usize },
 
-    // Layer 3
+    // Layer 4 (structured data access)
     #[error("Missing required parameter: {0}")]
     MissingParam(String),
+    #[error("Decompression failed: {0}")]
+    DecompressionError(String),
     #[error("Invalid parameter value for key '{key}': {detail}")]
     InvalidParamValue { key: String, detail: String },
     #[error("Binary read past end: needed {needed} bytes at offset {offset}, only {available} remain")]
     BinaryReadPastEnd { offset: usize, needed: usize, available: usize },
 
-    // Layer 4 (strict validation)
+    // Layer 4 (embedded object envelope)
+    #[error("Invalid embedded object: {0}")]
+    InvalidEmbeddedObject(String),
+
+    // Layer 5 (strict validation)
     #[error("Unknown record type: {0}")]
     UnknownRecordType(i32),
     #[error("Unknown PCB object ID: {0}")]
     UnknownObjectId(u8),
+    #[error("Unknown binary code in schematic block: 0x{0:02X}")]
+    UnknownBinaryCode(u8),
     #[error("Unknown parameters remaining: {keys:?}")]
     UnknownParams { keys: Vec<String> },
     #[error("Unexpected trailing data: {count} bytes remaining at offset {offset}")]
@@ -954,11 +1878,23 @@ pub enum AltiumFormatError {
 |---|---|---|
 | File is valid CFB | 1 | `cfb` crate returns `Err` on corrupt container |
 | Stream exists | 1 | `read_stream` returns `Err(StreamNotFound)` |
-| Block framing is valid | 2 | `parse_blocks` validates headers, sizes, checksums |
-| Decompression succeeds | 2 | `flate2` returns `Err` on corrupt zlib data |
-| Parameter syntax is valid | 3 | `ParameterCollection::from_bytes` validates encoding + delimiters |
-| Parameter value parses to type | 3 | `remove_required` / `FromParamValue` returns `Err` |
-| Binary data has enough bytes | 3 | `BinaryReader::read_*` checks `remaining()` |
-| Record type is known | 4 | Dispatch `match` has no wildcard — returns `Err(UnknownRecordType)` |
-| All fields consumed | 4 | Dispatcher calls `assert_exhausted()` after `FromParams`/`FromBinary` |
-| All bytes consumed | 4 | Dispatcher calls `assert_exhausted()` on sub-reader |
+| **All streams accounted for** | **2** | **`assert_all_consumed()` returns `Err(UnconsumedStreams)`** |
+| Block framing is valid | 3 | `parse_blocks` validates headers, sizes |
+| Binary record framing valid | 3 | `parse_pcb_binary_records` validates object_id, lengths |
+| PCB header version valid | 3 | `parse_pcb_file_header` validates version string |
+| Record count matches header | 3 | Loader validates `Weight` / `Header` count against actual |
+| WideStrings6 TLV valid | 3 | `parse_wide_strings_tlv` validates type codes, lengths |
+| Embedded object envelope valid | 4 | `parse_embedded_object` validates 0xD0 tag, lengths |
+| Sidecar entry count matches Weight | 4 | `parse_embedded_object_stream` validates |
+| Decompression succeeds | 4 | `flate2` returns `Err` on corrupt zlib (called by loader for Storage) |
+| Parameter syntax is valid | 4 | `ParameterCollection::from_bytes` validates encoding + delimiters |
+| Parameter escaping correct | 4 | `from_bytes` handles `[]` → `\|` and `{}` → `=` |
+| Parameter value parses to type | 4 | `remove_required` / `FromParamValue` returns `Err` |
+| Binary data has enough bytes | 4 | `BinaryReader::read_*` checks `remaining()` |
+| Record type is known (text) | 5 | Dispatch `match` on RECORD=N — returns `Err(UnknownRecordType)` |
+| Extended record type handled | 5 | RECORD=254 → read RECORDEX, dispatch on effective ID |
+| Binary code is known (sch) | 5 | Dispatch `match` on binary code — returns `Err(UnknownBinaryCode)` |
+| Object ID is known (pcb) | 5 | Dispatch `match` on object_id — returns `Err(UnknownObjectId)` |
+| End sentinel handled | 5 | RECORD=0 returns `Ok(None)`, not dispatched as unknown |
+| All fields consumed | 5 | Dispatcher calls `assert_exhausted()` after `FromParams`/`FromBinary` |
+| All bytes consumed | 5 | Dispatcher calls `assert_exhausted()` on sub-reader |
