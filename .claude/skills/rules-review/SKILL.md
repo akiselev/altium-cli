@@ -1,18 +1,19 @@
 ---
 name: rules-review
 description: >
-    Review code changes against the altium-cli project rules from CLAUDE.md.
-    Activate when the user requests a code review, rules check, or compliance audit.
+    Audit the altium-cli codebase (or a specified scope) against project rules from CLAUDE.md.
+    Activate when the user requests a rules review, rules check, compliance audit, or codebase audit.
     Checks for: fail-fast violations, raw type usage, privacy leaks across crate boundaries,
     silent error suppression, unconsumed data skipping, missing domain types, and error handling correctness.
+    Can target the full codebase, specific crates, files, or git changes.
 ---
 
 # altium-cli Rules Review
 
-Review the code changes (staged, unstaged, or a specific commit/PR) against the project rules below. For each violation found, report:
+Audit Rust source files against the project rules below. For each violation found, report:
 
 1. **Rule violated** (by name from the checklist)
-2. **File and line**
+2. **File and line** (e.g., `crates/altium-format/src/schlib.rs:123`)
 3. **What's wrong** (concrete description)
 4. **How to fix** (specific suggestion)
 
@@ -38,7 +39,7 @@ Never use raw types where domain types exist in `altium-format-types`. Look for:
 - `u8` where `PcbObjectId` should be used
 - `i32` where `SchRecordType`, `Coord`, or other typed values should be used
 - Raw integer literals for constants (e.g., `0xD0` instead of `INSTRUCTION_BINARY`, `0x00FF_FFFF` instead of `BLOCK_SIZE_MASK`)
-- Any new struct field using a primitive type when a domain type exists or should be created
+- Any struct field using a primitive type when a domain type exists or should be created
 
 #### R3: No Silent Error Dropping
 Everything fallible MUST return `Result<T, AltiumFormatError>` (in `altium-format`) or `Result<T, AltiumOpsError>` (in `altium-format-ops`). Look for:
@@ -95,9 +96,78 @@ Library code (everything except `altium-cli`) should return `Result` instead of 
 
 ## How to Review
 
-1. **Determine scope**: Ask the user what to review (staged changes, a commit, a PR, or specific files). If not specified, review unstaged + staged changes (`git diff HEAD`).
-2. **Read the diff**: Use `git diff` or `git show` to get the actual changes.
-3. **For each changed file**: Check every hunk against ALL rules above (R1-R10).
-4. **Check cross-crate concerns**: Verify new `pub` items don't leak internals (R4), error types match the crate (R6), and dependency direction is correct (R9).
-5. **Report findings** in the format specified above, ordered by severity (CRITICAL first).
-6. **If no violations found**: Explicitly state the code passes all checks.
+### 1. Determine scope
+
+If the user specifies a scope, use it. Otherwise, audit all Rust source files across the workspace:
+
+```
+crates/altium-format/src/**/*.rs
+crates/altium-format-derive/src/**/*.rs
+crates/altium-format-types/src/**/*.rs
+crates/altium-format-ops/src/**/*.rs
+crates/altium-cli/src/**/*.rs
+```
+
+Acceptable scope specifiers from the user:
+- **A crate name**: e.g., "altium-format" → audit all `.rs` files in that crate
+- **A file or glob**: e.g., "schlib.rs" or "src/param_*.rs"
+- **"changes"** or **"diff"**: audit only git changes (`git diff HEAD`)
+- **A commit or PR**: audit that specific changeset
+- **No argument**: audit the entire workspace
+
+### 2. Scan systematically
+
+For each file in scope, use Grep and Read to check for violations. Efficient search patterns:
+
+| Rule | Grep patterns to try |
+|------|---------------------|
+| R1 | `_ => \{\}`, `_ => Ok\(\)`, `skip`, `ignore_remaining`, `.ok()` on parse results |
+| R2 | Struct fields with `: String`, `: u8`, `: i32`, `: u32`, `: i64`, `: u64`; hex literals `0x[0-9a-fA-F]+` |
+| R3 | `.unwrap()`, `.expect(`, `if let Ok(`, `let _ =` |
+| R4 | `pub fn` and `pub struct` in altium-format (check if they should be `pub(crate)`) |
+| R5 | `mark_consumed`, `set_consumed`, `consumed = true` without adjacent parsing |
+| R6 | `anyhow` in library crates, `AltiumFormatError` in ops crate |
+| R7 | `enum` definitions in altium-format that look like Altium domain concepts |
+| R8 | String literals that look like stream/record names, numeric magic constants |
+| R9 | Check `Cargo.toml` files for dependency direction violations |
+| R10 | `panic!`, `unreachable!`, `todo!`, `assert!` in non-test code |
+
+### 3. Use context to reduce false positives
+
+- `.unwrap()` and `.expect()` in `#[cfg(test)]` modules or test files are fine
+- `assert!` in test code is fine
+- `pub` on items that are part of the crate's intended public API is fine — focus on items that look like internal parsing machinery
+- Some `_ =>` arms legitimately handle a finite set — check if data is being discarded
+- Raw types in proc macro code (`altium-format-derive`) may be acceptable since it generates code
+
+### 4. Report findings
+
+Order by severity (CRITICAL first, then WARNING), then by file path. Use this format:
+
+```
+## Findings
+
+### CRITICAL
+
+**R2: No Raw Primitive Types** — `crates/altium-format/src/schlib.rs:45`
+Field `component_count: u32` uses raw primitive. Should use a domain type or at minimum document why a raw type is necessary here.
+**Fix**: Define an appropriate type in `altium-format-types` or use an existing one.
+
+### WARNING
+
+**R8: Constants from FileFormatConsts** — `crates/altium-format/src/pcblib.rs:112`
+Hard-coded string `"Board6"` should use a constant from `altium_format_types::constants`.
+**Fix**: Add `pub const BOARD6: &str = "Board6";` to the appropriate constants module.
+
+## Summary
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 1 |
+| WARNING  | 1 |
+| **Total** | **2** |
+```
+
+### 5. If no violations found
+
+Explicitly state: "No rule violations found in the reviewed scope." and list which files were checked.
