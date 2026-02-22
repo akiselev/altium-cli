@@ -2080,7 +2080,7 @@ mod tests {
         let lib = make_test_lib(&["SOT-23", "QFP-48"]);
         let handle = lib.find_footprint("sot-23");
         assert!(handle.is_some());
-        assert_eq!(handle.unwrap().name(), "SOT-23");
+        assert_eq!(handle.unwrap().name().unwrap(), "SOT-23");
     }
 
     #[test]
@@ -2104,7 +2104,7 @@ mod tests {
 
         let lib = make_test_lib(&["SOT-23"]);
         let handle = DocumentQuery::<crate::handles::PcbFootprint>::query(&lib, "#0").unwrap();
-        assert_eq!(handle.name(), "SOT-23");
+        assert_eq!(handle.name().unwrap(), "SOT-23");
     }
 
     #[test]

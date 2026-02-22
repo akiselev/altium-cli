@@ -465,7 +465,7 @@ impl crate::traits::ParamCodec for PinConglomerateFlags {
                         key
                     ))
                 })?;
-                Ok(Some(Self::from_bits_truncate(int_val as u32)))
+                Ok(Some(Self::from_bits_retain(int_val as u32)))
             }
         }
     }

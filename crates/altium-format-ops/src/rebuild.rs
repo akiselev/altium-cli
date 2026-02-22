@@ -1004,7 +1004,7 @@ mod tests {
         let rebuilt_fp = rebuilt
             .find_footprint("FP1")
             .expect("rebuilt footprint should exist");
-        let rebuilt_pass = rebuilt_fp.storage_passthrough();
+        let rebuilt_pass = rebuilt_fp.storage_passthrough().expect("storage_passthrough");
         assert!(
             rebuilt_pass.sidecar_streams.wide_strings.is_none(),
             "strict rebuild should not passthrough sidecar streams"

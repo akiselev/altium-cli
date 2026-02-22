@@ -23,7 +23,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
 
     let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
-        let fp_name = fp.name();
+        let fp_name = fp.name()?;
         let fp_rec = fp.read();
         let description = fp_rec.description()?;
         let pad_count = fp.child_count::<PcbPad>();
@@ -108,7 +108,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     // 3. LARGEST FOOTPRINTS (by pad count)
     let mut by_pads: Vec<(String, String, usize)> = Vec::new();
     for fp in &footprints {
-        let fp_name = fp.name();
+        let fp_name = fp.name()?;
         let fp_rec = fp.read();
         let description = fp_rec.description()?;
         let pad_count = fp.child_count::<PcbPad>();
@@ -149,7 +149,7 @@ pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::
     let mut fps: Vec<FootprintSummaryExt> = Vec::new();
     let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
-        let fp_name = fp.name();
+        let fp_name = fp.name()?;
         let fp_rec = fp.read();
         fps.push(FootprintSummaryExt {
             name: fp_name,
@@ -181,7 +181,7 @@ pub fn cmd_search(
 
     let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
-        let fp_name = fp.name();
+        let fp_name = fp.name()?;
         let fp_rec = fp.read();
         let desc = fp_rec.description()?;
         let name_lower = fp_name.to_lowercase();

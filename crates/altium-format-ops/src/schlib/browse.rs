@@ -23,16 +23,16 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
 
     let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
-        let category = categorize_component(&comp.lib_ref(), &comp.description());
+        let category = categorize_component(&comp.lib_ref()?, &comp.description()?);
         let pin_count = comp.child_count::<SchPin>();
         categories
             .entry(category)
             .or_default()
             .push(ComponentSummary {
-                name: comp.lib_ref(),
-                description: comp.description(),
+                name: comp.lib_ref()?,
+                description: comp.description()?,
                 pin_count,
-                part_count: comp.part_count(),
+                part_count: comp.part_count()?,
             });
     }
 
@@ -101,12 +101,12 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
 
     let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
-        if comp.part_count() > 1 {
+        if comp.part_count()? > 1 {
             multi_part_components.push(ComponentSummary {
-                name: comp.lib_ref(),
-                description: comp.description(),
+                name: comp.lib_ref()?,
+                description: comp.description()?,
                 pin_count: comp.child_count::<SchPin>(),
-                part_count: comp.part_count(),
+                part_count: comp.part_count()?,
             });
         }
     }
@@ -118,10 +118,10 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
     let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         by_pins.push(ComponentSummary {
-            name: comp.lib_ref(),
-            description: comp.description(),
+            name: comp.lib_ref()?,
+            description: comp.description()?,
             pin_count: comp.child_count::<SchPin>(),
-            part_count: comp.part_count(),
+            part_count: comp.part_count()?,
         });
     }
     by_pins.sort_by_key(|c| std::cmp::Reverse(c.pin_count));
@@ -151,10 +151,10 @@ pub fn cmd_list(path: &Path) -> Result<SchLibComponentList, Box<dyn std::error::
     let results = lib.query_all::<SchComponent>("#1")?;
     for comp in &results {
         components.push(ComponentSummary {
-            name: comp.lib_ref(),
-            description: comp.description(),
+            name: comp.lib_ref()?,
+            description: comp.description()?,
             pin_count: comp.child_count::<SchPin>(),
-            part_count: comp.part_count(),
+            part_count: comp.part_count()?,
         });
     }
 
@@ -182,8 +182,8 @@ pub fn cmd_search(
 
     let results = lib.query_all::<SchComponent>("#1")?;
     for comp in &results {
-        let name = comp.lib_ref().to_lowercase();
-        let desc = comp.description().to_lowercase();
+        let name = comp.lib_ref()?.to_lowercase();
+        let desc = comp.description()?.to_lowercase();
 
         let is_match = if has_wildcard {
             let pattern = query_lower.replace('*', "");
@@ -194,10 +194,10 @@ pub fn cmd_search(
 
         if is_match {
             matches.push(ComponentSummary {
-                name: comp.lib_ref(),
-                description: comp.description(),
+                name: comp.lib_ref()?,
+                description: comp.description()?,
                 pin_count: comp.child_count::<SchPin>(),
-                part_count: comp.part_count(),
+                part_count: comp.part_count()?,
             });
         }
     }
@@ -241,7 +241,7 @@ pub fn cmd_info(path: &Path) -> Result<SchLibInfo, Box<dyn std::error::Error>> {
             *primitive_counts.entry(name).or_insert(0) += count;
             total_primitives += count;
         }
-        if comp.part_count() > 1 {
+        if comp.part_count()? > 1 {
             multi_part_count += 1;
         }
     }

@@ -12,6 +12,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+use crate::error::{AltiumError, Result};
+
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -148,10 +150,16 @@ impl SchCoord {
     /// - `Export_Coord`: `int num = argN / 100000; WriteShort((short)num, ...)`
     /// - The fractional part is `argN - 100000 * whole`.
     #[inline]
-    pub fn to_binary_parts(self) -> (i16, i32) {
+    pub fn to_binary_parts(self) -> Result<(i16, i32)> {
         let whole = self.0 / 100_000;
         let frac = self.0 - 100_000 * whole;
-        (whole as i16, frac)
+        let whole_i16 = i16::try_from(whole).map_err(|_| {
+            AltiumError::InvalidCoordinate(format!(
+                "coordinate {} mils overflows i16 binary representation",
+                whole
+            ))
+        })?;
+        Ok((whole_i16, frac))
     }
 
     /// Reconstructs from binary parts (whole mils `i16` + fractional remainder `i32`).
@@ -206,13 +214,13 @@ impl fmt::Display for SchCoord {
 }
 
 impl Serialize for SchCoord {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_i32(self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for SchCoord {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         i32::deserialize(deserializer).map(SchCoord)
     }
 }
@@ -277,13 +285,13 @@ impl fmt::Display for PcbCoord {
 }
 
 impl Serialize for PcbCoord {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_i32(self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for PcbCoord {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         i32::deserialize(deserializer).map(PcbCoord)
     }
 }
@@ -635,21 +643,21 @@ mod tests {
     fn sch_coord_binary_parts() {
         // Positive value with fractional part
         let c = SchCoord::from_raw(350_123);
-        let (whole, frac) = c.to_binary_parts();
+        let (whole, frac) = c.to_binary_parts().unwrap();
         assert_eq!(whole, 3);
         assert_eq!(frac, 50_123);
         assert_eq!(SchCoord::from_binary_parts(whole, frac), c);
 
         // Negative value
         let c2 = SchCoord::from_raw(-250_000);
-        let (whole2, frac2) = c2.to_binary_parts();
+        let (whole2, frac2) = c2.to_binary_parts().unwrap();
         assert_eq!(whole2, -2);
         assert_eq!(frac2, -50_000);
         assert_eq!(SchCoord::from_binary_parts(whole2, frac2), c2);
 
         // Exact mil boundary
         let c3 = SchCoord::from_mils(100.0);
-        let (whole3, frac3) = c3.to_binary_parts();
+        let (whole3, frac3) = c3.to_binary_parts().unwrap();
         assert_eq!(whole3, 100);
         assert_eq!(frac3, 0);
     }

@@ -957,7 +957,7 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     }
 
     let mut file_header_with_block =
-        file_header_meta.serialize_header_block(file_header_timeline.len());
+        file_header_meta.serialize_header_block(file_header_timeline.len())?;
     file_header_with_block.extend_from_slice(&file_header_data);
 
     let additional_with_block = if additional_timeline.is_empty() && additional_meta.is_none() {
@@ -969,7 +969,7 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
         } else {
             Some(additional_timeline.len())
         };
-        let mut stream = meta.serialize_header_block(weight_override);
+        let mut stream = meta.serialize_header_block(weight_override)?;
         stream.extend_from_slice(&additional_data);
         stream
     };
@@ -977,7 +977,7 @@ fn flatten_to_streams(doc: &SchDoc) -> Result<SchDocSerializedStreams> {
     Ok(SchDocSerializedStreams {
         file_header: file_header_with_block,
         additional: additional_with_block,
-        storage: storage_meta.to_stream_bytes(),
+        storage: storage_meta.to_stream_bytes()?,
     })
 }
 
@@ -1325,8 +1325,8 @@ mod tests {
 
     #[test]
     fn open_rejects_unimplemented_root_streams() {
-        let file_header = SchDocFileHeaderStreamMeta::default().serialize_header_block(0);
-        let storage = SchDocStorageStreamMeta::default().to_stream_bytes();
+        let file_header = SchDocFileHeaderStreamMeta::default().serialize_header_block(0).unwrap();
+        let storage = SchDocStorageStreamMeta::default().to_stream_bytes().unwrap();
         let bytes = make_schdoc_cfb_bytes(&file_header, None, &storage, Some(("/Unknown", b"x")));
 
         let err = SchDoc::open(Cursor::new(bytes)).err().unwrap();
@@ -1335,8 +1335,8 @@ mod tests {
 
     #[test]
     fn open_rejects_malformed_storage_entries() {
-        let file_header = SchDocFileHeaderStreamMeta::default().serialize_header_block(0);
-        let mut storage = SchDocStorageStreamMeta::default().to_stream_bytes();
+        let file_header = SchDocFileHeaderStreamMeta::default().serialize_header_block(0).unwrap();
+        let mut storage = SchDocStorageStreamMeta::default().to_stream_bytes().unwrap();
         storage.extend_from_slice(&encode_test_block(0x00, &[0x00]));
 
         let bytes = make_schdoc_cfb_bytes(&file_header, None, &storage, None);

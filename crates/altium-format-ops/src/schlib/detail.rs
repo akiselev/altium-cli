@@ -57,9 +57,9 @@ pub fn cmd_component(
     };
 
     Ok(SchLibComponentDetail {
-        name: comp.lib_ref(),
-        description: comp.description(),
-        part_count: comp.part_count(),
+        name: comp.lib_ref()?,
+        description: comp.description()?,
+        part_count: comp.part_count()?,
         display_mode_count,
         pin_count: pins.len(),
         total_primitives: comp.children_len(),
@@ -82,7 +82,7 @@ pub fn cmd_pins(
     let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
         if let Some(ref filter) = filter_lower {
-            if comp.lib_ref().to_lowercase() != *filter {
+            if comp.lib_ref()?.to_lowercase() != *filter {
                 continue;
             }
         }
@@ -91,7 +91,7 @@ pub fn cmd_pins(
         for pin_handle in &pins {
             let pin = pin_handle.read();
             all_pins.push(PinWithComponent {
-                component_name: comp.lib_ref(),
+                component_name: comp.lib_ref()?,
                 designator: pin.designator()?.to_string(),
                 name: pin.name()?.to_string(),
                 electrical_type: electrical_type_name(pin.electrical()?).to_string(),
@@ -156,7 +156,7 @@ pub fn cmd_primitives(
     let comp = lib
         .find_component_handle(component)
         .ok_or_else(|| format!("Component '{}' not found", component))?;
-    let component_name = comp.lib_ref();
+    let component_name = comp.lib_ref()?;
 
     let mut primitives: Vec<PrimitiveInfo> = Vec::new();
 

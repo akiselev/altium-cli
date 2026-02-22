@@ -223,22 +223,22 @@ pub fn read_pascal_string_u32(data: &[u8], offset: usize) -> (&str, usize) {
 ///
 /// Writes the length byte followed by the string bytes into `data` starting
 /// at `offset`. Returns the number of bytes written (1 + string length).
-///
-/// # Panics
-///
-/// Panics if the string length exceeds 255 bytes, or if the destination
-/// slice is too small.
 #[allow(dead_code)]
-pub fn write_pascal_string(data: &mut [u8], offset: usize, s: &str) -> usize {
+pub fn write_pascal_string(
+    data: &mut [u8],
+    offset: usize,
+    s: &str,
+) -> crate::error::Result<usize> {
     let bytes = s.as_bytes();
-    assert!(
-        bytes.len() <= 255,
-        "pascal string too long: {} bytes (max 255)",
-        bytes.len()
-    );
+    if bytes.len() > 255 {
+        return Err(crate::error::AltiumError::Validation(format!(
+            "pascal string too long: {} bytes (max 255)",
+            bytes.len()
+        )));
+    }
     data[offset] = bytes.len() as u8;
     data[offset + 1..offset + 1 + bytes.len()].copy_from_slice(bytes);
-    1 + bytes.len()
+    Ok(1 + bytes.len())
 }
 
 /// Writes a Pascal-style string with a 4-byte (u32 LE) length prefix.
@@ -399,14 +399,14 @@ mod tests {
         let mut buf = [0u8; 64];
 
         // Short ASCII string
-        let written = write_pascal_string(&mut buf, 0, "hello");
+        let written = write_pascal_string(&mut buf, 0, "hello").unwrap();
         assert_eq!(written, 6); // 1 byte length + 5 bytes data
         let (s, consumed) = read_pascal_string(&buf, 0);
         assert_eq!(s, "hello");
         assert_eq!(consumed, 6);
 
         // Empty string
-        let written = write_pascal_string(&mut buf, 10, "");
+        let written = write_pascal_string(&mut buf, 10, "").unwrap();
         assert_eq!(written, 1); // just the length byte (0)
         let (s, consumed) = read_pascal_string(&buf, 10);
         assert_eq!(s, "");
@@ -414,7 +414,7 @@ mod tests {
 
         // Longer string at non-zero offset
         let test_str = "PCB Track 42";
-        let written = write_pascal_string(&mut buf, 20, test_str);
+        let written = write_pascal_string(&mut buf, 20, test_str).unwrap();
         assert_eq!(written, 1 + test_str.len());
         let (s, consumed) = read_pascal_string(&buf, 20);
         assert_eq!(s, test_str);

@@ -721,7 +721,7 @@ impl SchLib {
                 .create_stream("/Storage")
                 .map_err(|e| AltiumError::Cfb(format!("Failed to create /Storage: {}", e)))?;
             stream
-                .write_all(&storage_meta.to_stream_bytes())
+                .write_all(&storage_meta.to_stream_bytes()?)
                 .map_err(AltiumError::Io)?;
         }
 
@@ -1647,7 +1647,7 @@ mod tests {
         let lib = make_lib_with_components(&["R1", "R2", "C1"]);
 
         let handle = DocumentQuery::<SchComponent>::query(&lib, "C1").unwrap();
-        let lib_ref = handle.lib_ref();
+        let lib_ref = handle.lib_ref().unwrap();
         assert_eq!(lib_ref, "C1");
     }
 
@@ -1825,7 +1825,8 @@ mod tests {
                 storage
                     .write_all(
                         &crate::documents::schdoc_streams::SchDocStorageStreamMeta::default()
-                            .to_stream_bytes(),
+                            .to_stream_bytes()
+                            .unwrap(),
                     )
                     .unwrap();
             }
@@ -1860,7 +1861,8 @@ mod tests {
         storage
             .write_all(
                 &crate::documents::schdoc_streams::SchDocStorageStreamMeta::default()
-                    .to_stream_bytes(),
+                    .to_stream_bytes()
+                    .unwrap(),
             )
             .unwrap();
         drop(storage);

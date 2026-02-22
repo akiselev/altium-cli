@@ -68,7 +68,7 @@ impl Default for SchDocFileHeaderStreamMeta {
 
 impl SchDocFileHeaderStreamMeta {
     /// Serialize only the stream header block (without record blocks).
-    pub fn serialize_header_block(&self, weight: usize) -> Vec<u8> {
+    pub fn serialize_header_block(&self, weight: usize) -> Result<Vec<u8>> {
         let mut params = self.header_block.params.clone();
         let mut header_block = self.header_block.clone();
         header_block.weight = Some(weight);
@@ -98,7 +98,7 @@ impl SchDocAdditionalStreamMeta {
     ///
     /// If `weight_override` is `Some`, the `Weight` field is forced to that
     /// value. If it is `None`, the stored optional `Weight` is used as-is.
-    pub fn serialize_header_block(&self, weight_override: Option<usize>) -> Vec<u8> {
+    pub fn serialize_header_block(&self, weight_override: Option<usize>) -> Result<Vec<u8>> {
         let mut params = self.header_block.params.clone();
         let mut header_block = self.header_block.clone();
         if let Some(weight) = weight_override {
@@ -154,12 +154,12 @@ pub struct SchDocStorageStreamMeta {
 
 impl SchDocStorageStreamMeta {
     /// Serialize a typed `/Storage` model back into stream bytes.
-    pub fn to_stream_bytes(&self) -> Vec<u8> {
+    pub fn to_stream_bytes(&self) -> Result<Vec<u8>> {
         let mut params = self.header_block.params.clone();
         set_param_if_changed(&mut params, "HEADER", &self.header_block.header);
         set_param_usize_if_changed(&mut params, "Weight", self.header_block.weight);
 
-        let mut out = encode_param_block(&params);
+        let mut out = encode_param_block(&params)?;
         for entry in &self.entries {
             let mut payload = Vec::new();
             payload.push(CFB_COMPRESSED_TAG);
@@ -174,9 +174,9 @@ impl SchDocStorageStreamMeta {
             payload.extend_from_slice(&inner_hdr.to_le_bytes());
             payload.extend_from_slice(&entry.compressed_data);
 
-            write_block(&mut out, 0x01, &payload);
+            write_block(&mut out, 0x01, &payload)?;
         }
-        out
+        Ok(out)
     }
 }
 
@@ -513,18 +513,25 @@ fn set_param_u32_if_changed(params: &mut ParameterCollection, key: &str, value: 
     }
 }
 
-fn encode_param_block(params: &ParameterCollection) -> Vec<u8> {
+fn encode_param_block(params: &ParameterCollection) -> Result<Vec<u8>> {
     let mut payload = encode_win1252(&params.to_param_string());
     payload.push(0);
     let mut out = Vec::with_capacity(payload.len() + 4);
-    write_block(&mut out, 0x00, &payload);
-    out
+    write_block(&mut out, 0x00, &payload)?;
+    Ok(out)
 }
 
-fn write_block(out: &mut Vec<u8>, flags: u8, payload: &[u8]) {
+fn write_block(out: &mut Vec<u8>, flags: u8, payload: &[u8]) -> Result<()> {
+    if payload.len() >= (1 << 24) {
+        return Err(AltiumError::Validation(format!(
+            "schdoc block payload length {} exceeds maximum 16777215",
+            payload.len()
+        )));
+    }
     let header = ((flags as u32) << 24) | (payload.len() as u32);
     out.extend_from_slice(&header.to_le_bytes());
     out.extend_from_slice(payload);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -535,10 +542,10 @@ mod tests {
     fn parse_storage_strictly_rejects_non_icon_header() {
         let mut params = ParameterCollection::new();
         params.add("HEADER", "Something Else");
-        let mut stream = encode_param_block(&params);
+        let mut stream = encode_param_block(&params).unwrap();
         let mut payload = vec![CFB_COMPRESSED_TAG, 0];
         payload.extend_from_slice(&(0u32).to_le_bytes());
-        write_block(&mut stream, 0x01, &payload);
+        write_block(&mut stream, 0x01, &payload).unwrap();
         let err = parse_storage_meta(&stream).unwrap_err();
         assert!(format!("{err}").contains("unsupported HEADER"));
     }
@@ -551,7 +558,7 @@ mod tests {
             compressed_flags: 0,
             compressed_data: vec![1, 2, 3, 4],
         });
-        let data = storage.to_stream_bytes();
+        let data = storage.to_stream_bytes().unwrap();
         let parsed = parse_storage_meta(&data).unwrap();
         assert_eq!(parsed.entries.len(), 1);
         assert_eq!(parsed.entries[0].id, "foo.bmp");

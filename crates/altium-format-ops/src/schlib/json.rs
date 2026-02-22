@@ -35,9 +35,9 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
             let rec = comp.read();
             let display_mode_count = rec.display_mode_count()?;
             components.push(serde_json::json!({
-                "name": comp.lib_ref(),
-                "description": comp.description(),
-                "part_count": comp.part_count(),
+                "name": comp.lib_ref()?,
+                "description": comp.description()?,
+                "part_count": comp.part_count()?,
                 "display_mode_count": display_mode_count,
                 "pin_count": pin_handles.len(),
                 "primitive_count": primitive_count,
@@ -59,10 +59,10 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
             let pin_count = comp.child_count::<SchPin>();
             let primitive_count = comp.children_len();
             components.push(serde_json::json!({
-                "name": comp.lib_ref(),
-                "description": comp.description(),
+                "name": comp.lib_ref()?,
+                "description": comp.description()?,
                 "pin_count": pin_count,
-                "part_count": comp.part_count(),
+                "part_count": comp.part_count()?,
                 "primitive_count": primitive_count,
             }));
         }

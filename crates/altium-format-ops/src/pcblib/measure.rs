@@ -22,7 +22,7 @@ pub fn cmd_measure(
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
 
-    let fp_name = fp.name();
+    let fp_name = fp.name()?;
     let pads = extract_pads(&fp)?;
     let bb = compute_bounding_box(&pads);
 

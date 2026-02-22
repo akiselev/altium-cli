@@ -62,7 +62,7 @@ pub fn cmd_footprint(
 
     Ok(PcbLibFootprintDetail {
         pattern: if pattern.is_empty() {
-            fp.name()
+            fp.name()?
         } else {
             pattern
         },
@@ -90,7 +90,7 @@ pub fn cmd_pads(
 
     let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
-        let fp_name = fp.name();
+        let fp_name = fp.name()?;
         if let Some(ref filter) = filter_lower {
             if fp_name.to_lowercase() != *filter {
                 continue;
@@ -161,7 +161,7 @@ pub fn cmd_primitives(
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
 
-    let fp_name = fp.name();
+    let fp_name = fp.name()?;
     let total_prims = fp.children_len();
 
     let pads = extract_pads(&fp)?;
@@ -210,7 +210,7 @@ pub fn cmd_holes(path: &Path) -> Result<serde_json::Value, Box<dyn std::error::E
 
     let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
-        let fp_name = fp.name();
+        let fp_name = fp.name()?;
         let pads = extract_pads(fp)?;
         for pad in &pads {
             if pad.record.hole_size().to_raw() > 0 {

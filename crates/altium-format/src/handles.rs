@@ -387,32 +387,41 @@ impl SchComponentHandle {
     }
 
     /// Library reference name (from group metadata).
-    pub fn lib_ref(&self) -> String {
+    pub fn lib_ref(&self) -> crate::error::Result<String> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         match &group.meta {
-            crate::store::GroupMeta::SchComponent { lib_ref, .. } => lib_ref.clone(),
-            _ => String::new(),
+            crate::store::GroupMeta::SchComponent { lib_ref, .. } => Ok(lib_ref.clone()),
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected SchComponent, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
     /// Component description (from group metadata).
-    pub fn description(&self) -> String {
+    pub fn description(&self) -> crate::error::Result<String> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         match &group.meta {
-            crate::store::GroupMeta::SchComponent { description, .. } => description.clone(),
-            _ => String::new(),
+            crate::store::GroupMeta::SchComponent { description, .. } => Ok(description.clone()),
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected SchComponent, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
     /// Part count (from group metadata).
-    pub fn part_count(&self) -> i32 {
+    pub fn part_count(&self) -> crate::error::Result<i32> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         match &group.meta {
-            crate::store::GroupMeta::SchComponent { part_count, .. } => *part_count,
-            _ => 1,
+            crate::store::GroupMeta::SchComponent { part_count, .. } => Ok(*part_count),
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected SchComponent, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -638,17 +647,20 @@ impl PcbFootprintHandle {
     }
 
     /// Footprint name (from group metadata).
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> crate::error::Result<String> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         match &group.meta {
-            crate::store::GroupMeta::PcbFootprint { name, .. } => name.clone(),
-            _ => String::new(),
+            crate::store::GroupMeta::PcbFootprint { name, .. } => Ok(name.clone()),
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected PcbFootprint, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
     /// Returns storage-level passthrough bytes for this footprint.
-    pub fn storage_passthrough(&self) -> PcbFootprintStoragePassthrough {
+    pub fn storage_passthrough(&self) -> crate::error::Result<PcbFootprintStoragePassthrough> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         match &group.meta {
@@ -658,13 +670,16 @@ impl PcbFootprintHandle {
                 original_primitive_order,
                 sidecar_streams,
                 ..
-            } => PcbFootprintStoragePassthrough {
+            } => Ok(PcbFootprintStoragePassthrough {
                 raw_pattern_name_block: raw_pattern_name_block.clone(),
                 raw_header: raw_header.clone(),
                 original_primitive_order: original_primitive_order.clone(),
                 sidecar_streams: sidecar_streams.clone(),
-            },
-            _ => PcbFootprintStoragePassthrough::default(),
+            }),
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected PcbFootprint, got {}",
+                other.variant_name()
+            ))),
         }
     }
 

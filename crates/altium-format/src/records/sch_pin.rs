@@ -276,9 +276,9 @@ impl SchPinRecord {
         write_u8(&mut out, self.electrical()?.to_int() as u8);
         write_u8(&mut out, self.pin_conglomerate()?);
 
-        let (pin_len_whole, _) = self.pin_length()?.to_binary_parts();
-        let (loc_x_whole, _) = self.location_x()?.to_binary_parts();
-        let (loc_y_whole, _) = self.location_y()?.to_binary_parts();
+        let (pin_len_whole, _) = self.pin_length()?.to_binary_parts()?;
+        let (loc_x_whole, _) = self.location_x()?.to_binary_parts()?;
+        let (loc_y_whole, _) = self.location_y()?.to_binary_parts()?;
         write_i16_le(&mut out, pin_len_whole);
         write_i16_le(&mut out, loc_x_whole);
         write_i16_le(&mut out, loc_y_whole);
