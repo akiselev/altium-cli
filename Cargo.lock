@@ -42,6 +42,7 @@ name = "altium-format"
 version = "0.1.8"
 dependencies = [
  "altium-format-derive",
+ "altium-format-types",
  "base64",
  "bitflags 2.11.0",
  "blake3",
@@ -84,6 +85,10 @@ dependencies = [
  "serde_json",
  "thiserror",
 ]
+
+[[package]]
+name = "altium-format-types"
+version = "0.1.8"
 
 [[package]]
 name = "anstream"

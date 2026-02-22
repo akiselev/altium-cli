@@ -9,6 +9,7 @@ pub mod unique_id;
 pub mod common;
 pub mod sch;
 pub mod pcb;
+pub mod constants;
 
 /// Error returned when a raw integer value does not correspond to any known enum variant.
 #[derive(Debug, Clone, PartialEq, Eq)]
