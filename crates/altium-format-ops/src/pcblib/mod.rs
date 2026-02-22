@@ -133,12 +133,12 @@ pub(super) fn find_footprint_by_name(
 }
 
 /// Extract all pad data from a footprint handle.
-pub(super) fn extract_pads(fp: &PcbFootprintHandle) -> Vec<PadData> {
-    let pad_handles = fp.children::<PcbPad>();
-    pad_handles
+pub(super) fn extract_pads(fp: &PcbFootprintHandle) -> Result<Vec<PadData>, Box<dyn std::error::Error>> {
+    let pad_handles = fp.children::<PcbPad>()?;
+    Ok(pad_handles
         .iter()
         .map(|h| PadData::from_record(h.read()))
-        .collect()
+        .collect())
 }
 
 /// Count primitives by type using the handle.

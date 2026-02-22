@@ -23,7 +23,7 @@ pub fn cmd_measure(
     let fp = find_footprint_by_name(&lib, footprint)?;
 
     let fp_name = fp.name();
-    let pads = extract_pads(&fp);
+    let pads = extract_pads(&fp)?;
     let bb = compute_bounding_box(&pads);
 
     // Calculate pad pitch (min center-to-center distance)

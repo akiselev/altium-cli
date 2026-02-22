@@ -18,7 +18,7 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
         let components_all = lib.query_all::<SchComponent>("#1")?;
         let mut components: Vec<serde_json::Value> = Vec::new();
         for comp in &components_all {
-            let pin_handles = comp.children::<SchPin>();
+            let pin_handles = comp.children::<SchPin>()?;
             let mut pins: Vec<serde_json::Value> = Vec::new();
             for pin_handle in &pin_handles {
                 let pin = pin_handle.read();

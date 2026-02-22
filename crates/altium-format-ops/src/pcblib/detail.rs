@@ -32,7 +32,7 @@ pub fn cmd_footprint(
     let height = format!("{:.3}mm", fp_rec.height()?.to_mm());
     let total_prims = fp.children_len();
 
-    let pads = extract_pads(&fp);
+    let pads = extract_pads(&fp)?;
     let pad_count = pads.len();
     let bounding_box = compute_bounding_box(&pads);
 
@@ -97,7 +97,7 @@ pub fn cmd_pads(
             }
         }
 
-        let pads = extract_pads(fp);
+        let pads = extract_pads(fp)?;
         for pad in &pads {
             all_pads.push(PadWithFootprint {
                 footprint_name: fp_name.clone(),
@@ -164,7 +164,7 @@ pub fn cmd_primitives(
     let fp_name = fp.name();
     let total_prims = fp.children_len();
 
-    let pads = extract_pads(&fp);
+    let pads = extract_pads(&fp)?;
     let mut pad_iter = pads.iter();
     let mut primitives: Vec<serde_json::Value> = Vec::new();
     let mut prim_idx = 0;
@@ -211,7 +211,7 @@ pub fn cmd_holes(path: &Path) -> Result<serde_json::Value, Box<dyn std::error::E
     let footprints = lib.query_all::<PcbFootprint>("#0")?;
     for fp in &footprints {
         let fp_name = fp.name();
-        let pads = extract_pads(fp);
+        let pads = extract_pads(fp)?;
         for pad in &pads {
             if pad.record.hole_size().to_raw() > 0 {
                 let hole_str = format!("{:.3}mm", pad.record.hole_size().to_mm());

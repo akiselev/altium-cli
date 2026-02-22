@@ -340,7 +340,7 @@ impl SchComponentHandle {
     }
 
     /// Get handles to all children of a given type.
-    pub fn children<T: HandleFamily>(&self) -> Vec<T::Handle> {
+    pub fn children<T: HandleFamily>(&self) -> crate::error::Result<Vec<T::Handle>> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         group
@@ -350,7 +350,7 @@ impl SchComponentHandle {
                 let rec = &store.records[id];
                 rec.key == T::record_id() && rec.origin.is_binary() == T::is_binary()
             })
-            .filter_map(|&id| T::try_make_handle(self.store.clone(), id).ok())
+            .map(|&id| T::try_make_handle(self.store.clone(), id))
             .collect()
     }
 
@@ -585,7 +585,7 @@ impl PcbFootprintHandle {
     }
 
     /// Get handles to all primitives of a given type.
-    pub fn children<T: HandleFamily>(&self) -> Vec<T::Handle> {
+    pub fn children<T: HandleFamily>(&self) -> crate::error::Result<Vec<T::Handle>> {
         let store = self.store.borrow();
         let group = &store.groups[self.group_id];
         group
@@ -595,7 +595,7 @@ impl PcbFootprintHandle {
                 let rec = &store.records[id];
                 rec.key == T::record_id() && rec.origin.is_binary() == T::is_binary()
             })
-            .filter_map(|&id| T::try_make_handle(self.store.clone(), id).ok())
+            .map(|&id| T::try_make_handle(self.store.clone(), id))
             .collect()
     }
 

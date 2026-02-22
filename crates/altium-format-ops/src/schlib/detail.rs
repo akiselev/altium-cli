@@ -31,7 +31,7 @@ pub fn cmd_component(
 
     // Collect pin details
     let mut pins: Vec<PinDetail> = Vec::new();
-    let pin_handles = comp.children::<SchPin>();
+    let pin_handles = comp.children::<SchPin>()?;
     for pin_handle in &pin_handles {
         let pin = pin_handle.read();
         pins.push(PinDetail {
@@ -87,7 +87,7 @@ pub fn cmd_pins(
             }
         }
 
-        let pins = comp.children::<SchPin>();
+        let pins = comp.children::<SchPin>()?;
         for pin_handle in &pins {
             let pin = pin_handle.read();
             all_pins.push(PinWithComponent {

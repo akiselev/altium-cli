@@ -20,7 +20,7 @@ pub fn cmd_render_ascii(
     let fp = find_footprint_by_name(&lib, footprint)?;
 
     let fp_name = fp.name();
-    let pads = extract_pads(&fp);
+    let pads = extract_pads(&fp)?;
     if pads.is_empty() {
         println!("Footprint '{}' has no pads to render.", fp_name);
         return Ok(());

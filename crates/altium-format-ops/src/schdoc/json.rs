@@ -21,7 +21,7 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn st
         for comp in &comps {
             let rec = comp.read();
             let mut pins_json = Vec::new();
-            for p in comp.children::<SchPin>().iter() {
+            for p in comp.children::<SchPin>()?.iter() {
                 let pr = p.read();
                 let designator = pr.designator()?.to_string();
                 let name = pr.name()?.to_string();

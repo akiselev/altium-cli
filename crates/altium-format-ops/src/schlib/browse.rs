@@ -79,7 +79,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
 
     let components = lib.query_all::<SchComponent>("#1")?;
     for comp in &components {
-        let pins = comp.children::<SchPin>();
+        let pins = comp.children::<SchPin>()?;
         for pin_handle in &pins {
             let pin = pin_handle.read();
             total_pins += 1;

@@ -28,7 +28,7 @@ pub fn cmd_json(path: &Path, full: bool) -> Result<PcbLibJson, Box<dyn std::erro
         let primitive_count = fp.children_len();
 
         let pads = if full {
-            let pad_list = extract_pads(fp);
+            let pad_list = extract_pads(fp)?;
             Some(
                 pad_list
                     .iter()

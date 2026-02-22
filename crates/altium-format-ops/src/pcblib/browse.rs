@@ -80,7 +80,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
     let mut hole_counts: HashMap<String, usize> = HashMap::new();
 
     for fp in &footprints {
-        let pads = extract_pads(fp);
+        let pads = extract_pads(fp)?;
         for pad in &pads {
             total_pads += 1;
             if pad.is_smd() {
