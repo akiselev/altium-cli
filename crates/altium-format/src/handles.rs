@@ -434,15 +434,21 @@ impl SchComponentHandle {
     pub fn set_sidecar_streams(
         &self,
         streams: crate::documents::schlib_streams::SchLibComponentSidecarStreamsMeta,
-    ) {
+    ) -> crate::error::Result<()> {
         let mut store = self.store.borrow_mut();
         let group = &mut store.groups[self.group_id];
-        if let crate::store::GroupMeta::SchComponent {
-            sidecar_streams, ..
-        } = &mut group.meta
-        {
-            *sidecar_streams = streams;
-            store.mark_semantic_ids_dirty();
+        match &mut group.meta {
+            crate::store::GroupMeta::SchComponent {
+                sidecar_streams, ..
+            } => {
+                *sidecar_streams = streams;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected SchComponent, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -663,23 +669,32 @@ impl PcbFootprintHandle {
     }
 
     /// Overwrite storage-level passthrough bytes for this footprint.
-    pub fn set_storage_passthrough(&self, data: PcbFootprintStoragePassthrough) {
+    pub fn set_storage_passthrough(
+        &self,
+        data: PcbFootprintStoragePassthrough,
+    ) -> crate::error::Result<()> {
         let mut store = self.store.borrow_mut();
         let group = &mut store.groups[self.group_id];
-        if let crate::store::GroupMeta::PcbFootprint {
-            raw_pattern_name_block,
-            raw_header,
-            original_primitive_order,
-            sidecar_streams,
-            ..
-        } = &mut group.meta
-        {
-            *raw_pattern_name_block = data.raw_pattern_name_block;
-            *raw_header = data.raw_header;
-            *original_primitive_order = data.original_primitive_order;
-            *sidecar_streams = data.sidecar_streams;
+        match &mut group.meta {
+            crate::store::GroupMeta::PcbFootprint {
+                raw_pattern_name_block,
+                raw_header,
+                original_primitive_order,
+                sidecar_streams,
+                ..
+            } => {
+                *raw_pattern_name_block = data.raw_pattern_name_block;
+                *raw_header = data.raw_header;
+                *original_primitive_order = data.original_primitive_order;
+                *sidecar_streams = data.sidecar_streams;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(crate::error::AltiumError::TypeMismatch(format!(
+                "expected PcbFootprint, got {}",
+                other.variant_name()
+            ))),
         }
-        store.mark_semantic_ids_dirty();
     }
 
     /// Query primitives of a given type.

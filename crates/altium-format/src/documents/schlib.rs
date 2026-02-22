@@ -149,11 +149,18 @@ impl SchLib {
     pub fn set_storage_meta(
         &self,
         meta: crate::documents::schdoc_streams::SchDocStorageStreamMeta,
-    ) {
+    ) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::SchLib { storage_meta, .. } = &mut store.meta {
-            *storage_meta = meta;
-            store.mark_semantic_ids_dirty();
+        match &mut store.meta {
+            DocumentMeta::SchLib { storage_meta, .. } => {
+                *storage_meta = meta;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected SchLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -170,15 +177,24 @@ impl SchLib {
     }
 
     /// Replace typed alias redirection stream metadata.
-    pub fn set_redirection_streams(&self, streams: BTreeMap<String, SchLibRedirectionStreamMeta>) {
+    pub fn set_redirection_streams(
+        &self,
+        streams: BTreeMap<String, SchLibRedirectionStreamMeta>,
+    ) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::SchLib {
-            redirection_streams,
-            ..
-        } = &mut store.meta
-        {
-            *redirection_streams = streams;
-            store.mark_semantic_ids_dirty();
+        match &mut store.meta {
+            DocumentMeta::SchLib {
+                redirection_streams,
+                ..
+            } => {
+                *redirection_streams = streams;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected SchLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -186,30 +202,33 @@ impl SchLib {
     ///
     /// Raw header passthrough fields are intentionally cleared so subsequent
     /// saves re-emit header text from modeled values.
-    pub fn set_header(&self, header: &SchLibHeader) {
+    pub fn set_header(&self, header: &SchLibHeader) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        let mut did_doc_key: Option<String> = None;
-        if let DocumentMeta::SchLib {
-            header_text,
-            weight,
-            minor_version,
-            unique_id,
-            raw_header,
-            raw_header_params,
-            ..
-        } = &mut store.meta
-        {
-            *header_text = header.header_text.clone();
-            *weight = header.weight;
-            *minor_version = header.minor_version;
-            *unique_id = header.unique_id.clone();
-            *raw_header = None;
-            *raw_header_params = header.raw_params.clone();
-            did_doc_key = Some(unique_id.clone());
-            store.mark_semantic_ids_dirty();
-        }
-        if let Some(doc_key) = did_doc_key {
-            store.set_semantic_context("dtid:schlib", &doc_key);
+        match &mut store.meta {
+            DocumentMeta::SchLib {
+                header_text,
+                weight,
+                minor_version,
+                unique_id,
+                raw_header,
+                raw_header_params,
+                ..
+            } => {
+                *header_text = header.header_text.clone();
+                *weight = header.weight;
+                *minor_version = header.minor_version;
+                *unique_id = header.unique_id.clone();
+                *raw_header = None;
+                *raw_header_params = header.raw_params.clone();
+                let doc_key = unique_id.clone();
+                store.mark_semantic_ids_dirty();
+                store.set_semantic_context("dtid:schlib", &doc_key);
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected SchLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 

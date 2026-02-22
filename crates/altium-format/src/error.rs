@@ -76,6 +76,10 @@ pub enum AltiumError {
     /// CFB (Compound File Binary) format error.
     #[error("CFB error: {0}")]
     Cfb(String),
+
+    /// Document or group type mismatch.
+    #[error("Document type mismatch: {0}")]
+    TypeMismatch(String),
 }
 
 /// Result type alias for Altium operations.

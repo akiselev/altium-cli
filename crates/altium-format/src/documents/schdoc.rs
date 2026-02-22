@@ -64,13 +64,19 @@ impl SchDoc {
     }
 
     /// Replace typed `/FileHeader` stream metadata.
-    pub fn set_file_header_meta(&self, meta: SchDocFileHeaderStreamMeta) {
+    pub fn set_file_header_meta(&self, meta: SchDocFileHeaderStreamMeta) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::SchDoc {
-            file_header_meta, ..
-        } = store.meta_mut()
-        {
-            *file_header_meta = meta;
+        match store.meta_mut() {
+            DocumentMeta::SchDoc {
+                file_header_meta, ..
+            } => {
+                *file_header_meta = meta;
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected SchDoc, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -86,13 +92,19 @@ impl SchDoc {
     }
 
     /// Replace typed `/Additional` stream metadata.
-    pub fn set_additional_meta(&self, meta: Option<SchDocAdditionalStreamMeta>) {
+    pub fn set_additional_meta(&self, meta: Option<SchDocAdditionalStreamMeta>) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::SchDoc {
-            additional_meta, ..
-        } = store.meta_mut()
-        {
-            *additional_meta = meta;
+        match store.meta_mut() {
+            DocumentMeta::SchDoc {
+                additional_meta, ..
+            } => {
+                *additional_meta = meta;
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected SchDoc, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -106,10 +118,17 @@ impl SchDoc {
     }
 
     /// Replace typed `/Storage` stream metadata.
-    pub fn set_storage_meta(&self, meta: SchDocStorageStreamMeta) {
+    pub fn set_storage_meta(&self, meta: SchDocStorageStreamMeta) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::SchDoc { storage_meta, .. } = store.meta_mut() {
-            *storage_meta = meta;
+        match store.meta_mut() {
+            DocumentMeta::SchDoc { storage_meta, .. } => {
+                *storage_meta = meta;
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected SchDoc, got {}",
+                other.variant_name()
+            ))),
         }
     }
 

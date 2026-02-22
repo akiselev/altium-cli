@@ -83,11 +83,18 @@ impl PcbLib {
     }
 
     /// Replace typed `/SectionKeys` mapping metadata.
-    pub fn set_section_keys(&self, keys: SectionKeyList) {
+    pub fn set_section_keys(&self, keys: SectionKeyList) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::PcbLib { section_keys, .. } = &mut store.meta {
-            *section_keys = keys;
-            store.mark_semantic_ids_dirty();
+        match &mut store.meta {
+            DocumentMeta::PcbLib { section_keys, .. } => {
+                *section_keys = keys;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected PcbLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -103,14 +110,20 @@ impl PcbLib {
     }
 
     /// Replace typed `/FileHeader` metadata.
-    pub fn set_file_header_meta(&self, meta: PcbLibFileHeaderStreamMeta) {
+    pub fn set_file_header_meta(&self, meta: PcbLibFileHeaderStreamMeta) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::PcbLib {
-            file_header_meta, ..
-        } = &mut store.meta
-        {
-            *file_header_meta = meta;
-            store.mark_semantic_ids_dirty();
+        match &mut store.meta {
+            DocumentMeta::PcbLib {
+                file_header_meta, ..
+            } => {
+                *file_header_meta = meta;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected PcbLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -127,15 +140,21 @@ impl PcbLib {
     }
 
     /// Replace typed `/FileVersionInfo/{Header,Data}` metadata.
-    pub fn set_file_version_info_meta(&self, meta: PcbLibCountedDataStreamMeta) {
+    pub fn set_file_version_info_meta(&self, meta: PcbLibCountedDataStreamMeta) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::PcbLib {
-            file_version_info_meta,
-            ..
-        } = &mut store.meta
-        {
-            *file_version_info_meta = meta;
-            store.mark_semantic_ids_dirty();
+        match &mut store.meta {
+            DocumentMeta::PcbLib {
+                file_version_info_meta,
+                ..
+            } => {
+                *file_version_info_meta = meta;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected PcbLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -149,11 +168,18 @@ impl PcbLib {
     }
 
     /// Replace typed `/Library/*` metadata.
-    pub fn set_library_meta(&self, meta: PcbLibLibraryStorageMeta) {
+    pub fn set_library_meta(&self, meta: PcbLibLibraryStorageMeta) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::PcbLib { library_meta, .. } = &mut store.meta {
-            *library_meta = meta;
-            store.mark_semantic_ids_dirty();
+        match &mut store.meta {
+            DocumentMeta::PcbLib { library_meta, .. } => {
+                *library_meta = meta;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected PcbLib, got {}",
+                other.variant_name()
+            ))),
         }
     }
 

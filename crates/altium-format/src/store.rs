@@ -77,6 +77,17 @@ pub enum GroupMeta {
     SchDocComponent,
 }
 
+impl GroupMeta {
+    /// Returns a human-readable name for the active variant.
+    pub(crate) fn variant_name(&self) -> &'static str {
+        match self {
+            Self::SchComponent { .. } => "SchComponent",
+            Self::PcbFootprint { .. } => "PcbFootprint",
+            Self::SchDocComponent => "SchDocComponent",
+        }
+    }
+}
+
 /// Document-level metadata.
 pub enum DocumentMeta {
     SchLib {
@@ -106,6 +117,19 @@ pub enum DocumentMeta {
         streams_meta: crate::documents::pcbdoc_streams::PcbDocStreamsMeta,
     },
     Empty,
+}
+
+impl DocumentMeta {
+    /// Returns a human-readable name for the active variant.
+    pub(crate) fn variant_name(&self) -> &'static str {
+        match self {
+            Self::SchLib { .. } => "SchLib",
+            Self::SchDoc { .. } => "SchDoc",
+            Self::PcbLib { .. } => "PcbLib",
+            Self::PcbDoc { .. } => "PcbDoc",
+            Self::Empty => "Empty",
+        }
+    }
 }
 
 impl DocumentStore {

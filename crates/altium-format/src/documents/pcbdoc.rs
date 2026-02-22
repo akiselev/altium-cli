@@ -82,14 +82,20 @@ impl PcbDoc {
     }
 
     /// Replace typed stream metadata.
-    pub fn set_streams_meta(&self, streams_meta: PcbDocStreamsMeta) {
+    pub fn set_streams_meta(&self, streams_meta: PcbDocStreamsMeta) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        if let DocumentMeta::PcbDoc {
-            streams_meta: current,
-        } = store.meta_mut()
-        {
-            *current = streams_meta;
-            store.mark_semantic_ids_dirty();
+        match store.meta_mut() {
+            DocumentMeta::PcbDoc {
+                streams_meta: current,
+            } => {
+                *current = streams_meta;
+                store.mark_semantic_ids_dirty();
+                Ok(())
+            }
+            other => Err(AltiumError::TypeMismatch(format!(
+                "expected PcbDoc, got {}",
+                other.variant_name()
+            ))),
         }
     }
 
@@ -793,7 +799,7 @@ mod tests {
                 record_ids: Vec::new(),
             }),
         );
-        doc.set_streams_meta(meta);
+        doc.set_streams_meta(meta).expect("set_streams_meta");
 
         let track = crate::records::PcbTrackRecord::from_origin(templates::pcb_track_default());
         doc.add_primitive_record("Tracks6", track)
@@ -831,7 +837,7 @@ mod tests {
                 record_ids: Vec::new(),
             }),
         );
-        doc.set_streams_meta(meta);
+        doc.set_streams_meta(meta).expect("set_streams_meta");
 
         let arc = crate::records::PcbArcRecord::from_origin(templates::pcb_arc_default());
         let err = doc

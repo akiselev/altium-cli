@@ -503,9 +503,9 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let dst = SchLib::new_empty();
 
     let header = src.header();
-    dst.set_header(&header);
-    dst.set_storage_meta(src.storage_meta());
-    dst.set_redirection_streams(src.redirection_streams());
+    dst.set_header(&header)?;
+    dst.set_storage_meta(src.storage_meta())?;
+    dst.set_redirection_streams(src.redirection_streams())?;
 
     let components = src.query_all::<SchComponent>("#1").map_err(|e| e.to_string())?;
 
@@ -520,7 +520,7 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             .build();
             builder.with_component(|comp| *comp = rebuilt);
         }).map_err(|e| e.to_string())?;
-        dst_comp.set_sidecar_streams(src_comp.sidecar_streams());
+        dst_comp.set_sidecar_streams(src_comp.sidecar_streams())?;
 
         for (type_id, rid) in src_comp.all_children() {
             macro_rules! emit_child {
@@ -551,10 +551,10 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
 fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
     let dst = PcbLib::new_empty();
-    dst.set_section_keys(src.section_keys());
-    dst.set_file_header_meta(src.file_header_meta());
-    dst.set_file_version_info_meta(src.file_version_info_meta());
-    dst.set_library_meta(src.library_meta());
+    dst.set_section_keys(src.section_keys())?;
+    dst.set_file_header_meta(src.file_header_meta())?;
+    dst.set_file_version_info_meta(src.file_version_info_meta())?;
+    dst.set_library_meta(src.library_meta())?;
 
     let names = src.names();
     for name in names {
@@ -607,9 +607,9 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let src = SchDoc::open_file(path).map_err(|e| e.to_string())?;
     let dst = SchDoc::new_empty();
 
-    dst.set_file_header_meta(src.file_header_meta());
-    dst.set_additional_meta(src.additional_meta());
-    dst.set_storage_meta(src.storage_meta());
+    dst.set_file_header_meta(src.file_header_meta())?;
+    dst.set_additional_meta(src.additional_meta())?;
+    dst.set_storage_meta(src.storage_meta())?;
 
     for src_comp in src.components() {
         let src_parent = src_comp.read();
@@ -681,7 +681,7 @@ fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             _ => None,
         })
         .collect();
-    dst.set_streams_meta(streams_meta);
+    dst.set_streams_meta(streams_meta)?;
 
     for section_name in primitive_section_names {
         for (type_id, rid) in src.primitive_records(&section_name) {
@@ -815,7 +815,7 @@ mod tests {
         let src = SchLib::new_empty();
         let mut header = src.header();
         header.unique_id = "SCHLIB-UNITTEST-UID".to_string();
-        src.set_header(&header);
+        src.set_header(&header).expect("set_header");
 
         let storage_meta = SchDocStorageStreamMeta {
             header_block: Default::default(),
@@ -825,7 +825,8 @@ mod tests {
                 compressed_data: vec![1, 2, 3, 4],
             }],
         };
-        src.set_storage_meta(storage_meta.clone());
+        src.set_storage_meta(storage_meta.clone())
+            .expect("set_storage_meta");
 
         let mut redirection_params = ParameterCollection::new();
         redirection_params.add("SECTIONNAME", "U_REAL");
@@ -838,7 +839,8 @@ mod tests {
                 params: redirection_params,
             },
         );
-        src.set_redirection_streams(redirection_streams.clone());
+        src.set_redirection_streams(redirection_streams.clone())
+            .expect("set_redirection_streams");
 
         src.build_component(templates::sch_component_default, |builder| {
             builder.with_component(|record| {
@@ -894,16 +896,19 @@ mod tests {
         let src = PcbLib::new_empty();
         let mut section_keys = altium_format::documents::section_keys::SectionKeyList::new();
         section_keys.insert_mapping("FP1", "FP1K");
-        src.set_section_keys(section_keys.clone());
+        src.set_section_keys(section_keys.clone())
+            .expect("set_section_keys");
         src.set_file_header_meta(PcbLibFileHeaderStreamMeta {
             header_text: "PCB 6.0 Binary Library File".to_string(),
             file_version: 5.01,
             key: "ZZZZZZZZ".to_string(),
-        });
+        })
+        .expect("set_file_header_meta");
         src.set_file_version_info_meta(PcbLibCountedDataStreamMeta {
             header_count: 1,
             data: b"version-info".to_vec(),
-        });
+        })
+        .expect("set_file_version_info_meta");
         src.set_library_meta(PcbLibLibraryStorageMeta {
             header_count: 1,
             data: b"library-data".to_vec(),
@@ -937,7 +942,8 @@ mod tests {
                 header_count: 1,
                 data: b"textures".to_vec(),
             },
-        });
+        })
+        .expect("set_library_meta");
 
         let fp = src.build_footprint("FP1", templates::pcb_footprint_default, |builder| {
             builder.with_metadata(|meta: &mut PcbFootprintRecord| {
@@ -974,7 +980,8 @@ mod tests {
             raw_header: 1u32.to_le_bytes().to_vec(),
             original_primitive_order: Vec::new(),
             sidecar_streams: sidecars.clone(),
-        });
+        })
+        .expect("set_storage_passthrough");
 
         src.save_file(&src_path)
             .expect("failed to save source PcbLib fixture");
