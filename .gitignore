@@ -31,3 +31,6 @@ target
 
 # Python cache files
 __pycache__/
+
+# Altium test files
+/data/
