@@ -1119,7 +1119,11 @@ fn read_file_header<F: Read + Seek>(
         raw_params: Some(params.clone()),
     };
 
-    let comp_count = params.get("CompCount").map(|v| v.as_int_or(0)).unwrap_or(0);
+    let comp_count = params
+        .get("CompCount")
+        .ok_or_else(|| AltiumError::MissingParameter("CompCount".into()))?
+        .as_int()
+        .map_err(|e| AltiumError::InvalidParameter(format!("CompCount: {}", e)))?;
     for i in 0..comp_count {
         let lib_ref = params
             .get(&format!("LibRef{}", i))
