@@ -20,6 +20,8 @@ pub enum AltiumOperationError {
     Io(#[from] std::io::Error),
     #[error("Altium format error: {0}")]
     AltiumFormat(#[from] AltiumFormatError),
+    #[error("Unimplemented operation: {0}")]
+    Unimplemented(String),
 }
 
 pub type Result<T> = std::result::Result<T, AltiumOperationError>;
