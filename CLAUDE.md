@@ -35,6 +35,16 @@ capture, no opaque blobs. If our parser encounters data it doesn't understand, t
 bug in our code that must be fixed -- never silently skipped. These files control PCB
 fabrication; a silently dropped field could cost thousands of dollars.
 
+**Use domain types from `altium-format-types`**: The `altium-format-types` crate defines typed
+enums and structs for every Altium concept (`PcbObjectId`, `SchRecordType`, `Color`, `Coord`,
+`UniqueId`, etc.) as well as named constants for format-level values (tag bytes, flag values,
+type codes, masks, shifts). ALWAYS use these instead of raw primitives:
+- Struct fields: `PcbObjectId` not `u8`, `SchRecordType` not `i32`, `Coord` not `i32`, etc.
+- Constants: `INSTRUCTION_BINARY` not `0xD0`, `BLOCK_SIZE_MASK` not `0x00FF_FFFF`, etc.
+- If a type or constant doesn't exist yet, add it to `altium-format-types` before using it.
+  Types go in the appropriate module (`pcb.rs`, `sch.rs`, etc.); constants go in
+  `crates/altium-format-types/src/constants/`. Make sure to check the constant you add against the decompiled code (Delphi or C# depending on the constant, but most should be in the already decompiled C# code)
+
 
 
 # Reverse engineering Altium
