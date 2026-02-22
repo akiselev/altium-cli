@@ -156,6 +156,12 @@ pub const AUTO_SIZE: &str = "AutoSize";
 /// default=500,000)
 pub const TEXT_MARGIN: &str = "TextMargin";
 
+/// Fractional part of the text margin coordinate (DXP split-coord extension).
+///
+/// **Wire type:** i32 (fractional DXP units, 0..100_000)
+/// **Used by:** TextFrame (RECORD=28), Note (RECORD=209)
+pub const TEXT_MARGIN_FRAC: &str = "TextMargin_Frac";
+
 /// Only show the first line of text.
 ///
 /// **Wire type:** bool

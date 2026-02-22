@@ -71,7 +71,13 @@ impl ParameterCollection {
     // Decodes UTF-16LE to &str then parses via from_str_params directly.
     // Re-encoding to bytes then decoding via Windows-1252 would corrupt non-ASCII characters.
     pub(crate) fn from_utf16le_bytes(data: &[u8]) -> Result<Self> {
-        let (decoded, _) = encoding_rs::UTF_16LE.decode_without_bom_handling(data);
+        let (decoded, had_errors) = encoding_rs::UTF_16LE.decode_without_bom_handling(data);
+        if had_errors {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "UTF-16LE".to_owned(),
+                detail: "invalid UTF-16LE encoding in parameter data".to_owned(),
+            });
+        }
         Self::from_str_params(&decoded)
     }
 
@@ -143,12 +149,24 @@ impl ParameterCollection {
 
     // Reconstructs a Coord from integer + fractional DXP parts: N * 100_000 + F.
     pub(crate) fn remove_coord(&mut self, key: &str, frac_key: &str) -> Result<Coord> {
-        let integer: i32 = self.remove_required(key)?;
+        let integer: i32 = self.remove_with_default(key, 0i32)?;
         let frac: i32 = self.remove_with_default(frac_key, 0i32)?;
         Ok(Coord::from_dxp_frac(integer, frac))
     }
 
+    // Like remove_coord, but returns None if the integer part is absent.
+    // Still consumes the frac companion if present (to avoid assert_exhausted failures).
+    pub(crate) fn remove_coord_optional(&mut self, key: &str, frac_key: &str) -> Result<Option<Coord>> {
+        let integer: Option<i32> = self.remove_optional(key)?;
+        let frac: i32 = self.remove_optional::<i32>(frac_key)?.unwrap_or(0);
+        match integer {
+            Some(int_val) => Ok(Some(Coord::from_dxp_frac(int_val, frac))),
+            None => Ok(None),
+        }
+    }
+
     // Reads count from `count_key`, then removes `{x_prefix}N`/`{y_prefix}N` pairs as Coords.
+    // Indices are 1-based to match Altium's on-disk format (X1, Y1, X2, Y2, ...).
     pub(crate) fn remove_indexed_coords(
         &mut self,
         count_key: &str,
@@ -157,11 +175,11 @@ impl ParameterCollection {
     ) -> Result<Vec<CoordPoint>> {
         let count: usize = self.remove_required(count_key)?;
         let mut points = Vec::with_capacity(count);
-        for i in 0..count {
+        for i in 1..=count {
             let x_key = format!("{x_prefix}{i}");
             let y_key = format!("{y_prefix}{i}");
-            let x_frac_key = format!("{x_prefix}{i}_FRAC");
-            let y_frac_key = format!("{y_prefix}{i}_FRAC");
+            let x_frac_key = format!("{x_prefix}{i}_Frac");
+            let y_frac_key = format!("{y_prefix}{i}_Frac");
             let x = self.remove_coord(&x_key, &x_frac_key)?;
             let y = self.remove_coord(&y_key, &y_frac_key)?;
             points.push(CoordPoint::new(x, y));
@@ -432,7 +450,7 @@ mod tests {
 
     #[test]
     fn remove_indexed_coords() {
-        let data = b"|COUNT=2|X0=1|Y0=2|X1=3|Y1=4|\0";
+        let data = b"|COUNT=2|X1=1|Y1=2|X2=3|Y2=4|\0";
         let mut pc = ParameterCollection::from_bytes(data).unwrap();
         let points = pc.remove_indexed_coords("COUNT", "X", "Y").unwrap();
         assert_eq!(points.len(), 2);

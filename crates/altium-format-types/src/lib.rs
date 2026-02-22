@@ -37,7 +37,9 @@ pub use pcb::{
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,
     HarnessConnectionPointStyle, HarnessLengthUnit, HarnessShieldStyle, HarnessSpliceStyle,
-    HarnessWireLengthType, LeftRightSide, NoErcSymbol, ParameterReadOnlyState, ParameterSetStyle,
-    ParameterType, PinElectricalType, SchRecordType, SheetReferenceZoneStyle, SheetSymbolType,
-    TextHorzAnchor, TextVertAnchor, VisibleGridStyle,
+    HarnessWireLengthType, IeeeSymbol, LeftRightSide, LineShape, LineStyle, NoErcSymbol,
+    ParameterReadOnlyState, ParameterSetStyle, ParameterType, PenWidth, PinElectricalType,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, TextHorzAnchor, TextJustification,
+    TextVertAnchor, VisibleGridStyle,
 };

@@ -144,3 +144,25 @@ pub const DATALINKS_LOCKED: &str = "DatalinksLocked";
 /// **Wire type:** i32
 /// **Used by:** various model/implementation objects
 pub const OBJECT_ID: &str = "ObjectId";
+
+// ---------------------------------------------------------------------------
+// MapDefiner
+// ---------------------------------------------------------------------------
+
+/// Designator interface string for a pin-to-pad mapping entry.
+///
+/// **Wire type:** DynamicString
+/// **Used by:** MapDefiner (RECORD=47)
+pub const DES_INTF: &str = "DesIntf";
+
+/// Count of designator-to-implementation mappings.
+///
+/// **Wire type:** i32
+/// **Used by:** MapDefiner (RECORD=47)
+pub const DES_IMP_COUNT: &str = "DesImpCount";
+
+/// Prefix for indexed designator-to-implementation mapping values (`DesImp0`, `DesImp1`, ...).
+///
+/// **Wire type:** string (indexed)
+/// **Used by:** MapDefiner (RECORD=47)
+pub const DES_IMP: &str = "DesImp";

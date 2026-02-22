@@ -46,6 +46,31 @@
 /// See module-level docs for bitfield layout.
 pub const PIN_CONGLOMERATE: &str = "PinConglomerate";
 
+// ---------------------------------------------------------------------------
+// PinConglomerate bitmask values
+// ---------------------------------------------------------------------------
+
+/// Orientation field mask: bits [1:0] (TRotationBy90: 0=0°, 1=90°, 2=180°, 3=270°).
+pub const PIN_CONGLOMERATE_ORIENTATION_MASK: u8 = 0x03;
+
+/// PinConglomerate flag: IsHidden (bit 2).
+pub const PIN_CONGLOMERATE_IS_HIDDEN: u8 = 0x04;
+
+/// PinConglomerate flag: ShowName (bit 3).
+pub const PIN_CONGLOMERATE_SHOW_NAME: u8 = 0x08;
+
+/// PinConglomerate flag: ShowDesignator (bit 4).
+pub const PIN_CONGLOMERATE_SHOW_DESIGNATOR: u8 = 0x10;
+
+/// PinConglomerate flag: NotAccessible (bit 5, inverted — set = NOT accessible).
+pub const PIN_CONGLOMERATE_NOT_ACCESSIBLE: u8 = 0x20;
+
+/// PinConglomerate flag: GraphicallyLocked (bit 6, written but reset on import).
+pub const PIN_CONGLOMERATE_GRAPHICALLY_LOCKED: u8 = 0x40;
+
+/// PinConglomerate flag: OwnerIndexAdditionalList (bit 7 — OwnerIndex refers to Additional stream).
+pub const PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST: u8 = 0x80;
+
 /// Length of pin line in DXP coordinate units.
 ///
 /// **Wire type:** coord (i32)

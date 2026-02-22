@@ -20,6 +20,13 @@ pub const SNAP_GRID_ON: &str = "SnapGridOn";
 /// **Used by:** Sheet (RECORD=31)
 pub const SNAP_GRID_SIZE: &str = "SnapGridSize";
 
+/// Fractional sub-unit for SnapGridSize (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Sheet (RECORD=31), SchLib FileHeader
+/// **Note:** Synthesized at runtime in Altium C# by appending "_Frac" to base key.
+pub const SNAP_GRID_SIZE_FRAC: &str = "SnapGridSize_Frac";
+
 /// Visible grid enabled.
 ///
 /// **Wire type:** bool
@@ -32,6 +39,13 @@ pub const VISIBLE_GRID_ON: &str = "VisibleGridOn";
 /// **Used by:** Sheet (RECORD=31)
 pub const VISIBLE_GRID_SIZE: &str = "VisibleGridSize";
 
+/// Fractional sub-unit for VisibleGridSize (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Sheet (RECORD=31), SchLib FileHeader
+/// **Note:** Synthesized at runtime in Altium C# by appending "_Frac" to base key.
+pub const VISIBLE_GRID_SIZE_FRAC: &str = "VisibleGridSize_Frac";
+
 /// Hot spot grid enabled.
 ///
 /// **Wire type:** bool
@@ -43,6 +57,13 @@ pub const HOT_SPOT_GRID_ON: &str = "HotSpotGridOn";
 /// **Wire type:** coord (i32, default 8 mils)
 /// **Used by:** Sheet (RECORD=31)
 pub const HOT_SPOT_GRID_SIZE: &str = "HotSpotGridSize";
+
+/// Fractional sub-unit for HotSpotGridSize (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Sheet (RECORD=31), SchLib FileHeader
+/// **Note:** Synthesized at runtime in Altium C# by appending "_Frac" to base key.
+pub const HOT_SPOT_GRID_SIZE_FRAC: &str = "HotSpotGridSize_Frac";
 
 // ---------------------------------------------------------------------------
 // Sheet size
@@ -69,11 +90,25 @@ pub const USE_CUSTOM_SHEET: &str = "UseCustomSheet";
 /// **Used by:** Sheet (RECORD=31)
 pub const CUSTOM_X: &str = "CustomX";
 
+/// Fractional sub-unit for CustomX (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Sheet (RECORD=31), SchLib FileHeader
+/// **Note:** Synthesized at runtime in Altium C# by appending "_Frac" to base key.
+pub const CUSTOM_X_FRAC: &str = "CustomX_Frac";
+
 /// Custom sheet height.
 ///
 /// **Wire type:** coord (i32, default 950 mils = 95,000,000 DXP units)
 /// **Used by:** Sheet (RECORD=31)
 pub const CUSTOM_Y: &str = "CustomY";
+
+/// Fractional sub-unit for CustomY (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Sheet (RECORD=31), SchLib FileHeader
+/// **Note:** Synthesized at runtime in Altium C# by appending "_Frac" to base key.
+pub const CUSTOM_Y_FRAC: &str = "CustomY_Frac";
 
 // ---------------------------------------------------------------------------
 // Border and title block

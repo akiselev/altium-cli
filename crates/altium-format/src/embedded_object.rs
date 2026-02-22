@@ -1,13 +1,15 @@
 //! Layer 4 parser for the embedded object envelope format.
 //! Each entry in a Storage or sidecar block stream is a 0xD0-tagged envelope:
-//! tag(1) + id_length(1) + id(N) + inner_header(4) + inner_data(M).
-//! The inner header uses the same bit layout as the block header (bits 0-23
-//! = size, bits 24-31 = format discriminant).
+//! tag(1) + id_length(1) + id(N) + compressed_length(4) + zlib_data(M).
+//! The 4-byte compressed_length field stores the size of the zlib-compressed
+//! payload. The decompressed bytes are stored in `inner_data`.
 //! `parse_embedded_object_stream` consumes the header block's params internally
 //! so callers never receive a partially-consumed `ParameterCollection`.
-use altium_format_types::constants::parsing::{
-    BLOCK_FLAG_BINARY, BLOCK_FLAG_TEXT, BLOCK_SIZE_MASK, INSTRUCTION_BINARY,
-};
+use std::io::Read;
+
+use altium_format_types::constants::parsing::{BLOCK_SIZE_MASK, INSTRUCTION_BINARY};
+use altium_format_types::constants::record_structure::HEADER;
+use flate2::read::ZlibDecoder;
 
 use crate::binary_io::BinaryReader;
 use crate::block_stream::{Block, BlockFormat};
@@ -17,11 +19,11 @@ use crate::{AltiumFormatError, Result};
 #[derive(Debug)]
 pub(crate) struct EmbeddedObject {
     pub(crate) id: String,
-    pub(crate) inner_format: BlockFormat,
     pub(crate) inner_data: Vec<u8>,
 }
 
 // Parses a single 0xD0-tagged embedded object envelope from a binary block payload.
+// The inner payload is zlib-decompressed before being stored in `inner_data`.
 pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject> {
     let mut reader = BinaryReader::new(data);
     let tag = reader.read_u8()?;
@@ -37,21 +39,20 @@ pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject> {
             "embedded object id contains invalid UTF-8: {e}"
         ))
     })?;
-    let inner_header = reader.read_i32_le()?;
-    let inner_size = (inner_header & BLOCK_SIZE_MASK as i32) as usize;
-    let inner_flags = (inner_header >> 24) as u8;
-    let inner_format = match inner_flags {
-        BLOCK_FLAG_TEXT => BlockFormat::Text,
-        BLOCK_FLAG_BINARY => BlockFormat::Binary,
-        other => {
-            return Err(AltiumFormatError::InvalidEmbeddedObject(format!(
-                "unknown inner block flags {other:#04x}"
-            )));
-        }
-    };
-    let inner_data = reader.read_bytes(inner_size)?.to_vec();
+    let compressed_size = (reader.read_i32_le()? & BLOCK_SIZE_MASK as i32) as usize;
+    let compressed_bytes = reader.read_bytes(compressed_size)?;
+    let inner_data = zlib_decompress(compressed_bytes)?;
     reader.assert_exhausted()?;
-    Ok(EmbeddedObject { id, inner_format, inner_data })
+    Ok(EmbeddedObject { id, inner_data })
+}
+
+fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
+    let mut decoder = ZlibDecoder::new(data);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).map_err(|e| {
+        AltiumFormatError::InvalidEmbeddedObject(format!("zlib decompress failed: {e}"))
+    })?;
+    Ok(out)
 }
 
 // Parses the Storage-style block stream: block 0 = header params, blocks 1..N = entries.
@@ -72,6 +73,8 @@ pub(crate) fn parse_embedded_object_stream(
     let mut params = ParameterCollection::from_bytes(&blocks[0].data)?;
     // RECORD=0 sentinel may appear on the header block; consume it without dispatch.
     params.remove_optional::<i32>("RECORD")?;
+    // HEADER=<stream_name> appears in pin sidecar stream headers; consume without checking.
+    params.remove_optional::<String>(HEADER)?;
     let weight: usize = params.remove_required("Weight")?;
     params.assert_exhausted()?;
     let entries: Result<Vec<EmbeddedObject>> =
@@ -89,44 +92,53 @@ pub(crate) fn parse_embedded_object_stream(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use flate2::Compression;
+    use flate2::write::ZlibEncoder;
+
     use super::*;
     use altium_format_types::constants::parsing::INSTRUCTION_FILE_STREAM;
     use crate::binary_io::BinaryWriter;
 
-    fn make_envelope(id: &str, inner_flags: u8, inner_data: &[u8]) -> Vec<u8> {
+    fn zlib_compress(data: &[u8]) -> Vec<u8> {
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(data).unwrap();
+        enc.finish().unwrap()
+    }
+
+    fn make_envelope(id: &str, inner_data: &[u8]) -> Vec<u8> {
+        let compressed = zlib_compress(inner_data);
         let mut w = BinaryWriter::new();
         w.write_u8(INSTRUCTION_BINARY);
         w.write_u8(id.len() as u8);
         w.write_bytes(id.as_bytes());
-        let inner_header = (inner_data.len() as i32) | ((inner_flags as i32) << 24);
-        w.write_i32_le(inner_header);
-        w.write_bytes(inner_data);
+        w.write_i32_le(compressed.len() as i32);
+        w.write_bytes(&compressed);
         w.finish()
     }
 
     #[test]
-    fn parse_single_envelope_text() {
-        let inner = b"hello";
-        let data = make_envelope("comp1", BLOCK_FLAG_TEXT, inner);
+    fn parse_single_envelope_decompresses() {
+        let inner = b"hello world";
+        let data = make_envelope("comp1", inner);
         let obj = parse_embedded_object(&data).unwrap();
         assert_eq!(obj.id, "comp1");
-        assert_eq!(obj.inner_format, BlockFormat::Text);
         assert_eq!(obj.inner_data, inner);
     }
 
     #[test]
-    fn parse_single_envelope_binary() {
+    fn parse_binary_inner_decompresses() {
         let inner = b"\x01\x02\x03";
-        let data = make_envelope("item", BLOCK_FLAG_BINARY, inner);
+        let data = make_envelope("item", inner);
         let obj = parse_embedded_object(&data).unwrap();
         assert_eq!(obj.id, "item");
-        assert_eq!(obj.inner_format, BlockFormat::Binary);
         assert_eq!(obj.inner_data, inner);
     }
 
     #[test]
     fn wrong_tag_returns_error() {
-        let mut data = make_envelope("x", BLOCK_FLAG_TEXT, b"");
+        let mut data = make_envelope("x", b"");
         data[0] = INSTRUCTION_FILE_STREAM;
         let err = parse_embedded_object(&data).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidEmbeddedObject(_)));
@@ -140,23 +152,22 @@ mod tests {
 
     #[test]
     fn parse_stream_with_weight() {
-        // Build header block (text): |RECORD=0|Weight=2|\0
         let header_data = b"|RECORD=0|Weight=2|\0";
         let header_block = Block {
             format: BlockFormat::Text,
             data: header_data.to_vec(),
         };
-        // Build two entry blocks (binary format internally, but Block format must be binary
-        // for the envelope to pass through parse_embedded_object which reads raw bytes)
-        let entry1 = make_envelope("e1", BLOCK_FLAG_TEXT, b"abc");
-        let entry2 = make_envelope("e2", BLOCK_FLAG_BINARY, b"\xFF");
+        let entry1 = make_envelope("e1", b"abc");
+        let entry2 = make_envelope("e2", b"\x01\x02");
         let block1 = Block { format: BlockFormat::Binary, data: entry1 };
         let block2 = Block { format: BlockFormat::Binary, data: entry2 };
         let blocks = vec![header_block, block1, block2];
         let entries = parse_embedded_object_stream(&blocks).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, "e1");
+        assert_eq!(entries[0].inner_data, b"abc");
         assert_eq!(entries[1].id, "e2");
+        assert_eq!(entries[1].inner_data, b"\x01\x02");
     }
 
     #[test]
@@ -166,7 +177,7 @@ mod tests {
             format: BlockFormat::Text,
             data: header_data.to_vec(),
         };
-        let entry = make_envelope("e1", BLOCK_FLAG_TEXT, b"x");
+        let entry = make_envelope("e1", b"x");
         let block1 = Block { format: BlockFormat::Binary, data: entry };
         let blocks = vec![header_block, block1];
         let err = parse_embedded_object_stream(&blocks).unwrap_err();

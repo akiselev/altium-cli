@@ -3,9 +3,9 @@ mod binary_io;
 #[allow(dead_code)]
 mod block_stream;
 #[allow(dead_code)]
-mod pcb_binary_stream;
-#[allow(dead_code)]
 mod cfb_document;
+#[cfg(test)]
+mod derive_tests;
 #[allow(dead_code)]
 mod embedded_object;
 #[allow(dead_code)]
@@ -13,13 +13,17 @@ mod param_collection;
 #[allow(dead_code)]
 mod param_value;
 #[allow(dead_code)]
+mod pcb_binary_stream;
+#[allow(dead_code)]
+mod pcb_file_header;
+#[allow(dead_code)]
 mod prefixed_param_stream;
+#[allow(dead_code)]
+mod sch_records;
 #[allow(dead_code)]
 mod tracked_cfb;
 #[allow(dead_code)]
 mod wide_strings_tlv;
-#[allow(dead_code)]
-mod pcb_file_header;
 
 pub mod document;
 pub mod intlib;
@@ -27,6 +31,7 @@ pub mod pcbdoc;
 pub mod pcblib;
 pub mod project;
 pub mod schdoc;
+#[allow(dead_code)]
 pub mod schlib;
 
 pub use document::Document;
@@ -95,6 +100,35 @@ pub enum AltiumFormatError {
     UnknownParams { keys: Vec<String> },
     #[error("Unexpected trailing data: {count} bytes remaining at offset {offset}")]
     UnexpectedTrailingData { offset: usize, count: usize },
+
+    // Context wrapper for chaining location info (e.g. "parsing component 'X': ...")
+    #[error("{context}: {source}")]
+    WithContext {
+        context: String,
+        source: Box<AltiumFormatError>,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, AltiumFormatError>;
+
+/// Extension trait for attaching location context to errors.
+pub(crate) trait ResultExt<T> {
+    fn context(self, msg: &str) -> Result<T>;
+    fn with_context(self, f: impl FnOnce() -> String) -> Result<T>;
+}
+
+impl<T> ResultExt<T> for Result<T> {
+    fn context(self, msg: &str) -> Result<T> {
+        self.map_err(|e| AltiumFormatError::WithContext {
+            context: msg.to_owned(),
+            source: Box::new(e),
+        })
+    }
+
+    fn with_context(self, f: impl FnOnce() -> String) -> Result<T> {
+        self.map_err(|e| AltiumFormatError::WithContext {
+            context: f(),
+            source: Box::new(e),
+        })
+    }
+}

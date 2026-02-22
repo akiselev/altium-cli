@@ -250,11 +250,24 @@ pub const LENGTH: &str = "Length";
 /// Ellipse (RECORD=8)
 pub const RADIUS: &str = "Radius";
 
+/// Fractional sub-unit for Radius (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Arc (RECORD=12), EllipticalArc (RECORD=11), Pie (RECORD=9),
+/// Ellipse (RECORD=8)
+pub const RADIUS_FRAC: &str = "Radius_Frac";
+
 /// Y-axis radius for ellipses.
 ///
 /// **Wire type:** coord (i32)
 /// **Used by:** EllipticalArc (RECORD=11), Ellipse (RECORD=8)
 pub const SECONDARY_RADIUS: &str = "SecondaryRadius";
+
+/// Fractional sub-unit for SecondaryRadius (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** EllipticalArc (RECORD=11), Ellipse (RECORD=8)
+pub const SECONDARY_RADIUS_FRAC: &str = "SecondaryRadius_Frac";
 
 /// Horizontal corner rounding for rounded rectangles.
 ///
@@ -268,6 +281,18 @@ pub const CORNER_X_RADIUS: &str = "CornerXRadius";
 /// **Used by:** RoundRectangle (RECORD=10)
 pub const CORNER_Y_RADIUS: &str = "CornerYRadius";
 
+/// Fractional sub-unit for CornerXRadius (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** RoundRectangle (RECORD=10)
+pub const CORNER_X_RADIUS_FRAC: &str = "CornerXRadius_Frac";
+
+/// Fractional sub-unit for CornerYRadius (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** RoundRectangle (RECORD=10)
+pub const CORNER_Y_RADIUS_FRAC: &str = "CornerYRadius_Frac";
+
 // ---------------------------------------------------------------------------
 // Coordinates
 // ---------------------------------------------------------------------------
@@ -278,11 +303,23 @@ pub const CORNER_Y_RADIUS: &str = "CornerYRadius";
 /// **Used by:** most objects
 pub const LOCATION_X: &str = "Location.X";
 
+/// Fractional sub-unit for Location.X (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** most objects
+pub const LOCATION_X_FRAC: &str = "Location.X_Frac";
+
 /// Origin/anchor Y position.
 ///
 /// **Wire type:** coord (i32)
 /// **Used by:** most objects
 pub const LOCATION_Y: &str = "Location.Y";
+
+/// Fractional sub-unit for Location.Y (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** most objects
+pub const LOCATION_Y_FRAC: &str = "Location.Y_Frac";
 
 /// Opposite corner X position.
 ///
@@ -290,11 +327,23 @@ pub const LOCATION_Y: &str = "Location.Y";
 /// **Used by:** Rectangle, Line, RoundRectangle, Blanket, SchematicBlock
 pub const CORNER_X: &str = "Corner.X";
 
+/// Fractional sub-unit for Corner.X (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Rectangle, Line, RoundRectangle, Blanket, SchematicBlock
+pub const CORNER_X_FRAC: &str = "Corner.X_Frac";
+
 /// Opposite corner Y position.
 ///
 /// **Wire type:** coord (i32)
 /// **Used by:** Rectangle, Line, RoundRectangle, Blanket, SchematicBlock
 pub const CORNER_Y: &str = "Corner.Y";
+
+/// Fractional sub-unit for Corner.Y (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Rectangle, Line, RoundRectangle, Blanket, SchematicBlock
+pub const CORNER_Y_FRAC: &str = "Corner.Y_Frac";
 
 /// Vertex count for overflow vertices (beyond 50).
 ///

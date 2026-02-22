@@ -2,7 +2,10 @@
 //! `FromParamValue`: parse a string value for a named key into `T`.
 //! `ToParamValue`: serialize `T` back to the Altium string representation.
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
-use altium_format_types::{Color, Coord, UniqueId};
+use altium_format_types::{
+    Color, ComponentKind, Coord, LineShape, LineStyle, ParameterReadOnlyState, ParameterType,
+    PenWidth, RotationBy90, TextHorzAnchor, TextJustification, TextVertAnchor, UniqueId,
+};
 
 use crate::{AltiumFormatError, Result};
 
@@ -118,6 +121,45 @@ impl ToParamValue for Color {
         self.raw().to_string()
     }
 }
+
+// Enum types that are stored as decimal integer discriminants in parameter strings.
+// Each enum must implement TryFrom<u8> with Error = InvalidEnumValue.
+macro_rules! impl_enum_param_value {
+    ($($t:ty),+ $(,)?) => {
+        $(
+            impl FromParamValue for $t {
+                fn from_param_value(key: &str, value: &str) -> Result<Self> {
+                    let raw = u8::from_param_value(key, value)?;
+                    Self::try_from(raw).map_err(|e: altium_format_types::InvalidEnumValue| {
+                        AltiumFormatError::InvalidParamValue {
+                            key: key.to_owned(),
+                            detail: e.to_string(),
+                        }
+                    })
+                }
+            }
+
+            impl ToParamValue for $t {
+                fn to_param_value(&self) -> String {
+                    (*self as u8).to_string()
+                }
+            }
+        )+
+    };
+}
+
+impl_enum_param_value!(
+    PenWidth,
+    LineStyle,
+    LineShape,
+    TextJustification,
+    RotationBy90,
+    ComponentKind,
+    ParameterReadOnlyState,
+    ParameterType,
+    TextHorzAnchor,
+    TextVertAnchor,
+);
 
 // UniqueId is stored as an 8-char uppercase alpha string in parameter values.
 impl FromParamValue for UniqueId {

@@ -54,22 +54,6 @@ impl TrackedCfbDocument {
         self.inner.list_entries(normalized)
     }
 
-    /// Explicitly acknowledge a known stream/storage without reading it.
-    /// Use this for entries that are known but not yet implemented (must include
-    /// a TODO comment at call site), known to be irrelevant, or storage nodes
-    /// implicitly consumed by reading their children.
-    pub(crate) fn skip_known(&mut self, path: &str) {
-        self.consumed.insert(path.to_owned());
-    }
-
-    /// Mark multiple entries as consumed at once.
-    /// Convenience for acknowledging a batch of known-but-unimplemented streams.
-    pub(crate) fn skip_known_many(&mut self, paths: &[&str]) {
-        for path in paths {
-            self.consumed.insert((*path).to_owned());
-        }
-    }
-
     // Returns Err(UnconsumedStreams) if any enumerated entry was never read or listed.
     // Call at the end of SchLib::open to enforce the total-consumption invariant.
     pub(crate) fn assert_all_consumed(&self) -> Result<()> {
@@ -177,27 +161,4 @@ mod tests {
             .expect("non-existent optional read must not produce false-positive unconsumed error");
     }
 
-    #[test]
-    fn skip_known_marks_entries_as_consumed() {
-        let path = data_path("BlankSchlibComponent.SchLib");
-        let mut doc = TrackedCfbDocument::open(&path).expect("should open valid SchLib");
-        // List root to discover top-level entries.
-        let (root_storages, root_streams) =
-            doc.list_entries("/").expect("list_entries root must succeed");
-        // Skip all top-level streams.
-        for name in &root_streams {
-            doc.skip_known(&format!("/{name}"));
-        }
-        // For each storage, list children and skip nested streams.
-        for storage_name in &root_storages {
-            let storage_path = format!("/{storage_name}");
-            let (_, nested_streams) =
-                doc.list_entries(&storage_path).expect("list_entries storage must succeed");
-            let nested_paths: Vec<String> =
-                nested_streams.iter().map(|s| format!("{storage_path}/{s}")).collect();
-            let refs: Vec<&str> = nested_paths.iter().map(String::as_str).collect();
-            doc.skip_known_many(&refs);
-        }
-        doc.assert_all_consumed().expect("skip_known entries should count as consumed");
-    }
 }

@@ -374,6 +374,63 @@ pub struct SchFont {
     pub strikeout: bool,
 }
 
+/// Sheet display settings from SchLib FileHeader and SchDoc Sheet (RECORD=31).
+///
+/// These settings control grid configuration, sheet sizing, border/reference zone
+/// display, and editor preferences. All fields are optional because any may be
+/// absent from a given file (Altium uses built-in defaults).
+///
+/// Coord fields combine the integer part and `_Frac` companion into a single
+/// value: `raw = integer * 100_000 + frac`.
+#[derive(Debug, Clone, Default)]
+pub struct SchDisplaySettings {
+    // Grid settings
+    pub snap_grid_on: Option<bool>,
+    pub snap_grid_size: Option<crate::Coord>,
+    pub visible_grid_on: Option<bool>,
+    pub visible_grid_size: Option<crate::Coord>,
+    pub hot_spot_grid_on: Option<bool>,
+    pub hot_spot_grid_size: Option<crate::Coord>,
+
+    // Sheet size
+    pub sheet_style: Option<SheetStyle>,
+    pub use_custom_sheet: Option<bool>,
+    pub custom_x: Option<crate::Coord>,
+    pub custom_y: Option<crate::Coord>,
+
+    // Border and title block
+    pub border_on: Option<bool>,
+    pub title_block_on: Option<bool>,
+    pub document_border_style: Option<SheetBorderStyle>,
+    pub reference_zones_on: Option<bool>,
+    pub reference_zone_style: Option<SheetReferenceZoneStyle>,
+    pub custom_x_zones: Option<i32>,
+    pub custom_y_zones: Option<i32>,
+    pub custom_margin_width: Option<crate::Coord>,
+    pub sheet_number_space_size: Option<i32>,
+
+    // Display options
+    pub workspace_orientation: Option<SheetOrientation>,
+    pub show_hidden_pins: Option<bool>,
+    pub show_template_graphics: Option<bool>,
+    pub always_show_cd: Option<bool>,
+
+    // Template
+    pub template_file_name: Option<String>,
+
+    // Document settings
+    pub display_unit: Option<i32>,
+    pub system_font: Option<i32>,
+    pub use_mbcs: Option<bool>,
+    pub is_boc: Option<bool>,
+
+    // Colors
+    pub area_color: Option<crate::Color>,
+
+    // Version
+    pub file_version_info: Option<String>,
+}
+
 /// Pin electrical type (0-7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
