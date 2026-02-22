@@ -8,6 +8,7 @@
 //! - Nesting level changes separator (`|` at level 0, `` ` `` at level 1)
 //! - Handles `%UTF8%` prefix for Unicode values
 
+use crate::error::AltiumError;
 use encoding_rs::WINDOWS_1252;
 use indexmap::IndexMap;
 use std::fmt;
@@ -113,16 +114,24 @@ impl ParameterValue {
     }
 
     /// Splits the value by the list separator and returns integer items.
-    pub fn as_int_list(&self) -> Vec<i32> {
+    pub fn as_int_list(&self) -> Result<Vec<i32>, AltiumError> {
         self.as_list_impl()
-            .filter_map(|s| s.trim().parse().ok())
+            .map(|s| {
+                s.trim()
+                    .parse()
+                    .map_err(|e| AltiumError::Parse(format!("invalid integer '{}': {}", s.trim(), e)))
+            })
             .collect()
     }
 
     /// Splits the value by the list separator and returns double items.
-    pub fn as_double_list(&self) -> Vec<f64> {
+    pub fn as_double_list(&self) -> Result<Vec<f64>, AltiumError> {
         self.as_list_impl()
-            .filter_map(|s| s.trim().parse().ok())
+            .map(|s| {
+                s.trim()
+                    .parse()
+                    .map_err(|e| AltiumError::Parse(format!("invalid float '{}': {}", s.trim(), e)))
+            })
             .collect()
     }
 
@@ -464,7 +473,7 @@ mod tests {
         let data = "|POINTS=1,2,3,4,5|";
         let params = ParameterCollection::from_string(data);
 
-        let list = params.get("POINTS").unwrap().as_int_list();
+        let list = params.get("POINTS").unwrap().as_int_list().unwrap();
         assert_eq!(list, vec![1, 2, 3, 4, 5]);
     }
 
