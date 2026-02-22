@@ -68,14 +68,45 @@ impl TryFrom<u8> for PcbObjectId {
             24 => Ok(Self::SpareVia),
             25 => Ok(Self::Board),
             26 => Ok(Self::BoardOutline),
-            _ => Err(InvalidEnumValue { type_name: "PcbObjectId", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PcbObjectId",
+                value: v as i64,
+            }),
         }
     }
 }
 
 impl std::fmt::Display for PcbObjectId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Self::NoObject => write!(f, "NoObject"),
+            Self::Arc => write!(f, "Arc"),
+            Self::Pad => write!(f, "Pad"),
+            Self::Via => write!(f, "Via"),
+            Self::Track => write!(f, "Track"),
+            Self::Text => write!(f, "Text"),
+            Self::Fill => write!(f, "Fill"),
+            Self::Connection => write!(f, "Connection"),
+            Self::Net => write!(f, "Net"),
+            Self::Component => write!(f, "Component"),
+            Self::Polygon => write!(f, "Polygon"),
+            Self::Region => write!(f, "Region"),
+            Self::ComponentBody => write!(f, "ComponentBody"),
+            Self::Dimension => write!(f, "Dimension"),
+            Self::Coordinate => write!(f, "Coordinate"),
+            Self::Class => write!(f, "Class"),
+            Self::Rule => write!(f, "Rule"),
+            Self::FromTo => write!(f, "FromTo"),
+            Self::DifferentialPair => write!(f, "DifferentialPair"),
+            Self::Violation => write!(f, "Violation"),
+            Self::Embedded => write!(f, "Embedded"),
+            Self::EmbeddedBoard => write!(f, "EmbeddedBoard"),
+            Self::SplitPlane => write!(f, "SplitPlane"),
+            Self::Trace => write!(f, "Trace"),
+            Self::SpareVia => write!(f, "SpareVia"),
+            Self::Board => write!(f, "Board"),
+            Self::BoardOutline => write!(f, "BoardOutline"),
+        }
     }
 }
 
@@ -260,7 +291,10 @@ impl TryFrom<u8> for V6Layer {
             80 => Ok(Self::GridColor10),
             81 => Ok(Self::PadHoleLayer),
             82 => Ok(Self::ViaHoleLayer),
-            _ => Err(InvalidEnumValue { type_name: "V6Layer", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "V6Layer",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -268,22 +302,46 @@ impl TryFrom<u8> for V6Layer {
 impl V6Layer {
     /// Signal layers: TopLayer (1) through BottomLayer (32).
     pub fn is_signal(self) -> bool {
-        (self as u8) >= 1 && (self as u8) <= 32
+        let b = self as u8;
+        b >= 1 && b <= 32
+    }
+
+    /// Mid signal layers: MidLayer1 (2) through MidLayer30 (31).
+    pub fn is_mid_signal(self) -> bool {
+        let b = self as u8;
+        b >= 2 && b <= 31
     }
 
     /// Internal plane layers 1-16 (bytes 39-54).
     pub fn is_internal_plane(self) -> bool {
-        (self as u8) >= 39 && (self as u8) <= 54
+        let b = self as u8;
+        b >= 39 && b <= 54
     }
 
     /// Mechanical layers 1-16 (bytes 57-72).
     pub fn is_mechanical(self) -> bool {
-        (self as u8) >= 57 && (self as u8) <= 72
+        let b = self as u8;
+        b >= 57 && b <= 72
     }
 
-    /// Copper-carrying layers (signal layers + MultiLayer).
+    /// Copper-carrying layers (signal layers + MultiLayer + InternalPlanes).
     pub fn is_copper(self) -> bool {
-        self.is_signal() || self == V6Layer::MultiLayer
+        self.is_signal() || self == V6Layer::MultiLayer || self.is_internal_plane()
+    }
+
+    /// Overlay (silkscreen) layers.
+    pub fn is_overlay(self) -> bool {
+        self == V6Layer::TopOverlay || self == V6Layer::BottomOverlay
+    }
+
+    /// Solder mask layers.
+    pub fn is_solder_mask(self) -> bool {
+        self == V6Layer::TopSolder || self == V6Layer::BottomSolder
+    }
+
+    /// Paste mask layers.
+    pub fn is_paste_mask(self) -> bool {
+        self == V6Layer::TopPaste || self == V6Layer::BottomPaste
     }
 
     /// Internal plane number (1-16) if this is an internal plane layer.
@@ -397,7 +455,8 @@ impl V6Layer {
 
     /// Reverse lookup from layer name string to V6Layer.
     pub fn from_string_name(name: &str) -> Option<Self> {
-        constants::LAYER_STRINGS.iter()
+        constants::LAYER_STRINGS
+            .iter()
             .position(|&s| s.eq_ignore_ascii_case(name))
             .and_then(|i| V6Layer::try_from(i as u8).ok())
     }
@@ -453,6 +512,11 @@ impl V7Layer {
         } else {
             Err(self.0)
         }
+    }
+
+    /// Create from V6 layer.
+    pub fn from_v6(layer: V6Layer) -> Self {
+        Self(layer as u32)
     }
 }
 
@@ -516,7 +580,10 @@ impl TryFrom<u8> for PadShape {
             8 => Ok(Self::RotatedRect),
             9 => Ok(Self::RoundedRectangular),
             10 => Ok(Self::Custom),
-            _ => Err(InvalidEnumValue { type_name: "PadShape", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PadShape",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -551,7 +618,10 @@ impl TryFrom<u8> for PadShapeSubKind {
             3 => Ok(Self::RoundedRectangle),
             4 => Ok(Self::ChamferedRectangle),
             5 => Ok(Self::Donut),
-            _ => Err(InvalidEnumValue { type_name: "PadShapeSubKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PadShapeSubKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -574,7 +644,10 @@ impl TryFrom<u8> for PadStackMode {
             0 => Ok(Self::Simple),
             1 => Ok(Self::LocalStack),
             2 => Ok(Self::ExternalStack),
-            _ => Err(InvalidEnumValue { type_name: "PadStackMode", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PadStackMode",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -597,7 +670,10 @@ impl TryFrom<u8> for HoleType {
             0 => Ok(Self::Round),
             1 => Ok(Self::Square),
             2 => Ok(Self::Slot),
-            _ => Err(InvalidEnumValue { type_name: "HoleType", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HoleType",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -622,7 +698,10 @@ impl TryFrom<u8> for DrillType {
             1 => Ok(Self::Punched),
             2 => Ok(Self::LaserDrilled),
             3 => Ok(Self::PlasmaDrilled),
-            _ => Err(InvalidEnumValue { type_name: "DrillType", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DrillType",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -647,7 +726,10 @@ impl TryFrom<u8> for DrillLayerPairType {
             1 => Ok(Self::MicroViaDrill),
             2 => Ok(Self::Backdrill),
             3 => Ok(Self::CounterHole),
-            _ => Err(InvalidEnumValue { type_name: "DrillLayerPairType", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DrillLayerPairType",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -670,7 +752,10 @@ impl TryFrom<u8> for TextKind {
             0 => Ok(Self::StrokeFont),
             1 => Ok(Self::TrueTypeFont),
             2 => Ok(Self::Barcode),
-            _ => Err(InvalidEnumValue { type_name: "TextKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "TextKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -695,7 +780,10 @@ impl TryFrom<u8> for BarcodeKind {
             1 => Ok(Self::Code128),
             2 => Ok(Self::QrCode),
             3 => Ok(Self::DataMatrix),
-            _ => Err(InvalidEnumValue { type_name: "BarcodeKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "BarcodeKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -716,7 +804,10 @@ impl TryFrom<u8> for BarcodeRenderMode {
         match v {
             0 => Ok(Self::ByMinWidth),
             1 => Ok(Self::ByFullWidth),
-            _ => Err(InvalidEnumValue { type_name: "BarcodeRenderMode", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "BarcodeRenderMode",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -745,7 +836,10 @@ impl TryFrom<u8> for PolyHatchStyle {
             3 => Ok(Self::HorizontalHatch),
             4 => Ok(Self::NoHatch),
             5 => Ok(Self::Solid),
-            _ => Err(InvalidEnumValue { type_name: "PolyHatchStyle", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PolyHatchStyle",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -768,7 +862,10 @@ impl TryFrom<u8> for PolygonType {
             0 => Ok(Self::SignalLayer),
             1 => Ok(Self::SplitPlane),
             2 => Ok(Self::CoverlayOutline),
-            _ => Err(InvalidEnumValue { type_name: "PolygonType", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PolygonType",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -795,7 +892,10 @@ impl TryFrom<u8> for RegionKind {
             2 => Ok(Self::Named),
             3 => Ok(Self::BoardCutout),
             4 => Ok(Self::Cavity),
-            _ => Err(InvalidEnumValue { type_name: "RegionKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "RegionKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -818,7 +918,10 @@ impl TryFrom<u8> for PlaneConnectionStyle {
             0 => Ok(Self::NoConnect),
             1 => Ok(Self::Relief),
             2 => Ok(Self::Direct),
-            _ => Err(InvalidEnumValue { type_name: "PlaneConnectionStyle", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PlaneConnectionStyle",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -831,23 +934,71 @@ impl TryFrom<u8> for PlaneConnectionStyle {
 #[repr(u8)]
 pub enum MaskExpansionMode {
     #[default]
-    NoOverride = 0,
-    Override = 1,
-    TentingTop = 2,
-    TentingBottom = 3,
-    TentingBoth = 4,
+    NoMask = 0,
+    Rule = 1,
+    Manual = 2,
 }
 
 impl TryFrom<u8> for MaskExpansionMode {
     type Error = InvalidEnumValue;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         match v {
-            0 => Ok(Self::NoOverride),
-            1 => Ok(Self::Override),
-            2 => Ok(Self::TentingTop),
-            3 => Ok(Self::TentingBottom),
-            4 => Ok(Self::TentingBoth),
-            _ => Err(InvalidEnumValue { type_name: "MaskExpansionMode", value: v as i64 }),
+            0 => Ok(Self::NoMask),
+            1 => Ok(Self::Rule),
+            2 => Ok(Self::Manual),
+            _ => Err(InvalidEnumValue {
+                type_name: "MaskExpansionMode",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for MaskExpansionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoMask => write!(f, "NoMask"),
+            Self::Rule => write!(f, "Rule"),
+            Self::Manual => write!(f, "Manual"),
+        }
+    }
+}
+
+/// Tenting mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum TentingMode {
+    #[default]
+    None = 0,
+    Top = 1,
+    Bottom = 2,
+    Both = 3,
+}
+
+impl TryFrom<u8> for TentingMode {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Top),
+            2 => Ok(Self::Bottom),
+            3 => Ok(Self::Both),
+            _ => Err(InvalidEnumValue {
+                type_name: "TentingMode",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for TentingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Top => write!(f, "Top"),
+            Self::Bottom => write!(f, "Bottom"),
+            Self::Both => write!(f, "Both"),
         }
     }
 }
@@ -886,7 +1037,10 @@ impl TryFrom<u8> for DimensionKind {
             8 => Ok(Self::Original),
             9 => Ok(Self::LinearDiameter),
             10 => Ok(Self::RadialDiameter),
-            _ => Err(InvalidEnumValue { type_name: "DimensionKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DimensionKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -942,7 +1096,10 @@ impl TryFrom<u8> for PcbFileFormatVersion {
             14 => Ok(Self::BinaryV6CM),
             15 => Ok(Self::BinaryV6PCBWorks),
             16 => Ok(Self::PadViaLibraryV6),
-            _ => Err(InvalidEnumValue { type_name: "PcbFileFormatVersion", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PcbFileFormatVersion",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -963,7 +1120,10 @@ impl TryFrom<u8> for BoardSide {
         match v {
             0 => Ok(Self::Top),
             1 => Ok(Self::Bottom),
-            _ => Err(InvalidEnumValue { type_name: "BoardSide", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "BoardSide",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -986,7 +1146,10 @@ impl TryFrom<u8> for CornerStyle {
             0 => Ok(Self::Degree90),
             1 => Ok(Self::Degree45),
             2 => Ok(Self::Round),
-            _ => Err(InvalidEnumValue { type_name: "CornerStyle", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "CornerStyle",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1011,12 +1174,15 @@ impl TryFrom<u8> for DielectricType {
             1 => Ok(Self::Core),
             2 => Ok(Self::PrePreg),
             3 => Ok(Self::SurfaceMaterial),
-            _ => Err(InvalidEnumValue { type_name: "DielectricType", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DielectricType",
+                value: v as i64,
+            }),
         }
     }
 }
 
-/// Design rule kind. From TRuleKind in altium-types.md.
+/// Design rule kind. From TRuleKind in altium-types.md and pcb-dotnet-model.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1024,8 +1190,8 @@ pub enum RuleKind {
     #[default]
     Clearance = 0,
     ParallelSegment = 1,
-    MaxMinWidth = 2,
-    MaxMinLength = 3,
+    Width = 2,
+    Length = 3,
     MatchedLengths = 4,
     DaisyChainStubLength = 5,
     PowerPlaneConnectStyle = 6,
@@ -1065,8 +1231,8 @@ pub enum RuleKind {
     MaxSlopeFallingEdge = 40,
     SupplyNets = 41,
     MaxMinHoleSize = 42,
-    TestPointStyle = 43,
-    TestPointUsage = 44,
+    FabricationTestpointStyle = 43,
+    FabricationTestpointUsage = 44,
     UnconnectedPin = 45,
     SmdToPlane = 46,
     SmdNeckDown = 47,
@@ -1074,6 +1240,24 @@ pub enum RuleKind {
     FanoutControl = 49,
     MaxMinHeight = 50,
     DifferentialPairsRouting = 51,
+    HoleToHoleClearance = 52,
+    MinimumSolderMaskSliver = 53,
+    SilkToSolderMaskClearance = 54,
+    SilkToSilkClearance = 55,
+    NetAntennae = 56,
+    AssyTestPointStyle = 57,
+    AssyTestPointUsage = 58,
+    SilkToBoardRegionClearance = 59,
+    SmdEntry = 60,
+    None = 61,
+    UnpouredPolygon = 62,
+    BoardOutlineClearance = 63,
+    BackDrilling = 64,
+    Creepage = 65,
+    ReturnPath = 66,
+    RoutingNeckDown = 67,
+    WireBonding = 68,
+    ZAxisClearance = 69,
 }
 
 impl TryFrom<u8> for RuleKind {
@@ -1082,8 +1266,8 @@ impl TryFrom<u8> for RuleKind {
         match v {
             0 => Ok(Self::Clearance),
             1 => Ok(Self::ParallelSegment),
-            2 => Ok(Self::MaxMinWidth),
-            3 => Ok(Self::MaxMinLength),
+            2 => Ok(Self::Width),
+            3 => Ok(Self::Length),
             4 => Ok(Self::MatchedLengths),
             5 => Ok(Self::DaisyChainStubLength),
             6 => Ok(Self::PowerPlaneConnectStyle),
@@ -1123,8 +1307,8 @@ impl TryFrom<u8> for RuleKind {
             40 => Ok(Self::MaxSlopeFallingEdge),
             41 => Ok(Self::SupplyNets),
             42 => Ok(Self::MaxMinHoleSize),
-            43 => Ok(Self::TestPointStyle),
-            44 => Ok(Self::TestPointUsage),
+            43 => Ok(Self::FabricationTestpointStyle),
+            44 => Ok(Self::FabricationTestpointUsage),
             45 => Ok(Self::UnconnectedPin),
             46 => Ok(Self::SmdToPlane),
             47 => Ok(Self::SmdNeckDown),
@@ -1132,7 +1316,105 @@ impl TryFrom<u8> for RuleKind {
             49 => Ok(Self::FanoutControl),
             50 => Ok(Self::MaxMinHeight),
             51 => Ok(Self::DifferentialPairsRouting),
-            _ => Err(InvalidEnumValue { type_name: "RuleKind", value: v as i64 }),
+            52 => Ok(Self::HoleToHoleClearance),
+            53 => Ok(Self::MinimumSolderMaskSliver),
+            54 => Ok(Self::SilkToSolderMaskClearance),
+            55 => Ok(Self::SilkToSilkClearance),
+            56 => Ok(Self::NetAntennae),
+            57 => Ok(Self::AssyTestPointStyle),
+            58 => Ok(Self::AssyTestPointUsage),
+            59 => Ok(Self::SilkToBoardRegionClearance),
+            60 => Ok(Self::SmdEntry),
+            61 => Ok(Self::None),
+            62 => Ok(Self::UnpouredPolygon),
+            63 => Ok(Self::BoardOutlineClearance),
+            64 => Ok(Self::BackDrilling),
+            65 => Ok(Self::Creepage),
+            66 => Ok(Self::ReturnPath),
+            67 => Ok(Self::RoutingNeckDown),
+            68 => Ok(Self::WireBonding),
+            69 => Ok(Self::ZAxisClearance),
+            _ => Err(InvalidEnumValue {
+                type_name: "RuleKind",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for RuleKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Clearance => write!(f, "Clearance"),
+            Self::ParallelSegment => write!(f, "ParallelSegment"),
+            Self::Width => write!(f, "Width"),
+            Self::Length => write!(f, "Length"),
+            Self::MatchedLengths => write!(f, "MatchedLengths"),
+            Self::DaisyChainStubLength => write!(f, "DaisyChainStubLength"),
+            Self::PowerPlaneConnectStyle => write!(f, "PowerPlaneConnectStyle"),
+            Self::RoutingTopology => write!(f, "RoutingTopology"),
+            Self::RoutingPriority => write!(f, "RoutingPriority"),
+            Self::RoutingLayers => write!(f, "RoutingLayers"),
+            Self::RoutingCornerStyle => write!(f, "RoutingCornerStyle"),
+            Self::RoutingViaStyle => write!(f, "RoutingViaStyle"),
+            Self::PowerPlaneClearance => write!(f, "PowerPlaneClearance"),
+            Self::SolderMaskExpansion => write!(f, "SolderMaskExpansion"),
+            Self::PasteMaskExpansion => write!(f, "PasteMaskExpansion"),
+            Self::ShortCircuit => write!(f, "ShortCircuit"),
+            Self::BrokenNets => write!(f, "BrokenNets"),
+            Self::ViasUnderSmd => write!(f, "ViasUnderSmd"),
+            Self::MaximumViaCount => write!(f, "MaximumViaCount"),
+            Self::MinimumAnnularRing => write!(f, "MinimumAnnularRing"),
+            Self::PolygonConnectStyle => write!(f, "PolygonConnectStyle"),
+            Self::AcuteAngle => write!(f, "AcuteAngle"),
+            Self::ConfinementConstraint => write!(f, "ConfinementConstraint"),
+            Self::SmdToCorner => write!(f, "SmdToCorner"),
+            Self::ComponentClearance => write!(f, "ComponentClearance"),
+            Self::ComponentRotations => write!(f, "ComponentRotations"),
+            Self::PermittedLayers => write!(f, "PermittedLayers"),
+            Self::NetsToIgnore => write!(f, "NetsToIgnore"),
+            Self::SignalStimulus => write!(f, "SignalStimulus"),
+            Self::OvershootFallingEdge => write!(f, "OvershootFallingEdge"),
+            Self::OvershootRisingEdge => write!(f, "OvershootRisingEdge"),
+            Self::UndershootFallingEdge => write!(f, "UndershootFallingEdge"),
+            Self::UndershootRisingEdge => write!(f, "UndershootRisingEdge"),
+            Self::MaxMinImpedance => write!(f, "MaxMinImpedance"),
+            Self::SignalTopValue => write!(f, "SignalTopValue"),
+            Self::SignalBaseValue => write!(f, "SignalBaseValue"),
+            Self::FlightTimeRisingEdge => write!(f, "FlightTimeRisingEdge"),
+            Self::FlightTimeFallingEdge => write!(f, "FlightTimeFallingEdge"),
+            Self::LayerStack => write!(f, "LayerStack"),
+            Self::MaxSlopeRisingEdge => write!(f, "MaxSlopeRisingEdge"),
+            Self::MaxSlopeFallingEdge => write!(f, "MaxSlopeFallingEdge"),
+            Self::SupplyNets => write!(f, "SupplyNets"),
+            Self::MaxMinHoleSize => write!(f, "MaxMinHoleSize"),
+            Self::FabricationTestpointStyle => write!(f, "FabricationTestpointStyle"),
+            Self::FabricationTestpointUsage => write!(f, "FabricationTestpointUsage"),
+            Self::UnconnectedPin => write!(f, "UnconnectedPin"),
+            Self::SmdToPlane => write!(f, "SmdToPlane"),
+            Self::SmdNeckDown => write!(f, "SmdNeckDown"),
+            Self::LayerPair => write!(f, "LayerPair"),
+            Self::FanoutControl => write!(f, "FanoutControl"),
+            Self::MaxMinHeight => write!(f, "MaxMinHeight"),
+            Self::DifferentialPairsRouting => write!(f, "DifferentialPairsRouting"),
+            Self::HoleToHoleClearance => write!(f, "HoleToHoleClearance"),
+            Self::MinimumSolderMaskSliver => write!(f, "MinimumSolderMaskSliver"),
+            Self::SilkToSolderMaskClearance => write!(f, "SilkToSolderMaskClearance"),
+            Self::SilkToSilkClearance => write!(f, "SilkToSilkClearance"),
+            Self::NetAntennae => write!(f, "NetAntennae"),
+            Self::AssyTestPointStyle => write!(f, "AssyTestPointStyle"),
+            Self::AssyTestPointUsage => write!(f, "AssyTestPointUsage"),
+            Self::SilkToBoardRegionClearance => write!(f, "SilkToBoardRegionClearance"),
+            Self::SmdEntry => write!(f, "SmdEntry"),
+            Self::None => write!(f, "None"),
+            Self::UnpouredPolygon => write!(f, "UnpouredPolygon"),
+            Self::BoardOutlineClearance => write!(f, "BoardOutlineClearance"),
+            Self::BackDrilling => write!(f, "BackDrilling"),
+            Self::Creepage => write!(f, "Creepage"),
+            Self::ReturnPath => write!(f, "ReturnPath"),
+            Self::RoutingNeckDown => write!(f, "RoutingNeckDown"),
+            Self::WireBonding => write!(f, "WireBonding"),
+            Self::ZAxisClearance => write!(f, "ZAxisClearance"),
         }
     }
 }
@@ -1163,7 +1445,10 @@ impl TryFrom<u8> for DimensionUnit {
             4 => Ok(Self::Degrees),
             5 => Ok(Self::Radians),
             6 => Ok(Self::Automatic),
-            _ => Err(InvalidEnumValue { type_name: "DimensionUnit", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DimensionUnit",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1206,7 +1491,10 @@ impl TryFrom<u8> for DimensionTextPosition {
             7 => Ok(Self::InsideLeft),
             8 => Ok(Self::UniDirectional),
             9 => Ok(Self::Manual),
-            _ => Err(InvalidEnumValue { type_name: "DimensionTextPosition", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DimensionTextPosition",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1233,7 +1521,10 @@ impl TryFrom<u8> for DimensionArrowPosition {
         match v {
             0 => Ok(Self::Inside),
             1 => Ok(Self::Outside),
-            _ => Err(InvalidEnumValue { type_name: "DimensionArrowPosition", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "DimensionArrowPosition",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1274,7 +1565,10 @@ impl TryFrom<u8> for ClassMemberKind {
             6 => Ok(Self::DifferentialPair),
             7 => Ok(Self::Polygon),
             8 => Ok(Self::SplitPlane),
-            _ => Err(InvalidEnumValue { type_name: "ClassMemberKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ClassMemberKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1301,7 +1595,10 @@ impl TryFrom<u8> for PolySegmentType {
         match v {
             0 => Ok(Self::Line),
             1 => Ok(Self::Arc),
-            _ => Err(InvalidEnumValue { type_name: "PolySegmentType", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PolySegmentType",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1330,7 +1627,10 @@ impl TryFrom<u8> for PolygonRepourMode {
             0 => Ok(Self::Never),
             1 => Ok(Self::Threshold),
             2 => Ok(Self::Always),
-            _ => Err(InvalidEnumValue { type_name: "PolygonRepourMode", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PolygonRepourMode",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1357,7 +1657,10 @@ impl TryFrom<u8> for PolygonReliefAngle {
         match v {
             0 => Ok(Self::Angle45),
             1 => Ok(Self::Angle90),
-            _ => Err(InvalidEnumValue { type_name: "PolygonReliefAngle", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PolygonReliefAngle",
+                value: v as i64,
+            }),
         }
     }
 }

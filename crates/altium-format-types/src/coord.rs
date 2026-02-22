@@ -29,8 +29,13 @@ impl Coord {
         Self(mils.checked_mul(10_000).expect("Coord::from_mils overflow"))
     }
 
+    pub fn from_mils_f64(mils: f64) -> Self {
+        Self((mils * 10_000.0).round() as i32)
+    }
+
     pub fn from_mms(mm: f64) -> Self {
-        Self((mm * 393_700.787_401_574_8) as i32)
+        // Altium uses 393701 internal units per mm.
+        Self((mm * 393_701.0).round() as i32)
     }
 
     pub fn to_mils(self) -> f64 {

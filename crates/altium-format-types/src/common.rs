@@ -59,6 +59,17 @@ pub enum RotationBy90 {
     Rotate270 = 3,
 }
 
+impl RotationBy90 {
+    pub fn to_degrees(self) -> i32 {
+        match self {
+            Self::Rotate0 => 0,
+            Self::Rotate90 => 90,
+            Self::Rotate180 => 180,
+            Self::Rotate270 => 270,
+        }
+    }
+}
+
 impl TryFrom<u8> for RotationBy90 {
     type Error = InvalidEnumValue;
     fn try_from(v: u8) -> Result<Self, Self::Error> {

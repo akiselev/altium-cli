@@ -102,6 +102,8 @@ pub enum SchRecordType {
     HighLevelCodeEntry = 221,
     Blanket = 225,
     Hyperlink = 226,
+    HighLevelCodeName = 222,
+    HighLevelCodeFileName = 223,
     RichTextDocument = 240,
     RtfLink = 241,
 }
@@ -196,6 +198,8 @@ impl TryFrom<i32> for SchRecordType {
             218 => Ok(Self::SignalHarness),
             220 => Ok(Self::HighLevelCodeSymbol),
             221 => Ok(Self::HighLevelCodeEntry),
+            222 => Ok(Self::HighLevelCodeName),
+            223 => Ok(Self::HighLevelCodeFileName),
             225 => Ok(Self::Blanket),
             226 => Ok(Self::Hyperlink),
             240 => Ok(Self::RichTextDocument),
@@ -207,8 +211,113 @@ impl TryFrom<i32> for SchRecordType {
 
 impl std::fmt::Display for SchRecordType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Self::Component => write!(f, "Component"),
+            Self::Pin => write!(f, "Pin"),
+            Self::Symbol => write!(f, "Symbol"),
+            Self::Label => write!(f, "Label"),
+            Self::Bezier => write!(f, "Bezier"),
+            Self::Polyline => write!(f, "Polyline"),
+            Self::Polygon => write!(f, "Polygon"),
+            Self::Ellipse => write!(f, "Ellipse"),
+            Self::Pie => write!(f, "Pie"),
+            Self::RoundRectangle => write!(f, "RoundRectangle"),
+            Self::EllipticalArc => write!(f, "EllipticalArc"),
+            Self::Arc => write!(f, "Arc"),
+            Self::Line => write!(f, "Line"),
+            Self::Rectangle => write!(f, "Rectangle"),
+            Self::SheetSymbol => write!(f, "SheetSymbol"),
+            Self::SheetEntry => write!(f, "SheetEntry"),
+            Self::PowerObject => write!(f, "PowerObject"),
+            Self::Port => write!(f, "Port"),
+            Self::NoErc => write!(f, "NoERC"),
+            Self::ErrorMarker => write!(f, "ErrorMarker"),
+            Self::NetLabel => write!(f, "NetLabel"),
+            Self::Bus => write!(f, "Bus"),
+            Self::Wire => write!(f, "Wire"),
+            Self::TextFrame => write!(f, "TextFrame"),
+            Self::Junction => write!(f, "Junction"),
+            Self::Image => write!(f, "Image"),
+            Self::Sheet => write!(f, "Sheet"),
+            Self::SheetName => write!(f, "SheetName"),
+            Self::SheetFileName => write!(f, "SheetFileName"),
+            Self::Designator => write!(f, "Designator"),
+            Self::BusEntry => write!(f, "BusEntry"),
+            Self::Template => write!(f, "Template"),
+            Self::TaskHolder => write!(f, "TaskHolder"),
+            Self::Parameter => write!(f, "Parameter"),
+            Self::ParameterSet => write!(f, "ParameterSet"),
+            Self::ImplementationList => write!(f, "ImplementationList"),
+            Self::Implementation => write!(f, "Implementation"),
+            Self::ImplementationMap => write!(f, "ImplementationMap"),
+            Self::MapDefiner => write!(f, "MapDefiner"),
+            Self::ParameterList => write!(f, "ParameterList"),
+            Self::HarnessWiringDiagram => write!(f, "HarnessWiringDiagram"),
+            Self::HarnessLayoutDrawing => write!(f, "HarnessLayoutDrawing"),
+            Self::HarnessComponent => write!(f, "HarnessComponent"),
+            Self::HarnessWire => write!(f, "HarnessWire"),
+            Self::HarnessSplice => write!(f, "HarnessSplice"),
+            Self::HarnessLayoutLabel => write!(f, "HarnessLayoutLabel"),
+            Self::HarnessLayoutConnectionPoint => write!(f, "HarnessLayoutConnectionPoint"),
+            Self::HarnessBundle => write!(f, "HarnessBundle"),
+            Self::HarnessLogicalSignal => write!(f, "HarnessLogicalSignal"),
+            Self::HarnessPin => write!(f, "HarnessPin"),
+            Self::HarnessWireLabel => write!(f, "HarnessWireLabel"),
+            Self::HarnessWireData => write!(f, "HarnessWireData"),
+            Self::HarnessSpliceData => write!(f, "HarnessSpliceData"),
+            Self::HarnessShield => write!(f, "HarnessShield"),
+            Self::HarnessTwist => write!(f, "HarnessTwist"),
+            Self::HarnessNoConnect => write!(f, "HarnessNoConnect"),
+            Self::HarnessNoConnectData => write!(f, "HarnessNoConnectData"),
+            Self::HarnessShieldData => write!(f, "HarnessShieldData"),
+            Self::HarnessTwistData => write!(f, "HarnessTwistData"),
+            Self::HarnessCable => write!(f, "HarnessCable"),
+            Self::HarnessCableData => write!(f, "HarnessCableData"),
+            Self::HarnessAssociatedParts => write!(f, "HarnessAssociatedParts"),
+            Self::LineView => write!(f, "LineView"),
+            Self::HarnessLibrary => write!(f, "HarnessLibrary"),
+            Self::HarnessCovering => write!(f, "HarnessCovering"),
+            Self::ObjectDefinition => write!(f, "ObjectDefinition"),
+            Self::HarnessWireBreak => write!(f, "HarnessWireBreak"),
+            Self::AssociatedObjects => write!(f, "AssociatedObjects"),
+            Self::ElectronicsSystemDesignDocument => write!(f, "ElectronicsSystemDesignDocument"),
+            Self::FunctionalBlock => write!(f, "FunctionalBlock"),
+            Self::FunctionalConnectionLine => write!(f, "FunctionalConnectionLine"),
+            Self::FunctionalTextFrame => write!(f, "FunctionalTextFrame"),
+            Self::SchematicBlock => write!(f, "SchematicBlock"),
+            Self::ReuseSheetSymbol => write!(f, "ReuseSheetSymbol"),
+            Self::ReuseBlockImplementationInfo => write!(f, "ReuseBlockImplementationInfo"),
+            Self::SchLib => write!(f, "SchLib"),
+            Self::Note => write!(f, "Note"),
+            Self::Probe => write!(f, "Probe"),
+            Self::CompileMask => write!(f, "CompileMask"),
+            Self::HarnessConnector => write!(f, "HarnessConnector"),
+            Self::HarnessEntry => write!(f, "HarnessEntry"),
+            Self::HarnessConnectorType => write!(f, "HarnessConnectorType"),
+            Self::SignalHarness => write!(f, "SignalHarness"),
+            Self::HighLevelCodeSymbol => write!(f, "HighLevelCodeSymbol"),
+            Self::HighLevelCodeEntry => write!(f, "HighLevelCodeEntry"),
+            Self::HighLevelCodeName => write!(f, "HighLevelCodeName"),
+            Self::HighLevelCodeFileName => write!(f, "HighLevelCodeFileName"),
+            Self::Blanket => write!(f, "Blanket"),
+            Self::Hyperlink => write!(f, "Hyperlink"),
+            Self::RichTextDocument => write!(f, "RichTextDocument"),
+            Self::RtfLink => write!(f, "RtfLink"),
+        }
     }
+}
+
+/// Font definition from SchSheet RECORD=31.
+#[derive(Debug, Clone)]
+pub struct SchFont {
+    pub id: i32,            // 1-based index
+    pub name: String,       // e.g., "Times New Roman"
+    pub size: i32,          // point size
+    pub rotation: i32,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikeout: bool,
 }
 
 /// Pin electrical type (0-7).
@@ -250,6 +359,9 @@ impl std::fmt::Display for PinElectricalType {
         write!(f, "{:?}", self)
     }
 }
+
+/// IEEE pin symbol types (0-36).
+pub type PinSymbol = IeeeSymbol;
 
 /// IEEE pin symbol types (0-36).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

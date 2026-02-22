@@ -34,6 +34,10 @@ impl Color {
     pub fn b(self) -> u8 {
         ((self.0 >> 16) & 0xFF) as u8
     }
+
+    pub fn to_rgb_array(self) -> [u8; 3] {
+        [self.r(), self.g(), self.b()]
+    }
 }
 
 impl fmt::Display for Color {
