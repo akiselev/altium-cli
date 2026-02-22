@@ -34,4 +34,10 @@ pub use pcb::{
     BoardSide, CornerStyle, DielectricType, DimensionKind, PcbFileFormatVersion, PcbFlags,
     PcbObjectId, PadShape, PadShapeSubKind, PadStackMode, RuleKind, V6Layer, V7Layer,
 };
-pub use sch::{PinElectricalType, SchRecordType};
+pub use sch::{
+    ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,
+    HarnessConnectionPointStyle, HarnessLengthUnit, HarnessShieldStyle, HarnessSpliceStyle,
+    HarnessWireLengthType, LeftRightSide, NoErcSymbol, ParameterReadOnlyState, ParameterSetStyle,
+    ParameterType, PinElectricalType, SchRecordType, SheetReferenceZoneStyle, SheetSymbolType,
+    TextHorzAnchor, TextVertAnchor, VisibleGridStyle,
+};

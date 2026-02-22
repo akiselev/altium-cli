@@ -22,3 +22,4 @@ pub mod locking;
 pub mod vault;
 pub mod harness;
 pub mod reuse;
+pub mod parsing;

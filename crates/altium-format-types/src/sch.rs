@@ -31,8 +31,12 @@ pub enum SchRecordType {
     SheetEntry = 16,
     PowerObject = 17,
     Port = 18,
+    SimProbe = 19,
+    SimVector = 20,
+    SimStimulus = 21,
     NoErc = 22,
     ErrorMarker = 23,
+    LayoutDirective = 24,
     NetLabel = 25,
     Bus = 26,
     Wire = 27,
@@ -43,10 +47,14 @@ pub enum SchRecordType {
     SheetName = 32,
     SheetFileName = 33,
     Designator = 34,
+    PartType = 35,
+    PartDescription = 36,
     BusEntry = 37,
+    SheetPartFileName = 38,
     Template = 39,
     TaskHolder = 40,
     Parameter = 41,
+    SchComponent = 42,
     ParameterSet = 43,
     ImplementationList = 44,
     Implementation = 45,
@@ -94,18 +102,28 @@ pub enum SchRecordType {
     Note = 209,
     Probe = 210,
     CompileMask = 211,
+    OpenBusComponent = 212,
+    OpenBusLink = 213,
+    OpenBusDesignator = 214,
     HarnessConnector = 215,
     HarnessEntry = 216,
     HarnessConnectorType = 217,
     SignalHarness = 218,
+    OpenBusPort = 219,
     HighLevelCodeSymbol = 220,
     HighLevelCodeEntry = 221,
-    Blanket = 225,
-    Hyperlink = 226,
     HighLevelCodeName = 222,
     HighLevelCodeFileName = 223,
+    OpenBusPinGroup = 224,
+    Blanket = 225,
+    Hyperlink = 226,
+    PinDesignator = 230,
+    PinName = 231,
     RichTextDocument = 240,
     RtfLink = 241,
+    FSMState = 242,
+    FSMTransition = 243,
+    FSMNote = 244,
 }
 
 impl TryFrom<i32> for SchRecordType {
@@ -131,8 +149,12 @@ impl TryFrom<i32> for SchRecordType {
             16 => Ok(Self::SheetEntry),
             17 => Ok(Self::PowerObject),
             18 => Ok(Self::Port),
+            19 => Ok(Self::SimProbe),
+            20 => Ok(Self::SimVector),
+            21 => Ok(Self::SimStimulus),
             22 => Ok(Self::NoErc),
             23 => Ok(Self::ErrorMarker),
+            24 => Ok(Self::LayoutDirective),
             25 => Ok(Self::NetLabel),
             26 => Ok(Self::Bus),
             27 => Ok(Self::Wire),
@@ -143,10 +165,14 @@ impl TryFrom<i32> for SchRecordType {
             32 => Ok(Self::SheetName),
             33 => Ok(Self::SheetFileName),
             34 => Ok(Self::Designator),
+            35 => Ok(Self::PartType),
+            36 => Ok(Self::PartDescription),
             37 => Ok(Self::BusEntry),
+            38 => Ok(Self::SheetPartFileName),
             39 => Ok(Self::Template),
             40 => Ok(Self::TaskHolder),
             41 => Ok(Self::Parameter),
+            42 => Ok(Self::SchComponent),
             43 => Ok(Self::ParameterSet),
             44 => Ok(Self::ImplementationList),
             45 => Ok(Self::Implementation),
@@ -192,18 +218,28 @@ impl TryFrom<i32> for SchRecordType {
             209 => Ok(Self::Note),
             210 => Ok(Self::Probe),
             211 => Ok(Self::CompileMask),
+            212 => Ok(Self::OpenBusComponent),
+            213 => Ok(Self::OpenBusLink),
+            214 => Ok(Self::OpenBusDesignator),
             215 => Ok(Self::HarnessConnector),
             216 => Ok(Self::HarnessEntry),
             217 => Ok(Self::HarnessConnectorType),
             218 => Ok(Self::SignalHarness),
+            219 => Ok(Self::OpenBusPort),
             220 => Ok(Self::HighLevelCodeSymbol),
             221 => Ok(Self::HighLevelCodeEntry),
             222 => Ok(Self::HighLevelCodeName),
             223 => Ok(Self::HighLevelCodeFileName),
+            224 => Ok(Self::OpenBusPinGroup),
             225 => Ok(Self::Blanket),
             226 => Ok(Self::Hyperlink),
+            230 => Ok(Self::PinDesignator),
+            231 => Ok(Self::PinName),
             240 => Ok(Self::RichTextDocument),
             241 => Ok(Self::RtfLink),
+            242 => Ok(Self::FSMState),
+            243 => Ok(Self::FSMTransition),
+            244 => Ok(Self::FSMNote),
             _ => Err(InvalidEnumValue { type_name: "SchRecordType", value: value as i64 }),
         }
     }
@@ -230,8 +266,12 @@ impl std::fmt::Display for SchRecordType {
             Self::SheetEntry => write!(f, "SheetEntry"),
             Self::PowerObject => write!(f, "PowerObject"),
             Self::Port => write!(f, "Port"),
+            Self::SimProbe => write!(f, "SimProbe"),
+            Self::SimVector => write!(f, "SimVector"),
+            Self::SimStimulus => write!(f, "SimStimulus"),
             Self::NoErc => write!(f, "NoERC"),
             Self::ErrorMarker => write!(f, "ErrorMarker"),
+            Self::LayoutDirective => write!(f, "LayoutDirective"),
             Self::NetLabel => write!(f, "NetLabel"),
             Self::Bus => write!(f, "Bus"),
             Self::Wire => write!(f, "Wire"),
@@ -242,10 +282,14 @@ impl std::fmt::Display for SchRecordType {
             Self::SheetName => write!(f, "SheetName"),
             Self::SheetFileName => write!(f, "SheetFileName"),
             Self::Designator => write!(f, "Designator"),
+            Self::PartType => write!(f, "PartType"),
+            Self::PartDescription => write!(f, "PartDescription"),
             Self::BusEntry => write!(f, "BusEntry"),
+            Self::SheetPartFileName => write!(f, "SheetPartFileName"),
             Self::Template => write!(f, "Template"),
             Self::TaskHolder => write!(f, "TaskHolder"),
             Self::Parameter => write!(f, "Parameter"),
+            Self::SchComponent => write!(f, "SchComponent"),
             Self::ParameterSet => write!(f, "ParameterSet"),
             Self::ImplementationList => write!(f, "ImplementationList"),
             Self::Implementation => write!(f, "Implementation"),
@@ -291,18 +335,28 @@ impl std::fmt::Display for SchRecordType {
             Self::Note => write!(f, "Note"),
             Self::Probe => write!(f, "Probe"),
             Self::CompileMask => write!(f, "CompileMask"),
+            Self::OpenBusComponent => write!(f, "OpenBusComponent"),
+            Self::OpenBusLink => write!(f, "OpenBusLink"),
+            Self::OpenBusDesignator => write!(f, "OpenBusDesignator"),
             Self::HarnessConnector => write!(f, "HarnessConnector"),
             Self::HarnessEntry => write!(f, "HarnessEntry"),
             Self::HarnessConnectorType => write!(f, "HarnessConnectorType"),
             Self::SignalHarness => write!(f, "SignalHarness"),
+            Self::OpenBusPort => write!(f, "OpenBusPort"),
             Self::HighLevelCodeSymbol => write!(f, "HighLevelCodeSymbol"),
             Self::HighLevelCodeEntry => write!(f, "HighLevelCodeEntry"),
             Self::HighLevelCodeName => write!(f, "HighLevelCodeName"),
             Self::HighLevelCodeFileName => write!(f, "HighLevelCodeFileName"),
+            Self::OpenBusPinGroup => write!(f, "OpenBusPinGroup"),
             Self::Blanket => write!(f, "Blanket"),
             Self::Hyperlink => write!(f, "Hyperlink"),
+            Self::PinDesignator => write!(f, "PinDesignator"),
+            Self::PinName => write!(f, "PinName"),
             Self::RichTextDocument => write!(f, "RichTextDocument"),
             Self::RtfLink => write!(f, "RtfLink"),
+            Self::FSMState => write!(f, "FSMState"),
+            Self::FSMTransition => write!(f, "FSMTransition"),
+            Self::FSMNote => write!(f, "FSMNote"),
         }
     }
 }
@@ -805,6 +859,531 @@ impl TryFrom<u8> for SheetBorderStyle {
             0 => Ok(Self::Standard),
             1 => Ok(Self::Ansi),
             _ => Err(InvalidEnumValue { type_name: "SheetBorderStyle", value: value as i64 }),
+        }
+    }
+}
+
+/// Text horizontal anchor mode.
+///
+/// **Wire type:** u8
+/// **Used by:** Text (RECORD=17), TextFrame (RECORD=28)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum TextHorzAnchor {
+    #[default]
+    None = 0,
+    Both = 1,
+    Left = 2,
+    Right = 3,
+}
+
+impl TryFrom<u8> for TextHorzAnchor {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Both),
+            2 => Ok(Self::Left),
+            3 => Ok(Self::Right),
+            _ => Err(InvalidEnumValue { type_name: "TextHorzAnchor", value: value as i64 }),
+        }
+    }
+}
+
+/// Text vertical anchor mode.
+///
+/// **Wire type:** u8
+/// **Used by:** Text (RECORD=17), TextFrame (RECORD=28)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum TextVertAnchor {
+    #[default]
+    None = 0,
+    Both = 1,
+    Top = 2,
+    Bottom = 3,
+}
+
+impl TryFrom<u8> for TextVertAnchor {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Both),
+            2 => Ok(Self::Top),
+            3 => Ok(Self::Bottom),
+            _ => Err(InvalidEnumValue { type_name: "TextVertAnchor", value: value as i64 }),
+        }
+    }
+}
+
+/// Parameter read-only state controlling which parts are editable.
+///
+/// **Wire type:** u8
+/// **Used by:** Parameter (RECORD=41)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ParameterReadOnlyState {
+    #[default]
+    None = 0,
+    Name = 1,
+    Value = 2,
+    NameAndValue = 3,
+}
+
+impl TryFrom<u8> for ParameterReadOnlyState {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Name),
+            2 => Ok(Self::Value),
+            3 => Ok(Self::NameAndValue),
+            _ => Err(InvalidEnumValue { type_name: "ParameterReadOnlyState", value: value as i64 }),
+        }
+    }
+}
+
+/// Parameter value type discriminator.
+///
+/// **Wire type:** u8
+/// **Used by:** Parameter (RECORD=41)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ParameterType {
+    #[default]
+    String = 0,
+    Boolean = 1,
+    Integer = 2,
+    Float = 3,
+}
+
+impl TryFrom<u8> for ParameterType {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::String),
+            1 => Ok(Self::Boolean),
+            2 => Ok(Self::Integer),
+            3 => Ok(Self::Float),
+            _ => Err(InvalidEnumValue { type_name: "ParameterType", value: value as i64 }),
+        }
+    }
+}
+
+/// Parameter set visual style.
+///
+/// **Wire type:** u8
+/// **Used by:** ParameterSet (RECORD=43)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ParameterSetStyle {
+    #[default]
+    Large = 0,
+    Tiny = 1,
+}
+
+impl TryFrom<u8> for ParameterSetStyle {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Large),
+            1 => Ok(Self::Tiny),
+            _ => Err(InvalidEnumValue { type_name: "ParameterSetStyle", value: value as i64 }),
+        }
+    }
+}
+
+/// No-ERC marker visual style.
+///
+/// **Wire type:** u8
+/// **Used by:** NoERC (RECORD=22)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum NoErcSymbol {
+    #[default]
+    CrossThin = 0,
+    CrossThick = 1,
+    CrossSmall = 2,
+    CheckBox = 3,
+    Triangle = 4,
+}
+
+impl TryFrom<u8> for NoErcSymbol {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::CrossThin),
+            1 => Ok(Self::CrossThick),
+            2 => Ok(Self::CrossSmall),
+            3 => Ok(Self::CheckBox),
+            4 => Ok(Self::Triangle),
+            _ => Err(InvalidEnumValue { type_name: "NoErcSymbol", value: value as i64 }),
+        }
+    }
+}
+
+/// Object side / edge placement.
+///
+/// **Wire type:** u8
+/// **Used by:** SheetEntry (RECORD=16), HarnessConnector (RECORD=215)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum LeftRightSide {
+    #[default]
+    Left = 0,
+    Right = 1,
+    Top = 2,
+    Bottom = 3,
+}
+
+impl TryFrom<u8> for LeftRightSide {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Left),
+            1 => Ok(Self::Right),
+            2 => Ok(Self::Top),
+            3 => Ok(Self::Bottom),
+            _ => Err(InvalidEnumValue { type_name: "LeftRightSide", value: value as i64 }),
+        }
+    }
+}
+
+/// Sheet symbol sub-type.
+///
+/// **Wire type:** u8
+/// **Used by:** SheetSymbol (RECORD=15)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum SheetSymbolType {
+    #[default]
+    Normal = 0,
+    DeviceSheet = 1,
+    DesignItem = 2,
+}
+
+impl TryFrom<u8> for SheetSymbolType {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Normal),
+            1 => Ok(Self::DeviceSheet),
+            2 => Ok(Self::DesignItem),
+            _ => Err(InvalidEnumValue { type_name: "SheetSymbolType", value: value as i64 }),
+        }
+    }
+}
+
+/// Visible grid rendering style.
+///
+/// **Wire type:** u8
+/// **Used by:** Sheet (RECORD=31)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum VisibleGridStyle {
+    #[default]
+    DotGrid = 0,
+    LineGrid = 1,
+}
+
+impl TryFrom<u8> for VisibleGridStyle {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::DotGrid),
+            1 => Ok(Self::LineGrid),
+            _ => Err(InvalidEnumValue { type_name: "VisibleGridStyle", value: value as i64 }),
+        }
+    }
+}
+
+/// Sheet border reference zone label style.
+///
+/// **Wire type:** u8
+/// **Used by:** Sheet (RECORD=31)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum SheetReferenceZoneStyle {
+    #[default]
+    Default = 0,
+    Asme = 1,
+}
+
+impl TryFrom<u8> for SheetReferenceZoneStyle {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Default),
+            1 => Ok(Self::Asme),
+            _ => Err(InvalidEnumValue { type_name: "SheetReferenceZoneStyle", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness connector visual kind.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessConnector (RECORD=215)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ConnectorKind {
+    #[default]
+    Poly = 0,
+    Arrow = 1,
+    Round = 2,
+}
+
+impl TryFrom<u8> for ConnectorKind {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Poly),
+            1 => Ok(Self::Arrow),
+            2 => Ok(Self::Round),
+            _ => Err(InvalidEnumValue { type_name: "ConnectorKind", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness connector gender/state.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessConnector (RECORD=215)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ConnectorState {
+    #[default]
+    Unknown = 0,
+    Male = 1,
+    Female = 2,
+}
+
+impl TryFrom<u8> for ConnectorState {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Unknown),
+            1 => Ok(Self::Male),
+            2 => Ok(Self::Female),
+            _ => Err(InvalidEnumValue { type_name: "ConnectorState", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness covering visual fill pattern.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessCovering (RECORD=128)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessBrush {
+    #[default]
+    None = 0,
+    BlackWeave = 1,
+    YellowWeave = 2,
+    RedWeave = 3,
+}
+
+impl TryFrom<u8> for HarnessBrush {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::BlackWeave),
+            2 => Ok(Self::YellowWeave),
+            3 => Ok(Self::RedWeave),
+            _ => Err(InvalidEnumValue { type_name: "HarnessBrush", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness document length measurement unit.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessDocument
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessLengthUnit {
+    #[default]
+    Millimeter = 0,
+    Centimeter = 1,
+    Meter = 2,
+    Inch = 3,
+    Foot = 4,
+}
+
+impl TryFrom<u8> for HarnessLengthUnit {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Millimeter),
+            1 => Ok(Self::Centimeter),
+            2 => Ok(Self::Meter),
+            3 => Ok(Self::Inch),
+            4 => Ok(Self::Foot),
+            _ => Err(InvalidEnumValue { type_name: "HarnessLengthUnit", value: value as i64 }),
+        }
+    }
+}
+
+/// How a harness wire/bundle length was determined.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessBundleSubLineData
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessWireLengthType {
+    #[default]
+    Calculated = 0,
+    UserDefined = 1,
+    McadCoDesigner = 2,
+}
+
+impl TryFrom<u8> for HarnessWireLengthType {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Calculated),
+            1 => Ok(Self::UserDefined),
+            2 => Ok(Self::McadCoDesigner),
+            _ => Err(InvalidEnumValue { type_name: "HarnessWireLengthType", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness cavity associated part type.
+///
+/// **Wire type:** u8
+/// **Used by:** AssociatedObjects (RECORD=131)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessCavityPartType {
+    #[default]
+    Crimp = 0,
+    Seal = 1,
+    Plug = 2,
+    Other = 3,
+}
+
+impl TryFrom<u8> for HarnessCavityPartType {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Crimp),
+            1 => Ok(Self::Seal),
+            2 => Ok(Self::Plug),
+            3 => Ok(Self::Other),
+            _ => Err(InvalidEnumValue { type_name: "HarnessCavityPartType", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness layout connection point visual style.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessLayoutConnectionPoint (RECORD=110)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessConnectionPointStyle {
+    #[default]
+    Circle = 0,
+    Square = 1,
+    Insulator = 2,
+}
+
+impl TryFrom<u8> for HarnessConnectionPointStyle {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Circle),
+            1 => Ok(Self::Square),
+            2 => Ok(Self::Insulator),
+            _ => Err(InvalidEnumValue { type_name: "HarnessConnectionPointStyle", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness shield visual style.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessShield (RECORD=117)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessShieldStyle {
+    #[default]
+    Shield = 0,
+    ShieldWithConnection = 1,
+}
+
+impl TryFrom<u8> for HarnessShieldStyle {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Shield),
+            1 => Ok(Self::ShieldWithConnection),
+            _ => Err(InvalidEnumValue { type_name: "HarnessShieldStyle", value: value as i64 }),
+        }
+    }
+}
+
+/// Harness splice visual style.
+///
+/// **Wire type:** u8
+/// **Used by:** HarnessSplice (RECORD=108)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HarnessSpliceStyle {
+    #[default]
+    Circle = 0,
+    Inline = 1,
+}
+
+impl TryFrom<u8> for HarnessSpliceStyle {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Circle),
+            1 => Ok(Self::Inline),
+            _ => Err(InvalidEnumValue { type_name: "HarnessSpliceStyle", value: value as i64 }),
         }
     }
 }
