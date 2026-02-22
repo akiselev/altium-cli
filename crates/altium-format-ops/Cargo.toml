@@ -1,0 +1,21 @@
+[package]
+name = "altium-format-ops"
+version = "0.1.8"
+edition = "2024"
+rust-version = "1.85"
+
+description = "High-level operations for Altium Designer files (CLI business logic)."
+license = "GPL-3.0-only"
+repository = "https://github.com/akiselev/altium-cli"
+homepage = "https://github.com/akiselev/altium-cli"
+authors = ["Alexander Kiselev <alex@akiselev.com>"]
+
+[lints]
+workspace = true
+
+[dependencies]
+altium-format = { version = "0.1.8", path = "../altium-format" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+cfb = "0.12.1"
+thiserror = "2"

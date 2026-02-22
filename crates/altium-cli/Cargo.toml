@@ -1,0 +1,27 @@
+[package]
+name = "altium-cli"
+version = "0.1.8"
+edition = "2024"
+rust-version = "1.85"
+
+description = "CLI tool for inspecting and manipulating Altium Designer files"
+license = "GPL-3.0-only"
+repository = "https://github.com/akiselev/altium-cli"
+homepage = "https://github.com/akiselev/altium-cli"
+documentation = "https://docs.rs/altium-cli"
+readme = "README.md"
+authors = ["Alexander Kiselev <alex@akiselev.com>"]
+keywords = ["altium", "eda", "pcb", "schematic", "cli"]
+categories = ["command-line-utilities"]
+
+[lints]
+workspace = true
+
+[dependencies]
+altium-format = { version = "0.1.0", path = "../altium-format" }
+altium-format-ops = { version = "0.1.0", path = "../altium-format-ops" }
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "0.8"
