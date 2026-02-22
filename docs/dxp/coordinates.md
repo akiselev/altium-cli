@@ -45,23 +45,33 @@ LOCATION.X=100
 LOCATION.X_FRAC=5000
 ```
 
-The raw coordinate value is reconstructed as:
+The raw coordinate value (in internal units) is reconstructed as:
 
 ```
-raw = integer_part * 10,000 + fractional_part
+raw = integer_part * 100,000 + fractional_part
 ```
 
-So `LOCATION.X=100, LOCATION.X_FRAC=5000` → `raw = 1,005,000` → `100.5 mils`.
+**Source**: `Rt_Schematic.Consts.cBaseUnit = 100000` and
+`SchDataUtils.GetCoord_DXP2004SP1_To_DXP2004SP2(whole, fraction) = whole * 100000 + fraction`.
+
+Each "DXP unit" (the integer part) represents **10 mils** (100,000 internal units).
+So `LOCATION.X=100, LOCATION.X_FRAC=5000` → `raw = 100 * 100,000 + 5,000 = 10,005,000`
+→ `1000.5 mils`.
+
+**Important**: Both PCB and schematic use the same internal unit resolution
+(10,000 units = 1 mil). The difference is purely in the text encoding — schematic
+uses `cBaseUnit = 100,000` as the divisor for the integer/fraction split, while PCB
+binary format stores raw i32 internal units directly.
 
 ### Encoding rules
 
-- `integer_part` = `raw / 10,000` (integer division, can be negative)
-- `fractional_part` = `raw % 10,000` (remainder, always 0..9999 for
+- `integer_part` = `raw / 100,000` (integer division, can be negative)
+- `fractional_part` = `raw % 100,000` (remainder, always 0..99,999 for
   canonical form)
 - When `fractional_part` is 0, the `_FRAC` parameter is typically omitted.
 - **Non-canonical values** are accepted on read (e.g., `RADIUS=14,
-  RADIUS_FRAC=85746` decodes to `raw = 225,746`, same as canonical
-  `RADIUS=22, RADIUS_FRAC=5746`). The library normalizes to canonical form
+  RADIUS_FRAC=85746` decodes to `raw = 1,485,746`, same as canonical
+  `RADIUS=14, RADIUS_FRAC=85746`). The library normalizes to canonical form
   on write.
 
 ### Field attribute
@@ -73,8 +83,8 @@ In the derive macro, fractional coordinates use the `frac` attribute:
 pub location_x: i32,
 ```
 
-This generates code that reads both parameters and combines them into a single
-`i32` raw value, and splits them back on write.
+This generates code that reads both parameters, reconstructs the internal
+coordinate as `integer * 100,000 + frac`, and splits them back on write.
 
 ## Indexed Vertex Coordinates
 

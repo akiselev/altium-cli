@@ -425,8 +425,8 @@ SchPin {
             owner_part_display_mode: None,
             graphically_locked: false,
         },
-        location_x: 1_000_000,          // ← LOCATION.X=100 * 10000 + 0
-        location_y: 2_000_000,          // ← LOCATION.Y=200 * 10000 + 0
+        location_x: 10_000_000,         // ← LOCATION.X=100 * 100000 + 0
+        location_y: 20_000_000,         // ← LOCATION.Y=200 * 100000 + 0
         color: 128,                      // ← COLOR=128
         area_color: 0,                   // ← (missing, default)
     },
