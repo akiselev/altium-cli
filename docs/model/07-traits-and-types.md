@@ -738,16 +738,17 @@ impl Coord {
     }
 
     /// Reconstruct from DXP fractional encoding (schematic parameter format).
-    /// raw = integer_part * 10000 + frac_part
+    /// raw = integer_part * 100_000 + frac_part
+    /// Source: Rt_Schematic.Consts.cBaseUnit = 100000 (each DXP unit = 10 mils).
     pub fn from_dxp_frac(integer: i32, frac: i32) -> Self {
-        Self(integer.wrapping_mul(Self::UNITS_PER_MIL).wrapping_add(frac))
+        Self(integer.wrapping_mul(Self::DXP_BASE_UNIT).wrapping_add(frac))
     }
 
     /// Split into DXP fractional encoding for serialization.
-    /// Returns (integer_part, frac_part) where frac_part is in 0..9999.
+    /// Returns (integer_part, frac_part) where frac_part is in 0..99999.
     pub fn to_dxp_frac(self) -> (i32, i32) {
-        let integer = self.0.div_euclid(Self::UNITS_PER_MIL);
-        let frac = self.0.rem_euclid(Self::UNITS_PER_MIL);
+        let integer = self.0.div_euclid(Self::DXP_BASE_UNIT);
+        let frac = self.0.rem_euclid(Self::DXP_BASE_UNIT);
         (integer, frac)
     }
 

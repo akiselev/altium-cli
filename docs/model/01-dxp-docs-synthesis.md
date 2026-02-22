@@ -154,10 +154,11 @@ Coordinates are split into **two parameters**: integer + fractional.
 
 ```
 LOCATION.X=100, LOCATION.X_FRAC=5000
-raw = 100 * 10000 + 5000 = 1,005,000 (= 100.5 mils)
+raw = 100 * 100000 + 5000 = 10,005,000 (= 1000.5 mils)
 ```
 
-Encoding: `integer = raw / 10000`, `frac = raw % 10000` (always 0..9999).
+Source: `Rt_Schematic.Consts.cBaseUnit = 100000` — each DXP unit = 10 mils.
+Encoding: `integer = raw / 100000`, `frac = raw % 100000` (always 0..99999).
 When frac is 0, the `_FRAC` parameter is typically omitted.
 Non-canonical values are accepted on read and normalized on write.
 

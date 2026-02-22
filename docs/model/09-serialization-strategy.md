@@ -805,29 +805,32 @@ pub struct Coord(pub i32);
 Schematic records split coordinates into integer and fractional parameters:
 
 ```
-LOCATION.X=100          -- integer part
-LOCATION.X_FRAC=5000    -- fractional part (0-9999)
+LOCATION.X=100          -- integer part (each unit = 10 mils)
+LOCATION.X_FRAC=5000    -- fractional part (0-99999)
 
-raw = 100 * 10000 + 5000 = 1,005,000 internal units = 100.5 mils
+raw = 100 * 100000 + 5000 = 10,005,000 internal units = 1000.5 mils
 ```
+
+Source: `Rt_Schematic.Consts.cBaseUnit = 100000` — each DXP unit is 100,000
+internal units (10 mils). This is confirmed by `SchDataUtils.GetCoord_DXP2004SP1_To_DXP2004SP2`.
 
 ```rust
 pub(crate) fn decode_dxp_coord(integer: i32, frac: i32) -> Coord {
-    Coord(integer * 10_000 + frac)
+    Coord(integer * 100_000 + frac)
 }
 
 pub(crate) fn encode_dxp_coord(raw: i32) -> (i32, i32) {
-    let integer = if raw >= 0 { raw / 10_000 } else { (raw - 9999) / 10_000 };
-    let frac = raw - integer * 10_000;
-    debug_assert!((0..10_000).contains(&frac));
+    let integer = raw.div_euclid(100_000);
+    let frac = raw.rem_euclid(100_000);
+    debug_assert!((0..100_000).contains(&frac));
     (integer, frac)
 }
 ```
 
 **Writing rules:**
 - If frac == 0, omit the `_FRAC` parameter
-- Frac is always in range [0, 9999]
-- Negative coordinates are handled: `raw = -5000` -> `integer = -1, frac = 5000`
+- Frac is always in range [0, 99999]
+- Negative coordinates use Euclidean division: `raw = -5000` -> `integer = -1, frac = 95000`
 
 ### 8.3 PCB Binary Coordinates
 
