@@ -3,6 +3,10 @@
 //! The 4-byte header encodes payload size (bits 0-23) and format (bits 24-31):
 //! 0x00 = text (pipe-delimited parameters), 0x01 = binary (packed struct).
 //! Unknown flag values are hard errors — Altium has no other documented formats.
+use altium_format_types::constants::parsing::{
+    BLOCK_FLAG_BINARY, BLOCK_FLAG_SHIFT, BLOCK_FLAG_TEXT, BLOCK_SIZE_MASK,
+};
+
 use crate::{AltiumFormatError, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,11 +20,6 @@ pub(crate) struct Block {
     pub(crate) format: BlockFormat,
     pub(crate) data: Vec<u8>,
 }
-
-// Bits 0-23 carry the payload size; bits 24-31 carry the format discriminant.
-// 0x00 = text (pipe-delimited params), 0x01 = binary (packed struct).
-const SIZE_MASK: i32 = 0x00FF_FFFF;
-const FLAG_SHIFT: u32 = 24;
 
 // Parses all blocks from `stream_data` eagerly, returning an error on the first bad header.
 pub(crate) fn parse_blocks(stream_data: &[u8]) -> Result<Vec<Block>> {
@@ -73,12 +72,12 @@ impl<'a> Iterator for BlockIter<'a> {
             self.data[self.pos + 3],
         ];
         let header = i32::from_le_bytes(header_bytes);
-        let size = (header & SIZE_MASK) as usize;
-        let flags = (header >> FLAG_SHIFT) as u8;
+        let size = (header & BLOCK_SIZE_MASK as i32) as usize;
+        let flags = (header >> BLOCK_FLAG_SHIFT) as u8;
         self.pos += 4;
         let format = match flags {
-            0x00 => BlockFormat::Text,
-            0x01 => BlockFormat::Binary,
+            BLOCK_FLAG_TEXT => BlockFormat::Text,
+            BLOCK_FLAG_BINARY => BlockFormat::Binary,
             other => {
                 return Some(Err(AltiumFormatError::InvalidBlockHeader {
                     offset: header_offset,
@@ -123,7 +122,7 @@ mod tests {
     #[test]
     fn single_text_block() {
         let payload = b"hello";
-        let data = make_block_bytes(payload, 0x00);
+        let data = make_block_bytes(payload, BLOCK_FLAG_TEXT);
         let blocks = parse_blocks(&data).unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].format, BlockFormat::Text);
@@ -133,7 +132,7 @@ mod tests {
     #[test]
     fn single_binary_block() {
         let payload = b"\x01\x02\x03";
-        let data = make_block_bytes(payload, 0x01);
+        let data = make_block_bytes(payload, BLOCK_FLAG_BINARY);
         let blocks = parse_blocks(&data).unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].format, BlockFormat::Binary);
@@ -142,8 +141,8 @@ mod tests {
 
     #[test]
     fn multiple_blocks() {
-        let mut data = make_block_bytes(b"text", 0x00);
-        data.extend_from_slice(&make_block_bytes(b"\xAA\xBB", 0x01));
+        let mut data = make_block_bytes(b"text", BLOCK_FLAG_TEXT);
+        data.extend_from_slice(&make_block_bytes(b"\xAA\xBB", BLOCK_FLAG_BINARY));
         let blocks = parse_blocks(&data).unwrap();
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].format, BlockFormat::Text);
@@ -177,8 +176,8 @@ mod tests {
 
     #[test]
     fn iter_blocks_matches_parse_blocks() {
-        let mut data = make_block_bytes(b"abc", 0x00);
-        data.extend_from_slice(&make_block_bytes(b"\x01\x02", 0x01));
+        let mut data = make_block_bytes(b"abc", BLOCK_FLAG_TEXT);
+        data.extend_from_slice(&make_block_bytes(b"\x01\x02", BLOCK_FLAG_BINARY));
         let parsed: Vec<Block> = parse_blocks(&data).unwrap();
         let iterated: Vec<Block> = iter_blocks(&data).collect::<std::result::Result<Vec<_>, _>>().unwrap();
         assert_eq!(parsed.len(), iterated.len());

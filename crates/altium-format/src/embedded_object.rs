@@ -5,6 +5,10 @@
 //! = size, bits 24-31 = format discriminant).
 //! `parse_embedded_object_stream` consumes the header block's params internally
 //! so callers never receive a partially-consumed `ParameterCollection`.
+use altium_format_types::constants::parsing::{
+    BLOCK_FLAG_BINARY, BLOCK_FLAG_TEXT, BLOCK_SIZE_MASK, INSTRUCTION_BINARY,
+};
+
 use crate::binary_io::BinaryReader;
 use crate::block_stream::{Block, BlockFormat};
 use crate::param_collection::ParameterCollection;
@@ -21,9 +25,9 @@ pub(crate) struct EmbeddedObject {
 pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject> {
     let mut reader = BinaryReader::new(data);
     let tag = reader.read_u8()?;
-    if tag != 0xD0 {
+    if tag != INSTRUCTION_BINARY {
         return Err(AltiumFormatError::InvalidEmbeddedObject(format!(
-            "expected 0xD0 tag, got {tag:#04x}"
+            "expected {INSTRUCTION_BINARY:#04x} tag, got {tag:#04x}"
         )));
     }
     let id_len = reader.read_u8()? as usize;
@@ -34,11 +38,11 @@ pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject> {
         ))
     })?;
     let inner_header = reader.read_i32_le()?;
-    let inner_size = (inner_header & 0x00FF_FFFF) as usize;
+    let inner_size = (inner_header & BLOCK_SIZE_MASK as i32) as usize;
     let inner_flags = (inner_header >> 24) as u8;
     let inner_format = match inner_flags {
-        0x00 => BlockFormat::Text,
-        0x01 => BlockFormat::Binary,
+        BLOCK_FLAG_TEXT => BlockFormat::Text,
+        BLOCK_FLAG_BINARY => BlockFormat::Binary,
         other => {
             return Err(AltiumFormatError::InvalidEmbeddedObject(format!(
                 "unknown inner block flags {other:#04x}"
@@ -86,11 +90,12 @@ pub(crate) fn parse_embedded_object_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use altium_format_types::constants::parsing::INSTRUCTION_FILE_STREAM;
     use crate::binary_io::BinaryWriter;
 
     fn make_envelope(id: &str, inner_flags: u8, inner_data: &[u8]) -> Vec<u8> {
         let mut w = BinaryWriter::new();
-        w.write_u8(0xD0);
+        w.write_u8(INSTRUCTION_BINARY);
         w.write_u8(id.len() as u8);
         w.write_bytes(id.as_bytes());
         let inner_header = (inner_data.len() as i32) | ((inner_flags as i32) << 24);
@@ -102,7 +107,7 @@ mod tests {
     #[test]
     fn parse_single_envelope_text() {
         let inner = b"hello";
-        let data = make_envelope("comp1", 0x00, inner);
+        let data = make_envelope("comp1", BLOCK_FLAG_TEXT, inner);
         let obj = parse_embedded_object(&data).unwrap();
         assert_eq!(obj.id, "comp1");
         assert_eq!(obj.inner_format, BlockFormat::Text);
@@ -112,7 +117,7 @@ mod tests {
     #[test]
     fn parse_single_envelope_binary() {
         let inner = b"\x01\x02\x03";
-        let data = make_envelope("item", 0x01, inner);
+        let data = make_envelope("item", BLOCK_FLAG_BINARY, inner);
         let obj = parse_embedded_object(&data).unwrap();
         assert_eq!(obj.id, "item");
         assert_eq!(obj.inner_format, BlockFormat::Binary);
@@ -121,15 +126,15 @@ mod tests {
 
     #[test]
     fn wrong_tag_returns_error() {
-        let mut data = make_envelope("x", 0x00, b"");
-        data[0] = 0xE3;
+        let mut data = make_envelope("x", BLOCK_FLAG_TEXT, b"");
+        data[0] = INSTRUCTION_FILE_STREAM;
         let err = parse_embedded_object(&data).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidEmbeddedObject(_)));
     }
 
     #[test]
     fn truncated_data_returns_error() {
-        let err = parse_embedded_object(&[0xD0]).unwrap_err();
+        let err = parse_embedded_object(&[INSTRUCTION_BINARY]).unwrap_err();
         assert!(matches!(err, AltiumFormatError::BinaryReadPastEnd { .. }));
     }
 
@@ -143,8 +148,8 @@ mod tests {
         };
         // Build two entry blocks (binary format internally, but Block format must be binary
         // for the envelope to pass through parse_embedded_object which reads raw bytes)
-        let entry1 = make_envelope("e1", 0x00, b"abc");
-        let entry2 = make_envelope("e2", 0x01, b"\xFF");
+        let entry1 = make_envelope("e1", BLOCK_FLAG_TEXT, b"abc");
+        let entry2 = make_envelope("e2", BLOCK_FLAG_BINARY, b"\xFF");
         let block1 = Block { format: BlockFormat::Binary, data: entry1 };
         let block2 = Block { format: BlockFormat::Binary, data: entry2 };
         let blocks = vec![header_block, block1, block2];
@@ -161,7 +166,7 @@ mod tests {
             format: BlockFormat::Text,
             data: header_data.to_vec(),
         };
-        let entry = make_envelope("e1", 0x00, b"x");
+        let entry = make_envelope("e1", BLOCK_FLAG_TEXT, b"x");
         let block1 = Block { format: BlockFormat::Binary, data: entry };
         let blocks = vec![header_block, block1];
         let err = parse_embedded_object_stream(&blocks).unwrap_err();

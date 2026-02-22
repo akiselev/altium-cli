@@ -3,22 +3,31 @@ mod binary_io;
 #[allow(dead_code)]
 mod block_stream;
 #[allow(dead_code)]
+mod pcb_binary_stream;
+#[allow(dead_code)]
 mod cfb_document;
-pub mod document;
 #[allow(dead_code)]
 mod embedded_object;
-pub mod intlib;
 #[allow(dead_code)]
 mod param_collection;
 #[allow(dead_code)]
 mod param_value;
+#[allow(dead_code)]
+mod prefixed_param_stream;
+#[allow(dead_code)]
+mod tracked_cfb;
+#[allow(dead_code)]
+mod wide_strings_tlv;
+#[allow(dead_code)]
+mod pcb_file_header;
+
+pub mod document;
+pub mod intlib;
 pub mod pcbdoc;
 pub mod pcblib;
 pub mod project;
 pub mod schdoc;
 pub mod schlib;
-#[allow(dead_code)]
-mod tracked_cfb;
 
 pub use document::Document;
 pub use intlib::IntLib;
@@ -78,6 +87,8 @@ pub enum AltiumFormatError {
     UnknownRecordType(i32),
     #[error("Unknown PCB object ID: {0}")]
     UnknownObjectId(u8),
+    #[error("Invalid enum value: {0}")]
+    InvalidEnumValue(#[from] altium_format_types::InvalidEnumValue),
     #[error("Unknown binary code in schematic block: 0x{0:02X}")]
     UnknownBinaryCode(u8),
     #[error("Unknown parameters remaining: {keys:?}")]

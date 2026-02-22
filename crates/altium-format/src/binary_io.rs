@@ -266,6 +266,18 @@ impl<'a> BinaryReader<'a> {
     }
 }
 
+/// Read a Pascal-string prefix (u8 length + ASCII bytes) from the start of a
+/// byte buffer, returning (name, remaining_bytes).
+///
+/// Used by PcbLib footprint Data streams which have a pattern name before
+/// the packed binary records.
+pub(crate) fn read_pascal_prefix(data: &[u8]) -> Result<(String, &[u8])> {
+    let mut reader = BinaryReader::new(data);
+    let name = reader.read_pascal_string()?;
+    let consumed = reader.position();
+    Ok((name, &data[consumed..]))
+}
+
 // ---------------------------------------------------------------------------
 // BinaryWriter
 // ---------------------------------------------------------------------------
@@ -599,5 +611,16 @@ mod tests {
         assert_eq!(r.position(), 3);
         assert_eq!(r.remaining(), 2);
         assert_eq!(r.read_u8().unwrap(), 4);
+    }
+
+    #[test]
+    fn read_pascal_prefix_splits_buffer() {
+        let mut w = BinaryWriter::new();
+        w.write_pascal_string("MyFootprint");
+        w.write_bytes(&[0xDE, 0xAD, 0xBE, 0xEF]); // remaining data
+        let data = w.finish();
+        let (name, remaining) = read_pascal_prefix(&data).unwrap();
+        assert_eq!(name, "MyFootprint");
+        assert_eq!(remaining, &[0xDE, 0xAD, 0xBE, 0xEF]);
     }
 }

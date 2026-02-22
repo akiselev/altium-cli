@@ -102,6 +102,41 @@ pub const INSTRUCTION_EXTRA_OBJECT_INDEX: u8 = 0xFE;
 pub const INSTRUCTION_END: u8 = 0xFF;
 
 // ---------------------------------------------------------------------------
+// Block header encoding
+// ---------------------------------------------------------------------------
+
+/// Block header size mask: bits 0-23 contain the payload size.
+///
+/// Both block-framed streams and PCB binary record headers use this
+/// layout: bits 0-23 = size, bits 24-31 = flags.
+pub const BLOCK_SIZE_MASK: u32 = 0x00FF_FFFF;
+
+/// Block header flag shift: the format discriminant is in bits 24-31.
+pub const BLOCK_FLAG_SHIFT: u32 = 24;
+
+/// Block format flag: text mode (pipe-delimited parameter string).
+pub const BLOCK_FLAG_TEXT: u8 = 0x00;
+
+/// Block format flag: binary mode (packed struct data).
+pub const BLOCK_FLAG_BINARY: u8 = 0x01;
+
+// ---------------------------------------------------------------------------
+// WideStrings6 TLV type codes
+// ---------------------------------------------------------------------------
+
+/// WideStrings6 TLV type: u8 length + ASCII string data.
+pub const WIDE_STRING_TYPE_ASCII_U8: u8 = 0x06;
+
+/// WideStrings6 TLV type: u32 LE byte count + ASCII string data.
+pub const WIDE_STRING_TYPE_ASCII_U32: u8 = 0x0C;
+
+/// WideStrings6 TLV type: u32 LE char count (×2 for byte count) + UTF-16LE string data.
+pub const WIDE_STRING_TYPE_UTF16LE: u8 = 0x12;
+
+/// WideStrings6 TLV type: u32 LE byte count + UTF-8 string data.
+pub const WIDE_STRING_TYPE_UTF8: u8 = 0x14;
+
+// ---------------------------------------------------------------------------
 // Metric coordinate lookup table (DXP units for common MM values)
 // ---------------------------------------------------------------------------
 //

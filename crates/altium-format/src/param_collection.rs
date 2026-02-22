@@ -7,7 +7,7 @@
 use indexmap::IndexMap;
 use altium_format_types::{Coord, CoordPoint};
 
-use crate::param_value::{FromParamValue, ToParamValue};
+use crate::param_value::FromParamValue;
 use crate::{AltiumFormatError, Result};
 
 pub(crate) struct ParameterCollection {

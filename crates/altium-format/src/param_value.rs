@@ -2,7 +2,7 @@
 //! `FromParamValue`: parse a string value for a named key into `T`.
 //! `ToParamValue`: serialize `T` back to the Altium string representation.
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
-use altium_format_types::Coord;
+use altium_format_types::{Color, Coord, UniqueId};
 
 use crate::{AltiumFormatError, Result};
 
@@ -97,5 +97,40 @@ impl FromParamValue for usize {
 impl ToParamValue for usize {
     fn to_param_value(&self) -> String {
         self.to_string()
+    }
+}
+
+// Color is stored as a decimal Win32 COLORREF integer (0x00BBGGRR) in parameter strings.
+impl FromParamValue for Color {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        let raw: i32 = value.parse().map_err(|e: std::num::ParseIntError| {
+            AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: e.to_string(),
+            }
+        })?;
+        Ok(Color::new(raw))
+    }
+}
+
+impl ToParamValue for Color {
+    fn to_param_value(&self) -> String {
+        self.raw().to_string()
+    }
+}
+
+// UniqueId is stored as an 8-char uppercase alpha string in parameter values.
+impl FromParamValue for UniqueId {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        value.parse::<UniqueId>().map_err(|e| AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: e.to_string(),
+        })
+    }
+}
+
+impl ToParamValue for UniqueId {
+    fn to_param_value(&self) -> String {
+        self.as_str().to_owned()
     }
 }
