@@ -10,7 +10,7 @@ use altium_format::handles::{SchComponent, SchPin};
 use super::open_schlib;
 
 /// Serializes the library to JSON for LLM processing or external analysis.
-pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+pub fn cmd_json(path: &Path, full: bool) -> crate::Result<serde_json::Value> {
     let lib = open_schlib(path)?;
 
     if full {

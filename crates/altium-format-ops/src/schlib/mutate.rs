@@ -14,13 +14,12 @@ const BLANK_SCHLIB_TEMPLATE: &[u8] =
     include_bytes!("../../../altium-format/data/blank/Schlib1.SchLib");
 
 /// Creates an empty SchLib file at the given path.
-pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_create(path: &Path) -> crate::Result<()> {
     if path.exists() {
-        return Err(format!("File already exists: {}", path.display()).into());
+        return Err(crate::AltiumOpsError::AlreadyExists(format!("File already exists: {}", path.display())));
     }
 
-    std::fs::write(path, BLANK_SCHLIB_TEMPLATE)
-        .map_err(|e| format!("Error creating file: {}", e))?;
+    std::fs::write(path, BLANK_SCHLIB_TEMPLATE)?;
 
     println!("Created empty SchLib: {}", path.display());
     Ok(())
@@ -31,12 +30,12 @@ pub fn cmd_add_component(
     path: &Path,
     name: &str,
     description: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let lib = open_schlib(path)?;
 
     // Check if component already exists
     if lib.find_component_handle(name).is_some() {
-        return Err(format!("Component '{}' already exists in library", name).into());
+        return Err(crate::AltiumOpsError::AlreadyExists(format!("Component '{}' already exists in library", name)));
     }
 
     // Add component using the builder API
@@ -47,13 +46,12 @@ pub fn cmd_add_component(
             comp.set_lib_reference(LibReference::from(name));
             comp.set_component_description(description.unwrap_or_default());
         });
-    })
-    .map_err(|e| e.to_string())?;
+    })?;
 
     lib.invalidate_cached_header();
 
     // Write back
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!("Added component '{}' to {}", name, path.display());
     Ok(())
@@ -66,13 +64,13 @@ pub fn cmd_add_pin(
     designator: &str,
     name: &str,
     electrical_type: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let lib = open_schlib(path)?;
 
     // Find component
     let comp = lib
         .find_component_handle(component)
-        .ok_or_else(|| format!("Component '{}' not found", component))?;
+        .ok_or_else(|| crate::AltiumOpsError::NotFound(format!("Component '{}' not found", component)))?;
 
     // Parse electrical type
     let electrical = parse_electrical_type(electrical_type);
@@ -93,7 +91,7 @@ pub fn cmd_add_pin(
     lib.invalidate_cached_header();
 
     // Write back
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Added pin '{}' ({}) to component '{}' in {}",

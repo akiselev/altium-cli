@@ -20,12 +20,12 @@ pub fn cmd_component(
     path: &Path,
     name: &str,
     show_primitives: bool,
-) -> Result<SchLibComponentDetail, Box<dyn std::error::Error>> {
+) -> crate::Result<SchLibComponentDetail> {
     let lib = open_schlib(path)?;
 
     let comp = lib
         .find_component_handle(name)
-        .ok_or_else(|| format!("Component '{}' not found", name))?;
+        .ok_or_else(|| crate::AltiumOpsError::NotFound(format!("Component '{}' not found", name)))?;
 
     let display_mode_count = comp.read().display_mode_count()? as i32;
 
@@ -72,7 +72,7 @@ pub fn cmd_component(
 pub fn cmd_pins(
     path: &Path,
     component: Option<String>,
-) -> Result<SchLibPinList, Box<dyn std::error::Error>> {
+) -> crate::Result<SchLibPinList> {
     let lib = open_schlib(path)?;
 
     let filter_lower = component.as_ref().map(|s| s.to_lowercase());
@@ -150,12 +150,12 @@ pub fn cmd_pins(
 pub fn cmd_primitives(
     path: &Path,
     component: &str,
-) -> Result<SchLibPrimitiveList, Box<dyn std::error::Error>> {
+) -> crate::Result<SchLibPrimitiveList> {
     let lib = open_schlib(path)?;
 
     let comp = lib
         .find_component_handle(component)
-        .ok_or_else(|| format!("Component '{}' not found", component))?;
+        .ok_or_else(|| crate::AltiumOpsError::NotFound(format!("Component '{}' not found", component)))?;
     let component_name = comp.lib_ref()?;
 
     let mut primitives: Vec<PrimitiveInfo> = Vec::new();
@@ -169,7 +169,7 @@ pub fn cmd_primitives(
                 // Pin — read_normalized handles both binary and param origins
                 let pin = comp
                     .handle_for::<SchPin>(record_id)
-                    .map_err(|e| format!("pin handle: {}", e))?
+                    .map_err(|e| crate::AltiumOpsError::Rebuild { context: "pin handle".to_string(), source: e })?
                     .read_normalized();
                 primitives.push(PrimitiveInfo::Pin {
                     designator: pin.designator()?.to_string(),
@@ -188,7 +188,7 @@ pub fn cmd_primitives(
                 } else {
                     let rect = comp
                         .handle_for::<SchRectangle>(record_id)
-                        .map_err(|e| format!("rect handle: {}", e))?
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: "rect handle".to_string(), source: e })?
                         .read();
                     primitives.push(PrimitiveInfo::Rectangle {
                         x1: coord_to_mils(rect.location_x()?),
@@ -207,7 +207,7 @@ pub fn cmd_primitives(
                 } else {
                     let line = comp
                         .handle_for::<SchLine>(record_id)
-                        .map_err(|e| format!("line handle: {}", e))?
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: "line handle".to_string(), source: e })?
                         .read();
                     primitives.push(PrimitiveInfo::Line {
                         x1: coord_to_mils(line.location_x()?),
@@ -226,7 +226,7 @@ pub fn cmd_primitives(
                 } else {
                     let arc = comp
                         .handle_for::<SchArc>(record_id)
-                        .map_err(|e| format!("arc handle: {}", e))?
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: "arc handle".to_string(), source: e })?
                         .read();
                     primitives.push(PrimitiveInfo::Arc {
                         center_x: coord_to_mils(arc.location_x()?),
@@ -256,7 +256,7 @@ pub fn cmd_primitives(
                 } else {
                     let label = comp
                         .handle_for::<SchLabel>(record_id)
-                        .map_err(|e| format!("label handle: {}", e))?
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: "label handle".to_string(), source: e })?
                         .read();
                     primitives.push(PrimitiveInfo::Label {
                         text: label.text()?.to_string(),

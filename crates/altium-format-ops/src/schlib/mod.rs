@@ -26,8 +26,8 @@ use altium_format::handles::SchComponentHandle;
 use crate::helpers::*;
 
 /// Opens and parses a SchLib file from the given path.
-pub(super) fn open_schlib(path: &Path) -> Result<SchLib, Box<dyn std::error::Error>> {
-    Ok(SchLib::open_file(path).map_err(|e| e.to_string())?)
+pub(super) fn open_schlib(path: &Path) -> crate::Result<SchLib> {
+    Ok(SchLib::open_file(path)?)
 }
 
 /// Convert schematic coordinates to mils for display.

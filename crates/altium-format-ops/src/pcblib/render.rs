@@ -15,7 +15,7 @@ pub fn cmd_render_ascii(
     footprint: &str,
     width: u32,
     height: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
 
@@ -123,10 +123,9 @@ pub fn cmd_render_svg(
     _light: bool,
     _no_grid: bool,
     _no_designators: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err("SVG rendering is not yet implemented in the v2 API. \
-         Use cmd_render_ascii for a quick text-mode preview."
-        .into())
+) -> crate::Result<()> {
+    Err(crate::AltiumOpsError::NotImplemented("SVG rendering is not yet implemented in the v2 API. \
+         Use cmd_render_ascii for a quick text-mode preview.".to_string()))
 }
 
 /// Render footprint as PNG.
@@ -136,8 +135,7 @@ pub fn cmd_render_png(
     _output: Option<PathBuf>,
     _scale: f64,
     _width: Option<u32>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err("PNG rendering is not yet implemented in the v2 API. \
-         Use cmd_render_ascii for a quick text-mode preview."
-        .into())
+) -> crate::Result<()> {
+    Err(crate::AltiumOpsError::NotImplemented("PNG rendering is not yet implemented in the v2 API. \
+         Use cmd_render_ascii for a quick text-mode preview.".to_string()))
 }

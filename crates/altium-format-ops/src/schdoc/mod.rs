@@ -28,8 +28,8 @@ use altium_format::records::{SchNetLabelRecord, SchPowerRecord};
 use crate::helpers::*;
 
 /// Opens and parses a SchDoc file from the given path.
-pub(super) fn open_schdoc(path: &Path) -> Result<SchDoc, Box<dyn std::error::Error>> {
-    Ok(SchDoc::open_file(path).map_err(|e| e.to_string())?)
+pub(super) fn open_schdoc(path: &Path) -> crate::Result<SchDoc> {
+    Ok(SchDoc::open_file(path)?)
 }
 
 /// Format a coordinate pair as a display string.

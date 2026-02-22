@@ -189,27 +189,27 @@ pub fn parse_electrical_type(s: &str) -> altium_format::records::enums::PinElect
 
 /// Parse a dimension string with unit suffix (e.g., "2.54mm", "100mil") into
 /// internal PCB coordinate units.
-pub fn parse_dimension(s: &str) -> Result<i32, Box<dyn std::error::Error>> {
+pub fn parse_dimension(s: &str) -> crate::Result<i32> {
     use altium_format::coord::{AltiumCoord, PcbCoord};
     let s = s.trim();
     if let Some(val) = s.strip_suffix("mm") {
         let mm: f64 = val
             .parse()
-            .map_err(|_| format!("Invalid dimension: {}", s))?;
+            .map_err(|_| crate::AltiumOpsError::InvalidInput(format!("Invalid dimension: {}", s)))?;
         Ok(PcbCoord::from_mm(mm).to_raw())
     } else if let Some(val) = s.strip_suffix("mil") {
         let mils: f64 = val
             .parse()
-            .map_err(|_| format!("Invalid dimension: {}", s))?;
+            .map_err(|_| crate::AltiumOpsError::InvalidInput(format!("Invalid dimension: {}", s)))?;
         Ok(PcbCoord::from_mils(mils).to_raw())
     } else if let Some(val) = s.strip_suffix("in") {
         let inches: f64 = val
             .parse()
-            .map_err(|_| format!("Invalid dimension: {}", s))?;
+            .map_err(|_| crate::AltiumOpsError::InvalidInput(format!("Invalid dimension: {}", s)))?;
         Ok(PcbCoord::from_mils(inches * 1000.0).to_raw())
     } else {
         // Default to mm
-        let mm: f64 = s.parse().map_err(|_| format!("Invalid dimension: {}", s))?;
+        let mm: f64 = s.parse().map_err(|_| crate::AltiumOpsError::InvalidInput(format!("Invalid dimension: {}", s)))?;
         Ok(PcbCoord::from_mm(mm).to_raw())
     }
 }

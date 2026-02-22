@@ -18,7 +18,7 @@ pub fn cmd_measure(
     _pad2: Option<&str>,
     _axis: Option<&str>,
     as_json: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
 

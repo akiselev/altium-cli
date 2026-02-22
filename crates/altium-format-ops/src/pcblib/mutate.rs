@@ -10,6 +10,7 @@ use altium_format::coord::{AltiumCoord, PcbCoord};
 use altium_format::records::PcbPadRecord;
 
 use crate::helpers::*;
+use crate::AltiumOpsError;
 
 use super::{find_footprint_by_name, mm_to_raw, open_pcblib};
 
@@ -47,13 +48,14 @@ fn build_pad_record(
 }
 
 /// Creates an empty PcbLib file at the given path.
-pub fn cmd_create(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_create(path: &Path) -> crate::Result<()> {
     if path.exists() {
-        return Err(format!("File already exists: {}", path.display()).into());
+        return Err(AltiumOpsError::AlreadyExists(
+            format!("File already exists: {}", path.display()),
+        ));
     }
 
-    std::fs::write(path, BLANK_PCBLIB_TEMPLATE)
-        .map_err(|e| format!("Error creating file: {}", e))?;
+    std::fs::write(path, BLANK_PCBLIB_TEMPLATE)?;
 
     println!("Created empty PcbLib: {}", path.display());
     Ok(())
@@ -64,11 +66,13 @@ pub fn cmd_add_footprint(
     path: &Path,
     name: &str,
     description: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let lib = open_pcblib(path)?;
 
     if lib.find_footprint(name).is_some() {
-        return Err(format!("Footprint '{}' already exists in library", name).into());
+        return Err(AltiumOpsError::AlreadyExists(
+            format!("Footprint '{}' already exists in library", name),
+        ));
     }
 
     let desc = description.as_deref().unwrap_or("").to_string();
@@ -83,7 +87,7 @@ pub fn cmd_add_footprint(
         },
     );
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!("Added footprint '{}' to {}", name, path.display());
     Ok(())
@@ -100,7 +104,7 @@ pub fn cmd_add_pad(
     height: f64,
     shape: &str,
     hole: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
 
@@ -115,7 +119,7 @@ pub fn cmd_add_pad(
     let pad = build_pad_record(x_raw, y_raw, w_raw, h_raw, hole_raw, shape_byte, layer);
     fp.add_primitive_record(pad);
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Added pad '{}' ({:.3}mm x {:.3}mm) to footprint '{}' in {}",
@@ -137,12 +141,12 @@ pub fn cmd_add_silkscreen(
     _x2: f64,
     _y2: f64,
     _width: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err(
+) -> crate::Result<()> {
+    Err(AltiumOpsError::NotImplemented(
         "Adding silkscreen tracks to existing footprints is not yet supported \
          through the public API. Use build_footprint() for new footprints that include tracks."
-            .into(),
-    )
+            .to_string(),
+    ))
 }
 
 /// Adds a silkscreen arc to a footprint.
@@ -155,10 +159,12 @@ pub fn cmd_add_arc(
     _start_angle: f64,
     _end_angle: f64,
     _width: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err("Adding arcs to existing footprints is not yet supported \
+) -> crate::Result<()> {
+    Err(AltiumOpsError::NotImplemented(
+        "Adding arcs to existing footprints is not yet supported \
          through the public API. Use build_footprint() for new footprints that include arcs."
-        .into())
+            .to_string(),
+    ))
 }
 
 /// Generate a standard chip (0201/0402/0603/0805/1206) footprint.
@@ -166,7 +172,7 @@ pub fn cmd_gen_chip(
     path: &Path,
     size: &str,
     density: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let (body_l, body_w) = match size {
         "0201" => (0.6, 0.3),
         "0402" => (1.0, 0.5),
@@ -175,11 +181,10 @@ pub fn cmd_gen_chip(
         "1206" => (3.2, 1.6),
         "1210" => (3.2, 2.5),
         _ => {
-            return Err(format!(
+            return Err(AltiumOpsError::InvalidInput(format!(
                 "Unknown chip size '{}'. Supported: 0201, 0402, 0603, 0805, 1206, 1210",
                 size
-            )
-            .into());
+            )));
         }
     };
 
@@ -188,11 +193,10 @@ pub fn cmd_gen_chip(
         "nominal" | "b" => (0.35, 0.0, 0.0),
         "least" | "c" => (0.15, 0.0, -0.05),
         _ => {
-            return Err(format!(
+            return Err(AltiumOpsError::InvalidInput(format!(
                 "Unknown density '{}'. Supported: most, nominal, least",
                 density
-            )
-            .into());
+            )));
         }
     };
 
@@ -205,7 +209,9 @@ pub fn cmd_gen_chip(
     {
         let lib = open_pcblib(path)?;
         if lib.find_footprint(&fp_name).is_some() {
-            return Err(format!("Footprint '{}' already exists in library", fp_name).into());
+            return Err(AltiumOpsError::AlreadyExists(
+                format!("Footprint '{}' already exists in library", fp_name),
+            ));
         }
     }
 
@@ -284,7 +290,7 @@ pub fn cmd_gen_chip(
         },
     );
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Generated {} chip footprint '{}' ({} density)",
@@ -298,7 +304,7 @@ pub fn cmd_add_json(
     path: &Path,
     file: Option<String>,
     input_json: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let json_str = if let Some(ref json) = input_json {
         json.clone()
     } else if let Some(ref file_path) = file {
@@ -308,15 +314,15 @@ pub fn cmd_add_json(
             std::io::stdin().read_to_string(&mut buf)?;
             buf
         } else {
-            std::fs::read_to_string(file_path)
-                .map_err(|e| format!("Error reading {}: {}", file_path, e))?
+            std::fs::read_to_string(file_path)?
         }
     } else {
-        return Err("Either --file or --input must be provided".into());
+        return Err(AltiumOpsError::InvalidInput(
+            "Either --file or --input must be provided".to_string(),
+        ));
     };
 
-    let value: serde_json::Value =
-        serde_json::from_str(&json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
+    let value: serde_json::Value = serde_json::from_str(&json_str)?;
 
     let footprints = if value.is_array() {
         value.as_array().unwrap().clone()
@@ -328,7 +334,9 @@ pub fn cmd_add_json(
     for fp_json in &footprints {
         let name = fp_json["name"]
             .as_str()
-            .ok_or("Footprint JSON must have a 'name' field")?;
+            .ok_or_else(|| AltiumOpsError::InvalidInput(
+                "Footprint JSON must have a 'name' field".to_string(),
+            ))?;
         let description = fp_json["description"].as_str().map(|s| s.to_string());
 
         cmd_add_footprint(path, name, description)?;
@@ -337,25 +345,39 @@ pub fn cmd_add_json(
             for (i, pad_json) in pads.iter().enumerate() {
                 let designator = pad_json["designator"]
                     .as_str()
-                    .ok_or_else(|| format!("Pad {} in footprint '{}': missing 'designator' field", i, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad {} in footprint '{}': missing 'designator' field", i, name),
+                    ))?;
                 let x = pad_json["x"]
                     .as_f64()
-                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'x' field", designator, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad '{}' in footprint '{}': missing or invalid 'x' field", designator, name),
+                    ))?;
                 let y = pad_json["y"]
                     .as_f64()
-                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'y' field", designator, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad '{}' in footprint '{}': missing or invalid 'y' field", designator, name),
+                    ))?;
                 let width = pad_json["width"]
                     .as_f64()
-                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'width' field", designator, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad '{}' in footprint '{}': missing or invalid 'width' field", designator, name),
+                    ))?;
                 let height = pad_json["height"]
                     .as_f64()
-                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'height' field", designator, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad '{}' in footprint '{}': missing or invalid 'height' field", designator, name),
+                    ))?;
                 let shape = pad_json["shape"]
                     .as_str()
-                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing 'shape' field", designator, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad '{}' in footprint '{}': missing 'shape' field", designator, name),
+                    ))?;
                 let hole = pad_json["hole"]
                     .as_f64()
-                    .ok_or_else(|| format!("Pad '{}' in footprint '{}': missing or invalid 'hole' field", designator, name))?;
+                    .ok_or_else(|| AltiumOpsError::InvalidInput(
+                        format!("Pad '{}' in footprint '{}': missing or invalid 'hole' field", designator, name),
+                    ))?;
 
                 cmd_add_pad(path, name, designator, x, y, width, height, shape, hole)?;
             }
@@ -391,7 +413,7 @@ pub fn cmd_add_pad_row(
     shape: &str,
     hole: &str,
     _use_spacing: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let pitch_raw = parse_dimension(pitch)?;
     let pw_raw = parse_dimension(pad_width)?;
     let ph_raw = parse_dimension(pad_height)?;
@@ -430,7 +452,7 @@ pub fn cmd_add_pad_row(
         fp.add_primitive_record(node);
     }
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Added {} pads (row) to footprint '{}' in {}",
@@ -453,7 +475,7 @@ pub fn cmd_add_dual_row(
     pad_diameter: Option<&str>,
     hole: Option<&str>,
     shape: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let pitch_raw = parse_dimension(pitch)?;
     let spacing_raw = parse_dimension(row_spacing)?;
     let hole_raw = hole.map(|h| parse_dimension(h)).transpose()?.unwrap_or(0);
@@ -513,7 +535,7 @@ pub fn cmd_add_dual_row(
         fp.add_primitive_record(node);
     }
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Added {} pads (dual row, {} per side) to footprint '{}' in {}",
@@ -535,7 +557,7 @@ pub fn cmd_add_quad_pads(
     pad_width: &str,
     pad_height: &str,
     shape: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let pitch_raw = parse_dimension(pitch)?;
     let span_raw = parse_dimension(span)?;
     let pw_raw = parse_dimension(pad_width)?;
@@ -612,7 +634,7 @@ pub fn cmd_add_quad_pads(
         fp.add_primitive_record(node);
     }
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Added {} pads (quad, {} per side) to footprint '{}' in {}",
@@ -634,7 +656,7 @@ pub fn cmd_add_pad_grid(
     pad_diameter: &str,
     shape: &str,
     skip_center: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     let pitch_raw = parse_dimension(pitch)?;
     let diam_raw = parse_dimension(pad_diameter)?;
     let skip_raw = parse_dimension(skip_center)?;
@@ -684,7 +706,7 @@ pub fn cmd_add_pad_grid(
         fp.add_primitive_record(node);
     }
 
-    lib.save_file(path).map_err(|e| e.to_string())?;
+    lib.save_file(path)?;
 
     println!(
         "Added {} pads ({}x{} grid) to footprint '{}' in {}",

@@ -15,7 +15,7 @@ use crate::output::*;
 use super::{count_primitives, open_schlib};
 
 /// Returns library overview with statistics and component category breakdown.
-pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::Error>> {
+pub fn cmd_overview(path: &Path) -> crate::Result<SchLibOverview> {
     let lib = open_schlib(path)?;
 
     // 1. COMPONENTS BY CATEGORY
@@ -143,7 +143,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchLibOverview, Box<dyn std::error::E
 }
 
 /// Lists all components in the library sorted alphanumerically.
-pub fn cmd_list(path: &Path) -> Result<SchLibComponentList, Box<dyn std::error::Error>> {
+pub fn cmd_list(path: &Path) -> crate::Result<SchLibComponentList> {
     let lib = open_schlib(path)?;
 
     let mut components: Vec<ComponentSummary> = Vec::new();
@@ -172,7 +172,7 @@ pub fn cmd_search(
     path: &Path,
     query: &str,
     limit: Option<usize>,
-) -> Result<SchLibSearchResults, Box<dyn std::error::Error>> {
+) -> crate::Result<SchLibSearchResults> {
     let lib = open_schlib(path)?;
 
     let query_lower = query.to_lowercase();
@@ -227,7 +227,7 @@ pub fn cmd_search(
 }
 
 /// Returns detailed library metadata including file info and header data.
-pub fn cmd_info(path: &Path) -> Result<SchLibInfo, Box<dyn std::error::Error>> {
+pub fn cmd_info(path: &Path) -> crate::Result<SchLibInfo> {
     let lib = open_schlib(path)?;
 
     let mut primitive_counts: HashMap<&'static str, usize> = HashMap::new();

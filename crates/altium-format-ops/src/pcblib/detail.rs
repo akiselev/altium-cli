@@ -22,7 +22,7 @@ pub fn cmd_footprint(
     path: &Path,
     name: &str,
     show_primitives: bool,
-) -> Result<PcbLibFootprintDetail, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbLibFootprintDetail> {
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, name)?;
 
@@ -81,7 +81,7 @@ pub fn cmd_pads(
     path: &Path,
     footprint: Option<String>,
     _group_by_shape: bool,
-) -> Result<PcbLibPadList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbLibPadList> {
     let lib = open_pcblib(path)?;
 
     let filter_lower = footprint.as_ref().map(|s| s.to_lowercase());
@@ -157,7 +157,7 @@ pub fn cmd_pads(
 pub fn cmd_primitives(
     path: &Path,
     footprint: &str,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+) -> crate::Result<serde_json::Value> {
     let lib = open_pcblib(path)?;
     let fp = find_footprint_by_name(&lib, footprint)?;
 
@@ -203,7 +203,7 @@ pub fn cmd_primitives(
 }
 
 /// Analyze hole sizes across the library.
-pub fn cmd_holes(path: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+pub fn cmd_holes(path: &Path) -> crate::Result<serde_json::Value> {
     let lib = open_pcblib(path)?;
 
     let mut hole_info: HashMap<String, Vec<String>> = HashMap::new();

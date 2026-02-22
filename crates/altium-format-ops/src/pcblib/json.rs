@@ -13,7 +13,7 @@ use crate::output::*;
 use super::{extract_pads, open_pcblib};
 
 /// Serializes the library to JSON for LLM processing or external analysis.
-pub fn cmd_json(path: &Path, full: bool) -> Result<PcbLibJson, Box<dyn std::error::Error>> {
+pub fn cmd_json(path: &Path, full: bool) -> crate::Result<PcbLibJson> {
     let lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 

@@ -21,7 +21,7 @@ use super::{
 
 /// Returns a schematic overview with component categories, power architecture,
 /// interfaces, key signals, and quick statistics.
-pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::Error>> {
+pub fn cmd_overview(path: &Path) -> crate::Result<SchDocOverview> {
     let doc = open_schdoc(path)?;
 
     // 1. COMPONENTS BY CATEGORY
@@ -206,7 +206,7 @@ pub fn cmd_overview(path: &Path) -> Result<SchDocOverview, Box<dyn std::error::E
 }
 
 /// Returns detailed sheet metadata, primitive summary, and net information.
-pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
+pub fn cmd_info(path: &Path) -> crate::Result<SchDocInfo> {
     let doc = open_schdoc(path)?;
 
     // 1. SHEET INFO
@@ -274,7 +274,7 @@ pub fn cmd_info(path: &Path) -> Result<SchDocInfo, Box<dyn std::error::Error>> {
 }
 
 /// Lists all placed components with their designators, references, and locations.
-pub fn cmd_components(path: &Path) -> Result<SchDocComponentList, Box<dyn std::error::Error>> {
+pub fn cmd_components(path: &Path) -> crate::Result<SchDocComponentList> {
     let doc = open_schdoc(path)?;
 
     let mut components: Vec<SchDocComponentInfo> = Vec::new();

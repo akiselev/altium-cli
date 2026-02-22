@@ -114,8 +114,8 @@ impl PadData {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Opens and parses a PcbLib file from the given path.
-pub(super) fn open_pcblib(path: &Path) -> Result<PcbLib, Box<dyn std::error::Error>> {
-    Ok(PcbLib::open_file(path).map_err(|e| e.to_string())?)
+pub(super) fn open_pcblib(path: &Path) -> crate::Result<PcbLib> {
+    Ok(PcbLib::open_file(path)?)
 }
 
 /// Convert mm to internal PCB coordinate units.
@@ -127,13 +127,13 @@ pub(super) fn mm_to_raw(mm: f64) -> i32 {
 pub(super) fn find_footprint_by_name(
     lib: &PcbLib,
     name: &str,
-) -> Result<PcbFootprintHandle, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbFootprintHandle> {
     lib.find_footprint(name)
-        .ok_or_else(|| format!("Footprint '{}' not found in library", name).into())
+        .ok_or_else(|| crate::AltiumOpsError::NotFound(format!("Footprint '{}' not found in library", name)))
 }
 
 /// Extract all pad data from a footprint handle.
-pub(super) fn extract_pads(fp: &PcbFootprintHandle) -> Result<Vec<PadData>, Box<dyn std::error::Error>> {
+pub(super) fn extract_pads(fp: &PcbFootprintHandle) -> crate::Result<Vec<PadData>> {
     let pad_handles = fp.children::<PcbPad>()?;
     Ok(pad_handles
         .iter()

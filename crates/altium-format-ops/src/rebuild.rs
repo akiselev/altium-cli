@@ -6,7 +6,6 @@
 //! Rebuilds supported Altium documents into a temp file using typed record
 //! getters/setters and templates, then diffs original vs rebuilt CFB streams.
 
-use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -89,7 +88,7 @@ fn classify_extension(path: &Path) -> Option<&'static str> {
     }
 }
 
-fn make_temp_rebuild_path(src: &Path) -> Result<PathBuf, Box<dyn Error>> {
+fn make_temp_rebuild_path(src: &Path) -> crate::Result<PathBuf> {
     let stem = src
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -98,12 +97,15 @@ fn make_temp_rebuild_path(src: &Path) -> Result<PathBuf, Box<dyn Error>> {
         .extension()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "bin".to_string());
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| crate::AltiumOpsError::InvalidInput(e.to_string()))?
+        .as_millis();
     let pid = std::process::id();
     Ok(std::env::temp_dir().join(format!("{}-rebuild-{}-{}.{}", stem, pid, ts, ext)))
 }
 
-fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Box<dyn Error>> {
+fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> crate::Result<PathBuf> {
     let Some(output) = output else {
         return make_temp_rebuild_path(src);
     };
@@ -119,309 +121,311 @@ fn resolve_rebuild_path(src: &Path, output: Option<&Path>) -> Result<PathBuf, Bo
         std::env::current_dir()?.join(output)
     };
     if src_abs == out_abs {
-        return Err("output path must differ from source path".into());
+        return Err(crate::AltiumOpsError::InvalidInput(
+            "output path must differ from source path".to_string(),
+        ));
     }
     Ok(output.to_path_buf())
 }
 
 macro_rules! copy_sch_record {
     ($type_id:expr, $rid:expr, $parent:expr, $emit:ident, $context:expr) => {{
-        let copy_result: std::result::Result<(), String> = match $type_id {
+        let copy_result: crate::Result<()> = match $type_id {
             SchPinRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchPin>($rid).map_err(|e| format!("{}: {}", $context, e))?.read_normalized();
-                let dst = SchPinRecord::builder_from(templates::sch_pin_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchPin>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read_normalized();
+                let dst = SchPinRecord::builder_from(templates::sch_pin_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchArcRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchArc>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchArcRecord::builder_from(templates::sch_arc_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchArc>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchArcRecord::builder_from(templates::sch_arc_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchLineRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchLine>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchLineRecord::builder_from(templates::sch_line_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchLine>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchLineRecord::builder_from(templates::sch_line_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchRectangleRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchRectangle>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchRectangle>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchRectangleRecord::builder_from(templates::sch_rectangle_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchBezierRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support RECORD={} (Bezier vertices not fully modeled)",
                     $context,
                     SchBezierRecord::RECORD_ID
-                ))
+                )))
             }
             SchPolylineRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support RECORD={} (Polyline vertices not fully modeled)",
                     $context,
                     SchPolylineRecord::RECORD_ID
-                ))
+                )))
             }
             SchPolygonRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support RECORD={} (Polygon vertices not fully modeled)",
                     $context,
                     SchPolygonRecord::RECORD_ID
-                ))
+                )))
             }
             SchEllipseRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchEllipse>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchEllipse>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
-                    SchEllipseRecord::builder_from(templates::sch_ellipse_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                    SchEllipseRecord::builder_from(templates::sch_ellipse_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchPieRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchPie>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchPieRecord::builder_from(templates::sch_pie_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchPie>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchPieRecord::builder_from(templates::sch_pie_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchRoundRectangleRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchRoundRectangle>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchRoundRectangle>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchRoundRectangleRecord::builder_from(
                     templates::sch_round_rectangle_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchEllipticalArcRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchEllipticalArc>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchEllipticalArc>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchEllipticalArcRecord::builder_from(
                     templates::sch_elliptical_arc_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchImageRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchImage>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchImage>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
-                    SchImageRecord::builder_from(templates::sch_image_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                    SchImageRecord::builder_from(templates::sch_image_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchDesignatorRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchDesignator>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchDesignator>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchDesignatorRecord::builder_from(templates::sch_designator_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchParameterRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchParameter>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchParameter>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let mut dst =
                     SchParameterRecord::builder_from(templates::sch_parameter_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
-                dst.append_hidden_duplicate_for_export().map_err(|e| format!("{}: {}", $context, e))?;
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
+                dst.append_hidden_duplicate_for_export().map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?;
                 $emit!(dst);
                 Ok(())
             }
             SchSymbolRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchSymbol>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchSymbol>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
-                    SchSymbolRecord::builder_from(templates::sch_symbol_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                    SchSymbolRecord::builder_from(templates::sch_symbol_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchLabelRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchLabel>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchLabelRecord::builder_from(templates::sch_label_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchLabel>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchLabelRecord::builder_from(templates::sch_label_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchPowerRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchPower>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchPowerRecord::builder_from(templates::sch_power_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchPower>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchPowerRecord::builder_from(templates::sch_power_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchPortRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchPort>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchPortRecord::builder_from(templates::sch_port_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchPort>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchPortRecord::builder_from(templates::sch_port_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchNoERCRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchNoERC>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchNoERC>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
-                    SchNoERCRecord::builder_from(templates::sch_no_erc_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                    SchNoERCRecord::builder_from(templates::sch_no_erc_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchNetLabelRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchNetLabel>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchNetLabel>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchNetLabelRecord::builder_from(templates::sch_net_label_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchBusRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support RECORD={} (Bus vertices not fully modeled)",
                     $context,
                     SchBusRecord::RECORD_ID
-                ))
+                )))
             }
             SchWireRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support RECORD={} (Wire vertices not fully modeled)",
                     $context,
                     SchWireRecord::RECORD_ID
-                ))
+                )))
             }
             SchTextFrameRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchTextFrame>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchTextFrame>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchTextFrameRecord::builder_from(templates::sch_text_frame_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchJunctionRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchJunction>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchJunction>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
-                    SchJunctionRecord::builder_from(templates::sch_junction_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                    SchJunctionRecord::builder_from(templates::sch_junction_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchSheet>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchSheetRecord::builder_from(templates::sch_sheet_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchSheet>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchSheetRecord::builder_from(templates::sch_sheet_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetNameRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchSheetName>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchSheetName>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchSheetNameRecord::builder_from(templates::sch_sheet_name_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetFileNameRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchSheetFileName>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchSheetFileName>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchSheetFileNameRecord::builder_from(
                     templates::sch_sheet_filename_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchBusEntryRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchBusEntry>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchBusEntry>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
-                    SchBusEntryRecord::builder_from(templates::sch_bus_entry_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                    SchBusEntryRecord::builder_from(templates::sch_bus_entry_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetSymbolRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchSheetSymbol>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchSheetSymbol>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchSheetSymbolRecord::builder_from(
                     templates::sch_sheet_symbol_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchSheetEntryRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchSheetEntry>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchSheetEntry>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchSheetEntryRecord::builder_from(templates::sch_sheet_entry_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchImplementationListRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchImplementationList>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchImplementationList>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchImplementationListRecord::builder_from(
                     templates::sch_implementation_list_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchImplementationRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchImplementation>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchImplementation>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let mut dst =
                     SchImplementationRecord::builder_from(templates::sch_implementation_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
-                dst.set_datafile_links(&src.datafile_links().map_err(|e| format!("{}: {}", $context, e))?);
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
+                dst.set_datafile_links(&src.datafile_links().map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?);
                 $emit!(dst);
                 Ok(())
             }
             SchMapDefinerListRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchMapDefinerList>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchMapDefinerList>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchMapDefinerListRecord::builder_from(
                     templates::sch_map_definer_list_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchMapDefinerRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchMapDefiner>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchMapDefiner>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let mut dst =
                     SchMapDefinerRecord::builder_from(templates::sch_map_definer_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
-                dst.set_implementation_designators(&src.implementation_designators().map_err(|e| format!("{}: {}", $context, e))?);
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
+                dst.set_implementation_designators(&src.implementation_designators().map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?);
                 $emit!(dst);
                 Ok(())
             }
             SchImplementationParametersRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchImplementationParameters>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchImplementationParameters>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = SchImplementationParametersRecord::builder_from(
                     templates::sch_implementation_parameters_default,
                     &src,
                 )
-                .map_err(|e| format!("{}: {}", $context, e))?.build();
+                .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchNoteRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchNote>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
-                let dst = SchNoteRecord::builder_from(templates::sch_note_default, &src).map_err(|e| format!("{}: {}", $context, e))?.build();
+                let src = $parent.handle_for::<SchNote>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
+                let dst = SchNoteRecord::builder_from(templates::sch_note_default, &src).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchTaskHolderRecord::RECORD_ID => {
-                let src = $parent.handle_for::<SchTaskHolder>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<SchTaskHolder>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst =
                     SchTaskHolderRecord::builder_from(templates::sch_task_holder_default, &src)
-                        .map_err(|e| format!("{}: {}", $context, e))?.build();
+                        .map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.build();
                 $emit!(dst);
                 Ok(())
             }
             SchBlanketRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support RECORD={} (Blanket vertices not fully modeled)",
                     $context,
                     SchBlanketRecord::RECORD_ID
-                ))
+                )))
             }
-            _ => Err(format!(
+            _ => Err(crate::AltiumOpsError::NotImplemented(format!(
                 "{}: unimplemented schematic record_id={}",
                 $context, $type_id
-            )),
+            ))),
         };
         copy_result
     }};
@@ -429,58 +433,58 @@ macro_rules! copy_sch_record {
 
 macro_rules! copy_pcb_record {
     ($type_id:expr, $rid:expr, $parent:expr, $emit:ident, $context:expr) => {{
-        let copy_result: std::result::Result<(), String> = match $type_id {
+        let copy_result: crate::Result<()> = match $type_id {
             PcbArcRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbArc>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbArc>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbArcRecord::builder_from(templates::pcb_arc_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbPadRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbPad>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbPad>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbPadRecord::builder_from(templates::pcb_pad_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbViaRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbVia>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbVia>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbViaRecord::builder_from(templates::pcb_via_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbTrackRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbTrack>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbTrack>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbTrackRecord::builder_from(templates::pcb_track_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbTextRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbText>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbText>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbTextRecord::builder_from(templates::pcb_text_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbFillRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbFill>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbFill>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbFillRecord::builder_from(templates::pcb_fill_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbConnectionRecord::RECORD_ID => {
-                Err(format!(
+                Err(crate::AltiumOpsError::NotImplemented(format!(
                     "{}: strict rebuild does not support pcb object_id={} (no high-level template)",
                     $context,
                     PcbConnectionRecord::RECORD_ID
-                ))
+                )))
             }
             PcbRegionRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbRegion>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbRegion>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbRegionRecord::builder_from(templates::pcb_region_default, &src).build();
                 $emit!(dst);
                 Ok(())
             }
             PcbComponentBodyRecord::RECORD_ID => {
-                let src = $parent.handle_for::<PcbComponentBody>($rid).map_err(|e| format!("{}: {}", $context, e))?.read();
+                let src = $parent.handle_for::<PcbComponentBody>($rid).map_err(|e| crate::AltiumOpsError::Rebuild { context: $context.to_string(), source: e })?.read();
                 let dst = PcbComponentBodyRecord::builder_from(
                     templates::pcb_component_body_default,
                     &src,
@@ -489,17 +493,17 @@ macro_rules! copy_pcb_record {
                 $emit!(dst);
                 Ok(())
             }
-            _ => Err(format!(
+            _ => Err(crate::AltiumOpsError::NotImplemented(format!(
                 "{}: unimplemented pcb object_id={}",
                 $context, $type_id
-            )),
+            ))),
         };
         copy_result
     }};
 }
 
-fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
-    let src = SchLib::open_file(path).map_err(|e| e.to_string())?;
+fn rebuild_schlib(path: &Path, out: &Path) -> crate::Result<()> {
+    let src = SchLib::open_file(path)?;
     let dst = SchLib::new_empty();
 
     let header = src.header();
@@ -507,19 +511,23 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     dst.set_storage_meta(src.storage_meta())?;
     dst.set_redirection_streams(src.redirection_streams())?;
 
-    let components = src.query_all::<SchComponent>("#1").map_err(|e| e.to_string())?;
+    let components = src.query_all::<SchComponent>("#1")?;
 
     for src_comp in components {
         let src_parent = src_comp.read();
+        let mut build_err: Option<altium_format::AltiumError> = None;
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
-            let rebuilt = altium_format::records::SchComponentRecord::builder_from(
+            match altium_format::records::SchComponentRecord::builder_from(
                 templates::sch_component_default,
                 &src_parent,
-            )
-            .expect("SchComponentRecord::builder_from failed")
-            .build();
-            builder.with_component(|comp| *comp = rebuilt);
-        }).map_err(|e| e.to_string())?;
+            ) {
+                Ok(b) => { builder.with_component(|comp| *comp = b.build()); }
+                Err(e) => build_err = Some(e),
+            }
+        })?;
+        if let Some(e) = build_err {
+            return Err(crate::AltiumOpsError::AltiumFormat(e));
+        }
         dst_comp.set_sidecar_streams(src_comp.sidecar_streams())?;
 
         for (type_id, rid) in src_comp.all_children() {
@@ -534,8 +542,7 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                 &src_comp,
                 emit_child,
                 "schlib:component-child"
-            )
-            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            )?;
         }
     }
 
@@ -544,12 +551,12 @@ fn rebuild_schlib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(parent)?;
         }
     }
-    dst.save_file(&out).map_err(|e| e.to_string())?;
+    dst.save_file(&out)?;
     Ok(())
 }
 
-fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
-    let src = PcbLib::open_file(path).map_err(|e| e.to_string())?;
+fn rebuild_pcblib(path: &Path, out: &Path) -> crate::Result<()> {
+    let src = PcbLib::open_file(path)?;
     let dst = PcbLib::new_empty();
     dst.set_section_keys(src.section_keys())?;
     dst.set_file_header_meta(src.file_header_meta())?;
@@ -559,23 +566,26 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     let names = src.names();
     for name in names {
         let Some(src_fp) = src.find_footprint(&name) else {
-            return Err(format!(
+            return Err(crate::AltiumOpsError::NotFound(format!(
                 "pcblib:footprint: footprint '{}' not found by name during rebuild",
                 name
-            )
-            .into());
+            )));
         };
 
         let src_meta = src_fp.read();
+        let mut build_err: Option<altium_format::AltiumError> = None;
         let dst_fp = dst.build_footprint(&name, templates::pcb_footprint_default, |builder| {
-            let rebuilt = altium_format::records::PcbFootprintRecord::builder_from(
+            match altium_format::records::PcbFootprintRecord::builder_from(
                 templates::pcb_footprint_default,
                 &src_meta,
-            )
-            .expect("PcbFootprintRecord::builder_from failed")
-            .build();
-            builder.with_metadata(|meta| *meta = rebuilt);
+            ) {
+                Ok(b) => { builder.with_metadata(|meta| *meta = b.build()); }
+                Err(e) => build_err = Some(e),
+            }
         });
+        if let Some(e) = build_err {
+            return Err(crate::AltiumOpsError::AltiumFormat(e));
+        }
 
         for (type_id, rid) in src_fp.all_children() {
             macro_rules! emit_prim {
@@ -589,8 +599,7 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                 &src_fp,
                 emit_prim,
                 "pcblib:primitive"
-            )
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            )?;
         }
     }
 
@@ -599,12 +608,12 @@ fn rebuild_pcblib(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(parent)?;
         }
     }
-    dst.save_file(&out).map_err(|e| e.to_string())?;
+    dst.save_file(&out)?;
     Ok(())
 }
 
-fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
-    let src = SchDoc::open_file(path).map_err(|e| e.to_string())?;
+fn rebuild_schdoc(path: &Path, out: &Path) -> crate::Result<()> {
+    let src = SchDoc::open_file(path)?;
     let dst = SchDoc::new_empty();
 
     dst.set_file_header_meta(src.file_header_meta())?;
@@ -613,15 +622,19 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
 
     for src_comp in src.components() {
         let src_parent = src_comp.read();
+        let mut build_err: Option<altium_format::AltiumError> = None;
         let dst_comp = dst.build_component(templates::sch_component_default, |builder| {
-            let rebuilt = altium_format::records::SchComponentRecord::builder_from(
+            match altium_format::records::SchComponentRecord::builder_from(
                 templates::sch_component_default,
                 &src_parent,
-            )
-            .expect("SchComponentRecord::builder_from failed")
-            .build();
-            builder.with_component(|comp| *comp = rebuilt);
+            ) {
+                Ok(b) => { builder.with_component(|comp| *comp = b.build()); }
+                Err(e) => build_err = Some(e),
+            }
         });
+        if let Some(e) = build_err {
+            return Err(crate::AltiumOpsError::AltiumFormat(e));
+        }
 
         for (type_id, rid) in src_comp.all_children().into_iter() {
             macro_rules! emit_child {
@@ -635,8 +648,7 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                 &src_comp,
                 emit_child,
                 "schdoc:component-child"
-            )
-            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            )?;
         }
     }
 
@@ -652,8 +664,7 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             &src,
             emit_orphan,
             "schdoc:orphan"
-        )
-            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        )?;
     }
 
     if let Some(parent) = out.parent() {
@@ -661,12 +672,12 @@ fn rebuild_schdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(parent)?;
         }
     }
-    dst.save_file(&out).map_err(|e| e.to_string())?;
+    dst.save_file(&out)?;
     Ok(())
 }
 
-fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
-    let src = PcbDoc::open_file(path).map_err(|e| e.to_string())?;
+fn rebuild_pcbdoc(path: &Path, out: &Path) -> crate::Result<()> {
+    let src = PcbDoc::open_file(path)?;
     let dst = PcbDoc::new_empty();
 
     let mut streams_meta = src.streams_meta();
@@ -687,8 +698,7 @@ fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
         for (type_id, rid) in src.primitive_records(&section_name) {
             macro_rules! emit_prim {
                 ($rec:expr) => {{
-                    dst.add_primitive_record(&section_name, $rec)
-                        .map_err(|e| -> Box<dyn Error> { e.to_string().into() })?;
+                    dst.add_primitive_record(&section_name, $rec)?;
                 }};
             }
             copy_pcb_record!(
@@ -697,8 +707,7 @@ fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
                 &src,
                 emit_prim,
                 "pcbdoc:primitive"
-            )
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            )?;
         }
     }
 
@@ -707,15 +716,18 @@ fn rebuild_pcbdoc(path: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(parent)?;
         }
     }
-    dst.save_file(out).map_err(|e| e.to_string())?;
+    dst.save_file(out)?;
     Ok(())
 }
 
 /// Rebuild a supported Altium document from high-level types and diff against
 /// the original CFB stream layout.
-pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, Box<dyn Error>> {
+pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> crate::Result<RebuildReport> {
     let Some(file_type) = classify_extension(path) else {
-        return Err(format!("Unsupported file extension for {}", path.display()).into());
+        return Err(crate::AltiumOpsError::InvalidInput(format!(
+            "Unsupported file extension for {}",
+            path.display()
+        )));
     };
 
     let _panic_hook_silencer = PanicHookSilencer::install();
@@ -727,7 +739,12 @@ pub fn cmd_rebuild(path: &Path, output: Option<&Path>) -> Result<RebuildReport, 
         "PcbLib" => rebuild_pcblib(path, &rebuilt_path)?,
         "SchDoc" => rebuild_schdoc(path, &rebuilt_path)?,
         "PcbDoc" => rebuild_pcbdoc(path, &rebuilt_path)?,
-        _ => return Err(format!("Unsupported file type: {}", file_type).into()),
+        _ => {
+            return Err(crate::AltiumOpsError::InvalidInput(format!(
+                "Unsupported file type: {}",
+                file_type
+            )))
+        }
     };
 
     let original_bytes = fs::read(path)?;

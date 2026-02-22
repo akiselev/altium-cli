@@ -18,7 +18,7 @@ use super::{format_location, open_schdoc, port_io_type_name, power_style_name};
 pub fn cmd_netlist(
     path: &Path,
     filter: Option<String>,
-) -> Result<SchDocNetLabelList, Box<dyn std::error::Error>> {
+) -> crate::Result<SchDocNetLabelList> {
     let doc = open_schdoc(path)?;
 
     let filter_lower = filter.as_ref().map(|f| f.to_lowercase());
@@ -72,13 +72,13 @@ pub fn cmd_netlist(
 /// **Status:** Wire coordinate extraction is not yet available in the typed API.
 /// The `SchWireRecord` vertex coordinates (`LOCATION.X/Y`, `CORNER.X/Y`) are
 /// `#[altium(skip)]` and not covered by the typed record accessors.
-pub fn cmd_wires(path: &Path) -> Result<SchDocWireList, Box<dyn std::error::Error>> {
+pub fn cmd_wires(path: &Path) -> crate::Result<SchDocWireList> {
     let _ = path;
-    Err("Wire coordinate extraction is not yet available in the typed API".into())
+    Err(crate::AltiumOpsError::NotImplemented("Wire coordinate extraction is not yet available in the typed API".to_string()))
 }
 
 /// Lists all port definitions (RECORD=18) for hierarchical design analysis.
-pub fn cmd_ports(path: &Path) -> Result<SchDocPortList, Box<dyn std::error::Error>> {
+pub fn cmd_ports(path: &Path) -> crate::Result<SchDocPortList> {
     let doc = open_schdoc(path)?;
 
     let mut ports: Vec<PortInfo> = Vec::new();
@@ -107,7 +107,7 @@ pub fn cmd_ports(path: &Path) -> Result<SchDocPortList, Box<dyn std::error::Erro
 
 /// Analyzes power distribution by listing all power port objects (RECORD=17),
 /// grouped by net name.
-pub fn cmd_power_map(path: &Path) -> Result<SchDocPowerList, Box<dyn std::error::Error>> {
+pub fn cmd_power_map(path: &Path) -> crate::Result<SchDocPowerList> {
     let doc = open_schdoc(path)?;
 
     let mut power_objects: Vec<PowerObjectInfo> = Vec::new();

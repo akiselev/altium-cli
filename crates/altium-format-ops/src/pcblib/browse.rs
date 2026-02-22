@@ -14,7 +14,7 @@ use crate::output::*;
 use super::{categorize_footprint, count_primitives, extract_pads, open_pcblib};
 
 /// Returns library overview with statistics and footprint category breakdown.
-pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::Error>> {
+pub fn cmd_overview(path: &Path) -> crate::Result<PcbLibOverview> {
     let lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 
@@ -143,7 +143,7 @@ pub fn cmd_overview(path: &Path) -> Result<PcbLibOverview, Box<dyn std::error::E
 }
 
 /// Lists all footprints in the library sorted alphanumerically.
-pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::Error>> {
+pub fn cmd_list(path: &Path) -> crate::Result<PcbLibFootprintList> {
     let lib = open_pcblib(path)?;
 
     let mut fps: Vec<FootprintSummaryExt> = Vec::new();
@@ -171,7 +171,7 @@ pub fn cmd_list(path: &Path) -> Result<PcbLibFootprintList, Box<dyn std::error::
 pub fn cmd_search(
     path: &Path,
     query: &str,
-) -> Result<PcbLibSearchResults, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbLibSearchResults> {
     let lib = open_pcblib(path)?;
 
     let query_lower = query.to_lowercase();
@@ -223,7 +223,7 @@ pub fn cmd_search(
 }
 
 /// Returns detailed library metadata including file info and primitive statistics.
-pub fn cmd_info(path: &Path) -> Result<PcbLibInfo, Box<dyn std::error::Error>> {
+pub fn cmd_info(path: &Path) -> crate::Result<PcbLibInfo> {
     let lib = open_pcblib(path)?;
     let unique_id = lib.unique_id();
 

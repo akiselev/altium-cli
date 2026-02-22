@@ -145,8 +145,8 @@ pub struct PcbDocRegionList {
 const NOT_IMPLEMENTED: &str =
     "PcbDoc v2 operations not yet implemented - pending PcbDoc document type";
 
-fn stub_err<T>() -> Result<T, Box<dyn std::error::Error>> {
-    Err(NOT_IMPLEMENTED.into())
+fn stub_err<T>() -> crate::Result<T> {
+    Err(crate::AltiumOpsError::NotImplemented(NOT_IMPLEMENTED.to_string()))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -155,13 +155,13 @@ fn stub_err<T>() -> Result<T, Box<dyn std::error::Error>> {
 
 /// Returns a complete overview of a PCB document.
 #[allow(unused_variables)]
-pub fn cmd_overview(path: &Path) -> Result<PcbDocOverview, Box<dyn std::error::Error>> {
+pub fn cmd_overview(path: &Path) -> crate::Result<PcbDocOverview> {
     stub_err()
 }
 
 /// Returns detailed document info and statistics.
 #[allow(unused_variables)]
-pub fn cmd_info(path: &Path) -> Result<PcbDocInfo, Box<dyn std::error::Error>> {
+pub fn cmd_info(path: &Path) -> crate::Result<PcbDocInfo> {
     stub_err()
 }
 
@@ -171,7 +171,7 @@ pub fn cmd_rules(
     path: &Path,
     kind: Option<String>,
     verbose: bool,
-) -> Result<PcbDocRuleList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocRuleList> {
     stub_err()
 }
 
@@ -181,7 +181,7 @@ pub fn cmd_rule(
     path: &Path,
     name: &str,
     verbose: bool,
-) -> Result<PcbDocRuleDetail, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocRuleDetail> {
     stub_err()
 }
 
@@ -191,7 +191,7 @@ pub fn cmd_components(
     path: &Path,
     verbose: bool,
     layer: Option<String>,
-) -> Result<PcbDocComponentList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocComponentList> {
     stub_err()
 }
 
@@ -201,13 +201,13 @@ pub fn cmd_component(
     path: &Path,
     designator: &str,
     verbose: bool,
-) -> Result<PcbDocComponentDetail, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocComponentDetail> {
     stub_err()
 }
 
 /// Lists all nets in the PCB document.
 #[allow(unused_variables)]
-pub fn cmd_nets(path: &Path) -> Result<PcbDocNetList, Box<dyn std::error::Error>> {
+pub fn cmd_nets(path: &Path) -> crate::Result<PcbDocNetList> {
     stub_err()
 }
 
@@ -217,7 +217,7 @@ pub fn cmd_json(
     path: &Path,
     full: bool,
     pretty: bool,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+) -> crate::Result<serde_json::Value> {
     stub_err()
 }
 
@@ -226,7 +226,7 @@ pub fn cmd_json(
 pub fn cmd_outline(
     path: &Path,
     verbose: bool,
-) -> Result<PcbDocOutline, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocOutline> {
     stub_err()
 }
 
@@ -235,13 +235,13 @@ pub fn cmd_outline(
 pub fn cmd_settings(
     path: &Path,
     verbose: bool,
-) -> Result<PcbDocSettings, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocSettings> {
     stub_err()
 }
 
 /// Shows the layer stack.
 #[allow(unused_variables)]
-pub fn cmd_layers(path: &Path, all: bool) -> Result<PcbDocLayers, Box<dyn std::error::Error>> {
+pub fn cmd_layers(path: &Path, all: bool) -> crate::Result<PcbDocLayers> {
     stub_err()
 }
 
@@ -250,13 +250,13 @@ pub fn cmd_layers(path: &Path, all: bool) -> Result<PcbDocLayers, Box<dyn std::e
 pub fn cmd_keepouts(
     path: &Path,
     layer: Option<String>,
-) -> Result<PcbDocKeepouts, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocKeepouts> {
     stub_err()
 }
 
 /// Lists board cutouts.
 #[allow(unused_variables)]
-pub fn cmd_cutouts(path: &Path) -> Result<PcbDocCutouts, Box<dyn std::error::Error>> {
+pub fn cmd_cutouts(path: &Path) -> crate::Result<PcbDocCutouts> {
     stub_err()
 }
 
@@ -266,7 +266,7 @@ pub fn cmd_polygons(
     path: &Path,
     layer: Option<String>,
     net: Option<String>,
-) -> Result<PcbDocPolygonList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocPolygonList> {
     stub_err()
 }
 
@@ -275,7 +275,7 @@ pub fn cmd_polygons(
 pub fn cmd_polygon(
     path: &Path,
     index: usize,
-) -> Result<PcbDocPolygonDetail, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocPolygonDetail> {
     stub_err()
 }
 
@@ -284,13 +284,13 @@ pub fn cmd_polygon(
 pub fn cmd_tracks(
     path: &Path,
     layer: Option<String>,
-) -> Result<PcbDocTrackList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocTrackList> {
     stub_err()
 }
 
 /// Lists vias.
 #[allow(unused_variables)]
-pub fn cmd_vias(path: &Path) -> Result<PcbDocViaList, Box<dyn std::error::Error>> {
+pub fn cmd_vias(path: &Path) -> crate::Result<PcbDocViaList> {
     stub_err()
 }
 
@@ -299,7 +299,7 @@ pub fn cmd_vias(path: &Path) -> Result<PcbDocViaList, Box<dyn std::error::Error>
 pub fn cmd_arcs(
     path: &Path,
     layer: Option<String>,
-) -> Result<PcbDocArcList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocArcList> {
     stub_err()
 }
 
@@ -308,7 +308,7 @@ pub fn cmd_arcs(
 pub fn cmd_fills(
     path: &Path,
     layer: Option<String>,
-) -> Result<PcbDocFillList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocFillList> {
     stub_err()
 }
 
@@ -317,7 +317,7 @@ pub fn cmd_fills(
 pub fn cmd_texts(
     path: &Path,
     layer: Option<String>,
-) -> Result<PcbDocTextList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocTextList> {
     stub_err()
 }
 
@@ -326,7 +326,7 @@ pub fn cmd_texts(
 pub fn cmd_regions(
     path: &Path,
     layer: Option<String>,
-) -> Result<PcbDocRegionList, Box<dyn std::error::Error>> {
+) -> crate::Result<PcbDocRegionList> {
     stub_err()
 }
 
@@ -339,7 +339,7 @@ pub fn cmd_regions(
 pub fn cmd_create(
     path: &Path,
     template: Option<PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -351,13 +351,13 @@ pub fn cmd_set_outline_rect(
     height: &str,
     origin_x: &str,
     origin_y: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
 /// Sets the board outline from a vertex string.
 #[allow(unused_variables)]
-pub fn cmd_set_outline(path: &Path, vertices: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_set_outline(path: &Path, vertices: &str) -> crate::Result<()> {
     stub_err()
 }
 
@@ -375,7 +375,7 @@ pub fn cmd_set_settings(
     track_width: Option<String>,
     origin_x: Option<String>,
     origin_y: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -388,7 +388,7 @@ pub fn cmd_add_keepout(
     y1: &str,
     x2: &str,
     y2: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -400,7 +400,7 @@ pub fn cmd_add_cutout(
     y1: &str,
     x2: &str,
     y2: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -414,7 +414,7 @@ pub fn cmd_add_polygon(
     pour_over: bool,
     remove_dead: bool,
     hatch_style: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -429,7 +429,7 @@ pub fn cmd_add_track(
     width: Option<String>,
     layer: &str,
     net: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -441,7 +441,7 @@ pub fn cmd_add_track_path(
     width: Option<String>,
     layer: &str,
     net: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -456,7 +456,7 @@ pub fn cmd_add_via(
     from_layer: &str,
     to_layer: &str,
     net: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -471,7 +471,7 @@ pub fn cmd_add_arc(
     width: Option<String>,
     layer: &str,
     net: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -486,7 +486,7 @@ pub fn cmd_add_fill(
     x2: &str,
     y2: &str,
     rotation: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -501,7 +501,7 @@ pub fn cmd_add_text(
     height: Option<String>,
     rotation: f64,
     mirror: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -513,7 +513,7 @@ pub fn cmd_add_region(
     net: Option<&str>,
     vertices: &str,
     kind: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -532,7 +532,7 @@ pub fn cmd_place_component(
     layer: Option<String>,
     grid: Option<String>,
     force: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -546,13 +546,13 @@ pub fn cmd_add_component(
     footprint: Option<String>,
     at: Option<String>,
     layer: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
 /// Adds a net to the PCB document.
 #[allow(unused_variables)]
-pub fn cmd_add_net(path: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_add_net(path: &Path, name: &str) -> crate::Result<()> {
     stub_err()
 }
 
@@ -571,7 +571,7 @@ pub fn cmd_add_rule(
     pref_width: Option<String>,
     comment: Option<String>,
     disabled: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
@@ -588,12 +588,12 @@ pub fn cmd_modify_rule(
     comment: Option<String>,
     enable: bool,
     disable: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> crate::Result<()> {
     stub_err()
 }
 
 /// Deletes a design rule by name.
 #[allow(unused_variables)]
-pub fn cmd_delete_rule(path: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn cmd_delete_rule(path: &Path, name: &str) -> crate::Result<()> {
     stub_err()
 }

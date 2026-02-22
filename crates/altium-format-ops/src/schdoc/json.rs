@@ -12,7 +12,7 @@ use altium_format::handles::{SchComponent, SchPin};
 use super::{collect_net_names, collect_power_nets, get_sheet_size, open_schdoc};
 
 /// Serializes the schematic document to JSON for LLM processing or external analysis.
-pub fn cmd_json(path: &Path, full: bool) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+pub fn cmd_json(path: &Path, full: bool) -> crate::Result<serde_json::Value> {
     let doc = open_schdoc(path)?;
 
     if full {
