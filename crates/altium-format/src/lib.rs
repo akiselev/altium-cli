@@ -1,6 +1,8 @@
 // Unused until TrackedCfbDocument (Layer 2, Milestone 3) is implemented.
 #[allow(dead_code)]
 mod cfb_document;
+#[allow(dead_code)]
+mod tracked_cfb;
 pub mod document;
 pub mod intlib;
 pub mod pcbdoc;

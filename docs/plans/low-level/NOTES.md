@@ -15,3 +15,13 @@
 - `enumerate_all_entries` uses recursive walk via `read_storage` — collects children into a `Vec` first to release the borrow on `self.inner` before recursing.
 - Test data paths use `env!("CARGO_MANIFEST_DIR")` + `../../data/` to reach workspace-level `data/` directory.
 - `enumerate_all_entries` test asserts 4 specific known paths from `BlankSchlibComponent.SchLib`: `/FileHeader`, `/Storage`, `/Component_1`, `/Component_1/Data` — the nested path proves recursive descent works.
+
+## Milestone 3: Layer 2 — TrackedCfbDocument
+
+- Tests placed as inline unit tests (`#[cfg(test)] mod tests` inside `tracked_cfb.rs`) rather than integration tests — same reasoning as Milestone 2: `TrackedCfbDocument` is `pub(crate)` and inaccessible from a separate test crate.
+- `list_entries` path normalization uses explicit `"/"` guard before `trim_end_matches('/')` — without the guard, `"/"` would normalize to `""` (empty string), causing `cfb::read_storage("")` to receive a malformed path.
+- `read_stream` marks path as consumed before delegating to inner — if the delegate fails, the path remains in `consumed`, but this is benign because errors propagate via `?` and `assert_all_consumed()` is only reached on the success path.
+- `read_stream_optional` marks consumed even for absent paths — inserting extra entries into `consumed` that aren't in `all_entries` is harmless since `assert_all_consumed` uses `all_entries.difference(&consumed)`.
+- `UnconsumedStreams` error variant already existed in `lib.rs` from Milestone 1 — no addition needed.
+- `#[allow(dead_code)]` on `mod tracked_cfb;` in `lib.rs` — `TrackedCfbDocument` has no callers yet; will be consumed by higher layers in later milestones.
+- Test for full consumption dynamically discovers entries via `list_entries("/")` rather than hardcoding — `list_entries` returns bare names (e.g., `"FileHeader"`), full paths constructed by prepending parent path (e.g., `format!("/{name}")`).
