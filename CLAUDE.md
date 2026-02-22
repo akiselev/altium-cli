@@ -54,7 +54,18 @@ type codes, masks, shifts). ALWAYS use these instead of raw primitives:
   Types go in the appropriate module (`pcb.rs`, `sch.rs`, etc.); constants go in
   `crates/altium-format-types/src/constants/`. Make sure to check the constant you add against the decompiled code (Delphi or C# depending on the constant, but most should be in the already decompiled C# code)
 
-NEVER use raw types like String (remember Altium uses a lot of Windows encoding and supports UTF8 and possibly UTF16 too) and primitive integers. If a type doesn't already exist in `altium-format-types`, let's add one (discuss it with the user first)
+NEVER use raw primitive integers where a domain type exists (e.g., use `Coord` not `i32`,
+`SchRecordType` not `i32`, `PcbObjectId` not `u8`). If a type doesn't already exist in
+`altium-format-types`, add one (discuss it with the user first).
+
+**Strings:** Rust `String` (UTF-8) is the correct in-memory representation for decoded text.
+Altium files use multiple encodings (Windows-1252 for parameter strings, UTF-8 via `%UTF8%`
+prefix, UTF-16LE in pin sidecars and WideStrings). The encoding is a property of the
+*serialization context*, not the string type — Altium's own C# code uses plain .NET `string`.
+All encoding/decoding MUST happen at parse boundaries with strict error checking:
+- Windows-1252: `encoding_rs::WINDOWS_1252.decode()` (all 256 byte values are valid, cannot error)
+- UTF-16LE: `encoding_rs::UTF_16LE.decode()` — MUST check `had_errors` flag
+- UTF-8: `std::str::from_utf8()` (strict) — NEVER use `from_utf8_lossy()`
 
 
 

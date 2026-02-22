@@ -34,12 +34,18 @@ The parser must never silently skip data it doesn't understand. If a stream, rec
 - `.ok()`, `.unwrap_or_default()`, or `let _ =` on parse results that silently drop errors
 
 #### R2: No Raw Primitive Types
-Never use raw types where domain types exist in `altium-format-types`. Look for:
-- `String` instead of the appropriate Altium string type (Altium uses Windows-1252, UTF-8, and UTF-16)
+Never use raw primitive integers where domain types exist in `altium-format-types`. Look for:
 - `u8` where `PcbObjectId` should be used
 - `i32` where `SchRecordType`, `Coord`, or other typed values should be used
 - Raw integer literals for constants (e.g., `0xD0` instead of `INSTRUCTION_BINARY`, `0x00FF_FFFF` instead of `BLOCK_SIZE_MASK`)
-- Any struct field using a primitive type when a domain type exists or should be created
+- Any struct field using a primitive integer type when a domain type exists or should be created
+- Note: Rust `String` is correct for decoded text — Altium's own C# code uses plain .NET `string`. The encoding is a property of the serialization context, not the type.
+
+#### R2b: Strict Encoding at Parse Boundaries
+All byte-to-string decoding MUST use strict (non-lossy) functions. Look for:
+- `from_utf8_lossy()` — ALWAYS a violation; use `from_utf8()` with error propagation or Windows-1252 decode
+- Discarded `had_errors` flag on `encoding_rs::UTF_16LE.decode()` calls — MUST be checked
+- Note: `encoding_rs::WINDOWS_1252.decode()` maps all 256 byte values and cannot error, so discarding its flags is safe
 
 #### R3: No Silent Error Dropping
 Everything fallible MUST return `Result<T, AltiumFormatError>` (in `altium-format`) or `Result<T, AltiumOpsError>` (in `altium-format-ops`). Look for:
@@ -122,7 +128,8 @@ For each file in scope, use Grep and Read to check for violations. Efficient sea
 | Rule | Grep patterns to try |
 |------|---------------------|
 | R1 | `_ => \{\}`, `_ => Ok\(\)`, `skip`, `ignore_remaining`, `.ok()` on parse results |
-| R2 | Struct fields with `: String`, `: u8`, `: i32`, `: u32`, `: i64`, `: u64`; hex literals `0x[0-9a-fA-F]+` |
+| R2 | Struct fields with `: u8`, `: i32`, `: u32`, `: i64`, `: u64`; hex literals `0x[0-9a-fA-F]+` |
+| R2b | `from_utf8_lossy`, `decode_without_bom_handling` with discarded `had_errors` on UTF-16 |
 | R3 | `.unwrap()`, `.expect(`, `if let Ok(`, `let _ =` |
 | R4 | `pub fn` and `pub struct` in altium-format (check if they should be `pub(crate)`) |
 | R5 | `mark_consumed`, `set_consumed`, `consumed = true` without adjacent parsing |
