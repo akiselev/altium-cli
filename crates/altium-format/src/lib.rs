@@ -1,3 +1,4 @@
+pub mod document;
 pub mod intlib;
 pub mod pcbdoc;
 pub mod pcblib;
@@ -5,6 +6,7 @@ pub mod project;
 pub mod schdoc;
 pub mod schlib;
 
+pub use document::Document;
 pub use intlib::IntLib;
 pub use pcbdoc::PcbDoc;
 pub use pcblib::PcbLib;
