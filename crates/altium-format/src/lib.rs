@@ -1,15 +1,24 @@
-// Unused until TrackedCfbDocument (Layer 2, Milestone 3) is implemented.
+#[allow(dead_code)]
+mod binary_io;
+#[allow(dead_code)]
+mod block_stream;
 #[allow(dead_code)]
 mod cfb_document;
-#[allow(dead_code)]
-mod tracked_cfb;
 pub mod document;
+#[allow(dead_code)]
+mod embedded_object;
 pub mod intlib;
+#[allow(dead_code)]
+mod param_collection;
+#[allow(dead_code)]
+mod param_value;
 pub mod pcbdoc;
 pub mod pcblib;
 pub mod project;
 pub mod schdoc;
 pub mod schlib;
+#[allow(dead_code)]
+mod tracked_cfb;
 
 pub use document::Document;
 pub use intlib::IntLib;
@@ -51,7 +60,9 @@ pub enum AltiumFormatError {
     DecompressionError(String),
     #[error("Invalid parameter value for key '{key}': {detail}")]
     InvalidParamValue { key: String, detail: String },
-    #[error("Binary read past end: needed {needed} bytes at offset {offset}, only {available} remain")]
+    #[error(
+        "Binary read past end: needed {needed} bytes at offset {offset}, only {available} remain"
+    )]
     BinaryReadPastEnd {
         offset: usize,
         needed: usize,
