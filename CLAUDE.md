@@ -45,6 +45,8 @@ type codes, masks, shifts). ALWAYS use these instead of raw primitives:
   Types go in the appropriate module (`pcb.rs`, `sch.rs`, etc.); constants go in
   `crates/altium-format-types/src/constants/`. Make sure to check the constant you add against the decompiled code (Delphi or C# depending on the constant, but most should be in the already decompiled C# code)
 
+NEVER use raw types like String (remember Altium uses a lot of Windows encoding and supports UTF8 and possibly UTF16 too) and primitive integers. If a type doesn't already exist in `altium-format-types`, let's add one (discuss it with the user first)
+
 
 
 # Reverse engineering Altium
