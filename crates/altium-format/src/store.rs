@@ -219,9 +219,20 @@ impl DocumentStore {
     }
 
     /// Set original flat-stream index for an orphan record by orphan position.
-    pub fn set_orphan_original_index(&mut self, orphan_pos: usize, original_index: usize) {
+    pub fn set_orphan_original_index(
+        &mut self,
+        orphan_pos: usize,
+        original_index: usize,
+    ) -> crate::error::Result<()> {
         if orphan_pos < self.orphan_original_indices.len() {
             self.orphan_original_indices[orphan_pos] = original_index;
+            Ok(())
+        } else {
+            Err(crate::error::AltiumError::Validation(format!(
+                "orphan position {} out of bounds (len {})",
+                orphan_pos,
+                self.orphan_original_indices.len()
+            )))
         }
     }
 
@@ -252,17 +263,17 @@ impl DocumentStore {
     }
 
     /// Recompute semantic IDs on demand if marked dirty.
-    pub fn ensure_semantic_ids(&mut self) {
+    pub fn ensure_semantic_ids(&mut self) -> crate::error::Result<()> {
         if !self.semantic_ids_dirty {
-            return;
+            return Ok(());
         }
         let Some(dtid) = self.semantic_dtid.clone() else {
-            return;
+            return Ok(());
         };
         let Some(doc_key) = self.semantic_doc_key.clone() else {
-            return;
+            return Ok(());
         };
-        crate::semantic_ids::compute_all_ids(self, &dtid, &doc_key);
+        crate::semantic_ids::compute_all_ids(self, &dtid, &doc_key)
     }
 }
 
@@ -293,9 +304,20 @@ impl GroupData {
     }
 
     /// Sets the original flat-stream index for a child at `child_pos`.
-    pub fn set_child_original_index(&mut self, child_pos: usize, index: usize) {
+    pub fn set_child_original_index(
+        &mut self,
+        child_pos: usize,
+        index: usize,
+    ) -> crate::error::Result<()> {
         if child_pos < self.original_indices.len() {
             self.original_indices[child_pos] = index;
+            Ok(())
+        } else {
+            Err(crate::error::AltiumError::Validation(format!(
+                "child position {} out of bounds (len {})",
+                child_pos,
+                self.original_indices.len()
+            )))
         }
     }
 

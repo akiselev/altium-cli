@@ -355,7 +355,7 @@ impl PcbDoc {
         }
 
         store.set_semantic_context("dtid:pcbdoc", &doc_key);
-        crate::semantic_ids::compute_all_ids(&mut store, "dtid:pcbdoc", &doc_key);
+        crate::semantic_ids::compute_all_ids(&mut store, "dtid:pcbdoc", &doc_key)?;
 
         if let DocumentMeta::PcbDoc {
             streams_meta: current,
@@ -379,7 +379,7 @@ impl PcbDoc {
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
         {
             let mut store = self.store.borrow_mut();
-            store.ensure_semantic_ids();
+            store.ensure_semantic_ids()?;
         }
 
         let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, writer)

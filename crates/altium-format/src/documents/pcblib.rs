@@ -184,10 +184,10 @@ impl PcbLib {
     }
 
     /// Returns the stable document-level semantic ID, if computed.
-    pub fn document_id(&self) -> Option<crate::semantic_ids::SemanticId> {
+    pub fn document_id(&self) -> Result<Option<crate::semantic_ids::SemanticId>> {
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
-        store.document_id().cloned()
+        store.ensure_semantic_ids()?;
+        Ok(store.document_id().cloned())
     }
 
     /// Open a PcbLib from a reader.
@@ -949,7 +949,7 @@ impl PcbLib {
             store.insert_group(group_data);
         }
 
-        crate::semantic_ids::compute_all_ids(&mut store, "dtid:pcblib", &doc_key);
+        crate::semantic_ids::compute_all_ids(&mut store, "dtid:pcblib", &doc_key)?;
 
         Ok(PcbLib {
             store: Rc::new(RefCell::new(store)),
@@ -968,7 +968,7 @@ impl PcbLib {
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;
 
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
+        store.ensure_semantic_ids()?;
 
         let (section_keys, file_header_meta, file_version_info_meta, library_meta) =
             match store.meta() {

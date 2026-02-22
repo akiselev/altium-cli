@@ -29,10 +29,10 @@ macro_rules! impl_record_handle {
                 self.id
             }
 
-            pub fn semantic_id(&self) -> Option<crate::semantic_ids::SemanticId> {
+            pub fn semantic_id(&self) -> crate::error::Result<Option<crate::semantic_ids::SemanticId>> {
                 let mut store = self.store.borrow_mut();
-                store.ensure_semantic_ids();
-                store.record_semantic_id(self.id).cloned()
+                store.ensure_semantic_ids()?;
+                Ok(store.record_semantic_id(self.id).cloned())
             }
 
             /// Returns `true` if this record's backing origin is binary.
@@ -291,10 +291,10 @@ impl SchComponentHandle {
     }
 
     /// Returns the stable semantic ID for this component group, if computed.
-    pub fn semantic_id(&self) -> Option<crate::semantic_ids::SemanticId> {
+    pub fn semantic_id(&self) -> crate::error::Result<Option<crate::semantic_ids::SemanticId>> {
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
-        store.group_semantic_id(self.group_id).cloned()
+        store.ensure_semantic_ids()?;
+        Ok(store.group_semantic_id(self.group_id).cloned())
     }
 
     /// Read the parent component record.
@@ -574,10 +574,10 @@ impl PcbFootprintHandle {
     }
 
     /// Returns the stable semantic ID for this footprint group, if computed.
-    pub fn semantic_id(&self) -> Option<crate::semantic_ids::SemanticId> {
+    pub fn semantic_id(&self) -> crate::error::Result<Option<crate::semantic_ids::SemanticId>> {
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
-        store.group_semantic_id(self.group_id).cloned()
+        store.ensure_semantic_ids()?;
+        Ok(store.group_semantic_id(self.group_id).cloned())
     }
 
     /// Read the footprint metadata record.

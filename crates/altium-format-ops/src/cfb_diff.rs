@@ -29,15 +29,18 @@ pub struct CfbDiffReport {
     pub only_in_original: Vec<String>,
     /// Streams only present in the rebuilt file.
     pub only_in_rebuilt: Vec<String>,
+    /// Streams that could not be read (path and error description).
+    pub read_errors: Vec<String>,
 }
 
 impl CfbDiffReport {
-    /// Returns true if the files are equivalent (no diffs, nothing missing).
+    /// Returns true if the files are equivalent (no diffs, nothing missing, no errors).
     pub fn is_match(&self) -> bool {
         self.text_diffs.is_empty()
             && self.binary_diffs.is_empty()
             && self.only_in_original.is_empty()
             && self.only_in_rebuilt.is_empty()
+            && self.read_errors.is_empty()
     }
 
     /// Total number of differences found.
@@ -46,6 +49,7 @@ impl CfbDiffReport {
             + self.binary_diffs.len()
             + self.only_in_original.len()
             + self.only_in_rebuilt.len()
+            + self.read_errors.len()
     }
 }
 
@@ -99,6 +103,16 @@ impl fmt::Display for CfbDiffReport {
                     diff.first_diff_offset
                         .map_or("N/A".to_string(), |o| o.to_string()),
                 )?;
+            }
+        }
+        if !self.read_errors.is_empty() {
+            writeln!(
+                f,
+                "\n--- Stream read errors ({}) ---",
+                self.read_errors.len()
+            )?;
+            for e in &self.read_errors {
+                writeln!(f, "  {}", e)?;
             }
         }
         if self.is_match() {
@@ -356,8 +370,8 @@ pub fn compare_cfb_files(original: &[u8], rebuilt: &[u8]) -> CfbDiffReport {
     let all_paths: BTreeSet<String> = orig_paths.union(&rebuilt_paths).cloned().collect();
 
     // Read stream data
-    let orig_streams = read_streams(&mut orig_cfb, &orig_paths);
-    let rebuilt_streams = read_streams(&mut rebuilt_cfb, &rebuilt_paths);
+    let orig_streams = read_streams(&mut orig_cfb, &orig_paths, &mut report.read_errors);
+    let rebuilt_streams = read_streams(&mut rebuilt_cfb, &rebuilt_paths, &mut report.read_errors);
 
     for path in &all_paths {
         match (orig_streams.get(path), rebuilt_streams.get(path)) {
@@ -384,17 +398,30 @@ pub fn compare_cfb_files(original: &[u8], rebuilt: &[u8]) -> CfbDiffReport {
 }
 
 /// Read all streams from a CFB into a map of path -> bytes.
+///
+/// Streams that fail to open or read are recorded in `errors` with their path and error message.
 fn read_streams<R: std::io::Read + std::io::Seek>(
     cfb: &mut cfb::CompoundFile<R>,
     paths: &BTreeSet<String>,
+    errors: &mut Vec<String>,
 ) -> BTreeMap<String, Vec<u8>> {
     use std::io::Read;
     let mut result = BTreeMap::new();
     for path in paths {
-        if let Ok(mut stream) = cfb.open_stream(path) {
-            let mut data = Vec::new();
-            if stream.read_to_end(&mut data).is_ok() {
-                result.insert(path.clone(), data);
+        match cfb.open_stream(path) {
+            Ok(mut stream) => {
+                let mut data = Vec::new();
+                match stream.read_to_end(&mut data) {
+                    Ok(_) => {
+                        result.insert(path.clone(), data);
+                    }
+                    Err(e) => {
+                        errors.push(format!("{}: failed to read stream: {}", path, e));
+                    }
+                }
+            }
+            Err(e) => {
+                errors.push(format!("{}: failed to open stream: {}", path, e));
             }
         }
     }

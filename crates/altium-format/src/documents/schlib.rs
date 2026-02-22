@@ -249,10 +249,10 @@ impl SchLib {
     }
 
     /// Returns the stable document-level semantic ID, if computed.
-    pub fn document_id(&self) -> Option<crate::semantic_ids::SemanticId> {
+    pub fn document_id(&self) -> Result<Option<crate::semantic_ids::SemanticId>> {
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
-        store.document_id().cloned()
+        store.ensure_semantic_ids()?;
+        Ok(store.document_id().cloned())
     }
 
     /// Open a SchLib from a reader (CFB compound file).
@@ -496,7 +496,7 @@ impl SchLib {
         } else {
             header.unique_id.clone()
         };
-        crate::semantic_ids::compute_all_ids(&mut store, "dtid:schlib", &doc_key);
+        crate::semantic_ids::compute_all_ids(&mut store, "dtid:schlib", &doc_key)?;
 
         Ok(SchLib {
             store: Rc::new(RefCell::new(store)),
@@ -512,7 +512,7 @@ impl SchLib {
     /// Save the SchLib to a writer (creates a new CFB compound file).
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
+        store.ensure_semantic_ids()?;
 
         // Extract SchLib metadata
         let (
@@ -1841,8 +1841,8 @@ mod tests {
         let a = SchLib::open(Cursor::new(bytes_a)).unwrap();
         let b = SchLib::open(Cursor::new(bytes_b)).unwrap();
 
-        let did_a = a.document_id().unwrap();
-        let did_b = b.document_id().unwrap();
+        let did_a = a.document_id().unwrap().unwrap();
+        let did_b = b.document_id().unwrap().unwrap();
         assert_ne!(did_a.as_str(), did_b.as_str());
     }
 

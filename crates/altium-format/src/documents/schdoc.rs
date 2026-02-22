@@ -133,10 +133,10 @@ impl SchDoc {
     }
 
     /// Returns the stable document-level semantic ID, if computed.
-    pub fn document_id(&self) -> Option<crate::semantic_ids::SemanticId> {
+    pub fn document_id(&self) -> Result<Option<crate::semantic_ids::SemanticId>> {
         let mut store = self.store.borrow_mut();
-        store.ensure_semantic_ids();
-        store.document_id().cloned()
+        store.ensure_semantic_ids()?;
+        Ok(store.document_id().cloned())
     }
 
     /// Open a SchDoc from a reader.
@@ -181,7 +181,7 @@ impl SchDoc {
         }
         group_by_owner_index(&mut doc_store, records);
 
-        crate::semantic_ids::compute_all_ids(&mut doc_store, "dtid:schdoc", &doc_key);
+        crate::semantic_ids::compute_all_ids(&mut doc_store, "dtid:schdoc", &doc_key)?;
 
         Ok(SchDoc {
             store: std::rc::Rc::new(std::cell::RefCell::new(doc_store)),
@@ -198,7 +198,7 @@ impl SchDoc {
     pub fn save<W: Read + Write + Seek>(&self, writer: W) -> Result<()> {
         {
             let mut store = self.store.borrow_mut();
-            store.ensure_semantic_ids();
+            store.ensure_semantic_ids()?;
         }
         let mut cfb = cfb::CompoundFile::create_with_version(cfb::Version::V3, writer)
             .map_err(|e| AltiumError::Cfb(format!("Failed to create CFB: {}", e)))?;

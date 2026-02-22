@@ -268,7 +268,13 @@ fn disambiguate_group_anchors(
 ///
 /// Populates `store.document_id`, `store.group_semantic_ids`, and
 /// `store.record_semantic_ids`.
-pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
+///
+/// Returns an error if a PCB document contains groups with non-footprint metadata.
+pub fn compute_all_ids(
+    store: &mut DocumentStore,
+    dtid: &str,
+    doc_key: &str,
+) -> crate::error::Result<()> {
     let is_pcb = dtid.contains("pcb");
     let is_schlib = dtid == "dtid:schlib";
 
@@ -288,7 +294,13 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
             let group = store.group(gid);
             match &group.meta() {
                 GroupMeta::PcbFootprint { name, .. } => name.to_lowercase(),
-                _ => continue,
+                other => {
+                    return Err(crate::error::AltiumError::Validation(format!(
+                        "PCB document contains non-footprint group type '{}' at {:?}",
+                        other.variant_name(),
+                        gid
+                    )));
+                }
             }
         } else {
             sch_group_anchor(store, gid, is_schlib)
@@ -425,6 +437,7 @@ pub fn compute_all_ids(store: &mut DocumentStore, dtid: &str, doc_key: &str) {
     }
 
     store.semantic_ids_dirty = false;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -519,7 +532,7 @@ mod tests {
             });
         }
 
-        compute_all_ids(&mut store, "dtid:schlib", "test");
+        compute_all_ids(&mut store, "dtid:schlib", "test").unwrap();
 
         // Both records should have unique RIDs, with no collision suffixes required.
         let rids: Vec<&SemanticId> = store.record_semantic_ids.values().collect();
@@ -627,7 +640,7 @@ mod tests {
             },
         });
 
-        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID").unwrap();
 
         // Document ID
         assert!(store.document_id.is_some());
@@ -650,7 +663,7 @@ mod tests {
 
         // IDs should be stable across re-computation
         let did_str = did.as_str().to_string();
-        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID").unwrap();
         assert_eq!(store.document_id.as_ref().unwrap().as_str(), did_str);
     }
 
@@ -706,7 +719,7 @@ mod tests {
             },
         });
 
-        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID").unwrap();
         let before_a = store.record_semantic_ids[&pin_a_id].as_str().to_string();
         let before_b = store.record_semantic_ids[&pin_b_id].as_str().to_string();
 
@@ -714,7 +727,7 @@ mod tests {
             let group = store.group_mut(gid);
             group.children.swap(0, 1);
         }
-        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID").unwrap();
         let after_a = store.record_semantic_ids[&pin_a_id].as_str().to_string();
         let after_b = store.record_semantic_ids[&pin_b_id].as_str().to_string();
 
@@ -758,7 +771,7 @@ mod tests {
             },
         });
 
-        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID");
+        compute_all_ids(&mut store, "dtid:schlib", "LIB-UID").unwrap();
         let before = store.record_semantic_ids[&comp_id].as_str().to_string();
 
         let rec = store.record_mut(comp_id);
@@ -767,7 +780,7 @@ mod tests {
         ));
         rec.mark_dirty();
         store.mark_semantic_ids_dirty();
-        store.ensure_semantic_ids();
+        store.ensure_semantic_ids().unwrap();
 
         let after = store.record_semantic_ids[&comp_id].as_str().to_string();
         assert_ne!(before, after);
