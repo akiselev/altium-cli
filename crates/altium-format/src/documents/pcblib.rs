@@ -1071,7 +1071,12 @@ impl PcbLib {
             let params_path = format!("/{}/{}", name, STREAM_PARAMETERS);
             let params_data = match &store.record(group.parent).origin {
                 RecordOrigin::Param(p) => super::encoding::encode_single_param_block(&p.params),
-                _ => Vec::new(),
+                RecordOrigin::Binary(_) => {
+                    return Err(AltiumError::InvalidRecord(format!(
+                        "footprint '{}' parent record has Binary origin, expected Param",
+                        name
+                    )));
+                }
             };
             let mut stream = cfb
                 .create_stream(&params_path)
