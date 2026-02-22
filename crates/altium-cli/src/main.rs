@@ -1,12 +1,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use altium_format::{
-    AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib,
-};
-use altium_format_ops::{
-    AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps,
-};
+use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
+use altium_format_ops::{AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
