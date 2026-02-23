@@ -173,10 +173,6 @@ This method does not currently exist and must be added:
 +            .cloned()
 +            .collect()
 +    }
-+
-     pub(crate) fn drain_remaining(&mut self) {
-         self.params.clear();
-     }
 ```
 
 ### Diff: create `crates/altium-format/src/pcblib/sidecar.rs`
@@ -185,11 +181,14 @@ This method does not currently exist and must be added:
 --- /dev/null
 +++ b/crates/altium-format/src/pcblib/sidecar.rs
 @@ -0,0 +1,121 @@
-+use altium_format_types::PcbObjectId;
++use std::collections::HashMap;
 +
++use altium_format_types::{MaskExpansionMode, PcbObjectId};
++
++use crate::block_stream::iter_blocks;
 +use crate::param_collection::ParameterCollection;
 +use crate::pcb_binary_stream::parse_pcb_section_header;
-+use crate::pcblib::{PcbFootprint, PcbPrimitive};
++use crate::pcblib::PcbPrimitive;
 +use crate::{AltiumFormatError, Result};
 +
 +pub(crate) struct UniqueIdEntry {
@@ -198,8 +197,14 @@ This method does not currently exist and must be added:
 +    pub(crate) unique_id: String,
 +}
 +
-+pub(crate) struct ExtendedPrimitiveEntry {
++pub(crate) struct ExtendedPrimitiveInfoEntry {
 +    pub(crate) primitive_index: usize,
++    pub(crate) primitive_object_id: PcbObjectId,
++    pub(crate) info_type: String,
++    pub(crate) solder_mask_expansion_mode: MaskExpansionMode,
++    pub(crate) solder_mask_expansion_manual: String,
++    pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
++    pub(crate) paste_mask_expansion_manual: String,
 +}
 +
 +/// Parse UniqueIDPrimitiveInformation/{Header,Data} streams.
@@ -233,27 +238,95 @@ This method does not currently exist and must be added:
 +}
 +
 +/// Parse ExtendedPrimitiveInformation/{Header,Data} streams.
-+pub(crate) fn parse_extended_primitive_info(
++///
++/// Each entry is a block-framed parameter string containing mask expansion
++/// properties for a specific primitive. Known keys: PRIMITIVEINDEX,
++/// PRIMITIVEOBJECTID, TYPE, SOLDERMASKEXPANSIONMODE, SOLDERMASKEXPANSION_MANUAL,
++/// PASTEMASKEXPANSIONMODE, PASTEMASKEXPANSION_MANUAL.
++pub(crate) fn parse_extended_primitive_information(
 +    header: &[u8],
 +    data: &[u8],
-+) -> Result<Vec<ExtendedPrimitiveEntry>> {
-+    let count = parse_pcb_section_header(header)? as usize;
-+    if count == 0 {
-+        return Ok(Vec::new());
++) -> Result<Vec<ExtendedPrimitiveInfoEntry>> {
++    let expected_count = parse_pcb_section_header(header)? as usize;
++
++    let mut entries = Vec::with_capacity(expected_count);
++    for block_result in iter_blocks(data) {
++        let block = block_result?;
++        let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(&block.data);
++        let mut params = ParameterCollection::from_str(&decoded)?;
++
++        let primitive_index: i32 = params.remove_required("PRIMITIVEINDEX")?;
++        if primitive_index < 0 {
++            return Err(AltiumFormatError::InvalidParamValue {
++                key: "PRIMITIVEINDEX".to_owned(),
++                detail: format!("negative primitive index: {primitive_index}"),
++            });
++        }
++
++        let object_id_str: String = params.remove_required("PRIMITIVEOBJECTID")?;
++        let primitive_object_id =
++            PcbObjectId::from_primitive_object_id_str(&object_id_str).ok_or_else(|| {
++                AltiumFormatError::InvalidParamValue {
++                    key: "PRIMITIVEOBJECTID".to_owned(),
++                    detail: format!("unknown primitive object ID string: '{object_id_str}'"),
++                }
++            })?;
++
++        let info_type = params.remove_optional::<String>("TYPE")?.unwrap_or_default();
++
++        let solder_mode_str = params
++            .remove_optional::<String>("SOLDERMASKEXPANSIONMODE")?
++            .unwrap_or_else(|| "None".to_owned());
++        let solder_mask_expansion_mode =
++            parse_mask_expansion_mode("SOLDERMASKEXPANSIONMODE", &solder_mode_str)?;
++        let solder_mask_expansion_manual = params
++            .remove_optional::<String>("SOLDERMASKEXPANSION_MANUAL")?
++            .unwrap_or_default();
++
++        let paste_mode_str = params
++            .remove_optional::<String>("PASTEMASKEXPANSIONMODE")?
++            .unwrap_or_else(|| "None".to_owned());
++        let paste_mask_expansion_mode =
++            parse_mask_expansion_mode("PASTEMASKEXPANSIONMODE", &paste_mode_str)?;
++        let paste_mask_expansion_manual = params
++            .remove_optional::<String>("PASTEMASKEXPANSION_MANUAL")?
++            .unwrap_or_default();
++
++        params.assert_exhausted()?;
++
++        entries.push(ExtendedPrimitiveInfoEntry {
++            primitive_index: primitive_index as usize,
++            primitive_object_id,
++            info_type,
++            solder_mask_expansion_mode,
++            solder_mask_expansion_manual,
++            paste_mask_expansion_mode,
++            paste_mask_expansion_manual,
++        });
 +    }
-+    let mut params = ParameterCollection::from_bytes(data)?;
-+    let mut entries = Vec::with_capacity(count);
-+    for _ in 0..count {
-+        let index: i32 = params.remove_required("PRIMITIVEINDEX")?;
-+        // Consume known fields; drain remaining for future implementation
-+        let _type_str = params.remove_optional::<String>("TYPE")?;
-+        let _solder = params.remove_optional::<String>("SOLDERMASKEXPANSIONMODE")?;
-+        let _paste = params.remove_optional::<String>("PASTEMASKEXPANSIONMODE")?;
-+        params.drain_remaining();
-+        entries.push(ExtendedPrimitiveEntry { primitive_index: index as usize });
++
++    if entries.len() != expected_count {
++        return Err(AltiumFormatError::RecordCountMismatch {
++            section: "ExtendedPrimitiveInformation".to_owned(),
++            expected: expected_count,
++            actual: entries.len(),
++        });
 +    }
-+    params.assert_exhausted()?;
++
 +    Ok(entries)
++}
++
++/// Parses a mask expansion mode string ("None", "NoMask", "Rule", "Manual").
++fn parse_mask_expansion_mode(key: &str, value: &str) -> Result<MaskExpansionMode> {
++    match value {
++        "None" | "NoMask" => Ok(MaskExpansionMode::NoMask),
++        "Rule" => Ok(MaskExpansionMode::Rule),
++        "Manual" => Ok(MaskExpansionMode::Manual),
++        _ => Err(AltiumFormatError::InvalidParamValue {
++            key: key.to_owned(),
++            detail: format!("unknown mask expansion mode: '{value}'"),
++        }),
++    }
 +}
 +
 +/// Parse PrimitiveGuids/{Header,Data} streams.
@@ -295,51 +368,61 @@ This method does not currently exist and must be added:
 +
 +/// Merge all sidecar data into footprint primitives.
 +pub(crate) fn merge_sidecars(
-+    footprint: &mut PcbFootprint,
-+    wide_strings: std::collections::HashMap<usize, String>,
++    primitives: &mut Vec<PcbPrimitive>,
++    wide_strings: HashMap<usize, String>,
 +    unique_ids: Vec<UniqueIdEntry>,
-+    _extended: Vec<ExtendedPrimitiveEntry>,
 +) -> Result<()> {
-+    // Apply WideStrings to Text primitives by Text-relative index
-+    let mut text_index = 0usize;
-+    for prim in &mut footprint.primitives {
-+        if let PcbPrimitive::Text(t) = prim {
-+            if let Some(s) = wide_strings.get(&text_index) {
-+                t.text = s.clone();
++    // Apply WideStrings to Text primitives by Text-relative index.
++    let mut text_count = 0usize;
++    for primitive in primitives.iter_mut() {
++        if let PcbPrimitive::Text(text) = primitive {
++            if let Some(wide_text) = wide_strings.get(&text_count) {
++                text.text = wide_text.clone();
 +            }
-+            text_index += 1;
++            text_count += 1;
 +        }
 +    }
 +
-+    // Apply UniqueIDs by global primitive index
++    // Apply UniqueIDs by global primitive index with type validation.
++    let primitive_count = primitives.len();
 +    for entry in unique_ids {
 +        let idx = entry.primitive_index;
-+        let prim = footprint.primitives.get_mut(idx).ok_or_else(|| {
-+            AltiumFormatError::InvalidPinIndex { index: idx, count: footprint.primitives.len() }
++        let primitive = primitives.get_mut(idx).ok_or_else(|| {
++            AltiumFormatError::InvalidParamValue {
++                key: "PRIMITIVEINDEX".to_owned(),
++                detail: format!(
++                    "primitive index {idx} out of range (footprint has {primitive_count} primitives)"
++                ),
++            }
 +        })?;
-+        let actual_id = primitive_object_id(prim);
-+        if actual_id != entry.object_id {
++        let actual_object_id = primitive_object_id(primitive);
++        if actual_object_id != entry.object_id {
 +            return Err(AltiumFormatError::InvalidParamValue {
 +                key: "PRIMITIVEOBJECTID".to_owned(),
 +                detail: format!(
-+                    "footprint '{}': primitive at index {idx} is {:?} but UniqueID entry says {:?}",
-+                    footprint.display_name, actual_id, entry.object_id
++                    "primitive at index {idx} is {:?} but sidecar says {:?}",
++                    actual_object_id, entry.object_id
 +                ),
 +            });
 +        }
-+        match prim {
-+            PcbPrimitive::Arc(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::Pad(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::Via(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::Track(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::Text(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::Fill(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::Region(p) => p.unique_id = Some(entry.unique_id),
-+            PcbPrimitive::ComponentBody(p) => p.unique_id = Some(entry.unique_id),
-+        }
++        set_unique_id(primitive, entry.unique_id);
 +    }
-
++
 +    Ok(())
++}
++
++/// Sets the unique_id field on a primitive variant.
++fn set_unique_id(primitive: &mut PcbPrimitive, unique_id: String) {
++    match primitive {
++        PcbPrimitive::Arc(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::Pad(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::Via(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::Track(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::Text(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::Fill(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::Region(p) => p.unique_id = Some(unique_id),
++        PcbPrimitive::ComponentBody(p) => p.unique_id = Some(unique_id),
++    }
 +}
 ```
 
@@ -352,7 +435,7 @@ This method does not currently exist and must be added:
  use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
  use altium_format_types::{Coord, PcbObjectId};
 
-+use crate::pcblib::sidecar::{merge_sidecars, parse_extended_primitive_info, parse_primitive_guids, parse_unique_id_info};
++use crate::pcblib::sidecar::{merge_sidecars, parse_extended_primitive_information, parse_primitive_guids, parse_unique_id_primitive_information};
 +use crate::pcblib::wide_strings::parse_pcblib_wide_strings;
  use crate::binary_io::BinaryReader;
  // ... (other imports unchanged)
@@ -375,7 +458,7 @@ This method does not currently exist and must be added:
 +    let unique_ids = if doc.exists(&uid_header_path) {
 +        let h = doc.read_stream(&uid_header_path)?;
 +        let d = doc.read_stream(&uid_data_path)?;
-+        parse_unique_id_info(&h, &d)?
++        parse_unique_id_primitive_information(&h, &d)?
 +    } else {
 +        Vec::new()
 +    };
@@ -383,13 +466,12 @@ This method does not currently exist and must be added:
 +    // 7. ExtendedPrimitiveInformation sidecar (optional, rare)
 +    let ext_header_path = format!("/{cfb_key}/ExtendedPrimitiveInformation/Header");
 +    let ext_data_path = format!("/{cfb_key}/ExtendedPrimitiveInformation/Data");
-+    let extended = if doc.exists(&ext_header_path) {
++    if doc.exists(&ext_header_path) {
 +        let h = doc.read_stream(&ext_header_path)?;
 +        let d = doc.read_stream(&ext_data_path)?;
-+        parse_extended_primitive_info(&h, &d)?
-+    } else {
-+        Vec::new()
-+    };
++        // Parse and validate; entries are stored for future use (e.g., mask expansion overrides).
++        let _extended = parse_extended_primitive_information(&h, &d)?;
++    }
 +
 +    // 8. PrimitiveGuids sidecar (optional)
 +    let pg_header_path = format!("/{cfb_key}/PrimitiveGuids/Header");
@@ -400,8 +482,8 @@ This method does not currently exist and must be added:
 +        parse_primitive_guids(&h, &d)?;
 +    }
 +
-+    // 9. Merge all sidecars into footprint
-+    merge_sidecars(&mut footprint, wide_strings, unique_ids, extended)?;
++    // 9. Merge WideStrings and UniqueIDs into footprint primitives
++    merge_sidecars(&mut footprint.primitives, wide_strings, unique_ids)?;
 +
      Ok(footprint)
  }

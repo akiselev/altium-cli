@@ -119,11 +119,14 @@ handling section, after Library/ parsing and before footprint enumeration):
 +            if count == 0 {
 +                None
 +            } else {
-+                // Parse Data as parameter blocks; extract version info string.
-+                // KEY NAMES determined by pre-implementation investigation.
++                // Parse Data as parameter blocks; extract ALL version info parameters.
++                // KEY NAMES determined by pre-implementation investigation — replace
++                // placeholders below with the actual keys found in real files.
 +                let mut params = crate::param_collection::ParameterCollection::from_bytes(&fvi_data)?;
 +                let version_str = params.remove_optional::<String>("VERSION")?;
-+                params.drain_remaining();
++                // Extract all remaining FileVersionInfo keys here (e.g., DATE, TIME, etc.)
++                // so that assert_exhausted catches any unrecognized parameters.
++                params.assert_exhausted()?;
 +                version_str
 +            }
 +        } else {

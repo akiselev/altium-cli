@@ -238,11 +238,9 @@ The `CoordPoint` used for `size_top/mid/bot` stores `(x, y)` as two `Coord` valu
 +        vertices.push(reader.read_coord_point()?);
 +    }
 +    let trailing_bytes = reader.read_remaining().to_vec();
-+    Ok(PcbRegion { common, vertices, unique_id: None, trailing_bytes })
++    Ok(PcbRegion { common, kind, vertices, unique_id: None, trailing_bytes })
 +}
 ```
-
-Note: `PcbRegion` struct in M1 does not include `kind: RegionKind`. Add this field to the struct definition in `mod.rs` alongside this milestone.
 
 ### Diff: create `crates/altium-format/src/pcblib/primitives/pad.rs`
 
@@ -295,13 +293,21 @@ Note: `PcbRegion` struct in M1 does not include `kind: RegionKind`. Add this fie
 +    Ok(PcbPad {
 +        common,
 +        location,
++        size_top: CoordPoint::new(size_top_x, size_top_y),
++        size_mid: CoordPoint::new(size_mid_x, size_mid_y),
++        size_bot: CoordPoint::new(size_bot_x, size_bot_y),
++        hole_size,
++        shape_top,
++        shape_mid,
++        shape_bot,
++        rotation,
++        is_plated,
++        stack_mode,
 +        unique_id: None,
 +        subrecord_trailing,
 +    })
 +}
 ```
-
-Note: `PcbPad` struct needs additional fields for the parsed pad properties (`size_top_x/y`, `size_mid_x/y`, `size_bot_x/y`, `hole_size`, `shape_top/mid/bot`, `rotation`, `is_plated`, `stack_mode`). Add these to the struct definition in `mod.rs` alongside this milestone. The `[Vec<u8>; 6]` array requires `Default::default()` which requires `Vec<u8>: Default` (it is).
 
 ### Diff: create `crates/altium-format/src/pcblib/primitives/component_body.rs`
 

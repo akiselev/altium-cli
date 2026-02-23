@@ -86,6 +86,32 @@ component parameter table of contents, 3D model metadata, and auxiliary sub-stor
 +    pub(crate) version: String,
 +    pub(crate) date: String,
 +    pub(crate) time: String,
++    pub(crate) board_config: PcbBoardConfig,
++}
++
++/// Board configuration parameters from the Library/Data stream.
++///
++/// These are the board defaults and layer stack definitions that Altium uses
++/// when editing footprints in the library editor. The layer stack uses indexed
++/// parameters V9_STACK_LAYER{N}_*.
++pub(crate) struct PcbBoardConfig {
++    pub(crate) record: String,
++    pub(crate) v9_masterstack_style: String,
++    pub(crate) v9_masterstack_id: String,
++    pub(crate) v9_masterstack_name: String,
++    pub(crate) layer_stack: Vec<PcbBoardLayerEntry>,
++}
++
++pub(crate) struct PcbBoardLayerEntry {
++    pub(crate) id: String,
++    pub(crate) name: String,
++    pub(crate) layer_id: String,
++    pub(crate) used_by_prims: bool,
++    pub(crate) cop_thick: String,
++    pub(crate) diel_type: String,
++    pub(crate) diel_const: String,
++    pub(crate) diel_height: String,
++    pub(crate) diel_material: String,
 +}
 +
 +pub(crate) struct PcbLibComponentTocEntry {
@@ -118,13 +144,11 @@ component parameter table of contents, 3D model metadata, and auxiliary sub-stor
 +    let version = params.remove_optional::<String>("VERSION")?.unwrap_or_default();
 +    let date = params.remove_optional::<String>("DATE")?.unwrap_or_default();
 +    let time = params.remove_optional::<String>("TIME")?.unwrap_or_default();
-+    // Board defaults, layer stack, and RECORD=Board continuation records are accepted
-+    // as remaining parameters without erroring (they vary by file and are not consumed here).
-+    // They are stored implicitly — this consume loop is the correct fail-fast behavior:
-+    // if a future milestone needs these values, remove_optional/remove_required them above.
-+    // For now, drain remaining parameters to satisfy assert_exhausted.
-+    params.drain_remaining();
-+    Ok(PcbLibraryData { filename, kind, version, date, time })
++    // Board defaults and layer stack parameters (RECORD=Board, V9_MASTERSTACK_*,
++    // V9_STACK_LAYER{N}_*) must be fully consumed — parse them into a board config struct.
++    let board_config = parse_library_board_params(&mut params)?;
++    params.assert_exhausted()?;
++    Ok(PcbLibraryData { filename, kind, version, date, time, board_config })
 +}
 +
 +/// Parse Library/ComponentParamsTOC/{Header,Data} streams.
@@ -232,34 +256,68 @@ component parameter table of contents, 3D model metadata, and auxiliary sub-stor
 +}
 ```
 
-### Diff: add `drain_remaining` to `crates/altium-format/src/param_collection.rs`
+### Diff: add `parse_library_board_params` to `crates/altium-format/src/pcblib/library.rs`
 
-This method does not currently exist and must be added as part of this milestone:
+Board/layer-stack parameters (RECORD=Board, V9_MASTERSTACK_*, V9_STACK_LAYER{N}_*) must
+be fully consumed by explicit `remove_optional`/`remove_required` calls. The layer stack
+uses 1-based indexing; detect entries by probing for `V9_STACK_LAYER{N}_ID` until absent.
 
 ```diff
---- a/crates/altium-format/src/param_collection.rs
-+++ b/crates/altium-format/src/param_collection.rs
-@@ -373,6 +373,12 @@ impl ParameterCollection {
-     pub(crate) fn assert_exhausted(&self) -> Result<()> {
-         if self.params.is_empty() {
-             return Ok(());
-         }
-         let keys: Vec<String> = self.params.keys().cloned().collect();
-         Err(AltiumFormatError::UnknownParams { keys })
-     }
-
-+    /// Removes all remaining parameters without erroring.
-+    ///
-+    /// Use sparingly — only when parameter keys are genuinely variable or not yet fully
-+    /// specified (e.g., board/layer stack parameters in Library/Data whose keys vary by
-+    /// file version). Prefer explicit `remove_optional` calls whenever keys are known.
-+    pub(crate) fn drain_remaining(&mut self) {
-+        self.params.clear();
+--- a/crates/altium-format/src/pcblib/library.rs
++++ b/crates/altium-format/src/pcblib/library.rs
+@@ +1,46 @@
++/// Parses board-level configuration parameters from the Library/Data stream.
++///
++/// These include the layer stack definition (V9_MASTERSTACK_* and V9_STACK_LAYER{N}_*)
++/// and continuation RECORD=Board entries. The layer stack uses 1-based indexing;
++/// we detect entries by probing for V9_STACK_LAYER{N}_ID.
++fn parse_library_board_params(params: &mut ParameterCollection) -> Result<PcbBoardConfig> {
++    let record = params.remove_optional::<String>("RECORD")?.unwrap_or_default();
++    let v9_masterstack_style = params
++        .remove_optional::<String>("V9_MASTERSTACK_STYLE")?
++        .unwrap_or_default();
++    let v9_masterstack_id = params
++        .remove_optional::<String>("V9_MASTERSTACK_ID")?
++        .unwrap_or_default();
++    let v9_masterstack_name = params
++        .remove_optional::<String>("V9_MASTERSTACK_NAME")?
++        .unwrap_or_default();
++
++    // Layer stack: probe V9_STACK_LAYER{idx}_ID from 1 upward until absent.
++    let mut layer_stack = Vec::new();
++    let mut idx = 1;
++    while params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_ID"))?.is_some() {
++        let id_val = /* already consumed above — restructure to capture it */;
++        // Extract all per-layer parameters for this index:
++        let name = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_NAME"))?.unwrap_or_default();
++        let layer_id = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_LAYERID"))?.unwrap_or_default();
++        let used_by_prims = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_USEDBYPRIMSONTOP"))?.map(|s| s.eq_ignore_ascii_case("TRUE")).unwrap_or(false);
++        let cop_thick = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_COPTHICK"))?.unwrap_or_default();
++        let diel_type = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELTYPE"))?.unwrap_or_default();
++        let diel_const = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELCONST"))?.unwrap_or_default();
++        let diel_height = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELHEIGHT"))?.unwrap_or_default();
++        let diel_material = params.remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELMATERIAL"))?.unwrap_or_default();
++        layer_stack.push(PcbBoardLayerEntry {
++            id: id_val, name, layer_id, used_by_prims, cop_thick,
++            diel_type, diel_const, diel_height, diel_material,
++        });
++        idx += 1;
 +    }
 +
-     // Returns the stored key whose lowercase form matches `key`, or `None` if absent.
-     fn find_key(&self, key: &str) -> Option<&str> {
++    Ok(PcbBoardConfig {
++        record,
++        v9_masterstack_style,
++        v9_masterstack_id,
++        v9_masterstack_name,
++        layer_stack,
++    })
++}
 ```
+
+Note: The exact set of V9_STACK_LAYER{N}_* parameter keys must be confirmed by inspecting
+real Library/Data streams (`altium cfb dump data/pcblib/LimeMicro*.PcbLib /Library/Data --blocks`).
+Add or remove per-layer keys as needed. After all board and layer-stack params are consumed,
+the caller calls `params.assert_exhausted()?` to catch any unrecognized keys.
 
 ### Diff: update `crates/altium-format/src/pcblib/mod.rs` — add library fields and parsing call
 
