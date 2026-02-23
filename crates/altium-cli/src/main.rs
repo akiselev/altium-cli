@@ -105,6 +105,15 @@ fn get_version(path: &PathBuf) -> anyhow::Result<()> {
                 println!("FileVersionInfo: {fvi}");
             }
         }
+        "pcblib" => {
+            let doc = PcbLib::open(path)?;
+            let info = doc.version()?;
+            println!("Header:        {}", info.header);
+            println!("Minor version: {}", info.minor_version);
+            if let Some(ref fvi) = info.file_version_info {
+                println!("FileVersionInfo: {fvi}");
+            }
+        }
         _ => anyhow::bail!("get version not yet supported for .{ext} files"),
     }
 
