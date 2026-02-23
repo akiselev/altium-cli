@@ -10,7 +10,7 @@ use std::path::Path;
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
-use altium_format_types::{Color, Coord, CoordPoint, PadShape, PadStackMode, PcbFlags, RegionKind, TextKind, V6Layer};
+use altium_format_types::{Color, Coord, CoordPoint, HoleType, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind, TCacheState, TextKind, V6Layer, V7Layer};
 
 use crate::block_stream::iter_blocks;
 use crate::pcb_binary_stream::parse_pcb_section_header;
@@ -77,6 +77,11 @@ pub(crate) struct PcbArc {
     pub(crate) start_angle: f64,
     pub(crate) end_angle: f64,
     pub(crate) width: Coord,
+    pub(crate) subpoly_index: u16,
+    pub(crate) user_routed: bool,
+    pub(crate) union_index: i32,
+    pub(crate) v7_layer: V7Layer,
+    pub(crate) keepout_restrictions: i32,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -128,8 +133,58 @@ pub(crate) struct PcbRegion {
     pub(crate) unique_id: Option<String>,
 }
 
+/// TV6_PadCache — 38 bytes at pad main subrecord offsets 67-104.
+///
+/// Confirmed by C# `TV6_PadCache` struct (Pack=1) + Ghidra setter functions.
+pub(crate) struct PcbPadCache {
+    pub(crate) plane_connection_style: PlaneConnectionStyle,
+    pub(crate) relief_conductor_width: Coord,
+    pub(crate) relief_entries: i16,
+    pub(crate) relief_air_gap: Coord,
+    pub(crate) power_plane_relief_expansion: Coord,
+    pub(crate) power_plane_clearance: Coord,
+    pub(crate) paste_mask_expansion: Coord,
+    pub(crate) solder_mask_expansion: Coord,
+    pub(crate) planes: u16,
+    pub(crate) plane_connection_style_valid: TCacheState,
+    pub(crate) relief_conductor_width_valid: TCacheState,
+    pub(crate) relief_entries_valid: TCacheState,
+    pub(crate) relief_air_gap_valid: TCacheState,
+    pub(crate) power_plane_relief_expansion_valid: TCacheState,
+    pub(crate) paste_mask_expansion_valid: TCacheState,
+    pub(crate) solder_mask_expansion_valid: TCacheState,
+    pub(crate) power_plane_clearance_valid: TCacheState,
+    pub(crate) planes_valid: TCacheState,
+}
+
+/// Per-layer stack data for pads (subrecord 5, 596+ bytes when present).
+///
+/// Confirmed by Ghidra FUN_018a2840 (init) + FUN_0187c7d0 (per-layer loop).
+pub(crate) struct PcbPadStackData {
+    pub(crate) inner_size_x: [Coord; 29],
+    pub(crate) inner_size_y: [Coord; 29],
+    pub(crate) inner_shape: [PadShape; 29],
+    pub(crate) padding_261: u8,
+    pub(crate) hole_shape: u8,
+    pub(crate) slot_size: Coord,
+    pub(crate) slot_rotation: f64,
+    pub(crate) hole_offset_x: [Coord; 32],
+    pub(crate) hole_offset_y: [Coord; 32],
+    pub(crate) padding_531: u8,
+    pub(crate) alt_shape: [u8; 32],
+    pub(crate) corner_radius_pct: [u8; 32],
+    pub(crate) per_layer_overrides: [u8; 32],
+    pub(crate) extended_stack_data: Vec<u8>,
+}
+
 pub(crate) struct PcbPad {
     pub(crate) common: PcbPrimitiveCommon,
+    // Subrecords 0-3: pad name and string data
+    pub(crate) pad_name: String,
+    pub(crate) unknown_sub1: String,
+    pub(crate) unknown_sub2: String,
+    pub(crate) unknown_sub3: String,
+    // Core pad fields (offsets 13-62)
     pub(crate) location: CoordPoint,
     pub(crate) size_top: CoordPoint,
     pub(crate) size_mid: CoordPoint,
@@ -140,7 +195,35 @@ pub(crate) struct PcbPad {
     pub(crate) shape_bot: PadShape,
     pub(crate) rotation: f64,
     pub(crate) is_plated: bool,
+    pub(crate) hole_type: HoleType,
     pub(crate) stack_mode: PadStackMode,
+    // Field at offset 63 (FUN_01811110)
+    pub(crate) unknown_63: i32,
+    // TV6_PadCache (offsets 67-104)
+    pub(crate) cache: PcbPadCache,
+    // Post-cache fields (offsets 105-113)
+    pub(crate) user_routed: bool,
+    pub(crate) union_index: i32,
+    pub(crate) unknown_110: i32,
+    // Extended fields (offsets 114-171, from FUN_0187b7c0)
+    pub(crate) layer_override: i32,
+    pub(crate) hole_flag_1: bool,
+    pub(crate) hole_flag_2: bool,
+    pub(crate) stack_flag: bool,
+    pub(crate) stack_conditional: i32,
+    pub(crate) unknown_125: bool,
+    pub(crate) swap_id_pad: [u8; 16],
+    pub(crate) swap_id_part: [u8; 16],
+    pub(crate) pin_package_length: Coord,
+    pub(crate) hole_positive_tolerance: i32,
+    pub(crate) hole_negative_tolerance: i32,
+    pub(crate) unknown_170: u8,
+    pub(crate) has_stack_data: bool,
+    // Post-172 variable data (stack extension, read as raw bytes)
+    pub(crate) post_172_data: Vec<u8>,
+    // Subrecord 5: per-layer stack data (0 or 596+ bytes)
+    pub(crate) stack_data: Option<PcbPadStackData>,
+    // Sidecar
     pub(crate) unique_id: Option<String>,
 }
 

@@ -243,6 +243,8 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
             });
         }
         let mut params = ParameterCollection::from_bytes(&block.data)?;
+        // Apply UNICODE sidecars first so NAME and other fields get true Unicode text.
+        params.apply_unicode_sidecars()?;
         let id = params.remove_optional::<String>("ID")?.unwrap_or_default();
         let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
         let embed = params
@@ -257,10 +259,6 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         // MODELSOURCE and TITLE are present but not used in our data model; consume them.
         let _ = params.remove_optional::<String>("MODELSOURCE")?;
         let _ = params.remove_optional::<String>("TITLE")?;
-        // UNICODE sidecar: CJK/non-ASCII model entries have UNICODE=EXISTS as marker
-        // plus UNICODE__<KEY>=<comma-separated UTF-16 code points> for each field.
-        let _unicode = params.remove_optional::<String>("UNICODE")?;
-        let _ = params.remove_prefixed("UNICODE__");
         params.assert_exhausted()?;
         entries.push(PcbLibModelEntry {
             id,

@@ -983,6 +983,34 @@ impl std::fmt::Display for MaskExpansionMode {
     }
 }
 
+/// Cache state for pad cache fields (TV6_PadCache validity flags).
+///
+/// From `TCacheState.cs` in AD26-dotnet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum TCacheState {
+    #[default]
+    Invalid = 0,
+    Valid = 1,
+    Manual = 2,
+}
+
+impl TryFrom<u8> for TCacheState {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Invalid),
+            1 => Ok(Self::Valid),
+            2 => Ok(Self::Manual),
+            _ => Err(InvalidEnumValue {
+                type_name: "TCacheState",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
 /// Tenting mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

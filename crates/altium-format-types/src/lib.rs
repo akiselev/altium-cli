@@ -31,9 +31,9 @@ pub use color::Color;
 pub use unique_id::{UniqueId, UniqueIdError};
 pub use common::{ComponentKind, RotationBy90, TextAutoPosition, Unit};
 pub use pcb::{
-    BoardSide, CornerStyle, DielectricType, DimensionKind, MaskExpansionMode,
+    BoardSide, CornerStyle, DielectricType, DimensionKind, HoleType, MaskExpansionMode,
     PcbFileFormatVersion, PcbFlags, PcbObjectId, PadShape, PadShapeSubKind, PadStackMode,
-    RegionKind, RuleKind, TextKind, V6Layer, V7Layer,
+    PlaneConnectionStyle, RegionKind, RuleKind, TCacheState, TextKind, V6Layer, V7Layer,
 };
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,

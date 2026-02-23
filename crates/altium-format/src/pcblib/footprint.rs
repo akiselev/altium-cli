@@ -83,6 +83,10 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     reader.assert_exhausted()?;
     let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(str_bytes);
     let mut params = ParameterCollection::from_str(&decoded)?;
+
+    // Apply UNICODE sidecars first so field values contain true Unicode text.
+    params.apply_unicode_sidecars()?;
+
     let pattern = params.remove_required::<String>("PATTERN")?;
     let height = parse_height_mil(&mut params)?;
     let description = params.remove_optional::<String>("DESCRIPTION")?.unwrap_or_default();
@@ -91,14 +95,6 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;
-
-    // UNICODE sidecar: CJK/non-ASCII footprints have UNICODE=EXISTS as marker
-    // plus UNICODE__<KEY>=<comma-separated UTF-16 code points> for each field
-    // that has characters outside Windows-1252. We consume these but don't
-    // apply the overrides (all text fields already store decoded Windows-1252).
-    let _unicode = params.remove_optional::<String>("UNICODE")?;
-    let _ = params.remove_prefixed("UNICODE__");
-
     params.assert_exhausted()?;
     Ok((pattern, height, description, item_guid, revision_guid))
 }
@@ -329,7 +325,7 @@ mod tests {
         w.write_bytes(name_bytes);
 
         // Arc record: type byte + u32 length + payload
-        // Build arc payload (45 bytes: 13 common + 32 fields)
+        // Build arc payload (56 bytes: 13 common + 32 fields + 11 trailing)
         let mut arc_payload = BinaryWriter::new();
         arc_payload.write_u8(1);      // layer
         arc_payload.write_u8(0);      // pad_byte
@@ -346,6 +342,10 @@ mod tests {
         arc_payload.write_f64_le(0.0);   // start_angle
         arc_payload.write_f64_le(360.0); // end_angle
         arc_payload.write_coord(Coord::from_internal(1_000)); // width
+        arc_payload.write_u16_le(0xFFFF); // subpoly_index
+        arc_payload.write_u8(0);          // user_routed
+        arc_payload.write_i32_le(0);      // union_index
+        arc_payload.write_u32_le(0);      // v7_layer
         let arc_bytes = arc_payload.finish();
 
         w.write_u8(PcbObjectId::Arc as u8);
