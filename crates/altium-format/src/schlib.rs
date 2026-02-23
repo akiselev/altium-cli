@@ -252,7 +252,7 @@ pub(crate) fn resolve_component_key(
     section_keys: &HashMap<String, String>,
 ) -> String {
     let key = section_keys.get(name).map(String::as_str).unwrap_or(name);
-    key.replace('/', "_")
+    sanitize_cfb_name(key)
 }
 
 fn is_end_marker(block: &Block) -> Result<bool> {
