@@ -469,6 +469,27 @@ impl ParameterCollection {
     }
 }
 
+/// Decodes a UNICODE sidecar value: comma-separated decimal UTF-16 code points.
+///
+/// Example: `"76,69,68,32,48,54,48,51,29627,29827,32617,46"` decodes to
+/// `"LED 0603瓋瑃翉."` (where the large values are CJK code points).
+fn decode_unicode_sidecar(key: &str, encoded: &str) -> Result<String> {
+    let code_units: Vec<u16> = encoded
+        .split(',')
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| {
+            token.trim().parse::<u16>().map_err(|_| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("invalid UTF-16 code unit in UNICODE sidecar: '{}'", token.trim()),
+            })
+        })
+        .collect::<Result<Vec<u16>>>()?;
+    String::from_utf16(&code_units).map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: key.to_owned(),
+        detail: format!("UNICODE sidecar UTF-16 decoding failed: {e}"),
+    })
+}
+
 // Escapes a raw value for Win-1252 encoding (doubleEscape mode).
 // Literal Ž (U+017D, Win-1252 byte 0x8E) is doubled so it round-trips as literal 0x8E.
 // Pipe | is replaced with Ž (encodes to single 0x8E = escaped pipe).
