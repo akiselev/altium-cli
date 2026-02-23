@@ -17,26 +17,45 @@ pub(crate) struct PcbFileHeader {
     pub(crate) unique_id: String,
 }
 
-/// Parse a PcbDoc FileHeaderSix or PcbLib FileHeader (pascal-block format).
+/// Parse a PcbDoc FileHeaderSix or PcbLib FileHeader.
 ///
-/// Format: two consecutive pascal blocks:
-///   Block 1: u32 outer_length + u8 string_length + version_string + f64 version
-///   Block 2: u32 outer_length + u8 string_length + unique_id
+/// Format: two consecutive records:
+///   Record 1: u32 string_length + u8 pascal_prefix + version_string + f64 version
+///   Record 2: u32 string_length + u8 pascal_prefix + unique_id
+///
+/// The u32 stores the string length (matching the pascal prefix byte),
+/// NOT the total record size.
 pub(crate) fn parse_pcb_file_header(data: &[u8]) -> Result<PcbFileHeader> {
     let mut reader = BinaryReader::new(data);
 
-    // Block 1: version string + version number
-    let outer_len1 = reader.read_u32_le()? as usize;
-    let mut block1 = reader.sub_reader(outer_len1)?;
-    let version_string = block1.read_pascal_string()?;
-    let version = block1.read_f64_le()?;
-    block1.assert_exhausted()?;
+    // Record 1: version string + version number
+    let str_len1 = reader.read_u32_le()? as usize;
+    let version_string = reader.read_pascal_string()?;
+    if version_string.len() != str_len1 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: FILE_HEADER.to_owned(),
+            detail: format!(
+                "version string length mismatch: u32 says {} but pascal says {}",
+                str_len1,
+                version_string.len()
+            ),
+        });
+    }
+    let version = reader.read_f64_le()?;
 
-    // Block 2: unique ID
-    let outer_len2 = reader.read_u32_le()? as usize;
-    let mut block2 = reader.sub_reader(outer_len2)?;
-    let unique_id = block2.read_pascal_string()?;
-    block2.assert_exhausted()?;
+    // Record 2: unique ID
+    let str_len2 = reader.read_u32_le()? as usize;
+    let unique_id = reader.read_pascal_string()?;
+    if unique_id.len() != str_len2 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: FILE_HEADER.to_owned(),
+            detail: format!(
+                "unique_id length mismatch: u32 says {} but pascal says {}",
+                str_len2,
+                unique_id.len()
+            ),
+        });
+    }
 
     reader.assert_exhausted()?;
 
@@ -79,23 +98,13 @@ mod tests {
         let version_f64: f64 = 5.01;
         let unique_id = "ABCDEFGH";
 
-        // Build block 1: pascal string + f64
-        let mut block1_inner = BinaryWriter::new();
-        block1_inner.write_pascal_string(version_str);
-        block1_inner.write_f64_le(version_f64);
-        let block1_data = block1_inner.finish();
-
-        // Build block 2: pascal string
-        let mut block2_inner = BinaryWriter::new();
-        block2_inner.write_pascal_string(unique_id);
-        let block2_data = block2_inner.finish();
-
-        // Assemble full header
+        // Format: u32(str_len) + pascal_string + f64 + u32(str_len) + pascal_string
         let mut w = BinaryWriter::new();
-        w.write_u32_le(block1_data.len() as u32);
-        w.write_bytes(&block1_data);
-        w.write_u32_le(block2_data.len() as u32);
-        w.write_bytes(&block2_data);
+        w.write_u32_le(version_str.len() as u32);
+        w.write_pascal_string(version_str);
+        w.write_f64_le(version_f64);
+        w.write_u32_le(unique_id.len() as u32);
+        w.write_pascal_string(unique_id);
         let data = w.finish();
 
         let header = parse_pcb_file_header(&data).unwrap();
@@ -129,20 +138,15 @@ mod tests {
 
     #[test]
     fn file_header_trailing_data_error() {
-        let mut block1 = BinaryWriter::new();
-        block1.write_pascal_string("PCB 6.0 Binary File");
-        block1.write_f64_le(5.01);
-        let b1 = block1.finish();
-
-        let mut block2 = BinaryWriter::new();
-        block2.write_pascal_string("TESTTEST");
-        let b2 = block2.finish();
+        let version_str = "PCB 6.0 Binary File";
+        let unique_id = "TESTTEST";
 
         let mut w = BinaryWriter::new();
-        w.write_u32_le(b1.len() as u32);
-        w.write_bytes(&b1);
-        w.write_u32_le(b2.len() as u32);
-        w.write_bytes(&b2);
+        w.write_u32_le(version_str.len() as u32);
+        w.write_pascal_string(version_str);
+        w.write_f64_le(5.01);
+        w.write_u32_le(unique_id.len() as u32);
+        w.write_pascal_string(unique_id);
         w.write_u8(0xFF); // trailing junk
         let data = w.finish();
 

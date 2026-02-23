@@ -270,3 +270,18 @@ pub const C_100_0_MM: i32 = 39_370_078;
 
 /// 1000.0 mm in DXP units.
 pub const C_1000_0_MM: i32 = 393_700_787;
+
+// ---------------------------------------------------------------------------
+// PcbLib Data stream subrecord counts
+// ---------------------------------------------------------------------------
+
+/// Number of subrecords for Pad primitives in PcbLib Data stream.
+/// Source: Altium file format — Pad serializer writes 6 sub-blocks.
+pub const PAD_SUBRECORD_COUNT: usize = 6;
+
+/// Number of subrecords for Text primitives in PcbLib Data stream.
+/// Source: Altium file format — Text serializer writes 2 sub-blocks.
+pub const TEXT_SUBRECORD_COUNT: usize = 2;
+
+/// Default subrecord count for all other primitive types in PcbLib Data stream.
+pub const DEFAULT_SUBRECORD_COUNT: usize = 1;

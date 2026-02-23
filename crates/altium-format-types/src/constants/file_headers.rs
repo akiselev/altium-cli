@@ -197,3 +197,13 @@ pub const HARNESS_LIBRARY_JSON_HEADER_V1: &str =
 /// **Container:** OLE2 compound document
 pub const ELECTRONICS_SYSTEM_DESIGN_JSON_HEADER_V1: &str =
     "Altium Designer - Electronics System Design JSON File Version 1.0";
+
+// ---------------------------------------------------------------------------
+// PCB library headers
+// ---------------------------------------------------------------------------
+
+/// V6 binary PCB footprint library header (OLE2 compound document).
+///
+/// **Era:** Current (AD6+)
+/// **Container:** OLE2 compound document
+pub const PCB_LIBRARY_BINARY_HEADER_V6: &str = "PCB 6.0 Binary Library File";

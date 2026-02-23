@@ -32,7 +32,8 @@ pub use unique_id::{UniqueId, UniqueIdError};
 pub use common::{ComponentKind, RotationBy90, TextAutoPosition, Unit};
 pub use pcb::{
     BoardSide, CornerStyle, DielectricType, DimensionKind, PcbFileFormatVersion, PcbFlags,
-    PcbObjectId, PadShape, PadShapeSubKind, PadStackMode, RuleKind, V6Layer, V7Layer,
+    PcbObjectId, PadShape, PadShapeSubKind, PadStackMode, RegionKind, RuleKind, TextKind,
+    V6Layer, V7Layer,
 };
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,

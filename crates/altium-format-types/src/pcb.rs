@@ -76,6 +76,25 @@ impl TryFrom<u8> for PcbObjectId {
     }
 }
 
+impl PcbObjectId {
+    /// Maps the PRIMITIVEOBJECTID string from UniqueIDPrimitiveInformation to PcbObjectId.
+    ///
+    /// These strings appear in PcbLib sidecar streams as human-readable type names.
+    pub fn from_primitive_object_id_str(s: &str) -> Option<Self> {
+        match s {
+            "Arc" => Some(Self::Arc),
+            "Pad" => Some(Self::Pad),
+            "Via" => Some(Self::Via),
+            "Track" => Some(Self::Track),
+            "Text" => Some(Self::Text),
+            "Fill" => Some(Self::Fill),
+            "Region" => Some(Self::Region),
+            "ComponentBody" => Some(Self::ComponentBody),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for PcbObjectId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

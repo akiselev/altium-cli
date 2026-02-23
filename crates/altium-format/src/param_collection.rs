@@ -218,6 +218,10 @@ impl ParameterCollection {
     // Treats all values as already-decoded strings; %UTF8% key prefix handling
     // does not apply here. Only from_bytes (raw-byte path) strips %UTF8% and
     // switches to UTF-8 decoding for the value bytes.
+    pub(crate) fn from_str(s: &str) -> Result<Self> {
+        Self::from_str_params(s)
+    }
+
     fn from_str_params(s: &str) -> Result<Self> {
         let s = s.strip_suffix('\0').unwrap_or(s);
         let mut params = IndexMap::new();
@@ -376,6 +380,25 @@ impl ParameterCollection {
         }
         let keys: Vec<String> = self.params.keys().cloned().collect();
         Err(AltiumFormatError::UnknownParams { keys })
+    }
+
+    /// Removes all remaining parameters without erroring.
+    ///
+    /// Use sparingly — only when parameter keys are genuinely variable or not yet fully
+    /// specified (e.g., board/layer stack parameters in Library/Data whose keys vary by
+    /// file version). Prefer explicit `remove_optional` calls whenever keys are known.
+    pub(crate) fn drain_remaining(&mut self) {
+        self.params.clear();
+    }
+
+    /// Returns all keys whose names start with `prefix` (case-insensitive).
+    pub(crate) fn keys_matching(&self, prefix: &str) -> Vec<String> {
+        let lower_prefix = prefix.to_ascii_lowercase();
+        self.params
+            .keys()
+            .filter(|k| k.to_ascii_lowercase().starts_with(&lower_prefix))
+            .cloned()
+            .collect()
     }
 
     // Returns the stored key whose lowercase form matches `key`, or `None` if absent.

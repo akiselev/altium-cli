@@ -207,53 +207,20 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
     Ok(SchLibHeader { weight, minor_version, unique_id, fonts, display_settings, components })
 }
 
-pub(crate) fn parse_section_keys(data: &[u8]) -> Result<HashMap<String, String>> {
-    let blocks = parse_blocks(data)?;
-    if blocks.len() != 1 {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: SECTION_KEYS.to_owned(),
-            detail: format!("expected 1 block, got {}", blocks.len()),
-        });
-    }
-    let block = &blocks[0];
-    if block.format != BlockFormat::Text {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: SECTION_KEYS.to_owned(),
-            detail: "expected text block, got binary".to_owned(),
-        });
-    }
-
-    let mut params = ParameterCollection::from_bytes(&block.data)?;
-
-    if let Some(record) = params.remove_optional::<i32>(RECORD)? {
-        if record != 0 {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: RECORD.to_owned(),
-                detail: format!("SectionKeys RECORD must be 0, got {record}"),
-            });
-        }
-    }
-
-    let mut map = HashMap::new();
-    let count: i32 = params.remove_required(KEY_COUNT)?;
-    for n in 0..count {
-        let lib_ref: String = params.remove_required(&format!("{}{}", LIB_REF, n))?;
-        let section_key: String = params.remove_required(&format!("{}{}", SECTION_KEY, n))?;
-        map.insert(lib_ref, section_key);
-    }
-
-    params.assert_exhausted()?;
-
-    Ok(map)
-}
+use crate::pcblib::section_keys::parse_section_keys;
 
 pub(crate) fn resolve_component_key(
     name: &str,
     section_keys: &HashMap<String, String>,
 ) -> String {
-    let key = section_keys.get(name).map(String::as_str).unwrap_or(name);
-    sanitize_cfb_name(key)
+    crate::pcblib::section_keys::sanitize_cfb_name(
+        section_keys.get(name).map(String::as_str).unwrap_or(name),
+    )
 }
+
+// NOTE: The local `sanitize_cfb_name` function is NOT removed — it is still called
+// by `build_section_key_for_name` (write-path code). Only `resolve_component_key`
+// delegates to the shared version. Both can coexist.
 
 fn is_end_marker(block: &Block) -> Result<bool> {
     if block.format != BlockFormat::Text {
