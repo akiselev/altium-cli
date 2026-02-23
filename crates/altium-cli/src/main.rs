@@ -21,6 +21,13 @@ enum Commands {
         /// Path to the document to validate
         path: PathBuf,
     },
+    /// Open, parse, and re-save a file (roundtrip for debugging)
+    SaveAs {
+        /// Path to the input file
+        input: PathBuf,
+        /// Path to the output file
+        output: PathBuf,
+    },
     /// CFB container inspection and debugging tools
     Cfb {
         #[command(subcommand)]
@@ -38,6 +45,12 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        Commands::SaveAs { input, output } => {
+            if let Err(e) = save_as(&input, &output) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
         Commands::Cfb { sub } => match cfb::run(sub) {
             Ok(code) => return code,
             Err(e) => {
@@ -48,6 +61,24 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or_else(|| anyhow::anyhow!("cannot determine file type: {}", input.display()))?;
+
+    match ext.to_ascii_lowercase().as_str() {
+        "schlib" => {
+            let doc = SchLib::open(input)?;
+            doc.save_as(output.as_path())?;
+        }
+        _ => anyhow::bail!("save-as not yet supported for .{ext} files"),
+    }
+
+    println!("Saved: {} -> {}", input.display(), output.display());
+    Ok(())
 }
 
 fn validate(path: &PathBuf) -> anyhow::Result<()> {

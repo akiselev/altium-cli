@@ -1179,16 +1179,26 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
     params.insert(MINOR_VERSION, header.minor_version.to_param_value());
     params.insert(UNIQUE_ID, header.unique_id.clone());
 
-    // Font table (1-based)
+    // Font table (1-based) — only write non-default fields to match Altium's output
     params.insert(FONT_ID_COUNT, (header.fonts.len() as i32).to_param_value());
     for font in &header.fonts {
         let idx = font.id.to_string();
         params.insert(&format!("{}{}", SIZE, idx), font.size.to_param_value());
-        params.insert(&format!("{}{}", ROTATION, idx), font.rotation.to_param_value());
-        params.insert(&format!("{}{}", UNDERLINE, idx), font.underline.to_param_value());
-        params.insert(&format!("{}{}", ITALIC, idx), font.italic.to_param_value());
-        params.insert(&format!("{}{}", BOLD, idx), font.bold.to_param_value());
-        params.insert(&format!("{}{}", STRIKE_OUT, idx), font.strikeout.to_param_value());
+        if font.rotation != 0 {
+            params.insert(&format!("{}{}", ROTATION, idx), font.rotation.to_param_value());
+        }
+        if font.underline {
+            params.insert(&format!("{}{}", UNDERLINE, idx), font.underline.to_param_value());
+        }
+        if font.italic {
+            params.insert(&format!("{}{}", ITALIC, idx), font.italic.to_param_value());
+        }
+        if font.bold {
+            params.insert(&format!("{}{}", BOLD, idx), font.bold.to_param_value());
+        }
+        if font.strikeout {
+            params.insert(&format!("{}{}", STRIKE_OUT, idx), font.strikeout.to_param_value());
+        }
         params.insert(&format!("{}{}", FONT_NAME, idx), font.name.clone());
     }
 
@@ -1249,7 +1259,14 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
 }
 
 // Serializes the Storage stream (embedded images).
+// When empty, writes just the header without Weight (matching Altium's output).
+// When non-empty, writes header with Weight + embedded object entries.
 fn serialize_storage_stream(images: &[SchLibEmbeddedImage]) -> Result<Vec<u8>> {
+    if images.is_empty() {
+        let mut params = ParameterCollection::new();
+        params.insert(HEADER, "Icon storage".to_owned());
+        return Ok(write_text_block(&params.to_bytes()));
+    }
     let entries: Vec<(String, Vec<u8>)> = images
         .iter()
         .map(|img| (img.file_name.clone(), img.data.clone()))

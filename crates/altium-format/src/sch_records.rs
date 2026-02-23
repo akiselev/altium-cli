@@ -704,22 +704,26 @@ pub(crate) struct SchImage {
 // ── Text and annotation records ───────────────────────────────────────────────
 
 /// A text label (RECORD=4).
+///
+/// Field order matches Altium's `ExportLabel` (FileFormatV5.cs:868-886).
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchLabel {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
-    #[param(key = TEXT, default = String::new())]
-    pub text: String,
-    #[param(key = FONT_ID, default = 1i32)]
-    pub font_id: i32,
-    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
-    pub justification: TextJustification,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
     pub orientation: RotationBy90,
+    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
+    pub justification: TextJustification,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
     #[param(key = IS_MIRRORED, default = false)]
     pub is_mirrored: bool,
-    #[param(key = IS_HIDDEN, default = false)]
-    pub is_hidden: bool,
     #[param(key = URL, default = String::new())]
     pub url: String,
     #[param(key = UNIQUE_ID, default = String::new())]
@@ -727,70 +731,82 @@ pub(crate) struct SchLabel {
 }
 
 /// A designator annotation (RECORD=34).
+///
+/// Field order matches Altium's `ExportParameter` (FileFormatV5.cs:1339-1371).
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchDesignator {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
+    pub justification: TextJustification,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = IS_HIDDEN, default = false)]
+    pub is_hidden: bool,
     #[param(key = TEXT, default = String::from("*"))]
     pub text: String,
     #[param(key = NAME, default = String::from("Designator"))]
     pub name: String,
-    #[param(key = FONT_ID, default = 1i32)]
-    pub font_id: i32,
-    #[param(key = UNIQUE_ID, default = String::new())]
-    pub unique_id: String,
     #[param(key = READ_ONLY_STATE, default = ParameterReadOnlyState::Name)]
     pub read_only_state: ParameterReadOnlyState,
-    #[param(key = IS_HIDDEN, default = false)]
-    pub is_hidden: bool,
-    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
-    pub orientation: RotationBy90,
-    #[param(key = IS_MIRRORED, default = false)]
-    pub is_mirrored: bool,
-    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
-    pub justification: TextJustification,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
     #[param(key = NOT_AUTO_POSITION, default = false)]
     pub not_auto_position: bool,
+    #[param(key = IS_MIRRORED, default = false)]
+    pub is_mirrored: bool,
 }
 
 /// A parameter annotation (RECORD=41).
 ///
 /// Used for Comment, Value, and user-defined parameters. The `name` field
 /// determines the parameter's role (e.g., `"Comment"`, `"Value"`).
+///
+/// Field order matches Altium's `ExportParameter` (FileFormatV5.cs:1339-1371).
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchParameter {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
-    #[param(key = TEXT, default = String::from("*"))]
-    pub text: String,
-    #[param(key = NAME, default = String::from("Comment"))]
-    pub name: String,
-    #[param(key = FONT_ID, default = 1i32)]
-    pub font_id: i32,
-    #[param(key = UNIQUE_ID, default = String::new())]
-    pub unique_id: String,
-    #[param(key = READ_ONLY_STATE, default = ParameterReadOnlyState::None)]
-    pub read_only_state: ParameterReadOnlyState,
-    #[param(key = IS_HIDDEN, default = false)]
-    pub is_hidden: bool,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
     pub orientation: RotationBy90,
-    #[param(key = IS_MIRRORED, default = false)]
-    pub is_mirrored: bool,
     #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
     pub justification: TextJustification,
-    #[param(key = NOT_AUTO_POSITION, default = false)]
-    pub not_auto_position: bool,
-    #[param(key = SHOW_NAME, default = false)]
-    pub show_name: bool,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = IS_HIDDEN, default = false)]
+    pub is_hidden: bool,
+    #[param(key = TEXT, default = String::from("*"))]
+    pub text: String,
     #[param(key = PARAM_TYPE, default = ParameterType::String)]
     pub param_type: ParameterType,
+    #[param(key = NAME, default = String::from("Comment"))]
+    pub name: String,
+    #[param(key = SHOW_NAME, default = false)]
+    pub show_name: bool,
+    #[param(key = READ_ONLY_STATE, default = ParameterReadOnlyState::None)]
+    pub read_only_state: ParameterReadOnlyState,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
     #[param(key = DESCRIPTION, default = String::new())]
     pub description: String,
     #[param(key = NOT_ALLOW_LIBRARY_SYNCHRONIZE, default = false)]
     pub not_allow_library_synchronize: bool,
     #[param(key = NOT_ALLOW_DATABASE_SYNCHRONIZE, default = false)]
     pub not_allow_database_synchronize: bool,
+    #[param(key = NOT_AUTO_POSITION, default = false)]
+    pub not_auto_position: bool,
+    #[param(key = IS_MIRRORED, default = false)]
+    pub is_mirrored: bool,
     #[param(key = TEXT_HORZ_ANCHOR, default = TextHorzAnchor::None)]
     pub text_horz_anchor: TextHorzAnchor,
     #[param(key = TEXT_VERT_ANCHOR, default = TextVertAnchor::None)]
@@ -1750,15 +1766,14 @@ mod tests {
 
     #[test]
     fn label_parsed() {
-        let mut params = pc("|Location.X=10|Location.Y=20|Text=Hello|FontID=2|Justification=3|Orientation=1|IsMirrored=T|IsHidden=F|");
+        let mut params = pc("|Location.X=10|Location.Y=20|Text=Hello|FontID=2|Justification=3|Orientation=1|IsMirrored=T|");
         let label = SchLabel::from_params(&mut params).unwrap();
-        assert_eq!(label.base.location.x.to_internal(), 10 * 100_000);
+        assert_eq!(label.location.x.to_internal(), 10 * 100_000);
         assert_eq!(label.text, "Hello");
         assert_eq!(label.font_id, 2);
         assert_eq!(label.justification, TextJustification::CenterLeft);
         assert_eq!(label.orientation, RotationBy90::Rotate90);
         assert!(label.is_mirrored);
-        assert!(!label.is_hidden);
     }
 
     #[test]
@@ -1770,14 +1785,6 @@ mod tests {
         assert_eq!(label.justification, TextJustification::BottomLeft);
         assert_eq!(label.orientation, RotationBy90::Rotate0);
         assert!(!label.is_mirrored);
-        assert!(!label.is_hidden);
-    }
-
-    #[test]
-    fn label_hidden() {
-        let mut params = pc("|Location.X=0|Location.Y=0|IsHidden=T|");
-        let label = SchLabel::from_params(&mut params).unwrap();
-        assert!(label.is_hidden);
     }
 
     #[test]
