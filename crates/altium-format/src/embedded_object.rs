@@ -123,9 +123,8 @@ pub(crate) fn serialize_embedded_object_stream(
     header_name: &str,
     entries: &[(String, Vec<u8>)],
 ) -> Result<Vec<u8>> {
-    // Build header params
+    // Build header params (no RECORD=0 — original files omit it from sidecar/storage headers)
     let mut params = ParameterCollection::new();
-    params.insert(RECORD, "0".to_owned());
     params.insert(HEADER, header_name.to_owned());
     params.insert(WEIGHT, entries.len().to_string());
     let header_bytes = params.to_bytes();

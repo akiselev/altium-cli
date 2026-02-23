@@ -42,6 +42,15 @@ use altium_format_types::constants::visual::{FONT_ID_COUNT, FONT_NAME, ROTATION,
 use altium_format_types::constants::text::NAME;
 
 
+// Sidecar parameter keys: Delphi convention (all-uppercase, no separators) for
+// byte-exact roundtrip with files created by Altium's Delphi code path.
+// The C# FileFormatConsts use mixed-case (e.g. "PinPackageLength"), but actual
+// .SchLib files contain Delphi-style uppercase keys in their UTF-16LE sidecar data.
+// Parsing is case-insensitive so the constants from altium-format-types work for reads;
+// these are only needed for writes.
+const SIDECAR_SYMBOL_LINE_WIDTH: &str = "SYMBOL_LINEWIDTH";
+const SIDECAR_PIN_PACKAGE_LENGTH: &str = "PINPACKAGELENGTH";
+
 use crate::binary_io::{BinaryReader, BinaryWriter};
 use crate::block_stream::{parse_blocks, write_text_block, Block, BlockFormat};
 use crate::cfb_document::CfbDocument;
@@ -631,7 +640,7 @@ fn merge_pin_symbol_line_width(
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<i32>(SYMBOL_LINE_WIDTH)? {
-            pins[pin_idx].pin_symbol_line_width = v;
+            pins[pin_idx].pin_symbol_line_width = Some(v);
         }
         params.assert_exhausted()?;
     }
@@ -922,13 +931,13 @@ fn write_pin_wide_text(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     Some(serialize_embedded_object_stream(PIN_WIDE_TEXT, &entries))
 }
 
-// Returns PinSymbolLineWidth sidecar stream if any pin has non-zero line width.
+// Returns PinSymbolLineWidth sidecar stream if any pin has a sidecar entry.
 fn write_pin_symbol_line_width(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
-        if pin.pin_symbol_line_width != 0 {
+        if let Some(width) = pin.pin_symbol_line_width {
             let mut params = ParameterCollection::new();
-            params.insert(SYMBOL_LINE_WIDTH, pin.pin_symbol_line_width.to_string());
+            params.insert(SIDECAR_SYMBOL_LINE_WIDTH, width.to_string());
             entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
         }
     }
@@ -944,7 +953,7 @@ fn write_pin_package_length(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     for (i, pin) in pins.iter().enumerate() {
         if !pin.pin_package_length.is_empty() {
             let mut params = ParameterCollection::new();
-            params.insert(PIN_PACKAGE_LENGTH_KEY, pin.pin_package_length.clone());
+            params.insert(SIDECAR_PIN_PACKAGE_LENGTH, pin.pin_package_length.clone());
             entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
         }
     }
@@ -1228,6 +1237,7 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
     if let Some(v) = ds.custom_x { params.insert_coord(CUSTOM_X, CUSTOM_X_FRAC, v); }
     if let Some(v) = ds.custom_y { params.insert_coord(CUSTOM_Y, CUSTOM_Y_FRAC, v); }
     if let Some(v) = ds.use_custom_sheet { params.insert(USE_CUSTOM_SHEET, v.to_param_value()); }
+    if let Some(v) = ds.show_hidden_pins { params.insert(SHOW_HIDDEN_PINS, v.to_param_value()); }
     if let Some(v) = ds.reference_zones_on { params.insert(REFERENCE_ZONES_ON, v.to_param_value()); }
     if let Some(v) = ds.reference_zone_style { params.insert(REFERENCE_ZONE_STYLE, (v as u8).to_param_value()); }
     if let Some(v) = ds.custom_x_zones { params.insert(CUSTOM_X_ZONES, v.to_param_value()); }
@@ -1239,7 +1249,6 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
     if let Some(v) = ds.display_unit { params.insert(DISPLAY_UNIT, v.to_param_value()); }
     if let Some(v) = ds.hot_spot_grid_on { params.insert(HOT_SPOT_GRID_ON, v.to_param_value()); }
     if let Some(v) = ds.hot_spot_grid_size { params.insert_coord(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, v); }
-    if let Some(v) = ds.show_hidden_pins { params.insert(SHOW_HIDDEN_PINS, v.to_param_value()); }
     if let Some(v) = ds.show_template_graphics { params.insert(SHOW_TEMPLATE_GRAPHICS, v.to_param_value()); }
     if let Some(ref v) = ds.template_file_name { params.insert(TEMPLATE_FILE_NAME, v.clone()); }
     if let Some(v) = ds.always_show_cd { params.insert(ALWAYS_SHOW_CD, v.to_param_value()); }
@@ -1715,6 +1724,7 @@ mod tests {
         );
 
         // Compare each stream's raw bytes
+        let mut storage_diffs = Vec::new();
         for entry in &orig_sorted {
             // Skip storages (they have no data)
             if original.read_stream(entry).is_err() {
@@ -1723,6 +1733,12 @@ mod tests {
             let orig_data = original.read_stream(entry).expect("read original stream");
             let rt_data = roundtripped.read_stream(entry).expect("read roundtripped stream");
             if orig_data != rt_data {
+                // For Storage streams, the zlib compression level may differ;
+                // collect these separately and compare decompressed contents.
+                if entry.ends_with("/Storage") || *entry == "/Storage" {
+                    storage_diffs.push((entry.to_string(), orig_data, rt_data));
+                    continue;
+                }
                 // Find first difference for debugging
                 let min_len = orig_data.len().min(rt_data.len());
                 let first_diff = (0..min_len).find(|&i| orig_data[i] != rt_data[i]);
@@ -1740,6 +1756,36 @@ mod tests {
                         orig_data.len(), rt_data.len()
                     ),
                 }
+            }
+        }
+
+        // For Storage streams, compare decompressed embedded object contents
+        // (zlib compression level may differ but decompressed data must match)
+        for (entry, orig_data, rt_data) in &storage_diffs {
+            use crate::block_stream::parse_blocks;
+            use crate::embedded_object::parse_embedded_object_stream;
+            let orig_blocks = parse_blocks(orig_data).expect("parse original storage blocks");
+            let rt_blocks = parse_blocks(rt_data).expect("parse roundtripped storage blocks");
+            let orig_objects = parse_embedded_object_stream(&orig_blocks)
+                .expect("parse original embedded objects");
+            let rt_objects = parse_embedded_object_stream(&rt_blocks)
+                .expect("parse roundtripped embedded objects");
+            assert_eq!(
+                orig_objects.len(), rt_objects.len(),
+                "{filename}: {entry} embedded object count mismatch: orig={}, rt={}",
+                orig_objects.len(), rt_objects.len()
+            );
+            for (i, (orig_obj, rt_obj)) in orig_objects.iter().zip(rt_objects.iter()).enumerate() {
+                assert_eq!(
+                    orig_obj.id, rt_obj.id,
+                    "{filename}: {entry} object[{i}] id mismatch"
+                );
+                assert_eq!(
+                    orig_obj.inner_data, rt_obj.inner_data,
+                    "{filename}: {entry} object[{i}] (id={}) decompressed data mismatch \
+                     (orig_len={}, rt_len={})",
+                    orig_obj.id, orig_obj.inner_data.len(), rt_obj.inner_data.len()
+                );
             }
         }
     }

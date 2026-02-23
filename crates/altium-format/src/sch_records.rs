@@ -75,7 +75,7 @@ use altium_format_types::{
 use crate::binary_io::{BinaryReader, BinaryWriter};
 use crate::block_stream::{write_binary_block, write_text_block};
 use crate::param_collection::ParameterCollection;
-use crate::param_value::ToParamValue;
+use crate::param_value::{SchAngle, ToParamValue};
 use crate::{AltiumFormatError, Result};
 
 // ── Base composition types ────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ pub(crate) struct SchPin {
     pub owner_index_additional_list: bool,
 
     // Populated by sidecar streams (Milestone 9)
-    pub pin_symbol_line_width: i32,
+    pub pin_symbol_line_width: Option<i32>,
     pub pin_package_length: String,
     pub propagation_delay: String,
     pub selected_functions: Vec<String>,
@@ -302,7 +302,7 @@ pub(crate) fn parse_binary_pin(data: &[u8]) -> Result<SchPin> {
         graphically_locked: cong.graphically_locked,
         owner_index_additional_list: cong.owner_index_additional_list,
         // Sidecar fields: zero-initialized, populated in M9
-        pin_symbol_line_width: 0,
+        pin_symbol_line_width: None,
         pin_package_length: String::new(),
         propagation_delay: String::new(),
         selected_functions: Vec::new(),
@@ -592,10 +592,10 @@ pub(crate) struct SchArc {
     pub radius: Coord,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
-    #[param(key = START_ANGLE, default = 0.0f64)]
-    pub start_angle: f64,
-    #[param(key = END_ANGLE, default = 360.0f64)]
-    pub end_angle: f64,
+    #[param(key = START_ANGLE, default = SchAngle(0.0))]
+    pub start_angle: SchAngle,
+    #[param(key = END_ANGLE, optional)]
+    pub end_angle: Option<SchAngle>,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
     #[param(key = UNIQUE_ID, default = String::new())]
@@ -619,10 +619,10 @@ pub(crate) struct SchEllipticalArc {
     pub secondary_radius: Coord,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
-    #[param(key = START_ANGLE, default = 0.0f64)]
-    pub start_angle: f64,
-    #[param(key = END_ANGLE, default = 360.0f64)]
-    pub end_angle: f64,
+    #[param(key = START_ANGLE, default = SchAngle(0.0))]
+    pub start_angle: SchAngle,
+    #[param(key = END_ANGLE, optional)]
+    pub end_angle: Option<SchAngle>,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
     #[param(key = UNIQUE_ID, default = String::new())]
@@ -675,10 +675,10 @@ pub(crate) struct SchPie {
     pub secondary_radius: Coord,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
-    #[param(key = START_ANGLE, default = 0.0f64)]
-    pub start_angle: f64,
-    #[param(key = END_ANGLE, default = 360.0f64)]
-    pub end_angle: f64,
+    #[param(key = START_ANGLE, default = SchAngle(0.0))]
+    pub start_angle: SchAngle,
+    #[param(key = END_ANGLE, optional)]
+    pub end_angle: Option<SchAngle>,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
     #[param(key = AREA_COLOR, default = Color::BLACK)]
@@ -917,7 +917,7 @@ pub(crate) struct SchTextFrame {
     pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
-    #[param(key = LINE_WIDTH, default = PenWidth::Small)]
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
@@ -929,7 +929,7 @@ pub(crate) struct SchTextFrame {
     pub font_id: i32,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
-    #[param(key = SHOW_BORDER, default = true)]
+    #[param(key = SHOW_BORDER, default = false)]
     pub show_border: bool,
     #[param(key = ALIGNMENT, default = TextJustification::BottomLeft)]
     pub alignment: TextJustification,
@@ -941,7 +941,7 @@ pub(crate) struct SchTextFrame {
     pub text: String,
     #[param(coord, key = TEXT_MARGIN, frac_key = TEXT_MARGIN_FRAC)]
     pub text_margin: Coord,
-    #[param(key = TRANSPARENT, default = true)]
+    #[param(key = TRANSPARENT, default = false)]
     pub transparent: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
@@ -1723,7 +1723,7 @@ mod tests {
         assert!(pin.swap_id_pin.is_empty());
         assert!(pin.swap_id_part.is_empty());
         assert!(pin.default_value.is_empty());
-        assert_eq!(pin.pin_symbol_line_width, 0);
+        assert_eq!(pin.pin_symbol_line_width, None);
         assert!(pin.pin_package_length.is_empty());
         assert!(pin.propagation_delay.is_empty());
         assert!(pin.selected_functions.is_empty());
@@ -1771,8 +1771,8 @@ mod tests {
         let mut params = pc("|Location.X=5|Location.Y=5|Radius=100|StartAngle=45|EndAngle=270|LineWidth=1|");
         let arc = SchArc::from_params(&mut params).unwrap();
         assert_eq!(arc.radius.to_internal(), 100 * 100_000);
-        assert!((arc.start_angle - 45.0).abs() < f64::EPSILON);
-        assert!((arc.end_angle - 270.0).abs() < f64::EPSILON);
+        assert_eq!(arc.start_angle, SchAngle(45.0));
+        assert_eq!(arc.end_angle, Some(SchAngle(270.0)));
         assert_eq!(arc.line_width, PenWidth::Small);
     }
 
@@ -1789,8 +1789,8 @@ mod tests {
         let ea = SchEllipticalArc::from_params(&mut params).unwrap();
         assert_eq!(ea.radius.to_internal(), 50 * 100_000);
         assert_eq!(ea.secondary_radius.to_internal(), 25 * 100_000);
-        assert!((ea.start_angle - 0.0).abs() < f64::EPSILON);
-        assert!((ea.end_angle - 180.0).abs() < f64::EPSILON);
+        assert_eq!(ea.start_angle, SchAngle(0.0));
+        assert_eq!(ea.end_angle, Some(SchAngle(180.0)));
     }
 
     #[test]
@@ -1808,8 +1808,8 @@ mod tests {
         let mut params = pc("|Location.X=0|Location.Y=0|Radius=40|SecondaryRadius=40|StartAngle=30|EndAngle=150|LineWidth=0|IsSolid=T|Transparent=F|");
         let pie = SchPie::from_params(&mut params).unwrap();
         assert_eq!(pie.radius.to_internal(), 40 * 100_000);
-        assert!((pie.start_angle - 30.0).abs() < f64::EPSILON);
-        assert!((pie.end_angle - 150.0).abs() < f64::EPSILON);
+        assert_eq!(pie.start_angle, SchAngle(30.0));
+        assert_eq!(pie.end_angle, Some(SchAngle(150.0)));
         assert!(pie.is_solid);
     }
 
@@ -1963,10 +1963,10 @@ mod tests {
         assert!(tf.text.is_empty());
         assert_eq!(tf.font_id, 1);
         assert_eq!(tf.alignment, TextJustification::BottomLeft);
-        assert!(!tf.word_wrap);
-        assert_eq!(tf.line_width, PenWidth::Small);
-        assert!(tf.show_border);
-        assert!(tf.transparent);
+        assert!(!tf.word_wrap);      // parse default: false (absent = false)
+        assert_eq!(tf.line_width, PenWidth::Zero); // C# default: eZeroSize
+        assert!(!tf.show_border);    // C# default: false
+        assert!(!tf.transparent);    // C# default: false
     }
 
     // ── Implementation/model record tests ────────────────────────────────────
@@ -2142,8 +2142,8 @@ mod tests {
 
         assert_eq!(arc2.location.x.to_internal(), 5 * 100_000 + 25_000);
         assert_eq!(arc2.radius.to_internal(), 100 * 100_000 + 50_000);
-        assert!((arc2.start_angle - 45.0).abs() < f64::EPSILON);
-        assert!((arc2.end_angle - 270.0).abs() < f64::EPSILON);
+        assert_eq!(arc2.start_angle, SchAngle(45.0));
+        assert_eq!(arc2.end_angle, Some(SchAngle(270.0)));
     }
 
     #[test]
@@ -2198,7 +2198,7 @@ mod tests {
             swap_id_part: String::new(),
             default_value: String::new(),
             // Sidecar fields (not serialized in binary pin format)
-            pin_symbol_line_width: 0,
+            pin_symbol_line_width: None,
             pin_package_length: String::new(),
             propagation_delay: String::new(),
             selected_functions: Vec::new(),

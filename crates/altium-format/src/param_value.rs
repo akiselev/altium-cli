@@ -161,6 +161,33 @@ impl_enum_param_value!(
     TextVertAnchor,
 );
 
+// Angle value that serializes with exactly 3 decimal places (matching Altium's N3 format).
+// C#: StrUtils.DoubleToString(value, "N3") always produces "180.000", "45.000", etc.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SchAngle(pub f64);
+
+impl ToParamValue for SchAngle {
+    fn to_param_value(&self) -> String {
+        format!("{:.3}", self.0)
+    }
+}
+
+impl FromParamValue for SchAngle {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        let v: f64 = value.parse().map_err(|e: std::num::ParseFloatError| {
+            AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("invalid angle: {e}"),
+            }
+        })?;
+        Ok(SchAngle(v))
+    }
+}
+
+impl Default for SchAngle {
+    fn default() -> Self { SchAngle(0.0) }
+}
+
 // UniqueId is stored as an 8-char uppercase alpha string in parameter values.
 impl FromParamValue for UniqueId {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {

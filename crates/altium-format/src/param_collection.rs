@@ -37,9 +37,14 @@ impl ParameterCollection {
     // the _FRAC companion only if the fractional remainder is non-zero.
     pub(crate) fn insert_coord(&mut self, key: &str, frac_key: &str, coord: Coord) {
         let internal = coord.to_internal();
-        let integer_part = internal.div_euclid(C_BASE_UNIT);
-        let frac_part = internal.rem_euclid(C_BASE_UNIT);
-        self.insert(key, integer_part.to_param_value());
+        // Truncation division (toward zero) matches Altium's integer/frac split:
+        // -1920000 → integer=-19, frac=-20000 (not Euclidean's -20, +80000).
+        let integer_part = internal / C_BASE_UNIT;
+        let frac_part = internal % C_BASE_UNIT;
+        // T1 behavior: skip integer/frac parts when they are zero.
+        if integer_part != 0 {
+            self.insert(key, integer_part.to_param_value());
+        }
         if frac_part != 0 {
             self.insert(frac_key, frac_part.to_param_value());
         }
@@ -145,8 +150,10 @@ impl ParameterCollection {
             s.push('=');
             s.push_str(&escaped_value);
         }
-        s.push('|');
-        encoding_rs::UTF_16LE.encode(&s).0.into_owned()
+        // No trailing pipe -- matches C#'s StrUtils.SetParameterValue output.
+        // encoding_rs::UTF_16LE.encode() does NOT produce UTF-16LE (the WHATWG spec
+        // has no encoder for UTF-16); use Rust's native encode_utf16() instead.
+        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>()
     }
 
     // Parses pipe-delimited Windows-1252 parameter bytes with %UTF8% key support.
