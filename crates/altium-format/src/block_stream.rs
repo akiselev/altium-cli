@@ -36,6 +36,24 @@ pub(crate) fn iter_blocks(stream_data: &[u8]) -> BlockIter<'_> {
     BlockIter::new(stream_data)
 }
 
+/// Encodes a payload as a text-format block: 4-byte header (flags=0x00) + payload bytes.
+pub(crate) fn write_text_block(payload: &[u8]) -> Vec<u8> {
+    let header: i32 = (BLOCK_FLAG_TEXT as i32) << BLOCK_FLAG_SHIFT | (payload.len() as i32 & BLOCK_SIZE_MASK as i32);
+    let mut out = Vec::with_capacity(4 + payload.len());
+    out.extend_from_slice(&header.to_le_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Encodes a payload as a binary-format block: 4-byte header (flags=0x01) + payload bytes.
+pub(crate) fn write_binary_block(payload: &[u8]) -> Vec<u8> {
+    let header: i32 = (BLOCK_FLAG_BINARY as i32) << BLOCK_FLAG_SHIFT | (payload.len() as i32 & BLOCK_SIZE_MASK as i32);
+    let mut out = Vec::with_capacity(4 + payload.len());
+    out.extend_from_slice(&header.to_le_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
 pub(crate) struct BlockIter<'a> {
     data: &'a [u8],
     pos: usize,
@@ -172,6 +190,46 @@ mod tests {
         let data = make_block_bytes(b"x", 0x02);
         let result = parse_blocks(&data);
         assert!(matches!(result, Err(AltiumFormatError::InvalidBlockHeader { .. })));
+    }
+
+    #[test]
+    fn write_text_block_roundtrips() {
+        let payload = b"|RECORD=1|KEY=VALUE|\0";
+        let block_bytes = write_text_block(payload);
+        let blocks = parse_blocks(&block_bytes).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].format, BlockFormat::Text);
+        assert_eq!(blocks[0].data, payload);
+    }
+
+    #[test]
+    fn write_binary_block_roundtrips() {
+        let payload = b"\x02\x00\x00\x00\x01\x00";
+        let block_bytes = write_binary_block(payload);
+        let blocks = parse_blocks(&block_bytes).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].format, BlockFormat::Binary);
+        assert_eq!(blocks[0].data, payload);
+    }
+
+    #[test]
+    fn write_multiple_blocks_roundtrip() {
+        let mut stream = write_text_block(b"|RECORD=0|\0");
+        stream.extend_from_slice(&write_binary_block(b"\x02\x03"));
+        stream.extend_from_slice(&write_text_block(b"|KEY=val|\0"));
+        let blocks = parse_blocks(&stream).unwrap();
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].format, BlockFormat::Text);
+        assert_eq!(blocks[1].format, BlockFormat::Binary);
+        assert_eq!(blocks[2].format, BlockFormat::Text);
+    }
+
+    #[test]
+    fn write_empty_payload_roundtrips() {
+        let block_bytes = write_text_block(b"");
+        let blocks = parse_blocks(&block_bytes).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].data.is_empty());
     }
 
     #[test]

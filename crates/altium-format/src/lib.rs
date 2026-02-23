@@ -98,6 +98,8 @@ pub enum AltiumFormatError {
     UnknownBinaryCode(u8),
     #[error("Unknown parameters remaining: {keys:?}")]
     UnknownParams { keys: Vec<String> },
+    #[error("Sidecar pin index {index} out of range (component has {count} pins)")]
+    InvalidPinIndex { index: usize, count: usize },
     #[error("Unexpected trailing data: {count} bytes remaining at offset {offset}")]
     UnexpectedTrailingData { offset: usize, count: usize },
 

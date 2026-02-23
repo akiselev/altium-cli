@@ -19,11 +19,11 @@
 //! `SchRecord` is the dispatch enum covering all implemented record variants.
 //! `SchLibComponent` bundles a parsed component record with its child records.
 
-use altium_format_derive::FromParams;
+use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LineShape, LineStyle,
     ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
-    TextHorzAnchor, TextJustification, TextVertAnchor,
+    SchRecordType, TextHorzAnchor, TextJustification, TextVertAnchor,
     constants::{
         component::{
             ALL_PIN_COUNT, ALIAS_LIST, COMPONENT_DESCRIPTION, COMPONENT_KIND,
@@ -47,7 +47,7 @@ use altium_format_types::{
         },
         record_structure::{
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID,
-            PARAM_TYPE, UNIQUE_ID, URL,
+            PARAM_TYPE, RECORD, RECORD_EX, UNIQUE_ID, URL,
         },
         sheet::{AREA_COLOR, SHOW_BORDER, SHOW_HIDDEN_PINS, TARGET_FILE_NAME},
         text::{
@@ -72,31 +72,34 @@ use altium_format_types::{
     },
 };
 
-use crate::binary_io::BinaryReader;
+use crate::binary_io::{BinaryReader, BinaryWriter};
+use crate::block_stream::{write_binary_block, write_text_block};
 use crate::param_collection::ParameterCollection;
+use crate::param_value::ToParamValue;
 use crate::{AltiumFormatError, Result};
 
 // ── Base composition types ────────────────────────────────────────────────────
 
 /// Base fields shared by every schematic record: ownership, part/display mode, locking.
-#[derive(FromParams, Debug)]
+/// Field order matches Altium's ExportDataObject + ExportGraphicalObject serialization order.
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPrimitiveBase {
-    #[param(key = OWNER_INDEX, default = -1i32)]
+    #[param(key = OWNER_INDEX, default = 0i32)]
     pub owner_index: i32,
     #[param(key = IS_NOT_ACCESSIBLE, default = false)]
     pub is_not_accessible: bool,
-    #[param(key = OWNER_PART_ID, default = -1i32)]
+    #[param(key = INDEX_IN_SHEET, default = 0i32)]
+    pub index_in_sheet: i32,
+    #[param(key = OWNER_PART_ID, default = 0i32)]
     pub owner_part_id: i32,
     #[param(key = OWNER_PART_DISPLAY_MODE, default = 0i32)]
     pub owner_part_display_mode: i32,
     #[param(key = GRAPHICALLY_LOCKED, default = false)]
     pub graphically_locked: bool,
-    #[param(key = INDEX_IN_SHEET, default = -1i32)]
-    pub index_in_sheet: i32,
 }
 
 /// Extends `SchPrimitiveBase` with location and color fields for graphical objects.
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchGraphicalBase {
     #[param(flatten)]
     pub primitive: SchPrimitiveBase,
@@ -323,10 +326,10 @@ pub(crate) struct SchComponent {
     pub display_mode_count: i32,
     pub owner_index: i32,
     pub is_not_accessible: bool,
+    pub index_in_sheet: i32,
     pub owner_part_id: i32,
     pub owner_part_display_mode: i32,
     pub graphically_locked: bool,
-    pub index_in_sheet: i32,
     pub location: CoordPoint,
     pub display_mode: i32,
     pub is_mirrored: bool,
@@ -374,13 +377,13 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
     let part_count: i32 = params.remove_with_default(PART_COUNT, 1i32)?;
     let display_mode_count: i32 = params.remove_with_default(DISPLAY_MODE_COUNT, 0i32)?;
 
-    // ExportGraphicalObject fields
-    let owner_index: i32 = params.remove_with_default(OWNER_INDEX, -1i32)?;
+    // ExportDataObject + ExportGraphicalObject fields (order matches Altium export)
+    let owner_index: i32 = params.remove_with_default(OWNER_INDEX, 0i32)?;
     let is_not_accessible: bool = params.remove_with_default(IS_NOT_ACCESSIBLE, false)?;
-    let owner_part_id: i32 = params.remove_with_default(OWNER_PART_ID, -1i32)?;
+    let index_in_sheet: i32 = params.remove_with_default(INDEX_IN_SHEET, 0i32)?;
+    let owner_part_id: i32 = params.remove_with_default(OWNER_PART_ID, 0i32)?;
     let owner_part_display_mode: i32 = params.remove_with_default(OWNER_PART_DISPLAY_MODE, 0i32)?;
     let graphically_locked: bool = params.remove_with_default(GRAPHICALLY_LOCKED, false)?;
-    let index_in_sheet: i32 = params.remove_with_default(INDEX_IN_SHEET, -1i32)?;
 
     // Location (DXP frac coords)
     let location_x: i32 = params.remove_with_default(LOCATION_X, 0i32)?;
@@ -445,10 +448,10 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
         display_mode_count,
         owner_index,
         is_not_accessible,
+        index_in_sheet,
         owner_part_id,
         owner_part_display_mode,
         graphically_locked,
-        index_in_sheet,
         location,
         display_mode,
         is_mirrored,
@@ -494,7 +497,7 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
 // ── Graphical primitive records ───────────────────────────────────────────────
 
 /// A line segment (RECORD=13).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchLine {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -511,7 +514,7 @@ pub(crate) struct SchLine {
 }
 
 /// A filled or outlined rectangle (RECORD=14).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchRectangle {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -530,7 +533,7 @@ pub(crate) struct SchRectangle {
 }
 
 /// A rounded rectangle (RECORD=10).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchRoundRectangle {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -549,7 +552,7 @@ pub(crate) struct SchRoundRectangle {
 }
 
 /// A circular arc segment (RECORD=12).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchArc {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -566,7 +569,7 @@ pub(crate) struct SchArc {
 }
 
 /// An elliptical arc segment (RECORD=11).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchEllipticalArc {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -585,7 +588,7 @@ pub(crate) struct SchEllipticalArc {
 }
 
 /// A filled or outlined ellipse (RECORD=8).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchEllipse {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -604,7 +607,7 @@ pub(crate) struct SchEllipse {
 }
 
 /// A pie (filled wedge) shape (RECORD=9).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPie {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -623,7 +626,7 @@ pub(crate) struct SchPie {
 }
 
 /// A multi-segment polyline (RECORD=6).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPolyline {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -646,7 +649,7 @@ pub(crate) struct SchPolyline {
 }
 
 /// A closed polygon (RECORD=7).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPolygon {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -663,7 +666,7 @@ pub(crate) struct SchPolygon {
 }
 
 /// A Bezier curve (RECORD=5).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchBezier {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -676,7 +679,7 @@ pub(crate) struct SchBezier {
 }
 
 /// An embedded or linked image (RECORD=30).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchImage {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -701,7 +704,7 @@ pub(crate) struct SchImage {
 // ── Text and annotation records ───────────────────────────────────────────────
 
 /// A text label (RECORD=4).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchLabel {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -724,7 +727,7 @@ pub(crate) struct SchLabel {
 }
 
 /// A designator annotation (RECORD=34).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchDesignator {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -754,7 +757,7 @@ pub(crate) struct SchDesignator {
 ///
 /// Used for Comment, Value, and user-defined parameters. The `name` field
 /// determines the parameter's role (e.g., `"Comment"`, `"Value"`).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchParameter {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -797,7 +800,7 @@ pub(crate) struct SchParameter {
 }
 
 /// A text frame (bordered text box) (RECORD=28).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchTextFrame {
     #[param(flatten)]
     pub base: SchGraphicalBase,
@@ -832,7 +835,7 @@ pub(crate) struct SchTextFrame {
 // ── Implementation/model records ─────────────────────────────────────────────
 
 /// Container for component implementation (footprint) entries (RECORD=44).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchImplementationList {
     #[param(flatten)]
     pub base: SchPrimitiveBase,
@@ -844,7 +847,7 @@ pub(crate) struct SchImplementationList {
 /// ModelDatafileEntity{i}, ModelDatafileKind{i}) are stored as flat Strings
 /// for index 0 only at this milestone; full multi-datafile support can be
 /// added when assert_exhausted reveals more entries in real files.
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchImplementation {
     #[param(flatten)]
     pub base: SchPrimitiveBase,
@@ -887,7 +890,7 @@ pub(crate) struct SchImplementation {
 }
 
 /// Container for pin-to-pad mapping entries (RECORD=46).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchImplementationMap {
     #[param(flatten)]
     pub base: SchPrimitiveBase,
@@ -932,7 +935,7 @@ impl SchMapDefiner {
 }
 
 /// A parameter list container (RECORD=48).
-#[derive(FromParams, Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchParameterList {
     #[param(flatten)]
     pub base: SchPrimitiveBase,
@@ -977,6 +980,319 @@ pub(crate) struct SchLibComponent {
     pub records: Vec<SchRecord>,
 }
 
+// ── Serialization ─────────────────────────────────────────────────────────────
+
+/// Encodes the PinConglomerate bitmask byte from individual fields.
+fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
+    let mut byte = pin.orientation as u8 & PIN_CONGLOMERATE_ORIENTATION_MASK;
+    if pin.is_hidden { byte |= PIN_CONGLOMERATE_IS_HIDDEN; }
+    if pin.show_name { byte |= PIN_CONGLOMERATE_SHOW_NAME; }
+    if pin.show_designator { byte |= PIN_CONGLOMERATE_SHOW_DESIGNATOR; }
+    if pin.is_not_accessible { byte |= PIN_CONGLOMERATE_NOT_ACCESSIBLE; }
+    if pin.graphically_locked { byte |= PIN_CONGLOMERATE_GRAPHICALLY_LOCKED; }
+    if pin.owner_index_additional_list { byte |= PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST; }
+    byte
+}
+
+/// Serializes a SchPin back to the binary pin format (inverse of `parse_binary_pin`).
+/// Returns the raw binary payload (not wrapped in a block).
+pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
+    let mut w = BinaryWriter::new();
+
+    w.write_u8(0x02); // binary_code
+    w.write_i32_le(pin.owner_index);
+    w.write_i16_le(pin.owner_part_id as i16);
+    w.write_u8(pin.owner_part_display_mode);
+
+    w.write_u8(pin.symbol_inner_edge as u8);
+    w.write_u8(pin.symbol_outer_edge as u8);
+    w.write_u8(pin.symbol_inside as u8);
+    w.write_u8(pin.symbol_outside as u8);
+
+    w.write_pascal_string(&pin.description);
+
+    w.write_u8(pin.formal_type);
+    w.write_u8(pin.electrical as u8);
+    w.write_u8(encode_pin_conglomerate(pin));
+
+    w.write_i16_le((pin.pin_length.to_internal() / C_BASE_UNIT) as i16);
+    w.write_i16_le((pin.location.x.to_internal() / C_BASE_UNIT) as i16);
+    w.write_i16_le((pin.location.y.to_internal() / C_BASE_UNIT) as i16);
+
+    w.write_i32_le(pin.color.raw());
+
+    w.write_pascal_string(&pin.name);
+    w.write_pascal_string(&pin.designator);
+    w.write_pascal_string(&pin.swap_id_pin);
+    w.write_pascal_string(&pin.swap_id_part);
+    w.write_pascal_string(&pin.default_value);
+
+    w.finish()
+}
+
+/// Serializes a SchComponent's fields into the given ParameterCollection.
+/// Follows the exact parameter order from `FileFormatV5.cs` (see `parse_component_record`).
+/// Caller is responsible for inserting the RECORD key before calling this.
+pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut ParameterCollection) {
+    params.insert(LIB_REFERENCE, comp.lib_reference.to_param_value());
+    if comp.component_description != String::new() {
+        params.insert(COMPONENT_DESCRIPTION, comp.component_description.to_param_value());
+    }
+    if comp.part_count != 0 {
+        params.insert(PART_COUNT, comp.part_count.to_param_value());
+    }
+    if comp.display_mode_count != 0 {
+        params.insert(DISPLAY_MODE_COUNT, comp.display_mode_count.to_param_value());
+    }
+
+    // ExportDataObject + ExportGraphicalObject fields (order matches Altium export)
+    if comp.owner_index != 0 {
+        params.insert(OWNER_INDEX, comp.owner_index.to_param_value());
+    }
+    if comp.is_not_accessible {
+        params.insert(IS_NOT_ACCESSIBLE, comp.is_not_accessible.to_param_value());
+    }
+    if comp.index_in_sheet != 0 {
+        params.insert(INDEX_IN_SHEET, comp.index_in_sheet.to_param_value());
+    }
+    if comp.owner_part_id != 0 {
+        params.insert(OWNER_PART_ID, comp.owner_part_id.to_param_value());
+    }
+    if comp.owner_part_display_mode != 0 {
+        params.insert(OWNER_PART_DISPLAY_MODE, comp.owner_part_display_mode.to_param_value());
+    }
+    if comp.graphically_locked {
+        params.insert(GRAPHICALLY_LOCKED, comp.graphically_locked.to_param_value());
+    }
+
+    // Location (DXP frac coords) — T1: skip at zero
+    if comp.location.x.to_internal() != 0 {
+        params.insert_coord(LOCATION_X, LOCATION_X_FRAC, comp.location.x);
+    }
+    if comp.location.y.to_internal() != 0 {
+        params.insert_coord(LOCATION_Y, LOCATION_Y_FRAC, comp.location.y);
+    }
+
+    if comp.display_mode != 0 {
+        params.insert(DISPLAY_MODE, comp.display_mode.to_param_value());
+    }
+    if comp.is_mirrored {
+        params.insert(IS_MIRRORED, comp.is_mirrored.to_param_value());
+    }
+    if comp.orientation != RotationBy90::Rotate0 {
+        params.insert(ORIENTATION, comp.orientation.to_param_value());
+    }
+    if comp.current_part_id != 0 {
+        params.insert(CURRENT_PART_ID, comp.current_part_id.to_param_value());
+    }
+    if comp.show_hidden_fields {
+        params.insert(SHOW_HIDDEN_FIELDS, comp.show_hidden_fields.to_param_value());
+    }
+    if comp.show_hidden_pins {
+        params.insert(SHOW_HIDDEN_PINS, comp.show_hidden_pins.to_param_value());
+    }
+    if !comp.library_path.is_empty() {
+        params.insert(LIBRARY_PATH, comp.library_path.to_param_value());
+    }
+    if !comp.source_library_name.is_empty() {
+        params.insert(SOURCE_LIBRARY_NAME, comp.source_library_name.to_param_value());
+    }
+    if !comp.database_table_name.is_empty() {
+        params.insert(DATABASE_TABLE_NAME, comp.database_table_name.to_param_value());
+    }
+    if !comp.sheet_part_file_name.is_empty() {
+        params.insert(SHEET_PART_FILE_NAME, comp.sheet_part_file_name.to_param_value());
+    }
+    if !comp.target_file_name.is_empty() {
+        params.insert(TARGET_FILE_NAME, comp.target_file_name.to_param_value());
+    }
+    if !comp.unique_id.is_empty() {
+        params.insert(UNIQUE_ID, comp.unique_id.to_param_value());
+    }
+    if comp.area_color != Color::BLACK {
+        params.insert(AREA_COLOR, comp.area_color.to_param_value());
+    }
+    if comp.color != Color::BLACK {
+        params.insert(COLOR, comp.color.to_param_value());
+    }
+    if comp.pin_color != Color::BLACK {
+        params.insert(PIN_COLOR, comp.pin_color.to_param_value());
+    }
+    if comp.override_colors {
+        params.insert(OVERIDE_COLORS, comp.override_colors.to_param_value());
+    }
+    if comp.display_field_names {
+        params.insert(DISPLAY_FIELD_NAMES, comp.display_field_names.to_param_value());
+    }
+    if comp.designator_locked {
+        params.insert(DESIGNATOR_LOCKED, comp.designator_locked.to_param_value());
+    }
+    // T2: always write (Export_Boolean_WithDefault)
+    params.insert(PART_ID_LOCKED, comp.part_id_locked.to_param_value());
+    if comp.pins_moveable {
+        params.insert(PINS_MOVEABLE, comp.pins_moveable.to_param_value());
+    }
+    if !comp.alias_list.is_empty() {
+        params.insert(ALIAS_LIST, comp.alias_list.to_param_value());
+    }
+    if comp.not_use_library_name {
+        params.insert(NOT_USE_LIBRARY_NAME, comp.not_use_library_name.to_param_value());
+    }
+    if comp.not_use_db_table_name {
+        params.insert(NOT_USE_DB_TABLE_NAME, comp.not_use_db_table_name.to_param_value());
+    }
+    if !comp.design_item_id.is_empty() {
+        params.insert(DESIGN_ITEM_ID, comp.design_item_id.to_param_value());
+    }
+    if !comp.vault_guid.is_empty() {
+        params.insert(VAULT_GUID, comp.vault_guid.to_param_value());
+    }
+    if !comp.item_guid.is_empty() {
+        params.insert(ITEM_GUID, comp.item_guid.to_param_value());
+    }
+    if !comp.revision_guid.is_empty() {
+        params.insert(REVISION_GUID, comp.revision_guid.to_param_value());
+    }
+    if !comp.symbol_vault_guid.is_empty() {
+        params.insert(SYMBOL_VAULT_GUID, comp.symbol_vault_guid.to_param_value());
+    }
+    if !comp.symbol_item_guid.is_empty() {
+        params.insert(SYMBOL_ITEM_GUID, comp.symbol_item_guid.to_param_value());
+    }
+    if !comp.symbol_revision_guid.is_empty() {
+        params.insert(SYMBOL_REVISION_GUID, comp.symbol_revision_guid.to_param_value());
+    }
+    if !comp.generic_component_template_guid.is_empty() {
+        params.insert(GENERIC_COMPONENT_TEMPLATE_GUID, comp.generic_component_template_guid.to_param_value());
+    }
+    if comp.has_only_current_part_info {
+        params.insert(HAS_ONLY_CURRENT_PART_INFO, comp.has_only_current_part_info.to_param_value());
+    }
+    if comp.all_pin_count != 0 {
+        params.insert(ALL_PIN_COUNT, comp.all_pin_count.to_param_value());
+    }
+    if !comp.key_component_unique_id.is_empty() {
+        params.insert(KEY_COMPONENT_UNIQUE_ID, comp.key_component_unique_id.to_param_value());
+    }
+    if comp.component_kind != ComponentKind::Standard {
+        params.insert(COMPONENT_KIND, comp.component_kind.to_param_value());
+    }
+    if comp.component_kind_version2 != ComponentKind::Standard {
+        params.insert(COMPONENT_KIND_VERSION2, comp.component_kind_version2.to_param_value());
+    }
+    if comp.component_kind_version3 != ComponentKind::Standard {
+        params.insert(COMPONENT_KIND_VERSION3, comp.component_kind_version3.to_param_value());
+    }
+
+    // CustomDisplayModeName0..N-1
+    for (i, name) in comp.custom_display_mode_names.iter().enumerate() {
+        if !name.is_empty() {
+            let key = format!("{}{}", altium_format_types::constants::component::CUSTOM_DISPLAY_MODE_NAME, i);
+            params.insert(&key, name.to_param_value());
+        }
+    }
+}
+
+/// Serializes a SchMapDefiner's fields into the given ParameterCollection.
+/// Caller is responsible for inserting the RECORD key before calling this.
+pub(crate) fn serialize_map_definer(md: &SchMapDefiner, params: &mut ParameterCollection) {
+    md.base.to_params(params);
+    if !md.des_intf.is_empty() {
+        params.insert(DES_INTF, md.des_intf.to_param_value());
+    }
+    if !md.des_imps.is_empty() {
+        params.insert(DES_IMP_COUNT, (md.des_imps.len() as i32).to_param_value());
+        for (i, imp) in md.des_imps.iter().enumerate() {
+            let key = format!("DesImp{i}");
+            if !imp.is_empty() {
+                params.insert(&key, imp.to_param_value());
+            }
+        }
+    }
+}
+
+// Inserts RECORD (and RECORDEX for values >= 256) into a ParameterCollection.
+fn insert_record_key(params: &mut ParameterCollection, record_type: SchRecordType) {
+    let record_val = record_type as i32;
+    if record_val >= 256 {
+        params.insert(RECORD, "254".to_owned());
+        params.insert(RECORD_EX, record_val.to_param_value());
+    } else {
+        params.insert(RECORD, record_val.to_param_value());
+    }
+}
+
+/// Serializes any SchRecord into the appropriate block bytes (text or binary).
+/// For text records: `|RECORD=N|field1=val1|...|field_n=val_n|\0` as a text block.
+/// For binary records (Pin): binary payload as a binary block.
+pub(crate) fn serialize_record(record: &SchRecord) -> Vec<u8> {
+    match record {
+        SchRecord::Pin(pin) => write_binary_block(&serialize_binary_pin(pin)),
+        _ => {
+            let mut params = ParameterCollection::new();
+            insert_record_key(&mut params, record_type_for(record));
+            fill_record_fields(record, &mut params);
+            write_text_block(&params.to_bytes())
+        }
+    }
+}
+
+// Returns the SchRecordType for any SchRecord variant.
+fn record_type_for(record: &SchRecord) -> SchRecordType {
+    match record {
+        SchRecord::Component(_) => SchRecordType::Component,
+        SchRecord::Pin(_) => SchRecordType::Pin,
+        SchRecord::Label(_) => SchRecordType::Label,
+        SchRecord::Bezier(_) => SchRecordType::Bezier,
+        SchRecord::Polyline(_) => SchRecordType::Polyline,
+        SchRecord::Polygon(_) => SchRecordType::Polygon,
+        SchRecord::Ellipse(_) => SchRecordType::Ellipse,
+        SchRecord::Pie(_) => SchRecordType::Pie,
+        SchRecord::RoundRectangle(_) => SchRecordType::RoundRectangle,
+        SchRecord::EllipticalArc(_) => SchRecordType::EllipticalArc,
+        SchRecord::Arc(_) => SchRecordType::Arc,
+        SchRecord::Line(_) => SchRecordType::Line,
+        SchRecord::Rectangle(_) => SchRecordType::Rectangle,
+        SchRecord::TextFrame(_) => SchRecordType::TextFrame,
+        SchRecord::Image(_) => SchRecordType::Image,
+        SchRecord::Designator(_) => SchRecordType::Designator,
+        SchRecord::Parameter(_) => SchRecordType::Parameter,
+        SchRecord::ImplementationList(_) => SchRecordType::ImplementationList,
+        SchRecord::Implementation(_) => SchRecordType::Implementation,
+        SchRecord::ImplementationMap(_) => SchRecordType::ImplementationMap,
+        SchRecord::MapDefiner(_) => SchRecordType::MapDefiner,
+        SchRecord::ParameterList(_) => SchRecordType::ParameterList,
+    }
+}
+
+// Fills field parameters into the collection (RECORD key already inserted).
+fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
+    match record {
+        SchRecord::Component(v) => serialize_component_record(v, params),
+        SchRecord::MapDefiner(v) => serialize_map_definer(v, params),
+        SchRecord::Label(v) => v.to_params(params),
+        SchRecord::Bezier(v) => v.to_params(params),
+        SchRecord::Polyline(v) => v.to_params(params),
+        SchRecord::Polygon(v) => v.to_params(params),
+        SchRecord::Ellipse(v) => v.to_params(params),
+        SchRecord::Pie(v) => v.to_params(params),
+        SchRecord::RoundRectangle(v) => v.to_params(params),
+        SchRecord::EllipticalArc(v) => v.to_params(params),
+        SchRecord::Arc(v) => v.to_params(params),
+        SchRecord::Line(v) => v.to_params(params),
+        SchRecord::Rectangle(v) => v.to_params(params),
+        SchRecord::TextFrame(v) => v.to_params(params),
+        SchRecord::Image(v) => v.to_params(params),
+        SchRecord::Designator(v) => v.to_params(params),
+        SchRecord::Parameter(v) => v.to_params(params),
+        SchRecord::ImplementationList(v) => v.to_params(params),
+        SchRecord::Implementation(v) => v.to_params(params),
+        SchRecord::ImplementationMap(v) => v.to_params(params),
+        SchRecord::ParameterList(v) => v.to_params(params),
+        SchRecord::Pin(_) => unreachable!("Pin handled in serialize_record"),
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -997,12 +1313,12 @@ mod tests {
     fn primitive_base_all_defaults() {
         let mut params = pc("|");
         let base = SchPrimitiveBase::from_params(&mut params).unwrap();
-        assert_eq!(base.owner_index, -1);
+        assert_eq!(base.owner_index, 0);
         assert!(!base.is_not_accessible);
-        assert_eq!(base.owner_part_id, -1);
+        assert_eq!(base.index_in_sheet, 0);
+        assert_eq!(base.owner_part_id, 0);
         assert_eq!(base.owner_part_display_mode, 0);
         assert!(!base.graphically_locked);
-        assert_eq!(base.index_in_sheet, -1);
     }
 
     #[test]
@@ -1610,5 +1926,301 @@ mod tests {
         let mut params = pc("|OwnerIndex=1|");
         let pl = SchParameterList::from_params(&mut params).unwrap();
         assert_eq!(pl.base.owner_index, 1);
+    }
+
+    // ── ToParams roundtrip tests ─────────────────────────────────────────────
+
+    #[test]
+    fn primitive_base_roundtrip_explicit_fields() {
+        let mut params = pc("|OwnerIndex=3|IsNotAccesible=T|OwnerPartId=2|OwnerPartDisplayMode=1|GraphicallyLocked=T|IndexInSheet=5|");
+        let base = SchPrimitiveBase::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        let mut out = ParameterCollection::new();
+        base.to_params(&mut out);
+        let bytes = out.to_bytes();
+
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let base2 = SchPrimitiveBase::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+
+        assert_eq!(base2.owner_index, 3);
+        assert!(base2.is_not_accessible);
+        assert_eq!(base2.owner_part_id, 2);
+        assert_eq!(base2.owner_part_display_mode, 1);
+        assert!(base2.graphically_locked);
+        assert_eq!(base2.index_in_sheet, 5);
+    }
+
+    #[test]
+    fn primitive_base_t1_skips_defaults() {
+        // All defaults: owner_index=0, is_not_accessible=false, etc.
+        let mut params = pc("|");
+        let base = SchPrimitiveBase::from_params(&mut params).unwrap();
+
+        let mut out = ParameterCollection::new();
+        base.to_params(&mut out);
+        let bytes = out.to_bytes();
+
+        // T1 skips all default values, so output should be just "\0"
+        // (the base only has WithDefault fields, all at their defaults)
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let base2 = SchPrimitiveBase::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+        assert_eq!(base2.owner_index, 0);
+        assert!(!base2.is_not_accessible);
+    }
+
+    #[test]
+    fn line_roundtrip() {
+        let mut params = pc("|OwnerIndex=0|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|LineWidth=1|LineStyle=2|LineStyleExt=1|UniqueID=ABC|");
+        let line = SchLine::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        let mut out = ParameterCollection::new();
+        line.to_params(&mut out);
+        let bytes = out.to_bytes();
+
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let line2 = SchLine::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+
+        assert_eq!(line2.base.primitive.owner_index, 0);
+        assert_eq!(line2.base.location.x.to_internal(), 10 * 100_000);
+        assert_eq!(line2.base.location.y.to_internal(), 20 * 100_000);
+        assert_eq!(line2.corner.x.to_internal(), 30 * 100_000);
+        assert_eq!(line2.corner.y.to_internal(), 40 * 100_000);
+        assert_eq!(line2.line_width, PenWidth::Small);
+        assert_eq!(line2.line_style, LineStyle::Dotted);
+        assert_eq!(line2.line_style_ext, LineStyle::Dashed);
+        assert_eq!(line2.unique_id, "ABC");
+    }
+
+    #[test]
+    fn polyline_roundtrip() {
+        let mut params = pc("|Location.X=0|Location.Y=0|LocationCount=3|X1=1|Y1=2|X2=3|Y2=4|X3=5|Y3=6|LineWidth=1|");
+        let pl = SchPolyline::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        let mut out = ParameterCollection::new();
+        pl.to_params(&mut out);
+        let bytes = out.to_bytes();
+
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let pl2 = SchPolyline::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+
+        assert_eq!(pl2.vertices.len(), 3);
+        assert_eq!(pl2.vertices[0].x.to_internal(), 1 * 100_000);
+        assert_eq!(pl2.vertices[2].y.to_internal(), 6 * 100_000);
+        assert_eq!(pl2.line_width, PenWidth::Small);
+    }
+
+    #[test]
+    fn arc_with_frac_roundtrip() {
+        let mut params = pc("|Location.X=5|Location.X_Frac=25000|Location.Y=10|Radius=100|Radius_Frac=50000|StartAngle=45|EndAngle=270|LineWidth=2|");
+        let arc = SchArc::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        let mut out = ParameterCollection::new();
+        arc.to_params(&mut out);
+        let bytes = out.to_bytes();
+
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let arc2 = SchArc::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+
+        assert_eq!(arc2.base.location.x.to_internal(), 5 * 100_000 + 25_000);
+        assert_eq!(arc2.radius.to_internal(), 100 * 100_000 + 50_000);
+        assert!((arc2.start_angle - 45.0).abs() < f64::EPSILON);
+        assert!((arc2.end_angle - 270.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn implementation_roundtrip() {
+        let mut params = pc("|ModelName=SOIC|ModelType=PCBLIB|Description=SOP-8|IsCurrent=T|DatafileCount=1|ModelDatafile0=Lib.PcbLib|ModelDatafileEntity0=SOIC|ModelDatafileKind0=PCBLIB|");
+        let imp = SchImplementation::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        let mut out = ParameterCollection::new();
+        imp.to_params(&mut out);
+        let bytes = out.to_bytes();
+
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let imp2 = SchImplementation::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+
+        assert_eq!(imp2.model_name, "SOIC");
+        assert_eq!(imp2.model_type, "PCBLIB");
+        assert_eq!(imp2.description, "SOP-8");
+        assert!(imp2.is_current);
+        assert_eq!(imp2.datafile_count, 1);
+        assert_eq!(imp2.model_datafile0, "Lib.PcbLib");
+    }
+
+    // ── serialize_binary_pin roundtrip tests ──────────────────────────
+
+    fn make_test_pin() -> SchPin {
+        SchPin {
+            owner_index: 0,
+            owner_part_id: 1,
+            owner_part_display_mode: 0,
+            symbol_inner_edge: IeeeSymbol::NoSymbol,
+            symbol_outer_edge: IeeeSymbol::NoSymbol,
+            symbol_inside: IeeeSymbol::NoSymbol,
+            symbol_outside: IeeeSymbol::NoSymbol,
+            description: String::new(),
+            formal_type: 0,
+            electrical: PinElectricalType::Input,
+            orientation: RotationBy90::Rotate0,
+            is_hidden: false,
+            show_name: true,
+            show_designator: true,
+            is_not_accessible: false,
+            graphically_locked: false,
+            owner_index_additional_list: false,
+            pin_length: Coord::from_internal(3 * 100_000),
+            location: CoordPoint::new(Coord::from_internal(10 * 100_000), Coord::from_internal(20 * 100_000)),
+            color: Color::new(0x00800000),
+            name: "A0".to_owned(),
+            designator: "1".to_owned(),
+            swap_id_pin: String::new(),
+            swap_id_part: String::new(),
+            default_value: String::new(),
+            // Sidecar fields (not serialized in binary pin format)
+            pin_symbol_line_width: 0,
+            pin_package_length: String::new(),
+            propagation_delay: String::new(),
+            selected_functions: Vec::new(),
+            defined_functions: Vec::new(),
+            name_text_data: None,
+            designator_text_data: None,
+        }
+    }
+
+    #[test]
+    fn serialize_binary_pin_roundtrip_minimal() {
+        let pin = make_test_pin();
+        let data = serialize_binary_pin(&pin);
+        let pin2 = parse_binary_pin(&data).unwrap();
+        assert_eq!(pin2.owner_index, pin.owner_index);
+        assert_eq!(pin2.owner_part_id, pin.owner_part_id);
+        assert_eq!(pin2.electrical, pin.electrical);
+        assert_eq!(pin2.pin_length, pin.pin_length);
+        assert_eq!(pin2.location, pin.location);
+        assert_eq!(pin2.color, pin.color);
+        assert_eq!(pin2.name, pin.name);
+        assert_eq!(pin2.designator, pin.designator);
+        assert_eq!(pin2.is_hidden, pin.is_hidden);
+        assert_eq!(pin2.show_name, pin.show_name);
+        assert_eq!(pin2.show_designator, pin.show_designator);
+    }
+
+    #[test]
+    fn serialize_binary_pin_roundtrip_with_flags() {
+        let mut pin = make_test_pin();
+        pin.owner_index = 5;
+        pin.owner_part_id = 2;
+        pin.owner_part_display_mode = 1;
+        pin.symbol_inner_edge = IeeeSymbol::Clock;
+        pin.symbol_outer_edge = IeeeSymbol::Dot;
+        pin.description = "Test pin description".to_owned();
+        pin.formal_type = 1;
+        pin.electrical = PinElectricalType::Output;
+        pin.orientation = RotationBy90::Rotate90;
+        pin.is_hidden = true;
+        pin.show_name = false;
+        pin.show_designator = false;
+        pin.is_not_accessible = true;
+        pin.graphically_locked = true;
+        pin.pin_length = Coord::from_internal(5 * 100_000);
+        pin.location = CoordPoint::new(Coord::from_internal(-10 * 100_000), Coord::from_internal(0));
+        pin.color = Color::new(0x000000FF);
+        pin.name = "DATA".to_owned();
+        pin.designator = "2".to_owned();
+        pin.swap_id_pin = "swap1".to_owned();
+        pin.swap_id_part = "swapP".to_owned();
+        pin.default_value = "HIGH".to_owned();
+
+        let data = serialize_binary_pin(&pin);
+        let pin2 = parse_binary_pin(&data).unwrap();
+        assert_eq!(pin2.owner_index, 5);
+        assert_eq!(pin2.owner_part_id, 2);
+        assert_eq!(pin2.owner_part_display_mode, 1);
+        assert_eq!(pin2.symbol_inner_edge, IeeeSymbol::Clock);
+        assert_eq!(pin2.symbol_outer_edge, IeeeSymbol::Dot);
+        assert_eq!(pin2.description, "Test pin description");
+        assert_eq!(pin2.formal_type, 1);
+        assert_eq!(pin2.electrical, PinElectricalType::Output);
+        assert_eq!(pin2.orientation, RotationBy90::Rotate90);
+        assert!(pin2.is_hidden);
+        assert!(!pin2.show_name);
+        assert!(!pin2.show_designator);
+        assert!(pin2.is_not_accessible);
+        assert!(pin2.graphically_locked);
+        assert_eq!(pin2.pin_length, Coord::from_internal(5 * 100_000));
+        assert_eq!(pin2.location.x, Coord::from_internal(-10 * 100_000));
+        assert_eq!(pin2.name, "DATA");
+        assert_eq!(pin2.designator, "2");
+        assert_eq!(pin2.swap_id_pin, "swap1");
+        assert_eq!(pin2.swap_id_part, "swapP");
+        assert_eq!(pin2.default_value, "HIGH");
+    }
+
+    // ── serialize_record roundtrip tests ─────────────────────────────
+
+    #[test]
+    fn serialize_record_line_roundtrip() {
+        use crate::block_stream::{parse_blocks, BlockFormat};
+
+        let mut params = pc("|OwnerIndex=0|OwnerPartId=1|LineWidth=1|Color=128|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|");
+        let line = SchLine::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        let record = SchRecord::Line(line);
+        let bytes = serialize_record(&record);
+        let blocks = parse_blocks(&bytes).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].format, BlockFormat::Text);
+
+        // Re-parse: strip the RECORD key and parse back
+        let mut rt_params = ParameterCollection::from_bytes(&blocks[0].data).unwrap();
+        let record_val: i32 = rt_params.remove_required("RECORD").unwrap();
+        assert_eq!(record_val, 13); // SchRecordType::Line
+        let line2 = SchLine::from_params(&mut rt_params).unwrap();
+        rt_params.assert_exhausted().unwrap();
+        assert_eq!(line2.base.location.x, Coord::from_dxp_frac(10, 0));
+        assert_eq!(line2.base.location.y, Coord::from_dxp_frac(20, 0));
+        assert_eq!(line2.corner.x, Coord::from_dxp_frac(30, 0));
+        assert_eq!(line2.corner.y, Coord::from_dxp_frac(40, 0));
+        assert_eq!(line2.base.color, Color::new(128));
+    }
+
+    #[test]
+    fn serialize_record_pin_roundtrip() {
+        use crate::block_stream::{parse_blocks, BlockFormat};
+
+        let mut pin = make_test_pin();
+        pin.electrical = PinElectricalType::Passive;
+        pin.orientation = RotationBy90::Rotate180;
+        pin.pin_length = Coord::from_internal(2 * 100_000);
+        pin.location = CoordPoint::new(Coord::from_internal(5 * 100_000), Coord::from_internal(-3 * 100_000));
+        pin.name = "GND".to_owned();
+        pin.designator = "4".to_owned();
+
+        let record = SchRecord::Pin(pin);
+        let bytes = serialize_record(&record);
+        let blocks = parse_blocks(&bytes).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].format, BlockFormat::Binary);
+
+        let pin2 = parse_binary_pin(&blocks[0].data).unwrap();
+        assert_eq!(pin2.name, "GND");
+        assert_eq!(pin2.designator, "4");
+        assert_eq!(pin2.electrical, PinElectricalType::Passive);
+        assert_eq!(pin2.orientation, RotationBy90::Rotate180);
+        assert_eq!(pin2.pin_length, Coord::from_internal(2 * 100_000));
+        assert_eq!(pin2.location.x, Coord::from_internal(5 * 100_000));
+        assert_eq!(pin2.location.y, Coord::from_internal(-3 * 100_000));
     }
 }

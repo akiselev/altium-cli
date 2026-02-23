@@ -10,6 +10,7 @@ use altium_format_types::constants::component::{
     ALIAS_COUNT, COMP_COUNT, COMP_DESCR, LIB_REF, PART_COUNT,
 };
 use altium_format_types::constants::file_headers::SCH_LIBRARY_BINARY_HEADER_V50;
+use altium_format_types::constants::parsing::C_BASE_UNIT;
 use altium_format_types::constants::pin::{
     DEF_VALUE, PAIR_SWAP_ID, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
     PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY, PIN_PROPAGATION_DELAY as PIN_PROPAGATION_DELAY_KEY,
@@ -39,12 +40,15 @@ use altium_format_types::constants::visual::{FONT_ID_COUNT, FONT_NAME, ROTATION,
 use altium_format_types::constants::text::NAME;
 
 
-use crate::binary_io::BinaryReader;
-use crate::block_stream::{parse_blocks, Block, BlockFormat};
-use crate::embedded_object::parse_embedded_object_stream;
+use crate::binary_io::{BinaryReader, BinaryWriter};
+use crate::block_stream::{parse_blocks, write_text_block, Block, BlockFormat};
+use crate::cfb_document::CfbDocument;
+use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
+use crate::param_value::ToParamValue;
 use crate::sch_records::{
-    parse_binary_pin, parse_component_record, PinTextPositioning, SchArc, SchBezier,
+    parse_binary_pin, parse_component_record, serialize_component_record, serialize_record,
+    PinTextPositioning, SchArc, SchBezier,
     SchDesignator, SchEllipse, SchEllipticalArc, SchImage, SchImplementation,
     SchImplementationList, SchImplementationMap, SchLabel, SchLibComponent, SchLine, SchMapDefiner,
     SchParameter, SchParameterList, SchPie, SchPin, SchPolygon, SchPolyline, SchRecord,
@@ -410,7 +414,10 @@ fn merge_pin_frac(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut r = BinaryReader::new(&entry.inner_data);
         let x_frac = r.read_i32_le()?;
@@ -443,7 +450,10 @@ fn merge_pin_desc(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut r = BinaryReader::new(&entry.inner_data);
         let byte_len = r.read_i32_le()? as usize;
@@ -469,7 +479,10 @@ fn merge_pin_misc_data(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<String>(PAIR_SWAP_ID)? {
@@ -495,7 +508,10 @@ fn merge_pin_text_data(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         // Each entry has two consecutive variable-length binary structs: name then designator
         let mut r = BinaryReader::new(&entry.inner_data);
@@ -562,7 +578,10 @@ fn merge_pin_wide_text(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<String>(DESC)? {
@@ -603,7 +622,10 @@ fn merge_pin_symbol_line_width(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<i32>(SYMBOL_LINE_WIDTH)? {
@@ -629,7 +651,10 @@ fn merge_pin_package_length(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<String>(PIN_PACKAGE_LENGTH_KEY)? {
@@ -655,7 +680,10 @@ fn merge_pin_propagation_delay(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<String>(PIN_PROPAGATION_DELAY_KEY)? {
@@ -681,7 +709,10 @@ fn merge_pin_function_data(
     for entry in &entries {
         let pin_idx = parse_pin_index(&entry.id)?;
         if pin_idx >= pins.len() {
-            continue;
+            return Err(AltiumFormatError::InvalidPinIndex {
+                index: pin_idx,
+                count: pins.len(),
+            });
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         let sel_count: i32 = params.remove_with_default(PIN_SELECTED_FUNCTIONS_COUNT, 0i32)?;
@@ -729,6 +760,282 @@ pub(crate) fn merge_pin_sidecars(
     merge_pin_function_data(cfb, component_key, pins)
         .with_context(|| format!("/{}/{}", component_key, PIN_FUNCTION_DATA))?;
     Ok(())
+}
+
+// ── Pin sidecar writers ──────────────────────────────────────────────────────
+
+// Wraps a UTF-16LE parameter collection in the length-prefixed sidecar format:
+// i32LE(byte_len) + UTF-16LE bytes.
+fn write_sidecar_utf16le_params(params: &ParameterCollection) -> Vec<u8> {
+    let utf16_bytes = params.to_utf16le_bytes();
+    let mut w = BinaryWriter::new();
+    w.write_i32_le(utf16_bytes.len() as i32);
+    w.write_bytes(&utf16_bytes);
+    w.finish()
+}
+
+// Returns PinFrac sidecar stream bytes if any pin has non-zero fractional coords.
+// Each entry: 12 bytes (i32 x_frac, i32 y_frac, i32 len_frac).
+fn write_pin_frac(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        let x_frac = pin.location.x.to_internal() % C_BASE_UNIT;
+        let y_frac = pin.location.y.to_internal() % C_BASE_UNIT;
+        let len_frac = pin.pin_length.to_internal() % C_BASE_UNIT;
+        if x_frac != 0 || y_frac != 0 || len_frac != 0 {
+            let mut w = BinaryWriter::new();
+            w.write_i32_le(x_frac);
+            w.write_i32_le(y_frac);
+            w.write_i32_le(len_frac);
+            entries.push((i.to_string(), w.finish()));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_FRAC, &entries))
+}
+
+// Returns PinDesc sidecar stream bytes if any pin description exceeds 254 chars.
+// Each entry: length-prefixed ASCII overflow text (chars beyond position 254).
+fn write_pin_desc(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if pin.description.len() > 254 {
+            let overflow = &pin.description[254..];
+            let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(overflow);
+            let mut w = BinaryWriter::new();
+            w.write_i32_le(encoded.len() as i32);
+            w.write_bytes(&encoded);
+            entries.push((i.to_string(), w.finish()));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_DESC, &entries))
+}
+
+// Returns PinMiscData sidecar stream if any pin has a non-empty swap_id_pin.
+fn write_pin_misc_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if !pin.swap_id_pin.is_empty() {
+            let mut params = ParameterCollection::new();
+            params.insert(PAIR_SWAP_ID, pin.swap_id_pin.clone());
+            entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_MISC_DATA, &entries))
+}
+
+// Returns PinTextData sidecar stream if any pin has custom text positioning.
+fn write_pin_text_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if pin.name_text_data.is_some() || pin.designator_text_data.is_some() {
+            let mut w = BinaryWriter::new();
+            write_pin_text_positioning_struct(&mut w, pin.name_text_data.as_ref());
+            write_pin_text_positioning_struct(&mut w, pin.designator_text_data.as_ref());
+            entries.push((i.to_string(), w.finish()));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_TEXT_DATA, &entries))
+}
+
+fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinTextPositioning>) {
+    let data = match data {
+        Some(d) => d,
+        None => {
+            w.write_u8(0); // all flags off = default
+            return;
+        }
+    };
+    let mut flags: u8 = 0;
+    if data.position_mode_custom { flags |= 0x01; }
+    if data.rotation_anchor_component { flags |= 0x02; }
+    flags |= (data.rotation_relative as u8 & 0x03) << 2;
+    if data.font_mode_custom { flags |= 0x10; }
+    w.write_u8(flags);
+    if data.position_mode_custom {
+        w.write_i32_le(data.custom_position_margin.map_or(0, |c| c.to_internal()));
+    }
+    if data.font_mode_custom {
+        w.write_i16_le(data.custom_font_id.unwrap_or(0));
+        w.write_i32_le(data.custom_color.map_or(0, |c| c.raw()));
+    }
+}
+
+// Returns PinWideText sidecar stream if any pin has non-empty text fields.
+fn write_pin_wide_text(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        let has_data = !pin.description.is_empty()
+            || !pin.name.is_empty()
+            || !pin.designator.is_empty()
+            || !pin.swap_id_pin.is_empty()
+            || !pin.swap_id_part.is_empty()
+            || !pin.default_value.is_empty();
+        if has_data {
+            let mut params = ParameterCollection::new();
+            if !pin.description.is_empty() {
+                params.insert(DESC, pin.description.clone());
+            }
+            if !pin.name.is_empty() {
+                params.insert(NAME, pin.name.clone());
+            }
+            if !pin.designator.is_empty() {
+                params.insert(DESIG, pin.designator.clone());
+            }
+            if !pin.swap_id_pin.is_empty() {
+                params.insert(SWAP_ID, pin.swap_id_pin.clone());
+            }
+            if !pin.swap_id_part.is_empty() {
+                params.insert(SWAP_ID_PART, pin.swap_id_part.clone());
+            }
+            if !pin.default_value.is_empty() {
+                params.insert(DEF_VALUE, pin.default_value.clone());
+            }
+            entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_WIDE_TEXT, &entries))
+}
+
+// Returns PinSymbolLineWidth sidecar stream if any pin has non-zero line width.
+fn write_pin_symbol_line_width(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if pin.pin_symbol_line_width != 0 {
+            let mut params = ParameterCollection::new();
+            params.insert(SYMBOL_LINE_WIDTH, pin.pin_symbol_line_width.to_string());
+            entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_SYMBOL_LINE_WIDTH, &entries))
+}
+
+// Returns PinPackageLength sidecar stream if any pin has non-empty package length.
+fn write_pin_package_length(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if !pin.pin_package_length.is_empty() {
+            let mut params = ParameterCollection::new();
+            params.insert(PIN_PACKAGE_LENGTH_KEY, pin.pin_package_length.clone());
+            entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_PACKAGE_LENGTH, &entries))
+}
+
+// Returns PinPropagationDelay sidecar stream if any pin has non-empty delay.
+fn write_pin_propagation_delay(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if !pin.propagation_delay.is_empty() {
+            let mut params = ParameterCollection::new();
+            params.insert(PIN_PROPAGATION_DELAY_KEY, pin.propagation_delay.clone());
+            entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_PROPAGATION_DELAY, &entries))
+}
+
+// Returns PinFunctionData sidecar stream if any pin has selected/defined functions.
+fn write_pin_function_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
+    let mut entries = Vec::new();
+    for (i, pin) in pins.iter().enumerate() {
+        if !pin.selected_functions.is_empty() || !pin.defined_functions.is_empty() {
+            let mut params = ParameterCollection::new();
+            if !pin.selected_functions.is_empty() {
+                params.insert(
+                    PIN_SELECTED_FUNCTIONS_COUNT,
+                    (pin.selected_functions.len() as i32).to_string(),
+                );
+                for (j, func) in pin.selected_functions.iter().enumerate() {
+                    let key = format!("{}{}", PIN_SELECTED_FUNCTION, j + 1);
+                    params.insert(&key, func.clone());
+                }
+            }
+            if !pin.defined_functions.is_empty() {
+                params.insert(
+                    PIN_DEFINED_FUNCTIONS_COUNT,
+                    (pin.defined_functions.len() as i32).to_string(),
+                );
+                for (j, func) in pin.defined_functions.iter().enumerate() {
+                    let key = format!("{}{}", PIN_DEFINED_FUNCTION, j + 1);
+                    params.insert(&key, func.clone());
+                }
+            }
+            entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(serialize_embedded_object_stream(PIN_FUNCTION_DATA, &entries))
+}
+
+// Collects immutable pin references from a records list.
+fn collect_pins(records: &[SchRecord]) -> Vec<&SchPin> {
+    records
+        .iter()
+        .filter_map(|r| if let SchRecord::Pin(p) = r { Some(p) } else { None })
+        .collect()
+}
+
+/// Serializes all pin sidecar streams for a component. Returns a list of
+/// (stream_name, data) pairs for streams that have data.
+pub(crate) fn serialize_pin_sidecars(
+    pins: &[&SchPin],
+) -> Result<Vec<(&'static str, Vec<u8>)>> {
+    let mut sidecars = Vec::new();
+    if let Some(data) = write_pin_frac(pins) {
+        sidecars.push((PIN_FRAC, data?));
+    }
+    if let Some(data) = write_pin_desc(pins) {
+        sidecars.push((PIN_DESC, data?));
+    }
+    if let Some(data) = write_pin_misc_data(pins) {
+        sidecars.push((PIN_MISC_DATA, data?));
+    }
+    if let Some(data) = write_pin_text_data(pins) {
+        sidecars.push((PIN_TEXT_DATA, data?));
+    }
+    if let Some(data) = write_pin_wide_text(pins) {
+        sidecars.push((PIN_WIDE_TEXT, data?));
+    }
+    if let Some(data) = write_pin_symbol_line_width(pins) {
+        sidecars.push((PIN_SYMBOL_LINE_WIDTH, data?));
+    }
+    if let Some(data) = write_pin_package_length(pins) {
+        sidecars.push((PIN_PACKAGE_LENGTH, data?));
+    }
+    if let Some(data) = write_pin_propagation_delay(pins) {
+        sidecars.push((PIN_PROPAGATION_DELAY, data?));
+    }
+    if let Some(data) = write_pin_function_data(pins) {
+        sidecars.push((PIN_FUNCTION_DATA, data?));
+    }
+    Ok(sidecars)
 }
 
 // ── Storage stream (embedded images) ────────────────────────────────────────
@@ -859,6 +1166,191 @@ pub(crate) fn parse_redirection_stream(data: &[u8]) -> Result<String> {
     Ok(canonical)
 }
 
+// ── Serialization ────────────────────────────────────────────────────────────
+
+// Serializes the FileHeader stream as a single text block.
+fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+
+    params.insert(HEADER, SCH_LIBRARY_BINARY_HEADER_V50.to_owned());
+    params.insert(WEIGHT, header.weight.to_param_value());
+    params.insert(MINOR_VERSION, header.minor_version.to_param_value());
+    params.insert(UNIQUE_ID, header.unique_id.clone());
+
+    // Font table (1-based)
+    params.insert(FONT_ID_COUNT, (header.fonts.len() as i32).to_param_value());
+    for font in &header.fonts {
+        let idx = font.id.to_string();
+        params.insert(&format!("{}{}", SIZE, idx), font.size.to_param_value());
+        params.insert(&format!("{}{}", ROTATION, idx), font.rotation.to_param_value());
+        params.insert(&format!("{}{}", UNDERLINE, idx), font.underline.to_param_value());
+        params.insert(&format!("{}{}", ITALIC, idx), font.italic.to_param_value());
+        params.insert(&format!("{}{}", BOLD, idx), font.bold.to_param_value());
+        params.insert(&format!("{}{}", STRIKE_OUT, idx), font.strikeout.to_param_value());
+        params.insert(&format!("{}{}", FONT_NAME, idx), font.name.clone());
+    }
+
+    // Display settings — write all fields that were present in the original
+    let ds = &header.display_settings;
+    if let Some(v) = ds.use_mbcs { params.insert(USE_MBCS, v.to_param_value()); }
+    if let Some(v) = ds.is_boc { params.insert(IS_BOC, v.to_param_value()); }
+    if let Some(v) = ds.sheet_style { params.insert(SHEET_STYLE, (v as u8).to_param_value()); }
+    if let Some(v) = ds.border_on { params.insert(BORDER_ON, v.to_param_value()); }
+    if let Some(v) = ds.title_block_on { params.insert(TITLE_BLOCK_ON, v.to_param_value()); }
+    if let Some(v) = ds.document_border_style { params.insert(DOCUMENT_BORDER_STYLE, (v as u8).to_param_value()); }
+    if let Some(v) = ds.sheet_number_space_size { params.insert(SHEET_NUMBER_SPACE_SIZE, v.to_param_value()); }
+    if let Some(v) = ds.area_color { params.insert(AREA_COLOR, v.raw().to_param_value()); }
+    if let Some(v) = ds.snap_grid_on { params.insert(SNAP_GRID_ON, v.to_param_value()); }
+    if let Some(v) = ds.snap_grid_size { params.insert_coord(SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, v); }
+    if let Some(v) = ds.visible_grid_on { params.insert(VISIBLE_GRID_ON, v.to_param_value()); }
+    if let Some(v) = ds.visible_grid_size { params.insert_coord(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, v); }
+    if let Some(v) = ds.custom_x { params.insert_coord(CUSTOM_X, CUSTOM_X_FRAC, v); }
+    if let Some(v) = ds.custom_y { params.insert_coord(CUSTOM_Y, CUSTOM_Y_FRAC, v); }
+    if let Some(v) = ds.use_custom_sheet { params.insert(USE_CUSTOM_SHEET, v.to_param_value()); }
+    if let Some(v) = ds.reference_zones_on { params.insert(REFERENCE_ZONES_ON, v.to_param_value()); }
+    if let Some(v) = ds.reference_zone_style { params.insert(REFERENCE_ZONE_STYLE, (v as u8).to_param_value()); }
+    if let Some(v) = ds.custom_x_zones { params.insert(CUSTOM_X_ZONES, v.to_param_value()); }
+    if let Some(v) = ds.custom_y_zones { params.insert(CUSTOM_Y_ZONES, v.to_param_value()); }
+    if let Some(v) = ds.custom_margin_width {
+        params.insert_coord(CUSTOM_MARGIN_WIDTH, &format!("{}_Frac", CUSTOM_MARGIN_WIDTH), v);
+    }
+    if let Some(v) = ds.workspace_orientation { params.insert(WORKSPACE_ORIENTATION, (v as u8).to_param_value()); }
+    if let Some(v) = ds.display_unit { params.insert(DISPLAY_UNIT, v.to_param_value()); }
+    if let Some(v) = ds.hot_spot_grid_on { params.insert(HOT_SPOT_GRID_ON, v.to_param_value()); }
+    if let Some(v) = ds.hot_spot_grid_size { params.insert_coord(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, v); }
+    if let Some(v) = ds.show_hidden_pins { params.insert(SHOW_HIDDEN_PINS, v.to_param_value()); }
+    if let Some(v) = ds.show_template_graphics { params.insert(SHOW_TEMPLATE_GRAPHICS, v.to_param_value()); }
+    if let Some(ref v) = ds.template_file_name { params.insert(TEMPLATE_FILE_NAME, v.clone()); }
+    if let Some(v) = ds.always_show_cd { params.insert(ALWAYS_SHOW_CD, v.to_param_value()); }
+    if let Some(v) = ds.system_font { params.insert(SYSTEM_FONT, v.to_param_value()); }
+    if let Some(ref v) = ds.file_version_info { params.insert(FILE_VERSION_INFO, v.clone()); }
+
+    // Component index (0-based)
+    params.insert(COMP_COUNT, (header.components.len() as i32).to_param_value());
+    for (n, comp) in header.components.iter().enumerate() {
+        params.insert(&format!("{}{}", LIB_REF, n), comp.lib_ref.clone());
+        if !comp.description.is_empty() {
+            params.insert(&format!("{}{}", COMP_DESCR, n), comp.description.clone());
+        }
+        if comp.part_count != 1 {
+            params.insert(&format!("{}{}", PART_COUNT, n), comp.part_count.to_param_value());
+        }
+        if !comp.aliases.is_empty() {
+            params.insert(&format!("{}{}", ALIAS_COUNT, n), (comp.aliases.len() as i32).to_param_value());
+            for (m, alias) in comp.aliases.iter().enumerate() {
+                params.insert(&format!("Comp{}Alias{}", n, m), alias.clone());
+            }
+        }
+    }
+
+    write_text_block(&params.to_bytes())
+}
+
+// Serializes the Storage stream (embedded images).
+fn serialize_storage_stream(images: &[SchLibEmbeddedImage]) -> Result<Vec<u8>> {
+    let entries: Vec<(String, Vec<u8>)> = images
+        .iter()
+        .map(|img| (img.file_name.clone(), img.data.clone()))
+        .collect();
+    serialize_embedded_object_stream("Icon storage", &entries)
+}
+
+// Serializes the SectionKeys stream. Returns None if no keys needed.
+fn serialize_section_keys(section_keys: &HashMap<String, String>) -> Option<Vec<u8>> {
+    if section_keys.is_empty() {
+        return None;
+    }
+    let mut params = ParameterCollection::new();
+    params.insert(KEY_COUNT, (section_keys.len() as i32).to_param_value());
+    for (i, (name, key)) in section_keys.iter().enumerate() {
+        params.insert(&format!("{}{}", LIB_REF, i), name.clone());
+        params.insert(&format!("{}{}", SECTION_KEY, i), key.clone());
+    }
+    Some(write_text_block(&params.to_bytes()))
+}
+
+// Serializes a component's Data stream (component record + child records).
+fn serialize_component_data(comp: &SchLibComponent) -> Vec<u8> {
+    // Build the component (RECORD=1) block directly to avoid needing Clone on SchComponent.
+    let mut params = ParameterCollection::new();
+    params.insert(RECORD, (SchRecordType::Component as i32).to_param_value());
+    serialize_component_record(&comp.component, &mut params);
+    let mut stream = write_text_block(&params.to_bytes());
+    for record in &comp.records {
+        stream.extend_from_slice(&serialize_record(record));
+    }
+    stream
+}
+
+// Serializes a Redirection stream for an alias.
+fn serialize_redirection_stream(canonical_name: &str) -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+    params.insert(RECORD, "0".to_owned());
+    params.insert(SECTION_NAME, canonical_name.to_owned());
+    write_text_block(&params.to_bytes())
+}
+
+// Serializes the LibAdditional header stream.
+fn serialize_lib_additional_header(components: &[SchLibComponent]) -> Option<Vec<u8>> {
+    // Check if any component has Additional records (records beyond the standard child set)
+    // For now, we don't track which records came from Additional vs Data,
+    // so we skip writing LibAdditional if there were none originally.
+    // TODO: Track Additional records separately during parsing.
+    let _ = components;
+    None
+}
+
+// Builds the reverse section_keys mapping from SchLibHeader and tests key generation.
+fn build_section_keys(header: &SchLibHeader) -> HashMap<String, String> {
+    let mut keys = HashMap::new();
+    let mut used_keys = std::collections::HashSet::new();
+
+    for comp in &header.components {
+        let sanitized = sanitize_cfb_name(&comp.lib_ref);
+        if sanitized != comp.lib_ref || sanitized.len() > 31 {
+            let short_key = generate_unique_key(&sanitized, &mut used_keys);
+            keys.insert(comp.lib_ref.clone(), short_key.clone());
+            used_keys.insert(short_key);
+        } else {
+            used_keys.insert(sanitized);
+        }
+        // Also handle alias names
+        for alias in &comp.aliases {
+            let sanitized = sanitize_cfb_name(alias);
+            if sanitized != *alias || sanitized.len() > 31 {
+                let short_key = generate_unique_key(&sanitized, &mut used_keys);
+                keys.insert(alias.clone(), short_key.clone());
+                used_keys.insert(short_key);
+            } else {
+                used_keys.insert(sanitized);
+            }
+        }
+    }
+    keys
+}
+
+fn sanitize_cfb_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if "/\\:*?\"<>|!".contains(c) { '_' } else { c })
+        .collect()
+}
+
+fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>) -> String {
+    let base = if sanitized.len() > 31 { &sanitized[..31] } else { sanitized };
+    if !used.contains(base) {
+        return base.to_owned();
+    }
+    for suffix in 1.. {
+        let suffix_str = suffix.to_string();
+        let max_base_len = 31 - suffix_str.len();
+        let candidate = format!("{}{}", &sanitized[..max_base_len.min(sanitized.len())], suffix_str);
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
 impl SchLib {
     pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
@@ -936,6 +1428,61 @@ impl SchLib {
         doc.assert_all_consumed()?;
 
         Ok(Self { header, components, embedded_images, aliases })
+    }
+
+    /// Serializes this SchLib back to a CFB file at `path`.
+    pub fn save(&self, path: impl AsRef<Path>) -> crate::Result<()> {
+        let section_keys = build_section_keys(&self.header);
+        let mut cfb = CfbDocument::create()?;
+
+        // 1. /FileHeader
+        let file_header_data = serialize_file_header(&self.header);
+        cfb.write_stream(&format!("/{FILE_HEADER}"), &file_header_data)?;
+
+        // 2. /Storage
+        let storage_data = serialize_storage_stream(&self.embedded_images)?;
+        cfb.write_stream(&format!("/{STORAGE}"), &storage_data)?;
+
+        // 3. /SectionKeys (optional)
+        if let Some(section_keys_data) = serialize_section_keys(&section_keys) {
+            cfb.write_stream(&format!("/{SECTION_KEYS}"), &section_keys_data)?;
+        }
+
+        // 4. Per component
+        for (i, comp) in self.components.iter().enumerate() {
+            let key = resolve_component_key(
+                &self.header.components[i].lib_ref,
+                &section_keys,
+            );
+            cfb.create_storage(&format!("/{key}"))?;
+
+            // Data stream
+            let data = serialize_component_data(comp);
+            cfb.write_stream(&format!("/{key}/Data"), &data)?;
+
+            // Pin sidecars
+            let pins = collect_pins(&comp.records);
+            let sidecars = serialize_pin_sidecars(&pins)?;
+            for (stream_name, sidecar_data) in sidecars {
+                cfb.write_stream(&format!("/{key}/{stream_name}"), &sidecar_data)?;
+            }
+        }
+
+        // 5. /LibAdditional (optional)
+        if let Some(lib_additional_data) = serialize_lib_additional_header(&self.components) {
+            cfb.write_stream(&format!("/{LIB_ADDITIONAL}"), &lib_additional_data)?;
+        }
+
+        // 6. Aliases
+        for alias in &self.aliases {
+            let alias_key = resolve_component_key(&alias.alias_name, &section_keys);
+            cfb.create_storage(&format!("/{alias_key}"))?;
+            let redir_data = serialize_redirection_stream(&alias.canonical_name);
+            cfb.write_stream(&format!("/{alias_key}/{REDIRECTION}"), &redir_data)?;
+        }
+
+        cfb.save_to_file(path)?;
+        Ok(())
     }
 }
 
@@ -1064,4 +1611,84 @@ mod tests {
         let lib = SchLib::open(&path).expect("SchLib::open must succeed for Synthiam");
         assert!(!lib.aliases.is_empty(), "Synthiam.SchLib should have aliases");
     }
+
+    // ── Roundtrip serialization tests ─────────────────────────────────────
+
+    fn roundtrip_stream_compare(filename: &str) {
+        use crate::cfb_document::CfbDocument;
+
+        let path = data_path(filename);
+        if !path.exists() {
+            return; // skip if test file absent
+        }
+
+        // Parse original
+        let lib = SchLib::open(&path).expect("SchLib::open must succeed");
+
+        // Save to temp file
+        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+        lib.save(tmp.path()).expect("SchLib::save must succeed");
+
+        // Compare stream-by-stream: open both as raw CFB
+        let mut original = CfbDocument::open(&path).expect("open original");
+        let mut roundtripped = CfbDocument::open(tmp.path()).expect("open roundtripped");
+
+        let orig_entries = original.enumerate_all_entries().expect("enumerate original");
+        let rt_entries = roundtripped.enumerate_all_entries().expect("enumerate roundtripped");
+
+        // Check same set of entries
+        let mut orig_sorted: Vec<&String> = orig_entries.iter().collect();
+        orig_sorted.sort();
+        let mut rt_sorted: Vec<&String> = rt_entries.iter().collect();
+        rt_sorted.sort();
+        assert_eq!(
+            orig_sorted, rt_sorted,
+            "CFB entry sets differ for {filename}"
+        );
+
+        // Compare each stream's raw bytes
+        for entry in &orig_sorted {
+            // Skip storages (they have no data)
+            if original.read_stream(entry).is_err() {
+                continue;
+            }
+            let orig_data = original.read_stream(entry).expect("read original stream");
+            let rt_data = roundtripped.read_stream(entry).expect("read roundtripped stream");
+            if orig_data != rt_data {
+                // Find first difference for debugging
+                let min_len = orig_data.len().min(rt_data.len());
+                let first_diff = (0..min_len).find(|&i| orig_data[i] != rt_data[i]);
+                match first_diff {
+                    Some(offset) => panic!(
+                        "{filename}: stream {entry} differs at byte {offset}: \
+                         original={:#04x}, roundtripped={:#04x} \
+                         (orig_len={}, rt_len={})",
+                        orig_data[offset], rt_data[offset],
+                        orig_data.len(), rt_data.len()
+                    ),
+                    None => panic!(
+                        "{filename}: stream {entry} length mismatch: \
+                         original={}, roundtripped={}",
+                        orig_data.len(), rt_data.len()
+                    ),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn roundtrip_blank_schlib() {
+        roundtrip_stream_compare("BlankSchlibComponent.SchLib");
+    }
+
+    #[test]
+    fn roundtrip_lime_micro_schlib() {
+        roundtrip_stream_compare("LimeMicroAltiumLib_schLib.SchLib");
+    }
+
+    #[test]
+    fn roundtrip_synthiam_schlib() {
+        roundtrip_stream_compare("Synthiam.SchLib");
+    }
+
 }

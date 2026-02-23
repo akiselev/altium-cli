@@ -2,7 +2,7 @@
 //! Wraps `cfb::CompoundFile` with error mapping to `AltiumFormatError`.
 //! Holds no consumption state — see `TrackedCfbDocument` for stream tracking.
 use std::collections::HashSet;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use crate::{AltiumFormatError, Result};
@@ -71,6 +71,49 @@ impl CfbDocument {
             }
         }
         Ok((storages, streams))
+    }
+
+    // Creates a new in-memory CFB container (V3, 512-byte sectors).
+    pub(crate) fn create() -> Result<Self> {
+        let cursor = Cursor::new(Vec::new());
+        let inner = cfb::CompoundFile::create(cursor)
+            .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    // Creates a sub-storage at the given path.
+    pub(crate) fn create_storage(&mut self, path: &str) -> Result<()> {
+        self.inner
+            .create_storage(path)
+            .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
+        Ok(())
+    }
+
+    // Creates (or overwrites) a stream at the given path with the provided data.
+    pub(crate) fn write_stream(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        let mut stream = self
+            .inner
+            .create_stream(path)
+            .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
+        stream
+            .write_all(data)
+            .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
+        stream
+            .flush()
+            .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
+        Ok(())
+    }
+
+    // Flushes the CFB container and writes the result to a file.
+    // Consumes self because into_stream() takes ownership of the CompoundFile.
+    pub(crate) fn save_to_file(mut self, path: impl AsRef<Path>) -> Result<()> {
+        self.inner
+            .flush()
+            .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
+        let cursor = self.inner.into_inner();
+        let buf = cursor.into_inner();
+        std::fs::write(path, &buf)?;
+        Ok(())
     }
 
     // Walks all CFB entries recursively from root and returns their full paths.

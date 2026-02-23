@@ -6,8 +6,9 @@
 //! Insertion order is preserved (IndexMap) for deterministic serialization.
 use indexmap::IndexMap;
 use altium_format_types::{Coord, CoordPoint};
+use altium_format_types::constants::parsing::C_BASE_UNIT;
 
-use crate::param_value::FromParamValue;
+use crate::param_value::{FromParamValue, ToParamValue};
 use crate::{AltiumFormatError, Result};
 
 pub(crate) struct ParameterCollection {
@@ -20,6 +21,101 @@ impl ParameterCollection {
     // Creates an empty collection; use from_bytes or from_utf16le_bytes to populate.
     pub(crate) fn new() -> Self {
         Self { params: IndexMap::new() }
+    }
+
+    // Inserts a key=value pair. Does nothing if the key already exists (first-occurrence-wins).
+    pub(crate) fn insert(&mut self, key: &str, value: String) {
+        self.params.entry(key.to_owned()).or_insert(value);
+    }
+
+    // Inserts a DXP fractional coordinate. Always writes the integer part; writes
+    // the _FRAC companion only if the fractional remainder is non-zero.
+    pub(crate) fn insert_coord(&mut self, key: &str, frac_key: &str, coord: Coord) {
+        let internal = coord.to_internal();
+        let integer_part = internal.div_euclid(C_BASE_UNIT);
+        let frac_part = internal.rem_euclid(C_BASE_UNIT);
+        self.insert(key, integer_part.to_param_value());
+        if frac_part != 0 {
+            self.insert(frac_key, frac_part.to_param_value());
+        }
+    }
+
+    // Inserts a coordinate point (x + y, each with optional frac).
+    pub(crate) fn insert_coord_point(
+        &mut self,
+        x_key: &str,
+        x_frac: &str,
+        y_key: &str,
+        y_frac: &str,
+        point: CoordPoint,
+    ) {
+        self.insert_coord(x_key, x_frac, point.x);
+        self.insert_coord(y_key, y_frac, point.y);
+    }
+
+    // Inserts indexed coordinates: count_key=N, then {x_prefix}1..N and {y_prefix}1..N.
+    pub(crate) fn insert_indexed_coords(
+        &mut self,
+        count_key: &str,
+        x_prefix: &str,
+        y_prefix: &str,
+        points: &[CoordPoint],
+    ) {
+        self.insert(count_key, points.len().to_param_value());
+        for (i, point) in points.iter().enumerate() {
+            let idx = i + 1; // 1-based
+            let x_key = format!("{x_prefix}{idx}");
+            let y_key = format!("{y_prefix}{idx}");
+            let x_frac_key = format!("{x_prefix}{idx}_Frac");
+            let y_frac_key = format!("{y_prefix}{idx}_Frac");
+            self.insert_coord(&x_key, &x_frac_key, point.x);
+            self.insert_coord(&y_key, &y_frac_key, point.y);
+        }
+    }
+
+    // Serializes to pipe-delimited Windows-1252 bytes: `|KEY1=VALUE1|KEY2=VALUE2|\0`.
+    // Values are escaped (| → [], = → {}) and encoded as Windows-1252.
+    // If a value cannot be losslessly encoded in Windows-1252, it is written with
+    // a %UTF8% key prefix and UTF-8 value encoding.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (key, value) in &self.params {
+            let escaped_value = escape_param_value(value);
+            let (encoded_value, _, had_unmappable) = encoding_rs::WINDOWS_1252.encode(&escaped_value);
+            if had_unmappable {
+                // Write |%UTF8%KEY= as ASCII, then value as raw UTF-8
+                out.push(b'|');
+                out.extend_from_slice(b"%UTF8%");
+                out.extend_from_slice(key.as_bytes());
+                out.push(b'=');
+                out.extend_from_slice(escaped_value.as_bytes());
+            } else {
+                // Write |KEY=VALUE as Windows-1252
+                out.push(b'|');
+                let (encoded_key, _, _) = encoding_rs::WINDOWS_1252.encode(key);
+                out.extend_from_slice(&encoded_key);
+                out.push(b'=');
+                out.extend_from_slice(&encoded_value);
+            }
+        }
+        out.push(0); // NUL terminator
+        out
+    }
+
+    // Serializes as pipe-delimited UTF-16LE parameter bytes (no NUL terminator).
+    // Format: "|KEY1=VALUE1|KEY2=VALUE2|" encoded as UTF-16LE.
+    // Used for pin sidecar streams (PinMiscData, PinWideText, etc.).
+    pub(crate) fn to_utf16le_bytes(&self) -> Vec<u8> {
+        let mut s = String::new();
+        for (key, value) in &self.params {
+            let escaped_value = escape_param_value(value);
+            s.push('|');
+            s.push_str(key);
+            s.push('=');
+            s.push_str(&escaped_value);
+        }
+        s.push('|');
+        encoding_rs::UTF_16LE.encode(&s).0.into_owned()
     }
 
     // Parses pipe-delimited Windows-1252 parameter bytes with %UTF8% key support.
@@ -254,6 +350,13 @@ impl ParameterCollection {
     }
 }
 
+// Encodes literal pipe and equals in values for writing.
+// This is the inverse of unescape_param_value: | → [], = → {}.
+fn escape_param_value(s: &str) -> String {
+    // Order matters: escape pipes first, then equals
+    s.replace('|', "[]").replace('=', "{}")
+}
+
 // Decodes Altium's in-value escape sequences.
 // Altium encodes literal pipe and equals inside values because | and = are delimiters.
 // Additionally, byte 0x8E (142) encodes a literal pipe within values (single 0x8E → |,
@@ -475,6 +578,123 @@ mod tests {
         let mut pc = ParameterCollection::from_bytes(data).unwrap();
         let items: Vec<i32> = pc.remove_list_or_empty("ITEMS").unwrap();
         assert!(items.is_empty());
+    }
+
+    // ── Serialization tests ──────────────────────────────────────────
+
+    #[test]
+    fn to_bytes_simple_roundtrip() {
+        let mut pc = ParameterCollection::new();
+        pc.insert("RECORD", "1".to_owned());
+        pc.insert("KEY", "value".to_owned());
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let record: i32 = pc2.remove_required("RECORD").unwrap();
+        assert_eq!(record, 1);
+        let key: String = pc2.remove_required("KEY").unwrap();
+        assert_eq!(key, "value");
+        pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn to_bytes_escaping() {
+        let mut pc = ParameterCollection::new();
+        pc.insert("VAL", "a|b=c".to_owned());
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let v: String = pc2.remove_required("VAL").unwrap();
+        assert_eq!(v, "a|b=c");
+    }
+
+    #[test]
+    fn to_bytes_empty_collection() {
+        let pc = ParameterCollection::new();
+        let bytes = pc.to_bytes();
+        assert_eq!(bytes, b"\0");
+    }
+
+    #[test]
+    fn insert_coord_with_frac() {
+        let mut pc = ParameterCollection::new();
+        pc.insert_coord("LOC.X", "LOC.X_FRAC", Coord::from_internal(10_050_000));
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let c = pc2.remove_coord("LOC.X", "LOC.X_FRAC").unwrap();
+        assert_eq!(c.to_internal(), 10_050_000);
+        pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn insert_coord_without_frac() {
+        let mut pc = ParameterCollection::new();
+        pc.insert_coord("LOC.X", "LOC.X_FRAC", Coord::from_internal(10_000_000));
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let c = pc2.remove_coord("LOC.X", "LOC.X_FRAC").unwrap();
+        assert_eq!(c.to_internal(), 10_000_000);
+        pc2.assert_exhausted().unwrap();
+        // Verify no FRAC key was written
+        let raw = std::str::from_utf8(&bytes[..bytes.len()-1]).unwrap();
+        assert!(!raw.contains("FRAC"), "FRAC should not appear when frac=0");
+    }
+
+    #[test]
+    fn insert_coord_point_roundtrip() {
+        let mut pc = ParameterCollection::new();
+        let point = CoordPoint::new(
+            Coord::from_internal(10_050_000),
+            Coord::from_internal(20_075_000),
+        );
+        pc.insert_coord_point("Location.X", "Location.X_FRAC", "Location.Y", "Location.Y_FRAC", point);
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let x = pc2.remove_coord("Location.X", "Location.X_FRAC").unwrap();
+        let y = pc2.remove_coord("Location.Y", "Location.Y_FRAC").unwrap();
+        assert_eq!(x.to_internal(), 10_050_000);
+        assert_eq!(y.to_internal(), 20_075_000);
+        pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn insert_indexed_coords_roundtrip() {
+        let mut pc = ParameterCollection::new();
+        let points = vec![
+            CoordPoint::new(Coord::from_internal(100_000), Coord::from_internal(200_000)),
+            CoordPoint::new(Coord::from_internal(300_000), Coord::from_internal(400_000)),
+        ];
+        pc.insert_indexed_coords("LocationCount", "X", "Y", &points);
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let parsed_points = pc2.remove_indexed_coords("LocationCount", "X", "Y").unwrap();
+        assert_eq!(parsed_points.len(), 2);
+        assert_eq!(parsed_points[0].x.to_internal(), 100_000);
+        assert_eq!(parsed_points[0].y.to_internal(), 200_000);
+        assert_eq!(parsed_points[1].x.to_internal(), 300_000);
+        assert_eq!(parsed_points[1].y.to_internal(), 400_000);
+        pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn insert_preserves_order() {
+        let mut pc = ParameterCollection::new();
+        pc.insert("RECORD", "1".to_owned());
+        pc.insert("NAME", "test".to_owned());
+        pc.insert("VALUE", "42".to_owned());
+        let bytes = pc.to_bytes();
+        let s = String::from_utf8_lossy(&bytes[..bytes.len()-1]);
+        // Order must be: |RECORD=1|NAME=test|VALUE=42 (no trailing pipe)
+        assert_eq!(s.as_ref(), "|RECORD=1|NAME=test|VALUE=42", "got: {s}");
+    }
+
+    #[test]
+    fn insert_negative_coord() {
+        let mut pc = ParameterCollection::new();
+        // Negative coord: -5 DXP units + 50000 frac = -5*100000 + 50000 = -450000
+        pc.insert_coord("LOC.X", "LOC.X_FRAC", Coord::from_internal(-450_000));
+        let bytes = pc.to_bytes();
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let c = pc2.remove_coord("LOC.X", "LOC.X_FRAC").unwrap();
+        assert_eq!(c.to_internal(), -450_000);
     }
 
     #[test]

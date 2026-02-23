@@ -47,3 +47,6 @@ pest = "2.7"
 pest_derive = "2.7"
 schemars = "0.8"
 slotmap = "1"
+
+[dev-dependencies]
+tempfile = "3.25.0"

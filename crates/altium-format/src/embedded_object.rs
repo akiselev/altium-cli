@@ -5,14 +5,16 @@
 //! payload. The decompressed bytes are stored in `inner_data`.
 //! `parse_embedded_object_stream` consumes the header block's params internally
 //! so callers never receive a partially-consumed `ParameterCollection`.
-use std::io::Read;
+use std::io::{Read, Write};
 
 use altium_format_types::constants::parsing::{BLOCK_SIZE_MASK, INSTRUCTION_BINARY};
 use altium_format_types::constants::record_structure::HEADER;
+use flate2::Compression;
 use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
 
-use crate::binary_io::BinaryReader;
-use crate::block_stream::{Block, BlockFormat};
+use crate::binary_io::{BinaryReader, BinaryWriter};
+use crate::block_stream::{Block, BlockFormat, write_binary_block, write_text_block};
 use crate::param_collection::ParameterCollection;
 use crate::{AltiumFormatError, Result};
 
@@ -90,25 +92,63 @@ pub(crate) fn parse_embedded_object_stream(
     Ok(entries)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::io::Write;
+/// Compresses data using zlib (standard deflate with zlib header).
+pub(crate) fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(data).map_err(|e| {
+        AltiumFormatError::InvalidEmbeddedObject(format!("zlib compress failed: {e}"))
+    })?;
+    enc.finish().map_err(|e| {
+        AltiumFormatError::InvalidEmbeddedObject(format!("zlib compress finish failed: {e}"))
+    })
+}
 
-    use flate2::Compression;
-    use flate2::write::ZlibEncoder;
+/// Serializes a single embedded object into the 0xD0-tagged envelope format.
+/// The inner_data is zlib-compressed before being wrapped.
+pub(crate) fn serialize_embedded_object(id: &str, inner_data: &[u8]) -> Result<Vec<u8>> {
+    let compressed = zlib_compress(inner_data)?;
+    let mut w = BinaryWriter::new();
+    w.write_u8(INSTRUCTION_BINARY);
+    w.write_u8(id.len() as u8);
+    w.write_bytes(id.as_bytes());
+    w.write_i32_le(compressed.len() as i32);
+    w.write_bytes(&compressed);
+    Ok(w.finish())
+}
 
-    use super::*;
-    use altium_format_types::constants::parsing::INSTRUCTION_FILE_STREAM;
-    use crate::binary_io::BinaryWriter;
+/// Serializes a complete embedded object stream: header text block + entry binary blocks.
+/// The header block contains RECORD=0, HEADER=<header_name>, Weight=<count>.
+/// Each entry is a 0xD0-tagged envelope in a binary block.
+pub(crate) fn serialize_embedded_object_stream(
+    header_name: &str,
+    entries: &[(String, Vec<u8>)],
+) -> Result<Vec<u8>> {
+    // Build header params
+    let mut params = ParameterCollection::new();
+    params.insert("RECORD", "0".to_owned());
+    params.insert(HEADER, header_name.to_owned());
+    params.insert("Weight", entries.len().to_string());
+    let header_bytes = params.to_bytes();
 
-    fn zlib_compress(data: &[u8]) -> Vec<u8> {
-        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
-        enc.write_all(data).unwrap();
-        enc.finish().unwrap()
+    let mut stream = write_text_block(&header_bytes);
+
+    // Write each entry as a binary block containing a 0xD0 envelope
+    for (id, inner_data) in entries {
+        let envelope = serialize_embedded_object(id, inner_data)?;
+        stream.extend_from_slice(&write_binary_block(&envelope));
     }
 
+    Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_stream::parse_blocks;
+    use altium_format_types::constants::parsing::INSTRUCTION_FILE_STREAM;
+
     fn make_envelope(id: &str, inner_data: &[u8]) -> Vec<u8> {
-        let compressed = zlib_compress(inner_data);
+        let compressed = zlib_compress(inner_data).unwrap();
         let mut w = BinaryWriter::new();
         w.write_u8(INSTRUCTION_BINARY);
         w.write_u8(id.len() as u8);
@@ -188,5 +228,55 @@ mod tests {
     fn empty_blocks_returns_error() {
         let err = parse_embedded_object_stream(&[]).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidEmbeddedObject(_)));
+    }
+
+    // ── Serialization roundtrip tests ──────────────────────────────────
+
+    #[test]
+    fn serialize_embedded_object_roundtrips() {
+        let inner = b"test data payload";
+        let envelope = serialize_embedded_object("myid", inner).unwrap();
+        let obj = parse_embedded_object(&envelope).unwrap();
+        assert_eq!(obj.id, "myid");
+        assert_eq!(obj.inner_data, inner);
+    }
+
+    #[test]
+    fn serialize_embedded_object_stream_roundtrips() {
+        let entries = vec![
+            ("e1".to_owned(), b"abc".to_vec()),
+            ("e2".to_owned(), b"\x01\x02\x03".to_vec()),
+        ];
+        let stream_bytes = serialize_embedded_object_stream("TestStream", &entries).unwrap();
+        let blocks = parse_blocks(&stream_bytes).unwrap();
+        let parsed = parse_embedded_object_stream(&blocks).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "e1");
+        assert_eq!(parsed[0].inner_data, b"abc");
+        assert_eq!(parsed[1].id, "e2");
+        assert_eq!(parsed[1].inner_data, b"\x01\x02\x03");
+    }
+
+    #[test]
+    fn zlib_compress_decompress_roundtrip() {
+        let data = b"Hello, world! This is test data for zlib compression.";
+        let compressed = zlib_compress(data).unwrap();
+        assert!(compressed.len() > 0);
+        let mut decoder = flate2::read::ZlibDecoder::new(&compressed[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn serialize_empty_stream() {
+        let entries: Vec<(String, Vec<u8>)> = vec![];
+        let stream_bytes = serialize_embedded_object_stream("Empty", &entries).unwrap();
+        let blocks = parse_blocks(&stream_bytes).unwrap();
+        // Header block should have Weight=0
+        assert_eq!(blocks.len(), 1); // only header, no entries
+        let mut params = ParameterCollection::from_bytes(&blocks[0].data).unwrap();
+        let weight: usize = params.remove_required("Weight").unwrap();
+        assert_eq!(weight, 0);
     }
 }
