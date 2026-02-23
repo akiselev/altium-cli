@@ -6,6 +6,44 @@ use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::PcbComponentBody;
 use crate::{AltiumFormatError, Result};
 
+/// Decodes an IDENTIFIER value from comma-separated UTF-16 code units.
+///
+/// Format: `"67,65,80,67,50,48,49,50"` → `"CAPC2012"`.
+/// An empty string input returns an empty string.
+fn decode_identifier(raw: &str) -> Result<String> {
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    let code_units: std::result::Result<Vec<u16>, _> = raw.split(',').map(|s| s.trim().parse::<u16>()).collect();
+    let code_units = code_units.map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: "IDENTIFIER".to_owned(),
+        detail: format!("cannot parse comma-separated UTF-16 code units: {}", e),
+    })?;
+    String::from_utf16(&code_units).map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: "IDENTIFIER".to_owned(),
+        detail: format!("invalid UTF-16 sequence: {}", e),
+    })
+}
+
+/// Parses a float parameter that may use scientific notation (e.g. " 0.00000000000000E+0000").
+/// Returns `0.0` if key is absent.
+fn parse_scientific_float(params: &mut ParameterCollection, key: &str) -> Result<f64> {
+    let raw: Option<String> = params.remove_optional(key)?;
+    match raw {
+        None => Ok(0.0),
+        Some(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Ok(0.0);
+            }
+            trimmed.parse::<f64>().map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("cannot parse '{}' as float: {}", s, e),
+            })
+        }
+    }
+}
+
 /// Parses a mil-format coordinate string (e.g. "59.0551mil", "0mil", "-3.937mil").
 /// Some locales use comma as decimal separator. Returns `Coord::ZERO` if key is absent.
 fn parse_mil_param(params: &mut ParameterCollection, key: &str) -> Result<Coord> {
@@ -65,16 +103,37 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     let mut params = ParameterCollection::from_str(&decoded)?;
 
     // Extract all known parameters.
+    // Region-inherited parameters
     let v7_layer = params.remove_optional::<String>("V7_LAYER")?.unwrap_or_default();
     let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
     let kind = params.remove_optional::<i32>("KIND")?.unwrap_or(0);
     let subpoly_index = params.remove_optional::<i32>("SUBPOLYINDEX")?.unwrap_or(-1);
     let union_index = params.remove_optional::<i32>("UNIONINDEX")?.unwrap_or(0);
+    let arc_resolution = parse_mil_param(&mut params, "ARCRESOLUTION")?;
+    let is_shape_based = params
+        .remove_optional::<String>("ISSHAPEBASED")?
+        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .unwrap_or(false);
+    let cavity_height = parse_mil_param(&mut params, "CAVITYHEIGHT")?;
+    // ComponentBody parameters
     let standoff_height = parse_mil_param(&mut params, "STANDOFFHEIGHT")?;
     let overall_height = parse_mil_param(&mut params, "OVERALLHEIGHT")?;
     let body_projection = params.remove_optional::<i32>("BODYPROJECTION")?.unwrap_or(0);
     let body_color_3d = params.remove_optional::<Color>("BODYCOLOR3D")?.unwrap_or(Color::new(0));
     let body_opacity_3d = params.remove_optional::<f64>("BODYOPACITY3D")?.unwrap_or(1.0);
+    let identifier_raw = params.remove_optional::<String>("IDENTIFIER")?.unwrap_or_default();
+    let identifier = decode_identifier(&identifier_raw)?;
+    let texture = params.remove_optional::<String>("TEXTURE")?.unwrap_or_default();
+    let texture_center_x = parse_mil_param(&mut params, "TEXTURECENTERX")?;
+    let texture_center_y = parse_mil_param(&mut params, "TEXTURECENTERY")?;
+    let texture_size_x = parse_mil_param(&mut params, "TEXTURESIZEX")?;
+    let texture_size_y = parse_mil_param(&mut params, "TEXTURESIZEY")?;
+    let texture_rotation = parse_scientific_float(&mut params, "TEXTUREROTATION")?;
+    let body_override_color = params
+        .remove_optional::<String>("BODYOVERRIDECOLOR")?
+        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .unwrap_or(false);
+    // 3D model parameters
     let model_guid = params.remove_optional::<String>("MODELID")?.unwrap_or_default();
     let model_checksum = params.remove_optional::<String>("MODEL.CHECKSUM")?.unwrap_or_default();
     let model_embed = params
@@ -91,6 +150,28 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     let model_3d_dz = parse_mil_param(&mut params, "MODEL.3D.DZ")?;
     let model_type = params.remove_optional::<i32>("MODEL.MODELTYPE")?.unwrap_or(0);
     let model_source = params.remove_optional::<String>("MODEL.MODELSOURCE")?.unwrap_or_default();
+    // Snap points: MODEL.SNAPCOUNT + MODEL.S{n}X/Y/Z (raw i32 internal units)
+    let snap_count = params.remove_optional::<i32>("MODEL.SNAPCOUNT")?.unwrap_or(0);
+    let mut model_snap_points = Vec::with_capacity(snap_count.max(0) as usize);
+    for i in 0..snap_count.max(0) {
+        let sx = params
+            .remove_optional::<i32>(&format!("MODEL.S{}X", i))?
+            .unwrap_or(0);
+        let sy = params
+            .remove_optional::<i32>(&format!("MODEL.S{}Y", i))?
+            .unwrap_or(0);
+        let sz = params
+            .remove_optional::<i32>(&format!("MODEL.S{}Z", i))?
+            .unwrap_or(0);
+        model_snap_points.push((
+            Coord::from_internal(sx),
+            Coord::from_internal(sy),
+            Coord::from_internal(sz),
+        ));
+    }
+    // Extruded body Z bounds (only present for extruded model types)
+    let model_extruded_min_z = parse_mil_param(&mut params, "MODEL.EXTRUDED.MINZ")?;
+    let model_extruded_max_z = parse_mil_param(&mut params, "MODEL.EXTRUDED.MAXZ")?;
     params.assert_exhausted()?;
 
     // Outline vertices: i32 count + f64 (x, y) pairs.
@@ -131,11 +212,22 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
         kind,
         subpoly_index,
         union_index,
+        arc_resolution,
+        is_shape_based,
+        cavity_height,
         standoff_height,
         overall_height,
         body_projection,
         body_color_3d,
         body_opacity_3d,
+        identifier,
+        texture,
+        texture_center_x,
+        texture_center_y,
+        texture_size_x,
+        texture_size_y,
+        texture_rotation,
+        body_override_color,
         model_guid,
         model_checksum,
         model_embed,
@@ -149,6 +241,9 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
         model_3d_dz,
         model_type,
         model_source,
+        model_snap_points,
+        model_extruded_min_z,
+        model_extruded_max_z,
         outline,
         unique_id: None,
     })

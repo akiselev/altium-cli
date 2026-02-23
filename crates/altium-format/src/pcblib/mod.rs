@@ -250,16 +250,30 @@ pub(crate) struct PcbPad {
 
 pub(crate) struct PcbComponentBody {
     pub(crate) common: PcbPrimitiveCommon,
+    // Region-inherited parameters
     pub(crate) v7_layer: String,
     pub(crate) name: String,
     pub(crate) kind: i32,
     pub(crate) subpoly_index: i32,
     pub(crate) union_index: i32,
+    pub(crate) arc_resolution: Coord,
+    pub(crate) is_shape_based: bool,
+    pub(crate) cavity_height: Coord,
+    // ComponentBody parameters
     pub(crate) standoff_height: Coord,
     pub(crate) overall_height: Coord,
     pub(crate) body_projection: i32,
     pub(crate) body_color_3d: Color,
     pub(crate) body_opacity_3d: f64,
+    pub(crate) identifier: String,
+    pub(crate) texture: String,
+    pub(crate) texture_center_x: Coord,
+    pub(crate) texture_center_y: Coord,
+    pub(crate) texture_size_x: Coord,
+    pub(crate) texture_size_y: Coord,
+    pub(crate) texture_rotation: f64,
+    pub(crate) body_override_color: bool,
+    // 3D model parameters
     pub(crate) model_guid: String,
     pub(crate) model_checksum: String,
     pub(crate) model_embed: bool,
@@ -273,6 +287,12 @@ pub(crate) struct PcbComponentBody {
     pub(crate) model_3d_dz: Coord,
     pub(crate) model_type: i32,
     pub(crate) model_source: String,
+    /// Snap points for 3D model alignment (indexed as MODEL.S{n}X/Y/Z).
+    pub(crate) model_snap_points: Vec<(Coord, Coord, Coord)>,
+    /// Extruded body minimum Z (MODEL.EXTRUDED.MINZ), only for extruded model types.
+    pub(crate) model_extruded_min_z: Coord,
+    /// Extruded body maximum Z (MODEL.EXTRUDED.MAXZ), only for extruded model types.
+    pub(crate) model_extruded_max_z: Coord,
     pub(crate) outline: Vec<CoordPoint>,
     pub(crate) unique_id: Option<String>,
 }
