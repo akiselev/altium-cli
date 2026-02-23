@@ -163,4 +163,4 @@ Reverse-engineered documentation for Altium Designer binary file formats. **Star
 - **PcbLib WideStrings pitfall**: Uses parameter-block format, NOT the binary TLV encoding used by PcbDoc's WideStrings6
 - **SchLib pin sidecars**: 9 streams per component (PinFrac → PinFunctionData). PinWideText is authoritative over PinDesc
 - **RECORD >= 256**: Written as `RECORD=254` + `RECORDEX=<actual_value>`
-- **Parameter keys**: Case-insensitive, first occurrence wins. `%UTF8%` prefix for Unicode keys. `[]` escapes `|`, `{}` escapes `=`
+- **Parameter keys**: Case-insensitive, first occurrence wins. `%UTF8%` prefix for Unicode keys. Byte 0x8E escapes `|` (single = pipe, double = literal 0x8E). `¦` (broken bar) also represents `|` in UTF-16LE/string contexts. `=` is never escaped (parser splits on first `=` only)
