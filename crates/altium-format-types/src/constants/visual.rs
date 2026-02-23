@@ -215,6 +215,12 @@ pub const MIRROR: &str = "Mirror";
 /// **Used by:** Symbol (RECORD=3)
 pub const SCALE_FACTOR: &str = "ScaleFactor";
 
+/// Fractional sub-unit for ScaleFactor (DXP frac encoding).
+///
+/// **Wire type:** i32 (0..100_000 internal units)
+/// **Used by:** Symbol (RECORD=3)
+pub const SCALE_FACTOR_FRAC: &str = "ScaleFactor_Frac";
+
 // ---------------------------------------------------------------------------
 // Geometry
 // ---------------------------------------------------------------------------

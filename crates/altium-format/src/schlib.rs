@@ -63,7 +63,7 @@ use crate::sch_records::{
     SchDesignator, SchEllipse, SchEllipticalArc, SchImage, SchImplementation,
     SchImplementationList, SchImplementationMap, SchLabel, SchLibComponent, SchLine, SchMapDefiner,
     SchParameter, SchParameterList, SchPie, SchPin, SchPolygon, SchPolyline, SchRecord,
-    SchRectangle, SchRoundRectangle, SchTextFrame,
+    SchRectangle, SchRoundRectangle, SchSymbol, SchTextFrame,
 };
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
@@ -134,7 +134,7 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
 
     let weight: i32 = params.remove_required(WEIGHT)?;
     let minor_version: i32 = params.remove_required(MINOR_VERSION)?;
-    let unique_id: String = params.remove_required(UNIQUE_ID)?;
+    let unique_id: String = params.remove_with_default(UNIQUE_ID, String::new())?;
 
     // Font table (1-based indexing)
     let fonts = params.remove_indexed(FONT_ID_COUNT, 1, |p, i| {
@@ -309,6 +309,7 @@ fn dispatch_record(block: &Block) -> Result<SchRecord> {
                     params.assert_exhausted()?;
                     Ok(SchRecord::Component(comp))
                 }
+                SchRecordType::Symbol => dispatch!(SchSymbol => SchRecord::Symbol),
                 SchRecordType::Label => dispatch!(SchLabel => SchRecord::Label),
                 SchRecordType::Bezier => dispatch!(SchBezier => SchRecord::Bezier),
                 SchRecordType::Polyline => dispatch!(SchPolyline => SchRecord::Polyline),

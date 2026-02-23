@@ -32,7 +32,7 @@ use altium_format_types::{
             IS_MIRRORED, KEY_COMPONENT_UNIQUE_ID, LIB_REFERENCE, NOT_USE_LIBRARY_NAME,
             PART_COUNT, PART_ID_LOCKED, PINS_MOVEABLE, SHEET_PART_FILE_NAME, SHOW_HIDDEN_FIELDS,
         },
-        locking::{GRAPHICALLY_LOCKED, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE, NOT_AUTO_POSITION, READ_ONLY_STATE},
+        locking::{GRAPHICALLY_LOCKED, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE, NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE},
         model::{
             DATABASE_DATALINKS_LOCKED, DATABASE_MODEL, DATAFILE_COUNT, DATALINKS_LOCKED,
             DES_IMP_COUNT, DES_INTF, INTEGRATED_MODEL, MODEL_ITEM_GUID, MODEL_LOCATION, MODEL_NAME,
@@ -40,14 +40,14 @@ use altium_format_types::{
         },
         parsing::C_BASE_UNIT,
         pin::{
-            PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED,
+            PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED, SYMBOL,
             PIN_CONGLOMERATE_IS_HIDDEN, PIN_CONGLOMERATE_NOT_ACCESSIBLE,
             PIN_CONGLOMERATE_ORIENTATION_MASK, PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST,
             PIN_CONGLOMERATE_SHOW_DESIGNATOR, PIN_CONGLOMERATE_SHOW_NAME,
         },
         record_structure::{
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID,
-            PARAM_TYPE, RECORD, RECORD_EX, UNIQUE_ID, URL,
+            PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
         },
         sheet::{AREA_COLOR, SHOW_BORDER, SHOW_HIDDEN_PINS, TARGET_FILE_NAME},
         text::{
@@ -65,9 +65,9 @@ use altium_format_types::{
             CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC, EMBED_IMAGE, END_ANGLE,
             END_LINE_SHAPE, FILE_NAME, FONT_ID, IS_SOLID, KEEP_ASPECT, LINE_SHAPE_SIZE,
             LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT,
-            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, ORIENTATION, OVERIDE_COLORS,
-            RADIUS, RADIUS_FRAC, SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, START_ANGLE,
-            START_LINE_SHAPE, TRANSPARENT,
+            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION,
+            OVERIDE_COLORS, RADIUS, RADIUS_FRAC, SCALE_FACTOR, SCALE_FACTOR_FRAC,
+            SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, START_ANGLE, START_LINE_SHAPE, TRANSPARENT,
         },
     },
 };
@@ -96,6 +96,8 @@ pub(crate) struct SchPrimitiveBase {
     pub owner_part_display_mode: i32,
     #[param(key = GRAPHICALLY_LOCKED, default = false)]
     pub graphically_locked: bool,
+    #[param(key = UNION_INDEX, default = 0i32)]
+    pub union_index: i32,
 }
 
 /// Extends `SchPrimitiveBase` with location and color fields for graphical objects.
@@ -330,6 +332,7 @@ pub(crate) struct SchComponent {
     pub owner_part_id: i32,
     pub owner_part_display_mode: i32,
     pub graphically_locked: bool,
+    pub union_index: i32,
     pub location: CoordPoint,
     pub display_mode: i32,
     pub is_mirrored: bool,
@@ -384,6 +387,7 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
     let owner_part_id: i32 = params.remove_with_default(OWNER_PART_ID, 0i32)?;
     let owner_part_display_mode: i32 = params.remove_with_default(OWNER_PART_DISPLAY_MODE, 0i32)?;
     let graphically_locked: bool = params.remove_with_default(GRAPHICALLY_LOCKED, false)?;
+    let union_index: i32 = params.remove_with_default(UNION_INDEX, 0i32)?;
 
     // Location (DXP frac coords)
     let location_x: i32 = params.remove_with_default(LOCATION_X, 0i32)?;
@@ -452,6 +456,7 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
         owner_part_id,
         owner_part_display_mode,
         graphically_locked,
+        union_index,
         location,
         display_mode,
         is_mirrored,
@@ -818,6 +823,30 @@ pub(crate) struct SchLabel {
     pub unique_id: String,
 }
 
+/// An IEEE symbol shape (RECORD=3).
+///
+/// Field order matches Altium's `ExportSymbol` (FileFormatV5.cs):
+/// ExportGraphicalObject, Symbol, Location, ScaleFactor, Orientation, LineWidth, Color, Mirror
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchSymbol {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(key = SYMBOL, default = IeeeSymbol::NoSymbol)]
+    pub symbol: IeeeSymbol,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord, key = SCALE_FACTOR, frac_key = SCALE_FACTOR_FRAC)]
+    pub scale_factor: Coord,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = MIRROR, default = false)]
+    pub is_mirrored: bool,
+}
+
 /// A designator annotation (RECORD=34).
 ///
 /// Field order matches Altium's `ExportParameter` (FileFormatV5.cs:1339-1371).
@@ -847,6 +876,8 @@ pub(crate) struct SchDesignator {
     pub unique_id: String,
     #[param(key = NOT_AUTO_POSITION, default = false)]
     pub not_auto_position: bool,
+    #[param(key = OVERRIDE_NOT_AUTO_POSITION, default = false)]
+    pub override_not_auto_position: bool,
     #[param(key = IS_MIRRORED, default = false)]
     pub is_mirrored: bool,
 }
@@ -893,6 +924,8 @@ pub(crate) struct SchParameter {
     pub not_allow_database_synchronize: bool,
     #[param(key = NOT_AUTO_POSITION, default = false)]
     pub not_auto_position: bool,
+    #[param(key = OVERRIDE_NOT_AUTO_POSITION, default = false)]
+    pub override_not_auto_position: bool,
     #[param(key = IS_MIRRORED, default = false)]
     pub is_mirrored: bool,
     #[param(key = TEXT_HORZ_ANCHOR, default = TextHorzAnchor::None)]
@@ -1066,6 +1099,7 @@ pub(crate) struct SchParameterList {
 pub(crate) enum SchRecord {
     Component(SchComponent),
     Pin(SchPin),
+    Symbol(SchSymbol),
     Line(SchLine),
     Rectangle(SchRectangle),
     RoundRectangle(SchRoundRectangle),
@@ -1182,6 +1216,9 @@ pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut Param
     }
     if comp.graphically_locked {
         params.insert(GRAPHICALLY_LOCKED, comp.graphically_locked.to_param_value());
+    }
+    if comp.union_index != 0 {
+        params.insert(UNION_INDEX, comp.union_index.to_param_value());
     }
 
     // Location (DXP frac coords) — T1: skip at zero
@@ -1361,6 +1398,7 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
     match record {
         SchRecord::Component(_) => SchRecordType::Component,
         SchRecord::Pin(_) => SchRecordType::Pin,
+        SchRecord::Symbol(_) => SchRecordType::Symbol,
         SchRecord::Label(_) => SchRecordType::Label,
         SchRecord::Bezier(_) => SchRecordType::Bezier,
         SchRecord::Polyline(_) => SchRecordType::Polyline,
@@ -1389,6 +1427,7 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
     match record {
         SchRecord::Component(v) => serialize_component_record(v, params),
         SchRecord::MapDefiner(v) => serialize_map_definer(v, params),
+        SchRecord::Symbol(v) => v.to_params(params),
         SchRecord::Label(v) => v.to_params(params),
         SchRecord::Bezier(v) => v.to_params(params),
         SchRecord::Polyline(v) => v.to_params(params),
