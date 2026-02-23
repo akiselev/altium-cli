@@ -23,7 +23,10 @@ use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LineShape, LineStyle,
     ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
-    SchRecordType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SheetReferenceZoneStyle, SheetStyle, StdLogicState, TextHorzAnchor, TextJustification,
+    TextVertAnchor,
+    sch::SchFont,
     constants::{
         component::{
             ALL_PIN_COUNT, ALIAS_LIST, COMPONENT_DESCRIPTION, COMPONENT_KIND,
@@ -32,7 +35,14 @@ use altium_format_types::{
             IS_MIRRORED, KEY_COMPONENT_UNIQUE_ID, LIB_REFERENCE, NOT_USE_LIBRARY_NAME,
             PART_COUNT, PART_ID_LOCKED, PINS_MOVEABLE, SHEET_PART_FILE_NAME, SHOW_HIDDEN_FIELDS,
         },
-        locking::{GRAPHICALLY_LOCKED, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE, NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE},
+        locking::{
+            GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE,
+            NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE,
+        },
+        electrical::{
+            CONNECTION_PAIRS_TO_SUPPRESS, IO_TYPE, SHOW_NET_NAME, SIDE, SUPPRESS_ALL,
+            SYMBOL_TYPE,
+        },
         model::{
             DATABASE_DATALINKS_LOCKED, DATABASE_MODEL, DATAFILE_COUNT, DATALINKS_LOCKED,
             DES_IMP_COUNT, DES_INTF, INTEGRATED_MODEL, MODEL_ITEM_GUID, MODEL_LOCATION, MODEL_NAME,
@@ -47,12 +57,23 @@ use altium_format_types::{
         },
         record_structure::{
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID,
-            PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
+            COLLAPSED, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
         },
-        sheet::{AREA_COLOR, SHOW_BORDER, SHOW_HIDDEN_PINS, TARGET_FILE_NAME},
+        sheet::{
+            AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
+            CUSTOM_X_ZONES, CUSTOM_Y, CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT,
+            DOCUMENT_BORDER_STYLE,
+            FILE_VERSION_INFO, HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC,
+            IS_BOC, REFERENCE_ZONE_STYLE, REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE,
+            SHEET_STYLE, SHOW_BORDER, SHOW_HIDDEN_PINS, SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON,
+            SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, SYSTEM_FONT, TARGET_FILE_NAME,
+            TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS, VISIBLE_GRID_ON,
+            VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
+        },
         text::{
-            ALIGNMENT, CLIP_TO_RECT, DESCRIPTION, JUSTIFICATION, NAME, SHOW_NAME, TEXT,
-            TEXT_COLOR, TEXT_HORZ_ANCHOR, TEXT_MARGIN, TEXT_MARGIN_FRAC, TEXT_VERT_ANCHOR, WORD_WRAP,
+            ALIGNMENT, BOLD, CLIP_TO_RECT, DESCRIPTION, ITALIC, JUSTIFICATION, NAME, SHOW_NAME,
+            STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_HORZ_ANCHOR, TEXT_MARGIN, TEXT_MARGIN_FRAC,
+            TEXT_VERT_ANCHOR, UNDERLINE, WORD_WRAP,
         },
         vault::{
             DATABASE_TABLE_NAME, DESIGN_ITEM_ID, GENERIC_COMPONENT_TEMPLATE_GUID, ITEM_GUID,
@@ -63,11 +84,12 @@ use altium_format_types::{
         visual::{
             COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS, CORNER_X_RADIUS_FRAC, CORNER_Y,
             CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC, EMBED_IMAGE, END_ANGLE,
-            END_LINE_SHAPE, FILE_NAME, FONT_ID, IS_SOLID, KEEP_ASPECT, LINE_SHAPE_SIZE,
-            LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT,
-            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION,
-            OVERIDE_COLORS, RADIUS, RADIUS_FRAC, SCALE_FACTOR, SCALE_FACTOR_FRAC,
-            SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, START_ANGLE, START_LINE_SHAPE, TRANSPARENT,
+            END_LINE_SHAPE, FILE_NAME, FONT_ID, FONT_ID_COUNT, FONT_NAME, IS_SOLID, KEEP_ASPECT,
+            LINE_SHAPE_SIZE, LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT, LOCATION_X,
+            LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION, OVERIDE_COLORS,
+            RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR, SCALE_FACTOR_FRAC, SECONDARY_RADIUS,
+            SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE, START_LINE_SHAPE, STYLE, TRANSPARENT,
+            WIDTH, HEIGHT,
         },
     },
 };
@@ -1094,12 +1116,417 @@ pub(crate) struct SchParameterList {
     pub base: SchPrimitiveBase,
 }
 
+/// A schematic sheet record (RECORD=31).
+///
+/// Carries the sheet font table and document display settings.
+#[derive(Debug)]
+pub(crate) struct SchSheet {
+    pub base: SchPrimitiveBase,
+    pub fonts: Vec<SchFont>,
+    pub display_settings: SchDisplaySettings,
+}
+
+impl SchSheet {
+    pub(crate) fn from_params(params: &mut ParameterCollection) -> Result<Self> {
+        let base = SchPrimitiveBase::from_params(params)?;
+
+        let fonts = params.remove_indexed(FONT_ID_COUNT, 1, |p, i| {
+            let idx = i.to_string();
+            let name: String = p.remove_required(&format!("{FONT_NAME}{idx}"))?;
+            let size: i32 = p.remove_required(&format!("{SIZE}{idx}"))?;
+            let rotation: i32 = p.remove_with_default(&format!("{ROTATION}{idx}"), 0i32)?;
+            let bold: bool = p.remove_with_default(&format!("{BOLD}{idx}"), false)?;
+            let italic: bool = p.remove_with_default(&format!("{ITALIC}{idx}"), false)?;
+            let underline: bool = p.remove_with_default(&format!("{UNDERLINE}{idx}"), false)?;
+            let strikeout: bool = p.remove_with_default(&format!("{STRIKE_OUT}{idx}"), false)?;
+            Ok(SchFont {
+                id: i as i32,
+                name,
+                size,
+                rotation,
+                bold,
+                italic,
+                underline,
+                strikeout,
+            })
+        })?;
+
+        let display_settings = SchDisplaySettings {
+            snap_grid_on: params.remove_optional(SNAP_GRID_ON)?,
+            snap_grid_size: params.remove_coord_optional(SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC)?,
+            visible_grid_on: params.remove_optional(VISIBLE_GRID_ON)?,
+            visible_grid_size: params
+                .remove_coord_optional(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC)?,
+            hot_spot_grid_on: params.remove_optional(HOT_SPOT_GRID_ON)?,
+            hot_spot_grid_size: params
+                .remove_coord_optional(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC)?,
+            sheet_style: params
+                .remove_optional::<u8>(SHEET_STYLE)?
+                .map(SheetStyle::try_from)
+                .transpose()?,
+            use_custom_sheet: params.remove_optional(USE_CUSTOM_SHEET)?,
+            custom_x: params.remove_coord_optional(CUSTOM_X, CUSTOM_X_FRAC)?,
+            custom_y: params.remove_coord_optional(CUSTOM_Y, CUSTOM_Y_FRAC)?,
+            border_on: params.remove_optional(BORDER_ON)?,
+            title_block_on: params.remove_optional(TITLE_BLOCK_ON)?,
+            document_border_style: params
+                .remove_optional::<u8>(DOCUMENT_BORDER_STYLE)?
+                .map(SheetBorderStyle::try_from)
+                .transpose()?,
+            reference_zones_on: params.remove_optional(REFERENCE_ZONES_ON)?,
+            reference_zone_style: params
+                .remove_optional::<u8>(REFERENCE_ZONE_STYLE)?
+                .map(SheetReferenceZoneStyle::try_from)
+                .transpose()?,
+            custom_x_zones: params.remove_optional(CUSTOM_X_ZONES)?,
+            custom_y_zones: params.remove_optional(CUSTOM_Y_ZONES)?,
+            custom_margin_width: params.remove_coord_optional(
+                CUSTOM_MARGIN_WIDTH,
+                &format!("{CUSTOM_MARGIN_WIDTH}_Frac"),
+            )?,
+            sheet_number_space_size: params.remove_optional(SHEET_NUMBER_SPACE_SIZE)?,
+            workspace_orientation: params
+                .remove_optional::<u8>(WORKSPACE_ORIENTATION)?
+                .map(SheetOrientation::try_from)
+                .transpose()?,
+            show_hidden_pins: params.remove_optional(SHOW_HIDDEN_PINS)?,
+            show_template_graphics: params.remove_optional(SHOW_TEMPLATE_GRAPHICS)?,
+            always_show_cd: None,
+            template_file_name: params.remove_optional(TEMPLATE_FILE_NAME)?,
+            display_unit: params.remove_optional(DISPLAY_UNIT)?,
+            system_font: params.remove_optional(SYSTEM_FONT)?,
+            use_mbcs: params.remove_optional(USE_MBCS)?,
+            is_boc: params.remove_optional(IS_BOC)?,
+            area_color: params.remove_optional::<i32>(AREA_COLOR)?.map(Color::new),
+            file_version_info: params.remove_optional(FILE_VERSION_INFO)?,
+        };
+
+        Ok(Self {
+            base,
+            fonts,
+            display_settings,
+        })
+    }
+}
+
+/// Schematic template record (RECORD=39).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchTemplate {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(key = FILE_NAME, default = String::new())]
+    pub file_name: String,
+}
+
+/// Electrical wire record (RECORD=27).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchWire {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = LINE_STYLE, default = LineStyle::Solid)]
+    pub line_style: LineStyle,
+    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
+    pub vertices: Vec<CoordPoint>,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Bus record (RECORD=26).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchBus {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
+    pub vertices: Vec<CoordPoint>,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Net label record (RECORD=25).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchNetLabel {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
+    pub justification: TextJustification,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
+    #[param(key = IS_MIRRORED, default = false)]
+    pub is_mirrored: bool,
+    #[param(key = IS_HIDDEN, default = false)]
+    pub is_hidden: bool,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Power object record (RECORD=17).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchPowerObject {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
+    #[param(key = SYMBOL_TYPE, default = 0i32)]
+    pub symbol_type: i32,
+    #[param(key = SHOW_NET_NAME, default = true)]
+    pub show_net_name: bool,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Port record (RECORD=18).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchPort {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = NAME, default = String::new())]
+    pub name: String,
+    #[param(key = IO_TYPE, default = 0i32)]
+    pub io_type: i32,
+    #[param(key = STYLE, default = 0i32)]
+    pub style: i32,
+    #[param(coord, key = WIDTH, frac_key = "Width_Frac")]
+    pub width: Coord,
+    #[param(coord, key = HEIGHT, frac_key = "Height_Frac")]
+    pub height: Coord,
+    #[param(key = TEXT_COLOR, default = Color::BLACK)]
+    pub text_color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = ALIGNMENT, default = TextJustification::BottomLeft)]
+    pub alignment: TextJustification,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// No-connect marker record (RECORD=22).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchNoConnect {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = SYMBOL, default = String::new())]
+    pub symbol: String,
+    #[param(key = IS_ACTIVE, default = true)]
+    pub is_active: bool,
+    #[param(key = SUPPRESS_ALL, default = true)]
+    pub suppress_all: bool,
+    #[param(key = CONNECTION_PAIRS_TO_SUPPRESS, default = String::new())]
+    pub connection_pairs_to_suppress: String,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Junction record (RECORD=29).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchJunction {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+}
+
+/// Sheet symbol record (RECORD=15).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchSheetSymbol {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
+    pub corner: CoordPoint,
+    #[param(key = IS_SOLID, default = false)]
+    pub is_solid: bool,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+    #[param(key = SYMBOL_TYPE, default = 0i32)]
+    pub symbol_type: i32,
+    #[param(key = "SheetName", default = String::new())]
+    pub sheet_name: String,
+    #[param(key = FILE_NAME, default = String::new())]
+    pub file_name: String,
+}
+
+/// Sheet entry record (RECORD=16).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchSheetEntry {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = NAME, default = String::new())]
+    pub name: String,
+    #[param(key = IO_TYPE, default = 0i32)]
+    pub io_type: i32,
+    #[param(key = SIDE, default = 0i32)]
+    pub side: i32,
+    #[param(key = STYLE, default = 0i32)]
+    pub style: i32,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Parameter set record (RECORD=43).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchParameterSet {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = NAME, default = String::new())]
+    pub name: String,
+    #[param(key = STYLE, default = 0i32)]
+    pub style: i32,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Note record (RECORD=209).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchNote {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
+    pub corner: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
+    #[param(key = AUTHOR, default = String::new())]
+    pub author: String,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = TEXT_COLOR, default = Color::BLACK)]
+    pub text_color: Color,
+    #[param(key = IS_SOLID, default = true)]
+    pub is_solid: bool,
+    #[param(key = SHOW_BORDER, default = true)]
+    pub show_border: bool,
+    #[param(key = WORD_WRAP, default = true)]
+    pub word_wrap: bool,
+    #[param(key = CLIP_TO_RECT, default = true)]
+    pub clip_to_rect: bool,
+    #[param(coord, key = TEXT_MARGIN, frac_key = TEXT_MARGIN_FRAC)]
+    pub text_margin: Coord,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Probe record (RECORD=210).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchProbe {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = NAME, default = String::new())]
+    pub name: String,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
+/// Compile mask record (RECORD=211).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchCompileMask {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
+    pub corner: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = COLLAPSED, default = false)]
+    pub collapsed: bool,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+}
+
+/// Blanket/dashed rectangle record (RECORD=225).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchBlanket {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
+    pub corner: CoordPoint,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = LINE_STYLE, default = LineStyle::Dashed)]
+    pub line_style: LineStyle,
+    #[param(key = LINE_STYLE_EXT, default = LineStyle::Dashed)]
+    pub line_style_ext: LineStyle,
+    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
+    pub vertices: Vec<CoordPoint>,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
 // ── SchRecord dispatch enum ───────────────────────────────────────────────────
 
 /// All implemented schematic record variants.
 ///
 /// Variants are added incrementally as record types are implemented.
+#[derive(Debug)]
 pub(crate) enum SchRecord {
+    Sheet(SchSheet),
+    Template(SchTemplate),
     Component(SchComponent),
     Pin(SchPin),
     Symbol(SchSymbol),
@@ -1399,6 +1826,8 @@ pub(crate) fn serialize_record(record: &SchRecord) -> Vec<u8> {
 // Returns the SchRecordType for any SchRecord variant.
 fn record_type_for(record: &SchRecord) -> SchRecordType {
     match record {
+        SchRecord::Sheet(_) => SchRecordType::Sheet,
+        SchRecord::Template(_) => SchRecordType::Template,
         SchRecord::Component(_) => SchRecordType::Component,
         SchRecord::Pin(_) => SchRecordType::Pin,
         SchRecord::Symbol(_) => SchRecordType::Symbol,
@@ -1428,6 +1857,10 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
 // Fills field parameters into the collection (RECORD key already inserted).
 fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
     match record {
+        SchRecord::Sheet(_) => {
+            unreachable!("SchSheet serialization is not implemented yet")
+        }
+        SchRecord::Template(v) => v.to_params(params),
         SchRecord::Component(v) => serialize_component_record(v, params),
         SchRecord::MapDefiner(v) => serialize_map_definer(v, params),
         SchRecord::Symbol(v) => v.to_params(params),
