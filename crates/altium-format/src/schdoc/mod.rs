@@ -4,16 +4,47 @@ mod types;
 
 use std::path::Path;
 
+use altium_format_types::constants::component::DESIGNATOR;
+use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
+use altium_format_types::constants::pin::{
+    DEF_VALUE, DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID,
+    DESIGNATOR_CUSTOM_POSITION_MARGIN, NAME_CUSTOM_COLOR, NAME_CUSTOM_FONT_ID,
+    NAME_CUSTOM_POSITION_MARGIN, PIN_CONGLOMERATE, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED,
+    PIN_CONGLOMERATE_IS_HIDDEN, PIN_CONGLOMERATE_NOT_ACCESSIBLE,
+    PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST, PIN_CONGLOMERATE_SHOW_DESIGNATOR,
+    PIN_CONGLOMERATE_SHOW_NAME, PIN_CONGLOMERATE_ORIENTATION_MASK,
+    PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT, PIN_DESIGNATOR_POSITION_CONGLOMERATE,
+    PIN_LENGTH, PIN_NAME_POSITION_CONGLOMERATE, PIN_PACKAGE_LENGTH, PIN_PROPAGATION_DELAY,
+    PIN_SELECTED_FUNCTION, PIN_SELECTED_FUNCTIONS_COUNT, SWAP_ID_PART, SWAP_ID_PIN, SYMBOL_INNER,
+    SYMBOL_INNER_EDGE, SYMBOL_LINE_WIDTH, SYMBOL_OUTER, SYMBOL_OUTER_EDGE,
+};
 use altium_format_types::constants::record_structure::{HEADER, RECORD, RECORD_EX, WEIGHT};
 use altium_format_types::constants::streams::{
     ADDITIONAL, FILES, FILE_HEADER, HARNESS_CONNECTION_POINT_CONNECTOR, OBJECT_DEFINITIONS,
     REUSE_BLOCK_INFOS, REUSE_BLOCKS, REUSE_BLOCKS_V2, STORAGE,
 };
+use altium_format_types::constants::sheet::{
+    AREA_COLOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC, CUSTOM_X_ZONES, CUSTOM_Y,
+    CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT, DOCUMENT_BORDER_STYLE, FILE_VERSION_INFO,
+    HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, IS_BOC, MINOR_VERSION,
+    REFERENCE_ZONE_STYLE, REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE, SHEET_STYLE,
+    SHOW_HIDDEN_PINS, SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC,
+    SYSTEM_FONT, TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS,
+    VISIBLE_GRID_ON, VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
+};
+use altium_format_types::constants::text::{BOLD, DESCRIPTION, ITALIC, NAME, STRIKE_OUT, UNDERLINE};
+use altium_format_types::constants::record_structure::{OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, UNIQUE_ID};
+use altium_format_types::constants::visual::{
+    COLOR, FONT_ID_COUNT, FONT_NAME, LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC,
+    ROTATION, SIZE,
+};
 
-use crate::block_stream::{BlockFormat, parse_blocks};
-use crate::embedded_object::parse_embedded_object_stream;
+use crate::block_stream::{BlockFormat, parse_blocks, write_text_block};
+use crate::cfb_document::CfbDocument;
+use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
-use crate::sch_records::SchRecord;
+use crate::param_value::ToParamValue;
+use crate::sch_records::{serialize_record, SchPin, SchRecord, SchSheet};
 use crate::schdoc::dispatch::dispatch_record_type;
 use crate::schdoc::fileheader::parse_fileheader_stream;
 use crate::schdoc::types::{SchDocEmbeddedObject, SchDocHeaderMetadata};
@@ -119,6 +150,296 @@ impl SchDoc {
     pub fn validate_invariants(&self) -> Result<()> {
         validate_invariants(&self.records, &self.additional_records, &self.embedded_objects)
     }
+
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.validate_invariants()
+            .context("validating SchDoc invariants before save")?;
+
+        let mut cfb = CfbDocument::create().context("creating SchDoc CFB container")?;
+
+        let fileheader = serialize_fileheader_stream(&self.header, &self.records)
+            .context("serializing /FileHeader")?;
+        cfb.write_stream(&format!("/{FILE_HEADER}"), &fileheader)
+            .context("writing /FileHeader")?;
+
+        let storage = serialize_storage_stream(&self.embedded_objects)
+            .context("serializing /Storage")?;
+        cfb.write_stream(&format!("/{STORAGE}"), &storage)
+            .context("writing /Storage")?;
+
+        let additional = serialize_additional_stream(&self.additional_records)
+            .context("serializing /Additional")?;
+        cfb.write_stream(&format!("/{ADDITIONAL}"), &additional)
+            .context("writing /Additional")?;
+
+        cfb.save_to_file(path)
+            .context("saving SchDoc CFB to file")?;
+        Ok(())
+    }
+}
+
+fn serialize_fileheader_stream(header: &SchDocHeaderMetadata, records: &[SchRecord]) -> Result<Vec<u8>> {
+    let mut header_params = ParameterCollection::new();
+    header_params.insert(HEADER, SCH_SHEET_BINARY_HEADER_V50.to_owned());
+    header_params.insert(WEIGHT, (records.len() as i32).to_param_value());
+    header_params.insert(MINOR_VERSION, header.minor_version.to_param_value());
+    header_params.insert(UNIQUE_ID, header.unique_id.clone());
+
+    let mut stream = write_text_block(&header_params.to_bytes());
+    for (idx, record) in records.iter().enumerate() {
+        let block = serialize_schdoc_record(record)
+            .with_context(|| format!("serializing /FileHeader record #{idx}"))?;
+        stream.extend_from_slice(&block);
+    }
+    Ok(stream)
+}
+
+fn serialize_additional_stream(records: &[SchRecord]) -> Result<Vec<u8>> {
+    let mut header_params = ParameterCollection::new();
+    header_params.insert(HEADER, SCH_SHEET_BINARY_HEADER_V50.to_owned());
+    header_params.insert(WEIGHT, (records.len() as i32).to_param_value());
+
+    let mut stream = write_text_block(&header_params.to_bytes());
+    for (idx, record) in records.iter().enumerate() {
+        let block = serialize_schdoc_record(record)
+            .with_context(|| format!("serializing /Additional record #{idx}"))?;
+        stream.extend_from_slice(&block);
+    }
+    Ok(stream)
+}
+
+fn serialize_storage_stream(objects: &[SchDocEmbeddedObject]) -> Result<Vec<u8>> {
+    if objects.is_empty() {
+        let mut params = ParameterCollection::new();
+        params.insert(HEADER, "Icon storage".to_owned());
+        return Ok(write_text_block(&params.to_bytes()));
+    }
+
+    let entries: Vec<(String, Vec<u8>)> = objects
+        .iter()
+        .map(|obj| (obj.id.clone(), obj.data.clone()))
+        .collect();
+    serialize_embedded_object_stream("Icon storage", &entries)
+}
+
+fn serialize_schdoc_record(record: &SchRecord) -> Result<Vec<u8>> {
+    match record {
+        SchRecord::Sheet(sheet) => Ok(serialize_sheet_record(sheet)),
+        SchRecord::Pin(pin) => Ok(serialize_text_pin_record(pin)),
+        _ => Ok(serialize_record(record)),
+    }
+}
+
+fn serialize_sheet_record(sheet: &SchSheet) -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+    params.insert(RECORD, "31".to_owned());
+    sheet.base.to_params(&mut params);
+
+    params.insert(FONT_ID_COUNT, (sheet.fonts.len() as i32).to_param_value());
+    for font in &sheet.fonts {
+        let idx = font.id.to_string();
+        params.insert(&format!("{FONT_NAME}{idx}"), font.name.clone());
+        params.insert(&format!("{SIZE}{idx}"), font.size.to_param_value());
+        if font.rotation != 0 {
+            params.insert(&format!("{ROTATION}{idx}"), font.rotation.to_param_value());
+        }
+        if font.bold {
+            params.insert(&format!("{BOLD}{idx}"), font.bold.to_param_value());
+        }
+        if font.italic {
+            params.insert(&format!("{ITALIC}{idx}"), font.italic.to_param_value());
+        }
+        if font.underline {
+            params.insert(&format!("{UNDERLINE}{idx}"), font.underline.to_param_value());
+        }
+        if font.strikeout {
+            params.insert(&format!("{STRIKE_OUT}{idx}"), font.strikeout.to_param_value());
+        }
+    }
+
+    let ds = &sheet.display_settings;
+    if let Some(v) = ds.snap_grid_on { params.insert(SNAP_GRID_ON, v.to_param_value()); }
+    if let Some(v) = ds.snap_grid_size { params.insert_coord(SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, v); }
+    if let Some(v) = ds.visible_grid_on { params.insert(VISIBLE_GRID_ON, v.to_param_value()); }
+    if let Some(v) = ds.visible_grid_size { params.insert_coord(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, v); }
+    if let Some(v) = ds.hot_spot_grid_on { params.insert(HOT_SPOT_GRID_ON, v.to_param_value()); }
+    if let Some(v) = ds.hot_spot_grid_size { params.insert_coord(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, v); }
+    if let Some(v) = ds.sheet_style { params.insert(SHEET_STYLE, (v as u8).to_param_value()); }
+    if let Some(v) = ds.use_custom_sheet { params.insert(USE_CUSTOM_SHEET, v.to_param_value()); }
+    if let Some(v) = ds.custom_x { params.insert_coord(CUSTOM_X, CUSTOM_X_FRAC, v); }
+    if let Some(v) = ds.custom_y { params.insert_coord(CUSTOM_Y, CUSTOM_Y_FRAC, v); }
+    if let Some(v) = ds.border_on { params.insert(BORDER_ON, v.to_param_value()); }
+    if let Some(v) = ds.title_block_on { params.insert(TITLE_BLOCK_ON, v.to_param_value()); }
+    if let Some(v) = ds.document_border_style { params.insert(DOCUMENT_BORDER_STYLE, (v as u8).to_param_value()); }
+    if let Some(v) = ds.reference_zones_on { params.insert(REFERENCE_ZONES_ON, v.to_param_value()); }
+    if let Some(v) = ds.reference_zone_style { params.insert(REFERENCE_ZONE_STYLE, (v as u8).to_param_value()); }
+    if let Some(v) = ds.custom_x_zones { params.insert(CUSTOM_X_ZONES, v.to_param_value()); }
+    if let Some(v) = ds.custom_y_zones { params.insert(CUSTOM_Y_ZONES, v.to_param_value()); }
+    if let Some(v) = ds.custom_margin_width {
+        params.insert_coord(CUSTOM_MARGIN_WIDTH, &format!("{CUSTOM_MARGIN_WIDTH}_Frac"), v);
+    }
+    if let Some(v) = ds.sheet_number_space_size { params.insert(SHEET_NUMBER_SPACE_SIZE, v.to_param_value()); }
+    if let Some(v) = ds.workspace_orientation { params.insert(WORKSPACE_ORIENTATION, (v as u8).to_param_value()); }
+    if let Some(v) = ds.show_hidden_pins { params.insert(SHOW_HIDDEN_PINS, v.to_param_value()); }
+    if let Some(v) = ds.show_template_graphics { params.insert(SHOW_TEMPLATE_GRAPHICS, v.to_param_value()); }
+    if let Some(v) = ds.template_file_name.as_ref() { params.insert(TEMPLATE_FILE_NAME, v.clone()); }
+    if let Some(v) = ds.display_unit { params.insert(DISPLAY_UNIT, v.to_param_value()); }
+    if let Some(v) = ds.system_font { params.insert(SYSTEM_FONT, v.to_param_value()); }
+    if let Some(v) = ds.use_mbcs { params.insert(USE_MBCS, v.to_param_value()); }
+    if let Some(v) = ds.is_boc { params.insert(IS_BOC, v.to_param_value()); }
+    if let Some(v) = ds.area_color { params.insert(AREA_COLOR, v.raw().to_param_value()); }
+    if let Some(v) = ds.file_version_info.as_ref() { params.insert(FILE_VERSION_INFO, v.clone()); }
+
+    write_text_block(&params.to_bytes())
+}
+
+fn serialize_text_pin_record(pin: &SchPin) -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+    params.insert(RECORD, "2".to_owned());
+    if pin.owner_index != 0 {
+        params.insert(OWNER_INDEX, pin.owner_index.to_param_value());
+    }
+    if pin.owner_part_id != 0 {
+        params.insert(OWNER_PART_ID, pin.owner_part_id.to_param_value());
+    }
+    if pin.owner_part_display_mode != 0 {
+        params.insert(OWNER_PART_DISPLAY_MODE, (pin.owner_part_display_mode as i32).to_param_value());
+    }
+    params.insert(SYMBOL_INNER_EDGE, (pin.symbol_inner_edge as u8).to_param_value());
+    params.insert(SYMBOL_OUTER_EDGE, (pin.symbol_outer_edge as u8).to_param_value());
+    params.insert(SYMBOL_INNER, (pin.symbol_inside as u8).to_param_value());
+    params.insert(SYMBOL_OUTER, (pin.symbol_outside as u8).to_param_value());
+    if !pin.description.is_empty() {
+        params.insert(DESCRIPTION, pin.description.clone());
+    }
+    if pin.formal_type as u8 != 0 {
+        params.insert(altium_format_types::constants::electrical::FORMAL_TYPE, (pin.formal_type as u8).to_param_value());
+    }
+    if pin.electrical as u8 != 0 {
+        params.insert(altium_format_types::constants::electrical::ELECTRICAL, (pin.electrical as u8).to_param_value());
+    }
+    params.insert(PIN_CONGLOMERATE, encode_pin_conglomerate(pin).to_param_value());
+    params.insert_coord(PIN_LENGTH, "PinLength_Frac", pin.pin_length);
+    params.insert_coord(LOCATION_X, LOCATION_X_FRAC, pin.location.x);
+    params.insert_coord(LOCATION_Y, LOCATION_Y_FRAC, pin.location.y);
+    if pin.color.raw() != 0 {
+        params.insert(COLOR, pin.color.raw().to_param_value());
+    }
+    if !pin.name.is_empty() {
+        params.insert(NAME, pin.name.clone());
+    }
+    if !pin.designator.is_empty() {
+        params.insert(DESIGNATOR, pin.designator.clone());
+    }
+    if !pin.swap_id_pin.is_empty() {
+        params.insert(SWAP_ID_PIN, pin.swap_id_pin.clone());
+    }
+    if !pin.swap_id_part.is_empty() {
+        params.insert(SWAP_ID_PART, pin.swap_id_part.clone());
+    }
+    if !pin.default_value.is_empty() {
+        params.insert(DEF_VALUE, pin.default_value.clone());
+    }
+    if let Some(v) = pin.pin_symbol_line_width {
+        params.insert(SYMBOL_LINE_WIDTH, v.to_param_value());
+    }
+    if !pin.pin_package_length.is_empty() {
+        params.insert(PIN_PACKAGE_LENGTH, pin.pin_package_length.clone());
+    }
+    if !pin.propagation_delay.is_empty() {
+        params.insert(PIN_PROPAGATION_DELAY, pin.propagation_delay.clone());
+    }
+    if !pin.selected_functions.is_empty() {
+        params.insert(
+            PIN_SELECTED_FUNCTIONS_COUNT,
+            (pin.selected_functions.len() as i32).to_param_value(),
+        );
+        for (idx, value) in pin.selected_functions.iter().enumerate() {
+            params.insert(&format!("{PIN_SELECTED_FUNCTION}{}", idx + 1), value.clone());
+        }
+    }
+    if !pin.defined_functions.is_empty() {
+        params.insert(
+            PIN_DEFINED_FUNCTIONS_COUNT,
+            (pin.defined_functions.len() as i32).to_param_value(),
+        );
+        for (idx, value) in pin.defined_functions.iter().enumerate() {
+            params.insert(&format!("{PIN_DEFINED_FUNCTION}{}", idx + 1), value.clone());
+        }
+    }
+
+    if let Some(ref text) = pin.name_text_data {
+        let mut flags = 0u8;
+        if text.position_mode_custom {
+            flags |= 0x01;
+        }
+        if text.rotation_anchor_component {
+            flags |= 0x02;
+        }
+        flags |= ((text.rotation_relative as u8) & 0x03) << 2;
+        if text.font_mode_custom {
+            flags |= 0x10;
+        }
+        params.insert(PIN_NAME_POSITION_CONGLOMERATE, flags.to_param_value());
+        if let Some(v) = text.custom_position_margin {
+            params.insert(NAME_CUSTOM_POSITION_MARGIN, v.to_param_value());
+        }
+        if let Some(v) = text.custom_font_id {
+            params.insert(NAME_CUSTOM_FONT_ID, v.to_param_value());
+        }
+        if let Some(v) = text.custom_color {
+            params.insert(NAME_CUSTOM_COLOR, v.raw().to_param_value());
+        }
+    }
+
+    if let Some(ref text) = pin.designator_text_data {
+        let mut flags = 0u8;
+        if text.position_mode_custom {
+            flags |= 0x01;
+        }
+        if text.rotation_anchor_component {
+            flags |= 0x02;
+        }
+        flags |= ((text.rotation_relative as u8) & 0x03) << 2;
+        if text.font_mode_custom {
+            flags |= 0x10;
+        }
+        params.insert(PIN_DESIGNATOR_POSITION_CONGLOMERATE, flags.to_param_value());
+        if let Some(v) = text.custom_position_margin {
+            params.insert(DESIGNATOR_CUSTOM_POSITION_MARGIN, v.to_param_value());
+        }
+        if let Some(v) = text.custom_font_id {
+            params.insert(DESIGNATOR_CUSTOM_FONT_ID, v.to_param_value());
+        }
+        if let Some(v) = text.custom_color {
+            params.insert(DESIGNATOR_CUSTOM_COLOR, v.raw().to_param_value());
+        }
+    }
+
+    write_text_block(&params.to_bytes())
+}
+
+fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
+    let mut out = (pin.orientation as u8) & PIN_CONGLOMERATE_ORIENTATION_MASK;
+    if pin.is_hidden {
+        out |= PIN_CONGLOMERATE_IS_HIDDEN;
+    }
+    if pin.show_name {
+        out |= PIN_CONGLOMERATE_SHOW_NAME;
+    }
+    if pin.show_designator {
+        out |= PIN_CONGLOMERATE_SHOW_DESIGNATOR;
+    }
+    if pin.is_not_accessible {
+        out |= PIN_CONGLOMERATE_NOT_ACCESSIBLE;
+    }
+    if pin.graphically_locked {
+        out |= PIN_CONGLOMERATE_GRAPHICALLY_LOCKED;
+    }
+    if pin.owner_index_additional_list {
+        out |= PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST;
+    }
+    out
 }
 
 fn parse_storage_stream(data: &[u8]) -> Result<Vec<SchDocEmbeddedObject>> {
@@ -329,6 +650,7 @@ fn owner_ref(record: &SchRecord) -> (i32, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn schdoc_fixture_path(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -344,5 +666,39 @@ mod tests {
             Err(AltiumFormatError::Io(e)) => panic!("unexpected IO error while opening fixture: {e}"),
             Err(_) => {}
         }
+    }
+
+    #[test]
+    fn schdoc_save_roundtrip_reopens() {
+        let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+        if !fixture_dir.exists() {
+            return;
+        }
+
+        let mut parsed: Option<SchDoc> = None;
+        let entries = match fs::read_dir(&fixture_dir) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|v| v.to_str()) != Some("SchDoc") {
+                continue;
+            }
+            if let Ok(doc) = SchDoc::open(&path) {
+                parsed = Some(doc);
+                break;
+            }
+        }
+
+        let Some(doc) = parsed else {
+            return;
+        };
+
+        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+        doc.save(tmp.path()).expect("SchDoc::save must succeed");
+
+        let saved = SchDoc::open(tmp.path()).expect("saved SchDoc must reopen");
+        saved.validate_invariants().expect("saved SchDoc must validate");
     }
 }

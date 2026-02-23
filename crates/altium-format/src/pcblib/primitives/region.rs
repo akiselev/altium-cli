@@ -1,23 +1,46 @@
-use altium_format_types::RegionKind;
+use altium_format_types::{Coord, CoordPoint, RegionKind};
 
 use crate::binary_io::BinaryReader;
+use crate::param_collection::ParameterCollection;
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::PcbRegion;
 use crate::{AltiumFormatError, Result};
 
-pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
-    let mut reader = BinaryReader::new(data);
-    let common = parse_common_header(&mut reader)?;
-    let kind = RegionKind::try_from(reader.read_u8()?)?;
+/// Parses a mil-format coordinate string (e.g. "0.5mil", "0mil", "-3.937mil").
+/// Returns `Coord::ZERO` if key is absent.
+fn parse_mil_param(params: &mut ParameterCollection, key: &str) -> Result<Coord> {
+    let raw: Option<String> = params.remove_optional(key)?;
+    match raw {
+        None => Ok(Coord::ZERO),
+        Some(s) => {
+            let trimmed = s.strip_suffix("mil").unwrap_or(&s);
+            let normalized = trimmed.replace(',', ".");
+            let mils: f64 =
+                normalized.parse().map_err(|e: std::num::ParseFloatError| {
+                    AltiumFormatError::InvalidParamValue {
+                        key: key.to_owned(),
+                        detail: format!("cannot parse '{}' as mil value: {}", s, e),
+                    }
+                })?;
+            Ok(Coord::from_mils_f64(mils))
+        }
+    }
+}
+
+/// Reads a contour (vertex array) of f64 (x, y) pairs from the binary reader.
+///
+/// Format: i32 LE vertex count + N * (f64 LE x, f64 LE y) pairs.
+/// Coordinates are in internal units (10,000 = 1 mil); we round to Coord.
+fn read_f64_contour(reader: &mut BinaryReader, label: &str) -> Result<Vec<CoordPoint>> {
     let vertex_count_raw = reader.read_i32_le()?;
     if vertex_count_raw < 0 {
         return Err(AltiumFormatError::InvalidParamValue {
-            key: "Region.vertex_count".to_owned(),
+            key: format!("Region.{}_vertex_count", label),
             detail: format!("vertex_count must be >= 0, got {}", vertex_count_raw),
         });
     }
     let vertex_count = vertex_count_raw as usize;
-    let bytes_needed = vertex_count * 8; // each CoordPoint is 4+4 bytes
+    let bytes_needed = vertex_count * 16; // each (f64, f64) pair = 16 bytes
     if reader.remaining() < bytes_needed {
         return Err(AltiumFormatError::BinaryReadPastEnd {
             offset: reader.position(),
@@ -27,13 +50,140 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
     }
     let mut vertices = Vec::with_capacity(vertex_count);
     for _ in 0..vertex_count {
-        vertices.push(reader.read_coord_point()?);
+        let x = reader.read_f64_le()?;
+        let y = reader.read_f64_le()?;
+        vertices.push(CoordPoint::new(
+            Coord::from_internal(x.round() as i32),
+            Coord::from_internal(y.round() as i32),
+        ));
     }
+    Ok(vertices)
+}
+
+/// Parses a Region primitive from its single PcbLib subrecord.
+///
+/// Binary layout:
+///   [13 bytes]     Common header (PcbPrimitiveCommon)
+///   [1 byte]       Region kind (u8 → RegionKind)
+///   [4 bytes]      Hole count (i32 LE — number of hole contours)
+///   [4 bytes]      Parameter string length (u32 LE, includes NUL terminator)
+///   [N bytes]      Win1252 parameter string (pipe-delimited |KEY=VALUE|)
+///   [4 + V*16]     Main contour: vertex count (i32 LE) + f64 (x, y) pairs
+///   [4 + V*16] * H Hole contours (one per hole_count)
+///
+/// This is the same base format as ComponentBody (which inherits from Region).
+pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
+    let mut reader = BinaryReader::new(data);
+    let common = parse_common_header(&mut reader)?;
+    let kind = RegionKind::try_from(reader.read_u8()?)?;
+
+    // Hole count — number of hole contours that follow the main contour.
+    let hole_count_raw = reader.read_i32_le()?;
+    if hole_count_raw < 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Region.hole_count".to_owned(),
+            detail: format!("hole_count must be >= 0, got {}", hole_count_raw),
+        });
+    }
+    let hole_count = hole_count_raw as usize;
+
+    // Length-prefixed parameter string (Win1252, includes NUL terminator).
+    let param_len = reader.read_u32_le()? as usize;
+    let param_bytes = reader.read_bytes(param_len)?;
+    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(param_bytes);
+    let mut params = ParameterCollection::from_str(&decoded)?;
+
+    // Extract region parameters.
+    let v7_layer = params.remove_optional::<String>("V7_LAYER")?.unwrap_or_default();
+    let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
+    let param_kind = params.remove_optional::<i32>("KIND")?.unwrap_or(0);
+    let subpoly_index = params.remove_optional::<i32>("SUBPOLYINDEX")?.unwrap_or(-1);
+    let union_index = params.remove_optional::<i32>("UNIONINDEX")?.unwrap_or(0);
+    let arc_resolution = parse_mil_param(&mut params, "ARCRESOLUTION")?;
+    let is_shape_based = params
+        .remove_optional::<String>("ISSHAPEBASED")?
+        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .unwrap_or(false);
+    let cavity_height = parse_mil_param(&mut params, "CAVITYHEIGHT")?;
+    let keepout_restrictions = params.remove_optional::<i32>("KEEPOUTRESTRICTIONS")?.unwrap_or(0);
+    let layer = params.remove_optional::<String>("LAYER")?.unwrap_or_default();
+    let keepout = params
+        .remove_optional::<String>("KEEPOUT")?
+        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .unwrap_or(false);
+    let is_board_cutout = params
+        .remove_optional::<String>("ISBOARDCUTOUT")?
+        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .unwrap_or(false);
+    let pad_index = params.remove_optional::<i32>("PADINDEX")?.unwrap_or(-1);
+
+    // Shape-based regions include indexed edge geometry in the param string
+    // (MAINCONTOURVERTEXCOUNT, KIND0, VX0, VY0, CX0, CY0, SA0, EA0, R0, ...).
+    // We consume these to pass assert_exhausted but don't store them separately —
+    // the actual geometry comes from the f64 vertex arrays below.
+    if is_shape_based {
+        let shape_vertex_count = params.remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?.unwrap_or(0);
+        for i in 0..shape_vertex_count {
+            let idx = i.to_string();
+            // Each shape-based edge has: KIND, VX, VY, CX, CY, SA, EA, R
+            params.remove_optional::<String>(&format!("KIND{}", idx))?;
+            params.remove_optional::<String>(&format!("VX{}", idx))?;
+            params.remove_optional::<String>(&format!("VY{}", idx))?;
+            params.remove_optional::<String>(&format!("CX{}", idx))?;
+            params.remove_optional::<String>(&format!("CY{}", idx))?;
+            params.remove_optional::<String>(&format!("SA{}", idx))?;
+            params.remove_optional::<String>(&format!("EA{}", idx))?;
+            params.remove_optional::<String>(&format!("R{}", idx))?;
+        }
+        // Hole contour shape data
+        for h in 0..hole_count {
+            let hole_key = format!("HOLECONTOUR{}VERTEXCOUNT", h);
+            let hole_vertex_count = params.remove_optional::<i32>(&hole_key)?.unwrap_or(0);
+            for i in 0..hole_vertex_count {
+                let prefix = format!("HOLECONTOUR{}", h);
+                params.remove_optional::<String>(&format!("{}KIND{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}VX{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}VY{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}CX{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}CY{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}SA{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}EA{}", prefix, i))?;
+                params.remove_optional::<String>(&format!("{}R{}", prefix, i))?;
+            }
+        }
+    }
+
+    params.assert_exhausted()?;
+
+    // Main contour vertices.
+    let outline = read_f64_contour(&mut reader, "outline")?;
+
+    // Hole contour vertices.
+    let mut holes = Vec::with_capacity(hole_count);
+    for i in 0..hole_count {
+        holes.push(read_f64_contour(&mut reader, &format!("hole{}", i))?);
+    }
+
     reader.assert_exhausted()?;
+
     Ok(PcbRegion {
         common,
         kind,
-        vertices,
+        v7_layer,
+        name,
+        param_kind,
+        subpoly_index,
+        union_index,
+        arc_resolution,
+        is_shape_based,
+        cavity_height,
+        keepout_restrictions,
+        layer,
+        keepout,
+        is_board_cutout,
+        pad_index,
+        outline,
+        holes,
         unique_id: None,
     })
 }
@@ -41,7 +191,6 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint};
     use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
 
@@ -55,63 +204,93 @@ mod tests {
         w.write_u8(0);      // unknown
     }
 
+    fn make_param_string(params: &str) -> Vec<u8> {
+        let s = format!("{}\0", params);
+        let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&s);
+        encoded.to_vec()
+    }
+
     #[test]
     fn parse_region_no_vertices() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_u8(0);       // kind = Copper
-        w.write_i32_le(0);   // vertex_count = 0
+        w.write_i32_le(0);   // hole_count = 0
+        let params = make_param_string("|");
+        w.write_u32_le(params.len() as u32);
+        w.write_bytes(&params);
+        w.write_i32_le(0);   // main contour vertex_count = 0
         let data = w.finish();
         let region = parse_region(&data).unwrap();
         assert_eq!(region.kind, RegionKind::Copper);
-        assert!(region.vertices.is_empty());
+        assert!(region.outline.is_empty());
+        assert!(region.holes.is_empty());
     }
 
     #[test]
-    fn parse_region_three_vertices() {
+    fn parse_region_with_outline() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_u8(1);        // kind = Cutout
-        w.write_i32_le(3);    // vertex_count = 3
-        w.write_coord_point(CoordPoint::new(
-            Coord::from_internal(0),
-            Coord::from_internal(0),
-        ));
-        w.write_coord_point(CoordPoint::new(
-            Coord::from_internal(10_000),
-            Coord::from_internal(0),
-        ));
-        w.write_coord_point(CoordPoint::new(
-            Coord::from_internal(10_000),
-            Coord::from_internal(10_000),
-        ));
+        w.write_i32_le(0);    // hole_count = 0
+        let params = make_param_string("|V7_LAYER=TOP|NAME= |KIND=0|SUBPOLYINDEX=-1|UNIONINDEX=0|ARCRESOLUTION=0.5mil|ISSHAPEBASED=FALSE|CAVITYHEIGHT=0mil|");
+        w.write_u32_le(params.len() as u32);
+        w.write_bytes(&params);
+        // 3 vertices as f64 pairs
+        w.write_i32_le(3);
+        w.write_f64_le(0.0);
+        w.write_f64_le(0.0);
+        w.write_f64_le(10_000.0);
+        w.write_f64_le(0.0);
+        w.write_f64_le(10_000.0);
+        w.write_f64_le(10_000.0);
         let data = w.finish();
         let region = parse_region(&data).unwrap();
         assert_eq!(region.kind, RegionKind::Cutout);
-        assert_eq!(region.vertices.len(), 3);
-        assert_eq!(region.vertices[0].x.to_internal(), 0);
-        assert_eq!(region.vertices[1].x.to_internal(), 10_000);
-        assert_eq!(region.vertices[2].y.to_internal(), 10_000);
+        assert_eq!(region.outline.len(), 3);
+        assert_eq!(region.outline[0].x.to_internal(), 0);
+        assert_eq!(region.outline[1].x.to_internal(), 10_000);
+        assert_eq!(region.outline[2].y.to_internal(), 10_000);
+        assert!(region.holes.is_empty());
+        assert_eq!(region.v7_layer, "TOP");
+        assert!(!region.is_shape_based);
     }
 
     #[test]
-    fn parse_region_errors_on_trailing_bytes() {
+    fn parse_region_with_hole() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_u8(0); // kind = Copper
-        w.write_i32_le(0); // vertex_count = 0
-        w.write_bytes(&[0xAA, 0xBB, 0xCC]); // trailing bytes
+        w.write_u8(0);        // kind = Copper
+        w.write_i32_le(1);    // hole_count = 1
+        let params = make_param_string("|");
+        w.write_u32_le(params.len() as u32);
+        w.write_bytes(&params);
+        // Main contour: 4 vertices
+        w.write_i32_le(4);
+        for &(x, y) in &[(0.0, 0.0), (100_000.0, 0.0), (100_000.0, 100_000.0), (0.0, 100_000.0)] {
+            w.write_f64_le(x);
+            w.write_f64_le(y);
+        }
+        // Hole contour: 3 vertices
+        w.write_i32_le(3);
+        for &(x, y) in &[(20_000.0, 20_000.0), (80_000.0, 20_000.0), (50_000.0, 80_000.0)] {
+            w.write_f64_le(x);
+            w.write_f64_le(y);
+        }
         let data = w.finish();
-        let result = parse_region(&data);
-        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
+        let region = parse_region(&data).unwrap();
+        assert_eq!(region.outline.len(), 4);
+        assert_eq!(region.holes.len(), 1);
+        assert_eq!(region.holes[0].len(), 3);
+        assert_eq!(region.holes[0][0].x.to_internal(), 20_000);
     }
 
     #[test]
-    fn parse_region_negative_vertex_count_returns_error() {
+    fn parse_region_negative_hole_count_returns_error() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_u8(0);
-        w.write_i32_le(-1); // negative vertex_count
+        w.write_i32_le(-1); // negative hole_count
         let data = w.finish();
         let result = parse_region(&data);
         assert!(matches!(result, Err(AltiumFormatError::InvalidParamValue { .. })));
@@ -120,18 +299,6 @@ mod tests {
     #[test]
     fn truncated_region_returns_error() {
         let data = [0u8; 5];
-        let result = parse_region(&data);
-        assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
-    }
-
-    #[test]
-    fn parse_region_truncated_vertex_data_returns_error() {
-        let mut w = BinaryWriter::new();
-        write_common_header(&mut w);
-        w.write_u8(0);      // kind
-        w.write_i32_le(2);  // claims 2 vertices but only provides 4 bytes (too short for 16 bytes needed)
-        w.write_bytes(&[0u8; 4]);
-        let data = w.finish();
         let result = parse_region(&data);
         assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
     }

@@ -114,6 +114,11 @@ pub(crate) struct PcbFill {
     pub(crate) corner1: CoordPoint,
     pub(crate) corner2: CoordPoint,
     pub(crate) rotation: f64,
+    // AD26+ extended fields (13 bytes when present)
+    pub(crate) user_routed: bool,
+    pub(crate) union_index: i32,
+    pub(crate) v7_layer: V7Layer,
+    pub(crate) keepout_restrictions: i32,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -150,7 +155,23 @@ pub(crate) struct PcbText {
 pub(crate) struct PcbRegion {
     pub(crate) common: PcbPrimitiveCommon,
     pub(crate) kind: RegionKind,
-    pub(crate) vertices: Vec<CoordPoint>,
+    // Region parameters (from embedded param string)
+    pub(crate) v7_layer: String,
+    pub(crate) name: String,
+    pub(crate) param_kind: i32,
+    pub(crate) subpoly_index: i32,
+    pub(crate) union_index: i32,
+    pub(crate) arc_resolution: Coord,
+    pub(crate) is_shape_based: bool,
+    pub(crate) cavity_height: Coord,
+    pub(crate) keepout_restrictions: i32,
+    pub(crate) layer: String,
+    pub(crate) keepout: bool,
+    pub(crate) is_board_cutout: bool,
+    pub(crate) pad_index: i32,
+    // Geometry: main outline + hole contours (all f64 vertex pairs)
+    pub(crate) outline: Vec<CoordPoint>,
+    pub(crate) holes: Vec<Vec<CoordPoint>>,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -293,6 +314,10 @@ pub(crate) struct PcbComponentBody {
     pub(crate) model_extruded_min_z: Coord,
     /// Extruded body maximum Z (MODEL.EXTRUDED.MAXZ), only for extruded model types.
     pub(crate) model_extruded_max_z: Coord,
+    /// Cylinder model radius (MODEL.CYLINDER.RADIUS), only for cylinder model types.
+    pub(crate) model_cylinder_radius: Coord,
+    /// Cylinder model height (MODEL.CYLINDER.HEIGHT), only for cylinder model types.
+    pub(crate) model_cylinder_height: Coord,
     pub(crate) outline: Vec<CoordPoint>,
     pub(crate) unique_id: Option<String>,
 }

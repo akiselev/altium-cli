@@ -127,6 +127,10 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot determine file type: {}", input.display()))?;
 
     match ext.to_ascii_lowercase().as_str() {
+        "schdoc" => {
+            let doc = SchDoc::open(input)?;
+            doc.save_as(output.as_path())?;
+        }
         "schlib" => {
             let doc = SchLib::open(input)?;
             doc.save_as(output.as_path())?;

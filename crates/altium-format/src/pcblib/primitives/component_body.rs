@@ -172,6 +172,27 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     // Extruded body Z bounds (only present for extruded model types)
     let model_extruded_min_z = parse_mil_param(&mut params, "MODEL.EXTRUDED.MINZ")?;
     let model_extruded_max_z = parse_mil_param(&mut params, "MODEL.EXTRUDED.MAXZ")?;
+    // Cylinder model parameters (only present for cylinder model types)
+    let model_cylinder_radius = parse_mil_param(&mut params, "MODEL.CYLINDER.RADIUS")?;
+    let model_cylinder_height = parse_mil_param(&mut params, "MODEL.CYLINDER.HEIGHT")?;
+
+    // Shape-based regions include indexed edge geometry in the param string.
+    // ComponentBody inherits from Region so it can also have these.
+    if is_shape_based {
+        let shape_vertex_count = params.remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?.unwrap_or(0);
+        for i in 0..shape_vertex_count {
+            let idx = i.to_string();
+            params.remove_optional::<String>(&format!("KIND{}", idx))?;
+            params.remove_optional::<String>(&format!("VX{}", idx))?;
+            params.remove_optional::<String>(&format!("VY{}", idx))?;
+            params.remove_optional::<String>(&format!("CX{}", idx))?;
+            params.remove_optional::<String>(&format!("CY{}", idx))?;
+            params.remove_optional::<String>(&format!("SA{}", idx))?;
+            params.remove_optional::<String>(&format!("EA{}", idx))?;
+            params.remove_optional::<String>(&format!("R{}", idx))?;
+        }
+    }
+
     params.assert_exhausted()?;
 
     // Outline vertices: i32 count + f64 (x, y) pairs.
@@ -244,6 +265,8 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
         model_snap_points,
         model_extruded_min_z,
         model_extruded_max_z,
+        model_cylinder_radius,
+        model_cylinder_height,
         outline,
         unique_id: None,
     })
