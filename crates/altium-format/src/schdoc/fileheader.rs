@@ -165,6 +165,7 @@ fn record_type_of(record: &SchRecord) -> SchRecordType {
         SchRecord::SheetFileName(_) => SchRecordType::SheetFileName,
         SchRecord::SheetSymbol(_) => SchRecordType::SheetSymbol,
         SchRecord::SheetEntry(_) => SchRecordType::SheetEntry,
+        SchRecord::BusEntry(_) => SchRecordType::BusEntry,
         SchRecord::ParameterSet(_) => SchRecordType::ParameterSet,
         SchRecord::Note(_) => SchRecordType::Note,
         SchRecord::Probe(_) => SchRecordType::Probe,

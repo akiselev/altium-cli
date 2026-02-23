@@ -1697,6 +1697,23 @@ pub(crate) struct SchSheetEntry {
     pub unique_id: String,
 }
 
+/// Bus entry record (RECORD=37).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchBusEntry {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
+    pub corner: CoordPoint,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+}
+
 /// Parameter set record (RECORD=43).
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchParameterSet {
@@ -1806,6 +1823,8 @@ pub(crate) struct SchBlanket {
     pub line_style: LineStyle,
     #[param(key = LINE_STYLE_EXT, default = LineStyle::Dashed)]
     pub line_style_ext: LineStyle,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
     #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
     pub vertices: Vec<CoordPoint>,
     #[param(key = UNIQUE_ID, default = String::new())]
@@ -1832,6 +1851,7 @@ pub(crate) enum SchRecord {
     SheetFileName(SchSheetFileName),
     SheetSymbol(SchSheetSymbol),
     SheetEntry(SchSheetEntry),
+    BusEntry(SchBusEntry),
     ParameterSet(SchParameterSet),
     Note(SchNote),
     Probe(SchProbe),
@@ -2149,6 +2169,7 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
         SchRecord::SheetFileName(_) => SchRecordType::SheetFileName,
         SchRecord::SheetSymbol(_) => SchRecordType::SheetSymbol,
         SchRecord::SheetEntry(_) => SchRecordType::SheetEntry,
+        SchRecord::BusEntry(_) => SchRecordType::BusEntry,
         SchRecord::ParameterSet(_) => SchRecordType::ParameterSet,
         SchRecord::Note(_) => SchRecordType::Note,
         SchRecord::Probe(_) => SchRecordType::Probe,
@@ -2198,6 +2219,7 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
         SchRecord::SheetFileName(v) => v.to_params(params),
         SchRecord::SheetSymbol(v) => v.to_params(params),
         SchRecord::SheetEntry(v) => v.to_params(params),
+        SchRecord::BusEntry(v) => v.to_params(params),
         SchRecord::ParameterSet(v) => v.to_params(params),
         SchRecord::Note(v) => v.to_params(params),
         SchRecord::Probe(v) => v.to_params(params),

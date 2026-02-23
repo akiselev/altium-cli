@@ -294,6 +294,7 @@ fn owner_ref(record: &SchRecord) -> (i32, bool) {
         SchRecord::SheetFileName(v) => (v.base.owner_index, false),
         SchRecord::SheetSymbol(v) => (v.base.owner_index, false),
         SchRecord::SheetEntry(v) => (v.base.owner_index, false),
+        SchRecord::BusEntry(v) => (v.base.owner_index, false),
         SchRecord::ParameterSet(v) => (v.base.owner_index, false),
         SchRecord::Note(v) => (v.base.owner_index, false),
         SchRecord::Probe(v) => (v.base.owner_index, false),

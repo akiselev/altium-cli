@@ -2,7 +2,7 @@ use altium_format_types::SchRecordType;
 
 use crate::param_collection::ParameterCollection;
 use crate::sch_records::{
-    SchArc, SchBezier, SchBlanket, SchBus, SchCompileMask, SchDesignator, SchEllipse,
+    SchArc, SchBezier, SchBlanket, SchBus, SchBusEntry, SchCompileMask, SchDesignator, SchEllipse,
     SchEllipticalArc, SchImage, SchImplementation, SchImplementationList,
     SchImplementationMap, SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel,
     SchNoConnect, SchNote, SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon,
@@ -46,6 +46,7 @@ pub(crate) fn dispatch_record_type(
         SchRecordType::SheetFileName => dispatch!(SchSheetFileName => SchRecord::SheetFileName),
         SchRecordType::SheetSymbol => dispatch!(SchSheetSymbol => SchRecord::SheetSymbol),
         SchRecordType::SheetEntry => dispatch!(SchSheetEntry => SchRecord::SheetEntry),
+        SchRecordType::BusEntry => dispatch!(SchBusEntry => SchRecord::BusEntry),
         SchRecordType::ParameterSet => dispatch!(SchParameterSet => SchRecord::ParameterSet),
         SchRecordType::Note => dispatch!(SchNote => SchRecord::Note),
         SchRecordType::Probe => dispatch!(SchProbe => SchRecord::Probe),
