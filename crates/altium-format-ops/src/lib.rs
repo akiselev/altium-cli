@@ -14,6 +14,19 @@ pub use project_ops::AltiumProjectOps;
 pub use schdoc_ops::SchDocOps;
 pub use schlib_ops::SchLibOps;
 
+/// Version information extracted from an Altium document's file header.
+#[derive(Debug, serde::Serialize)]
+pub struct VersionInfo {
+    /// On-disk header string identifying the file format (e.g. "Protel for Windows - Schematic
+    /// Library Editor Binary File Version 5.0").
+    pub header: String,
+    /// Minor version number from the file header. Incremented as Altium Designer adds
+    /// forward-compatibility features.
+    pub minor_version: i32,
+    /// Optional `FileVersionInfo` blob written by the saving application.
+    pub file_version_info: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AltiumOperationError {
     #[error("IO error: {0}")]

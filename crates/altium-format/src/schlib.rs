@@ -1496,6 +1496,26 @@ impl SchLib {
         Ok(Self { header, components, embedded_images, aliases })
     }
 
+    /// Returns the on-disk header string identifying the file format version.
+    pub fn version_header(&self) -> &'static str {
+        // The parser validates this is always SCH_LIBRARY_BINARY_HEADER_V50;
+        // if it were anything else, open() would have returned an error.
+        SCH_LIBRARY_BINARY_HEADER_V50
+    }
+
+    /// Returns the minor version number from the file header.
+    pub fn minor_version(&self) -> i32 {
+        self.header.minor_version
+    }
+
+    /// Returns the optional `FileVersionInfo` string from display settings.
+    ///
+    /// When present, this contains a packed compatibility-data blob written by
+    /// the version of Altium Designer that last saved the file.
+    pub fn file_version_info(&self) -> Option<&str> {
+        self.header.display_settings.file_version_info.as_deref()
+    }
+
     /// Serializes this SchLib back to a CFB file at `path`.
     pub fn save(&self, path: impl AsRef<Path>) -> crate::Result<()> {
         let section_keys = build_section_keys(&self.header);

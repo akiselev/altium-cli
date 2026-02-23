@@ -33,6 +33,20 @@ enum Commands {
         #[command(subcommand)]
         sub: cfb::CfbSubcommand,
     },
+    /// Query document properties
+    Get {
+        #[command(subcommand)]
+        sub: GetSubcommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum GetSubcommand {
+    /// Display the document's format version header and minor version
+    Version {
+        /// Path to the document
+        path: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -58,9 +72,43 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         },
+        Commands::Get { sub } => {
+            if let Err(e) = run_get(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_get(sub: GetSubcommand) -> anyhow::Result<()> {
+    match sub {
+        GetSubcommand::Version { path } => get_version(&path),
+    }
+}
+
+fn get_version(path: &PathBuf) -> anyhow::Result<()> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or_else(|| anyhow::anyhow!("cannot determine file type: {}", path.display()))?;
+
+    match ext.to_ascii_lowercase().as_str() {
+        "schlib" => {
+            let doc = SchLib::open(path)?;
+            let info = doc.version()?;
+            println!("Header:        {}", info.header);
+            println!("Minor version: {}", info.minor_version);
+            if let Some(ref fvi) = info.file_version_info {
+                println!("FileVersionInfo: {fvi}");
+            }
+        }
+        _ => anyhow::bail!("get version not yet supported for .{ext} files"),
+    }
+
+    Ok(())
 }
 
 fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
