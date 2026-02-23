@@ -870,6 +870,8 @@ pub(crate) struct SchDesignator {
     pub text: String,
     #[param(tier2, key = NAME, default = String::from("Designator"))]
     pub name: String,
+    #[param(key = SHOW_NAME, default = false)]
+    pub show_name: bool,
     #[param(key = READ_ONLY_STATE, default = ParameterReadOnlyState::Name)]
     pub read_only_state: ParameterReadOnlyState,
     #[param(key = UNIQUE_ID, default = String::new())]
@@ -1044,6 +1046,8 @@ pub(crate) struct SchImplementation {
 pub(crate) struct SchImplementationMap {
     #[param(flatten)]
     pub base: SchPrimitiveBase,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
 }
 
 /// A single pin-to-pad designator mapping entry (RECORD=47).
@@ -2048,9 +2052,10 @@ mod tests {
 
     #[test]
     fn implementation_map_parses() {
-        let mut params = pc("|OwnerIndex=3|");
+        let mut params = pc("|OwnerIndex=3|UniqueID=ABC123|");
         let im = SchImplementationMap::from_params(&mut params).unwrap();
         assert_eq!(im.base.owner_index, 3);
+        assert_eq!(im.unique_id, "ABC123");
     }
 
     #[test]
