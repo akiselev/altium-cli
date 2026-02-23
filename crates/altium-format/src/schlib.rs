@@ -362,7 +362,7 @@ pub(crate) fn parse_component_data(data: &[u8]) -> Result<SchLibComponent> {
         );
     }
 
-    Ok(SchLibComponent { component, records })
+    Ok(SchLibComponent { component, records, additional_records: Vec::new() })
 }
 
 // ── Pin sidecar helpers ────────────────────────────────────────────────────────
@@ -1293,13 +1293,33 @@ fn serialize_redirection_stream(canonical_name: &str) -> Vec<u8> {
 }
 
 // Serializes the LibAdditional header stream.
+// Returns None if no component has additional records.
 fn serialize_lib_additional_header(components: &[SchLibComponent]) -> Option<Vec<u8>> {
-    // Check if any component has Additional records (records beyond the standard child set)
-    // For now, we don't track which records came from Additional vs Data,
-    // so we skip writing LibAdditional if there were none originally.
-    // TODO: Track Additional records separately during parsing.
-    let _ = components;
-    None
+    let total_weight: i32 = components
+        .iter()
+        .map(|c| c.additional_records.len() as i32)
+        .sum();
+    if total_weight == 0 {
+        return None;
+    }
+    let mut params = ParameterCollection::new();
+    params.insert(RECORD, 0i32.to_param_value());
+    params.insert(HEADER, SCH_LIBRARY_BINARY_HEADER_V50.to_owned());
+    params.insert(WEIGHT, total_weight.to_param_value());
+    Some(write_text_block(&params.to_bytes()))
+}
+
+// Serializes a component's Additional stream (additional records + end marker).
+fn serialize_additional_data(records: &[SchRecord]) -> Vec<u8> {
+    let mut stream = Vec::new();
+    for record in records {
+        stream.extend_from_slice(&serialize_record(record));
+    }
+    // End marker: RECORD=0
+    let mut end_params = ParameterCollection::new();
+    end_params.insert(RECORD, 0i32.to_param_value());
+    stream.extend_from_slice(&write_text_block(&end_params.to_bytes()));
+    stream
 }
 
 // Builds the reverse section_keys mapping from SchLibHeader and tests key generation.
@@ -1403,7 +1423,7 @@ impl SchLib {
                 if let Some(data) = doc.read_stream_optional(&format!("/{}/{}", key, ADDITIONAL))? {
                     let records = parse_additional_data(&data)
                         .with_context(|| format!("parsing Additional for '{}'", comp_index.lib_ref))?;
-                    components[i].records.extend(records);
+                    components[i].additional_records = records;
                 }
             }
         }
@@ -1470,9 +1490,20 @@ impl SchLib {
             }
         }
 
-        // 5. /LibAdditional (optional)
+        // 5. /LibAdditional header + per-component Additional streams (optional)
         if let Some(lib_additional_data) = serialize_lib_additional_header(&self.components) {
             cfb.write_stream(&format!("/{LIB_ADDITIONAL}"), &lib_additional_data)?;
+
+            for (i, comp) in self.components.iter().enumerate() {
+                if !comp.additional_records.is_empty() {
+                    let key = resolve_component_key(
+                        &self.header.components[i].lib_ref,
+                        &section_keys,
+                    );
+                    let additional_data = serialize_additional_data(&comp.additional_records);
+                    cfb.write_stream(&format!("/{key}/{ADDITIONAL}"), &additional_data)?;
+                }
+            }
         }
 
         // 6. Aliases

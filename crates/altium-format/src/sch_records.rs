@@ -978,6 +978,8 @@ pub(crate) enum SchRecord {
 pub(crate) struct SchLibComponent {
     pub component: SchComponent,
     pub records: Vec<SchRecord>,
+    /// Records from the per-component Additional stream (separate from Data).
+    pub additional_records: Vec<SchRecord>,
 }
 
 // ── Serialization ─────────────────────────────────────────────────────────────
