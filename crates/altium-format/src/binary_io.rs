@@ -238,14 +238,6 @@ impl<'a> BinaryReader<'a> {
         Ok(BinaryReader::new(sub_data))
     }
 
-    /// Reads all remaining bytes in the reader, advancing position to the end.
-    /// Returns an empty slice if no bytes remain.
-    pub(crate) fn read_remaining(&mut self) -> &'a [u8] {
-        let remaining = &self.data[self.pos..];
-        self.pos = self.data.len();
-        remaining
-    }
-
     /// Returns an error if there are any bytes remaining.
     pub(crate) fn assert_exhausted(&self) -> Result<()> {
         let count = self.remaining();

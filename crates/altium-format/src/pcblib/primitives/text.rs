@@ -1,16 +1,28 @@
+use altium_format_types::constants::parsing::TEXT_SUBRECORD_COUNT;
 use altium_format_types::TextKind;
 
 use crate::binary_io::BinaryReader;
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::PcbText;
-use crate::Result;
+use crate::{AltiumFormatError, Result};
 
-/// Parses a Text primitive from a single PcbLib record payload.
+/// Parses a Text primitive from its 2 PcbLib subrecords.
 ///
-/// PcbLib uses single-record format: the binary header fields are followed
-/// by a pascal string (u8 length + Win1252 bytes) containing the text.
-pub(crate) fn parse_text(data: &[u8]) -> Result<PcbText> {
-    let mut reader = BinaryReader::new(data);
+/// Subrecord 0: text properties (common header + location + height + rotation + flags + font_kind)
+/// Subrecord 1: text string content (raw Win1252 bytes)
+pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
+    if subrecords.len() != TEXT_SUBRECORD_COUNT {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Text subrecords".to_owned(),
+            detail: format!(
+                "expected {} subrecords, got {}",
+                TEXT_SUBRECORD_COUNT,
+                subrecords.len()
+            ),
+        });
+    }
+
+    let mut reader = BinaryReader::new(subrecords[0]);
     let common = parse_common_header(&mut reader)?;
     let location = reader.read_coord_point()?;
     let height = reader.read_coord()?;
@@ -20,8 +32,12 @@ pub(crate) fn parse_text(data: &[u8]) -> Result<PcbText> {
     let is_comment = reader.read_u8()? != 0;
     let is_designator = reader.read_u8()? != 0;
     let font_kind = TextKind::try_from(reader.read_u8()?)?;
-    let text = reader.read_pascal_string()?;
-    let trailing_bytes = reader.read_remaining().to_vec();
+    reader.assert_exhausted()?;
+
+    // Subrecord 1 contains the text string (Win1252 encoded).
+    let text_bytes = subrecords[1];
+    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(text_bytes);
+    let text = decoded.into_owned();
 
     Ok(PcbText {
         common,
@@ -35,7 +51,6 @@ pub(crate) fn parse_text(data: &[u8]) -> Result<PcbText> {
         font_kind,
         text,
         unique_id: None,
-        trailing_bytes,
     })
 }
 
@@ -44,9 +59,8 @@ mod tests {
     use super::*;
     use altium_format_types::{Coord, CoordPoint, TextKind};
     use crate::binary_io::BinaryWriter;
-    use crate::AltiumFormatError;
 
-    fn make_text_payload(text_kind: u8, text: &str) -> Vec<u8> {
+    fn make_text_properties_subrecord(text_kind: u8) -> Vec<u8> {
         let mut w = BinaryWriter::new();
         // Common header (13 bytes)
         w.write_u8(1);      // layer
@@ -68,14 +82,20 @@ mod tests {
         w.write_u8(0);        // is_comment = false
         w.write_u8(1);        // is_designator = true
         w.write_u8(text_kind); // font_kind
-        w.write_pascal_string(text); // embedded text
         w.finish()
+    }
+
+    fn make_text_subrecords(text_kind: u8, text: &str) -> [Vec<u8>; 2] {
+        let sub0 = make_text_properties_subrecord(text_kind);
+        let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(text);
+        [sub0, encoded.to_vec()]
     }
 
     #[test]
     fn parse_text_known_bytes() {
-        let data = make_text_payload(0, "R1"); // StrokeFont
-        let text = parse_text(&data).unwrap();
+        let subs = make_text_subrecords(0, "R1"); // StrokeFont
+        let sub_refs: Vec<&[u8]> = subs.iter().map(|s| s.as_slice()).collect();
+        let text = parse_text(&sub_refs).unwrap();
         assert_eq!(text.location.x.to_internal(), 10_000);
         assert_eq!(text.location.y.to_internal(), 20_000);
         assert_eq!(text.height.to_internal(), 6_000);
@@ -86,30 +106,32 @@ mod tests {
         assert!(text.is_designator);
         assert_eq!(text.font_kind, TextKind::StrokeFont);
         assert_eq!(text.text, "R1");
-        assert!(text.trailing_bytes.is_empty());
         assert!(text.unique_id.is_none());
     }
 
     #[test]
     fn parse_text_empty_string() {
-        let data = make_text_payload(0, "");
-        let text = parse_text(&data).unwrap();
+        let subs = make_text_subrecords(0, "");
+        let sub_refs: Vec<&[u8]> = subs.iter().map(|s| s.as_slice()).collect();
+        let text = parse_text(&sub_refs).unwrap();
         assert_eq!(text.text, "");
     }
 
     #[test]
     fn parse_text_truetype_font_kind() {
-        let data = make_text_payload(1, "C1"); // TrueTypeFont
-        let text = parse_text(&data).unwrap();
+        let subs = make_text_subrecords(1, "C1"); // TrueTypeFont
+        let sub_refs: Vec<&[u8]> = subs.iter().map(|s| s.as_slice()).collect();
+        let text = parse_text(&sub_refs).unwrap();
         assert_eq!(text.font_kind, TextKind::TrueTypeFont);
         assert_eq!(text.text, "C1");
     }
 
     #[test]
-    fn truncated_text_returns_error() {
-        // Too short for common header (needs 13 bytes)
-        let data = vec![0u8; 5];
-        let result = parse_text(&data);
-        assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
+    fn wrong_subrecord_count_returns_error() {
+        // Only 1 subrecord instead of 2
+        let sub0 = make_text_properties_subrecord(0);
+        let sub_refs: Vec<&[u8]> = vec![sub0.as_slice()];
+        let result = parse_text(&sub_refs);
+        assert!(result.is_err());
     }
 }

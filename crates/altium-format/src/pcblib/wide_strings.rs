@@ -8,6 +8,7 @@
 //! Example: "39,46,68,101,115" decodes as the byte string "'.Des".
 //! The decoded bytes are validated as UTF-8 (strict).
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::param_collection::ParameterCollection;
@@ -68,16 +69,29 @@ pub(crate) fn parse_pcblib_wide_strings(data: &[u8]) -> Result<HashMap<usize, St
                 })?;
         let value: String = params.remove_required(&key)?;
         let decoded_string = decode_encoded_text(&key, &value)?;
-        result.insert(index, decoded_string);
+        match result.entry(index) {
+            Entry::Vacant(e) => {
+                e.insert(decoded_string);
+            }
+            Entry::Occupied(_) => {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: key.clone(),
+                    detail: format!("duplicate ENCODEDTEXT index {index}"),
+                });
+            }
+        }
     }
 
     Ok(result)
 }
 
 /// Decodes a comma-separated decimal byte list to a UTF-8 string.
+///
+/// An empty value or a value with only empty tokens represents an empty string.
 fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
     let bytes: Vec<u8> = value
         .split(',')
+        .filter(|token| !token.trim().is_empty())
         .map(|token| {
             token.trim().parse::<u8>().map_err(|_| AltiumFormatError::InvalidParamValue {
                 key: key.to_owned(),
@@ -137,6 +151,23 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[&0], "Hi");
         assert_eq!(result[&1], "Bye");
+    }
+
+    #[test]
+    fn empty_value_returns_empty_string() {
+        // ENCODEDTEXT2=| with no bytes between = and | is a valid empty string.
+        // This matches real files like lucashudson-Arduino.PcbLib.
+        let param_str = "|ENCODEDTEXT0=70,111,111|ENCODEDTEXT1=|ENCODEDTEXT2=66,65,82\x00";
+        let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(param_str);
+        let len = encoded.len() as u32;
+        let mut stream = len.to_le_bytes().to_vec();
+        stream.extend_from_slice(&encoded);
+
+        let result = parse_pcblib_wide_strings(&stream).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[&0], "Foo");
+        assert_eq!(result[&1], "");
+        assert_eq!(result[&2], "BAR");
     }
 
     #[test]

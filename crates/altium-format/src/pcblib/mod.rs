@@ -10,14 +10,14 @@ use std::path::Path;
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
-use altium_format_types::{Coord, CoordPoint, PadShape, PadStackMode, PcbFlags, RegionKind, TextKind, V6Layer};
+use altium_format_types::{Color, Coord, CoordPoint, PadShape, PadStackMode, PcbFlags, RegionKind, TextKind, V6Layer};
 
 use crate::block_stream::iter_blocks;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcb_file_header::{parse_pcb_file_header, PcbFileHeader};
 use crate::pcblib::library::{
     PcbLibraryData, PcbLibComponentTocEntry, PcbLibModelEntry,
-    consume_embedded_fonts, consume_header_data_substorage, parse_library_data,
+    validate_empty_embedded_fonts, validate_empty_substorage, parse_library_data,
     parse_component_toc, parse_model_metadata,
 };
 use crate::tracked_cfb::TrackedCfbDocument;
@@ -73,7 +73,6 @@ pub(crate) struct PcbArc {
     pub(crate) end_angle: f64,
     pub(crate) width: Coord,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 pub(crate) struct PcbTrack {
@@ -83,20 +82,16 @@ pub(crate) struct PcbTrack {
     pub(crate) width: Coord,
     pub(crate) subpoly_index: u16,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 pub(crate) struct PcbVia {
     pub(crate) common: PcbPrimitiveCommon,
     pub(crate) location: CoordPoint,
+    pub(crate) diameter: Coord,
     pub(crate) hole_size: Coord,
-    pub(crate) diameter_top: Coord,
-    pub(crate) diameter_mid: Coord,
-    pub(crate) diameter_bot: Coord,
     pub(crate) from_layer: V6Layer,
     pub(crate) to_layer: V6Layer,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 pub(crate) struct PcbFill {
@@ -105,7 +100,6 @@ pub(crate) struct PcbFill {
     pub(crate) corner2: CoordPoint,
     pub(crate) rotation: f64,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 pub(crate) struct PcbText {
@@ -120,7 +114,6 @@ pub(crate) struct PcbText {
     pub(crate) font_kind: TextKind,
     pub(crate) text: String,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 pub(crate) struct PcbRegion {
@@ -128,7 +121,6 @@ pub(crate) struct PcbRegion {
     pub(crate) kind: RegionKind,
     pub(crate) vertices: Vec<CoordPoint>,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 pub(crate) struct PcbPad {
@@ -145,19 +137,35 @@ pub(crate) struct PcbPad {
     pub(crate) is_plated: bool,
     pub(crate) stack_mode: PadStackMode,
     pub(crate) unique_id: Option<String>,
-    pub(crate) subrecord_trailing: [Vec<u8>; 6],
 }
 
 pub(crate) struct PcbComponentBody {
     pub(crate) common: PcbPrimitiveCommon,
-    pub(crate) model_guid: String,
+    pub(crate) v7_layer: String,
+    pub(crate) name: String,
+    pub(crate) kind: i32,
+    pub(crate) subpoly_index: i32,
+    pub(crate) union_index: i32,
     pub(crate) standoff_height: Coord,
+    pub(crate) overall_height: Coord,
+    pub(crate) body_projection: i32,
+    pub(crate) body_color_3d: Color,
+    pub(crate) body_opacity_3d: f64,
+    pub(crate) model_guid: String,
+    pub(crate) model_checksum: String,
+    pub(crate) model_embed: bool,
+    pub(crate) model_name: String,
+    pub(crate) model_2d_x: Coord,
+    pub(crate) model_2d_y: Coord,
+    pub(crate) model_2d_rotation: f64,
     pub(crate) rotation_x: f64,
     pub(crate) rotation_y: f64,
     pub(crate) rotation_z: f64,
+    pub(crate) model_3d_dz: Coord,
+    pub(crate) model_type: i32,
+    pub(crate) model_source: String,
     pub(crate) outline: Vec<CoordPoint>,
     pub(crate) unique_id: Option<String>,
-    pub(crate) trailing_bytes: Vec<u8>,
 }
 
 /// Parses the FileVersionInfo/Header and Data streams.
@@ -166,15 +174,34 @@ pub(crate) struct PcbComponentBody {
 /// (COUNT, VER0, FWDMSG0, BKMSG0, etc.). We decode the block and return the
 /// raw decoded string for version identification.
 fn parse_file_version_info(header_data: &[u8], data: &[u8]) -> Result<String> {
-    let _count = parse_pcb_section_header(header_data)?;
+    let count = parse_pcb_section_header(header_data)?;
 
-    let mut result = String::new();
+    let mut blocks = Vec::new();
     for block_result in iter_blocks(data) {
         let block = block_result?;
         let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(&block.data);
-        result = decoded.into_owned();
+        blocks.push(decoded.into_owned());
     }
-    Ok(result)
+
+    if blocks.len() as u32 != count {
+        return Err(AltiumFormatError::RecordCountMismatch {
+            section: "FileVersionInfo".to_owned(),
+            expected: count as usize,
+            actual: blocks.len(),
+        });
+    }
+
+    if blocks.len() != 1 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "FileVersionInfo".to_owned(),
+            detail: format!(
+                "expected exactly 1 block in FileVersionInfo/Data, got {}",
+                blocks.len()
+            ),
+        });
+    }
+
+    Ok(blocks.into_iter().next().unwrap_or_default())
 }
 
 impl PcbLib {
@@ -231,7 +258,7 @@ impl PcbLib {
         let _lib_header_count = crate::pcb_binary_stream::parse_pcb_section_header(&lib_header_data)?;
 
         let lib_data_raw = doc.read_stream("/Library/Data")?;
-        let library = parse_library_data(&lib_data_raw)
+        let (library, suffix_names) = parse_library_data(&lib_data_raw)
             .context("parsing /Library/Data")?;
 
         let lib_toc_header = doc.read_stream("/Library/ComponentParamsTOC/Header")?;
@@ -239,6 +266,21 @@ impl PcbLib {
         let component_toc = parse_component_toc(&lib_toc_header, &lib_toc_data)
             .context("parsing /Library/ComponentParamsTOC")?;
         let _ = doc.list_entries("/Library/ComponentParamsTOC")?;
+
+        // Cross-validate Library/Data suffix names against ComponentParamsTOC.
+        if !suffix_names.is_empty() {
+            let toc_names: Vec<&str> = component_toc.iter().map(|e| e.name.as_str()).collect();
+            let suffix_refs: Vec<&str> = suffix_names.iter().map(|s| s.as_str()).collect();
+            if toc_names != suffix_refs {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "Library/Data suffix".to_owned(),
+                    detail: format!(
+                        "component name index mismatch: suffix has {:?} but ComponentParamsTOC has {:?}",
+                        suffix_refs, toc_names
+                    ),
+                });
+            }
+        }
 
         let lib_models_header = doc.read_stream("/Library/Models/Header")?;
         let lib_models_data = doc.read_stream("/Library/Models/Data")?;
@@ -251,7 +293,7 @@ impl PcbLib {
 
         // Auxiliary Library sub-storages (optional)
         if doc.exists("/Library/LayerKindMapping/Header") {
-            consume_header_data_substorage(
+            validate_empty_substorage(
                 &mut doc,
                 "/Library/LayerKindMapping/Header",
                 "/Library/LayerKindMapping/Data",
@@ -259,7 +301,7 @@ impl PcbLib {
             let _ = doc.list_entries("/Library/LayerKindMapping")?;
         }
         if doc.exists("/Library/PadViaLibrary/Header") {
-            consume_header_data_substorage(
+            validate_empty_substorage(
                 &mut doc,
                 "/Library/PadViaLibrary/Header",
                 "/Library/PadViaLibrary/Data",
@@ -267,10 +309,10 @@ impl PcbLib {
             let _ = doc.list_entries("/Library/PadViaLibrary")?;
         }
         if doc.exists("/Library/EmbeddedFonts") {
-            consume_embedded_fonts(&mut doc, "/Library/EmbeddedFonts")?;
+            validate_empty_embedded_fonts(&mut doc, "/Library/EmbeddedFonts")?;
         }
         if doc.exists("/Library/ModelsNoEmbed/Header") {
-            consume_header_data_substorage(
+            validate_empty_substorage(
                 &mut doc,
                 "/Library/ModelsNoEmbed/Header",
                 "/Library/ModelsNoEmbed/Data",
@@ -278,12 +320,31 @@ impl PcbLib {
             let _ = doc.list_entries("/Library/ModelsNoEmbed")?;
         }
         if doc.exists("/Library/Textures/Header") {
-            consume_header_data_substorage(
+            validate_empty_substorage(
                 &mut doc,
                 "/Library/Textures/Header",
                 "/Library/Textures/Data",
             )?;
-            let _ = doc.list_entries("/Library/Textures")?;
+            // Enumerate children — error if numbered texture blobs exist since
+            // the texture blob format has not been reverse-engineered yet.
+            let (_, texture_streams) = doc.list_entries("/Library/Textures")?;
+            for stream_name in &texture_streams {
+                // Header and Data were already consumed above; skip them here.
+                if stream_name == "Header" || stream_name == "Data" {
+                    continue;
+                }
+                let blob_path = format!("/Library/Textures/{stream_name}");
+                if let Some(data) = doc.read_stream_optional(&blob_path)? {
+                    return Err(AltiumFormatError::InvalidParamValue {
+                        key: "Library/Textures".to_owned(),
+                        detail: format!(
+                            "texture blob '{blob_path}' exists ({} bytes); \
+                             parser not yet implemented",
+                            data.len()
+                        ),
+                    });
+                }
+            }
         }
 
         // Mark Library storage itself as consumed.
@@ -355,6 +416,13 @@ mod tests {
                 version: String::new(),
                 date: String::new(),
                 time: String::new(),
+                board_config: library::PcbBoardConfig {
+                    record: String::new(),
+                    v9_masterstack_style: String::new(),
+                    v9_masterstack_id: String::new(),
+                    v9_masterstack_name: String::new(),
+                    layer_stack: Vec::new(),
+                },
             },
             component_toc: Vec::new(),
             model_entries: Vec::new(),

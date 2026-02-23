@@ -10,7 +10,7 @@ pub(crate) fn parse_track(data: &[u8]) -> Result<PcbTrack> {
     let end = reader.read_coord_point()?;
     let width = reader.read_coord()?;
     let subpoly_index = reader.read_u16_le()?;
-    let trailing_bytes = reader.read_remaining().to_vec();
+    reader.assert_exhausted()?;
     Ok(PcbTrack {
         common,
         start,
@@ -18,7 +18,6 @@ pub(crate) fn parse_track(data: &[u8]) -> Result<PcbTrack> {
         width,
         subpoly_index,
         unique_id: None,
-        trailing_bytes,
     })
 }
 
@@ -64,11 +63,10 @@ mod tests {
         assert_eq!(track.end.y.to_internal(), 40_000);
         assert_eq!(track.width.to_internal(), 5_000);
         assert_eq!(track.subpoly_index, 0xFFFF);
-        assert!(track.trailing_bytes.is_empty());
     }
 
     #[test]
-    fn parse_track_ad26_49_bytes_stores_trailing() {
+    fn parse_track_ad26_49_bytes_errors_on_trailing() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
@@ -79,8 +77,8 @@ mod tests {
         w.write_bytes(&[0u8; 14]);
         let data = w.finish();
         assert_eq!(data.len(), 49);
-        let track = parse_track(&data).unwrap();
-        assert_eq!(track.trailing_bytes.len(), 14);
+        let result = parse_track(&data);
+        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
     }
 
     #[test]

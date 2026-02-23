@@ -29,13 +29,12 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
     for _ in 0..vertex_count {
         vertices.push(reader.read_coord_point()?);
     }
-    let trailing_bytes = reader.read_remaining().to_vec();
+    reader.assert_exhausted()?;
     Ok(PcbRegion {
         common,
         kind,
         vertices,
         unique_id: None,
-        trailing_bytes,
     })
 }
 
@@ -66,7 +65,6 @@ mod tests {
         let region = parse_region(&data).unwrap();
         assert_eq!(region.kind, RegionKind::Copper);
         assert!(region.vertices.is_empty());
-        assert!(region.trailing_bytes.is_empty());
     }
 
     #[test]
@@ -94,19 +92,18 @@ mod tests {
         assert_eq!(region.vertices[0].x.to_internal(), 0);
         assert_eq!(region.vertices[1].x.to_internal(), 10_000);
         assert_eq!(region.vertices[2].y.to_internal(), 10_000);
-        assert!(region.trailing_bytes.is_empty());
     }
 
     #[test]
-    fn parse_region_stores_trailing_bytes() {
+    fn parse_region_errors_on_trailing_bytes() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_u8(0); // kind = Copper
         w.write_i32_le(0); // vertex_count = 0
         w.write_bytes(&[0xAA, 0xBB, 0xCC]); // trailing bytes
         let data = w.finish();
-        let region = parse_region(&data).unwrap();
-        assert_eq!(region.trailing_bytes, &[0xAA, 0xBB, 0xCC]);
+        let result = parse_region(&data);
+        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub(crate) fn parse_arc(data: &[u8]) -> Result<PcbArc> {
     let start_angle = reader.read_f64_le()?;
     let end_angle = reader.read_f64_le()?;
     let width = reader.read_coord()?;
-    let trailing_bytes = reader.read_remaining().to_vec();
+    reader.assert_exhausted()?;
     Ok(PcbArc {
         common,
         center,
@@ -20,7 +20,6 @@ pub(crate) fn parse_arc(data: &[u8]) -> Result<PcbArc> {
         end_angle,
         width,
         unique_id: None,
-        trailing_bytes,
     })
 }
 
@@ -64,12 +63,11 @@ mod tests {
         assert_eq!(arc.start_angle, 0.0);
         assert_eq!(arc.end_angle, 360.0);
         assert_eq!(arc.width.to_internal(), 10_000);
-        assert!(arc.trailing_bytes.is_empty());
         assert!(arc.unique_id.is_none());
     }
 
     #[test]
-    fn parse_arc_ad26_58_bytes_stores_trailing() {
+    fn parse_arc_ad26_58_bytes_errors_on_trailing() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_coord_point(CoordPoint::new(
@@ -84,8 +82,8 @@ mod tests {
         w.write_bytes(&[0u8; 13]);
         let data = w.finish();
         assert_eq!(data.len(), 58);
-        let arc = parse_arc(&data).unwrap();
-        assert_eq!(arc.trailing_bytes.len(), 13);
+        let result = parse_arc(&data);
+        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
     }
 
     #[test]

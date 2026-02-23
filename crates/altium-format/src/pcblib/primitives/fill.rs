@@ -9,14 +9,13 @@ pub(crate) fn parse_fill(data: &[u8]) -> Result<PcbFill> {
     let corner1 = reader.read_coord_point()?;
     let corner2 = reader.read_coord_point()?;
     let rotation = reader.read_f64_le()?;
-    let trailing_bytes = reader.read_remaining().to_vec();
+    reader.assert_exhausted()?;
     Ok(PcbFill {
         common,
         corner1,
         corner2,
         rotation,
         unique_id: None,
-        trailing_bytes,
     })
 }
 
@@ -58,11 +57,10 @@ mod tests {
         assert_eq!(fill.corner1.x.to_internal(), 10_000);
         assert_eq!(fill.corner2.x.to_internal(), 100_000);
         assert_eq!(fill.rotation, 0.0);
-        assert!(fill.trailing_bytes.is_empty());
     }
 
     #[test]
-    fn parse_fill_ad26_50_bytes_stores_trailing() {
+    fn parse_fill_ad26_50_bytes_errors_on_trailing() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
@@ -72,9 +70,8 @@ mod tests {
         w.write_bytes(&[0u8; 13]);
         let data = w.finish();
         assert_eq!(data.len(), 50);
-        let fill = parse_fill(&data).unwrap();
-        assert_eq!(fill.rotation, 90.0);
-        assert_eq!(fill.trailing_bytes.len(), 13);
+        let result = parse_fill(&data);
+        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
     }
 
     #[test]

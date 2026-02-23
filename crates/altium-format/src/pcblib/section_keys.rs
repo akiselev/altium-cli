@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use altium_format_types::constants::component::LIB_REF;
@@ -40,7 +41,17 @@ pub(crate) fn parse_section_keys(data: &[u8]) -> Result<HashMap<String, String>>
     for n in 0..count {
         let lib_ref: String = params.remove_required(&format!("{}{}", LIB_REF, n))?;
         let section_key: String = params.remove_required(&format!("{}{}", SECTION_KEY, n))?;
-        map.insert(lib_ref, section_key);
+        match map.entry(lib_ref) {
+            Entry::Vacant(e) => {
+                e.insert(section_key);
+            }
+            Entry::Occupied(e) => {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: format!("{}{}", LIB_REF, n),
+                    detail: format!("duplicate LIBREF '{}'", e.key()),
+                });
+            }
+        }
     }
 
     params.assert_exhausted()?;

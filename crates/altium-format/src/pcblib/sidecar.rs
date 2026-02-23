@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use altium_format_types::PcbObjectId;
+use altium_format_types::{MaskExpansionMode, PcbObjectId};
 
 use crate::block_stream::iter_blocks;
 use crate::param_collection::ParameterCollection;
@@ -72,17 +72,43 @@ pub(crate) fn parse_unique_id_primitive_information(
     Ok(entries)
 }
 
+/// One entry from ExtendedPrimitiveInformation.
+#[derive(Debug)]
+pub(crate) struct ExtendedPrimitiveInfoEntry {
+    pub(crate) primitive_index: usize,
+    pub(crate) primitive_object_id: PcbObjectId,
+    pub(crate) info_type: String,
+    pub(crate) solder_mask_expansion_mode: MaskExpansionMode,
+    pub(crate) solder_mask_expansion_manual: String,
+    pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
+    pub(crate) paste_mask_expansion_manual: String,
+}
+
+/// Parses a mask expansion mode string ("None", "NoMask", "Rule", "Manual").
+fn parse_mask_expansion_mode(key: &str, value: &str) -> Result<MaskExpansionMode> {
+    match value {
+        "None" | "NoMask" => Ok(MaskExpansionMode::NoMask),
+        "Rule" => Ok(MaskExpansionMode::Rule),
+        "Manual" => Ok(MaskExpansionMode::Manual),
+        _ => Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("unknown mask expansion mode: '{value}'"),
+        }),
+    }
+}
+
 /// Parses the ExtendedPrimitiveInformation/Header and Data streams.
 ///
-/// Validates the format but uses drain_remaining() on each block since the
-/// full set of possible keys has not been determined.
+/// Each entry contains mask expansion properties for a specific primitive.
+/// Known keys: PRIMITIVEINDEX, PRIMITIVEOBJECTID, TYPE, SOLDERMASKEXPANSIONMODE,
+/// SOLDERMASKEXPANSION_MANUAL, PASTEMASKEXPANSIONMODE, PASTEMASKEXPANSION_MANUAL.
 pub(crate) fn parse_extended_primitive_information(
     header_data: &[u8],
     data: &[u8],
-) -> Result<Vec<usize>> {
+) -> Result<Vec<ExtendedPrimitiveInfoEntry>> {
     let expected_count = parse_pcb_section_header(header_data)? as usize;
 
-    let mut indices = Vec::with_capacity(expected_count);
+    let mut entries = Vec::with_capacity(expected_count);
     for block_result in iter_blocks(data) {
         let block = block_result?;
         let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(&block.data);
@@ -95,42 +121,79 @@ pub(crate) fn parse_extended_primitive_information(
                 detail: format!("negative primitive index: {primitive_index}"),
             });
         }
-        // drain_remaining() is intentional: ExtendedPrimitiveInformation has
-        // not been fully reverse-engineered, so we accept unknown keys here.
-        params.drain_remaining();
 
-        indices.push(primitive_index as usize);
+        let object_id_str: String = params.remove_required("PRIMITIVEOBJECTID")?;
+        let primitive_object_id =
+            PcbObjectId::from_primitive_object_id_str(&object_id_str).ok_or_else(|| {
+                AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEOBJECTID".to_owned(),
+                    detail: format!("unknown primitive object ID string: '{object_id_str}'"),
+                }
+            })?;
+
+        let info_type = params.remove_optional::<String>("TYPE")?.unwrap_or_default();
+
+        let solder_mode_str = params
+            .remove_optional::<String>("SOLDERMASKEXPANSIONMODE")?
+            .unwrap_or_else(|| "None".to_owned());
+        let solder_mask_expansion_mode =
+            parse_mask_expansion_mode("SOLDERMASKEXPANSIONMODE", &solder_mode_str)?;
+        let solder_mask_expansion_manual = params
+            .remove_optional::<String>("SOLDERMASKEXPANSION_MANUAL")?
+            .unwrap_or_default();
+
+        let paste_mode_str = params
+            .remove_optional::<String>("PASTEMASKEXPANSIONMODE")?
+            .unwrap_or_else(|| "None".to_owned());
+        let paste_mask_expansion_mode =
+            parse_mask_expansion_mode("PASTEMASKEXPANSIONMODE", &paste_mode_str)?;
+        let paste_mask_expansion_manual = params
+            .remove_optional::<String>("PASTEMASKEXPANSION_MANUAL")?
+            .unwrap_or_default();
+
+        params.assert_exhausted()?;
+
+        entries.push(ExtendedPrimitiveInfoEntry {
+            primitive_index: primitive_index as usize,
+            primitive_object_id,
+            info_type,
+            solder_mask_expansion_mode,
+            solder_mask_expansion_manual,
+            paste_mask_expansion_mode,
+            paste_mask_expansion_manual,
+        });
     }
 
-    if indices.len() != expected_count {
+    if entries.len() != expected_count {
         return Err(AltiumFormatError::RecordCountMismatch {
             section: "ExtendedPrimitiveInformation".to_owned(),
             expected: expected_count,
-            actual: indices.len(),
+            actual: entries.len(),
         });
     }
 
-    Ok(indices)
+    Ok(entries)
 }
+
+/// Size of a single PrimitiveGuids record: ObjectId (4) + IndexForSave (4) + GUID (16).
+const PRIMITIVE_GUID_RECORD_SIZE: usize = 24;
 
 /// Validates the PrimitiveGuids/Header and Data streams.
 ///
-/// If the count is greater than zero, returns an error because the format
-/// has not been investigated. An empty (count == 0) stream is accepted.
+/// The Data stream contains `count` fixed-size 24-byte binary records
+/// (TPrimitiveGUID struct: i32 ObjectId + i32 IndexForSave + 16-byte GUID).
+/// One extra entry (ObjectId=0x55, Component) exists per footprint beyond the
+/// primitive count. We validate the format but do not use the GUIDs.
 pub(crate) fn validate_primitive_guids(header_data: &[u8], data: &[u8]) -> Result<()> {
     let count = parse_pcb_section_header(header_data)? as usize;
-    if count > 0 {
+    let expected_bytes = count * PRIMITIVE_GUID_RECORD_SIZE;
+    if data.len() != expected_bytes {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "PrimitiveGuids".to_owned(),
             detail: format!(
-                "PrimitiveGuids stream has {count} entries; format not yet implemented"
+                "expected {} bytes ({} entries * {} bytes), got {} bytes",
+                expected_bytes, count, PRIMITIVE_GUID_RECORD_SIZE, data.len()
             ),
-        });
-    }
-    if !data.is_empty() {
-        return Err(AltiumFormatError::UnexpectedTrailingData {
-            offset: 0,
-            count: data.len(),
         });
     }
     Ok(())
@@ -284,9 +347,19 @@ mod tests {
     }
 
     #[test]
-    fn validate_primitive_guids_nonzero_returns_error() {
+    fn validate_primitive_guids_with_entries() {
+        let header = make_header(2);
+        // 2 entries * 24 bytes = 48 bytes
+        let data = vec![0u8; 48];
+        validate_primitive_guids(&header, &data).unwrap();
+    }
+
+    #[test]
+    fn validate_primitive_guids_wrong_size_returns_error() {
         let header = make_header(1);
-        let err = validate_primitive_guids(&header, &[]).unwrap_err();
+        // 1 entry expects 24 bytes, provide only 10
+        let data = vec![0u8; 10];
+        let err = validate_primitive_guids(&header, &data).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidParamValue { .. }));
     }
 }

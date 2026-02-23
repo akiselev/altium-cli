@@ -382,15 +382,6 @@ impl ParameterCollection {
         Err(AltiumFormatError::UnknownParams { keys })
     }
 
-    /// Removes all remaining parameters without erroring.
-    ///
-    /// Use sparingly — only when parameter keys are genuinely variable or not yet fully
-    /// specified (e.g., board/layer stack parameters in Library/Data whose keys vary by
-    /// file version). Prefer explicit `remove_optional` calls whenever keys are known.
-    pub(crate) fn drain_remaining(&mut self) {
-        self.params.clear();
-    }
-
     /// Returns all keys whose names start with `prefix` (case-insensitive).
     pub(crate) fn keys_matching(&self, prefix: &str) -> Vec<String> {
         let lower_prefix = prefix.to_ascii_lowercase();
@@ -399,6 +390,24 @@ impl ParameterCollection {
             .filter(|k| k.to_ascii_lowercase().starts_with(&lower_prefix))
             .cloned()
             .collect()
+    }
+
+    /// Removes and returns all key-value pairs whose key starts with `prefix`
+    /// (case-insensitive). Used for consuming families of indexed parameters
+    /// (e.g. all `V9_CACHE_LAYER{N}_*` entries) as structured data.
+    ///
+    /// Unlike drain_remaining, this targets explicit known prefixes and preserves
+    /// the data. Unknown keys (not matching any prefix) will still trigger
+    /// assert_exhausted errors.
+    pub(crate) fn remove_prefixed(&mut self, prefix: &str) -> IndexMap<String, String> {
+        let keys = self.keys_matching(prefix);
+        let mut result = IndexMap::new();
+        for key in keys {
+            if let Some(value) = self.params.shift_remove(&key) {
+                result.insert(key, value);
+            }
+        }
+        result
     }
 
     // Returns the stored key whose lowercase form matches `key`, or `None` if absent.

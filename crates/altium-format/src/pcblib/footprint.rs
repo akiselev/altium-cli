@@ -1,4 +1,6 @@
-use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
+use altium_format_types::constants::parsing::{
+    BLOCK_SIZE_MASK, DEFAULT_SUBRECORD_COUNT, PAD_SUBRECORD_COUNT, TEXT_SUBRECORD_COUNT,
+};
 use altium_format_types::{Coord, PcbObjectId};
 
 use crate::binary_io::BinaryReader;
@@ -68,6 +70,9 @@ pub(crate) fn load_footprint(
     load_sidecars(doc, cfb_key, &mut footprint)
         .with_context(|| format!("loading sidecars for /{cfb_key}"))?;
 
+    // Mark the footprint storage node itself as consumed.
+    let _ = doc.list_entries(&format!("/{cfb_key}"))?;
+
     Ok(footprint)
 }
 
@@ -83,8 +88,10 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     let description = params.remove_optional::<String>("DESCRIPTION")?.unwrap_or_default();
     let item_guid = params.remove_optional::<String>("ITEMGUID")?.unwrap_or_default();
     let revision_guid = params.remove_optional::<String>("REVISIONGUID")?.unwrap_or_default();
-    // Some libraries include extra metadata (AREA, TITLE, etc.)
-    params.drain_remaining();
+    // Known optional metadata parameters in footprint Parameters streams.
+    let _area = params.remove_optional::<String>("AREA")?;
+    let _title = params.remove_optional::<String>("TITLE")?;
+    params.assert_exhausted()?;
     Ok((pattern, height, description, item_guid, revision_guid))
 }
 
@@ -112,6 +119,18 @@ fn parse_height_mil(params: &mut ParameterCollection) -> Result<Coord> {
     }
 }
 
+/// Returns the number of subrecords for a given PcbLib primitive type.
+///
+/// Pad (6 subrecords) and Text (2 subrecords) use multi-subrecord format;
+/// all other types use a single subrecord.
+fn subrecord_count(object_id: PcbObjectId) -> usize {
+    match object_id {
+        PcbObjectId::Pad => PAD_SUBRECORD_COUNT,
+        PcbObjectId::Text => TEXT_SUBRECORD_COUNT,
+        _ => DEFAULT_SUBRECORD_COUNT,
+    }
+}
+
 fn parse_pcblib_data_stream(data: &[u8]) -> Result<(String, Vec<crate::pcblib::PcbPrimitive>)> {
     let mut reader = BinaryReader::new(data);
 
@@ -132,20 +151,23 @@ fn parse_pcblib_data_stream(data: &[u8]) -> Result<(String, Vec<crate::pcblib::P
         let record_offset = reader.position();
         let type_byte = reader.read_u8()?;
         let object_id = PcbObjectId::try_from(type_byte)?;
-        // PcbLib uses single-record format: each primitive has exactly one
-        // length-prefixed payload (unlike PcbDoc which uses multi-subrecord
-        // format for Pad and Text).
-        let raw_len = reader.read_u32_le()?;
-        let payload_len = (raw_len & BLOCK_SIZE_MASK) as usize;
-        let payload = reader.read_bytes(payload_len)?;
-        let primitive = primitives::dispatch_primitive(object_id, payload)
+        let n_subrecords = subrecord_count(object_id);
+
+        let mut subrecords: Vec<&[u8]> = Vec::with_capacity(n_subrecords);
+        for _ in 0..n_subrecords {
+            let raw_len = reader.read_u32_le()?;
+            let payload_len = (raw_len & BLOCK_SIZE_MASK) as usize;
+            let payload = reader.read_bytes(payload_len)?;
+            subrecords.push(payload);
+        }
+        let primitive = primitives::dispatch_primitive(object_id, &subrecords)
             .with_context(|| {
                 format!(
-                    "primitive #{} ({:?}) at Data offset 0x{:X} (payload {} bytes)",
+                    "primitive #{} ({:?}) at Data offset 0x{:X} ({} subrecords)",
                     records.len(),
                     object_id,
                     record_offset,
-                    payload_len,
+                    n_subrecords,
                 )
             })?;
         records.push(primitive);
@@ -214,6 +236,20 @@ fn load_sidecars(
     } else {
         let _ = doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
         let _ = doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
+    }
+
+    // CustomShapes: optional stream present in some footprints (e.g. MLP, WSON packages).
+    // Error if present — the format has not been reverse-engineered yet.
+    let custom_shapes_path = format!("/{cfb_key}/CustomShapes");
+    if let Some(data) = doc.read_stream_optional(&custom_shapes_path)? {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "CustomShapes".to_owned(),
+            detail: format!(
+                "CustomShapes stream exists ({} bytes) at {custom_shapes_path}; \
+                 parser not yet implemented",
+                data.len()
+            ),
+        });
     }
 
     merge_sidecars(&mut footprint.primitives, wide_strings, unique_ids)?;

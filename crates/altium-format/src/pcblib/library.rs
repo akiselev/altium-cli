@@ -15,6 +15,33 @@ pub(crate) struct PcbLibraryData {
     pub(crate) version: String,
     pub(crate) date: String,
     pub(crate) time: String,
+    pub(crate) board_config: PcbBoardConfig,
+}
+
+/// Board configuration parameters from the Library/Data stream.
+///
+/// These are the board defaults and layer stack definitions that Altium uses
+/// when editing footprints in the library editor. The layer stack uses indexed
+/// parameters V9_STACK_LAYER{N}_*.
+pub(crate) struct PcbBoardConfig {
+    pub(crate) record: String,
+    pub(crate) v9_masterstack_style: String,
+    pub(crate) v9_masterstack_id: String,
+    pub(crate) v9_masterstack_name: String,
+    pub(crate) layer_stack: Vec<PcbBoardLayerEntry>,
+}
+
+/// A single layer entry from the V9_STACK_LAYER{N}_* parameters.
+pub(crate) struct PcbBoardLayerEntry {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) layer_id: String,
+    pub(crate) used_by_prims: bool,
+    pub(crate) cop_thick: String,
+    pub(crate) diel_type: String,
+    pub(crate) diel_const: String,
+    pub(crate) diel_height: String,
+    pub(crate) diel_material: String,
 }
 
 pub(crate) struct PcbLibComponentTocEntry {
@@ -41,9 +68,10 @@ pub(crate) struct PcbLibModelEntry {
 /// The stream contains at least one text block of pipe-delimited params (the main
 /// library metadata and board/layer-stack defaults). After the block(s), a raw
 /// binary component-name index (NOT block-framed) may follow; it duplicates
-/// information already available in ComponentParamsTOC and is consumed here
-/// without detailed parsing.
-pub(crate) fn parse_library_data(data: &[u8]) -> Result<PcbLibraryData> {
+/// information already available in ComponentParamsTOC.
+///
+/// Returns the library metadata and the parsed component-name index (for cross-validation).
+pub(crate) fn parse_library_data(data: &[u8]) -> Result<(PcbLibraryData, Vec<String>)> {
     let mut blocks_iter = iter_blocks(data);
 
     // First block: pipe-delimited params.
@@ -70,39 +98,118 @@ pub(crate) fn parse_library_data(data: &[u8]) -> Result<PcbLibraryData> {
     let version = params.remove_optional::<String>("VERSION")?.unwrap_or_default();
     let date = params.remove_optional::<String>("DATE")?.unwrap_or_default();
     let time = params.remove_optional::<String>("TIME")?.unwrap_or_default();
-    // Board defaults, layer stack, and RECORD=Board continuation records are accepted
-    // as remaining parameters without erroring. Drain them to satisfy assert_exhausted.
-    params.drain_remaining();
+    let board_config = parse_library_board_params(&mut params)?;
+    params.assert_exhausted()?;
 
     // After the metadata block, the stream may contain:
-    //   - A second text block with short footprint names (block-framed)
     //   - A binary component-name index (raw TLV entries, NOT block-framed)
-    // We consume these supplementary sections by reading any remaining valid blocks,
-    // then consuming the binary name index entries that follow.
-    // The name index format is: u32_le(entry_size) u8(string_len) string_bytes.
+    // The name index format is: u32_le(count) then count entries of
+    // u32_le(entry_size) + entry_size bytes (u8_namelen + name_bytes).
+    // These names duplicate ComponentParamsTOC; we parse them for cross-validation.
     let bytes_after_first_block = 4 + block.data.len(); // header + payload
-    consume_library_data_suffix(&data[bytes_after_first_block..])?;
+    let suffix_names = parse_library_data_suffix(&data[bytes_after_first_block..])?;
 
-    Ok(PcbLibraryData { filename, kind, version, date, time })
+    Ok((PcbLibraryData { filename, kind, version, date, time, board_config }, suffix_names))
 }
 
-/// Consume the supplementary component-name index appended to Library/Data.
+/// Parses board-level configuration parameters from the Library/Data stream.
+///
+/// These include the layer stack definition (V9_MASTERSTACK_* and V9_STACK_LAYER{N}_*)
+/// and continuation RECORD=Board entries. The layer stack uses 1-based indexing;
+/// we detect entries by probing for V9_STACK_LAYER{N}_ID.
+fn parse_library_board_params(params: &mut ParameterCollection) -> Result<PcbBoardConfig> {
+    let record = params.remove_optional::<String>("RECORD")?.unwrap_or_default();
+    let v9_masterstack_style = params
+        .remove_optional::<String>("V9_MASTERSTACK_STYLE")?
+        .unwrap_or_default();
+    let v9_masterstack_id = params
+        .remove_optional::<String>("V9_MASTERSTACK_ID")?
+        .unwrap_or_default();
+    let v9_masterstack_name = params
+        .remove_optional::<String>("V9_MASTERSTACK_NAME")?
+        .unwrap_or_default();
+
+    // Consume indexed layer stack entries: V9_STACK_LAYER1_*, V9_STACK_LAYER2_*, ...
+    // Probe for the next index until no _ID key is found.
+    let mut layer_stack = Vec::new();
+    let mut idx = 1u32;
+    loop {
+        let id_key = format!("V9_STACK_LAYER{idx}_ID");
+        let id: Option<String> = params.remove_optional(&id_key)?;
+        match id {
+            None => break,
+            Some(id_val) => {
+                let name = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_NAME"))?
+                    .unwrap_or_default();
+                let layer_id = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_LAYERID"))?
+                    .unwrap_or_default();
+                let used_by_prims = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_USEDBYPRIMS"))?
+                    .map(|s| s.eq_ignore_ascii_case("TRUE"))
+                    .unwrap_or(false);
+                let cop_thick = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_COPTHICK"))?
+                    .unwrap_or_default();
+                let diel_type = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELTYPE"))?
+                    .unwrap_or_default();
+                let diel_const = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELCONST"))?
+                    .unwrap_or_default();
+                let diel_height = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELHEIGHT"))?
+                    .unwrap_or_default();
+                let diel_material = params
+                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELMATERIAL"))?
+                    .unwrap_or_default();
+                layer_stack.push(PcbBoardLayerEntry {
+                    id: id_val,
+                    name,
+                    layer_id,
+                    used_by_prims,
+                    cop_thick,
+                    diel_type,
+                    diel_const,
+                    diel_height,
+                    diel_material,
+                });
+                idx += 1;
+            }
+        }
+    }
+
+    Ok(PcbBoardConfig {
+        record,
+        v9_masterstack_style,
+        v9_masterstack_id,
+        v9_masterstack_name,
+        layer_stack,
+    })
+}
+
+/// Parse the supplementary component-name index appended to Library/Data.
 ///
 /// Format: u32_le(count) followed by count entries of u32_le(entry_size) +
-/// entry_size bytes (u8_namelen + name_bytes). This index duplicates information
-/// from ComponentParamsTOC; consume without parsing.
-fn consume_library_data_suffix(data: &[u8]) -> Result<()> {
+/// entry_size bytes (u8_namelen + name_bytes). Returns the parsed names
+/// for cross-validation against ComponentParamsTOC.
+fn parse_library_data_suffix(data: &[u8]) -> Result<Vec<String>> {
     if data.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let mut reader = BinaryReader::new(data);
     let count = reader.read_u32_le()? as usize;
+    let mut names = Vec::with_capacity(count);
     for _ in 0..count {
         let entry_size = reader.read_u32_le()? as usize;
-        let _entry_data = reader.read_bytes(entry_size)?;
+        let mut entry_reader = reader.sub_reader(entry_size)?;
+        let name = entry_reader.read_pascal_string()?;
+        entry_reader.assert_exhausted()?;
+        names.push(name);
     }
     reader.assert_exhausted()?;
-    Ok(())
+    Ok(names)
 }
 
 /// Parse Library/ComponentParamsTOC/{Header,Data} streams.
@@ -138,9 +245,16 @@ pub(crate) fn parse_component_toc(
             detail: "expected text block".to_owned(),
         });
     }
-    // Consume any additional blocks (for block_count > 1).
-    for extra in blocks_iter {
+    // Verify no additional blocks exist.
+    if let Some(extra) = blocks_iter.next() {
         let _ = extra?;
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Library/ComponentParamsTOC/Data".to_owned(),
+            detail: format!(
+                "expected exactly 1 block but found additional blocks (block_count={})",
+                block_count
+            ),
+        });
     }
 
     // Decode Windows-1252; strip trailing NUL terminator if present.
@@ -201,9 +315,11 @@ fn parse_toc_record(record: &str) -> Result<PcbLibComponentTocEntry> {
                 height = Coord::from_mils_f64(mils);
             }
             "Description" => description = value.to_owned(),
-            // Some libraries include extra metadata keys (e.g. "Title").
-            // These are harmless and don't affect footprint parsing.
-            _ => {}
+            _ => {
+                return Err(AltiumFormatError::UnknownParams {
+                    keys: vec![key.to_owned()],
+                });
+            }
         }
     }
 
@@ -241,8 +357,9 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         let rotation_z = params.remove_optional::<f64>("ROTZ")?.unwrap_or(0.0);
         let standoff = params.remove_optional::<f64>("DZ")?.unwrap_or(0.0);
         let checksum = params.remove_optional::<String>("CHECKSUM")?.unwrap_or_default();
-        // MODELSOURCE is present but not used in our data model; consume it.
+        // MODELSOURCE and TITLE are present but not used in our data model; consume them.
         let _ = params.remove_optional::<String>("MODELSOURCE")?;
+        let _ = params.remove_optional::<String>("TITLE")?;
         params.assert_exhausted()?;
         entries.push(PcbLibModelEntry {
             id,
@@ -268,29 +385,46 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
     Ok(entries)
 }
 
-/// Parse and consume an auxiliary Library sub-storage with Header+Data pattern.
+/// Validate an auxiliary Library sub-storage with Header+Data pattern is empty.
 ///
-/// Reads both Header and Data streams (marking them consumed). Validates the
-/// header count. These library-level metadata streams (LayerKindMapping,
-/// PadViaLibrary, etc.) are consumed for the tracked-CFB invariant but their
-/// detailed field-level parsing is not yet implemented.
-pub(crate) fn consume_header_data_substorage(
+/// Reads both Header and Data streams (marking them consumed). If the header
+/// declares a non-zero count or the data stream is non-empty, returns an error
+/// because the parser for these substorages is not yet implemented.
+pub(crate) fn validate_empty_substorage(
     doc: &mut TrackedCfbDocument,
     header_path: &str,
     data_path: &str,
 ) -> Result<()> {
     let header_data = doc.read_stream(header_path)?;
-    let _count = parse_pcb_section_header(&header_data)?;
-    let _data = doc.read_stream(data_path)?;
+    let count = parse_pcb_section_header(&header_data)?;
+    let data = doc.read_stream(data_path)?;
+    if count > 0 || !data.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: header_path.to_owned(),
+            detail: format!(
+                "substorage has count={count} and {} data bytes; parser not yet implemented",
+                data.len()
+            ),
+        });
+    }
     Ok(())
 }
 
-/// Parse and consume the Library/EmbeddedFonts single-stream sub-storage.
+/// Validate the Library/EmbeddedFonts single-stream sub-storage is empty.
 ///
-/// EmbeddedFonts is a single stream (no Header/Data pattern) containing
-/// font data. Read and consumed for the tracked-CFB invariant.
-pub(crate) fn consume_embedded_fonts(doc: &mut TrackedCfbDocument, path: &str) -> Result<()> {
-    let _data = doc.read_stream(path)?;
+/// Reads the stream (marking it consumed). If non-empty, returns an error
+/// because the embedded font parser is not yet implemented.
+pub(crate) fn validate_empty_embedded_fonts(doc: &mut TrackedCfbDocument, path: &str) -> Result<()> {
+    let data = doc.read_stream(path)?;
+    if !data.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: path.to_owned(),
+            detail: format!(
+                "EmbeddedFonts stream has {} bytes; parser not yet implemented",
+                data.len()
+            ),
+        });
+    }
     Ok(())
 }
 
@@ -317,21 +451,23 @@ mod tests {
     fn parse_library_data_basic() {
         let payload = b"|FILENAME=test.PcbLib|KIND=PcbLib|VERSION=1.0|DATE=2024-01-01|TIME=12:00:00|\0";
         let block = make_text_block(payload);
-        let lib = parse_library_data(&block).unwrap();
+        let (lib, suffix_names) = parse_library_data(&block).unwrap();
         assert_eq!(lib.filename, "test.PcbLib");
         assert_eq!(lib.kind, "PcbLib");
         assert_eq!(lib.version, "1.0");
         assert_eq!(lib.date, "2024-01-01");
         assert_eq!(lib.time, "12:00:00");
+        assert!(suffix_names.is_empty());
     }
 
     #[test]
     fn parse_library_data_with_extra_params() {
         let payload = b"|FILENAME=foo.PcbLib|KIND=PcbLib|VERSION=2.0|DATE=2024-01-01|TIME=00:00:00|V9_MASTERSTACK_STYLE=1|\0";
         let block = make_text_block(payload);
-        let lib = parse_library_data(&block).unwrap();
+        let (lib, _) = parse_library_data(&block).unwrap();
         assert_eq!(lib.filename, "foo.PcbLib");
         assert_eq!(lib.version, "2.0");
+        assert_eq!(lib.board_config.v9_masterstack_style, "1");
     }
 
     #[test]
@@ -392,7 +528,7 @@ mod tests {
         }
         let mut doc = TrackedCfbDocument::open(&path).expect("should open PcbLib");
         let data = doc.read_stream("/Library/Data").expect("Library/Data must exist");
-        let lib = parse_library_data(&data).expect("parse_library_data must succeed");
+        let (lib, _suffix_names) = parse_library_data(&data).expect("parse_library_data must succeed");
         assert!(!lib.kind.is_empty(), "KIND must not be empty in real file");
         assert!(lib.kind.contains("PCB") || lib.kind.contains("Protel"), "KIND={}", lib.kind);
     }

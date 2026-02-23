@@ -13,25 +13,25 @@ use altium_format_types::PcbObjectId;
 use crate::pcblib::PcbPrimitive;
 use crate::{AltiumFormatError, Result};
 
-/// Dispatches a single PcbLib primitive payload to the appropriate parser.
+/// Dispatches PcbLib primitive subrecords to the appropriate parser.
 ///
-/// PcbLib uses single-record format: each primitive has exactly one
-/// length-prefixed payload (unlike PcbDoc which uses multi-subrecord
-/// format for Pad and Text).
+/// Most primitives have a single subrecord. Pad has 6 subrecords and
+/// Text has 2 subrecords — the subrecord count is determined by the
+/// caller based on the object type.
 pub(crate) fn dispatch_primitive(
     object_id: PcbObjectId,
-    data: &[u8],
+    subrecords: &[&[u8]],
 ) -> Result<PcbPrimitive> {
     match object_id {
-        PcbObjectId::Arc => arc::parse_arc(data).map(PcbPrimitive::Arc),
-        PcbObjectId::Track => track::parse_track(data).map(PcbPrimitive::Track),
-        PcbObjectId::Via => via::parse_via(data).map(PcbPrimitive::Via),
-        PcbObjectId::Fill => fill::parse_fill(data).map(PcbPrimitive::Fill),
-        PcbObjectId::Text => text::parse_text(data).map(PcbPrimitive::Text),
-        PcbObjectId::Region => region::parse_region(data).map(PcbPrimitive::Region),
-        PcbObjectId::Pad => pad::parse_pad(data).map(PcbPrimitive::Pad),
+        PcbObjectId::Arc => arc::parse_arc(subrecords[0]).map(PcbPrimitive::Arc),
+        PcbObjectId::Track => track::parse_track(subrecords[0]).map(PcbPrimitive::Track),
+        PcbObjectId::Via => via::parse_via(subrecords[0]).map(PcbPrimitive::Via),
+        PcbObjectId::Fill => fill::parse_fill(subrecords[0]).map(PcbPrimitive::Fill),
+        PcbObjectId::Text => text::parse_text(subrecords).map(PcbPrimitive::Text),
+        PcbObjectId::Region => region::parse_region(subrecords[0]).map(PcbPrimitive::Region),
+        PcbObjectId::Pad => pad::parse_pad(subrecords).map(PcbPrimitive::Pad),
         PcbObjectId::ComponentBody => {
-            component_body::parse_component_body(data).map(PcbPrimitive::ComponentBody)
+            component_body::parse_component_body(subrecords[0]).map(PcbPrimitive::ComponentBody)
         }
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
     }
