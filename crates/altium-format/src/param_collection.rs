@@ -6,7 +6,7 @@
 //! Insertion order is preserved (IndexMap) for deterministic serialization.
 use indexmap::IndexMap;
 use altium_format_types::{Coord, CoordPoint};
-use altium_format_types::constants::parsing::{C_BASE_UNIT, C_SCH_BROKEN_BAR, C_SCH_UTF8_PREFIX};
+use altium_format_types::constants::parsing::{C_BASE_UNIT, C_SCH_BROKEN_BAR, C_SCH_SPECIAL_DELIMITER, C_SCH_UTF8_PREFIX};
 
 use crate::param_value::{FromParamValue, ToParamValue};
 use crate::{AltiumFormatError, Result};
@@ -83,29 +83,49 @@ impl ParameterCollection {
         }
     }
 
-    // Serializes to pipe-delimited Windows-1252 bytes: `|KEY1=VALUE1|KEY2=VALUE2|\0`.
-    // Values are escaped (| → [], = → {}) and encoded as Windows-1252.
-    // If a value cannot be losslessly encoded in Windows-1252, it is written with
-    // a %UTF8% key prefix and UTF-8 value encoding.
+    // Serializes to pipe-delimited Windows-1252 bytes with %UTF8% dual-write.
+    //
+    // For each parameter, prepares a "safe" value (pipes → broken bar ¦) matching
+    // C#'s `GetSafeParamValue`. If the safe value contains any char > '~' (the
+    // `HasNonAnsiSymbols` trigger), a UTF-8 version `|%UTF8%KEY=VALUE||` is emitted
+    // first. The Win-1252 version `|KEY=VALUE` is ALWAYS emitted (unconditionally).
+    //
+    // Pipe escaping in Win-1252 uses byte 0x8E (Ž in Win-1252): | → Ž, literal Ž → ŽŽ.
+    // Equals signs are never escaped (parser splits on first `=` only).
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for (key, value) in &self.params {
-            let escaped_value = escape_param_value(value);
-            let (encoded_value, _, had_unmappable) = encoding_rs::WINDOWS_1252.encode(&escaped_value);
-            if had_unmappable {
-                // Write |%UTF8%KEY= as ASCII, then value as raw UTF-8
+            // Prepare "safe" value: double Ž first, then pipes → broken bar.
+            // Matches C#'s GetSafeParamValue: | → ¦, \u008E → \u008E\u008E.
+            // Our in-memory Ž is U+017D (Win-1252 decoded form of byte 0x8E).
+            let safe_value: String = {
+                let s = value.replace('\u{017D}', "\u{017D}\u{017D}");
+                s.replace('|', &String::from(C_SCH_BROKEN_BAR))
+            };
+
+            // HasNonAnsiSymbols: any char > '~' except the delimiter itself.
+            let needs_utf8 = safe_value.chars().any(|c| c > '~' && c != C_SCH_SPECIAL_DELIMITER);
+
+            // If non-ASCII: emit UTF-8 version first (value is .trim()'d).
+            if needs_utf8 {
+                let trimmed = safe_value.trim();
+                let utf8_entry = format!("|{}{key}={trimmed}||", C_SCH_UTF8_PREFIX);
+                out.extend_from_slice(utf8_entry.as_bytes());
+            }
+
+            // ALWAYS emit Win-1252 version.
+            let escaped = escape_for_win1252(value);
+            out.push(b'|');
+            let (encoded_key, _, _) = encoding_rs::WINDOWS_1252.encode(key);
+            out.extend_from_slice(&encoded_key);
+            out.push(b'=');
+            let (encoded_value, _, _) = encoding_rs::WINDOWS_1252.encode(&escaped);
+            out.extend_from_slice(&encoded_value);
+
+            // Per-parameter 0x8E boundary guard: if encoded value ends with 0x8E,
+            // append a trailing pipe to prevent misparse at the segment boundary.
+            if encoded_value.last() == Some(&0x8E) {
                 out.push(b'|');
-                out.extend_from_slice(C_SCH_UTF8_PREFIX.as_bytes());
-                out.extend_from_slice(key.as_bytes());
-                out.push(b'=');
-                out.extend_from_slice(escaped_value.as_bytes());
-            } else {
-                // Write |KEY=VALUE as Windows-1252
-                out.push(b'|');
-                let (encoded_key, _, _) = encoding_rs::WINDOWS_1252.encode(key);
-                out.extend_from_slice(&encoded_key);
-                out.push(b'=');
-                out.extend_from_slice(&encoded_value);
             }
         }
         out.push(0); // NUL terminator
@@ -114,11 +134,12 @@ impl ParameterCollection {
 
     // Serializes as pipe-delimited UTF-16LE parameter bytes (no NUL terminator).
     // Format: "|KEY1=VALUE1|KEY2=VALUE2|" encoded as UTF-16LE.
+    // Pipes in values are escaped as ¦ (broken bar, U+00A6). Equals are not escaped.
     // Used for pin sidecar streams (PinMiscData, PinWideText, etc.).
     pub(crate) fn to_utf16le_bytes(&self) -> Vec<u8> {
         let mut s = String::new();
         for (key, value) in &self.params {
-            let escaped_value = escape_param_value(value);
+            let escaped_value = escape_for_utf16le(value);
             s.push('|');
             s.push_str(key);
             s.push('=');
@@ -360,27 +381,35 @@ impl ParameterCollection {
     }
 }
 
-// Encodes literal pipe and equals in values for writing.
-// This is the inverse of unescape_param_value: | → [], = → {}.
-fn escape_param_value(s: &str) -> String {
-    // Order matters: escape pipes first, then equals
-    s.replace('|', "[]").replace('=', "{}")
+// Escapes a raw value for Win-1252 encoding (doubleEscape mode).
+// Literal Ž (U+017D, Win-1252 byte 0x8E) is doubled so it round-trips as literal 0x8E.
+// Pipe | is replaced with Ž (encodes to single 0x8E = escaped pipe).
+// Equals = is NOT escaped (parser splits on first = only).
+fn escape_for_win1252(s: &str) -> String {
+    // Order matters: double literal Ž first, then replace pipes with Ž.
+    let s = s.replace('\u{017D}', "\u{017D}\u{017D}");
+    s.replace('|', "\u{017D}")
+}
+
+// Escapes a raw value for UTF-16LE encoding (broken bar mode).
+// Pipe | is replaced with ¦ (broken bar, U+00A6).
+// Equals = is NOT escaped.
+fn escape_for_utf16le(s: &str) -> String {
+    s.replace('|', &String::from(C_SCH_BROKEN_BAR))
 }
 
 // Decodes Altium's in-value escape sequences.
-// Altium encodes literal pipe and equals inside values because | and = are delimiters.
-// Additionally, byte 0x8E (142) encodes a literal pipe within values (single 0x8E → |,
-// double 0x8E 0x8E → literal 0x8E character). Byte 0xA6 (broken bar ¦) is an alternate
-// pipe escape in ASCII format (¦ → |). Verified in `StrUtils.ReplaceSpecialDelimiterChars`
-// and `ProcessMBCSString` in decompiled .NET source.
+// Byte 0x8E (Win-1252 → Ž, U+017D) encodes pipes: single Ž → |, double ŽŽ → literal Ž.
+// Broken bar ¦ (U+00A6) is an alternate pipe escape in string/UTF-16LE contexts.
+// Equals = is never escaped (parser splits on first = only).
+// Verified in `StrUtils.ReplaceSpecialDelimiterChars` and `ProcessMBCSString`.
 fn unescape_param_value(s: &str) -> String {
-    // Order matters: resolve double-0x8E first (literal 0x8E), then single 0x8E (pipe).
+    // Order matters: resolve double Ž first (literal 0x8E), then single Ž (pipe).
     // Windows-1252 decodes byte 0x8E to U+017D (Ž), not U+008E.
     let s = s.replace("\u{017D}\u{017D}", "\x00");  // placeholder for literal Ž
     let s = s.replace('\u{017D}', "|");
-    let s = s.replace('\x00', "\u{017D}");           // restore literal Ž (0x8E in Windows-1252)
-    let s = s.replace(C_SCH_BROKEN_BAR, "|");            // broken bar → pipe
-    s.replace("[]", "|").replace("{}", "=")
+    let s = s.replace('\x00', "\u{017D}");           // restore literal Ž
+    s.replace(C_SCH_BROKEN_BAR, "|")                 // broken bar → pipe
 }
 
 #[cfg(test)]
@@ -413,14 +442,6 @@ mod tests {
         let v: String = pc.remove_required("KEY").unwrap();
         assert_eq!(v, "first");
         pc.assert_exhausted().unwrap();
-    }
-
-    #[test]
-    fn escape_brackets_and_braces() {
-        let data = b"|VAL=a[]b{}c|\0";
-        let mut pc = ParameterCollection::from_bytes(data).unwrap();
-        let v: String = pc.remove_required("VAL").unwrap();
-        assert_eq!(v, "a|b=c");
     }
 
     #[test]
@@ -607,13 +628,77 @@ mod tests {
     }
 
     #[test]
-    fn to_bytes_escaping() {
+    fn to_bytes_pipe_in_value_roundtrip() {
+        // Value contains pipe → triggers dual-write (¦ > '~').
         let mut pc = ParameterCollection::new();
         pc.insert("VAL", "a|b=c".to_owned());
         let bytes = pc.to_bytes();
+        // Verify dual-write: UTF-8 version uses ¦ (broken bar), Win-1252 uses 0x8E (Ž)
+        assert!(bytes.windows(6).any(|w| w == b"%UTF8%"), "should contain %UTF8% prefix");
+        assert!(bytes.contains(&0x8E), "should contain 0x8E escape byte");
+        // Roundtrip: parsing gives back original value
         let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
         let v: String = pc2.remove_required("VAL").unwrap();
         assert_eq!(v, "a|b=c");
+    }
+
+    #[test]
+    fn to_bytes_non_ascii_dual_write() {
+        // Non-ASCII µ triggers %UTF8% dual-write.
+        let mut pc = ParameterCollection::new();
+        pc.insert("Text", "0.1\u{00B5}F".to_owned()); // µF
+        let bytes = pc.to_bytes();
+        // UTF-8 version: µ as C2 B5
+        assert!(bytes.windows(6).any(|w| w == b"%UTF8%"), "should contain %UTF8% prefix");
+        assert!(bytes.windows(2).any(|w| w == [0xC2, 0xB5]), "should contain UTF-8 µ");
+        // Win-1252 version: µ as single byte B5
+        assert!(bytes.contains(&0xB5), "should contain Win-1252 µ byte");
+        // Roundtrip
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let v: String = pc2.remove_required("Text").unwrap();
+        assert_eq!(v, "0.1\u{00B5}F");
+    }
+
+    #[test]
+    fn to_bytes_ascii_no_dual_write() {
+        // Pure ASCII value should NOT trigger dual-write.
+        let mut pc = ParameterCollection::new();
+        pc.insert("KEY", "hello".to_owned());
+        let bytes = pc.to_bytes();
+        assert!(!bytes.windows(6).any(|w| w == b"%UTF8%"), "pure ASCII should not have %UTF8%");
+        assert_eq!(&bytes, b"|KEY=hello\0");
+    }
+
+    #[test]
+    fn to_bytes_equals_not_escaped() {
+        // Equals in value is NOT escaped — parser splits on first = only.
+        let mut pc = ParameterCollection::new();
+        pc.insert("VAL", "x=y=z".to_owned());
+        let bytes = pc.to_bytes();
+        // The raw bytes should contain literal = signs in the value
+        assert_eq!(&bytes, b"|VAL=x=y=z\0");
+        // Roundtrip
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let v: String = pc2.remove_required("VAL").unwrap();
+        assert_eq!(v, "x=y=z");
+    }
+
+    #[test]
+    fn to_bytes_trailing_0x8e_boundary_guard() {
+        // Value ending with | → escaped to trailing Ž (0x8E).
+        // Boundary guard appends 0x7C after the 0x8E.
+        let mut pc = ParameterCollection::new();
+        pc.insert("VAL", "a|".to_owned());
+        let bytes = pc.to_bytes();
+        // Find the Win-1252 portion: should end with 0x8E 0x7C before NUL
+        // (boundary guard pipe after trailing escape byte)
+        let nul_pos = bytes.iter().rposition(|&b| b == 0).unwrap();
+        assert_eq!(bytes[nul_pos - 1], b'|', "boundary guard pipe before NUL");
+        assert_eq!(bytes[nul_pos - 2], 0x8E, "0x8E escape before guard pipe");
+        // Roundtrip
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let v: String = pc2.remove_required("VAL").unwrap();
+        assert_eq!(v, "a|");
     }
 
     #[test]

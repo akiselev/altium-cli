@@ -873,7 +873,7 @@ pub(crate) struct SchParameter {
     pub font_id: i32,
     #[param(key = IS_HIDDEN, default = false)]
     pub is_hidden: bool,
-    #[param(key = TEXT, default = String::from("*"), skip_default)]
+    #[param(key = TEXT, default = String::new())]
     pub text: String,
     #[param(key = PARAM_TYPE, default = ParameterType::String)]
     pub param_type: ParameterType,
@@ -1926,7 +1926,7 @@ mod tests {
     fn parameter_defaults() {
         let mut params = pc("|Location.X=0|Location.Y=0|");
         let param = SchParameter::from_params(&mut params).unwrap();
-        assert_eq!(param.text, "*");
+        assert_eq!(param.text, "");
         assert_eq!(param.name, "Comment");
         assert_eq!(param.read_only_state, ParameterReadOnlyState::None);
         assert!(!param.show_name);
