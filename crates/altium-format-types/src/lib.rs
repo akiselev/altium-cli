@@ -39,7 +39,7 @@ pub use sch::{
     HarnessConnectionPointStyle, HarnessLengthUnit, HarnessShieldStyle, HarnessSpliceStyle,
     HarnessWireLengthType, IeeeSymbol, LeftRightSide, LineShape, LineStyle, NoErcSymbol,
     ParameterReadOnlyState, ParameterSetStyle, ParameterType, PenWidth, PinElectricalType,
-    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation, StdLogicState,
     SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, TextHorzAnchor, TextJustification,
     TextVertAnchor, VisibleGridStyle,
 };

@@ -23,7 +23,7 @@ use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LineShape, LineStyle,
     ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
-    SchRecordType, TextHorzAnchor, TextJustification, TextVertAnchor,
+    SchRecordType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
     constants::{
         component::{
             ALL_PIN_COUNT, ALIAS_LIST, COMPONENT_DESCRIPTION, COMPONENT_KIND,
@@ -168,7 +168,7 @@ pub(crate) struct SchPin {
     pub symbol_inside: IeeeSymbol,
     pub symbol_outside: IeeeSymbol,
     pub description: String,
-    pub formal_type: u8,
+    pub formal_type: StdLogicState,
     pub electrical: PinElectricalType,
     pub pin_length: Coord,
     pub location: CoordPoint,
@@ -249,7 +249,7 @@ pub(crate) fn parse_binary_pin(data: &[u8]) -> Result<SchPin> {
 
     let description = r.read_pascal_string()?;
 
-    let formal_type = r.read_u8()?;
+    let formal_type = StdLogicState::try_from(r.read_u8()?)?;
     let electrical = PinElectricalType::try_from(r.read_u8()?)?;
     let conglomerate_byte = r.read_u8()?;
     let cong = decode_pin_conglomerate(conglomerate_byte)?;
@@ -1013,7 +1013,7 @@ pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
 
     w.write_pascal_string(&pin.description);
 
-    w.write_u8(pin.formal_type);
+    w.write_u8(pin.formal_type as u8);
     w.write_u8(pin.electrical as u8);
     w.write_u8(encode_pin_conglomerate(pin));
 
@@ -2072,7 +2072,7 @@ mod tests {
             symbol_inside: IeeeSymbol::NoSymbol,
             symbol_outside: IeeeSymbol::NoSymbol,
             description: String::new(),
-            formal_type: 0,
+            formal_type: StdLogicState::Uninitialized,
             electrical: PinElectricalType::Input,
             orientation: RotationBy90::Rotate0,
             is_hidden: false,
@@ -2127,7 +2127,7 @@ mod tests {
         pin.symbol_inner_edge = IeeeSymbol::Clock;
         pin.symbol_outer_edge = IeeeSymbol::Dot;
         pin.description = "Test pin description".to_owned();
-        pin.formal_type = 1;
+        pin.formal_type = StdLogicState::ForcingUnknown;
         pin.electrical = PinElectricalType::Output;
         pin.orientation = RotationBy90::Rotate90;
         pin.is_hidden = true;
@@ -2152,7 +2152,7 @@ mod tests {
         assert_eq!(pin2.symbol_inner_edge, IeeeSymbol::Clock);
         assert_eq!(pin2.symbol_outer_edge, IeeeSymbol::Dot);
         assert_eq!(pin2.description, "Test pin description");
-        assert_eq!(pin2.formal_type, 1);
+        assert_eq!(pin2.formal_type, StdLogicState::ForcingUnknown);
         assert_eq!(pin2.electrical, PinElectricalType::Output);
         assert_eq!(pin2.orientation, RotationBy90::Rotate90);
         assert!(pin2.is_hidden);
