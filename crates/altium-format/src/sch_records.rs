@@ -37,11 +37,11 @@ use altium_format_types::{
         },
         locking::{
             GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE,
-            NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE,
+            NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE, SELECTION,
         },
         electrical::{
             CONNECTION_PAIRS_TO_SUPPRESS, ELECTRICAL, FORMAL_TYPE, IO_TYPE, SHOW_NET_NAME, SIDE,
-            SUPPRESS_ALL, SYMBOL_TYPE, IS_CROSS_SHEET_CONNECTOR,
+            SUPPRESS_ALL, SYMBOL_TYPE, IS_CROSS_SHEET_CONNECTOR, ERROR_KIND_SET_TO_SUPPRESS,
         },
         harness::HARNESS_TYPE,
         model::{
@@ -1509,6 +1509,8 @@ pub(crate) struct SchPort {
     pub location: CoordPoint,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
     #[param(key = NAME, default = String::new())]
     pub name: String,
     #[param(key = IO_TYPE, default = 0i32)]
@@ -1546,10 +1548,78 @@ pub(crate) struct SchNoConnect {
     pub is_active: bool,
     #[param(key = SUPPRESS_ALL, default = true)]
     pub suppress_all: bool,
+    #[param(key = ERROR_KIND_SET_TO_SUPPRESS, default = String::new())]
+    pub error_kind_set_to_suppress: String,
     #[param(key = CONNECTION_PAIRS_TO_SUPPRESS, default = String::new())]
     pub connection_pairs_to_suppress: String,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
+}
+
+/// Sheet name text record (RECORD=32).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchSheetName {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
+    pub justification: TextJustification,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = IS_HIDDEN, default = false)]
+    pub is_hidden: bool,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
+    #[param(key = IS_MIRRORED, default = false)]
+    pub is_mirrored: bool,
+    #[param(key = NOT_AUTO_POSITION, default = false)]
+    pub not_auto_position: bool,
+    #[param(key = TEXT_HORZ_ANCHOR, default = TextHorzAnchor::None)]
+    pub text_horz_anchor: TextHorzAnchor,
+    #[param(key = TEXT_VERT_ANCHOR, default = TextVertAnchor::None)]
+    pub text_vert_anchor: TextVertAnchor,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+    #[param(key = SELECTION, default = false)]
+    pub selection: bool,
+}
+
+/// Sheet filename text record (RECORD=33).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchSheetFileName {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
+    pub orientation: RotationBy90,
+    #[param(key = JUSTIFICATION, default = TextJustification::BottomLeft)]
+    pub justification: TextJustification,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
+    #[param(key = IS_HIDDEN, default = false)]
+    pub is_hidden: bool,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
+    #[param(key = IS_MIRRORED, default = false)]
+    pub is_mirrored: bool,
+    #[param(key = NOT_AUTO_POSITION, default = false)]
+    pub not_auto_position: bool,
+    #[param(key = TEXT_HORZ_ANCHOR, default = TextHorzAnchor::None)]
+    pub text_horz_anchor: TextHorzAnchor,
+    #[param(key = TEXT_VERT_ANCHOR, default = TextVertAnchor::None)]
+    pub text_vert_anchor: TextVertAnchor,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+    #[param(key = SELECTION, default = false)]
+    pub selection: bool,
 }
 
 /// Junction record (RECORD=29).
@@ -1758,6 +1828,8 @@ pub(crate) enum SchRecord {
     Port(SchPort),
     NoConnect(SchNoConnect),
     Junction(SchJunction),
+    SheetName(SchSheetName),
+    SheetFileName(SchSheetFileName),
     SheetSymbol(SchSheetSymbol),
     SheetEntry(SchSheetEntry),
     ParameterSet(SchParameterSet),
@@ -2073,6 +2145,8 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
         SchRecord::Port(_) => SchRecordType::Port,
         SchRecord::NoConnect(_) => SchRecordType::NoErc,
         SchRecord::Junction(_) => SchRecordType::Junction,
+        SchRecord::SheetName(_) => SchRecordType::SheetName,
+        SchRecord::SheetFileName(_) => SchRecordType::SheetFileName,
         SchRecord::SheetSymbol(_) => SchRecordType::SheetSymbol,
         SchRecord::SheetEntry(_) => SchRecordType::SheetEntry,
         SchRecord::ParameterSet(_) => SchRecordType::ParameterSet,
@@ -2120,6 +2194,8 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
         SchRecord::Port(v) => v.to_params(params),
         SchRecord::NoConnect(v) => v.to_params(params),
         SchRecord::Junction(v) => v.to_params(params),
+        SchRecord::SheetName(v) => v.to_params(params),
+        SchRecord::SheetFileName(v) => v.to_params(params),
         SchRecord::SheetSymbol(v) => v.to_params(params),
         SchRecord::SheetEntry(v) => v.to_params(params),
         SchRecord::ParameterSet(v) => v.to_params(params),

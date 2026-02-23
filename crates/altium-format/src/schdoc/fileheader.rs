@@ -59,9 +59,10 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
         });
     }
 
+    // Older files may omit MinorVersion entirely.
     let minor_version: i32 = header_params
-        .remove_required(MINOR_VERSION)
-        .context("reading /FileHeader MinorVersion")?;
+        .remove_optional::<i32>(MINOR_VERSION)?
+        .unwrap_or(0);
     let unique_id: String = header_params
         .remove_with_default(UNIQUE_ID, String::new())
         .context("reading /FileHeader UniqueID")?;
@@ -160,6 +161,8 @@ fn record_type_of(record: &SchRecord) -> SchRecordType {
         SchRecord::Port(_) => SchRecordType::Port,
         SchRecord::NoConnect(_) => SchRecordType::NoErc,
         SchRecord::Junction(_) => SchRecordType::Junction,
+        SchRecord::SheetName(_) => SchRecordType::SheetName,
+        SchRecord::SheetFileName(_) => SchRecordType::SheetFileName,
         SchRecord::SheetSymbol(_) => SchRecordType::SheetSymbol,
         SchRecord::SheetEntry(_) => SchRecordType::SheetEntry,
         SchRecord::ParameterSet(_) => SchRecordType::ParameterSet,
@@ -241,6 +244,21 @@ mod tests {
 
         let err = parse_fileheader_stream(&stream).expect_err("must require RECORD=31 as first record");
         assert!(matches!(err, AltiumFormatError::InvalidParamValue { key, .. } if key == RECORD));
+    }
+
+    #[test]
+    fn parses_header_without_minor_version() {
+        let mut stream = write_text_block(&text_payload(
+            "|HEADER=Protel for Windows - Schematic Capture Binary File Version 5.0|Weight=1|UniqueID=ABCDEFGH|",
+        ));
+        stream.extend_from_slice(&write_text_block(&text_payload(
+            "|RECORD=31|FontIdCount=1|Size1=10|FontName1=Arial|",
+        )));
+
+        let parsed = parse_fileheader_stream(&stream).expect("header without MinorVersion should parse");
+        assert_eq!(parsed.header.minor_version, 0);
+        assert_eq!(parsed.records.len(), 1);
+        assert!(matches!(parsed.records[0], SchRecord::Sheet(_)));
     }
 
     #[test]

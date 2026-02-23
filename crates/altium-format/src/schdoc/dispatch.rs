@@ -6,8 +6,9 @@ use crate::sch_records::{
     SchEllipticalArc, SchImage, SchImplementation, SchImplementationList,
     SchImplementationMap, SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel,
     SchNoConnect, SchNote, SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon,
-    SchPolyline, SchPort, SchPowerObject, SchProbe, SchRecord, SchRectangle,
-    SchRoundRectangle, SchSheet, SchSheetEntry, SchSheetSymbol, SchSymbol, SchTemplate,
+    SchPolyline, SchPort, SchPowerObject, SchProbe, SchRecord, SchRectangle, SchSheetFileName,
+    SchSheetName, SchRoundRectangle, SchSheet, SchSheetEntry, SchSheetSymbol, SchSymbol,
+    SchTemplate,
     SchTextFrame, SchWire, parse_component_record, parse_text_pin,
 };
 use crate::{AltiumFormatError, Result, ResultExt};
@@ -41,6 +42,8 @@ pub(crate) fn dispatch_record_type(
         SchRecordType::Port => dispatch!(SchPort => SchRecord::Port),
         SchRecordType::NoErc => dispatch!(SchNoConnect => SchRecord::NoConnect),
         SchRecordType::Junction => dispatch!(SchJunction => SchRecord::Junction),
+        SchRecordType::SheetName => dispatch!(SchSheetName => SchRecord::SheetName),
+        SchRecordType::SheetFileName => dispatch!(SchSheetFileName => SchRecord::SheetFileName),
         SchRecordType::SheetSymbol => dispatch!(SchSheetSymbol => SchRecord::SheetSymbol),
         SchRecordType::SheetEntry => dispatch!(SchSheetEntry => SchRecord::SheetEntry),
         SchRecordType::ParameterSet => dispatch!(SchParameterSet => SchRecord::ParameterSet),
