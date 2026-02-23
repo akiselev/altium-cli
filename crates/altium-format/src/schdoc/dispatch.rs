@@ -2,11 +2,13 @@ use altium_format_types::SchRecordType;
 
 use crate::param_collection::ParameterCollection;
 use crate::sch_records::{
-    SchArc, SchBezier, SchDesignator, SchEllipse, SchEllipticalArc, SchImage,
-    SchImplementation, SchImplementationList, SchImplementationMap, SchLabel, SchLine,
-    SchMapDefiner, SchParameter, SchParameterList, SchPie, SchPolygon, SchPolyline,
-    SchRecord, SchRectangle, SchRoundRectangle, SchSheet, SchSymbol, SchTemplate,
-    SchTextFrame, parse_component_record,
+    SchArc, SchBezier, SchBlanket, SchBus, SchCompileMask, SchDesignator, SchEllipse,
+    SchEllipticalArc, SchImage, SchImplementation, SchImplementationList,
+    SchImplementationMap, SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel,
+    SchNoConnect, SchNote, SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon,
+    SchPolyline, SchPort, SchPowerObject, SchProbe, SchRecord, SchRectangle,
+    SchRoundRectangle, SchSheet, SchSheetEntry, SchSheetSymbol, SchSymbol, SchTemplate,
+    SchTextFrame, SchWire, parse_component_record, parse_text_pin,
 };
 use crate::{AltiumFormatError, Result, ResultExt};
 
@@ -32,15 +34,30 @@ pub(crate) fn dispatch_record_type(
             Ok(SchRecord::Sheet(sheet))
         }
         SchRecordType::Template => dispatch!(SchTemplate => SchRecord::Template),
+        SchRecordType::Wire => dispatch!(SchWire => SchRecord::Wire),
+        SchRecordType::Bus => dispatch!(SchBus => SchRecord::Bus),
+        SchRecordType::NetLabel => dispatch!(SchNetLabel => SchRecord::NetLabel),
+        SchRecordType::PowerObject => dispatch!(SchPowerObject => SchRecord::PowerObject),
+        SchRecordType::Port => dispatch!(SchPort => SchRecord::Port),
+        SchRecordType::NoErc => dispatch!(SchNoConnect => SchRecord::NoConnect),
+        SchRecordType::Junction => dispatch!(SchJunction => SchRecord::Junction),
+        SchRecordType::SheetSymbol => dispatch!(SchSheetSymbol => SchRecord::SheetSymbol),
+        SchRecordType::SheetEntry => dispatch!(SchSheetEntry => SchRecord::SheetEntry),
+        SchRecordType::ParameterSet => dispatch!(SchParameterSet => SchRecord::ParameterSet),
+        SchRecordType::Note => dispatch!(SchNote => SchRecord::Note),
+        SchRecordType::Probe => dispatch!(SchProbe => SchRecord::Probe),
+        SchRecordType::CompileMask => dispatch!(SchCompileMask => SchRecord::CompileMask),
+        SchRecordType::Blanket => dispatch!(SchBlanket => SchRecord::Blanket),
         SchRecordType::Component => {
             let comp = parse_component_record(params)
                 .with_context(|| format!("RECORD={record_type_val} (SchComponent)"))?;
             Ok(SchRecord::Component(comp))
         }
-        SchRecordType::Pin => Err(AltiumFormatError::InvalidParamValue {
-            key: "RECORD".to_owned(),
-            detail: "RECORD=2 (Pin) text parsing is not implemented yet for SchDoc".to_owned(),
-        }),
+        SchRecordType::Pin => {
+            let pin = parse_text_pin(params)
+                .with_context(|| format!("RECORD={record_type_val} (SchPin text)"))?;
+            Ok(SchRecord::Pin(pin))
+        }
         SchRecordType::Symbol => dispatch!(SchSymbol => SchRecord::Symbol),
         SchRecordType::Label => dispatch!(SchLabel => SchRecord::Label),
         SchRecordType::Bezier => dispatch!(SchBezier => SchRecord::Bezier),

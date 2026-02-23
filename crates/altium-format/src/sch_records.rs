@@ -22,11 +22,11 @@
 use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LineShape, LineStyle,
-    ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
-    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
-    SheetReferenceZoneStyle, SheetStyle, StdLogicState, TextHorzAnchor, TextJustification,
-    TextVertAnchor,
-    sch::SchFont,
+    LeftRightSide, ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType,
+    RotationBy90, SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor,
+    TextJustification, TextVertAnchor,
+    sch::{PortArrowStyle, PortIoType, PowerObjectStyle, SchFont},
     constants::{
         component::{
             ALL_PIN_COUNT, ALIAS_LIST, COMPONENT_DESCRIPTION, COMPONENT_KIND,
@@ -40,9 +40,10 @@ use altium_format_types::{
             NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE,
         },
         electrical::{
-            CONNECTION_PAIRS_TO_SUPPRESS, IO_TYPE, SHOW_NET_NAME, SIDE, SUPPRESS_ALL,
-            SYMBOL_TYPE,
+            CONNECTION_PAIRS_TO_SUPPRESS, ELECTRICAL, FORMAL_TYPE, IO_TYPE, SHOW_NET_NAME, SIDE,
+            SUPPRESS_ALL, SYMBOL_TYPE, IS_CROSS_SHEET_CONNECTOR,
         },
+        harness::HARNESS_TYPE,
         model::{
             DATABASE_DATALINKS_LOCKED, DATABASE_MODEL, DATAFILE_COUNT, DATALINKS_LOCKED,
             DES_IMP_COUNT, DES_INTF, INTEGRATED_MODEL, MODEL_ITEM_GUID, MODEL_LOCATION, MODEL_NAME,
@@ -50,14 +51,21 @@ use altium_format_types::{
         },
         parsing::C_BASE_UNIT,
         pin::{
-            PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED, SYMBOL,
+            DEF_VALUE, PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED, SYMBOL,
+            DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID, DESIGNATOR_CUSTOM_POSITION_MARGIN,
+            NAME_CUSTOM_COLOR, NAME_CUSTOM_FONT_ID, NAME_CUSTOM_POSITION_MARGIN,
             PIN_CONGLOMERATE_IS_HIDDEN, PIN_CONGLOMERATE_NOT_ACCESSIBLE,
             PIN_CONGLOMERATE_ORIENTATION_MASK, PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST,
-            PIN_CONGLOMERATE_SHOW_DESIGNATOR, PIN_CONGLOMERATE_SHOW_NAME,
+            PIN_CONGLOMERATE_SHOW_DESIGNATOR, PIN_CONGLOMERATE_SHOW_NAME, PIN_DEFINED_FUNCTION,
+            PIN_DEFINED_FUNCTIONS_COUNT, PIN_LENGTH, PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY,
+            PIN_DESIGNATOR_POSITION_CONGLOMERATE, PIN_NAME_POSITION_CONGLOMERATE,
+            PIN_PROPAGATION_DELAY as PIN_PROPAGATION_DELAY_KEY, PIN_SELECTED_FUNCTION,
+            PIN_SELECTED_FUNCTIONS_COUNT, SWAP_ID_PAIR, SWAP_ID_PART, SWAP_ID_PIN,
+            SYMBOL_INNER_EDGE, SYMBOL_OUTER_EDGE, SYMBOL_LINE_WIDTH,
         },
         record_structure::{
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID,
-            COLLAPSED, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
+            COLLAPSED, DISTANCE_FROM_TOP, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
         },
         sheet::{
             AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
@@ -72,7 +80,8 @@ use altium_format_types::{
         },
         text::{
             ALIGNMENT, BOLD, CLIP_TO_RECT, DESCRIPTION, ITALIC, JUSTIFICATION, NAME, SHOW_NAME,
-            STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_HORZ_ANCHOR, TEXT_MARGIN, TEXT_MARGIN_FRAC,
+            STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_FONT_ID, TEXT_HORZ_ANCHOR, TEXT_MARGIN,
+            TEXT_MARGIN_FRAC, TEXT_STYLE,
             TEXT_VERT_ANCHOR, UNDERLINE, WORD_WRAP,
         },
         vault::{
@@ -82,14 +91,14 @@ use altium_format_types::{
             SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
         },
         visual::{
-            COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS, CORNER_X_RADIUS_FRAC, CORNER_Y,
+            ARROW_KIND, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS, CORNER_X_RADIUS_FRAC, CORNER_Y,
             CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC, EMBED_IMAGE, END_ANGLE,
             END_LINE_SHAPE, FILE_NAME, FONT_ID, FONT_ID_COUNT, FONT_NAME, IS_SOLID, KEEP_ASPECT,
             LINE_SHAPE_SIZE, LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT, LOCATION_X,
             LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION, OVERIDE_COLORS,
             RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR, SCALE_FACTOR_FRAC, SECONDARY_RADIUS,
             SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE, START_LINE_SHAPE, STYLE, TRANSPARENT,
-            WIDTH, HEIGHT,
+            WIDTH, HEIGHT, X_SIZE, Y_SIZE,
         },
     },
 };
@@ -333,6 +342,195 @@ pub(crate) fn parse_binary_pin(data: &[u8]) -> Result<SchPin> {
         defined_functions: Vec::new(),
         name_text_data: None,
         designator_text_data: None,
+    })
+}
+
+/// Parses a text-format schematic pin record (RECORD=2) as used by SchDoc.
+pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin> {
+    let owner_index: i32 = params.remove_with_default(OWNER_INDEX, 0i32)?;
+    let owner_part_id: i32 = params.remove_with_default(OWNER_PART_ID, 0i32)?;
+    let owner_part_display_mode: u8 =
+        params.remove_with_default::<i32>(OWNER_PART_DISPLAY_MODE, 0i32)? as u8;
+
+    let symbol_inner_edge =
+        IeeeSymbol::try_from(params.remove_with_default::<u8>(SYMBOL_INNER_EDGE, 0u8)?)?;
+    let symbol_outer_edge =
+        IeeeSymbol::try_from(params.remove_with_default::<u8>(SYMBOL_OUTER_EDGE, 0u8)?)?;
+    let symbol_inside = IeeeSymbol::try_from(params.remove_with_default::<u8>("SymBol_Inner", 0u8)?)?;
+    let symbol_outside = IeeeSymbol::try_from(params.remove_with_default::<u8>("SymBol_Outer", 0u8)?)?;
+
+    let description: String = params.remove_with_default(DESCRIPTION, String::new())?;
+    let formal_type = StdLogicState::try_from(params.remove_with_default::<u8>(FORMAL_TYPE, 0u8)?)?;
+    let electrical = PinElectricalType::try_from(params.remove_with_default::<u8>(ELECTRICAL, 0u8)?)?;
+
+    let pin_conglomerate = params.remove_with_default(PIN_CONGLOMERATE, 0u8)?;
+    let cong = decode_pin_conglomerate(pin_conglomerate)?;
+
+    let pin_length = params
+        .remove_coord_optional(PIN_LENGTH, "PinLength_Frac")?
+        .unwrap_or_else(|| Coord::from_internal(0));
+    let location = CoordPoint::new(
+        params
+            .remove_coord_optional(LOCATION_X, LOCATION_X_FRAC)?
+            .unwrap_or_else(|| Coord::from_internal(0)),
+        params
+            .remove_coord_optional(LOCATION_Y, LOCATION_Y_FRAC)?
+            .unwrap_or_else(|| Coord::from_internal(0)),
+    );
+
+    let color = params
+        .remove_optional::<i32>(COLOR)?
+        .map(Color::new)
+        .unwrap_or(Color::BLACK);
+
+    let name: String = params.remove_with_default(NAME, String::new())?;
+    let designator: String = params.remove_with_default("Designator", String::new())?;
+    let swap_id_pin: String = params.remove_with_default(SWAP_ID_PIN, String::new())?;
+    let swap_id_part: String = params.remove_with_default(SWAP_ID_PART, String::new())?;
+    let default_value: String = params.remove_with_default(DEF_VALUE, String::new())?;
+
+    // Optional SchDoc pin fields.
+    let _symbol = params.remove_optional::<u8>(SYMBOL)?;
+    let _symbol_line_width = params.remove_optional::<i32>(SYMBOL_LINE_WIDTH)?;
+    let _spice_pin_name = params.remove_optional::<String>("SpicePinName")?;
+    let _hidden_net_name = params.remove_optional::<String>("HiddenNetName")?;
+    let _unique_id = params.remove_optional::<String>(UNIQUE_ID)?;
+    let _swap_id_pair = params.remove_optional::<String>(SWAP_ID_PAIR)?;
+
+    let pin_package_length = params
+        .remove_optional::<String>(PIN_PACKAGE_LENGTH_KEY)?
+        .unwrap_or_default();
+    let propagation_delay = params
+        .remove_optional::<String>(PIN_PROPAGATION_DELAY_KEY)?
+        .unwrap_or_default();
+
+    // Optional text positioning/font overrides in SchDoc ASCII pin records.
+    let name_text_data = if let Some(cong) = params.remove_optional::<u8>(PIN_NAME_POSITION_CONGLOMERATE)? {
+        let position_mode_custom = (cong & 0x01) != 0;
+        let rotation_anchor_component = (cong & 0x02) != 0;
+        let rotation_relative = RotationBy90::try_from((cong & 0x0C) >> 2)?;
+        let font_mode_custom = (cong & 0x10) != 0;
+
+        let custom_position_margin = if position_mode_custom {
+            params
+                .remove_optional::<Coord>(NAME_CUSTOM_POSITION_MARGIN)?
+        } else {
+            None
+        };
+
+        let custom_font_id = if font_mode_custom {
+            params.remove_optional::<i16>(NAME_CUSTOM_FONT_ID)?
+        } else {
+            None
+        };
+
+        let custom_color = if font_mode_custom {
+            params.remove_optional::<Color>(NAME_CUSTOM_COLOR)?
+        } else {
+            None
+        };
+
+        Some(PinTextPositioning {
+            position_mode_custom,
+            rotation_anchor_component,
+            rotation_relative,
+            font_mode_custom,
+            custom_position_margin,
+            custom_font_id,
+            custom_color,
+        })
+    } else {
+        None
+    };
+
+    let designator_text_data =
+        if let Some(cong) = params.remove_optional::<u8>(PIN_DESIGNATOR_POSITION_CONGLOMERATE)? {
+            let position_mode_custom = (cong & 0x01) != 0;
+            let rotation_anchor_component = (cong & 0x02) != 0;
+            let rotation_relative = RotationBy90::try_from((cong & 0x0C) >> 2)?;
+            let font_mode_custom = (cong & 0x10) != 0;
+
+            let custom_position_margin = if position_mode_custom {
+                params
+                    .remove_optional::<Coord>(DESIGNATOR_CUSTOM_POSITION_MARGIN)?
+            } else {
+                None
+            };
+
+            let custom_font_id = if font_mode_custom {
+                params.remove_optional::<i16>(DESIGNATOR_CUSTOM_FONT_ID)?
+            } else {
+                None
+            };
+
+            let custom_color = if font_mode_custom {
+                params.remove_optional::<Color>(DESIGNATOR_CUSTOM_COLOR)?
+            } else {
+                None
+            };
+
+            Some(PinTextPositioning {
+                position_mode_custom,
+                rotation_anchor_component,
+                rotation_relative,
+                font_mode_custom,
+                custom_position_margin,
+                custom_font_id,
+                custom_color,
+            })
+        } else {
+            None
+        };
+
+    let selected_functions_count: i32 =
+        params.remove_with_default(PIN_SELECTED_FUNCTIONS_COUNT, 0i32)?;
+    let mut selected_functions = Vec::with_capacity(selected_functions_count as usize);
+    for i in 1..=selected_functions_count {
+        let key = format!("{PIN_SELECTED_FUNCTION}{i}");
+        selected_functions.push(params.remove_with_default::<String>(&key, String::new())?);
+    }
+
+    let defined_functions_count: i32 =
+        params.remove_with_default(PIN_DEFINED_FUNCTIONS_COUNT, 0i32)?;
+    let mut defined_functions = Vec::with_capacity(defined_functions_count as usize);
+    for i in 1..=defined_functions_count {
+        let key = format!("{PIN_DEFINED_FUNCTION}{i}");
+        defined_functions.push(params.remove_with_default::<String>(&key, String::new())?);
+    }
+
+    Ok(SchPin {
+        owner_index,
+        owner_part_id,
+        owner_part_display_mode,
+        symbol_inner_edge,
+        symbol_outer_edge,
+        symbol_inside,
+        symbol_outside,
+        description,
+        formal_type,
+        electrical,
+        pin_length,
+        location,
+        color,
+        name,
+        designator,
+        swap_id_pin,
+        swap_id_part,
+        default_value,
+        orientation: cong.orientation,
+        is_hidden: cong.is_hidden,
+        show_name: cong.show_name,
+        show_designator: cong.show_designator,
+        is_not_accessible: cong.is_not_accessible,
+        graphically_locked: cong.graphically_locked,
+        owner_index_additional_list: cong.owner_index_additional_list,
+        pin_symbol_line_width: None,
+        pin_package_length,
+        propagation_delay,
+        selected_functions,
+        defined_functions,
+        name_text_data,
+        designator_text_data,
     })
 }
 
@@ -1288,12 +1486,16 @@ pub(crate) struct SchPowerObject {
     pub text: String,
     #[param(key = SYMBOL_TYPE, default = 0i32)]
     pub symbol_type: i32,
+    #[param(key = STYLE, default = PowerObjectStyle::Circle)]
+    pub style: PowerObjectStyle,
     #[param(key = SHOW_NET_NAME, default = true)]
     pub show_net_name: bool,
     #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
     pub orientation: RotationBy90,
     #[param(key = FONT_ID, default = 1i32)]
     pub font_id: i32,
+    #[param(key = IS_CROSS_SHEET_CONNECTOR, default = false)]
+    pub is_cross_sheet_connector: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
@@ -1368,14 +1570,22 @@ pub(crate) struct SchSheetSymbol {
     pub base: SchPrimitiveBase,
     #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
     pub location: CoordPoint,
-    #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
-    pub corner: CoordPoint,
+    #[param(coord, key = X_SIZE, frac_key = "XSize_FRAC")]
+    pub x_size: Coord,
+    #[param(coord, key = Y_SIZE, frac_key = "YSize_FRAC")]
+    pub y_size: Coord,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
-    #[param(key = SYMBOL_TYPE, default = 0i32)]
-    pub symbol_type: i32,
+    #[param(key = SYMBOL_TYPE, default = SheetSymbolType::Normal)]
+    pub symbol_type: SheetSymbolType,
     #[param(key = "SheetName", default = String::new())]
     pub sheet_name: String,
     #[param(key = FILE_NAME, default = String::new())]
@@ -1389,16 +1599,30 @@ pub(crate) struct SchSheetEntry {
     pub base: SchPrimitiveBase,
     #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
     pub location: CoordPoint,
+    #[param(key = SIDE, default = LeftRightSide::Left)]
+    pub side: LeftRightSide,
+    #[param(key = DISTANCE_FROM_TOP, default = Coord::from_internal(0))]
+    pub distance_from_top: Coord,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = TEXT_COLOR, default = Color::BLACK)]
+    pub text_color: Color,
+    #[param(key = TEXT_FONT_ID, default = 1i32)]
+    pub text_font_id: i32,
+    #[param(key = TEXT_STYLE, default = String::new())]
+    pub text_style: String,
     #[param(key = NAME, default = String::new())]
     pub name: String,
-    #[param(key = IO_TYPE, default = 0i32)]
-    pub io_type: i32,
-    #[param(key = SIDE, default = 0i32)]
-    pub side: i32,
-    #[param(key = STYLE, default = 0i32)]
-    pub style: i32,
+    #[param(key = HARNESS_TYPE, default = String::new())]
+    pub harness_type: String,
+    #[param(key = IO_TYPE, default = PortIoType::Unspecified)]
+    pub io_type: PortIoType,
+    #[param(key = STYLE, default = PortArrowStyle::None)]
+    pub style: PortArrowStyle,
+    #[param(key = ARROW_KIND, default = String::new())]
+    pub arrow_kind: String,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
@@ -1527,6 +1751,20 @@ pub(crate) struct SchBlanket {
 pub(crate) enum SchRecord {
     Sheet(SchSheet),
     Template(SchTemplate),
+    Wire(SchWire),
+    Bus(SchBus),
+    NetLabel(SchNetLabel),
+    PowerObject(SchPowerObject),
+    Port(SchPort),
+    NoConnect(SchNoConnect),
+    Junction(SchJunction),
+    SheetSymbol(SchSheetSymbol),
+    SheetEntry(SchSheetEntry),
+    ParameterSet(SchParameterSet),
+    Note(SchNote),
+    Probe(SchProbe),
+    CompileMask(SchCompileMask),
+    Blanket(SchBlanket),
     Component(SchComponent),
     Pin(SchPin),
     Symbol(SchSymbol),
@@ -1828,6 +2066,20 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
     match record {
         SchRecord::Sheet(_) => SchRecordType::Sheet,
         SchRecord::Template(_) => SchRecordType::Template,
+        SchRecord::Wire(_) => SchRecordType::Wire,
+        SchRecord::Bus(_) => SchRecordType::Bus,
+        SchRecord::NetLabel(_) => SchRecordType::NetLabel,
+        SchRecord::PowerObject(_) => SchRecordType::PowerObject,
+        SchRecord::Port(_) => SchRecordType::Port,
+        SchRecord::NoConnect(_) => SchRecordType::NoErc,
+        SchRecord::Junction(_) => SchRecordType::Junction,
+        SchRecord::SheetSymbol(_) => SchRecordType::SheetSymbol,
+        SchRecord::SheetEntry(_) => SchRecordType::SheetEntry,
+        SchRecord::ParameterSet(_) => SchRecordType::ParameterSet,
+        SchRecord::Note(_) => SchRecordType::Note,
+        SchRecord::Probe(_) => SchRecordType::Probe,
+        SchRecord::CompileMask(_) => SchRecordType::CompileMask,
+        SchRecord::Blanket(_) => SchRecordType::Blanket,
         SchRecord::Component(_) => SchRecordType::Component,
         SchRecord::Pin(_) => SchRecordType::Pin,
         SchRecord::Symbol(_) => SchRecordType::Symbol,
@@ -1861,6 +2113,20 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
             unreachable!("SchSheet serialization is not implemented yet")
         }
         SchRecord::Template(v) => v.to_params(params),
+        SchRecord::Wire(v) => v.to_params(params),
+        SchRecord::Bus(v) => v.to_params(params),
+        SchRecord::NetLabel(v) => v.to_params(params),
+        SchRecord::PowerObject(v) => v.to_params(params),
+        SchRecord::Port(v) => v.to_params(params),
+        SchRecord::NoConnect(v) => v.to_params(params),
+        SchRecord::Junction(v) => v.to_params(params),
+        SchRecord::SheetSymbol(v) => v.to_params(params),
+        SchRecord::SheetEntry(v) => v.to_params(params),
+        SchRecord::ParameterSet(v) => v.to_params(params),
+        SchRecord::Note(v) => v.to_params(params),
+        SchRecord::Probe(v) => v.to_params(params),
+        SchRecord::CompileMask(v) => v.to_params(params),
+        SchRecord::Blanket(v) => v.to_params(params),
         SchRecord::Component(v) => serialize_component_record(v, params),
         SchRecord::MapDefiner(v) => serialize_map_definer(v, params),
         SchRecord::Symbol(v) => v.to_params(params),

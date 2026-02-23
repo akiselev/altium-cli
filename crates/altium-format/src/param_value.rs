@@ -3,9 +3,10 @@
 //! `ToParamValue`: serialize `T` back to the Altium string representation.
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
 use altium_format_types::{
-    Color, ComponentKind, Coord, IeeeSymbol, LineShape, LineStyle, ParameterReadOnlyState,
-    ParameterType, PenWidth, RotationBy90, TextHorzAnchor, TextJustification, TextVertAnchor,
-    UniqueId,
+    Color, ComponentKind, Coord, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
+    ParameterReadOnlyState, ParameterType, PenWidth, RotationBy90, SheetSymbolType,
+    TextHorzAnchor, TextJustification, TextVertAnchor, UniqueId,
+    sch::{PortArrowStyle, PortIoType, PowerObjectStyle},
 };
 
 use crate::{AltiumFormatError, Result};
@@ -161,6 +162,10 @@ impl_enum_param_value!(
     ParameterType,
     TextHorzAnchor,
     TextVertAnchor,
+    PowerObjectStyle,
+    PortArrowStyle,
+    PortIoType,
+    LeftRightSide,
 );
 
 // Angle value that serializes with exactly 3 decimal places (matching Altium's N3 format).
@@ -203,5 +208,46 @@ impl FromParamValue for UniqueId {
 impl ToParamValue for UniqueId {
     fn to_param_value(&self) -> String {
         self.as_str().to_owned()
+    }
+}
+
+// SheetSymbolType is serialized as display strings in SchDoc text records.
+// C# mapping (SchDataUtils.{StringTo,ToString}SheetSymbolType):
+// Normal | Device Sheet | Design Item
+impl FromParamValue for SheetSymbolType {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        if value.eq_ignore_ascii_case("Normal") {
+            return Ok(SheetSymbolType::Normal);
+        }
+        if value.eq_ignore_ascii_case("Device Sheet") {
+            return Ok(SheetSymbolType::DeviceSheet);
+        }
+        if value.eq_ignore_ascii_case("Design Item") {
+            return Ok(SheetSymbolType::DesignItem);
+        }
+
+        // Accept numeric fallback for robustness in mixed-version files.
+        if let Ok(raw) = value.parse::<u8>() {
+            return SheetSymbolType::try_from(raw).map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: e.to_string(),
+            });
+        }
+
+        Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("expected one of Normal/Device Sheet/Design Item or u8, got {value:?}"),
+        })
+    }
+}
+
+impl ToParamValue for SheetSymbolType {
+    fn to_param_value(&self) -> String {
+        match self {
+            SheetSymbolType::Normal => "Normal".to_owned(),
+            SheetSymbolType::DeviceSheet => "Device Sheet".to_owned(),
+            SheetSymbolType::DesignItem => "Design Item".to_owned(),
+            _ => (*self as u8).to_string(),
+        }
     }
 }

@@ -13,6 +13,7 @@ use altium_format_types::constants::streams::{
 use crate::block_stream::{BlockFormat, parse_blocks};
 use crate::embedded_object::parse_embedded_object_stream;
 use crate::param_collection::ParameterCollection;
+use crate::sch_records::SchRecord;
 use crate::schdoc::dispatch::dispatch_record_type;
 use crate::schdoc::fileheader::parse_fileheader_stream;
 use crate::schdoc::types::{SchDocEmbeddedObject, SchDocHeaderMetadata};
@@ -91,6 +92,13 @@ impl SchDoc {
             Vec::new()
         };
 
+        validate_invariants(
+            &parsed_fileheader.records,
+            &additional_records,
+            &embedded_objects,
+        )
+        .context("validating SchDoc invariants")?;
+
         tracked
             .assert_all_consumed()
             .context("validating SchDoc stream consumption")?;
@@ -106,6 +114,10 @@ impl SchDoc {
             additional_records,
             embedded_objects,
         })
+    }
+
+    pub fn validate_invariants(&self) -> Result<()> {
+        validate_invariants(&self.records, &self.additional_records, &self.embedded_objects)
     }
 }
 
@@ -187,6 +199,128 @@ fn parse_additional_stream(data: &[u8]) -> Result<Vec<crate::sch_records::SchRec
     }
 
     Ok(records)
+}
+
+fn validate_invariants(
+    records: &[SchRecord],
+    additional_records: &[SchRecord],
+    embedded_objects: &[SchDocEmbeddedObject],
+) -> Result<()> {
+    for (idx, record) in records.iter().enumerate() {
+        validate_owner_index(
+            idx,
+            record,
+            records.len(),
+            additional_records.len(),
+            "FileHeader",
+        )?;
+    }
+    for (idx, record) in additional_records.iter().enumerate() {
+        validate_owner_index(
+            idx,
+            record,
+            records.len(),
+            additional_records.len(),
+            "Additional",
+        )?;
+    }
+
+    for (idx, record) in records.iter().enumerate() {
+        if let SchRecord::Image(image) = record {
+            if image.embed_image
+                && !image.file_name.is_empty()
+                && !embedded_objects.iter().any(|obj| obj.id == image.file_name)
+            {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "FileName".to_owned(),
+                    detail: format!(
+                        "embedded SchImage record #{idx} references missing storage object {:?}",
+                        image.file_name
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_owner_index(
+    idx: usize,
+    record: &SchRecord,
+    base_count: usize,
+    additional_count: usize,
+    section: &str,
+) -> Result<()> {
+    let (owner_index, owner_is_additional) = owner_ref(record);
+    if owner_index < 0 {
+        return Ok(());
+    }
+
+    let owner_index = owner_index as usize;
+    if owner_is_additional {
+        if owner_index >= additional_count {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "OwnerIndex".to_owned(),
+                detail: format!(
+                    "{section} record #{idx} points to Additional owner index {owner_index}, but Additional has only {additional_count} records"
+                ),
+            });
+        }
+    } else if owner_index >= base_count {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "OwnerIndex".to_owned(),
+            detail: format!(
+                "{section} record #{idx} points to base owner index {owner_index}, but FileHeader has only {base_count} records"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn owner_ref(record: &SchRecord) -> (i32, bool) {
+    match record {
+        SchRecord::Sheet(v) => (v.base.owner_index, false),
+        SchRecord::Template(v) => (v.base.owner_index, false),
+        SchRecord::Wire(v) => (v.base.owner_index, false),
+        SchRecord::Bus(v) => (v.base.owner_index, false),
+        SchRecord::NetLabel(v) => (v.base.owner_index, false),
+        SchRecord::PowerObject(v) => (v.base.owner_index, false),
+        SchRecord::Port(v) => (v.base.owner_index, false),
+        SchRecord::NoConnect(v) => (v.base.owner_index, false),
+        SchRecord::Junction(v) => (v.base.owner_index, false),
+        SchRecord::SheetSymbol(v) => (v.base.owner_index, false),
+        SchRecord::SheetEntry(v) => (v.base.owner_index, false),
+        SchRecord::ParameterSet(v) => (v.base.owner_index, false),
+        SchRecord::Note(v) => (v.base.owner_index, false),
+        SchRecord::Probe(v) => (v.base.owner_index, false),
+        SchRecord::CompileMask(v) => (v.base.owner_index, false),
+        SchRecord::Blanket(v) => (v.base.owner_index, false),
+        SchRecord::Component(v) => (v.owner_index, false),
+        SchRecord::Pin(v) => (v.owner_index, v.owner_index_additional_list),
+        SchRecord::Symbol(v) => (v.base.owner_index, false),
+        SchRecord::Line(v) => (v.base.owner_index, false),
+        SchRecord::Rectangle(v) => (v.base.owner_index, false),
+        SchRecord::RoundRectangle(v) => (v.base.owner_index, false),
+        SchRecord::Arc(v) => (v.base.owner_index, false),
+        SchRecord::EllipticalArc(v) => (v.base.owner_index, false),
+        SchRecord::Ellipse(v) => (v.base.owner_index, false),
+        SchRecord::Pie(v) => (v.base.owner_index, false),
+        SchRecord::Polyline(v) => (v.base.owner_index, false),
+        SchRecord::Polygon(v) => (v.base.owner_index, false),
+        SchRecord::Bezier(v) => (v.base.owner_index, false),
+        SchRecord::Image(v) => (v.base.owner_index, false),
+        SchRecord::Label(v) => (v.base.owner_index, false),
+        SchRecord::Designator(v) => (v.base.owner_index, false),
+        SchRecord::Parameter(v) => (v.base.owner_index, false),
+        SchRecord::TextFrame(v) => (v.base.owner_index, false),
+        SchRecord::ImplementationList(v) => (v.base.owner_index, false),
+        SchRecord::Implementation(v) => (v.base.owner_index, false),
+        SchRecord::ImplementationMap(v) => (v.base.owner_index, false),
+        SchRecord::MapDefiner(v) => (v.base.owner_index, false),
+        SchRecord::ParameterList(v) => (v.base.owner_index, false),
+    }
 }
 
 #[cfg(test)]
