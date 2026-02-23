@@ -129,9 +129,9 @@ The principle is the same pattern used everywhere else in the stack:
 ```rust
 /// Wraps CfbDocument with stream/storage consumption tracking.
 ///
-/// Every entry in the CFB container must be explicitly consumed (read) or
-/// acknowledged (skip_known) during document loading. After loading,
-/// assert_all_consumed() verifies nothing was missed.
+/// Every entry in the CFB container must be explicitly consumed (read)
+/// during document loading. After loading, assert_all_consumed() verifies
+/// nothing was missed.
 pub(crate) struct TrackedCfbDocument {
     inner: CfbDocument,
     /// All entries discovered at open time (recursive enumeration).
@@ -182,24 +182,7 @@ impl TrackedCfbDocument {
     ///
     /// Use this for entries that are:
     /// - Known but not yet implemented (must include a TODO comment at call site)
-    /// - Known to be irrelevant for our use case (e.g. printer settings)
-    /// - Storage nodes that are implicitly consumed by reading their children
-    ///
-    /// This forces explicit acknowledgement rather than silent ignorance.
-    /// The call site documents *why* the stream is being skipped.
-    pub fn skip_known(&mut self, path: &str) {
-        self.consumed.insert(path.to_string());
-    }
-
-    /// Mark multiple entries as consumed at once.
-    /// Convenience for acknowledging a batch of known-but-unimplemented streams.
-    pub fn skip_known_many(&mut self, paths: &[&str]) {
-        for path in paths {
-            self.consumed.insert(path.to_string());
-        }
-    }
-
-    /// FAIL FAST: Error if any entry in the CFB was never consumed or acknowledged.
+    /// FAIL FAST: Error if any entry in the CFB was never consumed.
     ///
     /// Must be called at the end of every document loader. An unknown stream
     /// could carry fabrication-critical data — we must never silently ignore it.
@@ -224,8 +207,7 @@ Stream tracking is the outermost discovery loop:
 
 1. Open a real Altium file → `assert_all_consumed()` fails, listing unknown streams
 2. Investigate what those streams contain (ghidra, hex dumps, docs)
-3. Either implement the parser (`read_stream` + full parsing) or call `skip_known` with a
-   comment explaining why it's safe to skip
+3. Implement the parser (`read_stream` + full parsing)
 4. Run again → passes, or fails on the next unknown stream
 
 This is exactly parallel to how `assert_exhausted()` on `ParameterCollection` drives
@@ -1433,7 +1415,7 @@ by 0xD0 envelope. They are parsed by the document loader using Layer 3 + Layer 4
 ## Stream manifests: What each file type contains
 
 These tables document every stream/storage in each file type. The document loader must
-read or `skip_known` every one of them. `assert_all_consumed()` enforces this.
+read and parse every one of them. `assert_all_consumed()` enforces this.
 
 ### SchDoc streams
 

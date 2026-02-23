@@ -49,7 +49,7 @@ The low-level API (layers 1-4: CFB I/O, consumption tracking, block framing, par
 
 | Risk | Mitigation | Anchor |
 |------|-----------|--------|
-| Unknown parameter keys in real SchLib files | `assert_exhausted()` on ParameterCollection will surface them immediately -> add to struct or skip_known as appropriate | `param_collection.rs:assert_exhausted()` |
+| Unknown parameter keys in real SchLib files | `assert_exhausted()` on ParameterCollection will surface them immediately -> add to struct or return error | `param_collection.rs:assert_exhausted()` |
 | Pin sidecar import order matters | Follow exact 9-stream order from docs/schlib/pin-sidecar-streams.md -> PinWideText (stream 5) is authoritative and replaces binary text | docs/schlib/pin-sidecar-streams.md |
 | Component names > 31 chars truncated in CFB | SectionKeys stream maps full names to CFB keys -> must parse SectionKeys before component enumeration | docs/schlib/cfb-structure.md |
 | PartCount stored as actual+1 in wire format | C# source confirms `PARTCOUNT` = actual_parts + 1 -> subtract 1 during parsing | docs/schlib/record-types.md |
