@@ -1,5 +1,5 @@
 use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
-use altium_format_types::{Coord, CoordPoint, PcbFlags, PcbObjectId, V6Layer, V7Layer};
+use altium_format_types::{Coord, CoordPoint, PcbFlags, PcbObjectId, TextKind, V6Layer, V7Layer};
 
 use crate::binary_io::BinaryReader;
 use crate::{AltiumFormatError, Result};
@@ -59,6 +59,56 @@ pub(crate) struct PcbFill {
 }
 
 #[derive(Debug)]
+pub(crate) struct PcbText {
+    pub(crate) common: PcbPrimitiveCommon,
+    pub(crate) location: CoordPoint,
+    pub(crate) height: Coord,
+    pub(crate) stroke_font_type: u16,
+    pub(crate) text_kind: TextKind,
+    pub(crate) rotation: f64,
+    pub(crate) is_mirrored: bool,
+    pub(crate) stroke_width: Coord,
+    pub(crate) is_comment: bool,
+    pub(crate) is_designator: bool,
+    pub(crate) user_routed: bool,
+    pub(crate) is_bold: bool,
+    pub(crate) is_italic: bool,
+    pub(crate) font_name: String,
+    pub(crate) is_inverted: bool,
+    pub(crate) margin_border_width: i32,
+    pub(crate) wide_string_index: i32,
+    pub(crate) union_index: i32,
+    pub(crate) is_inverted_rect: bool,
+    pub(crate) textbox_rect_width: i32,
+    pub(crate) textbox_rect_height: i32,
+    pub(crate) textbox_rect_justification: u8,
+    pub(crate) text_offset_width: i32,
+    pub(crate) unk_vec_x: i32,
+    pub(crate) unk_vec_y: i32,
+    pub(crate) barcode_margin_x: i32,
+    pub(crate) barcode_margin_y: i32,
+    pub(crate) unk32: i32,
+    pub(crate) barcode_type: u8,
+    pub(crate) barcode_inverted: bool,
+    pub(crate) barcode_font_type: u8,
+    pub(crate) barcode_font_name: String,
+    pub(crate) layer_enum_index: i32,
+    pub(crate) sentinel_1: i32,
+    pub(crate) sentinel_2: i32,
+    pub(crate) trailing_flag_1: i32,
+    pub(crate) trailing_flag_2: i32,
+    pub(crate) trailing_is_justification_valid: Option<bool>,
+    pub(crate) advance_snapping: Option<u8>,
+    pub(crate) advance_reserved: Option<u8>,
+    pub(crate) advance_justification_x: Option<i32>,
+    pub(crate) advance_justification_y: Option<i32>,
+    pub(crate) use_text_alignment_by_snap: Option<i32>,
+    pub(crate) snap_point_x: Option<i32>,
+    pub(crate) snap_point_y: Option<i32>,
+    pub(crate) text: String,
+}
+
+#[derive(Debug)]
 pub(crate) struct PcbRawPrimitive {
     pub(crate) common: PcbPrimitiveCommon,
     pub(crate) raw_payload: Vec<u8>,
@@ -71,7 +121,7 @@ pub(crate) enum PcbPrimitive {
     Fill(PcbFill),
     Pad(PcbRawPrimitive),
     Via(PcbRawPrimitive),
-    Text(PcbRawPrimitive),
+    Text(PcbText),
     Region(PcbRawPrimitive),
     ComponentBody(PcbRawPrimitive),
 }
@@ -103,6 +153,13 @@ pub(crate) fn parse_primitive_records(
     kind: PrimitiveSectionKind,
     data: &[u8],
 ) -> Result<Vec<ParsedPrimitiveRecord>> {
+    if matches!(
+        kind,
+        PrimitiveSectionKind::Texts | PrimitiveSectionKind::Texts6
+    ) {
+        return parse_text_records(kind, data);
+    }
+
     let expected = expected_object_id(kind);
     let mut reader = BinaryReader::new(data);
     let mut out = Vec::new();
@@ -136,7 +193,11 @@ fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8]) -> Result<Pcb
         PcbObjectId::Fill => parse_fill(payload).map(PcbPrimitive::Fill),
         PcbObjectId::Pad => parse_raw(payload).map(PcbPrimitive::Pad),
         PcbObjectId::Via => parse_raw(payload).map(PcbPrimitive::Via),
-        PcbObjectId::Text => parse_raw(payload).map(PcbPrimitive::Text),
+        PcbObjectId::Text => Err(AltiumFormatError::InvalidParamValue {
+            key: "Texts/Data".to_owned(),
+            detail: "Text parsing requires 2-subrecord framing; reached single-payload path"
+                .to_owned(),
+        }),
         PcbObjectId::Region => parse_raw(payload).map(PcbPrimitive::Region),
         PcbObjectId::ComponentBody => parse_raw(payload).map(PcbPrimitive::ComponentBody),
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
@@ -266,6 +327,215 @@ fn parse_fill(data: &[u8]) -> Result<PcbFill> {
         union_index,
         layer_enum_index,
         keepout_restrictions,
+    })
+}
+
+fn parse_text_records(
+    kind: PrimitiveSectionKind,
+    data: &[u8],
+) -> Result<Vec<ParsedPrimitiveRecord>> {
+    let expected = expected_object_id(kind);
+    let mut reader = BinaryReader::new(data);
+    let mut out = Vec::new();
+
+    while reader.remaining() > 0 {
+        let object_id = PcbObjectId::try_from(reader.read_u8()?)?;
+        if object_id != expected {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: format!("{kind:?} object ID"),
+                detail: format!("section expects {:?}, found {:?}", expected, object_id),
+            });
+        }
+
+        let raw_len_1 = reader.read_u32_le()?;
+        let len_1 = (raw_len_1 & BLOCK_SIZE_MASK) as usize;
+        let subrecord_1 = reader.read_bytes(len_1)?;
+
+        let len_2 = reader.read_u32_le()? as usize;
+        let subrecord_2 = reader.read_bytes(len_2)?;
+
+        let primitive = parse_text_subrecords(subrecord_1, subrecord_2)?;
+        out.push(ParsedPrimitiveRecord {
+            object_id,
+            primitive: PcbPrimitive::Text(primitive),
+        });
+    }
+
+    reader.assert_exhausted()?;
+    Ok(out)
+}
+
+fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbText> {
+    let mut reader = BinaryReader::new(subrecord_1);
+    let common = parse_common_header(&mut reader)?;
+    let location = reader.read_coord_point()?;
+    let height = reader.read_coord()?;
+    let stroke_font_type = reader.read_u16_le()?;
+    let mut text_kind = TextKind::StrokeFont;
+    let rotation = reader.read_f64_le()?;
+    let is_mirrored = reader.read_bool()?;
+    let stroke_width = reader.read_coord()?;
+
+    let mut is_comment = false;
+    let mut is_designator = false;
+    let mut user_routed = false;
+    let mut is_bold = false;
+    let mut is_italic = false;
+    let mut font_name = String::new();
+    let mut is_inverted = false;
+    let mut margin_border_width = 0;
+    let mut wide_string_index = 0;
+    let mut union_index = 0;
+    let mut is_inverted_rect = false;
+    let mut textbox_rect_width = 0;
+    let mut textbox_rect_height = 0;
+    let mut textbox_rect_justification = 0;
+    let mut text_offset_width = 0;
+    let mut unk_vec_x = 0;
+    let mut unk_vec_y = 0;
+    let mut barcode_margin_x = 0;
+    let mut barcode_margin_y = 0;
+    let mut unk32 = 0;
+    let mut barcode_type = 0;
+    let mut barcode_inverted = false;
+    let mut barcode_font_type = 0;
+    let mut barcode_font_name = String::new();
+    let mut layer_enum_index = 0;
+    let mut sentinel_1 = 0;
+    let mut sentinel_2 = 0;
+    let mut trailing_flag_1 = 0;
+    let mut trailing_flag_2 = 0;
+    let mut trailing_is_justification_valid = None;
+    let mut advance_snapping = None;
+    let mut advance_reserved = None;
+    let mut advance_justification_x = None;
+    let mut advance_justification_y = None;
+    let mut use_text_alignment_by_snap = None;
+    let mut snap_point_x = None;
+    let mut snap_point_y = None;
+
+    if reader.remaining() >= 83 {
+        is_comment = reader.read_bool()?;
+        is_designator = reader.read_bool()?;
+        user_routed = reader.read_bool()?;
+        let text_kind_ext = reader.read_u8()?;
+        text_kind = TextKind::try_from(text_kind_ext)?;
+        is_bold = reader.read_bool()?;
+        is_italic = reader.read_bool()?;
+        font_name = reader.read_wide_string_fixed(32)?;
+        is_inverted = reader.read_bool()?;
+        margin_border_width = reader.read_i32_le()?;
+        wide_string_index = reader.read_i32_le()?;
+        union_index = reader.read_i32_le()?;
+        is_inverted_rect = reader.read_bool()?;
+        textbox_rect_width = reader.read_i32_le()?;
+        textbox_rect_height = reader.read_i32_le()?;
+        textbox_rect_justification = reader.read_u8()?;
+        text_offset_width = reader.read_i32_le()?;
+    }
+
+    if reader.remaining() >= 103 {
+        unk_vec_x = reader.read_i32_le()?;
+        unk_vec_y = reader.read_i32_le()?;
+        barcode_margin_x = reader.read_i32_le()?;
+        barcode_margin_y = reader.read_i32_le()?;
+        unk32 = reader.read_i32_le()?;
+        barcode_type = reader.read_u8()?;
+        reader.skip(1)?;
+        barcode_inverted = reader.read_bool()?;
+        barcode_font_type = reader.read_u8()?;
+        barcode_font_name = reader.read_wide_string_fixed(32)?;
+        reader.skip(5)?;
+    }
+
+    if reader.remaining() >= 2 {
+        advance_snapping = Some(reader.read_u8()?);
+        advance_reserved = Some(reader.read_u8()?);
+    }
+    if reader.remaining() >= 8 {
+        advance_justification_x = Some(reader.read_i32_le()?);
+        advance_justification_y = Some(reader.read_i32_le()?);
+    }
+    if reader.remaining() >= 4 {
+        use_text_alignment_by_snap = Some(reader.read_i32_le()?);
+    }
+    if reader.remaining() >= 8 {
+        snap_point_x = Some(reader.read_i32_le()?);
+        snap_point_y = Some(reader.read_i32_le()?);
+    }
+
+    if reader.remaining() >= 22 {
+        reader.skip(1)?;
+        layer_enum_index = reader.read_i32_le()?;
+        sentinel_1 = reader.read_i32_le()?;
+        sentinel_2 = reader.read_i32_le()?;
+        trailing_flag_1 = reader.read_i32_le()?;
+        trailing_flag_2 = reader.read_i32_le()?;
+    }
+
+    if reader.remaining() == 1 {
+        trailing_is_justification_valid = Some(reader.read_bool()?);
+    } else if reader.remaining() > 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Text.subrecord1".to_owned(),
+            detail: format!(
+                "unexpected trailing bytes in subrecord1: {}",
+                reader.remaining()
+            ),
+        });
+    }
+
+    reader.assert_exhausted()?;
+    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(subrecord_2);
+    let text = decoded.trim_end_matches('\0').to_owned();
+
+    Ok(PcbText {
+        common,
+        location,
+        height,
+        stroke_font_type,
+        text_kind,
+        rotation,
+        is_mirrored,
+        stroke_width,
+        is_comment,
+        is_designator,
+        user_routed,
+        is_bold,
+        is_italic,
+        font_name,
+        is_inverted,
+        margin_border_width,
+        wide_string_index,
+        union_index,
+        is_inverted_rect,
+        textbox_rect_width,
+        textbox_rect_height,
+        textbox_rect_justification,
+        text_offset_width,
+        unk_vec_x,
+        unk_vec_y,
+        barcode_margin_x,
+        barcode_margin_y,
+        unk32,
+        barcode_type,
+        barcode_inverted,
+        barcode_font_type,
+        barcode_font_name,
+        layer_enum_index,
+        sentinel_1,
+        sentinel_2,
+        trailing_flag_1,
+        trailing_flag_2,
+        trailing_is_justification_valid,
+        advance_snapping,
+        advance_reserved,
+        advance_justification_x,
+        advance_justification_y,
+        use_text_alignment_by_snap,
+        snap_point_x,
+        snap_point_y,
+        text,
     })
 }
 

@@ -8,10 +8,14 @@ use altium_format_types::constants::file_headers::{
 };
 use altium_format_types::constants::streams::FILE_HEADER;
 
+use crate::binary_io::BinaryReader;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcb_file_header::{PcbFileHeader, parse_pcb_file_header, parse_pcb_legacy_header};
+use crate::pcblib::library::{
+    PcbEmbeddedFontEntry, PcbLayerKindMapping, PcbLibModelEntry, PcbPadViaLibraryConfig,
+    parse_layer_kind_mapping, parse_model_metadata, parse_pad_via_library,
+};
 use crate::tracked_cfb::TrackedCfbDocument;
-use crate::wide_strings_tlv::{WideStringEntry, parse_wide_strings_tlv};
 use crate::{AltiumFormatError, Result, ResultExt};
 
 pub(crate) struct PrimitiveSectionData {
@@ -30,22 +34,43 @@ pub(crate) struct PrefixedParamSectionData {
 }
 
 pub(crate) struct WideStringsSectionData {
-    pub(crate) entries: Vec<WideStringEntry>,
+    pub(crate) entries: Vec<records::WideString6Record>,
 }
 
-pub(crate) struct RawSectionData {
-    pub(crate) storage_name: String,
-    pub(crate) header: Option<Vec<u8>>,
-    pub(crate) data: Option<Vec<u8>>,
-    pub(crate) extra_streams: Vec<(String, Vec<u8>)>,
+pub(crate) struct BinarySectionData {
+    pub(crate) kind: records::BinaryLenSectionKind,
+    pub(crate) records: Vec<records::BinaryLenRecord>,
+}
+
+pub(crate) struct ModelsSectionData {
+    pub(crate) metadata: Vec<PcbLibModelEntry>,
+    pub(crate) blobs: Vec<(String, Vec<u8>)>,
+}
+
+pub(crate) struct EmbeddedFontsSectionData {
+    pub(crate) header_count: u32,
+    pub(crate) entries: Vec<PcbEmbeddedFontEntry>,
+}
+
+pub(crate) struct PadViaLibrarySectionData {
+    pub(crate) section_name: String,
+    pub(crate) config: Option<PcbPadViaLibraryConfig>,
+}
+
+pub(crate) struct LayerKindMappingSectionData {
+    pub(crate) mapping: PcbLayerKindMapping,
 }
 
 pub(crate) enum PcbDocSection {
     Primitive(PrimitiveSectionData),
     Parameter(ParamSectionData),
+    Binary(BinarySectionData),
     PrefixedParameter(PrefixedParamSectionData),
     WideStrings(WideStringsSectionData),
-    Raw(RawSectionData),
+    Models(ModelsSectionData),
+    EmbeddedFonts(EmbeddedFontsSectionData),
+    PadViaLibrary(PadViaLibrarySectionData),
+    LayerKindMapping(LayerKindMappingSectionData),
 }
 
 pub struct PcbDoc {
@@ -69,11 +94,13 @@ impl PcbDoc {
 
         let legacy_data = doc.read_stream(&format!("/{FILE_HEADER}"))?;
         let legacy_header = parse_pcb_legacy_header(&legacy_data).context("parsing /FileHeader")?;
-        if legacy_header != PCB_DOC_BINARY_HEADER_V5 {
+        if !PCB_DOC_BINARY_HEADER_V5.starts_with(&legacy_header)
+            || !legacy_header.starts_with("PCB ")
+        {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: FILE_HEADER.to_owned(),
                 detail: format!(
-                    "expected legacy header \"{}\", got \"{}\"",
+                    "expected legacy header prefix of \"{}\", got \"{}\"",
                     PCB_DOC_BINARY_HEADER_V5, legacy_header
                 ),
             });
@@ -110,8 +137,8 @@ impl PcbDoc {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
-                let entries = parse_wide_strings_tlv(&data)
-                    .with_context(|| format!("parsing {storage_path}/Data as WideStrings6 TLV"))?;
+                let entries = records::parse_wide_strings6_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
                 if expected_count != entries.len() {
                     return Err(AltiumFormatError::RecordCountMismatch {
                         section: storage_name.clone(),
@@ -119,10 +146,72 @@ impl PcbDoc {
                         actual: entries.len(),
                     });
                 }
-                let _ = doc.list_entries(&storage_path)?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::WideStrings(WideStringsSectionData {
                     entries,
                 }));
+                continue;
+            }
+
+            if storage_name == "Models" {
+                sections.push(parse_models_storage(&mut doc, &storage_name)?);
+                continue;
+            }
+
+            if storage_name == "PadViaLibrary" || storage_name == "PadViaLibraryCache" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let config = parse_pad_via_library(&header_data, &data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::PadViaLibrary(PadViaLibrarySectionData {
+                    section_name: storage_name.clone(),
+                    config,
+                }));
+                continue;
+            }
+
+            if storage_name == "LayerKindMapping" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let mapping = parse_layer_kind_mapping(&header_data, &data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::LayerKindMapping(
+                    LayerKindMappingSectionData { mapping },
+                ));
+                continue;
+            }
+
+            if storage_name == "EmbeddedFonts6" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let header_count = parse_pcb_section_header(&header_data)?;
+                let entries = parse_embedded_fonts6_data(&data, header_count as usize)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::EmbeddedFonts(EmbeddedFontsSectionData {
+                    header_count,
+                    entries,
+                }));
+                continue;
+            }
+
+            if let Some(kind) = records::BinaryLenSectionKind::from_storage_name(&storage_name) {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let expected_count = parse_pcb_section_header(&header_data)? as usize;
+                let records = records::parse_len_prefixed_binary_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                if expected_count != records.len() {
+                    return Err(AltiumFormatError::RecordCountMismatch {
+                        section: storage_name.clone(),
+                        expected: expected_count,
+                        actual: records.len(),
+                    });
+                }
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::Binary(BinarySectionData { kind, records }));
                 continue;
             }
 
@@ -139,7 +228,7 @@ impl PcbDoc {
                         actual: records.len(),
                     });
                 }
-                let _ = doc.list_entries(&storage_path)?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Primitive(PrimitiveSectionData {
                     kind,
                     records,
@@ -160,7 +249,7 @@ impl PcbDoc {
                         actual: records.len(),
                     });
                 }
-                let _ = doc.list_entries(&storage_path)?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
                 continue;
             }
@@ -179,7 +268,7 @@ impl PcbDoc {
                         actual: records.len(),
                     });
                 }
-                let _ = doc.list_entries(&storage_path)?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::PrefixedParameter(PrefixedParamSectionData {
                     kind,
                     records,
@@ -187,7 +276,10 @@ impl PcbDoc {
                 continue;
             }
 
-            sections.push(parse_raw_storage(&mut doc, &storage_name)?);
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "PcbDoc storage".to_owned(),
+                detail: format!("unimplemented storage /{storage_name}"),
+            });
         }
 
         doc.assert_all_consumed()?;
@@ -200,29 +292,129 @@ impl PcbDoc {
     }
 }
 
-fn parse_raw_storage(doc: &mut TrackedCfbDocument, storage_name: &str) -> Result<PcbDocSection> {
+fn assert_known_section_layout(
+    doc: &mut TrackedCfbDocument,
+    storage_name: &str,
+    storage_path: &str,
+) -> Result<()> {
+    let (storages, streams) = doc.list_entries(storage_path)?;
+    if !storages.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: storage_name.to_owned(),
+            detail: format!("unexpected nested storages: {}", storages.join(", ")),
+        });
+    }
+
+    let mut unexpected_streams = Vec::new();
+    for stream in streams {
+        if stream != "Header" && stream != "Data" {
+            unexpected_streams.push(stream);
+        }
+    }
+    if !unexpected_streams.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: storage_name.to_owned(),
+            detail: format!("unexpected streams: {}", unexpected_streams.join(", ")),
+        });
+    }
+    Ok(())
+}
+
+fn parse_models_storage(doc: &mut TrackedCfbDocument, storage_name: &str) -> Result<PcbDocSection> {
     let storage_path = format!("/{storage_name}");
-    let header_path = format!("{storage_path}/Header");
-    let data_path = format!("{storage_path}/Data");
+    let (storages, streams) = doc.list_entries(&storage_path)?;
+    if !storages.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: storage_name.to_owned(),
+            detail: format!("unexpected nested storages: {}", storages.join(", ")),
+        });
+    }
 
-    let header = doc.read_stream_optional(&header_path)?;
-    let data = doc.read_stream_optional(&data_path)?;
-    let (_storages, streams) = doc.list_entries(&storage_path)?;
+    let has_header = streams.iter().any(|s| s == "Header");
+    let has_data = streams.iter().any(|s| s == "Data");
+    if has_header != has_data {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: storage_name.to_owned(),
+            detail: "expected Header and Data to both exist or both be absent".to_owned(),
+        });
+    }
 
-    let mut extra_streams = Vec::new();
+    let mut metadata = Vec::new();
+    if has_header {
+        let header = doc.read_stream(&format!("{storage_path}/Header"))?;
+        let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+        metadata = parse_model_metadata(&header, &data)
+            .with_context(|| format!("parsing {storage_path}/Data as model metadata"))?;
+    }
+
+    let mut blobs = Vec::new();
     for stream in streams {
         if stream == "Header" || stream == "Data" {
             continue;
         }
-        let stream_path = format!("{storage_path}/{stream}");
-        let bytes = doc.read_stream(&stream_path)?;
-        extra_streams.push((stream, bytes));
+        let bytes = doc.read_stream(&format!("{storage_path}/{stream}"))?;
+        blobs.push((stream, bytes));
     }
 
-    Ok(PcbDocSection::Raw(RawSectionData {
-        storage_name: storage_name.to_owned(),
-        header,
-        data,
-        extra_streams,
-    }))
+    Ok(PcbDocSection::Models(ModelsSectionData { metadata, blobs }))
+}
+
+fn read_utf16le_len_prefixed(reader: &mut BinaryReader, key: &str) -> Result<String> {
+    let byte_len = reader.read_u32_le()? as usize;
+    if (byte_len % 2) != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("UTF-16LE byte length must be even, got {byte_len}"),
+        });
+    }
+    let raw = reader.read_bytes(byte_len)?;
+    let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(raw);
+    if had_errors {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: "invalid UTF-16LE sequence".to_owned(),
+        });
+    }
+    Ok(decoded.trim_end_matches('\0').to_owned())
+}
+
+fn parse_embedded_fonts6_data(
+    data: &[u8],
+    expected_count: usize,
+) -> Result<Vec<PcbEmbeddedFontEntry>> {
+    if expected_count == 0 {
+        if !data.is_empty() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "EmbeddedFonts6/Header".to_owned(),
+                detail: "header count is 0 but data stream is not empty".to_owned(),
+            });
+        }
+        return Ok(Vec::new());
+    }
+
+    let mut reader = BinaryReader::new(data);
+    let mut entries = Vec::with_capacity(expected_count);
+    for idx in 0..expected_count {
+        let name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.name")?;
+        let style_name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.style_name")?;
+        let localized_name =
+            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.localized_name")?;
+        let unknown_u16 = reader.read_u16_le()?;
+        let flag = reader.read_u8()?;
+        let blob_size = reader.read_u32_le()? as usize;
+        let blob = reader.read_bytes(blob_size)?;
+        entries.push(PcbEmbeddedFontEntry {
+            name,
+            style_name,
+            localized_name,
+            unknown_u16,
+            flag,
+            data: blob.to_vec(),
+        });
+        if idx + 1 == expected_count {
+            break;
+        }
+    }
+    reader.assert_exhausted()?;
+    Ok(entries)
 }

@@ -4,8 +4,29 @@ pub trait PcbDocOps {
 
 impl PcbDocOps for altium_format::PcbDoc {
     fn validate(&self) -> crate::Result<()> {
-        Err(crate::AltiumOperationError::Unimplemented(
-            "PcbDocOps::validate is not implemented yet".to_string(),
-        ))
+        const EXPECTED_PCBDOC_HEADER: &str = "PCB 6.0 Binary File";
+        if self.version_header() != EXPECTED_PCBDOC_HEADER {
+            return Err(crate::AltiumOperationError::AltiumFormat(
+                altium_format::AltiumFormatError::InvalidParamValue {
+                    key: "FileHeaderSix".to_owned(),
+                    detail: format!(
+                        "expected header {}, got {}",
+                        EXPECTED_PCBDOC_HEADER,
+                        self.version_header()
+                    ),
+                },
+            ));
+        }
+
+        if self.minor_version() <= 0.0 {
+            return Err(crate::AltiumOperationError::AltiumFormat(
+                altium_format::AltiumFormatError::InvalidParamValue {
+                    key: "FileHeaderSix.minor_version".to_owned(),
+                    detail: format!("expected positive minor version, got {}", self.minor_version()),
+                },
+            ));
+        }
+
+        Ok(())
     }
 }

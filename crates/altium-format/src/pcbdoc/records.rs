@@ -2,6 +2,7 @@ use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
 use crate::prefixed_param_stream::parse_prefixed_param_blocks;
 use crate::{AltiumFormatError, Result};
+use altium_format_types::{CoordPoint, V6Layer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrimitiveSectionKind {
@@ -48,7 +49,6 @@ pub(crate) enum ParamSectionKind {
     Classes6,
     DifferentialPairs6,
     FromTos6,
-    Connections6,
     EmbeddedBoards6,
     Embeddeds6,
     UniqueIdPrimitiveInformation,
@@ -83,7 +83,6 @@ impl ParamSectionKind {
             "Classes6" => Some(Self::Classes6),
             "DifferentialPairs6" => Some(Self::DifferentialPairs6),
             "FromTos6" => Some(Self::FromTos6),
-            "Connections6" => Some(Self::Connections6),
             "EmbeddedBoards6" => Some(Self::EmbeddedBoards6),
             "Embeddeds6" => Some(Self::Embeddeds6),
             "UniqueIDPrimitiveInformation" => Some(Self::UniqueIdPrimitiveInformation),
@@ -106,6 +105,20 @@ impl ParamSectionKind {
             "LayerKindMapping" => Some(Self::LayerKindMapping),
             "ModelsNoEmbed" => Some(Self::ModelsNoEmbed),
             "Textures" => Some(Self::Textures),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BinaryLenSectionKind {
+    Connections6,
+}
+
+impl BinaryLenSectionKind {
+    pub(crate) fn from_storage_name(name: &str) -> Option<Self> {
+        match name {
+            "Connections6" => Some(Self::Connections6),
             _ => None,
         }
     }
@@ -140,6 +153,32 @@ pub(crate) struct PrefixedParamRecord {
     pub(crate) params: ParameterCollection,
 }
 
+pub(crate) struct BinaryLenRecord {
+    pub(crate) common: ConnectionCommonHeader,
+    pub(crate) from: CoordPoint,
+    pub(crate) to: CoordPoint,
+    pub(crate) from_layer: V6Layer,
+    pub(crate) to_layer: V6Layer,
+    pub(crate) connection_layer_enum: i32,
+    pub(crate) from_layer_enum: i32,
+    pub(crate) to_layer_enum: i32,
+}
+
+pub(crate) struct ConnectionCommonHeader {
+    pub(crate) layer: V6Layer,
+    pub(crate) flags: u16,
+    pub(crate) net_index: i16,
+    pub(crate) unknown_1: i16,
+    pub(crate) component_index: i16,
+    pub(crate) polygon_index: i16,
+    pub(crate) unknown_2: i16,
+}
+
+pub(crate) struct WideString6Record {
+    pub(crate) index: u32,
+    pub(crate) text: String,
+}
+
 pub(crate) fn parse_standard_param_records(data: &[u8]) -> Result<Vec<StandardParamRecord>> {
     let mut reader = BinaryReader::new(data);
     let mut out = Vec::new();
@@ -148,6 +187,80 @@ pub(crate) fn parse_standard_param_records(data: &[u8]) -> Result<Vec<StandardPa
         let payload = reader.read_bytes(size)?;
         let params = ParameterCollection::from_bytes(payload)?;
         out.push(StandardParamRecord { params });
+    }
+    reader.assert_exhausted()?;
+    Ok(out)
+}
+
+pub(crate) fn parse_len_prefixed_binary_records(data: &[u8]) -> Result<Vec<BinaryLenRecord>> {
+    let mut reader = BinaryReader::new(data);
+    let mut out = Vec::new();
+    while reader.remaining() > 0 {
+        let size = reader.read_u32_le()? as usize;
+        let payload = reader.read_bytes(size)?;
+        if size != 43 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Connections6/Data".to_owned(),
+                detail: format!("expected 43-byte connection payload, got {size}"),
+            });
+        }
+
+        let mut payload_reader = BinaryReader::new(payload);
+        let common = ConnectionCommonHeader {
+            layer: V6Layer::try_from(payload_reader.read_u8()?)?,
+            flags: payload_reader.read_u16_le()?,
+            net_index: payload_reader.read_i16_le()?,
+            unknown_1: payload_reader.read_i16_le()?,
+            component_index: payload_reader.read_i16_le()?,
+            polygon_index: payload_reader.read_i16_le()?,
+            unknown_2: payload_reader.read_i16_le()?,
+        };
+        let from = payload_reader.read_coord_point()?;
+        let to = payload_reader.read_coord_point()?;
+        let from_layer = V6Layer::try_from(payload_reader.read_u8()?)?;
+        let to_layer = V6Layer::try_from(payload_reader.read_u8()?)?;
+        let connection_layer_enum = payload_reader.read_i32_le()?;
+        let from_layer_enum = payload_reader.read_i32_le()?;
+        let to_layer_enum = payload_reader.read_i32_le()?;
+        payload_reader.assert_exhausted()?;
+
+        out.push(BinaryLenRecord {
+            common,
+            from,
+            to,
+            from_layer,
+            to_layer,
+            connection_layer_enum,
+            from_layer_enum,
+            to_layer_enum,
+        });
+    }
+    reader.assert_exhausted()?;
+    Ok(out)
+}
+
+pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6Record>> {
+    let mut reader = BinaryReader::new(data);
+    let mut out = Vec::new();
+    while reader.remaining() > 0 {
+        let index = reader.read_u32_le()?;
+        let size = reader.read_u32_le()? as usize;
+        if (size % 2) != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "WideStrings6/Data".to_owned(),
+                detail: format!("string byte length must be even for UTF-16LE, got {size}"),
+            });
+        }
+        let payload = reader.read_bytes(size)?;
+        let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(payload);
+        if had_errors {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "WideStrings6/Data".to_owned(),
+                detail: format!("invalid UTF-16LE sequence for string index {index}"),
+            });
+        }
+        let text = decoded.trim_end_matches('\0').to_owned();
+        out.push(WideString6Record { index, text });
     }
     reader.assert_exhausted()?;
     Ok(out)

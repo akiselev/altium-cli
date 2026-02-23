@@ -10,9 +10,10 @@ use std::path::Path;
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
+use altium_format_types::pcb::TentingMode;
 use altium_format_types::{
-    Color, Coord, CoordPoint, HoleType, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle,
-    RegionKind, TCacheState, TextKind, V6Layer, V7Layer,
+    Color, Coord, CoordPoint, HoleType, MaskExpansionMode, PadShape, PadStackMode, PcbFlags,
+    PlaneConnectionStyle, RegionKind, TCacheState, TextKind, V6Layer, V7Layer,
 };
 
 use crate::block_stream::iter_blocks;
@@ -111,22 +112,60 @@ pub(crate) struct PcbVia {
     pub(crate) from_layer: V6Layer,
     pub(crate) to_layer: V6Layer,
     // Extended fields (offset 31+, present when subrecord > 31 bytes)
+    pub(crate) via_properties_version: u8,
     pub(crate) thermal_relief_air_gap: Coord,
     pub(crate) thermal_relief_conductor_count: u8,
+    pub(crate) thermal_relief_rotation_code: u8,
     pub(crate) thermal_relief_conductor_width: Coord,
+    pub(crate) power_plane_relief_expansion: Coord,
+    pub(crate) power_plane_clearance: Coord,
+    pub(crate) paste_mask_expansion: Coord,
     pub(crate) solder_mask_expansion_front: Coord,
+    pub(crate) planes: u16,
+    pub(crate) plane_connection_style_valid: TCacheState,
+    pub(crate) relief_conductor_width_valid: TCacheState,
+    pub(crate) relief_entries_valid: TCacheState,
+    pub(crate) relief_air_gap_valid: TCacheState,
+    pub(crate) power_plane_relief_expansion_valid: TCacheState,
+    pub(crate) paste_mask_expansion_valid: TCacheState,
     pub(crate) solder_mask_expansion_manual: bool,
+    pub(crate) solder_mask_expansion_valid: TCacheState,
+    pub(crate) power_plane_clearance_valid: TCacheState,
+    pub(crate) planes_valid: TCacheState,
+    pub(crate) plane_connection_style: PlaneConnectionStyle,
+    pub(crate) solder_mask_expansion_mode: MaskExpansionMode,
+    pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
+    pub(crate) tenting_mode: TentingMode,
     pub(crate) via_mode: u8,
     pub(crate) diameters_per_layer: [Coord; 32],
     // Additional extended (offset 203+)
+    pub(crate) layer_enum_index: i32,
+    pub(crate) stack_start_layer: u8,
+    pub(crate) stack_end_layer: u8,
+    pub(crate) extension_coord_209: Coord,
+    pub(crate) extension_coord_213: Coord,
+    pub(crate) extension_coord_217: Coord,
+    pub(crate) extension_coord_221: Coord,
+    pub(crate) extension_coord_225: Coord,
+    pub(crate) extension_coord_229: Coord,
+    pub(crate) extension_coord_233: Coord,
+    pub(crate) extension_coord_237: Coord,
     pub(crate) solder_mask_expansion_linked: bool,
     pub(crate) solder_mask_expansion_back: Coord,
     // Premium extended (offset 246+, AD26)
     pub(crate) pos_tolerance: Coord,
     pub(crate) neg_tolerance: Coord,
-    // Post-section-1 data (sections 2-5, consumed as raw bytes)
-    pub(crate) post_section_data: Vec<u8>,
+    // Post-section-1 data (sections 2-5), fully consumed without skip semantics.
+    pub(crate) layer_diameter_overrides: Vec<PcbViaSection2Entry>,
     pub(crate) unique_id: Option<String>,
+}
+
+pub(crate) struct PcbViaSection2Entry {
+    pub(crate) layer: u8,
+    pub(crate) diameter: Coord,
+    pub(crate) rule_index: u16,
+    pub(crate) flags: u8,
+    pub(crate) mode: u8,
 }
 
 pub(crate) struct PcbFill {
@@ -603,7 +642,7 @@ mod tests {
             header: PcbFileHeader {
                 version_string: String::new(),
                 version: 0.0,
-                unique_id: String::new(),
+                unique_id: Some(String::new()),
             },
             section_keys: HashMap::new(),
             library: library::PcbLibraryData {
