@@ -4,8 +4,8 @@
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
 use altium_format_types::{
     Color, ComponentKind, Coord, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
-    ParameterReadOnlyState, ParameterType, PenWidth, RotationBy90, SheetSymbolType,
-    TextHorzAnchor, TextJustification, TextVertAnchor, UniqueId,
+    ParameterReadOnlyState, ParameterType, PenWidth, RotationBy90, SheetSymbolType, TextHorzAnchor,
+    TextJustification, TextVertAnchor, UniqueId,
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle},
 };
 
@@ -46,7 +46,11 @@ impl FromParamValue for bool {
 
 impl ToParamValue for bool {
     fn to_param_value(&self) -> String {
-        if *self { "T".to_owned() } else { "F".to_owned() }
+        if *self {
+            "T".to_owned()
+        } else {
+            "F".to_owned()
+        }
     }
 }
 
@@ -76,7 +80,10 @@ impl_int_param_value!(i8, u8, i16, u16, i32, u32, f64);
 impl FromParamValue for Coord {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {
         let raw: i32 = value.parse().map_err(|e: std::num::ParseIntError| {
-            AltiumFormatError::InvalidParamValue { key: key.to_owned(), detail: e.to_string() }
+            AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: e.to_string(),
+            }
         })?;
         Ok(Coord::from_internal(raw))
     }
@@ -92,10 +99,12 @@ impl ToParamValue for Coord {
 // (32-bit or 64-bit depending on target); used for Weight and count fields.
 impl FromParamValue for usize {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {
-        value.parse::<usize>().map_err(|e| AltiumFormatError::InvalidParamValue {
-            key: key.to_owned(),
-            detail: e.to_string(),
-        })
+        value
+            .parse::<usize>()
+            .map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: e.to_string(),
+            })
     }
 }
 
@@ -192,16 +201,20 @@ impl FromParamValue for SchAngle {
 }
 
 impl Default for SchAngle {
-    fn default() -> Self { SchAngle(0.0) }
+    fn default() -> Self {
+        SchAngle(0.0)
+    }
 }
 
 // UniqueId is stored as an 8-char uppercase alpha string in parameter values.
 impl FromParamValue for UniqueId {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {
-        value.parse::<UniqueId>().map_err(|e| AltiumFormatError::InvalidParamValue {
-            key: key.to_owned(),
-            detail: e.to_string(),
-        })
+        value
+            .parse::<UniqueId>()
+            .map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: e.to_string(),
+            })
     }
 }
 
@@ -228,9 +241,11 @@ impl FromParamValue for SheetSymbolType {
 
         // Accept numeric fallback for robustness in mixed-version files.
         if let Ok(raw) = value.parse::<u8>() {
-            return SheetSymbolType::try_from(raw).map_err(|e| AltiumFormatError::InvalidParamValue {
-                key: key.to_owned(),
-                detail: e.to_string(),
+            return SheetSymbolType::try_from(raw).map_err(|e| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: e.to_string(),
+                }
             });
         }
 

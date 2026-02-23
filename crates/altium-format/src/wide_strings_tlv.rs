@@ -12,8 +12,8 @@
 //! format (Format A), NOT this TLV format.
 
 use altium_format_types::constants::parsing::{
-    WIDE_STRING_TYPE_ASCII_U8, WIDE_STRING_TYPE_ASCII_U32, WIDE_STRING_TYPE_UTF16LE,
-    WIDE_STRING_TYPE_UTF8,
+    WIDE_STRING_TYPE_ASCII_U8, WIDE_STRING_TYPE_ASCII_U32, WIDE_STRING_TYPE_UTF8,
+    WIDE_STRING_TYPE_UTF16LE,
 };
 
 use crate::binary_io::BinaryReader;
@@ -62,8 +62,7 @@ pub(crate) fn parse_wide_strings_tlv(stream_data: &[u8]) -> Result<Vec<WideStrin
                 let char_count = reader.read_u32_le()? as usize;
                 let byte_count = char_count * 2;
                 let bytes = reader.read_bytes(byte_count)?;
-                let (decoded, _, had_errors) =
-                    encoding_rs::UTF_16LE.decode(bytes);
+                let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(bytes);
                 if had_errors {
                     return Err(AltiumFormatError::InvalidParamValue {
                         key: "WideStrings6".to_owned(),
@@ -76,12 +75,12 @@ pub(crate) fn parse_wide_strings_tlv(stream_data: &[u8]) -> Result<Vec<WideStrin
                 // u32 LE byte count + UTF-8 bytes
                 let len = reader.read_u32_le()? as usize;
                 let bytes = reader.read_bytes(len)?;
-                std::str::from_utf8(bytes).map_err(|e| {
-                    AltiumFormatError::InvalidParamValue {
+                std::str::from_utf8(bytes)
+                    .map_err(|e| AltiumFormatError::InvalidParamValue {
                         key: "WideStrings6".to_owned(),
                         detail: format!("type 0x14 UTF-8 decode error: {e}"),
-                    }
-                })?.to_owned()
+                    })?
+                    .to_owned()
             }
             other => {
                 return Err(AltiumFormatError::InvalidParamValue {

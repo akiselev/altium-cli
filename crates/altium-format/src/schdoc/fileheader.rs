@@ -1,8 +1,8 @@
 use altium_format_types::SchRecordType;
 use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
+use altium_format_types::constants::record_structure::UNIQUE_ID;
 use altium_format_types::constants::record_structure::{HEADER, RECORD, RECORD_EX, WEIGHT};
 use altium_format_types::constants::sheet::MINOR_VERSION;
-use altium_format_types::constants::record_structure::UNIQUE_ID;
 
 use crate::block_stream::{BlockFormat, parse_blocks};
 use crate::param_collection::ParameterCollection;
@@ -27,9 +27,8 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
     }
 
     let mut header_params = match blocks[0].format {
-        BlockFormat::Text => {
-            ParameterCollection::from_bytes(&blocks[0].data).context("parsing /FileHeader block #0")?
-        }
+        BlockFormat::Text => ParameterCollection::from_bytes(&blocks[0].data)
+            .context("parsing /FileHeader block #0")?,
         BlockFormat::Binary => {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "FileHeader".to_owned(),
@@ -38,7 +37,8 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
         }
     };
 
-    let header: String = header_params.remove_required(HEADER)
+    let header: String = header_params
+        .remove_required(HEADER)
         .context("reading /FileHeader HEADER")?;
     if header != SCH_SHEET_BINARY_HEADER_V50 {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -50,7 +50,8 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
         });
     }
 
-    let weight: i32 = header_params.remove_required(WEIGHT)
+    let weight: i32 = header_params
+        .remove_required(WEIGHT)
         .context("reading /FileHeader Weight")?;
     if weight < 0 {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -75,8 +76,10 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
         } else {
             record_raw
         };
-        let parsed = dispatch_record_type(record_type_val, &mut header_params)
-            .with_context(|| format!("dispatching /FileHeader block #0 RECORD={record_type_val}"))?;
+        let parsed =
+            dispatch_record_type(record_type_val, &mut header_params).with_context(|| {
+                format!("dispatching /FileHeader block #0 RECORD={record_type_val}")
+            })?;
         header_params.assert_exhausted().with_context(|| {
             format!("/FileHeader block #0 RECORD={record_type_val} has unknown parameters")
         })?;
@@ -108,10 +111,13 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
             record_raw
         };
 
-        let record = dispatch_record_type(record_type_val, &mut params)
-            .with_context(|| format!("dispatching /FileHeader block #{block_idx} RECORD={record_type_val}"))?;
+        let record = dispatch_record_type(record_type_val, &mut params).with_context(|| {
+            format!("dispatching /FileHeader block #{block_idx} RECORD={record_type_val}")
+        })?;
         params.assert_exhausted().with_context(|| {
-            format!("/FileHeader block #{block_idx} RECORD={record_type_val} has unknown parameters")
+            format!(
+                "/FileHeader block #{block_idx} RECORD={record_type_val} has unknown parameters"
+            )
         })?;
 
         records.push(record);
@@ -243,7 +249,8 @@ mod tests {
         ));
         stream.extend_from_slice(&write_text_block(&text_payload("|RECORD=41|")));
 
-        let err = parse_fileheader_stream(&stream).expect_err("must require RECORD=31 as first record");
+        let err =
+            parse_fileheader_stream(&stream).expect_err("must require RECORD=31 as first record");
         assert!(matches!(err, AltiumFormatError::InvalidParamValue { key, .. } if key == RECORD));
     }
 
@@ -256,7 +263,8 @@ mod tests {
             "|RECORD=31|FontIdCount=1|Size1=10|FontName1=Arial|",
         )));
 
-        let parsed = parse_fileheader_stream(&stream).expect("header without MinorVersion should parse");
+        let parsed =
+            parse_fileheader_stream(&stream).expect("header without MinorVersion should parse");
         assert_eq!(parsed.header.minor_version, 0);
         assert_eq!(parsed.records.len(), 1);
         assert!(matches!(parsed.records[0], SchRecord::Sheet(_)));
@@ -270,6 +278,8 @@ mod tests {
         stream.extend_from_slice(&write_binary_block(&[0xAA, 0xBB]));
 
         let err = parse_fileheader_stream(&stream).expect_err("must reject binary record blocks");
-        assert!(matches!(err, AltiumFormatError::InvalidParamValue { key, .. } if key == "FileHeader"));
+        assert!(
+            matches!(err, AltiumFormatError::InvalidParamValue { key, .. } if key == "FileHeader")
+        );
     }
 }

@@ -4,9 +4,11 @@
 //! Accessors are destructive (remove-on-read): `assert_exhausted` then
 //! confirms every key was consumed, enforcing the fail-fast invariant.
 //! Insertion order is preserved (IndexMap) for deterministic serialization.
-use indexmap::IndexMap;
+use altium_format_types::constants::parsing::{
+    C_BASE_UNIT, C_SCH_BROKEN_BAR, C_SCH_SPECIAL_DELIMITER, C_SCH_UTF8_PREFIX,
+};
 use altium_format_types::{Coord, CoordPoint};
-use altium_format_types::constants::parsing::{C_BASE_UNIT, C_SCH_BROKEN_BAR, C_SCH_SPECIAL_DELIMITER, C_SCH_UTF8_PREFIX};
+use indexmap::IndexMap;
 
 use crate::param_value::{FromParamValue, ToParamValue};
 use crate::{AltiumFormatError, Result};
@@ -20,7 +22,9 @@ pub(crate) struct ParameterCollection {
 impl ParameterCollection {
     // Creates an empty collection; use from_bytes or from_utf16le_bytes to populate.
     pub(crate) fn new() -> Self {
-        Self { params: IndexMap::new() }
+        Self {
+            params: IndexMap::new(),
+        }
     }
 
     // Returns true if the collection has no parameters.
@@ -109,7 +113,9 @@ impl ParameterCollection {
             };
 
             // HasNonAnsiSymbols: any char > '~' except the delimiter itself.
-            let needs_utf8 = safe_value.chars().any(|c| c > '~' && c != C_SCH_SPECIAL_DELIMITER);
+            let needs_utf8 = safe_value
+                .chars()
+                .any(|c| c > '~' && c != C_SCH_SPECIAL_DELIMITER);
 
             // If non-ASCII: emit UTF-8 version first (value is .trim()'d).
             if needs_utf8 {
@@ -153,7 +159,9 @@ impl ParameterCollection {
         // No trailing pipe -- matches C#'s StrUtils.SetParameterValue output.
         // encoding_rs::UTF_16LE.encode() does NOT produce UTF-16LE (the WHATWG spec
         // has no encoder for UTF-16); use Rust's native encode_utf16() instead.
-        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>()
+        s.encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect::<Vec<u8>>()
     }
 
     // Parses pipe-delimited Windows-1252 parameter bytes with %UTF8% key support.
@@ -192,8 +200,7 @@ impl ParameterCollection {
                 params.entry(stripped_key).or_insert(unescaped);
                 continue;
             } else {
-                let (decoded, _) =
-                    encoding_rs::WINDOWS_1252.decode_without_bom_handling(raw_value);
+                let (decoded, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(raw_value);
                 unescape_param_value(&decoded)
             };
             // First occurrence wins for duplicate keys.
@@ -259,10 +266,7 @@ impl ParameterCollection {
     }
 
     // Removes key (case-insensitive) and parses it if present; returns Ok(None) if absent.
-    pub(crate) fn remove_optional<T: FromParamValue>(
-        &mut self,
-        key: &str,
-    ) -> Result<Option<T>> {
+    pub(crate) fn remove_optional<T: FromParamValue>(&mut self, key: &str) -> Result<Option<T>> {
         let found = self.find_key(key).map(|k| k.to_owned());
         match found {
             Some(actual_key) => {
@@ -294,7 +298,11 @@ impl ParameterCollection {
 
     // Like remove_coord, but returns None if the integer part is absent.
     // Still consumes the frac companion if present (to avoid assert_exhausted failures).
-    pub(crate) fn remove_coord_optional(&mut self, key: &str, frac_key: &str) -> Result<Option<Coord>> {
+    pub(crate) fn remove_coord_optional(
+        &mut self,
+        key: &str,
+        frac_key: &str,
+    ) -> Result<Option<Coord>> {
         let integer: Option<i32> = self.remove_optional(key)?;
         let frac: i32 = self.remove_optional::<i32>(frac_key)?.unwrap_or(0);
         match integer {
@@ -349,10 +357,7 @@ impl ParameterCollection {
     }
 
     // Like remove_list but returns empty Vec when the key is absent.
-    pub(crate) fn remove_list_or_empty<T: FromParamValue>(
-        &mut self,
-        key: &str,
-    ) -> Result<Vec<T>> {
+    pub(crate) fn remove_list_or_empty<T: FromParamValue>(&mut self, key: &str) -> Result<Vec<T>> {
         match self.remove_optional::<String>(key)? {
             Some(raw) => raw
                 .split(',')
@@ -478,10 +483,16 @@ fn decode_unicode_sidecar(key: &str, encoded: &str) -> Result<String> {
         .split(',')
         .filter(|token| !token.trim().is_empty())
         .map(|token| {
-            token.trim().parse::<u16>().map_err(|_| AltiumFormatError::InvalidParamValue {
-                key: key.to_owned(),
-                detail: format!("invalid UTF-16 code unit in UNICODE sidecar: '{}'", token.trim()),
-            })
+            token
+                .trim()
+                .parse::<u16>()
+                .map_err(|_| AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!(
+                        "invalid UTF-16 code unit in UNICODE sidecar: '{}'",
+                        token.trim()
+                    ),
+                })
         })
         .collect::<Result<Vec<u16>>>()?;
     String::from_utf16(&code_units).map_err(|e| AltiumFormatError::InvalidParamValue {
@@ -515,10 +526,10 @@ fn escape_for_utf16le(s: &str) -> String {
 fn unescape_param_value(s: &str) -> String {
     // Order matters: resolve double Ž first (literal 0x8E), then single Ž (pipe).
     // Windows-1252 decodes byte 0x8E to U+017D (Ž), not U+008E.
-    let s = s.replace("\u{017D}\u{017D}", "\x00");  // placeholder for literal Ž
+    let s = s.replace("\u{017D}\u{017D}", "\x00"); // placeholder for literal Ž
     let s = s.replace('\u{017D}', "|");
-    let s = s.replace('\x00', "\u{017D}");           // restore literal Ž
-    s.replace(C_SCH_BROKEN_BAR, "|")                 // broken bar → pipe
+    let s = s.replace('\x00', "\u{017D}"); // restore literal Ž
+    s.replace(C_SCH_BROKEN_BAR, "|") // broken bar → pipe
 }
 
 #[cfg(test)]
@@ -743,7 +754,10 @@ mod tests {
         pc.insert("VAL", "a|b=c".to_owned());
         let bytes = pc.to_bytes();
         // Verify dual-write: UTF-8 version uses ¦ (broken bar), Win-1252 uses 0x8E (Ž)
-        assert!(bytes.windows(6).any(|w| w == b"%UTF8%"), "should contain %UTF8% prefix");
+        assert!(
+            bytes.windows(6).any(|w| w == b"%UTF8%"),
+            "should contain %UTF8% prefix"
+        );
         assert!(bytes.contains(&0x8E), "should contain 0x8E escape byte");
         // Roundtrip: parsing gives back original value
         let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
@@ -758,8 +772,14 @@ mod tests {
         pc.insert("Text", "0.1\u{00B5}F".to_owned()); // µF
         let bytes = pc.to_bytes();
         // UTF-8 version: µ as C2 B5
-        assert!(bytes.windows(6).any(|w| w == b"%UTF8%"), "should contain %UTF8% prefix");
-        assert!(bytes.windows(2).any(|w| w == [0xC2, 0xB5]), "should contain UTF-8 µ");
+        assert!(
+            bytes.windows(6).any(|w| w == b"%UTF8%"),
+            "should contain %UTF8% prefix"
+        );
+        assert!(
+            bytes.windows(2).any(|w| w == [0xC2, 0xB5]),
+            "should contain UTF-8 µ"
+        );
         // Win-1252 version: µ as single byte B5
         assert!(bytes.contains(&0xB5), "should contain Win-1252 µ byte");
         // Roundtrip
@@ -774,7 +794,10 @@ mod tests {
         let mut pc = ParameterCollection::new();
         pc.insert("KEY", "hello".to_owned());
         let bytes = pc.to_bytes();
-        assert!(!bytes.windows(6).any(|w| w == b"%UTF8%"), "pure ASCII should not have %UTF8%");
+        assert!(
+            !bytes.windows(6).any(|w| w == b"%UTF8%"),
+            "pure ASCII should not have %UTF8%"
+        );
         assert_eq!(&bytes, b"|KEY=hello\0");
     }
 
@@ -838,7 +861,7 @@ mod tests {
         assert_eq!(c.to_internal(), 10_000_000);
         pc2.assert_exhausted().unwrap();
         // Verify no FRAC key was written
-        let raw = std::str::from_utf8(&bytes[..bytes.len()-1]).unwrap();
+        let raw = std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap();
         assert!(!raw.contains("FRAC"), "FRAC should not appear when frac=0");
     }
 
@@ -849,7 +872,13 @@ mod tests {
             Coord::from_internal(10_050_000),
             Coord::from_internal(20_075_000),
         );
-        pc.insert_coord_point("Location.X", "Location.X_FRAC", "Location.Y", "Location.Y_FRAC", point);
+        pc.insert_coord_point(
+            "Location.X",
+            "Location.X_FRAC",
+            "Location.Y",
+            "Location.Y_FRAC",
+            point,
+        );
         let bytes = pc.to_bytes();
         let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
         let x = pc2.remove_coord("Location.X", "Location.X_FRAC").unwrap();
@@ -869,7 +898,9 @@ mod tests {
         pc.insert_indexed_coords("LocationCount", "X", "Y", &points);
         let bytes = pc.to_bytes();
         let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
-        let parsed_points = pc2.remove_indexed_coords("LocationCount", "X", "Y").unwrap();
+        let parsed_points = pc2
+            .remove_indexed_coords("LocationCount", "X", "Y")
+            .unwrap();
         assert_eq!(parsed_points.len(), 2);
         assert_eq!(parsed_points[0].x.to_internal(), 100_000);
         assert_eq!(parsed_points[0].y.to_internal(), 200_000);
@@ -885,7 +916,7 @@ mod tests {
         pc.insert("NAME", "test".to_owned());
         pc.insert("VALUE", "42".to_owned());
         let bytes = pc.to_bytes();
-        let s = String::from_utf8_lossy(&bytes[..bytes.len()-1]);
+        let s = String::from_utf8_lossy(&bytes[..bytes.len() - 1]);
         // Order must be: |RECORD=1|NAME=test|VALUE=42 (no trailing pipe)
         assert_eq!(s.as_ref(), "|RECORD=1|NAME=test|VALUE=42", "got: {s}");
     }

@@ -382,7 +382,8 @@ impl BinaryWriter {
         let b3 = (ieee_mant >> 29) as u8;
         let b4 = (ieee_mant >> 37) as u8;
         let b5 = ((ieee_mant >> 45) as u8 & 0x7F) | (sign << 7);
-        self.buf.extend_from_slice(&[real48_exp, b1, b2, b3, b4, b5]);
+        self.buf
+            .extend_from_slice(&[real48_exp, b1, b2, b3, b4, b5]);
     }
 
     /// Writes a `Coord` as a 4-byte little-endian i32 via `to_internal()`.
@@ -588,14 +589,27 @@ mod tests {
     fn assert_exhausted_with_remaining_returns_error() {
         let r = BinaryReader::new(&[1, 2, 3]);
         let err = r.assert_exhausted().unwrap_err();
-        assert!(matches!(err, AltiumFormatError::UnexpectedTrailingData { offset: 0, count: 3 }));
+        assert!(matches!(
+            err,
+            AltiumFormatError::UnexpectedTrailingData {
+                offset: 0,
+                count: 3
+            }
+        ));
     }
 
     #[test]
     fn read_past_end_returns_error() {
         let mut r = BinaryReader::new(&[]);
         let err = r.read_u8().unwrap_err();
-        assert!(matches!(err, AltiumFormatError::BinaryReadPastEnd { offset: 0, needed: 1, available: 0 }));
+        assert!(matches!(
+            err,
+            AltiumFormatError::BinaryReadPastEnd {
+                offset: 0,
+                needed: 1,
+                available: 0
+            }
+        ));
     }
 
     #[test]
@@ -614,8 +628,10 @@ mod tests {
             let mut r = BinaryReader::new(&data);
             let read_back = r.read_real48().unwrap();
             // Real48 has ~11 decimal digits of precision (40-bit mantissa)
-            assert!((read_back - v).abs() < 1e-10 * v.abs().max(1.0),
-                "roundtrip failed for {v}: got {read_back}");
+            assert!(
+                (read_back - v).abs() < 1e-10 * v.abs().max(1.0),
+                "roundtrip failed for {v}: got {read_back}"
+            );
         }
     }
 

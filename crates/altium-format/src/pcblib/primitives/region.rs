@@ -2,8 +2,8 @@ use altium_format_types::{Coord, CoordPoint, RegionKind};
 
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
-use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::PcbRegion;
+use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
 /// Parses a mil-format coordinate string (e.g. "0.5mil", "0mil", "-3.937mil").
@@ -15,13 +15,12 @@ fn parse_mil_param(params: &mut ParameterCollection, key: &str) -> Result<Coord>
         Some(s) => {
             let trimmed = s.strip_suffix("mil").unwrap_or(&s);
             let normalized = trimmed.replace(',', ".");
-            let mils: f64 =
-                normalized.parse().map_err(|e: std::num::ParseFloatError| {
-                    AltiumFormatError::InvalidParamValue {
-                        key: key.to_owned(),
-                        detail: format!("cannot parse '{}' as mil value: {}", s, e),
-                    }
-                })?;
+            let mils: f64 = normalized.parse().map_err(|e: std::num::ParseFloatError| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("cannot parse '{}' as mil value: {}", s, e),
+                }
+            })?;
             Ok(Coord::from_mils_f64(mils))
         }
     }
@@ -94,8 +93,12 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
     let mut params = ParameterCollection::from_str(&decoded)?;
 
     // Extract region parameters.
-    let v7_layer = params.remove_optional::<String>("V7_LAYER")?.unwrap_or_default();
-    let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
+    let v7_layer = params
+        .remove_optional::<String>("V7_LAYER")?
+        .unwrap_or_default();
+    let name = params
+        .remove_optional::<String>("NAME")?
+        .unwrap_or_default();
     let param_kind = params.remove_optional::<i32>("KIND")?.unwrap_or(0);
     let subpoly_index = params.remove_optional::<i32>("SUBPOLYINDEX")?.unwrap_or(-1);
     let union_index = params.remove_optional::<i32>("UNIONINDEX")?.unwrap_or(0);
@@ -105,8 +108,12 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
         .map(|s| s.eq_ignore_ascii_case("TRUE"))
         .unwrap_or(false);
     let cavity_height = parse_mil_param(&mut params, "CAVITYHEIGHT")?;
-    let keepout_restrictions = params.remove_optional::<i32>("KEEPOUTRESTRICTIONS")?.unwrap_or(0);
-    let layer = params.remove_optional::<String>("LAYER")?.unwrap_or_default();
+    let keepout_restrictions = params
+        .remove_optional::<i32>("KEEPOUTRESTRICTIONS")?
+        .unwrap_or(0);
+    let layer = params
+        .remove_optional::<String>("LAYER")?
+        .unwrap_or_default();
     let keepout = params
         .remove_optional::<String>("KEEPOUT")?
         .map(|s| s.eq_ignore_ascii_case("TRUE"))
@@ -122,7 +129,9 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
     // We consume these to pass assert_exhausted but don't store them separately —
     // the actual geometry comes from the f64 vertex arrays below.
     if is_shape_based {
-        let shape_vertex_count = params.remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?.unwrap_or(0);
+        let shape_vertex_count = params
+            .remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?
+            .unwrap_or(0);
         for i in 0..shape_vertex_count {
             let idx = i.to_string();
             // Each shape-based edge has: KIND, VX, VY, CX, CY, SA, EA, R
@@ -191,17 +200,17 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
+    use crate::binary_io::BinaryWriter;
 
     fn write_common_header(w: &mut BinaryWriter) {
-        w.write_u8(1);      // layer
-        w.write_u8(0);      // pad_byte
-        w.write_u16_le(0);  // flags
+        w.write_u8(1); // layer
+        w.write_u8(0); // pad_byte
+        w.write_u16_le(0); // flags
         w.write_i32_le(-1); // net_index
         w.write_u16_le(0xFFFF); // polygon_index
-        w.write_u16_le(0);  // component_index
-        w.write_u8(0);      // unknown
+        w.write_u16_le(0); // component_index
+        w.write_u8(0); // unknown
     }
 
     fn make_param_string(params: &str) -> Vec<u8> {
@@ -214,12 +223,12 @@ mod tests {
     fn parse_region_no_vertices() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_u8(0);       // kind = Copper
-        w.write_i32_le(0);   // hole_count = 0
+        w.write_u8(0); // kind = Copper
+        w.write_i32_le(0); // hole_count = 0
         let params = make_param_string("|");
         w.write_u32_le(params.len() as u32);
         w.write_bytes(&params);
-        w.write_i32_le(0);   // main contour vertex_count = 0
+        w.write_i32_le(0); // main contour vertex_count = 0
         let data = w.finish();
         let region = parse_region(&data).unwrap();
         assert_eq!(region.kind, RegionKind::Copper);
@@ -231,9 +240,11 @@ mod tests {
     fn parse_region_with_outline() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_u8(1);        // kind = Cutout
-        w.write_i32_le(0);    // hole_count = 0
-        let params = make_param_string("|V7_LAYER=TOP|NAME= |KIND=0|SUBPOLYINDEX=-1|UNIONINDEX=0|ARCRESOLUTION=0.5mil|ISSHAPEBASED=FALSE|CAVITYHEIGHT=0mil|");
+        w.write_u8(1); // kind = Cutout
+        w.write_i32_le(0); // hole_count = 0
+        let params = make_param_string(
+            "|V7_LAYER=TOP|NAME= |KIND=0|SUBPOLYINDEX=-1|UNIONINDEX=0|ARCRESOLUTION=0.5mil|ISSHAPEBASED=FALSE|CAVITYHEIGHT=0mil|",
+        );
         w.write_u32_le(params.len() as u32);
         w.write_bytes(&params);
         // 3 vertices as f64 pairs
@@ -260,20 +271,29 @@ mod tests {
     fn parse_region_with_hole() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_u8(0);        // kind = Copper
-        w.write_i32_le(1);    // hole_count = 1
+        w.write_u8(0); // kind = Copper
+        w.write_i32_le(1); // hole_count = 1
         let params = make_param_string("|");
         w.write_u32_le(params.len() as u32);
         w.write_bytes(&params);
         // Main contour: 4 vertices
         w.write_i32_le(4);
-        for &(x, y) in &[(0.0, 0.0), (100_000.0, 0.0), (100_000.0, 100_000.0), (0.0, 100_000.0)] {
+        for &(x, y) in &[
+            (0.0, 0.0),
+            (100_000.0, 0.0),
+            (100_000.0, 100_000.0),
+            (0.0, 100_000.0),
+        ] {
             w.write_f64_le(x);
             w.write_f64_le(y);
         }
         // Hole contour: 3 vertices
         w.write_i32_le(3);
-        for &(x, y) in &[(20_000.0, 20_000.0), (80_000.0, 20_000.0), (50_000.0, 80_000.0)] {
+        for &(x, y) in &[
+            (20_000.0, 20_000.0),
+            (80_000.0, 20_000.0),
+            (50_000.0, 80_000.0),
+        ] {
             w.write_f64_le(x);
             w.write_f64_le(y);
         }
@@ -293,13 +313,19 @@ mod tests {
         w.write_i32_le(-1); // negative hole_count
         let data = w.finish();
         let result = parse_region(&data);
-        assert!(matches!(result, Err(AltiumFormatError::InvalidParamValue { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::InvalidParamValue { .. })
+        ));
     }
 
     #[test]
     fn truncated_region_returns_error() {
         let data = [0u8; 5];
         let result = parse_region(&data);
-        assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::BinaryReadPastEnd { .. })
+        ));
     }
 }

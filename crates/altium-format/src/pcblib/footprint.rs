@@ -6,13 +6,13 @@ use altium_format_types::{Coord, PcbObjectId};
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
+use crate::pcblib::PcbFootprint;
 use crate::pcblib::primitives;
 use crate::pcblib::sidecar::{
     merge_sidecars, parse_extended_primitive_information, parse_unique_id_primitive_information,
     validate_primitive_guids,
 };
 use crate::pcblib::wide_strings::parse_pcblib_wide_strings;
-use crate::pcblib::PcbFootprint;
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
 
@@ -27,16 +27,15 @@ pub(crate) fn load_footprint(
 
     let params_raw = doc.read_stream(&params_path)?;
     let (pattern, height, description, item_guid, revision_guid) =
-        parse_parameters_stream(&params_raw)
-            .with_context(|| format!("parsing {params_path}"))?;
+        parse_parameters_stream(&params_raw).with_context(|| format!("parsing {params_path}"))?;
 
     let header_raw = doc.read_stream(&header_path)?;
     let expected_count = parse_pcb_section_header(&header_raw)
         .with_context(|| format!("parsing {header_path}"))? as usize;
 
     let data_raw = doc.read_stream(&data_path)?;
-    let (data_pattern, primitives_vec) = parse_pcblib_data_stream(&data_raw)
-        .with_context(|| format!("parsing {data_path}"))?;
+    let (data_pattern, primitives_vec) =
+        parse_pcblib_data_stream(&data_raw).with_context(|| format!("parsing {data_path}"))?;
 
     if data_pattern != pattern {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -89,9 +88,15 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
 
     let pattern = params.remove_required::<String>("PATTERN")?;
     let height = parse_height_mil(&mut params)?;
-    let description = params.remove_optional::<String>("DESCRIPTION")?.unwrap_or_default();
-    let item_guid = params.remove_optional::<String>("ITEMGUID")?.unwrap_or_default();
-    let revision_guid = params.remove_optional::<String>("REVISIONGUID")?.unwrap_or_default();
+    let description = params
+        .remove_optional::<String>("DESCRIPTION")?
+        .unwrap_or_default();
+    let item_guid = params
+        .remove_optional::<String>("ITEMGUID")?
+        .unwrap_or_default();
+    let revision_guid = params
+        .remove_optional::<String>("REVISIONGUID")?
+        .unwrap_or_default();
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;
@@ -111,13 +116,12 @@ fn parse_height_mil(params: &mut ParameterCollection) -> Result<Coord> {
             let trimmed = s.strip_suffix("mil").unwrap_or(&s);
             // Handle comma decimal separator (locale-dependent Altium installs)
             let normalized = trimmed.replace(',', ".");
-            let mils: f64 =
-                normalized.parse().map_err(|e: std::num::ParseFloatError| {
-                    AltiumFormatError::InvalidParamValue {
-                        key: "HEIGHT".to_owned(),
-                        detail: format!("cannot parse HEIGHT '{}': {}", s, e),
-                    }
-                })?;
+            let mils: f64 = normalized.parse().map_err(|e: std::num::ParseFloatError| {
+                AltiumFormatError::InvalidParamValue {
+                    key: "HEIGHT".to_owned(),
+                    detail: format!("cannot parse HEIGHT '{}': {}", s, e),
+                }
+            })?;
             Ok(Coord::from_mils_f64(mils))
         }
     }
@@ -164,8 +168,8 @@ fn parse_pcblib_data_stream(data: &[u8]) -> Result<(String, Vec<crate::pcblib::P
             let payload = reader.read_bytes(payload_len)?;
             subrecords.push(payload);
         }
-        let primitive = primitives::dispatch_primitive(object_id, &subrecords)
-            .with_context(|| {
+        let primitive =
+            primitives::dispatch_primitive(object_id, &subrecords).with_context(|| {
                 format!(
                     "primitive #{} ({:?}) at Data offset 0x{:X} ({} subrecords)",
                     records.len(),
@@ -197,19 +201,16 @@ fn load_sidecars(
     let unique_ids = if doc.exists(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Header")) {
         let header_data =
             doc.read_stream(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Header"))?;
-        let data =
-            doc.read_stream(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Data"))?;
+        let data = doc.read_stream(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Data"))?;
         // Mark the parent storage node as consumed.
         let _ = doc.list_entries(&format!("/{cfb_key}/UniqueIDPrimitiveInformation"))?;
         parse_unique_id_primitive_information(&header_data, &data)?
     } else {
         // Ensure the optional stream path is marked consumed even when absent.
-        let _ = doc.read_stream_optional(
-            &format!("/{cfb_key}/UniqueIDPrimitiveInformation/Header"),
-        )?;
-        let _ = doc.read_stream_optional(
-            &format!("/{cfb_key}/UniqueIDPrimitiveInformation/Data"),
-        )?;
+        let _ =
+            doc.read_stream_optional(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Header"))?;
+        let _ =
+            doc.read_stream_optional(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Data"))?;
         vec![]
     };
 
@@ -217,23 +218,19 @@ fn load_sidecars(
     if doc.exists(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header")) {
         let header_data =
             doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"))?;
-        let data =
-            doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
+        let data = doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
         let _ = doc.list_entries(&format!("/{cfb_key}/ExtendedPrimitiveInformation"))?;
         parse_extended_primitive_information(&header_data, &data)?;
     } else {
-        let _ = doc.read_stream_optional(
-            &format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"),
-        )?;
-        let _ = doc.read_stream_optional(
-            &format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"),
-        )?;
+        let _ =
+            doc.read_stream_optional(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"))?;
+        let _ =
+            doc.read_stream_optional(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
     }
 
     // PrimitiveGuids: optional Header/Data substorage.
     if doc.exists(&format!("/{cfb_key}/PrimitiveGuids/Header")) {
-        let header_data =
-            doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
+        let header_data = doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
         let _ = doc.list_entries(&format!("/{cfb_key}/PrimitiveGuids"))?;
         validate_primitive_guids(&header_data, &data)?;
@@ -264,9 +261,9 @@ fn load_sidecars(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint};
     use crate::binary_io::BinaryWriter;
     use crate::pcblib::PcbPrimitive;
+    use altium_format_types::{Coord, CoordPoint};
 
     fn make_parameters_stream(pattern: &str) -> Vec<u8> {
         let param_str = format!("|PATTERN={pattern}|\x00");
@@ -327,25 +324,25 @@ mod tests {
         // Arc record: type byte + u32 length + payload
         // Build arc payload (56 bytes: 13 common + 32 fields + 11 trailing)
         let mut arc_payload = BinaryWriter::new();
-        arc_payload.write_u8(1);      // layer
-        arc_payload.write_u8(0);      // pad_byte
-        arc_payload.write_u16_le(0);  // flags
+        arc_payload.write_u8(1); // layer
+        arc_payload.write_u8(0); // pad_byte
+        arc_payload.write_u16_le(0); // flags
         arc_payload.write_i32_le(-1); // net_index
         arc_payload.write_u16_le(0xFFFF); // polygon_index
-        arc_payload.write_u16_le(0);  // component_index
-        arc_payload.write_u8(0);      // unknown
+        arc_payload.write_u16_le(0); // component_index
+        arc_payload.write_u8(0); // unknown
         arc_payload.write_coord_point(CoordPoint::new(
             Coord::from_internal(10_000),
             Coord::from_internal(20_000),
         ));
         arc_payload.write_coord(Coord::from_internal(5_000)); // radius
-        arc_payload.write_f64_le(0.0);   // start_angle
+        arc_payload.write_f64_le(0.0); // start_angle
         arc_payload.write_f64_le(360.0); // end_angle
         arc_payload.write_coord(Coord::from_internal(1_000)); // width
         arc_payload.write_u16_le(0xFFFF); // subpoly_index
-        arc_payload.write_u8(0);          // user_routed
-        arc_payload.write_i32_le(0);      // union_index
-        arc_payload.write_u32_le(0);      // v7_layer
+        arc_payload.write_u8(0); // user_routed
+        arc_payload.write_i32_le(0); // union_index
+        arc_payload.write_u32_le(0); // v7_layer
         let arc_bytes = arc_payload.finish();
 
         w.write_u8(PcbObjectId::Arc as u8);
@@ -382,6 +379,13 @@ mod tests {
             None
         };
         assert!(err.is_some());
-        assert!(matches!(err.unwrap(), AltiumFormatError::RecordCountMismatch { expected: 5, actual: 0, .. }));
+        assert!(matches!(
+            err.unwrap(),
+            AltiumFormatError::RecordCountMismatch {
+                expected: 5,
+                actual: 0,
+                ..
+            }
+        ));
     }
 }

@@ -1,5 +1,7 @@
 use altium_format_types::constants::parsing::PAD_SUBRECORD_COUNT;
-use altium_format_types::{Coord, CoordPoint, HoleType, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState};
+use altium_format_types::{
+    Coord, CoordPoint, HoleType, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState,
+};
 
 use crate::binary_io::BinaryReader;
 use crate::pcblib::primitives::common::parse_common_header;
@@ -182,7 +184,8 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
 fn parse_string_subrecord(data: &[u8], index: usize) -> Result<String> {
     let mut reader = BinaryReader::new(data);
     let s = reader.read_pascal_string()?;
-    reader.assert_exhausted()
+    reader
+        .assert_exhausted()
         .map_err(|e| AltiumFormatError::InvalidParamValue {
             key: format!("Pad subrecord {index}"),
             detail: format!("string subrecord has unparsed bytes after string: {e}"),
@@ -321,17 +324,17 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint, PadShape, PadStackMode, HoleType};
     use crate::binary_io::BinaryWriter;
+    use altium_format_types::{Coord, CoordPoint, HoleType, PadShape, PadStackMode};
 
     fn write_common_header(w: &mut BinaryWriter) {
-        w.write_u8(74);     // layer = MultiLayer
-        w.write_u8(0);      // pad_byte
-        w.write_u16_le(0);  // flags
+        w.write_u8(74); // layer = MultiLayer
+        w.write_u8(0); // pad_byte
+        w.write_u16_le(0); // flags
         w.write_i32_le(-1); // net_index
         w.write_u16_le(0xFFFF); // polygon_index
-        w.write_u16_le(0);  // component_index
-        w.write_u8(0);      // unknown
+        w.write_u16_le(0); // component_index
+        w.write_u8(0); // unknown
     }
 
     fn make_string_sub(s: &str) -> Vec<u8> {
@@ -366,55 +369,55 @@ mod tests {
         // unknown_63 (offset 63)
         w.write_i32_le(0);
         // TV6_PadCache (offsets 67-104, 38 bytes)
-        w.write_u8(0);  // plane_connection_style = NoConnect
-        w.write_i32_le(0);  // relief_conductor_width
-        w.write_i16_le(4);  // relief_entries
-        w.write_i32_le(0);  // relief_air_gap
-        w.write_i32_le(0);  // power_plane_relief_expansion
-        w.write_i32_le(0);  // power_plane_clearance
-        w.write_i32_le(0);  // paste_mask_expansion
-        w.write_i32_le(0);  // solder_mask_expansion
-        w.write_u16_le(0);  // planes
-        w.write_u8(0);  // plane_connection_style_valid
-        w.write_u8(0);  // relief_conductor_width_valid
-        w.write_u8(0);  // relief_entries_valid
-        w.write_u8(0);  // relief_air_gap_valid
-        w.write_u8(0);  // power_plane_relief_expansion_valid
-        w.write_u8(0);  // paste_mask_expansion_valid
-        w.write_u8(0);  // solder_mask_expansion_valid
-        w.write_u8(0);  // power_plane_clearance_valid
-        w.write_u8(0);  // planes_valid
+        w.write_u8(0); // plane_connection_style = NoConnect
+        w.write_i32_le(0); // relief_conductor_width
+        w.write_i16_le(4); // relief_entries
+        w.write_i32_le(0); // relief_air_gap
+        w.write_i32_le(0); // power_plane_relief_expansion
+        w.write_i32_le(0); // power_plane_clearance
+        w.write_i32_le(0); // paste_mask_expansion
+        w.write_i32_le(0); // solder_mask_expansion
+        w.write_u16_le(0); // planes
+        w.write_u8(0); // plane_connection_style_valid
+        w.write_u8(0); // relief_conductor_width_valid
+        w.write_u8(0); // relief_entries_valid
+        w.write_u8(0); // relief_air_gap_valid
+        w.write_u8(0); // power_plane_relief_expansion_valid
+        w.write_u8(0); // paste_mask_expansion_valid
+        w.write_u8(0); // solder_mask_expansion_valid
+        w.write_u8(0); // power_plane_clearance_valid
+        w.write_u8(0); // planes_valid
         // Post-cache fields (offsets 105-113)
-        w.write_u8(0);  // user_routed
-        w.write_i32_le(0);  // union_index
-        w.write_i32_le(0);  // unknown_110
+        w.write_u8(0); // user_routed
+        w.write_i32_le(0); // union_index
+        w.write_i32_le(0); // unknown_110
     }
 
     /// Write extended fields (offsets 114-171, 58 bytes).
     fn write_pad_extended(w: &mut BinaryWriter) {
-        w.write_i32_le(0);  // layer_override
-        w.write_u8(0);  // hole_flag_1
-        w.write_u8(0);  // hole_flag_2
-        w.write_u8(0);  // stack_flag
-        w.write_i32_le(0);  // stack_conditional
-        w.write_u8(0);  // unknown_125
-        w.write_bytes(&[0u8; 16]);  // swap_id_pad
-        w.write_bytes(&[0u8; 16]);  // swap_id_part
-        w.write_i32_le(0);  // pin_package_length
-        w.write_i32_le(0x7FFFFFFF);  // hole_positive_tolerance
-        w.write_i32_le(0x7FFFFFFF);  // hole_negative_tolerance
-        w.write_u8(0);  // unknown_170
-        w.write_u8(0);  // has_stack_data
+        w.write_i32_le(0); // layer_override
+        w.write_u8(0); // hole_flag_1
+        w.write_u8(0); // hole_flag_2
+        w.write_u8(0); // stack_flag
+        w.write_i32_le(0); // stack_conditional
+        w.write_u8(0); // unknown_125
+        w.write_bytes(&[0u8; 16]); // swap_id_pad
+        w.write_bytes(&[0u8; 16]); // swap_id_part
+        w.write_i32_le(0); // pin_package_length
+        w.write_i32_le(0x7FFFFFFF); // hole_positive_tolerance
+        w.write_i32_le(0x7FFFFFFF); // hole_negative_tolerance
+        w.write_u8(0); // unknown_170
+        w.write_u8(0); // has_stack_data
     }
 
     fn make_pad_subrecords(main_data: &[u8]) -> [Vec<u8>; 6] {
         [
-            make_string_sub("1"),  // sub 0: pad name
-            make_string_sub(""),   // sub 1: empty string
-            make_string_sub(""),   // sub 2: empty string
-            make_string_sub(""),   // sub 3: empty string
-            main_data.to_vec(),    // sub 4: main pad data
-            vec![],                // sub 5: no stack data
+            make_string_sub("1"), // sub 0: pad name
+            make_string_sub(""),  // sub 1: empty string
+            make_string_sub(""),  // sub 2: empty string
+            make_string_sub(""),  // sub 3: empty string
+            main_data.to_vec(),   // sub 4: main pad data
+            vec![],               // sub 5: no stack data
         ]
     }
 
@@ -436,7 +439,10 @@ mod tests {
         assert!(pad.is_plated);
         assert_eq!(pad.hole_type, HoleType::Round);
         assert_eq!(pad.stack_mode, PadStackMode::Simple);
-        assert_eq!(pad.cache.plane_connection_style, PlaneConnectionStyle::NoConnect);
+        assert_eq!(
+            pad.cache.plane_connection_style,
+            PlaneConnectionStyle::NoConnect
+        );
         assert_eq!(pad.cache.relief_entries, 4);
         assert!(!pad.has_stack_data);
         assert!(pad.post_172_data.is_empty());

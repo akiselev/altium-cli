@@ -8,18 +8,18 @@
 // Organization mirrors the logical grouping of the C# source, split into
 // domain-specific modules for discoverability.
 
-pub mod file_headers;
-pub mod streams;
-pub mod record_structure;
 pub mod component;
-pub mod pin;
-pub mod sheet;
-pub mod visual;
-pub mod text;
 pub mod electrical;
-pub mod model;
-pub mod locking;
-pub mod vault;
+pub mod file_headers;
 pub mod harness;
-pub mod reuse;
+pub mod locking;
+pub mod model;
 pub mod parsing;
+pub mod pin;
+pub mod record_structure;
+pub mod reuse;
+pub mod sheet;
+pub mod streams;
+pub mod text;
+pub mod vault;
+pub mod visual;

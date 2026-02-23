@@ -79,8 +79,7 @@ pub const CONNECTED_BUNDLE_UNIQUE_ID: &str = "ConnectedBundleUniqueId";
 ///
 /// **Wire type:** i32
 /// **Used by:** HarnessWire, HarnessWireData
-pub const CONNECTED_INLINE_SPLICES_UNIQUE_IDS_COUNT: &str =
-    "ConnectedInlineSplicesUniqueIdsCount";
+pub const CONNECTED_INLINE_SPLICES_UNIQUE_IDS_COUNT: &str = "ConnectedInlineSplicesUniqueIdsCount";
 
 /// Connected inline splice UniqueID (indexed).
 ///

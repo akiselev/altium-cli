@@ -3,13 +3,12 @@ use altium_format_types::SchRecordType;
 use crate::param_collection::ParameterCollection;
 use crate::sch_records::{
     SchArc, SchBezier, SchBlanket, SchBus, SchBusEntry, SchCompileMask, SchDesignator, SchEllipse,
-    SchEllipticalArc, SchImage, SchImplementation, SchImplementationList,
-    SchImplementationMap, SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel,
-    SchNoConnect, SchNote, SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon,
-    SchPolyline, SchPort, SchPowerObject, SchProbe, SchRecord, SchRectangle, SchSheetFileName,
-    SchSheetName, SchRoundRectangle, SchSheet, SchSheetEntry, SchSheetSymbol, SchSymbol,
-    SchTemplate,
-    SchTextFrame, SchWire, parse_component_record, parse_text_pin,
+    SchEllipticalArc, SchImage, SchImplementation, SchImplementationList, SchImplementationMap,
+    SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel, SchNoConnect, SchNote,
+    SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon, SchPolyline, SchPort,
+    SchPowerObject, SchProbe, SchRecord, SchRectangle, SchRoundRectangle, SchSheet, SchSheetEntry,
+    SchSheetFileName, SchSheetName, SchSheetSymbol, SchSymbol, SchTemplate, SchTextFrame, SchWire,
+    parse_component_record, parse_text_pin,
 };
 use crate::{AltiumFormatError, Result, ResultExt};
 
@@ -22,7 +21,10 @@ pub(crate) fn dispatch_record_type(
     macro_rules! dispatch {
         ($ty:ty => $variant:expr) => {{
             let parsed = <$ty>::from_params(params).with_context(|| {
-                format!("RECORD={record_type_val} ({ty_name})", ty_name = stringify!($ty))
+                format!(
+                    "RECORD={record_type_val} ({ty_name})",
+                    ty_name = stringify!($ty)
+                )
             })?;
             Ok($variant(parsed))
         }};

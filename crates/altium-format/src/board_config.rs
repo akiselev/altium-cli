@@ -258,21 +258,40 @@ pub(crate) struct PcbCfgAll {
 }
 
 pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<PcbBoardConfig> {
-    let record = params.remove_optional::<String>("RECORD")?.unwrap_or_default();
+    let record = params
+        .remove_optional::<String>("RECORD")?
+        .unwrap_or_default();
 
     // 1. V9 master stack (probe STYLE as existence check)
-    let v9_master_stack = if params.remove_optional::<String>("V9_MASTERSTACK_STYLE")?.is_some() {
+    let v9_master_stack = if params
+        .remove_optional::<String>("V9_MASTERSTACK_STYLE")?
+        .is_some()
+    {
         // The style was already consumed by the probe above; we can't re-read it.
         // Instead we rebuild by consuming remaining master stack fields.
-        let id = params.remove_optional::<String>("V9_MASTERSTACK_ID")?.unwrap_or_default();
-        let name = params.remove_optional::<String>("V9_MASTERSTACK_NAME")?.unwrap_or_default();
-        let show_top_dielectric =
-            params.remove_optional::<bool>("V9_MASTERSTACK_SHOWTOPDIELECTRIC")?.unwrap_or_default();
-        let show_bottom_dielectric =
-            params.remove_optional::<bool>("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC")?.unwrap_or_default();
-        let is_flex =
-            params.remove_optional::<bool>("V9_MASTERSTACK_ISFLEX")?.unwrap_or_default();
-        Some(PcbMasterStack { style: 0, id, name, show_top_dielectric, show_bottom_dielectric, is_flex })
+        let id = params
+            .remove_optional::<String>("V9_MASTERSTACK_ID")?
+            .unwrap_or_default();
+        let name = params
+            .remove_optional::<String>("V9_MASTERSTACK_NAME")?
+            .unwrap_or_default();
+        let show_top_dielectric = params
+            .remove_optional::<bool>("V9_MASTERSTACK_SHOWTOPDIELECTRIC")?
+            .unwrap_or_default();
+        let show_bottom_dielectric = params
+            .remove_optional::<bool>("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC")?
+            .unwrap_or_default();
+        let is_flex = params
+            .remove_optional::<bool>("V9_MASTERSTACK_ISFLEX")?
+            .unwrap_or_default();
+        Some(PcbMasterStack {
+            style: 0,
+            id,
+            name,
+            show_top_dielectric,
+            show_bottom_dielectric,
+            is_flex,
+        })
     } else {
         // style not present; consume the other optional master stack fields anyway
         let _ = params.remove_optional::<String>("V9_MASTERSTACK_ID")?;
@@ -303,7 +322,13 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                 let is_flex = params
                     .remove_optional::<bool>(&format!("V9_SUBSTACK{idx}_ISFLEX"))?
                     .unwrap_or_default();
-                v9_substacks.push(PcbSubStack { id, name, show_top_dielectric, show_bottom_dielectric, is_flex });
+                v9_substacks.push(PcbSubStack {
+                    id,
+                    name,
+                    show_top_dielectric,
+                    show_bottom_dielectric,
+                    is_flex,
+                });
                 idx += 1;
             }
         }
@@ -335,7 +360,10 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         let layer = parse_stack_layer_fields_after_id(params, &prefix)?;
         let pullback_distance =
             params.remove_optional::<String>(&format!("{prefix}PULLBACKDISTANCE"))?;
-        v9_cache_layers.push(PcbCacheLayerEntry { layer, pullback_distance });
+        v9_cache_layers.push(PcbCacheLayerEntry {
+            layer,
+            pullback_distance,
+        });
         idx += 1;
     }
 
@@ -364,7 +392,14 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         let is_flex = params
             .remove_optional::<bool>("LAYERMASTERSTACK_V8ISFLEX")?
             .unwrap_or_default();
-        Some(PcbMasterStack { style, id, name, show_top_dielectric, show_bottom_dielectric, is_flex })
+        Some(PcbMasterStack {
+            style,
+            id,
+            name,
+            show_top_dielectric,
+            show_bottom_dielectric,
+            is_flex,
+        })
     } else {
         let _ = params.remove_optional::<String>("LAYERMASTERSTACK_V8ID")?;
         let _ = params.remove_optional::<String>("LAYERMASTERSTACK_V8NAME")?;
@@ -500,14 +535,30 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
 
     // 10. Surface properties
     let surface_properties = PcbSurfaceProperties {
-        top_type: params.remove_optional::<String>("TOPTYPE")?.unwrap_or_default(),
-        top_const: params.remove_optional::<String>("TOPCONST")?.unwrap_or_default(),
-        top_height: params.remove_optional::<String>("TOPHEIGHT")?.unwrap_or_default(),
-        top_material: params.remove_optional::<String>("TOPMATERIAL")?.unwrap_or_default(),
-        bottom_type: params.remove_optional::<String>("BOTTOMTYPE")?.unwrap_or_default(),
-        bottom_const: params.remove_optional::<String>("BOTTOMCONST")?.unwrap_or_default(),
-        bottom_height: params.remove_optional::<String>("BOTTOMHEIGHT")?.unwrap_or_default(),
-        bottom_material: params.remove_optional::<String>("BOTTOMMATERIAL")?.unwrap_or_default(),
+        top_type: params
+            .remove_optional::<String>("TOPTYPE")?
+            .unwrap_or_default(),
+        top_const: params
+            .remove_optional::<String>("TOPCONST")?
+            .unwrap_or_default(),
+        top_height: params
+            .remove_optional::<String>("TOPHEIGHT")?
+            .unwrap_or_default(),
+        top_material: params
+            .remove_optional::<String>("TOPMATERIAL")?
+            .unwrap_or_default(),
+        bottom_type: params
+            .remove_optional::<String>("BOTTOMTYPE")?
+            .unwrap_or_default(),
+        bottom_const: params
+            .remove_optional::<String>("BOTTOMCONST")?
+            .unwrap_or_default(),
+        bottom_height: params
+            .remove_optional::<String>("BOTTOMHEIGHT")?
+            .unwrap_or_default(),
+        bottom_material: params
+            .remove_optional::<String>("BOTTOMMATERIAL")?
+            .unwrap_or_default(),
         layer_stack_style: params
             .remove_optional::<String>("LAYERSTACKSTYLE")?
             .unwrap_or_default(),
@@ -526,16 +577,16 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         match params.remove_optional::<String>(&key)? {
             None => break,
             Some(_) => {
-                let _ = params
-                    .remove_optional::<String>(&format!("MECHPAIR{mech_pair_idx}L2"))?;
+                let _ = params.remove_optional::<String>(&format!("MECHPAIR{mech_pair_idx}L2"))?;
                 mech_pair_idx += 1;
             }
         }
     }
 
     // 12. Layer sets (count-based via LAYERSETSCOUNT, 1-based)
-    let layer_sets_count: usize =
-        params.remove_optional::<i32>("LAYERSETSCOUNT")?.unwrap_or(0) as usize;
+    let layer_sets_count: usize = params
+        .remove_optional::<i32>("LAYERSETSCOUNT")?
+        .unwrap_or(0) as usize;
     let mut layer_sets = Vec::with_capacity(layer_sets_count);
     for n in 1..=layer_sets_count {
         let name = params
@@ -556,7 +607,14 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         let flip_board = params
             .remove_optional::<bool>(&format!("LAYERSET{n}FLIPBOARD"))?
             .unwrap_or_default();
-        layer_sets.push(PcbLayerSet { name, layers, active_layer, is_current, is_locked, flip_board });
+        layer_sets.push(PcbLayerSet {
+            name,
+            layers,
+            active_layer,
+            is_current,
+            is_locked,
+            flip_board,
+        });
     }
 
     // 13. Grid settings
@@ -588,36 +646,74 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         electrical_grid_enabled: params
             .remove_optional::<bool>("ELECTRICALGRIDENABLED")?
             .unwrap_or_default(),
-        dot_grid: params.remove_optional::<bool>("DOTGRID")?.unwrap_or_default(),
-        dot_grid_large: params.remove_optional::<bool>("DOTGRIDLARGE")?.unwrap_or_default(),
+        dot_grid: params
+            .remove_optional::<bool>("DOTGRID")?
+            .unwrap_or_default(),
+        dot_grid_large: params
+            .remove_optional::<bool>("DOTGRIDLARGE")?
+            .unwrap_or_default(),
     };
 
     // 14. Viewport
     let viewport = PcbViewportState {
-        lx: params.remove_optional::<String>("VP.LX")?.unwrap_or_default(),
-        hx: params.remove_optional::<String>("VP.HX")?.unwrap_or_default(),
-        ly: params.remove_optional::<String>("VP.LY")?.unwrap_or_default(),
-        hy: params.remove_optional::<String>("VP.HY")?.unwrap_or_default(),
-        lookat_x: params.remove_optional::<String>("LOOKAT.X")?.unwrap_or_default(),
-        lookat_y: params.remove_optional::<String>("LOOKAT.Y")?.unwrap_or_default(),
-        lookat_z: params.remove_optional::<String>("LOOKAT.Z")?.unwrap_or_default(),
-        eye_rotation_x: params.remove_optional::<String>("EYEROTATION.X")?.unwrap_or_default(),
-        eye_rotation_y: params.remove_optional::<String>("EYEROTATION.Y")?.unwrap_or_default(),
-        eye_rotation_z: params.remove_optional::<String>("EYEROTATION.Z")?.unwrap_or_default(),
-        zoom_mult: params.remove_optional::<String>("ZOOMMULT")?.unwrap_or_default(),
-        view_size_x: params.remove_optional::<String>("VIEWSIZE.X")?.unwrap_or_default(),
-        view_size_y: params.remove_optional::<String>("VIEWSIZE.Y")?.unwrap_or_default(),
+        lx: params
+            .remove_optional::<String>("VP.LX")?
+            .unwrap_or_default(),
+        hx: params
+            .remove_optional::<String>("VP.HX")?
+            .unwrap_or_default(),
+        ly: params
+            .remove_optional::<String>("VP.LY")?
+            .unwrap_or_default(),
+        hy: params
+            .remove_optional::<String>("VP.HY")?
+            .unwrap_or_default(),
+        lookat_x: params
+            .remove_optional::<String>("LOOKAT.X")?
+            .unwrap_or_default(),
+        lookat_y: params
+            .remove_optional::<String>("LOOKAT.Y")?
+            .unwrap_or_default(),
+        lookat_z: params
+            .remove_optional::<String>("LOOKAT.Z")?
+            .unwrap_or_default(),
+        eye_rotation_x: params
+            .remove_optional::<String>("EYEROTATION.X")?
+            .unwrap_or_default(),
+        eye_rotation_y: params
+            .remove_optional::<String>("EYEROTATION.Y")?
+            .unwrap_or_default(),
+        eye_rotation_z: params
+            .remove_optional::<String>("EYEROTATION.Z")?
+            .unwrap_or_default(),
+        zoom_mult: params
+            .remove_optional::<String>("ZOOMMULT")?
+            .unwrap_or_default(),
+        view_size_x: params
+            .remove_optional::<String>("VIEWSIZE.X")?
+            .unwrap_or_default(),
+        view_size_y: params
+            .remove_optional::<String>("VIEWSIZE.Y")?
+            .unwrap_or_default(),
     };
 
     // 15. View configs
     let view_configs = PcbViewConfigs {
-        config_2d_type: params.remove_optional::<String>("2DCONFIGTYPE")?.unwrap_or_default(),
-        configuration_2d: params.remove_optional::<String>("2DCONFIGURATION")?.unwrap_or_default(),
+        config_2d_type: params
+            .remove_optional::<String>("2DCONFIGTYPE")?
+            .unwrap_or_default(),
+        configuration_2d: params
+            .remove_optional::<String>("2DCONFIGURATION")?
+            .unwrap_or_default(),
         config_2d_full_filename: params
             .remove_optional::<String>("2DCONFIGFULLFILENAME")?
             .unwrap_or_default(),
-        config_3d_type: params.remove_optional::<String>("3DCONFIGTYPE")?.unwrap_or_default(),
-        configuration_3d: params.remove_optional::<String>("3DCONFIGURATION")?.unwrap_or_default(),
+        config_3d_type: params
+            .remove_optional::<String>("3DCONFIGTYPE")?
+            .unwrap_or_default(),
+        configuration_3d: params
+            .remove_optional::<String>("3DCONFIGURATION")?
+            .unwrap_or_default(),
         config_3d_full_filename: params
             .remove_optional::<String>("3DCONFIGFULLFILENAME")?
             .unwrap_or_default(),
@@ -628,9 +724,15 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
 
     // 16. Snapping
     let snapping = PcbSnappingConfig {
-        eg_range: params.remove_optional::<String>("EGRANGE")?.unwrap_or_default(),
-        eg_mult: params.remove_optional::<String>("EGMULT")?.unwrap_or_default(),
-        eg_enabled: params.remove_optional::<bool>("EGENABLED")?.unwrap_or_default(),
+        eg_range: params
+            .remove_optional::<String>("EGRANGE")?
+            .unwrap_or_default(),
+        eg_mult: params
+            .remove_optional::<String>("EGMULT")?
+            .unwrap_or_default(),
+        eg_enabled: params
+            .remove_optional::<bool>("EGENABLED")?
+            .unwrap_or_default(),
         eg_snap_to_board_outline: params
             .remove_optional::<bool>("EGSNAPTOBOARDOUTLINE")?
             .unwrap_or_default(),
@@ -640,12 +742,18 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         eg_use_all_layers: params
             .remove_optional::<bool>("EGUSEALLLAYERS")?
             .unwrap_or_default(),
-        og_snap_enabled: params.remove_optional::<bool>("OGSNAPENABLED")?.unwrap_or_default(),
-        mg_snap_enabled: params.remove_optional::<bool>("MGSNAPENABLED")?.unwrap_or_default(),
+        og_snap_enabled: params
+            .remove_optional::<bool>("OGSNAPENABLED")?
+            .unwrap_or_default(),
+        mg_snap_enabled: params
+            .remove_optional::<bool>("MGSNAPENABLED")?
+            .unwrap_or_default(),
         point_guide_enabled: params
             .remove_optional::<bool>("POINTGUIDEENABLED")?
             .unwrap_or_default(),
-        grid_snap_enabled: params.remove_optional::<bool>("GRIDSNAPENABLED")?.unwrap_or_default(),
+        grid_snap_enabled: params
+            .remove_optional::<bool>("GRIDSNAPENABLED")?
+            .unwrap_or_default(),
         snapping_entity_set: params
             .remove_optional::<String>("SNAPPINGENTITYSET")?
             .unwrap_or_default(),
@@ -659,82 +767,117 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         far_objects_enabled: params
             .remove_optional::<bool>("FAROBJECTSENABLED")?
             .unwrap_or_default(),
-        near_object_set: params.remove_optional::<String>("NEAROBJECTSET")?.unwrap_or_default(),
-        far_object_set: params.remove_optional::<String>("FAROBJECTSET")?.unwrap_or_default(),
-        near_distance: params.remove_optional::<String>("NEARDISTANCE")?.unwrap_or_default(),
+        near_object_set: params
+            .remove_optional::<String>("NEAROBJECTSET")?
+            .unwrap_or_default(),
+        far_object_set: params
+            .remove_optional::<String>("FAROBJECTSET")?
+            .unwrap_or_default(),
+        near_distance: params
+            .remove_optional::<String>("NEARDISTANCE")?
+            .unwrap_or_default(),
     };
 
     // 18. CFG2D typed scalars
-    let cfg2d_prim_draw_mode =
-        params.remove_optional::<String>("CFG2D.PRIMDRAWMODE")?.unwrap_or_default();
-    let cfg2d_current_layer =
-        params.remove_optional::<String>("CFG2D.CURRENTLAYER")?.unwrap_or_default();
-    let cfg2d_display_special_strings =
-        params.remove_optional::<bool>("CFG2D.DISPLAYSPECIALSTRINGS")?.unwrap_or_default();
-    let cfg2d_show_test_points =
-        params.remove_optional::<bool>("CFG2D.SHOWTESTPOINTS")?.unwrap_or_default();
-    let cfg2d_show_origin_marker =
-        params.remove_optional::<bool>("CFG2D.SHOWORIGINMARKER")?.unwrap_or_default();
-    let cfg2d_eye_dist =
-        params.remove_optional::<String>("CFG2D.EYEDIST")?.unwrap_or_default();
-    let cfg2d_show_status_info =
-        params.remove_optional::<bool>("CFG2D.SHOWSTATUSINFO")?.unwrap_or_default();
-    let cfg2d_show_pad_nets =
-        params.remove_optional::<bool>("CFG2D.SHOWPADNETS")?.unwrap_or_default();
-    let cfg2d_show_pad_numbers =
-        params.remove_optional::<bool>("CFG2D.SHOWPADNUMBERS")?.unwrap_or_default();
-    let cfg2d_show_via_nets =
-        params.remove_optional::<bool>("CFG2D.SHOWVIANETS")?.unwrap_or_default();
-    let cfg2d_show_via_span =
-        params.remove_optional::<bool>("CFG2D.SHOWVIASPAN")?.unwrap_or_default();
-    let cfg2d_use_transparent_layers =
-        params.remove_optional::<bool>("CFG2D.USETRANSPARENTLAYERS")?.unwrap_or_default();
-    let cfg2d_plane_draw_mode =
-        params.remove_optional::<String>("CFG2D.PLANEDRAWMODE")?.unwrap_or_default();
-    let cfg2d_display_net_names_on_tracks =
-        params.remove_optional::<String>("CFG2D.DISPLAYNETNAMESONTRACKS")?.unwrap_or_default();
-    let cfg2d_from_tos_display_mode =
-        params.remove_optional::<String>("CFG2D.FROMTOSDISPLAYMODE")?.unwrap_or_default();
-    let cfg2d_pad_types_display_mode =
-        params.remove_optional::<String>("CFG2D.PADTYPESDISPLAYMODE")?.unwrap_or_default();
-    let cfg2d_single_layer_mode_state =
-        params.remove_optional::<String>("CFG2D.SINGLELAYERMODESTATE")?.unwrap_or_default();
-    let cfg2d_origin_marker_color =
-        params.remove_optional::<String>("CFG2D.ORIGINMARKERCOLOR")?.unwrap_or_default();
-    let cfg2d_show_component_ref_point =
-        params.remove_optional::<bool>("CFG2D.SHOWCOMPONENTREFPOINT")?.unwrap_or_default();
-    let cfg2d_component_ref_point_color =
-        params.remove_optional::<String>("CFG2D.COMPONENTREFPOINTCOLOR")?.unwrap_or_default();
-    let cfg2d_positive_top_solder_mask =
-        params.remove_optional::<bool>("CFG2D.POSITIVETOPSOLDERMASK")?.unwrap_or_default();
-    let cfg2d_positive_bottom_solder_mask =
-        params.remove_optional::<bool>("CFG2D.POSITIVEBOTTOMSOLDERMASK")?.unwrap_or_default();
-    let cfg2d_top_positive_solder_mask_alpha =
-        params.remove_optional::<String>("CFG2D.TOPPOSITIVESOLDERMASKALPHA")?.unwrap_or_default();
+    let cfg2d_prim_draw_mode = params
+        .remove_optional::<String>("CFG2D.PRIMDRAWMODE")?
+        .unwrap_or_default();
+    let cfg2d_current_layer = params
+        .remove_optional::<String>("CFG2D.CURRENTLAYER")?
+        .unwrap_or_default();
+    let cfg2d_display_special_strings = params
+        .remove_optional::<bool>("CFG2D.DISPLAYSPECIALSTRINGS")?
+        .unwrap_or_default();
+    let cfg2d_show_test_points = params
+        .remove_optional::<bool>("CFG2D.SHOWTESTPOINTS")?
+        .unwrap_or_default();
+    let cfg2d_show_origin_marker = params
+        .remove_optional::<bool>("CFG2D.SHOWORIGINMARKER")?
+        .unwrap_or_default();
+    let cfg2d_eye_dist = params
+        .remove_optional::<String>("CFG2D.EYEDIST")?
+        .unwrap_or_default();
+    let cfg2d_show_status_info = params
+        .remove_optional::<bool>("CFG2D.SHOWSTATUSINFO")?
+        .unwrap_or_default();
+    let cfg2d_show_pad_nets = params
+        .remove_optional::<bool>("CFG2D.SHOWPADNETS")?
+        .unwrap_or_default();
+    let cfg2d_show_pad_numbers = params
+        .remove_optional::<bool>("CFG2D.SHOWPADNUMBERS")?
+        .unwrap_or_default();
+    let cfg2d_show_via_nets = params
+        .remove_optional::<bool>("CFG2D.SHOWVIANETS")?
+        .unwrap_or_default();
+    let cfg2d_show_via_span = params
+        .remove_optional::<bool>("CFG2D.SHOWVIASPAN")?
+        .unwrap_or_default();
+    let cfg2d_use_transparent_layers = params
+        .remove_optional::<bool>("CFG2D.USETRANSPARENTLAYERS")?
+        .unwrap_or_default();
+    let cfg2d_plane_draw_mode = params
+        .remove_optional::<String>("CFG2D.PLANEDRAWMODE")?
+        .unwrap_or_default();
+    let cfg2d_display_net_names_on_tracks = params
+        .remove_optional::<String>("CFG2D.DISPLAYNETNAMESONTRACKS")?
+        .unwrap_or_default();
+    let cfg2d_from_tos_display_mode = params
+        .remove_optional::<String>("CFG2D.FROMTOSDISPLAYMODE")?
+        .unwrap_or_default();
+    let cfg2d_pad_types_display_mode = params
+        .remove_optional::<String>("CFG2D.PADTYPESDISPLAYMODE")?
+        .unwrap_or_default();
+    let cfg2d_single_layer_mode_state = params
+        .remove_optional::<String>("CFG2D.SINGLELAYERMODESTATE")?
+        .unwrap_or_default();
+    let cfg2d_origin_marker_color = params
+        .remove_optional::<String>("CFG2D.ORIGINMARKERCOLOR")?
+        .unwrap_or_default();
+    let cfg2d_show_component_ref_point = params
+        .remove_optional::<bool>("CFG2D.SHOWCOMPONENTREFPOINT")?
+        .unwrap_or_default();
+    let cfg2d_component_ref_point_color = params
+        .remove_optional::<String>("CFG2D.COMPONENTREFPOINTCOLOR")?
+        .unwrap_or_default();
+    let cfg2d_positive_top_solder_mask = params
+        .remove_optional::<bool>("CFG2D.POSITIVETOPSOLDERMASK")?
+        .unwrap_or_default();
+    let cfg2d_positive_bottom_solder_mask = params
+        .remove_optional::<bool>("CFG2D.POSITIVEBOTTOMSOLDERMASK")?
+        .unwrap_or_default();
+    let cfg2d_top_positive_solder_mask_alpha = params
+        .remove_optional::<String>("CFG2D.TOPPOSITIVESOLDERMASKALPHA")?
+        .unwrap_or_default();
     let cfg2d_bottom_positive_solder_mask_alpha = params
         .remove_optional::<String>("CFG2D.BOTTOMPOSITIVESOLDERMASKALPHA")?
         .unwrap_or_default();
     let cfg2d_all_connections_in_single_layer_mode = params
         .remove_optional::<bool>("CFG2D.ALLCONNECTIONSINSINGLELAYERMODE")?
         .unwrap_or_default();
-    let cfg2d_multi_colored_connections =
-        params.remove_optional::<bool>("CFG2D.MULTICOLOREDCONNECTIONS")?.unwrap_or_default();
-    let cfg2d_show_special_strings_handles =
-        params.remove_optional::<bool>("CFG2D.SHOWSPECIALSTRINGSHANDLES")?.unwrap_or_default();
-    let cfg2d_toggle_layers =
-        params.remove_optional::<String>("CFG2D.TOGGLELAYERS")?.unwrap_or_default();
-    let cfg2d_toggle_layers_set =
-        params.remove_optional::<String>("CFG2D.TOGGLELAYERS.SET")?.unwrap_or_default();
-    let cfg2d_mech_layer_in_single_layer_mode =
-        params.remove_optional::<String>("CFG2D.MECHLAYERINSINGLELAYERMODE")?.unwrap_or_default();
+    let cfg2d_multi_colored_connections = params
+        .remove_optional::<bool>("CFG2D.MULTICOLOREDCONNECTIONS")?
+        .unwrap_or_default();
+    let cfg2d_show_special_strings_handles = params
+        .remove_optional::<bool>("CFG2D.SHOWSPECIALSTRINGSHANDLES")?
+        .unwrap_or_default();
+    let cfg2d_toggle_layers = params
+        .remove_optional::<String>("CFG2D.TOGGLELAYERS")?
+        .unwrap_or_default();
+    let cfg2d_toggle_layers_set = params
+        .remove_optional::<String>("CFG2D.TOGGLELAYERS.SET")?
+        .unwrap_or_default();
+    let cfg2d_mech_layer_in_single_layer_mode = params
+        .remove_optional::<String>("CFG2D.MECHLAYERINSINGLELAYERMODE")?
+        .unwrap_or_default();
     let cfg2d_mech_layer_in_single_layer_mode_set = params
         .remove_optional::<String>("CFG2D.MECHLAYERINSINGLELAYERMODE.SET")?
         .unwrap_or_default();
     let cfg2d_layers_in_single_layer_mode_set = params
         .remove_optional::<String>("CFG2D.LAYERSINSINGLELAYERMODE.SET")?
         .unwrap_or_default();
-    let cfg2d_mech_layer_linked_to_sheet =
-        params.remove_optional::<String>("CFG2D.MECHLAYERLINKEDTOSHEET")?.unwrap_or_default();
+    let cfg2d_mech_layer_linked_to_sheet = params
+        .remove_optional::<String>("CFG2D.MECHLAYERLINKEDTOSHEET")?
+        .unwrap_or_default();
     let cfg2d_mech_layer_linked_to_sheet_set = params
         .remove_optional::<String>("CFG2D.MECHLAYERLINKEDTOSHEET.SET")?
         .unwrap_or_default();
@@ -831,42 +974,54 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
     };
 
     // 21. Remaining scalars
-    let display_unit =
-        params.remove_optional::<i32>("DISPLAYUNIT")?.unwrap_or_default();
-    let current_2d_3d_view_state =
-        params.remove_optional::<String>("CURRENT2D3DVIEWSTATE")?.unwrap_or_default();
-    let toggle_layers =
-        params.remove_optional::<String>("TOGGLELAYERS")?.unwrap_or_default();
-    let show_default_sets =
-        params.remove_optional::<bool>("SHOWDEFAULTSETS")?.unwrap_or_default();
-    let board_version =
-        params.remove_optional::<String>("BOARDVERSION")?.unwrap_or_default();
-    let vault_guid =
-        params.remove_optional::<String>("VAULTGUID")?.unwrap_or_default();
-    let folder_guid =
-        params.remove_optional::<String>("FOLDERGUID")?.unwrap_or_default();
-    let lifecycle_definition_guid =
-        params.remove_optional::<String>("LIFECYCLEDEFINITIONGUID")?.unwrap_or_default();
-    let revision_naming_scheme_guid =
-        params.remove_optional::<String>("REVISIONNAMINGSCHEMEGUID")?.unwrap_or_default();
-    let lib_grid_sn_guide =
-        params.remove_optional::<String>("LIBGRIDSNGUIDE")?.unwrap_or_default();
-    let unicode =
-        params.remove_optional::<String>("UNICODE")?.unwrap_or_default();
-    let unicode_filename =
-        params.remove_optional::<String>("UNICODE__FILENAME")?.unwrap_or_default();
-    let unicode_name =
-        params.remove_optional::<String>("UNICODE__NAME")?.unwrap_or_default();
-    let unicode_time =
-        params.remove_optional::<String>("UNICODE__TIME")?.unwrap_or_default();
+    let display_unit = params
+        .remove_optional::<i32>("DISPLAYUNIT")?
+        .unwrap_or_default();
+    let current_2d_3d_view_state = params
+        .remove_optional::<String>("CURRENT2D3DVIEWSTATE")?
+        .unwrap_or_default();
+    let toggle_layers = params
+        .remove_optional::<String>("TOGGLELAYERS")?
+        .unwrap_or_default();
+    let show_default_sets = params
+        .remove_optional::<bool>("SHOWDEFAULTSETS")?
+        .unwrap_or_default();
+    let board_version = params
+        .remove_optional::<String>("BOARDVERSION")?
+        .unwrap_or_default();
+    let vault_guid = params
+        .remove_optional::<String>("VAULTGUID")?
+        .unwrap_or_default();
+    let folder_guid = params
+        .remove_optional::<String>("FOLDERGUID")?
+        .unwrap_or_default();
+    let lifecycle_definition_guid = params
+        .remove_optional::<String>("LIFECYCLEDEFINITIONGUID")?
+        .unwrap_or_default();
+    let revision_naming_scheme_guid = params
+        .remove_optional::<String>("REVISIONNAMINGSCHEMEGUID")?
+        .unwrap_or_default();
+    let lib_grid_sn_guide = params
+        .remove_optional::<String>("LIBGRIDSNGUIDE")?
+        .unwrap_or_default();
+    let unicode = params
+        .remove_optional::<String>("UNICODE")?
+        .unwrap_or_default();
+    let unicode_filename = params
+        .remove_optional::<String>("UNICODE__FILENAME")?
+        .unwrap_or_default();
+    let unicode_name = params
+        .remove_optional::<String>("UNICODE__NAME")?
+        .unwrap_or_default();
+    let unicode_time = params
+        .remove_optional::<String>("UNICODE__TIME")?
+        .unwrap_or_default();
 
     // 22. Legacy plane pullbacks: PLANE{N}PULLBACK / PLANE{N}PULLBACK.LAYER (1-based)
     let mut plane_pullbacks = Vec::new();
     {
         let mut n = 1;
-        while let Some(pullback) =
-            params.remove_optional::<String>(&format!("PLANE{n}PULLBACK"))?
-        {
+        while let Some(pullback) = params.remove_optional::<String>(&format!("PLANE{n}PULLBACK"))? {
             let layer = params
                 .remove_optional::<String>(&format!("PLANE{n}PULLBACK.LAYER"))?
                 .unwrap_or_default();

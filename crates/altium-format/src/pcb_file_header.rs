@@ -133,7 +133,10 @@ mod tests {
         w.write_bytes(&[0x41, 0x00]); // only 2 bytes (1 char)
         let data = w.finish();
         let err = parse_pcb_legacy_header(&data).unwrap_err();
-        assert!(matches!(err, crate::AltiumFormatError::BinaryReadPastEnd { .. }));
+        assert!(matches!(
+            err,
+            crate::AltiumFormatError::BinaryReadPastEnd { .. }
+        ));
     }
 
     #[test]
@@ -151,6 +154,9 @@ mod tests {
         let data = w.finish();
 
         let err = parse_pcb_file_header(&data).unwrap_err();
-        assert!(matches!(err, crate::AltiumFormatError::UnexpectedTrailingData { .. }));
+        assert!(matches!(
+            err,
+            crate::AltiumFormatError::UnexpectedTrailingData { .. }
+        ));
     }
 }

@@ -132,7 +132,11 @@ impl CfbDocument {
         let children: Vec<(String, bool)> = entries
             .map(|e| {
                 (
-                    e.path().display().to_string().trim_end_matches('/').to_owned(),
+                    e.path()
+                        .display()
+                        .to_string()
+                        .trim_end_matches('/')
+                        .to_owned(),
                     e.is_storage(),
                 )
             })
@@ -164,7 +168,9 @@ mod tests {
     fn open_blank_schlib_and_read_file_header() {
         let path = data_path("BlankSchlibComponent.SchLib");
         let mut doc = CfbDocument::open(&path).expect("should open valid SchLib");
-        let bytes = doc.read_stream("/FileHeader").expect("FileHeader stream must exist");
+        let bytes = doc
+            .read_stream("/FileHeader")
+            .expect("FileHeader stream must exist");
         assert!(!bytes.is_empty(), "FileHeader stream must be non-empty");
     }
 
@@ -174,9 +180,15 @@ mod tests {
         let mut doc = CfbDocument::open(&path).expect("should open valid SchLib");
         let entries = doc.enumerate_all_entries().expect("enumerate must succeed");
         // Top-level streams and storages known from BlankSchlibComponent.SchLib.
-        assert!(entries.contains("/FileHeader"), "FileHeader must be in entry set");
+        assert!(
+            entries.contains("/FileHeader"),
+            "FileHeader must be in entry set"
+        );
         assert!(entries.contains("/Storage"), "Storage must be in entry set");
-        assert!(entries.contains("/Component_1"), "Component_1 storage must be in entry set");
+        assert!(
+            entries.contains("/Component_1"),
+            "Component_1 storage must be in entry set"
+        );
         // Nested stream — proves the recursive walk descends into storages.
         assert!(
             entries.contains("/Component_1/Data"),

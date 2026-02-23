@@ -2,8 +2,8 @@ use altium_format_types::{Color, Coord, CoordPoint, RegionKind};
 
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
-use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::PcbComponentBody;
+use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
 /// Decodes an IDENTIFIER value from comma-separated UTF-16 code units.
@@ -14,7 +14,8 @@ fn decode_identifier(raw: &str) -> Result<String> {
     if raw.is_empty() {
         return Ok(String::new());
     }
-    let code_units: std::result::Result<Vec<u16>, _> = raw.split(',').map(|s| s.trim().parse::<u16>()).collect();
+    let code_units: std::result::Result<Vec<u16>, _> =
+        raw.split(',').map(|s| s.trim().parse::<u16>()).collect();
     let code_units = code_units.map_err(|e| AltiumFormatError::InvalidParamValue {
         key: "IDENTIFIER".to_owned(),
         detail: format!("cannot parse comma-separated UTF-16 code units: {}", e),
@@ -36,10 +37,12 @@ fn parse_scientific_float(params: &mut ParameterCollection, key: &str) -> Result
             if trimmed.is_empty() {
                 return Ok(0.0);
             }
-            trimmed.parse::<f64>().map_err(|e| AltiumFormatError::InvalidParamValue {
-                key: key.to_owned(),
-                detail: format!("cannot parse '{}' as float: {}", s, e),
-            })
+            trimmed
+                .parse::<f64>()
+                .map_err(|e| AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("cannot parse '{}' as float: {}", s, e),
+                })
         }
     }
 }
@@ -53,13 +56,12 @@ fn parse_mil_param(params: &mut ParameterCollection, key: &str) -> Result<Coord>
         Some(s) => {
             let trimmed = s.strip_suffix("mil").unwrap_or(&s);
             let normalized = trimmed.replace(',', ".");
-            let mils: f64 =
-                normalized.parse().map_err(|e: std::num::ParseFloatError| {
-                    AltiumFormatError::InvalidParamValue {
-                        key: key.to_owned(),
-                        detail: format!("cannot parse '{}' as mil value: {}", s, e),
-                    }
-                })?;
+            let mils: f64 = normalized.parse().map_err(|e: std::num::ParseFloatError| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("cannot parse '{}' as mil value: {}", s, e),
+                }
+            })?;
             Ok(Coord::from_mils_f64(mils))
         }
     }
@@ -104,8 +106,12 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
 
     // Extract all known parameters.
     // Region-inherited parameters
-    let v7_layer = params.remove_optional::<String>("V7_LAYER")?.unwrap_or_default();
-    let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
+    let v7_layer = params
+        .remove_optional::<String>("V7_LAYER")?
+        .unwrap_or_default();
+    let name = params
+        .remove_optional::<String>("NAME")?
+        .unwrap_or_default();
     let kind = params.remove_optional::<i32>("KIND")?.unwrap_or(0);
     let subpoly_index = params.remove_optional::<i32>("SUBPOLYINDEX")?.unwrap_or(-1);
     let union_index = params.remove_optional::<i32>("UNIONINDEX")?.unwrap_or(0);
@@ -118,12 +124,22 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     // ComponentBody parameters
     let standoff_height = parse_mil_param(&mut params, "STANDOFFHEIGHT")?;
     let overall_height = parse_mil_param(&mut params, "OVERALLHEIGHT")?;
-    let body_projection = params.remove_optional::<i32>("BODYPROJECTION")?.unwrap_or(0);
-    let body_color_3d = params.remove_optional::<Color>("BODYCOLOR3D")?.unwrap_or(Color::new(0));
-    let body_opacity_3d = params.remove_optional::<f64>("BODYOPACITY3D")?.unwrap_or(1.0);
-    let identifier_raw = params.remove_optional::<String>("IDENTIFIER")?.unwrap_or_default();
+    let body_projection = params
+        .remove_optional::<i32>("BODYPROJECTION")?
+        .unwrap_or(0);
+    let body_color_3d = params
+        .remove_optional::<Color>("BODYCOLOR3D")?
+        .unwrap_or(Color::new(0));
+    let body_opacity_3d = params
+        .remove_optional::<f64>("BODYOPACITY3D")?
+        .unwrap_or(1.0);
+    let identifier_raw = params
+        .remove_optional::<String>("IDENTIFIER")?
+        .unwrap_or_default();
     let identifier = decode_identifier(&identifier_raw)?;
-    let texture = params.remove_optional::<String>("TEXTURE")?.unwrap_or_default();
+    let texture = params
+        .remove_optional::<String>("TEXTURE")?
+        .unwrap_or_default();
     let texture_center_x = parse_mil_param(&mut params, "TEXTURECENTERX")?;
     let texture_center_y = parse_mil_param(&mut params, "TEXTURECENTERY")?;
     let texture_size_x = parse_mil_param(&mut params, "TEXTURESIZEX")?;
@@ -134,24 +150,44 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
         .map(|s| s.eq_ignore_ascii_case("TRUE"))
         .unwrap_or(false);
     // 3D model parameters
-    let model_guid = params.remove_optional::<String>("MODELID")?.unwrap_or_default();
-    let model_checksum = params.remove_optional::<String>("MODEL.CHECKSUM")?.unwrap_or_default();
+    let model_guid = params
+        .remove_optional::<String>("MODELID")?
+        .unwrap_or_default();
+    let model_checksum = params
+        .remove_optional::<String>("MODEL.CHECKSUM")?
+        .unwrap_or_default();
     let model_embed = params
         .remove_optional::<String>("MODEL.EMBED")?
         .map(|s| s.eq_ignore_ascii_case("TRUE"))
         .unwrap_or(false);
-    let model_name = params.remove_optional::<String>("MODEL.NAME")?.unwrap_or_default();
+    let model_name = params
+        .remove_optional::<String>("MODEL.NAME")?
+        .unwrap_or_default();
     let model_2d_x = parse_mil_param(&mut params, "MODEL.2D.X")?;
     let model_2d_y = parse_mil_param(&mut params, "MODEL.2D.Y")?;
-    let model_2d_rotation = params.remove_optional::<f64>("MODEL.2D.ROTATION")?.unwrap_or(0.0);
-    let rotation_x = params.remove_optional::<f64>("MODEL.3D.ROTX")?.unwrap_or(0.0);
-    let rotation_y = params.remove_optional::<f64>("MODEL.3D.ROTY")?.unwrap_or(0.0);
-    let rotation_z = params.remove_optional::<f64>("MODEL.3D.ROTZ")?.unwrap_or(0.0);
+    let model_2d_rotation = params
+        .remove_optional::<f64>("MODEL.2D.ROTATION")?
+        .unwrap_or(0.0);
+    let rotation_x = params
+        .remove_optional::<f64>("MODEL.3D.ROTX")?
+        .unwrap_or(0.0);
+    let rotation_y = params
+        .remove_optional::<f64>("MODEL.3D.ROTY")?
+        .unwrap_or(0.0);
+    let rotation_z = params
+        .remove_optional::<f64>("MODEL.3D.ROTZ")?
+        .unwrap_or(0.0);
     let model_3d_dz = parse_mil_param(&mut params, "MODEL.3D.DZ")?;
-    let model_type = params.remove_optional::<i32>("MODEL.MODELTYPE")?.unwrap_or(0);
-    let model_source = params.remove_optional::<String>("MODEL.MODELSOURCE")?.unwrap_or_default();
+    let model_type = params
+        .remove_optional::<i32>("MODEL.MODELTYPE")?
+        .unwrap_or(0);
+    let model_source = params
+        .remove_optional::<String>("MODEL.MODELSOURCE")?
+        .unwrap_or_default();
     // Snap points: MODEL.SNAPCOUNT + MODEL.S{n}X/Y/Z (raw i32 internal units)
-    let snap_count = params.remove_optional::<i32>("MODEL.SNAPCOUNT")?.unwrap_or(0);
+    let snap_count = params
+        .remove_optional::<i32>("MODEL.SNAPCOUNT")?
+        .unwrap_or(0);
     let mut model_snap_points = Vec::with_capacity(snap_count.max(0) as usize);
     for i in 0..snap_count.max(0) {
         let sx = params
@@ -179,7 +215,9 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     // Shape-based regions include indexed edge geometry in the param string.
     // ComponentBody inherits from Region so it can also have these.
     if is_shape_based {
-        let shape_vertex_count = params.remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?.unwrap_or(0);
+        let shape_vertex_count = params
+            .remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?
+            .unwrap_or(0);
         for i in 0..shape_vertex_count {
             let idx = i.to_string();
             params.remove_optional::<String>(&format!("KIND{}", idx))?;
@@ -275,8 +313,8 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::Coord;
     use crate::binary_io::BinaryWriter;
+    use altium_format_types::Coord;
 
     fn write_common_header(w: &mut BinaryWriter) {
         w.write_u8(57); // layer = Mechanical1
@@ -355,11 +393,7 @@ mod tests {
 
     #[test]
     fn parse_component_body_empty_outline() {
-        let data = make_component_body_data(
-            "{00000000-0000-0000-0000-000000000000}",
-            "0",
-            &[],
-        );
+        let data = make_component_body_data("{00000000-0000-0000-0000-000000000000}", "0", &[]);
         let body = parse_component_body(&data).unwrap();
         assert!(body.outline.is_empty());
         assert_eq!(body.standoff_height, Coord::ZERO);
@@ -370,7 +404,12 @@ mod tests {
         let data = make_component_body_data(
             "{ABCDEF01-2345-6789-ABCD-EF0123456789}",
             "-3.937",
-            &[(0.0, 0.0), (100_000.0, 0.0), (100_000.0, 100_000.0), (0.0, 100_000.0)],
+            &[
+                (0.0, 0.0),
+                (100_000.0, 0.0),
+                (100_000.0, 100_000.0),
+                (0.0, 100_000.0),
+            ],
         );
         let body = parse_component_body(&data).unwrap();
         assert_eq!(body.standoff_height, Coord::from_mils_f64(-3.937));

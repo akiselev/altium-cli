@@ -1,9 +1,9 @@
 use altium_format_types::V7Layer;
 
-use crate::binary_io::BinaryReader;
-use crate::pcblib::primitives::common::parse_common_header;
-use crate::pcblib::PcbArc;
 use crate::Result;
+use crate::binary_io::BinaryReader;
+use crate::pcblib::PcbArc;
+use crate::pcblib::primitives::common::parse_common_header;
 
 /// Parses a PcbArc primitive from its single subrecord (56-60 bytes).
 ///
@@ -61,18 +61,18 @@ pub(crate) fn parse_arc(data: &[u8]) -> Result<PcbArc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint};
-    use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
+    use crate::binary_io::BinaryWriter;
+    use altium_format_types::{Coord, CoordPoint};
 
     fn write_common_header(w: &mut BinaryWriter) {
-        w.write_u8(1);      // layer
-        w.write_u8(0);      // pad_byte
-        w.write_u16_le(0);  // flags
+        w.write_u8(1); // layer
+        w.write_u8(0); // pad_byte
+        w.write_u16_le(0); // flags
         w.write_i32_le(-1); // net_index
         w.write_u16_le(0xFFFF); // polygon_index
-        w.write_u16_le(0);  // component_index
-        w.write_u8(0);      // unknown
+        w.write_u16_le(0); // component_index
+        w.write_u8(0); // unknown
     }
 
     fn make_arc_core(w: &mut BinaryWriter) {
@@ -82,12 +82,12 @@ mod tests {
             Coord::from_internal(200_000),
         ));
         w.write_coord(Coord::from_internal(50_000)); // radius
-        w.write_f64_le(0.0);   // start_angle
+        w.write_f64_le(0.0); // start_angle
         w.write_f64_le(360.0); // end_angle
         w.write_coord(Coord::from_internal(10_000)); // width
         w.write_u16_le(0xFFFF); // subpoly_index
-        w.write_u8(1);          // user_routed = true
-        w.write_i32_le(0);      // union_index
+        w.write_u8(1); // user_routed = true
+        w.write_i32_le(0); // union_index
         w.write_u32_le(0x0102_001d); // v7_layer (Mechanical1)
     }
 
@@ -133,13 +133,19 @@ mod tests {
         let mut data = w.finish();
         data.extend_from_slice(&[0xAA, 0xBB]);
         let result = parse_arc(&data);
-        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::UnexpectedTrailingData { .. })
+        ));
     }
 
     #[test]
     fn truncated_arc_returns_error() {
         let data = [0u8; 10]; // too short for common header (13 bytes)
         let result = parse_arc(&data);
-        assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::BinaryReadPastEnd { .. })
+        ));
     }
 }

@@ -8,8 +8,8 @@
 //! Example: "39,46,68,101,115" decodes as the byte string "'.Des".
 //! The decoded bytes are validated as UTF-8 (strict).
 
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use crate::param_collection::ParameterCollection;
 use crate::{AltiumFormatError, Result};
@@ -54,19 +54,18 @@ pub(crate) fn parse_pcblib_wide_strings(data: &[u8]) -> Result<HashMap<usize, St
     let mut result = HashMap::new();
     for key in keys {
         let lower = key.to_ascii_lowercase();
-        let index_str = lower
-            .strip_prefix("encodedtext")
-            .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+        let index_str = lower.strip_prefix("encodedtext").ok_or_else(|| {
+            AltiumFormatError::InvalidParamValue {
                 key: key.clone(),
                 detail: "unexpected key format".to_owned(),
+            }
+        })?;
+        let index: usize = index_str
+            .parse()
+            .map_err(|_| AltiumFormatError::InvalidParamValue {
+                key: key.clone(),
+                detail: format!("non-numeric index suffix: '{index_str}'"),
             })?;
-        let index: usize =
-            index_str
-                .parse()
-                .map_err(|_| AltiumFormatError::InvalidParamValue {
-                    key: key.clone(),
-                    detail: format!("non-numeric index suffix: '{index_str}'"),
-                })?;
         let value: String = params.remove_required(&key)?;
         let decoded_string = decode_encoded_text(&key, &value)?;
         match result.entry(index) {
@@ -93,10 +92,13 @@ fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
         .split(',')
         .filter(|token| !token.trim().is_empty())
         .map(|token| {
-            token.trim().parse::<u8>().map_err(|_| AltiumFormatError::InvalidParamValue {
-                key: key.to_owned(),
-                detail: format!("invalid decimal byte token: '{}'", token.trim()),
-            })
+            token
+                .trim()
+                .parse::<u8>()
+                .map_err(|_| AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("invalid decimal byte token: '{}'", token.trim()),
+                })
         })
         .collect::<Result<Vec<u8>>>()?;
     std::str::from_utf8(&bytes)

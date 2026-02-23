@@ -8,8 +8,8 @@ mod tests {
     use altium_format_derive::FromParams;
     use altium_format_types::{Coord, CoordPoint};
 
-    use crate::param_collection::ParameterCollection;
     use crate::Result;
+    use crate::param_collection::ParameterCollection;
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -121,7 +121,13 @@ mod tests {
 
     #[derive(FromParams, Debug)]
     struct CoordPointStruct {
-        #[param(coord_point, x_key = "LX", x_frac = "LX_FRAC", y_key = "LY", y_frac = "LY_FRAC")]
+        #[param(
+            coord_point,
+            x_key = "LX",
+            x_frac = "LX_FRAC",
+            y_key = "LY",
+            y_frac = "LY_FRAC"
+        )]
         pub location: CoordPoint,
     }
 

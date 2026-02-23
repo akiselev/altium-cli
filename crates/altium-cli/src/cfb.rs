@@ -153,7 +153,11 @@ fn format_hex_line(offset: usize, bytes: &[u8]) -> String {
             hex_part.push(' ');
         }
         hex_part.push_str(&format!("{b:02x} "));
-        ascii_part.push(if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' });
+        ascii_part.push(if b.is_ascii_graphic() || b == b' ' {
+            b as char
+        } else {
+            '.'
+        });
     }
 
     // Pad hex part to align ASCII column (16 bytes = 48 hex chars + 1 mid-gap)
@@ -223,7 +227,11 @@ pub fn run(sub: CfbSubcommand) -> anyhow::Result<ExitCode> {
         }
         CfbSubcommand::Diff(args) => {
             let identical = cmd_diff(&args)?;
-            Ok(if identical { ExitCode::SUCCESS } else { ExitCode::from(1) })
+            Ok(if identical {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
         }
         CfbSubcommand::Cat(args) => {
             cmd_cat(&args)?;
@@ -243,7 +251,11 @@ fn cmd_ls(args: &LsArgs) -> anyhow::Result<()> {
                 continue;
             }
             let path = entry.path().to_string_lossy().into_owned();
-            let kind = if entry.is_storage() { "storage" } else { "stream" };
+            let kind = if entry.is_storage() {
+                "storage"
+            } else {
+                "stream"
+            };
             let size = if entry.is_stream() { entry.len() } else { 0 };
             println!("{path}\t{kind}\t{size}");
         }
@@ -265,7 +277,8 @@ fn print_tree<F: std::io::Read + std::io::Seek>(
         // Depth = number of components minus 1 (root)
         let depth = path.components().count().saturating_sub(1);
         let indent = "  ".repeat(depth);
-        let name = path.file_name()
+        let name = path
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
 
@@ -288,7 +301,9 @@ fn cmd_dump(args: &DumpArgs) -> anyhow::Result<()> {
     if start >= data.len() {
         anyhow::bail!(
             "offset {} is beyond stream length {} for '{}'",
-            start, data.len(), args.stream
+            start,
+            data.len(),
+            args.stream
         );
     }
 
@@ -310,7 +325,10 @@ fn cmd_dump(args: &DumpArgs) -> anyhow::Result<()> {
 
             println!(
                 "--- block[{}] @ {:#x}: {} ({} bytes) ---",
-                block.index, block.header_offset, block.format_label(), block.size
+                block.index,
+                block.header_offset,
+                block.format_label(),
+                block.size
             );
 
             // Determine the window within this block to dump
@@ -328,7 +346,11 @@ fn cmd_dump(args: &DumpArgs) -> anyhow::Result<()> {
                 // Dump header bytes if in range
                 let header_end = block.header_offset + 4;
                 if dump_start < header_end {
-                    print_hex_dump(&data, dump_start, Some(header_end.min(dump_end) - dump_start));
+                    print_hex_dump(
+                        &data,
+                        dump_start,
+                        Some(header_end.min(dump_end) - dump_start),
+                    );
                 }
                 // Dump payload bytes
                 let payload_start = header_end.max(dump_start);
@@ -373,7 +395,11 @@ fn cmd_blocks(args: &BlocksArgs) -> anyhow::Result<()> {
 
             println!(
                 "block[{}] @ offset {:#x}: format={}, flags={:#04x}, payload={} bytes",
-                block.index, block.header_offset, block.format_label(), block.flags, block.size
+                block.index,
+                block.header_offset,
+                block.format_label(),
+                block.flags,
+                block.size
             );
 
             // Full hex dump of payload
@@ -424,7 +450,11 @@ fn cmd_blocks(args: &BlocksArgs) -> anyhow::Result<()> {
 
                 println!(
                     "  [{:3}] @{:#08x}  {:6}  {:6} bytes  {}",
-                    block.index, block.header_offset, block.format_label(), block.size, preview
+                    block.index,
+                    block.header_offset,
+                    block.format_label(),
+                    block.size,
+                    preview
                 );
             }
         }
@@ -584,7 +614,10 @@ fn diff_blocks(stream_path: &str, data1: &[u8], data2: &[u8]) {
                 if b1.payload != b2.payload || b1.flags != b2.flags {
                     println!(
                         "    block[{i}] differs in {stream_path}: {}({} bytes) vs {}({} bytes)",
-                        b1.format_label(), b1.size, b2.format_label(), b2.size
+                        b1.format_label(),
+                        b1.size,
+                        b2.format_label(),
+                        b2.size
                     );
                     // Show decoded text for text blocks that differ
                     if !b1.is_binary() {
@@ -600,13 +633,15 @@ fn diff_blocks(stream_path: &str, data1: &[u8], data2: &[u8]) {
             (Some(b1), None) => {
                 println!(
                     "    block[{i}] only in file1: {}({} bytes)",
-                    b1.format_label(), b1.size
+                    b1.format_label(),
+                    b1.size
                 );
             }
             (None, Some(b2)) => {
                 println!(
                     "    block[{i}] only in file2: {}({} bytes)",
-                    b2.format_label(), b2.size
+                    b2.format_label(),
+                    b2.size
                 );
             }
             (None, None) => {}

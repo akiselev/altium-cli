@@ -28,7 +28,10 @@ impl TryFrom<u8> for ComponentKind {
             4 => Ok(Self::NetTieNoBom),
             5 => Ok(Self::StandardNoBom),
             6 => Ok(Self::Jumper),
-            _ => Err(InvalidEnumValue { type_name: "ComponentKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ComponentKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -78,7 +81,10 @@ impl TryFrom<u8> for RotationBy90 {
             1 => Ok(Self::Rotate90),
             2 => Ok(Self::Rotate180),
             3 => Ok(Self::Rotate270),
-            _ => Err(InvalidEnumValue { type_name: "RotationBy90", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "RotationBy90",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -126,7 +132,10 @@ impl TryFrom<u8> for TextAutoPosition {
             7 => Ok(Self::TopRight),
             8 => Ok(Self::CenterRight),
             9 => Ok(Self::BottomRight),
-            _ => Err(InvalidEnumValue { type_name: "TextAutoPosition", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "TextAutoPosition",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -164,7 +173,10 @@ impl TryFrom<u8> for Unit {
         match v {
             0 => Ok(Self::Metric),
             1 => Ok(Self::Imperial),
-            _ => Err(InvalidEnumValue { type_name: "Unit", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "Unit",
+                value: v as i64,
+            }),
         }
     }
 }

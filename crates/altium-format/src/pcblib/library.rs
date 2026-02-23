@@ -3,8 +3,8 @@
 use altium_format_types::Coord;
 
 use crate::binary_io::BinaryReader;
-use crate::block_stream::{iter_blocks, BlockFormat};
-use crate::board_config::{parse_board_config, PcbBoardConfig};
+use crate::block_stream::{BlockFormat, iter_blocks};
+use crate::board_config::{PcbBoardConfig, parse_board_config};
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::{AltiumFormatError, Result};
@@ -67,11 +67,21 @@ pub(crate) fn parse_library_data(data: &[u8]) -> Result<(PcbLibraryData, Vec<Str
     }
 
     let mut params = ParameterCollection::from_bytes(&block.data)?;
-    let filename = params.remove_optional::<String>("FILENAME")?.unwrap_or_default();
-    let kind = params.remove_optional::<String>("KIND")?.unwrap_or_default();
-    let version = params.remove_optional::<String>("VERSION")?.unwrap_or_default();
-    let date = params.remove_optional::<String>("DATE")?.unwrap_or_default();
-    let time = params.remove_optional::<String>("TIME")?.unwrap_or_default();
+    let filename = params
+        .remove_optional::<String>("FILENAME")?
+        .unwrap_or_default();
+    let kind = params
+        .remove_optional::<String>("KIND")?
+        .unwrap_or_default();
+    let version = params
+        .remove_optional::<String>("VERSION")?
+        .unwrap_or_default();
+    let date = params
+        .remove_optional::<String>("DATE")?
+        .unwrap_or_default();
+    let time = params
+        .remove_optional::<String>("TIME")?
+        .unwrap_or_default();
     let board_config = parse_board_config(&mut params)?;
     params.assert_exhausted()?;
 
@@ -83,7 +93,17 @@ pub(crate) fn parse_library_data(data: &[u8]) -> Result<(PcbLibraryData, Vec<Str
     let bytes_after_first_block = 4 + block.data.len(); // header + payload
     let suffix_names = parse_library_data_suffix(&data[bytes_after_first_block..])?;
 
-    Ok((PcbLibraryData { filename, kind, version, date, time, board_config }, suffix_names))
+    Ok((
+        PcbLibraryData {
+            filename,
+            kind,
+            version,
+            date,
+            time,
+            board_config,
+        },
+        suffix_names,
+    ))
 }
 
 /// Parse the supplementary component-name index appended to Library/Data.
@@ -184,19 +204,24 @@ fn parse_toc_record(record: &str) -> Result<PcbLibComponentTocEntry> {
         if segment.is_empty() {
             continue;
         }
-        let eq_pos = segment.find('=').ok_or_else(|| AltiumFormatError::InvalidParamValue {
-            key: segment.to_owned(),
-            detail: "TOC record segment has no '=' separator".to_owned(),
-        })?;
+        let eq_pos = segment
+            .find('=')
+            .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                key: segment.to_owned(),
+                detail: "TOC record segment has no '=' separator".to_owned(),
+            })?;
         let key = segment[..eq_pos].trim();
         let value = segment[eq_pos + 1..].trim();
         match key {
             "Name" => name = value.to_owned(),
             "Pad Count" => {
-                pad_count = value.parse::<u32>().map_err(|_| AltiumFormatError::InvalidParamValue {
-                    key: "Pad Count".to_owned(),
-                    detail: format!("cannot parse '{value}' as u32"),
-                })?;
+                pad_count =
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| AltiumFormatError::InvalidParamValue {
+                            key: "Pad Count".to_owned(),
+                            detail: format!("cannot parse '{value}' as u32"),
+                        })?;
             }
             "Height" => {
                 // Height is stored as mils (float), optionally with "mil" suffix.
@@ -220,7 +245,12 @@ fn parse_toc_record(record: &str) -> Result<PcbLibComponentTocEntry> {
         }
     }
 
-    Ok(PcbLibComponentTocEntry { name, pad_count, height, description })
+    Ok(PcbLibComponentTocEntry {
+        name,
+        pad_count,
+        height,
+        description,
+    })
 }
 
 /// Parse Library/Models/{Header,Data} streams.
@@ -246,7 +276,9 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         // Apply UNICODE sidecars first so NAME and other fields get true Unicode text.
         params.apply_unicode_sidecars()?;
         let id = params.remove_optional::<String>("ID")?.unwrap_or_default();
-        let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
+        let name = params
+            .remove_optional::<String>("NAME")?
+            .unwrap_or_default();
         let embed = params
             .remove_optional::<String>("EMBED")?
             .map(|s| s.eq_ignore_ascii_case("TRUE"))
@@ -255,7 +287,9 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         let rotation_y = params.remove_optional::<f64>("ROTY")?.unwrap_or(0.0);
         let rotation_z = params.remove_optional::<f64>("ROTZ")?.unwrap_or(0.0);
         let standoff = params.remove_optional::<f64>("DZ")?.unwrap_or(0.0);
-        let checksum = params.remove_optional::<String>("CHECKSUM")?.unwrap_or_default();
+        let checksum = params
+            .remove_optional::<String>("CHECKSUM")?
+            .unwrap_or_default();
         // MODELSOURCE and TITLE are present but not used in our data model; consume them.
         let _ = params.remove_optional::<String>("MODELSOURCE")?;
         let _ = params.remove_optional::<String>("TITLE")?;
@@ -347,10 +381,7 @@ pub(crate) struct PcbLayerKindPair {
 ///   entry_count × 8 bytes: (u32_le TV7_Layer, u32_le TMechanicalLayerKind)
 ///
 /// TMechanicalLayerKind is a u8 enum (0-48) but stored as u32 on disk.
-pub(crate) fn parse_layer_kind_mapping(
-    header: &[u8],
-    data: &[u8],
-) -> Result<PcbLayerKindMapping> {
+pub(crate) fn parse_layer_kind_mapping(header: &[u8], data: &[u8]) -> Result<PcbLayerKindMapping> {
     let _section_count = parse_pcb_section_header(header)?;
     if data.is_empty() {
         return Ok(PcbLayerKindMapping {
@@ -387,7 +418,11 @@ pub(crate) fn parse_layer_kind_mapping(
     }
     reader.assert_exhausted()?;
 
-    Ok(PcbLayerKindMapping { version, hash, entries })
+    Ok(PcbLayerKindMapping {
+        version,
+        hash,
+        entries,
+    })
 }
 
 /// Parse Library/PadViaLibrary/{Header,Data} streams.
@@ -411,12 +446,15 @@ pub(crate) fn parse_pad_via_library(
     };
 
     let mut params = ParameterCollection::from_bytes(&block.data)?;
-    let library_id =
-        params.remove_optional::<String>("PADVIALIBRARY.LIBRARYID")?.unwrap_or_default();
-    let library_name =
-        params.remove_optional::<String>("PADVIALIBRARY.LIBRARYNAME")?.unwrap_or_default();
-    let display_units =
-        params.remove_optional::<String>("PADVIALIBRARY.DISPLAYUNITS")?.unwrap_or_default();
+    let library_id = params
+        .remove_optional::<String>("PADVIALIBRARY.LIBRARYID")?
+        .unwrap_or_default();
+    let library_name = params
+        .remove_optional::<String>("PADVIALIBRARY.LIBRARYNAME")?
+        .unwrap_or_default();
+    let display_units = params
+        .remove_optional::<String>("PADVIALIBRARY.DISPLAYUNITS")?
+        .unwrap_or_default();
     params.assert_exhausted()?;
 
     if let Some(extra) = blocks_iter.next() {
@@ -427,7 +465,11 @@ pub(crate) fn parse_pad_via_library(
         });
     }
 
-    Ok(Some(PcbPadViaLibraryConfig { library_id, library_name, display_units }))
+    Ok(Some(PcbPadViaLibraryConfig {
+        library_id,
+        library_name,
+        display_units,
+    }))
 }
 
 /// Parse the Library/EmbeddedFonts single-stream sub-storage.
@@ -451,7 +493,14 @@ pub(crate) fn parse_embedded_fonts(data: &[u8]) -> Result<Vec<PcbEmbeddedFontEnt
         let flag = reader.read_u8()?;
         let blob_size = reader.read_u32_le()? as usize;
         let data_blob = reader.read_bytes(blob_size)?.to_vec();
-        entries.push(PcbEmbeddedFontEntry { name, style_name, localized_name, unknown_u16, flag, data: data_blob });
+        entries.push(PcbEmbeddedFontEntry {
+            name,
+            style_name,
+            localized_name,
+            unknown_u16,
+            flag,
+            data: data_blob,
+        });
     }
     reader.assert_exhausted()?;
     Ok(entries)
@@ -462,10 +511,7 @@ pub(crate) fn parse_embedded_fonts(data: &[u8]) -> Result<Vec<PcbEmbeddedFontEnt
 /// Same pattern as Models: Header has block count, Data has one text block per
 /// entry with pipe-delimited params (e.g., `NAME=<path>`). Blob data is loaded
 /// separately from numbered streams.
-pub(crate) fn parse_texture_metadata(
-    header: &[u8],
-    data: &[u8],
-) -> Result<Vec<PcbTextureEntry>> {
+pub(crate) fn parse_texture_metadata(header: &[u8], data: &[u8]) -> Result<Vec<PcbTextureEntry>> {
     let count = parse_pcb_section_header(header)? as usize;
     if count == 0 && data.is_empty() {
         return Ok(Vec::new());
@@ -481,7 +527,9 @@ pub(crate) fn parse_texture_metadata(
             });
         }
         let mut params = ParameterCollection::from_bytes(&block.data)?;
-        let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
+        let name = params
+            .remove_optional::<String>("NAME")?
+            .unwrap_or_default();
         params.assert_exhausted()?;
         entries.push(PcbTextureEntry { name, blob: None });
     }
@@ -500,12 +548,14 @@ pub(crate) fn parse_texture_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
     use crate::tracked_cfb::TrackedCfbDocument;
+    use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
 
     fn data_path(filename: &str) -> std::path::PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        std::path::Path::new(manifest_dir).join("../../data").join(filename)
+        std::path::Path::new(manifest_dir)
+            .join("../../data")
+            .join(filename)
     }
 
     // Build a minimal block-framed stream for testing.
@@ -519,7 +569,8 @@ mod tests {
 
     #[test]
     fn parse_library_data_basic() {
-        let payload = b"|FILENAME=test.PcbLib|KIND=PcbLib|VERSION=1.0|DATE=2024-01-01|TIME=12:00:00|\0";
+        let payload =
+            b"|FILENAME=test.PcbLib|KIND=PcbLib|VERSION=1.0|DATE=2024-01-01|TIME=12:00:00|\0";
         let block = make_text_block(payload);
         let (lib, suffix_names) = parse_library_data(&block).unwrap();
         assert_eq!(lib.filename, "test.PcbLib");
@@ -537,12 +588,16 @@ mod tests {
         let (lib, _) = parse_library_data(&block).unwrap();
         assert_eq!(lib.filename, "foo.PcbLib");
         assert_eq!(lib.version, "2.0");
-        assert!(lib.board_config.v9_master_stack.is_some(), "V9_MASTERSTACK_STYLE present should yield Some(master_stack)");
+        assert!(
+            lib.board_config.v9_master_stack.is_some(),
+            "V9_MASTERSTACK_STYLE present should yield Some(master_stack)"
+        );
     }
 
     #[test]
     fn parse_toc_record_basic() {
-        let entry = parse_toc_record("Name=SOT23|Pad Count=3|Height=0|Description=Transistor").unwrap();
+        let entry =
+            parse_toc_record("Name=SOT23|Pad Count=3|Height=0|Description=Transistor").unwrap();
         assert_eq!(entry.name, "SOT23");
         assert_eq!(entry.pad_count, 3);
         assert_eq!(entry.height, Coord::ZERO);
@@ -597,10 +652,17 @@ mod tests {
             return;
         }
         let mut doc = TrackedCfbDocument::open(&path).expect("should open PcbLib");
-        let data = doc.read_stream("/Library/Data").expect("Library/Data must exist");
-        let (lib, _suffix_names) = parse_library_data(&data).expect("parse_library_data must succeed");
+        let data = doc
+            .read_stream("/Library/Data")
+            .expect("Library/Data must exist");
+        let (lib, _suffix_names) =
+            parse_library_data(&data).expect("parse_library_data must succeed");
         assert!(!lib.kind.is_empty(), "KIND must not be empty in real file");
-        assert!(lib.kind.contains("PCB") || lib.kind.contains("Protel"), "KIND={}", lib.kind);
+        assert!(
+            lib.kind.contains("PCB") || lib.kind.contains("Protel"),
+            "KIND={}",
+            lib.kind
+        );
     }
 
     #[test]
@@ -616,10 +678,14 @@ mod tests {
         let data = doc
             .read_stream("/Library/ComponentParamsTOC/Data")
             .expect("ComponentParamsTOC/Data must exist");
-        let entries = parse_component_toc(&header, &data).expect("parse_component_toc must succeed");
+        let entries =
+            parse_component_toc(&header, &data).expect("parse_component_toc must succeed");
         assert!(!entries.is_empty(), "ComponentParamsTOC must have entries");
         // First entry should be a known footprint name.
-        assert!(!entries[0].name.is_empty(), "first TOC entry name must not be empty");
+        assert!(
+            !entries[0].name.is_empty(),
+            "first TOC entry name must not be empty"
+        );
     }
 
     #[test]
@@ -629,12 +695,21 @@ mod tests {
             return;
         }
         let mut doc = TrackedCfbDocument::open(&path).expect("should open PcbLib");
-        let header = doc.read_stream("/Library/Models/Header").expect("Models/Header must exist");
-        let data = doc.read_stream("/Library/Models/Data").expect("Models/Data must exist");
-        let entries = parse_model_metadata(&header, &data).expect("parse_model_metadata must succeed");
+        let header = doc
+            .read_stream("/Library/Models/Header")
+            .expect("Models/Header must exist");
+        let data = doc
+            .read_stream("/Library/Models/Data")
+            .expect("Models/Data must exist");
+        let entries =
+            parse_model_metadata(&header, &data).expect("parse_model_metadata must succeed");
         // 28Pins_Project has 22 model blobs.
         assert!(!entries.is_empty(), "Models must have at least one entry");
-        assert_eq!(entries.len(), 22, "28Pins_Project must have 22 model entries");
+        assert_eq!(
+            entries.len(),
+            22,
+            "28Pins_Project must have 22 model entries"
+        );
         for entry in &entries {
             assert!(!entry.id.is_empty(), "model id must not be empty");
             assert!(!entry.name.is_empty(), "model name must not be empty");

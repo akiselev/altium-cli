@@ -207,3 +207,13 @@ pub const ELECTRONICS_SYSTEM_DESIGN_JSON_HEADER_V1: &str =
 /// **Era:** Current (AD6+)
 /// **Container:** OLE2 compound document
 pub const PCB_LIBRARY_BINARY_HEADER_V6: &str = "PCB 6.0 Binary Library File";
+
+/// Legacy binary PCB document header (`/FileHeader`, UTF-16LE).
+///
+/// **Container:** OLE2 compound document
+pub const PCB_DOC_BINARY_HEADER_V5: &str = "PCB 5.0 Binary File";
+
+/// V6 binary PCB document header (`/FileHeaderSix`, pascal-block).
+///
+/// **Container:** OLE2 compound document
+pub const PCB_DOC_BINARY_HEADER_V6: &str = "PCB 6.0 Binary File";

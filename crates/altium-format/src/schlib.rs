@@ -1,11 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use altium_format_types::{
-    Color, Coord, RotationBy90, SchDisplaySettings, SchRecordType, SheetBorderStyle,
-    SheetOrientation, SheetReferenceZoneStyle, SheetStyle,
-};
-use altium_format_types::sch::SchFont;
 use altium_format_types::constants::component::{
     ALIAS_COUNT, COMP_COUNT, COMP_DESCR, LIB_REF, PART_COUNT,
 };
@@ -13,34 +8,40 @@ use altium_format_types::constants::file_headers::SCH_LIBRARY_BINARY_HEADER_V50;
 use altium_format_types::constants::parsing::C_BASE_UNIT;
 use altium_format_types::constants::pin::{
     DEF_VALUE, PAIR_SWAP_ID, PIN_BINARY_CODE, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
-    PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY, PIN_PROPAGATION_DELAY as PIN_PROPAGATION_DELAY_KEY,
-    PIN_SELECTED_FUNCTION, PIN_SELECTED_FUNCTIONS_COUNT, PIN_TEXT_FONT_CUSTOM, PIN_TEXT_POS_CUSTOM,
-    PIN_TEXT_ROT_ANCHOR, PIN_TEXT_ROT_REL_MASK, PIN_TEXT_ROT_REL_SHIFT, SWAP_ID, SWAP_ID_PART,
-    SYMBOL_LINE_WIDTH,
+    PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY,
+    PIN_PROPAGATION_DELAY as PIN_PROPAGATION_DELAY_KEY, PIN_SELECTED_FUNCTION,
+    PIN_SELECTED_FUNCTIONS_COUNT, PIN_TEXT_FONT_CUSTOM, PIN_TEXT_POS_CUSTOM, PIN_TEXT_ROT_ANCHOR,
+    PIN_TEXT_ROT_REL_MASK, PIN_TEXT_ROT_REL_SHIFT, SWAP_ID, SWAP_ID_PART, SYMBOL_LINE_WIDTH,
 };
-use altium_format_types::constants::record_structure::{HEADER, KEY_COUNT, RECORD, RECORD_EX, SECTION_KEY, WEIGHT};
 use altium_format_types::constants::record_structure::ALWAYS_SHOW_CD;
-use altium_format_types::constants::sheet::{
-    AREA_COLOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC, CUSTOM_X_ZONES,
-    CUSTOM_Y, CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT, DOCUMENT_BORDER_STYLE,
-    FILE_VERSION_INFO, HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, IS_BOC,
-    REFERENCE_ZONE_STYLE, REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE, SHEET_STYLE,
-    SHOW_HIDDEN_PINS, SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC,
-    SYSTEM_FONT, TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS,
-    VISIBLE_GRID_ON, VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
-};
 use altium_format_types::constants::record_structure::SECTION_NAME;
-use altium_format_types::constants::streams::{
-    ADDITIONAL, FILE_HEADER, LIB_ADDITIONAL, PIN_DESC, PIN_FRAC, PIN_FUNCTION_DATA,
-    PIN_MISC_DATA, PIN_PACKAGE_LENGTH, PIN_PROPAGATION_DELAY, PIN_SYMBOL_LINE_WIDTH,
-    PIN_TEXT_DATA, PIN_WIDE_TEXT, REDIRECTION, SECTION_KEYS, STORAGE,
-};
-use altium_format_types::constants::text::{BOLD, DESC, DESIG, ITALIC, STRIKE_OUT, UNDERLINE};
 use altium_format_types::constants::record_structure::UNIQUE_ID;
+use altium_format_types::constants::record_structure::{
+    HEADER, KEY_COUNT, RECORD, RECORD_EX, SECTION_KEY, WEIGHT,
+};
 use altium_format_types::constants::sheet::MINOR_VERSION;
-use altium_format_types::constants::visual::{FONT_ID_COUNT, FONT_NAME, ROTATION, SIZE};
+use altium_format_types::constants::sheet::{
+    AREA_COLOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC, CUSTOM_X_ZONES, CUSTOM_Y,
+    CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT, DOCUMENT_BORDER_STYLE, FILE_VERSION_INFO,
+    HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, IS_BOC, REFERENCE_ZONE_STYLE,
+    REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE, SHEET_STYLE, SHOW_HIDDEN_PINS,
+    SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, SYSTEM_FONT,
+    TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS, VISIBLE_GRID_ON,
+    VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
+};
+use altium_format_types::constants::streams::{
+    ADDITIONAL, FILE_HEADER, LIB_ADDITIONAL, PIN_DESC, PIN_FRAC, PIN_FUNCTION_DATA, PIN_MISC_DATA,
+    PIN_PACKAGE_LENGTH, PIN_PROPAGATION_DELAY, PIN_SYMBOL_LINE_WIDTH, PIN_TEXT_DATA, PIN_WIDE_TEXT,
+    REDIRECTION, SECTION_KEYS, STORAGE,
+};
 use altium_format_types::constants::text::NAME;
-
+use altium_format_types::constants::text::{BOLD, DESC, DESIG, ITALIC, STRIKE_OUT, UNDERLINE};
+use altium_format_types::constants::visual::{FONT_ID_COUNT, FONT_NAME, ROTATION, SIZE};
+use altium_format_types::sch::SchFont;
+use altium_format_types::{
+    Color, Coord, RotationBy90, SchDisplaySettings, SchRecordType, SheetBorderStyle,
+    SheetOrientation, SheetReferenceZoneStyle, SheetStyle,
+};
 
 // Sidecar parameter keys: Delphi convention (all-uppercase, no separators) for
 // byte-exact roundtrip with files created by Altium's Delphi code path.
@@ -52,18 +53,17 @@ const SIDECAR_SYMBOL_LINE_WIDTH: &str = "SYMBOL_LINEWIDTH";
 const SIDECAR_PIN_PACKAGE_LENGTH: &str = "PINPACKAGELENGTH";
 
 use crate::binary_io::{BinaryReader, BinaryWriter};
-use crate::block_stream::{parse_blocks, write_text_block, Block, BlockFormat};
+use crate::block_stream::{Block, BlockFormat, parse_blocks, write_text_block};
 use crate::cfb_document::CfbDocument;
 use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
 use crate::param_value::ToParamValue;
 use crate::sch_records::{
+    PinTextPositioning, SchArc, SchBezier, SchDesignator, SchEllipse, SchEllipticalArc, SchImage,
+    SchImplementation, SchImplementationList, SchImplementationMap, SchLabel, SchLibComponent,
+    SchLine, SchMapDefiner, SchParameter, SchParameterList, SchPie, SchPin, SchPolygon,
+    SchPolyline, SchRecord, SchRectangle, SchRoundRectangle, SchSymbol, SchTextFrame,
     parse_binary_pin, parse_component_record, serialize_component_record, serialize_record,
-    PinTextPositioning, SchArc, SchBezier,
-    SchDesignator, SchEllipse, SchEllipticalArc, SchImage, SchImplementation,
-    SchImplementationList, SchImplementationMap, SchLabel, SchLibComponent, SchLine, SchMapDefiner,
-    SchParameter, SchParameterList, SchPie, SchPin, SchPolygon, SchPolyline, SchRecord,
-    SchRectangle, SchRoundRectangle, SchSymbol, SchTextFrame,
 };
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
@@ -146,7 +146,16 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
         let italic: bool = p.remove_with_default(&format!("{}{}", ITALIC, idx), false)?;
         let underline: bool = p.remove_with_default(&format!("{}{}", UNDERLINE, idx), false)?;
         let strikeout: bool = p.remove_with_default(&format!("{}{}", STRIKE_OUT, idx), false)?;
-        Ok(SchFont { id: i as i32, name, size, rotation, bold, italic, underline, strikeout })
+        Ok(SchFont {
+            id: i as i32,
+            name,
+            size,
+            rotation,
+            bold,
+            italic,
+            underline,
+            strikeout,
+        })
     })?;
 
     // Display settings — library-level sheet display preferences, preserved for round-trip
@@ -154,27 +163,40 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
         snap_grid_on: params.remove_optional(SNAP_GRID_ON)?,
         snap_grid_size: params.remove_coord_optional(SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC)?,
         visible_grid_on: params.remove_optional(VISIBLE_GRID_ON)?,
-        visible_grid_size: params.remove_coord_optional(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC)?,
+        visible_grid_size: params
+            .remove_coord_optional(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC)?,
         hot_spot_grid_on: params.remove_optional(HOT_SPOT_GRID_ON)?,
-        hot_spot_grid_size: params.remove_coord_optional(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC)?,
-        sheet_style: params.remove_optional::<u8>(SHEET_STYLE)?
-            .map(SheetStyle::try_from).transpose()?,
+        hot_spot_grid_size: params
+            .remove_coord_optional(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC)?,
+        sheet_style: params
+            .remove_optional::<u8>(SHEET_STYLE)?
+            .map(SheetStyle::try_from)
+            .transpose()?,
         use_custom_sheet: params.remove_optional(USE_CUSTOM_SHEET)?,
         custom_x: params.remove_coord_optional(CUSTOM_X, CUSTOM_X_FRAC)?,
         custom_y: params.remove_coord_optional(CUSTOM_Y, CUSTOM_Y_FRAC)?,
         border_on: params.remove_optional(BORDER_ON)?,
         title_block_on: params.remove_optional(TITLE_BLOCK_ON)?,
-        document_border_style: params.remove_optional::<u8>(DOCUMENT_BORDER_STYLE)?
-            .map(SheetBorderStyle::try_from).transpose()?,
+        document_border_style: params
+            .remove_optional::<u8>(DOCUMENT_BORDER_STYLE)?
+            .map(SheetBorderStyle::try_from)
+            .transpose()?,
         reference_zones_on: params.remove_optional(REFERENCE_ZONES_ON)?,
-        reference_zone_style: params.remove_optional::<u8>(REFERENCE_ZONE_STYLE)?
-            .map(SheetReferenceZoneStyle::try_from).transpose()?,
+        reference_zone_style: params
+            .remove_optional::<u8>(REFERENCE_ZONE_STYLE)?
+            .map(SheetReferenceZoneStyle::try_from)
+            .transpose()?,
         custom_x_zones: params.remove_optional(CUSTOM_X_ZONES)?,
         custom_y_zones: params.remove_optional(CUSTOM_Y_ZONES)?,
-        custom_margin_width: params.remove_coord_optional(CUSTOM_MARGIN_WIDTH, &format!("{}_Frac", CUSTOM_MARGIN_WIDTH))?,
+        custom_margin_width: params.remove_coord_optional(
+            CUSTOM_MARGIN_WIDTH,
+            &format!("{}_Frac", CUSTOM_MARGIN_WIDTH),
+        )?,
         sheet_number_space_size: params.remove_optional(SHEET_NUMBER_SPACE_SIZE)?,
-        workspace_orientation: params.remove_optional::<u8>(WORKSPACE_ORIENTATION)?
-            .map(SheetOrientation::try_from).transpose()?,
+        workspace_orientation: params
+            .remove_optional::<u8>(WORKSPACE_ORIENTATION)?
+            .map(SheetOrientation::try_from)
+            .transpose()?,
         show_hidden_pins: params.remove_optional(SHOW_HIDDEN_PINS)?,
         show_template_graphics: params.remove_optional(SHOW_TEMPLATE_GRAPHICS)?,
         always_show_cd: params.remove_optional(ALWAYS_SHOW_CD)?,
@@ -190,7 +212,8 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
     // Component index (0-based indexing)
     let components = params.remove_indexed(COMP_COUNT, 0, |p, n| {
         let lib_ref: String = p.remove_required(&format!("{}{}", LIB_REF, n))?;
-        let description: String = p.remove_with_default(&format!("{}{}", COMP_DESCR, n), String::new())?;
+        let description: String =
+            p.remove_with_default(&format!("{}{}", COMP_DESCR, n), String::new())?;
         let part_count: i32 = p.remove_with_default(&format!("{}{}", PART_COUNT, n), 1i32)?;
         let alias_count: i32 = p.remove_with_default(&format!("{}{}", ALIAS_COUNT, n), 0i32)?;
         let mut aliases = Vec::with_capacity(alias_count as usize);
@@ -199,20 +222,29 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
             let alias: String = p.remove_required(&alias_key)?;
             aliases.push(alias);
         }
-        Ok(SchLibComponentIndex { lib_ref, description, part_count, aliases })
+        Ok(SchLibComponentIndex {
+            lib_ref,
+            description,
+            part_count,
+            aliases,
+        })
     })?;
 
     params.assert_exhausted()?;
 
-    Ok(SchLibHeader { weight, minor_version, unique_id, fonts, display_settings, components })
+    Ok(SchLibHeader {
+        weight,
+        minor_version,
+        unique_id,
+        fonts,
+        display_settings,
+        components,
+    })
 }
 
 use crate::pcblib::section_keys::parse_section_keys_text;
 
-pub(crate) fn resolve_component_key(
-    name: &str,
-    section_keys: &HashMap<String, String>,
-) -> String {
+pub(crate) fn resolve_component_key(name: &str, section_keys: &HashMap<String, String>) -> String {
     crate::pcblib::section_keys::sanitize_cfb_name(
         section_keys.get(name).map(String::as_str).unwrap_or(name),
     )
@@ -263,10 +295,18 @@ fn dispatch_record(block: &Block) -> Result<SchRecord> {
             let record_type = SchRecordType::try_from(record_type_val)?;
             macro_rules! dispatch {
                 ($ty:ty => $variant:expr) => {{
-                    let v = <$ty>::from_params(&mut params)
-                        .with_context(|| format!("RECORD={record_type_val} ({ty_name})", ty_name = stringify!($ty)))?;
-                    params.assert_exhausted()
-                        .with_context(|| format!("RECORD={record_type_val} ({ty_name})", ty_name = stringify!($ty)))?;
+                    let v = <$ty>::from_params(&mut params).with_context(|| {
+                        format!(
+                            "RECORD={record_type_val} ({ty_name})",
+                            ty_name = stringify!($ty)
+                        )
+                    })?;
+                    params.assert_exhausted().with_context(|| {
+                        format!(
+                            "RECORD={record_type_val} ({ty_name})",
+                            ty_name = stringify!($ty)
+                        )
+                    })?;
                     Ok($variant(v))
                 }};
             }
@@ -283,8 +323,12 @@ fn dispatch_record(block: &Block) -> Result<SchRecord> {
                 SchRecordType::Polygon => dispatch!(SchPolygon => SchRecord::Polygon),
                 SchRecordType::Ellipse => dispatch!(SchEllipse => SchRecord::Ellipse),
                 SchRecordType::Pie => dispatch!(SchPie => SchRecord::Pie),
-                SchRecordType::RoundRectangle => dispatch!(SchRoundRectangle => SchRecord::RoundRectangle),
-                SchRecordType::EllipticalArc => dispatch!(SchEllipticalArc => SchRecord::EllipticalArc),
+                SchRecordType::RoundRectangle => {
+                    dispatch!(SchRoundRectangle => SchRecord::RoundRectangle)
+                }
+                SchRecordType::EllipticalArc => {
+                    dispatch!(SchEllipticalArc => SchRecord::EllipticalArc)
+                }
                 SchRecordType::Arc => dispatch!(SchArc => SchRecord::Arc),
                 SchRecordType::Line => dispatch!(SchLine => SchRecord::Line),
                 SchRecordType::Rectangle => dispatch!(SchRectangle => SchRecord::Rectangle),
@@ -292,11 +336,19 @@ fn dispatch_record(block: &Block) -> Result<SchRecord> {
                 SchRecordType::Image => dispatch!(SchImage => SchRecord::Image),
                 SchRecordType::Designator => dispatch!(SchDesignator => SchRecord::Designator),
                 SchRecordType::Parameter => dispatch!(SchParameter => SchRecord::Parameter),
-                SchRecordType::ImplementationList => dispatch!(SchImplementationList => SchRecord::ImplementationList),
-                SchRecordType::Implementation => dispatch!(SchImplementation => SchRecord::Implementation),
-                SchRecordType::ImplementationMap => dispatch!(SchImplementationMap => SchRecord::ImplementationMap),
+                SchRecordType::ImplementationList => {
+                    dispatch!(SchImplementationList => SchRecord::ImplementationList)
+                }
+                SchRecordType::Implementation => {
+                    dispatch!(SchImplementation => SchRecord::Implementation)
+                }
+                SchRecordType::ImplementationMap => {
+                    dispatch!(SchImplementationMap => SchRecord::ImplementationMap)
+                }
                 SchRecordType::MapDefiner => dispatch!(SchMapDefiner => SchRecord::MapDefiner),
-                SchRecordType::ParameterList => dispatch!(SchParameterList => SchRecord::ParameterList),
+                SchRecordType::ParameterList => {
+                    dispatch!(SchParameterList => SchRecord::ParameterList)
+                }
                 _ => Err(AltiumFormatError::UnknownRecordType(record_type_val)),
             }
         }
@@ -333,13 +385,15 @@ pub(crate) fn parse_component_data(data: &[u8]) -> Result<SchLibComponent> {
         if is_end_marker(block)? {
             break;
         }
-        records.push(
-            dispatch_record(block)
-                .with_context(|| format!("record #{i} in Data stream"))?,
-        );
+        records
+            .push(dispatch_record(block).with_context(|| format!("record #{i} in Data stream"))?);
     }
 
-    Ok(SchLibComponent { component, records, additional_records: Vec::new() })
+    Ok(SchLibComponent {
+        component,
+        records,
+        additional_records: Vec::new(),
+    })
 }
 
 // ── Pin sidecar helpers ────────────────────────────────────────────────────────
@@ -347,7 +401,13 @@ pub(crate) fn parse_component_data(data: &[u8]) -> Result<SchLibComponent> {
 fn collect_pins_mut(records: &mut Vec<SchRecord>) -> Vec<&mut SchPin> {
     records
         .iter_mut()
-        .filter_map(|r| if let SchRecord::Pin(p) = r { Some(p) } else { None })
+        .filter_map(|r| {
+            if let SchRecord::Pin(p) = r {
+                Some(p)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -372,10 +432,11 @@ fn read_sidecar_ascii_params(inner_data: &[u8]) -> Result<ParameterCollection> {
 }
 
 fn parse_pin_index(id: &str) -> Result<usize> {
-    id.parse::<usize>().map_err(|_| AltiumFormatError::InvalidParamValue {
-        key: "embedded object id".to_owned(),
-        detail: format!("expected decimal pin index, got {:?}", id),
-    })
+    id.parse::<usize>()
+        .map_err(|_| AltiumFormatError::InvalidParamValue {
+            key: "embedded object id".to_owned(),
+            detail: format!("expected decimal pin index, got {:?}", id),
+        })
 }
 
 fn merge_pin_frac(
@@ -500,7 +561,11 @@ fn merge_pin_text_data(
         let name_rot_rel_raw = (name_flags & PIN_TEXT_ROT_REL_MASK) >> PIN_TEXT_ROT_REL_SHIFT;
         let name_rot_rel = RotationBy90::try_from(name_rot_rel_raw)?;
         let name_font_custom = (name_flags & PIN_TEXT_FONT_CUSTOM) != 0;
-        let name_margin = if name_pos_custom { Some(Coord::from_internal(r.read_i32_le()?)) } else { None };
+        let name_margin = if name_pos_custom {
+            Some(Coord::from_internal(r.read_i32_le()?))
+        } else {
+            None
+        };
         let (name_font_id, name_color) = if name_font_custom {
             (Some(r.read_i16_le()?), Some(Color::new(r.read_i32_le()?)))
         } else {
@@ -513,7 +578,11 @@ fn merge_pin_text_data(
         let desig_rot_rel_raw = (desig_flags & PIN_TEXT_ROT_REL_MASK) >> PIN_TEXT_ROT_REL_SHIFT;
         let desig_rot_rel = RotationBy90::try_from(desig_rot_rel_raw)?;
         let desig_font_custom = (desig_flags & PIN_TEXT_FONT_CUSTOM) != 0;
-        let desig_margin = if desig_pos_custom { Some(Coord::from_internal(r.read_i32_le()?)) } else { None };
+        let desig_margin = if desig_pos_custom {
+            Some(Coord::from_internal(r.read_i32_le()?))
+        } else {
+            None
+        };
         let (desig_font_id, desig_color) = if desig_font_custom {
             (Some(r.read_i16_le()?), Some(Color::new(r.read_i32_le()?)))
         } else {
@@ -838,10 +907,16 @@ fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinText
         }
     };
     let mut flags: u8 = 0;
-    if data.position_mode_custom { flags |= PIN_TEXT_POS_CUSTOM; }
-    if data.rotation_anchor_component { flags |= PIN_TEXT_ROT_ANCHOR; }
+    if data.position_mode_custom {
+        flags |= PIN_TEXT_POS_CUSTOM;
+    }
+    if data.rotation_anchor_component {
+        flags |= PIN_TEXT_ROT_ANCHOR;
+    }
     flags |= ((data.rotation_relative as u8) << PIN_TEXT_ROT_REL_SHIFT) & PIN_TEXT_ROT_REL_MASK;
-    if data.font_mode_custom { flags |= PIN_TEXT_FONT_CUSTOM; }
+    if data.font_mode_custom {
+        flags |= PIN_TEXT_FONT_CUSTOM;
+    }
     w.write_u8(flags);
     if data.position_mode_custom {
         w.write_i32_le(data.custom_position_margin.map_or(0, |c| c.to_internal()));
@@ -859,8 +934,7 @@ fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinText
 /// - Field exceeds 254 bytes (binary pin length-prefix is u8)
 /// - Field contains non-ANSI characters (> 0x7E, except 0x8E which is the pipe escape)
 fn pin_field_needs_wide_text(value: &str) -> bool {
-    value.len() > 254
-        || value.chars().any(|c| c as u32 > 0x7E && c as u32 != 0x8E)
+    value.len() > 254 || value.chars().any(|c| c as u32 > 0x7E && c as u32 != 0x8E)
 }
 
 // Returns PinWideText sidecar stream if any pin has fields that need wide text.
@@ -912,7 +986,10 @@ fn write_pin_symbol_line_width(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     if entries.is_empty() {
         return None;
     }
-    Some(serialize_embedded_object_stream(PIN_SYMBOL_LINE_WIDTH, &entries))
+    Some(serialize_embedded_object_stream(
+        PIN_SYMBOL_LINE_WIDTH,
+        &entries,
+    ))
 }
 
 // Returns PinPackageLength sidecar stream if any pin has non-empty package length.
@@ -928,7 +1005,10 @@ fn write_pin_package_length(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     if entries.is_empty() {
         return None;
     }
-    Some(serialize_embedded_object_stream(PIN_PACKAGE_LENGTH, &entries))
+    Some(serialize_embedded_object_stream(
+        PIN_PACKAGE_LENGTH,
+        &entries,
+    ))
 }
 
 // Returns PinPropagationDelay sidecar stream if any pin has non-empty delay.
@@ -944,7 +1024,10 @@ fn write_pin_propagation_delay(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     if entries.is_empty() {
         return None;
     }
-    Some(serialize_embedded_object_stream(PIN_PROPAGATION_DELAY, &entries))
+    Some(serialize_embedded_object_stream(
+        PIN_PROPAGATION_DELAY,
+        &entries,
+    ))
 }
 
 // Returns PinFunctionData sidecar stream if any pin has selected/defined functions.
@@ -979,22 +1062,29 @@ fn write_pin_function_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     if entries.is_empty() {
         return None;
     }
-    Some(serialize_embedded_object_stream(PIN_FUNCTION_DATA, &entries))
+    Some(serialize_embedded_object_stream(
+        PIN_FUNCTION_DATA,
+        &entries,
+    ))
 }
 
 // Collects immutable pin references from a records list.
 fn collect_pins(records: &[SchRecord]) -> Vec<&SchPin> {
     records
         .iter()
-        .filter_map(|r| if let SchRecord::Pin(p) = r { Some(p) } else { None })
+        .filter_map(|r| {
+            if let SchRecord::Pin(p) = r {
+                Some(p)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
 /// Serializes all pin sidecar streams for a component. Returns a list of
 /// (stream_name, data) pairs for streams that have data.
-pub(crate) fn serialize_pin_sidecars(
-    pins: &[&SchPin],
-) -> Result<Vec<(&'static str, Vec<u8>)>> {
+pub(crate) fn serialize_pin_sidecars(pins: &[&SchPin]) -> Result<Vec<(&'static str, Vec<u8>)>> {
     let mut sidecars = Vec::new();
     if let Some(data) = write_pin_frac(pins) {
         sidecars.push((PIN_FRAC, data?));
@@ -1124,8 +1214,7 @@ pub(crate) fn parse_additional_data(data: &[u8]) -> Result<Vec<SchRecord>> {
             break;
         }
         records.push(
-            dispatch_record(block)
-                .with_context(|| format!("record #{i} in Additional stream"))?,
+            dispatch_record(block).with_context(|| format!("record #{i} in Additional stream"))?,
         );
     }
     Ok(records)
@@ -1171,10 +1260,16 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
         let idx = font.id.to_string();
         params.insert(&format!("{}{}", SIZE, idx), font.size.to_param_value());
         if font.rotation != 0 {
-            params.insert(&format!("{}{}", ROTATION, idx), font.rotation.to_param_value());
+            params.insert(
+                &format!("{}{}", ROTATION, idx),
+                font.rotation.to_param_value(),
+            );
         }
         if font.underline {
-            params.insert(&format!("{}{}", UNDERLINE, idx), font.underline.to_param_value());
+            params.insert(
+                &format!("{}{}", UNDERLINE, idx),
+                font.underline.to_param_value(),
+            );
         }
         if font.italic {
             params.insert(&format!("{}{}", ITALIC, idx), font.italic.to_param_value());
@@ -1183,58 +1278,132 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
             params.insert(&format!("{}{}", BOLD, idx), font.bold.to_param_value());
         }
         if font.strikeout {
-            params.insert(&format!("{}{}", STRIKE_OUT, idx), font.strikeout.to_param_value());
+            params.insert(
+                &format!("{}{}", STRIKE_OUT, idx),
+                font.strikeout.to_param_value(),
+            );
         }
         params.insert(&format!("{}{}", FONT_NAME, idx), font.name.clone());
     }
 
     // Display settings — write all fields that were present in the original
     let ds = &header.display_settings;
-    if let Some(v) = ds.use_mbcs { params.insert(USE_MBCS, v.to_param_value()); }
-    if let Some(v) = ds.is_boc { params.insert(IS_BOC, v.to_param_value()); }
-    if let Some(v) = ds.sheet_style { params.insert(SHEET_STYLE, (v as u8).to_param_value()); }
-    if let Some(v) = ds.border_on { params.insert(BORDER_ON, v.to_param_value()); }
-    if let Some(v) = ds.title_block_on { params.insert(TITLE_BLOCK_ON, v.to_param_value()); }
-    if let Some(v) = ds.document_border_style { params.insert(DOCUMENT_BORDER_STYLE, (v as u8).to_param_value()); }
-    if let Some(v) = ds.sheet_number_space_size { params.insert(SHEET_NUMBER_SPACE_SIZE, v.to_param_value()); }
-    if let Some(v) = ds.area_color { params.insert(AREA_COLOR, v.raw().to_param_value()); }
-    if let Some(v) = ds.snap_grid_on { params.insert(SNAP_GRID_ON, v.to_param_value()); }
-    if let Some(v) = ds.snap_grid_size { params.insert_coord(SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, v); }
-    if let Some(v) = ds.visible_grid_on { params.insert(VISIBLE_GRID_ON, v.to_param_value()); }
-    if let Some(v) = ds.visible_grid_size { params.insert_coord(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, v); }
-    if let Some(v) = ds.custom_x { params.insert_coord(CUSTOM_X, CUSTOM_X_FRAC, v); }
-    if let Some(v) = ds.custom_y { params.insert_coord(CUSTOM_Y, CUSTOM_Y_FRAC, v); }
-    if let Some(v) = ds.use_custom_sheet { params.insert(USE_CUSTOM_SHEET, v.to_param_value()); }
-    if let Some(v) = ds.show_hidden_pins { params.insert(SHOW_HIDDEN_PINS, v.to_param_value()); }
-    if let Some(v) = ds.reference_zones_on { params.insert(REFERENCE_ZONES_ON, v.to_param_value()); }
-    if let Some(v) = ds.reference_zone_style { params.insert(REFERENCE_ZONE_STYLE, (v as u8).to_param_value()); }
-    if let Some(v) = ds.custom_x_zones { params.insert(CUSTOM_X_ZONES, v.to_param_value()); }
-    if let Some(v) = ds.custom_y_zones { params.insert(CUSTOM_Y_ZONES, v.to_param_value()); }
-    if let Some(v) = ds.custom_margin_width {
-        params.insert_coord(CUSTOM_MARGIN_WIDTH, &format!("{}_Frac", CUSTOM_MARGIN_WIDTH), v);
+    if let Some(v) = ds.use_mbcs {
+        params.insert(USE_MBCS, v.to_param_value());
     }
-    if let Some(v) = ds.workspace_orientation { params.insert(WORKSPACE_ORIENTATION, (v as u8).to_param_value()); }
-    if let Some(v) = ds.display_unit { params.insert(DISPLAY_UNIT, v.to_param_value()); }
-    if let Some(v) = ds.hot_spot_grid_on { params.insert(HOT_SPOT_GRID_ON, v.to_param_value()); }
-    if let Some(v) = ds.hot_spot_grid_size { params.insert_coord(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, v); }
-    if let Some(v) = ds.show_template_graphics { params.insert(SHOW_TEMPLATE_GRAPHICS, v.to_param_value()); }
-    if let Some(ref v) = ds.template_file_name { params.insert(TEMPLATE_FILE_NAME, v.clone()); }
-    if let Some(v) = ds.always_show_cd { params.insert(ALWAYS_SHOW_CD, v.to_param_value()); }
-    if let Some(v) = ds.system_font { params.insert(SYSTEM_FONT, v.to_param_value()); }
-    if let Some(ref v) = ds.file_version_info { params.insert(FILE_VERSION_INFO, v.clone()); }
+    if let Some(v) = ds.is_boc {
+        params.insert(IS_BOC, v.to_param_value());
+    }
+    if let Some(v) = ds.sheet_style {
+        params.insert(SHEET_STYLE, (v as u8).to_param_value());
+    }
+    if let Some(v) = ds.border_on {
+        params.insert(BORDER_ON, v.to_param_value());
+    }
+    if let Some(v) = ds.title_block_on {
+        params.insert(TITLE_BLOCK_ON, v.to_param_value());
+    }
+    if let Some(v) = ds.document_border_style {
+        params.insert(DOCUMENT_BORDER_STYLE, (v as u8).to_param_value());
+    }
+    if let Some(v) = ds.sheet_number_space_size {
+        params.insert(SHEET_NUMBER_SPACE_SIZE, v.to_param_value());
+    }
+    if let Some(v) = ds.area_color {
+        params.insert(AREA_COLOR, v.raw().to_param_value());
+    }
+    if let Some(v) = ds.snap_grid_on {
+        params.insert(SNAP_GRID_ON, v.to_param_value());
+    }
+    if let Some(v) = ds.snap_grid_size {
+        params.insert_coord(SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, v);
+    }
+    if let Some(v) = ds.visible_grid_on {
+        params.insert(VISIBLE_GRID_ON, v.to_param_value());
+    }
+    if let Some(v) = ds.visible_grid_size {
+        params.insert_coord(VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, v);
+    }
+    if let Some(v) = ds.custom_x {
+        params.insert_coord(CUSTOM_X, CUSTOM_X_FRAC, v);
+    }
+    if let Some(v) = ds.custom_y {
+        params.insert_coord(CUSTOM_Y, CUSTOM_Y_FRAC, v);
+    }
+    if let Some(v) = ds.use_custom_sheet {
+        params.insert(USE_CUSTOM_SHEET, v.to_param_value());
+    }
+    if let Some(v) = ds.show_hidden_pins {
+        params.insert(SHOW_HIDDEN_PINS, v.to_param_value());
+    }
+    if let Some(v) = ds.reference_zones_on {
+        params.insert(REFERENCE_ZONES_ON, v.to_param_value());
+    }
+    if let Some(v) = ds.reference_zone_style {
+        params.insert(REFERENCE_ZONE_STYLE, (v as u8).to_param_value());
+    }
+    if let Some(v) = ds.custom_x_zones {
+        params.insert(CUSTOM_X_ZONES, v.to_param_value());
+    }
+    if let Some(v) = ds.custom_y_zones {
+        params.insert(CUSTOM_Y_ZONES, v.to_param_value());
+    }
+    if let Some(v) = ds.custom_margin_width {
+        params.insert_coord(
+            CUSTOM_MARGIN_WIDTH,
+            &format!("{}_Frac", CUSTOM_MARGIN_WIDTH),
+            v,
+        );
+    }
+    if let Some(v) = ds.workspace_orientation {
+        params.insert(WORKSPACE_ORIENTATION, (v as u8).to_param_value());
+    }
+    if let Some(v) = ds.display_unit {
+        params.insert(DISPLAY_UNIT, v.to_param_value());
+    }
+    if let Some(v) = ds.hot_spot_grid_on {
+        params.insert(HOT_SPOT_GRID_ON, v.to_param_value());
+    }
+    if let Some(v) = ds.hot_spot_grid_size {
+        params.insert_coord(HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, v);
+    }
+    if let Some(v) = ds.show_template_graphics {
+        params.insert(SHOW_TEMPLATE_GRAPHICS, v.to_param_value());
+    }
+    if let Some(ref v) = ds.template_file_name {
+        params.insert(TEMPLATE_FILE_NAME, v.clone());
+    }
+    if let Some(v) = ds.always_show_cd {
+        params.insert(ALWAYS_SHOW_CD, v.to_param_value());
+    }
+    if let Some(v) = ds.system_font {
+        params.insert(SYSTEM_FONT, v.to_param_value());
+    }
+    if let Some(ref v) = ds.file_version_info {
+        params.insert(FILE_VERSION_INFO, v.clone());
+    }
 
     // Component index (0-based)
-    params.insert(COMP_COUNT, (header.components.len() as i32).to_param_value());
+    params.insert(
+        COMP_COUNT,
+        (header.components.len() as i32).to_param_value(),
+    );
     for (n, comp) in header.components.iter().enumerate() {
         params.insert(&format!("{}{}", LIB_REF, n), comp.lib_ref.clone());
         if !comp.description.is_empty() {
             params.insert(&format!("{}{}", COMP_DESCR, n), comp.description.clone());
         }
         if comp.part_count != 1 {
-            params.insert(&format!("{}{}", PART_COUNT, n), comp.part_count.to_param_value());
+            params.insert(
+                &format!("{}{}", PART_COUNT, n),
+                comp.part_count.to_param_value(),
+            );
         }
         if !comp.aliases.is_empty() {
-            params.insert(&format!("{}{}", ALIAS_COUNT, n), (comp.aliases.len() as i32).to_param_value());
+            params.insert(
+                &format!("{}{}", ALIAS_COUNT, n),
+                (comp.aliases.len() as i32).to_param_value(),
+            );
             for (m, alias) in comp.aliases.iter().enumerate() {
                 params.insert(&format!("Comp{}Alias{}", n, m), alias.clone());
             }
@@ -1370,14 +1539,22 @@ fn sanitize_cfb_name(name: &str) -> String {
 }
 
 fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>) -> String {
-    let base = if sanitized.len() > 31 { &sanitized[..31] } else { sanitized };
+    let base = if sanitized.len() > 31 {
+        &sanitized[..31]
+    } else {
+        sanitized
+    };
     if !used.contains(base) {
         return base.to_owned();
     }
     for suffix in 1.. {
         let suffix_str = suffix.to_string();
         let max_base_len = 31 - suffix_str.len();
-        let candidate = format!("{}{}", &sanitized[..max_base_len.min(sanitized.len())], suffix_str);
+        let candidate = format!(
+            "{}{}",
+            &sanitized[..max_base_len.min(sanitized.len())],
+            suffix_str
+        );
         if !used.contains(&candidate) {
             return candidate;
         }
@@ -1417,7 +1594,8 @@ impl SchLib {
             doc.list_entries(&storage_path)
                 .with_context(|| format!("listing entries for component '{lib_ref}'"))?;
 
-            let data = doc.read_stream(&format!("/{}/Data", key))
+            let data = doc
+                .read_stream(&format!("/{}/Data", key))
                 .with_context(|| format!("reading Data stream for component '{lib_ref}'"))?;
             let mut component = parse_component_data(&data)
                 .with_context(|| format!("parsing component '{lib_ref}'"))?;
@@ -1433,8 +1611,9 @@ impl SchLib {
             for (i, comp_index) in header.components.iter().enumerate() {
                 let key = resolve_component_key(&comp_index.lib_ref, &section_keys);
                 if let Some(data) = doc.read_stream_optional(&format!("/{}/{}", key, ADDITIONAL))? {
-                    let records = parse_additional_data(&data)
-                        .with_context(|| format!("parsing Additional for '{}'", comp_index.lib_ref))?;
+                    let records = parse_additional_data(&data).with_context(|| {
+                        format!("parsing Additional for '{}'", comp_index.lib_ref)
+                    })?;
                     components[i].additional_records = records;
                 }
             }
@@ -1447,7 +1626,8 @@ impl SchLib {
                 let alias_key = resolve_component_key(alias_name, &section_keys);
                 doc.list_entries(&format!("/{}", alias_key))
                     .with_context(|| format!("listing entries for alias '{alias_name}'"))?;
-                let data = doc.read_stream(&format!("/{}/{}", alias_key, REDIRECTION))
+                let data = doc
+                    .read_stream(&format!("/{}/{}", alias_key, REDIRECTION))
                     .with_context(|| format!("reading Redirection for alias '{alias_name}'"))?;
                 let canonical = parse_redirection_stream(&data)
                     .with_context(|| format!("parsing Redirection for alias '{alias_name}'"))?;
@@ -1461,7 +1641,12 @@ impl SchLib {
         // 7. Assert all CFB entries consumed
         doc.assert_all_consumed()?;
 
-        Ok(Self { header, components, embedded_images, aliases })
+        Ok(Self {
+            header,
+            components,
+            embedded_images,
+            aliases,
+        })
     }
 
     /// Returns the on-disk header string identifying the file format version.
@@ -1504,10 +1689,7 @@ impl SchLib {
 
         // 4. Per component
         for (i, comp) in self.components.iter().enumerate() {
-            let key = resolve_component_key(
-                &self.header.components[i].lib_ref,
-                &section_keys,
-            );
+            let key = resolve_component_key(&self.header.components[i].lib_ref, &section_keys);
             cfb.create_storage(&format!("/{key}"))?;
 
             // Data stream
@@ -1528,10 +1710,8 @@ impl SchLib {
 
             for (i, comp) in self.components.iter().enumerate() {
                 if !comp.additional_records.is_empty() {
-                    let key = resolve_component_key(
-                        &self.header.components[i].lib_ref,
-                        &section_keys,
-                    );
+                    let key =
+                        resolve_component_key(&self.header.components[i].lib_ref, &section_keys);
                     let additional_data = serialize_additional_data(&comp.additional_records);
                     cfb.write_stream(&format!("/{key}/{ADDITIONAL}"), &additional_data)?;
                 }
@@ -1557,7 +1737,9 @@ mod tests {
 
     fn data_path(filename: &str) -> std::path::PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        std::path::Path::new(manifest_dir).join("../../data").join(filename)
+        std::path::Path::new(manifest_dir)
+            .join("../../data")
+            .join(filename)
     }
 
     #[test]
@@ -1566,7 +1748,11 @@ mod tests {
         let mut doc = TrackedCfbDocument::open(&path).expect("open SchLib");
         let data = doc.read_stream("/FileHeader").expect("read FileHeader");
         let header = parse_file_header(&data).expect("parse FileHeader");
-        assert_eq!(header.components.len(), 1, "BlankSchlibComponent should have 1 component");
+        assert_eq!(
+            header.components.len(),
+            1,
+            "BlankSchlibComponent should have 1 component"
+        );
         assert!(!header.unique_id.is_empty(), "UniqueID must not be empty");
     }
 
@@ -1590,7 +1776,9 @@ mod tests {
     fn parse_section_keys_missing_returns_empty() {
         let path = data_path("BlankSchlibComponent.SchLib");
         let mut doc = TrackedCfbDocument::open(&path).expect("open SchLib");
-        let data = doc.read_stream_optional("/SectionKeys").expect("read_stream_optional");
+        let data = doc
+            .read_stream_optional("/SectionKeys")
+            .expect("read_stream_optional");
         let map = match data {
             Some(d) => parse_section_keys_text(&d).expect("parse SectionKeys"),
             None => HashMap::new(),
@@ -1608,7 +1796,10 @@ mod tests {
     #[test]
     fn resolve_component_key_with_mapping() {
         let mut keys = HashMap::new();
-        keys.insert("VeryLongComponentNameExceeding31Chars".to_owned(), "ShortKey1".to_owned());
+        keys.insert(
+            "VeryLongComponentNameExceeding31Chars".to_owned(),
+            "ShortKey1".to_owned(),
+        );
         assert_eq!(
             resolve_component_key("VeryLongComponentNameExceeding31Chars", &keys),
             "ShortKey1"
@@ -1638,12 +1829,17 @@ mod tests {
         let header = parse_file_header(&fh_data).expect("parse fh");
         assert_eq!(header.components.len(), 1);
         let comp_index = &header.components[0];
-        let data = doc.read_stream(&format!("/{}/Data", comp_index.lib_ref)).expect("read Data");
+        let data = doc
+            .read_stream(&format!("/{}/Data", comp_index.lib_ref))
+            .expect("read Data");
         // Data stream parsing either succeeds or fails with UnknownRecordType (M6+ records)
         // In either case it must progress past the SchComponent (RECORD=1) block.
         match parse_component_data(&data) {
             Ok(comp) => {
-                assert!(!comp.component.lib_reference.is_empty() || comp.component.lib_reference.is_empty());
+                assert!(
+                    !comp.component.lib_reference.is_empty()
+                        || comp.component.lib_reference.is_empty()
+                );
             }
             Err(AltiumFormatError::UnknownRecordType(_)) => {
                 // Expected: child records not yet implemented (M6-M8)
@@ -1674,7 +1870,10 @@ mod tests {
             return;
         }
         let lib = SchLib::open(&path).expect("SchLib::open must succeed for Synthiam");
-        assert!(!lib.aliases.is_empty(), "Synthiam.SchLib should have aliases");
+        assert!(
+            !lib.aliases.is_empty(),
+            "Synthiam.SchLib should have aliases"
+        );
     }
 
     // ── Roundtrip serialization tests ─────────────────────────────────────
@@ -1698,8 +1897,12 @@ mod tests {
         let mut original = CfbDocument::open(&path).expect("open original");
         let mut roundtripped = CfbDocument::open(tmp.path()).expect("open roundtripped");
 
-        let orig_entries = original.enumerate_all_entries().expect("enumerate original");
-        let rt_entries = roundtripped.enumerate_all_entries().expect("enumerate roundtripped");
+        let orig_entries = original
+            .enumerate_all_entries()
+            .expect("enumerate original");
+        let rt_entries = roundtripped
+            .enumerate_all_entries()
+            .expect("enumerate roundtripped");
 
         // Check same set of entries
         let mut orig_sorted: Vec<&String> = orig_entries.iter().collect();
@@ -1719,7 +1922,9 @@ mod tests {
                 continue;
             }
             let orig_data = original.read_stream(entry).expect("read original stream");
-            let rt_data = roundtripped.read_stream(entry).expect("read roundtripped stream");
+            let rt_data = roundtripped
+                .read_stream(entry)
+                .expect("read roundtripped stream");
             if orig_data != rt_data {
                 // For Storage streams, the zlib compression level may differ;
                 // collect these separately and compare decompressed contents.
@@ -1735,13 +1940,16 @@ mod tests {
                         "{filename}: stream {entry} differs at byte {offset}: \
                          original={:#04x}, roundtripped={:#04x} \
                          (orig_len={}, rt_len={})",
-                        orig_data[offset], rt_data[offset],
-                        orig_data.len(), rt_data.len()
+                        orig_data[offset],
+                        rt_data[offset],
+                        orig_data.len(),
+                        rt_data.len()
                     ),
                     None => panic!(
                         "{filename}: stream {entry} length mismatch: \
                          original={}, roundtripped={}",
-                        orig_data.len(), rt_data.len()
+                        orig_data.len(),
+                        rt_data.len()
                     ),
                 }
             }
@@ -1759,9 +1967,11 @@ mod tests {
             let rt_objects = parse_embedded_object_stream(&rt_blocks)
                 .expect("parse roundtripped embedded objects");
             assert_eq!(
-                orig_objects.len(), rt_objects.len(),
+                orig_objects.len(),
+                rt_objects.len(),
                 "{filename}: {entry} embedded object count mismatch: orig={}, rt={}",
-                orig_objects.len(), rt_objects.len()
+                orig_objects.len(),
+                rt_objects.len()
             );
             for (i, (orig_obj, rt_obj)) in orig_objects.iter().zip(rt_objects.iter()).enumerate() {
                 assert_eq!(
@@ -1769,10 +1979,13 @@ mod tests {
                     "{filename}: {entry} object[{i}] id mismatch"
                 );
                 assert_eq!(
-                    orig_obj.inner_data, rt_obj.inner_data,
+                    orig_obj.inner_data,
+                    rt_obj.inner_data,
                     "{filename}: {entry} object[{i}] (id={}) decompressed data mismatch \
                      (orig_len={}, rt_len={})",
-                    orig_obj.id, orig_obj.inner_data.len(), rt_obj.inner_data.len()
+                    orig_obj.id,
+                    orig_obj.inner_data.len(),
+                    rt_obj.inner_data.len()
                 );
             }
         }
@@ -1792,5 +2005,4 @@ mod tests {
     fn roundtrip_synthiam_schlib() {
         roundtrip_stream_compare("Synthiam.SchLib");
     }
-
 }

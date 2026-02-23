@@ -3,8 +3,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     Data, DeriveInput, Expr, Fields, Ident, Token, Type,
-    parse_macro_input,
     parse::{Parse, ParseStream},
+    parse_macro_input,
     punctuated::Punctuated,
 };
 
@@ -77,16 +77,19 @@ fn expand_to_params(input: DeriveInput) -> syn::Result<TokenStream2> {
         let field_name = field.ident.as_ref().unwrap();
         let param_attr = get_param_attr(field)?;
 
-        let (strategy, tier2, skip_default) = param_attr.parse_args_with(|input: ParseStream| {
-            let (flags, named) = collect_tokens(input)?;
-            let flag_strs: Vec<String> = flags.iter().map(|f| f.to_string()).collect();
-            let is_tier2 = flag_strs.iter().any(|f| f == "tier2");
-            let is_skip_default = flag_strs.iter().any(|f| f == "skip_default");
-            let filtered_flags: Vec<Ident> =
-                flags.into_iter().filter(|f| f != "tier2" && f != "skip_default").collect();
-            let strategy = build_strategy(filtered_flags, named)?;
-            Ok((strategy, is_tier2, is_skip_default))
-        })?;
+        let (strategy, tier2, skip_default) =
+            param_attr.parse_args_with(|input: ParseStream| {
+                let (flags, named) = collect_tokens(input)?;
+                let flag_strs: Vec<String> = flags.iter().map(|f| f.to_string()).collect();
+                let is_tier2 = flag_strs.iter().any(|f| f == "tier2");
+                let is_skip_default = flag_strs.iter().any(|f| f == "skip_default");
+                let filtered_flags: Vec<Ident> = flags
+                    .into_iter()
+                    .filter(|f| f != "tier2" && f != "skip_default")
+                    .collect();
+                let strategy = build_strategy(filtered_flags, named)?;
+                Ok((strategy, is_tier2, is_skip_default))
+            })?;
 
         stmts.push(strategy.to_serialize_tokens(field_name, &field.ty, tier2, skip_default));
     }
@@ -126,9 +129,7 @@ fn get_param_attr(field: &syn::Field) -> syn::Result<&syn::Attribute> {
         .attrs
         .iter()
         .find(|a| a.path().is_ident("param"))
-        .ok_or_else(|| {
-            syn::Error::new_spanned(field_name, "field missing #[param(...)] attribute")
-        })
+        .ok_or_else(|| syn::Error::new_spanned(field_name, "field missing #[param(...)] attribute"))
 }
 
 // ── Strategy ─────────────────────────────────────────────────────────────────
@@ -223,7 +224,13 @@ impl ParamStrategy {
     // `tier2`: if true, always write (T2); if false, skip when value equals type zero (T1).
     // `skip_default`: if true, skip when value equals the `default` expression (not type zero).
     // `field_type`: the concrete type, used for unambiguous Default::default() calls.
-    fn to_serialize_tokens(&self, field_name: &Ident, field_type: &syn::Type, tier2: bool, skip_default: bool) -> TokenStream2 {
+    fn to_serialize_tokens(
+        &self,
+        field_name: &Ident,
+        field_type: &syn::Type,
+        tier2: bool,
+        skip_default: bool,
+    ) -> TokenStream2 {
         match self {
             ParamStrategy::Required { key } => {
                 if tier2 {
@@ -430,10 +437,7 @@ fn build_strategy(
             syn::Error::new(flags[0].span(), "#[param(coord)] requires `key = ...`")
         })?;
         let frac_key = named.remove("frac_key").ok_or_else(|| {
-            syn::Error::new(
-                flags[0].span(),
-                "#[param(coord)] requires `frac_key = ...`",
-            )
+            syn::Error::new(flags[0].span(), "#[param(coord)] requires `frac_key = ...`")
         })?;
         if !named.is_empty() {
             return Err(syn::Error::new(

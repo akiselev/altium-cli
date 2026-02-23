@@ -2,8 +2,8 @@
 //! Used by PcbDoc sections Rules6, NewRules6, Dimensions6, Coordinates6.
 //! Each block: u16 LE prefix + u32 LE payload_size + NUL-terminated parameter string.
 
-use crate::binary_io::BinaryReader;
 use crate::Result;
+use crate::binary_io::BinaryReader;
 
 /// A prefixed parameter block from Rules6/Dimensions6/etc.
 #[derive(Debug)]
@@ -34,8 +34,8 @@ pub(crate) fn parse_prefixed_param_blocks(stream_data: &[u8]) -> Result<Vec<Pref
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
+    use crate::binary_io::BinaryWriter;
 
     #[test]
     fn parse_single_block() {

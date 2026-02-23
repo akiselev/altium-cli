@@ -1,12 +1,12 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use altium_format_types::constants::component::LIB_REF;
 use altium_format_types::constants::record_structure::{KEY_COUNT, RECORD, SECTION_KEY};
 use altium_format_types::constants::streams::SECTION_KEYS;
 
 use crate::binary_io::BinaryReader;
-use crate::block_stream::{parse_blocks, BlockFormat};
+use crate::block_stream::{BlockFormat, parse_blocks};
 use crate::param_collection::ParameterCollection;
 use crate::{AltiumFormatError, Result};
 
@@ -30,16 +30,18 @@ pub(crate) fn parse_section_keys(data: &[u8]) -> Result<HashMap<String, String>>
 
     let mut map = HashMap::new();
     for n in 0..count {
-        let display_name = read_size_prefixed_pascal_string(&mut reader)
-            .map_err(|e| AltiumFormatError::WithContext {
+        let display_name = read_size_prefixed_pascal_string(&mut reader).map_err(|e| {
+            AltiumFormatError::WithContext {
                 context: format!("SectionKeys entry {n} display name"),
                 source: Box::new(e),
-            })?;
-        let cfb_key = read_size_prefixed_pascal_string(&mut reader)
-            .map_err(|e| AltiumFormatError::WithContext {
+            }
+        })?;
+        let cfb_key = read_size_prefixed_pascal_string(&mut reader).map_err(|e| {
+            AltiumFormatError::WithContext {
                 context: format!("SectionKeys entry {n} CFB key"),
                 source: Box::new(e),
-            })?;
+            }
+        })?;
 
         match map.entry(display_name) {
             Entry::Vacant(e) => {
@@ -54,7 +56,8 @@ pub(crate) fn parse_section_keys(data: &[u8]) -> Result<HashMap<String, String>>
         }
     }
 
-    reader.assert_exhausted()
+    reader
+        .assert_exhausted()
         .map_err(|e| AltiumFormatError::WithContext {
             context: "SectionKeys".to_owned(),
             source: Box::new(e),
@@ -78,9 +81,7 @@ fn read_size_prefixed_pascal_string(reader: &mut BinaryReader) -> Result<String>
     if pascal_len + 1 != entry_size {
         return Err(AltiumFormatError::InvalidParamValue {
             key: SECTION_KEYS.to_owned(),
-            detail: format!(
-                "pascal length {pascal_len} + 1 != entry size {entry_size}"
-            ),
+            detail: format!("pascal length {pascal_len} + 1 != entry size {entry_size}"),
         });
     }
     let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(&entry_bytes[1..]);

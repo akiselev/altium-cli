@@ -48,17 +48,22 @@ pub(crate) fn parse_unique_id_primitive_information(
         let primitive_index = primitive_index as usize;
 
         let object_id_str: String = params.remove_required("PRIMITIVEOBJECTID")?;
-        let object_id = PcbObjectId::from_primitive_object_id_str(&object_id_str).ok_or_else(
-            || AltiumFormatError::InvalidParamValue {
-                key: "PRIMITIVEOBJECTID".to_owned(),
-                detail: format!("unknown primitive object ID string: '{object_id_str}'"),
-            },
-        )?;
+        let object_id =
+            PcbObjectId::from_primitive_object_id_str(&object_id_str).ok_or_else(|| {
+                AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEOBJECTID".to_owned(),
+                    detail: format!("unknown primitive object ID string: '{object_id_str}'"),
+                }
+            })?;
 
         let unique_id: String = params.remove_required("UNIQUEID")?;
         params.assert_exhausted()?;
 
-        entries.push(UniqueIdEntry { primitive_index, object_id, unique_id });
+        entries.push(UniqueIdEntry {
+            primitive_index,
+            object_id,
+            unique_id,
+        });
     }
 
     if entries.len() != expected_count {
@@ -123,15 +128,15 @@ pub(crate) fn parse_extended_primitive_information(
         }
 
         let object_id_str: String = params.remove_required("PRIMITIVEOBJECTID")?;
-        let primitive_object_id =
-            PcbObjectId::from_primitive_object_id_str(&object_id_str).ok_or_else(|| {
-                AltiumFormatError::InvalidParamValue {
-                    key: "PRIMITIVEOBJECTID".to_owned(),
-                    detail: format!("unknown primitive object ID string: '{object_id_str}'"),
-                }
+        let primitive_object_id = PcbObjectId::from_primitive_object_id_str(&object_id_str)
+            .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                key: "PRIMITIVEOBJECTID".to_owned(),
+                detail: format!("unknown primitive object ID string: '{object_id_str}'"),
             })?;
 
-        let info_type = params.remove_optional::<String>("TYPE")?.unwrap_or_default();
+        let info_type = params
+            .remove_optional::<String>("TYPE")?
+            .unwrap_or_default();
 
         let solder_mode_str = params
             .remove_optional::<String>("SOLDERMASKEXPANSIONMODE")?
@@ -192,7 +197,10 @@ pub(crate) fn validate_primitive_guids(header_data: &[u8], data: &[u8]) -> Resul
             key: "PrimitiveGuids".to_owned(),
             detail: format!(
                 "expected {} bytes ({} entries * {} bytes), got {} bytes",
-                expected_bytes, count, PRIMITIVE_GUID_RECORD_SIZE, data.len()
+                expected_bytes,
+                count,
+                PRIMITIVE_GUID_RECORD_SIZE,
+                data.len()
             ),
         });
     }
@@ -293,7 +301,9 @@ mod tests {
     }
 
     fn make_unique_id_block(index: i32, object_id: &str, unique_id: &str) -> Vec<u8> {
-        let param = format!("|PRIMITIVEINDEX={index}|PRIMITIVEOBJECTID={object_id}|UNIQUEID={unique_id}\x00");
+        let param = format!(
+            "|PRIMITIVEINDEX={index}|PRIMITIVEOBJECTID={object_id}|UNIQUEID={unique_id}\x00"
+        );
         let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&param);
         write_text_block(&encoded)
     }
@@ -328,7 +338,14 @@ mod tests {
         let data = make_unique_id_block(0, "Pad", "AAAAAAAA");
 
         let err = parse_unique_id_primitive_information(&header, &data).unwrap_err();
-        assert!(matches!(err, AltiumFormatError::RecordCountMismatch { expected: 3, actual: 1, .. }));
+        assert!(matches!(
+            err,
+            AltiumFormatError::RecordCountMismatch {
+                expected: 3,
+                actual: 1,
+                ..
+            }
+        ));
     }
 
     #[test]

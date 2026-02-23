@@ -240,7 +240,10 @@ impl TryFrom<i32> for SchRecordType {
             242 => Ok(Self::FSMState),
             243 => Ok(Self::FSMTransition),
             244 => Ok(Self::FSMNote),
-            _ => Err(InvalidEnumValue { type_name: "SchRecordType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "SchRecordType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -364,9 +367,9 @@ impl std::fmt::Display for SchRecordType {
 /// Font definition from SchSheet RECORD=31.
 #[derive(Debug, Clone)]
 pub struct SchFont {
-    pub id: i32,            // 1-based index
-    pub name: String,       // e.g., "Times New Roman"
-    pub size: i32,          // point size
+    pub id: i32,      // 1-based index
+    pub name: String, // e.g., "Times New Roman"
+    pub size: i32,    // point size
     pub rotation: i32,
     pub bold: bool,
     pub italic: bool,
@@ -460,7 +463,10 @@ impl TryFrom<u8> for PinElectricalType {
             5 => Ok(Self::HiZ),
             6 => Ok(Self::OpenEmitter),
             7 => Ok(Self::Power),
-            _ => Err(InvalidEnumValue { type_name: "PinElectricalType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PinElectricalType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -561,7 +567,10 @@ impl TryFrom<u8> for IeeeSymbol {
             34 => Ok(Self::BidirectionalSignalFlow),
             35 => Ok(Self::InternalPullUp),
             36 => Ok(Self::InternalPullDown),
-            _ => Err(InvalidEnumValue { type_name: "IeeeSymbol", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "IeeeSymbol",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -597,7 +606,10 @@ impl TryFrom<u8> for StdLogicState {
             6 => Ok(Self::Weak0),
             7 => Ok(Self::Weak1),
             8 => Ok(Self::DontCare),
-            _ => Err(InvalidEnumValue { type_name: "StdLogicState", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "StdLogicState",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -623,7 +635,10 @@ impl TryFrom<u8> for PenWidth {
             1 => Ok(Self::Small),
             2 => Ok(Self::Medium),
             3 => Ok(Self::Large),
-            _ => Err(InvalidEnumValue { type_name: "PenWidth", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PenWidth",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -649,7 +664,10 @@ impl TryFrom<u8> for LineStyle {
             1 => Ok(Self::Dashed),
             2 => Ok(Self::Dotted),
             3 => Ok(Self::DashDotted),
-            _ => Err(InvalidEnumValue { type_name: "LineStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "LineStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -681,7 +699,10 @@ impl TryFrom<u8> for LineShape {
             4 => Ok(Self::SolidTail),
             5 => Ok(Self::Circle),
             6 => Ok(Self::Square),
-            _ => Err(InvalidEnumValue { type_name: "LineShape", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "LineShape",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -717,7 +738,10 @@ impl TryFrom<u8> for TextJustification {
             6 => Ok(Self::TopLeft),
             7 => Ok(Self::TopCenter),
             8 => Ok(Self::TopRight),
-            _ => Err(InvalidEnumValue { type_name: "TextJustification", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "TextJustification",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -757,7 +781,10 @@ impl TryFrom<u8> for PowerObjectStyle {
             8 => Ok(Self::GostGndPower),
             9 => Ok(Self::GostGndEarth),
             10 => Ok(Self::GostBar),
-            _ => Err(InvalidEnumValue { type_name: "PowerObjectStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PowerObjectStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -791,7 +818,10 @@ impl TryFrom<u8> for PortArrowStyle {
             5 => Ok(Self::Top),
             6 => Ok(Self::Bottom),
             7 => Ok(Self::TopBottom),
-            _ => Err(InvalidEnumValue { type_name: "PortArrowStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PortArrowStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -817,7 +847,10 @@ impl TryFrom<u8> for PortIoType {
             1 => Ok(Self::Output),
             2 => Ok(Self::Input),
             3 => Ok(Self::Bidirectional),
-            _ => Err(InvalidEnumValue { type_name: "PortIoType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "PortIoType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -871,7 +904,10 @@ impl TryFrom<u8> for SheetStyle {
             15 => Ok(Self::OrcadC),
             16 => Ok(Self::OrcadD),
             17 => Ok(Self::OrcadE),
-            _ => Err(InvalidEnumValue { type_name: "SheetStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "SheetStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -893,7 +929,10 @@ impl TryFrom<u8> for SheetOrientation {
         match value {
             0 => Ok(Self::Landscape),
             1 => Ok(Self::Portrait),
-            _ => Err(InvalidEnumValue { type_name: "SheetOrientation", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "SheetOrientation",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -915,7 +954,10 @@ impl TryFrom<u8> for SheetBorderStyle {
         match value {
             0 => Ok(Self::Standard),
             1 => Ok(Self::Ansi),
-            _ => Err(InvalidEnumValue { type_name: "SheetBorderStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "SheetBorderStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -944,7 +986,10 @@ impl TryFrom<u8> for TextHorzAnchor {
             1 => Ok(Self::Both),
             2 => Ok(Self::Left),
             3 => Ok(Self::Right),
-            _ => Err(InvalidEnumValue { type_name: "TextHorzAnchor", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "TextHorzAnchor",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -973,7 +1018,10 @@ impl TryFrom<u8> for TextVertAnchor {
             1 => Ok(Self::Both),
             2 => Ok(Self::Top),
             3 => Ok(Self::Bottom),
-            _ => Err(InvalidEnumValue { type_name: "TextVertAnchor", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "TextVertAnchor",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1002,7 +1050,10 @@ impl TryFrom<u8> for ParameterReadOnlyState {
             1 => Ok(Self::Name),
             2 => Ok(Self::Value),
             3 => Ok(Self::NameAndValue),
-            _ => Err(InvalidEnumValue { type_name: "ParameterReadOnlyState", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ParameterReadOnlyState",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1031,7 +1082,10 @@ impl TryFrom<u8> for ParameterType {
             1 => Ok(Self::Boolean),
             2 => Ok(Self::Integer),
             3 => Ok(Self::Float),
-            _ => Err(InvalidEnumValue { type_name: "ParameterType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ParameterType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1056,7 +1110,10 @@ impl TryFrom<u8> for ParameterSetStyle {
         match value {
             0 => Ok(Self::Large),
             1 => Ok(Self::Tiny),
-            _ => Err(InvalidEnumValue { type_name: "ParameterSetStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ParameterSetStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1087,7 +1144,10 @@ impl TryFrom<u8> for NoErcSymbol {
             2 => Ok(Self::CrossSmall),
             3 => Ok(Self::CheckBox),
             4 => Ok(Self::Triangle),
-            _ => Err(InvalidEnumValue { type_name: "NoErcSymbol", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "NoErcSymbol",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1116,7 +1176,10 @@ impl TryFrom<u8> for LeftRightSide {
             1 => Ok(Self::Right),
             2 => Ok(Self::Top),
             3 => Ok(Self::Bottom),
-            _ => Err(InvalidEnumValue { type_name: "LeftRightSide", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "LeftRightSide",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1143,7 +1206,10 @@ impl TryFrom<u8> for SheetSymbolType {
             0 => Ok(Self::Normal),
             1 => Ok(Self::DeviceSheet),
             2 => Ok(Self::DesignItem),
-            _ => Err(InvalidEnumValue { type_name: "SheetSymbolType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "SheetSymbolType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1168,7 +1234,10 @@ impl TryFrom<u8> for VisibleGridStyle {
         match value {
             0 => Ok(Self::DotGrid),
             1 => Ok(Self::LineGrid),
-            _ => Err(InvalidEnumValue { type_name: "VisibleGridStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "VisibleGridStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1193,7 +1262,10 @@ impl TryFrom<u8> for SheetReferenceZoneStyle {
         match value {
             0 => Ok(Self::Default),
             1 => Ok(Self::Asme),
-            _ => Err(InvalidEnumValue { type_name: "SheetReferenceZoneStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "SheetReferenceZoneStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1220,7 +1292,10 @@ impl TryFrom<u8> for ConnectorKind {
             0 => Ok(Self::Poly),
             1 => Ok(Self::Arrow),
             2 => Ok(Self::Round),
-            _ => Err(InvalidEnumValue { type_name: "ConnectorKind", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ConnectorKind",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1247,7 +1322,10 @@ impl TryFrom<u8> for ConnectorState {
             0 => Ok(Self::Unknown),
             1 => Ok(Self::Male),
             2 => Ok(Self::Female),
-            _ => Err(InvalidEnumValue { type_name: "ConnectorState", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ConnectorState",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1276,7 +1354,10 @@ impl TryFrom<u8> for HarnessBrush {
             1 => Ok(Self::BlackWeave),
             2 => Ok(Self::YellowWeave),
             3 => Ok(Self::RedWeave),
-            _ => Err(InvalidEnumValue { type_name: "HarnessBrush", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessBrush",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1307,7 +1388,10 @@ impl TryFrom<u8> for HarnessLengthUnit {
             2 => Ok(Self::Meter),
             3 => Ok(Self::Inch),
             4 => Ok(Self::Foot),
-            _ => Err(InvalidEnumValue { type_name: "HarnessLengthUnit", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessLengthUnit",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1334,7 +1418,10 @@ impl TryFrom<u8> for HarnessWireLengthType {
             0 => Ok(Self::Calculated),
             1 => Ok(Self::UserDefined),
             2 => Ok(Self::McadCoDesigner),
-            _ => Err(InvalidEnumValue { type_name: "HarnessWireLengthType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessWireLengthType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1363,7 +1450,10 @@ impl TryFrom<u8> for HarnessCavityPartType {
             1 => Ok(Self::Seal),
             2 => Ok(Self::Plug),
             3 => Ok(Self::Other),
-            _ => Err(InvalidEnumValue { type_name: "HarnessCavityPartType", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessCavityPartType",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1390,7 +1480,10 @@ impl TryFrom<u8> for HarnessConnectionPointStyle {
             0 => Ok(Self::Circle),
             1 => Ok(Self::Square),
             2 => Ok(Self::Insulator),
-            _ => Err(InvalidEnumValue { type_name: "HarnessConnectionPointStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessConnectionPointStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1415,7 +1508,10 @@ impl TryFrom<u8> for HarnessShieldStyle {
         match value {
             0 => Ok(Self::Shield),
             1 => Ok(Self::ShieldWithConnection),
-            _ => Err(InvalidEnumValue { type_name: "HarnessShieldStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessShieldStyle",
+                value: value as i64,
+            }),
         }
     }
 }
@@ -1440,7 +1536,10 @@ impl TryFrom<u8> for HarnessSpliceStyle {
         match value {
             0 => Ok(Self::Circle),
             1 => Ok(Self::Inline),
-            _ => Err(InvalidEnumValue { type_name: "HarnessSpliceStyle", value: value as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "HarnessSpliceStyle",
+                value: value as i64,
+            }),
         }
     }
 }

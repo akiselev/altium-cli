@@ -1,9 +1,9 @@
-use altium_format_types::constants::parsing::TEXT_SUBRECORD_COUNT;
 use altium_format_types::TextKind;
+use altium_format_types::constants::parsing::TEXT_SUBRECORD_COUNT;
 
 use crate::binary_io::BinaryReader;
-use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::PcbText;
+use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
 /// Fixed size of the WideChar font name buffers (32 WideChars = 64 bytes).
@@ -171,17 +171,17 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint, TextKind};
     use crate::binary_io::BinaryWriter;
+    use altium_format_types::{Coord, CoordPoint, TextKind};
 
     fn write_common_header(w: &mut BinaryWriter) {
-        w.write_u8(33);        // layer = TopOverlay
-        w.write_u8(0x0c);      // pad_byte
-        w.write_u16_le(0);     // flags
-        w.write_i32_le(-1);    // net_index
+        w.write_u8(33); // layer = TopOverlay
+        w.write_u8(0x0c); // pad_byte
+        w.write_u16_le(0); // flags
+        w.write_i32_le(-1); // net_index
         w.write_u16_le(0xFFFF); // polygon_index
         w.write_u16_le(0xFFFF); // component_index
-        w.write_u8(0);         // unknown
+        w.write_u8(0); // unknown
     }
 
     /// Writes the 225-byte base format of Text subrecord 0.
@@ -197,33 +197,33 @@ mod tests {
             Coord::from_internal(200_000),
         ));
         w.write_coord(Coord::from_internal(60_000)); // height
-        w.write_u8(text_kind as u8);                  // text_kind
-        w.write_u8(0);                                // reserved
-        w.write_f64_le(90.0);                         // rotation
-        w.write_bool(false);                          // is_mirrored
-        w.write_coord(Coord::from_internal(10_000));  // stroke_width
-        w.write_bytes(&[0, 0, 0]);                    // reserved
-        w.write_bool(false);                          // is_italic
-        w.write_bool(true);                           // is_bold
-        w.write_u8(0);                                // reserved
+        w.write_u8(text_kind as u8); // text_kind
+        w.write_u8(0); // reserved
+        w.write_f64_le(90.0); // rotation
+        w.write_bool(false); // is_mirrored
+        w.write_coord(Coord::from_internal(10_000)); // stroke_width
+        w.write_bytes(&[0, 0, 0]); // reserved
+        w.write_bool(false); // is_italic
+        w.write_bool(true); // is_bold
+        w.write_u8(0); // reserved
         w.write_wide_string_fixed(font_name, FONT_NAME_WCHAR_COUNT); // font_name
-        w.write_bool(false);                          // inverted
-        w.write_bytes(&[0, 0, 0]);                    // reserved
-        w.write_i32_le(0);                            // wide_string_index
-        w.write_bytes(&[0, 0, 0, 0, 0, 0]);          // reserved
+        w.write_bool(false); // inverted
+        w.write_bytes(&[0, 0, 0]); // reserved
+        w.write_i32_le(0); // wide_string_index
+        w.write_bytes(&[0, 0, 0, 0, 0, 0]); // reserved
         w.write_coord(Coord::from_internal(250_000)); // ttf_text_width
-        w.write_coord(Coord::from_internal(80_000));  // ttf_text_height
-        w.write_i32_le(3);                            // font_id
-        w.write_bool(false);                          // barcode_inverted
+        w.write_coord(Coord::from_internal(80_000)); // ttf_text_height
+        w.write_i32_le(3); // font_id
+        w.write_bool(false); // barcode_inverted
         w.write_coord(Coord::from_internal(10_500_000)); // barcode_full_width
-        w.write_coord(Coord::from_internal(2_100_000));  // barcode_full_height
-        w.write_coord(Coord::from_internal(200_000));    // barcode_x_margin
-        w.write_coord(Coord::from_internal(200_000));    // barcode_y_margin
-        w.write_coord(Coord::from_internal(0));          // barcode_min_width
-        w.write_u8(0);                                   // reserved
-        w.write_bool(true);                              // barcode_show_text
-        w.write_u8(1);                                   // barcode_render_mode
-        w.write_bool(false);                             // multiline
+        w.write_coord(Coord::from_internal(2_100_000)); // barcode_full_height
+        w.write_coord(Coord::from_internal(200_000)); // barcode_x_margin
+        w.write_coord(Coord::from_internal(200_000)); // barcode_y_margin
+        w.write_coord(Coord::from_internal(0)); // barcode_min_width
+        w.write_u8(0); // reserved
+        w.write_bool(true); // barcode_show_text
+        w.write_u8(1); // barcode_render_mode
+        w.write_bool(false); // multiline
         w.write_wide_string_fixed(barcode_font_name, FONT_NAME_WCHAR_COUNT); // barcode_font_name
         w
     }
@@ -277,12 +277,12 @@ mod tests {
         let mut w = make_text_sub0_base(TextKind::TrueTypeFont, "Consolas", "Arial");
         // Tail bytes (225-251): 27 bytes of version-dependent fields.
         w.write_bytes(&[1, 6, 0, 3, 1]); // bytes 225-229
-        w.write_bytes(&[1, 0]);           // bytes 230-231 (advance_snapping + reserved)
-        w.write_i32_le(0);               // bytes 232-235 (advance_justification_x)
-        w.write_i32_le(0);               // bytes 236-239 (advance_justification_y)
-        w.write_bytes(&[0, 0, 0, 0]);    // bytes 240-243 (use_text_alignment + padding)
-        w.write_i32_le(500_000);         // bytes 244-247 (snap_point_x)
-        w.write_i32_le(600_000);         // bytes 248-251 (snap_point_y)
+        w.write_bytes(&[1, 0]); // bytes 230-231 (advance_snapping + reserved)
+        w.write_i32_le(0); // bytes 232-235 (advance_justification_x)
+        w.write_i32_le(0); // bytes 236-239 (advance_justification_y)
+        w.write_bytes(&[0, 0, 0, 0]); // bytes 240-243 (use_text_alignment + padding)
+        w.write_i32_le(500_000); // bytes 244-247 (snap_point_x)
+        w.write_i32_le(600_000); // bytes 248-251 (snap_point_y)
         let sub0 = w.finish();
         assert_eq!(sub0.len(), 252);
 

@@ -38,7 +38,8 @@ pub(crate) fn iter_blocks(stream_data: &[u8]) -> BlockIter<'_> {
 
 /// Encodes a payload as a text-format block: 4-byte header (flags=0x00) + payload bytes.
 pub(crate) fn write_text_block(payload: &[u8]) -> Vec<u8> {
-    let header: i32 = (BLOCK_FLAG_TEXT as i32) << BLOCK_FLAG_SHIFT | (payload.len() as i32 & BLOCK_SIZE_MASK as i32);
+    let header: i32 = (BLOCK_FLAG_TEXT as i32) << BLOCK_FLAG_SHIFT
+        | (payload.len() as i32 & BLOCK_SIZE_MASK as i32);
     let mut out = Vec::with_capacity(4 + payload.len());
     out.extend_from_slice(&header.to_le_bytes());
     out.extend_from_slice(payload);
@@ -47,7 +48,8 @@ pub(crate) fn write_text_block(payload: &[u8]) -> Vec<u8> {
 
 /// Encodes a payload as a binary-format block: 4-byte header (flags=0x01) + payload bytes.
 pub(crate) fn write_binary_block(payload: &[u8]) -> Vec<u8> {
-    let header: i32 = (BLOCK_FLAG_BINARY as i32) << BLOCK_FLAG_SHIFT | (payload.len() as i32 & BLOCK_SIZE_MASK as i32);
+    let header: i32 = (BLOCK_FLAG_BINARY as i32) << BLOCK_FLAG_SHIFT
+        | (payload.len() as i32 & BLOCK_SIZE_MASK as i32);
     let mut out = Vec::with_capacity(4 + payload.len());
     out.extend_from_slice(&header.to_le_bytes());
     out.extend_from_slice(payload);
@@ -172,7 +174,10 @@ mod tests {
     #[test]
     fn truncated_header_returns_error() {
         let result = parse_blocks(&[0x01, 0x02, 0x03]);
-        assert!(matches!(result, Err(AltiumFormatError::InvalidBlockHeader { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::InvalidBlockHeader { .. })
+        ));
     }
 
     #[test]
@@ -182,14 +187,20 @@ mod tests {
         let mut data = header.to_vec();
         data.extend_from_slice(&[0xAA, 0xBB]);
         let result = parse_blocks(&data);
-        assert!(matches!(result, Err(AltiumFormatError::InvalidBlockHeader { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::InvalidBlockHeader { .. })
+        ));
     }
 
     #[test]
     fn unknown_flags_returns_error() {
         let data = make_block_bytes(b"x", 0x02);
         let result = parse_blocks(&data);
-        assert!(matches!(result, Err(AltiumFormatError::InvalidBlockHeader { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::InvalidBlockHeader { .. })
+        ));
     }
 
     #[test]
@@ -237,7 +248,9 @@ mod tests {
         let mut data = make_block_bytes(b"abc", BLOCK_FLAG_TEXT);
         data.extend_from_slice(&make_block_bytes(b"\x01\x02", BLOCK_FLAG_BINARY));
         let parsed: Vec<Block> = parse_blocks(&data).unwrap();
-        let iterated: Vec<Block> = iter_blocks(&data).collect::<std::result::Result<Vec<_>, _>>().unwrap();
+        let iterated: Vec<Block> = iter_blocks(&data)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(parsed.len(), iterated.len());
         for (p, i) in parsed.iter().zip(iterated.iter()) {
             assert_eq!(p.format, i.format);

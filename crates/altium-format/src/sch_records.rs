@@ -21,29 +21,27 @@
 
 use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LineShape, LineStyle,
-    LeftRightSide, ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType,
-    RotationBy90, SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
-    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor,
-    TextJustification, TextVertAnchor,
-    sch::{PortArrowStyle, PortIoType, PowerObjectStyle, SchFont},
+    Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
+    ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle,
+    SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
     constants::{
         component::{
-            ALL_PIN_COUNT, ALIAS_LIST, COMPONENT_DESCRIPTION, COMPONENT_KIND,
+            ALIAS_LIST, ALL_PIN_COUNT, COMPONENT_DESCRIPTION, COMPONENT_KIND,
             COMPONENT_KIND_VERSION2, COMPONENT_KIND_VERSION3, CURRENT_PART_ID, DESIGNATOR_LOCKED,
             DISPLAY_FIELD_NAMES, DISPLAY_MODE, DISPLAY_MODE_COUNT, HAS_ONLY_CURRENT_PART_INFO,
-            IS_MIRRORED, KEY_COMPONENT_UNIQUE_ID, LIB_REFERENCE, NOT_USE_LIBRARY_NAME,
-            PART_COUNT, PART_ID_LOCKED, PINS_MOVEABLE, SHEET_PART_FILE_NAME, SHOW_HIDDEN_FIELDS,
+            IS_MIRRORED, KEY_COMPONENT_UNIQUE_ID, LIB_REFERENCE, NOT_USE_LIBRARY_NAME, PART_COUNT,
+            PART_ID_LOCKED, PINS_MOVEABLE, SHEET_PART_FILE_NAME, SHOW_HIDDEN_FIELDS,
         },
+        electrical::{
+            CONNECTION_PAIRS_TO_SUPPRESS, ELECTRICAL, ERROR_KIND_SET_TO_SUPPRESS, FORMAL_TYPE,
+            IO_TYPE, IS_CROSS_SHEET_CONNECTOR, SHOW_NET_NAME, SIDE, SUPPRESS_ALL, SYMBOL_TYPE,
+        },
+        harness::HARNESS_TYPE,
         locking::{
             GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE,
             NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE, SELECTION,
         },
-        electrical::{
-            CONNECTION_PAIRS_TO_SUPPRESS, ELECTRICAL, FORMAL_TYPE, IO_TYPE, SHOW_NET_NAME, SIDE,
-            SUPPRESS_ALL, SYMBOL_TYPE, IS_CROSS_SHEET_CONNECTOR, ERROR_KIND_SET_TO_SUPPRESS,
-        },
-        harness::HARNESS_TYPE,
         model::{
             DATABASE_DATALINKS_LOCKED, DATABASE_MODEL, DATAFILE_COUNT, DATALINKS_LOCKED,
             DES_IMP_COUNT, DES_INTF, INTEGRATED_MODEL, MODEL_ITEM_GUID, MODEL_LOCATION, MODEL_NAME,
@@ -51,56 +49,57 @@ use altium_format_types::{
         },
         parsing::C_BASE_UNIT,
         pin::{
-            DEF_VALUE, PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED, SYMBOL,
-            DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID, DESIGNATOR_CUSTOM_POSITION_MARGIN,
-            NAME_CUSTOM_COLOR, NAME_CUSTOM_FONT_ID, NAME_CUSTOM_POSITION_MARGIN,
-            PIN_CONGLOMERATE_IS_HIDDEN, PIN_CONGLOMERATE_NOT_ACCESSIBLE,
-            PIN_CONGLOMERATE_ORIENTATION_MASK, PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST,
-            PIN_CONGLOMERATE_SHOW_DESIGNATOR, PIN_CONGLOMERATE_SHOW_NAME, PIN_DEFINED_FUNCTION,
-            PIN_DEFINED_FUNCTIONS_COUNT, PIN_LENGTH, PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY,
-            PIN_DESIGNATOR_POSITION_CONGLOMERATE, PIN_NAME_POSITION_CONGLOMERATE,
+            DEF_VALUE, DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID,
+            DESIGNATOR_CUSTOM_POSITION_MARGIN, NAME_CUSTOM_COLOR, NAME_CUSTOM_FONT_ID,
+            NAME_CUSTOM_POSITION_MARGIN, PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE,
+            PIN_CONGLOMERATE_GRAPHICALLY_LOCKED, PIN_CONGLOMERATE_IS_HIDDEN,
+            PIN_CONGLOMERATE_NOT_ACCESSIBLE, PIN_CONGLOMERATE_ORIENTATION_MASK,
+            PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST, PIN_CONGLOMERATE_SHOW_DESIGNATOR,
+            PIN_CONGLOMERATE_SHOW_NAME, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
+            PIN_DESIGNATOR_POSITION_CONGLOMERATE, PIN_LENGTH, PIN_NAME_POSITION_CONGLOMERATE,
+            PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY,
             PIN_PROPAGATION_DELAY as PIN_PROPAGATION_DELAY_KEY, PIN_SELECTED_FUNCTION,
-            PIN_SELECTED_FUNCTIONS_COUNT, SWAP_ID_PAIR, SWAP_ID_PART, SWAP_ID_PIN,
-            SYMBOL_INNER_EDGE, SYMBOL_OUTER_EDGE, SYMBOL_LINE_WIDTH,
+            PIN_SELECTED_FUNCTIONS_COUNT, SWAP_ID_PAIR, SWAP_ID_PART, SWAP_ID_PIN, SYMBOL,
+            SYMBOL_INNER, SYMBOL_INNER_EDGE, SYMBOL_LINE_WIDTH, SYMBOL_OUTER, SYMBOL_OUTER_EDGE,
         },
         record_structure::{
-            INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID,
-            COLLAPSED, DISTANCE_FROM_TOP, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
+            COLLAPSED, DISTANCE_FROM_TOP, INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX,
+            OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX,
+            UNIQUE_ID, URL,
         },
         sheet::{
             AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
             CUSTOM_X_ZONES, CUSTOM_Y, CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT,
-            DOCUMENT_BORDER_STYLE,
-            FILE_VERSION_INFO, HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC,
-            IS_BOC, REFERENCE_ZONE_STYLE, REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE,
-            SHEET_STYLE, SHOW_BORDER, SHOW_HIDDEN_PINS, SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON,
-            SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, SYSTEM_FONT, TARGET_FILE_NAME,
-            TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS, VISIBLE_GRID_ON,
-            VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
+            DOCUMENT_BORDER_STYLE, FILE_VERSION_INFO, HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE,
+            HOT_SPOT_GRID_SIZE_FRAC, IS_BOC, REFERENCE_ZONE_STYLE, REFERENCE_ZONES_ON,
+            SHEET_NUMBER_SPACE_SIZE, SHEET_STYLE, SHOW_BORDER, SHOW_HIDDEN_PINS,
+            SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, SYSTEM_FONT,
+            TARGET_FILE_NAME, TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS,
+            VISIBLE_GRID_ON, VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
         },
         text::{
             ALIGNMENT, BOLD, CLIP_TO_RECT, DESCRIPTION, ITALIC, JUSTIFICATION, NAME, SHOW_NAME,
             STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_FONT_ID, TEXT_HORZ_ANCHOR, TEXT_MARGIN,
-            TEXT_MARGIN_FRAC, TEXT_STYLE,
-            TEXT_VERT_ANCHOR, UNDERLINE, WORD_WRAP,
+            TEXT_MARGIN_FRAC, TEXT_STYLE, TEXT_VERT_ANCHOR, UNDERLINE, WORD_WRAP,
         },
         vault::{
             DATABASE_TABLE_NAME, DESIGN_ITEM_ID, GENERIC_COMPONENT_TEMPLATE_GUID, ITEM_GUID,
             LIBRARY_PATH, NOT_ALLOW_DATABASE_SYNCHRONIZE, NOT_ALLOW_LIBRARY_SYNCHRONIZE,
-            NOT_USE_DB_TABLE_NAME, REVISION_GUID, SOURCE_LIBRARY_NAME,
-            SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
+            NOT_USE_DB_TABLE_NAME, REVISION_GUID, SOURCE_LIBRARY_NAME, SYMBOL_ITEM_GUID,
+            SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
         },
         visual::{
-            ARROW_KIND, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS, CORNER_X_RADIUS_FRAC, CORNER_Y,
-            CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC, EMBED_IMAGE, END_ANGLE,
-            END_LINE_SHAPE, FILE_NAME, FONT_ID, FONT_ID_COUNT, FONT_NAME, IS_SOLID, KEEP_ASPECT,
-            LINE_SHAPE_SIZE, LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT, LOCATION_X,
-            LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION, OVERIDE_COLORS,
-            RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR, SCALE_FACTOR_FRAC, SECONDARY_RADIUS,
-            SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE, START_LINE_SHAPE, STYLE, TRANSPARENT,
-            WIDTH, HEIGHT, X_SIZE, Y_SIZE,
+            ARROW_KIND, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS, CORNER_X_RADIUS_FRAC,
+            CORNER_Y, CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC, EMBED_IMAGE, END_ANGLE,
+            END_LINE_SHAPE, FILE_NAME, FONT_ID, FONT_ID_COUNT, FONT_NAME, HEIGHT, IS_SOLID,
+            KEEP_ASPECT, LINE_SHAPE_SIZE, LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT,
+            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION,
+            OVERIDE_COLORS, RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR, SCALE_FACTOR_FRAC,
+            SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE, START_LINE_SHAPE, STYLE,
+            TRANSPARENT, WIDTH, X_SIZE, Y_SIZE,
         },
     },
+    sch::{PortArrowStyle, PortIoType, PowerObjectStyle, SchFont},
 };
 
 use crate::binary_io::{BinaryReader, BinaryWriter};
@@ -200,6 +199,13 @@ pub(crate) struct SchPin {
     pub symbol_outer_edge: IeeeSymbol,
     pub symbol_inside: IeeeSymbol,
     pub symbol_outside: IeeeSymbol,
+    // Presence flags (SchDoc text pins can omit these keys; preserve omission on write).
+    pub symbol_inner_edge_present: bool,
+    pub symbol_outer_edge_present: bool,
+    pub symbol_inside_present: bool,
+    pub symbol_outside_present: bool,
+    // SchDoc text-only optional pin fields.
+    pub symbol: Option<IeeeSymbol>,
     pub description: String,
     pub formal_type: StdLogicState,
     pub electrical: PinElectricalType,
@@ -210,7 +216,11 @@ pub(crate) struct SchPin {
     pub designator: String,
     pub swap_id_pin: String,
     pub swap_id_part: String,
+    pub swap_id_pair: String,
     pub default_value: String,
+    pub spice_pin_name: String,
+    pub hidden_net_name: String,
+    pub unique_id: String,
 
     // Decoded from PinConglomerate
     pub orientation: RotationBy90,
@@ -316,6 +326,11 @@ pub(crate) fn parse_binary_pin(data: &[u8]) -> Result<SchPin> {
         symbol_outer_edge,
         symbol_inside,
         symbol_outside,
+        symbol_inner_edge_present: true,
+        symbol_outer_edge_present: true,
+        symbol_inside_present: true,
+        symbol_outside_present: true,
+        symbol: None,
         description,
         formal_type,
         electrical,
@@ -326,7 +341,11 @@ pub(crate) fn parse_binary_pin(data: &[u8]) -> Result<SchPin> {
         designator,
         swap_id_pin,
         swap_id_part,
+        swap_id_pair: String::new(),
         default_value,
+        spice_pin_name: String::new(),
+        hidden_net_name: String::new(),
+        unique_id: String::new(),
         orientation: cong.orientation,
         is_hidden: cong.is_hidden,
         show_name: cong.show_name,
@@ -352,16 +371,23 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
     let owner_part_display_mode: u8 =
         params.remove_with_default::<i32>(OWNER_PART_DISPLAY_MODE, 0i32)? as u8;
 
-    let symbol_inner_edge =
-        IeeeSymbol::try_from(params.remove_with_default::<u8>(SYMBOL_INNER_EDGE, 0u8)?)?;
-    let symbol_outer_edge =
-        IeeeSymbol::try_from(params.remove_with_default::<u8>(SYMBOL_OUTER_EDGE, 0u8)?)?;
-    let symbol_inside = IeeeSymbol::try_from(params.remove_with_default::<u8>("SymBol_Inner", 0u8)?)?;
-    let symbol_outside = IeeeSymbol::try_from(params.remove_with_default::<u8>("SymBol_Outer", 0u8)?)?;
+    let symbol_inner_edge_raw = params.remove_optional::<u8>(SYMBOL_INNER_EDGE)?;
+    let symbol_outer_edge_raw = params.remove_optional::<u8>(SYMBOL_OUTER_EDGE)?;
+    let symbol_inside_raw = params.remove_optional::<u8>(SYMBOL_INNER)?;
+    let symbol_outside_raw = params.remove_optional::<u8>(SYMBOL_OUTER)?;
+    let symbol_inner_edge = IeeeSymbol::try_from(symbol_inner_edge_raw.unwrap_or(0u8))?;
+    let symbol_outer_edge = IeeeSymbol::try_from(symbol_outer_edge_raw.unwrap_or(0u8))?;
+    let symbol_inside = IeeeSymbol::try_from(symbol_inside_raw.unwrap_or(0u8))?;
+    let symbol_outside = IeeeSymbol::try_from(symbol_outside_raw.unwrap_or(0u8))?;
+    let symbol = params
+        .remove_optional::<u8>(SYMBOL)?
+        .map(IeeeSymbol::try_from)
+        .transpose()?;
 
     let description: String = params.remove_with_default(DESCRIPTION, String::new())?;
     let formal_type = StdLogicState::try_from(params.remove_with_default::<u8>(FORMAL_TYPE, 0u8)?)?;
-    let electrical = PinElectricalType::try_from(params.remove_with_default::<u8>(ELECTRICAL, 0u8)?)?;
+    let electrical =
+        PinElectricalType::try_from(params.remove_with_default::<u8>(ELECTRICAL, 0u8)?)?;
 
     let pin_conglomerate = params.remove_with_default(PIN_CONGLOMERATE, 0u8)?;
     let cong = decode_pin_conglomerate(pin_conglomerate)?;
@@ -390,12 +416,19 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
     let default_value: String = params.remove_with_default(DEF_VALUE, String::new())?;
 
     // Optional SchDoc pin fields.
-    let _symbol = params.remove_optional::<u8>(SYMBOL)?;
-    let _symbol_line_width = params.remove_optional::<i32>(SYMBOL_LINE_WIDTH)?;
-    let _spice_pin_name = params.remove_optional::<String>("SpicePinName")?;
-    let _hidden_net_name = params.remove_optional::<String>("HiddenNetName")?;
-    let _unique_id = params.remove_optional::<String>(UNIQUE_ID)?;
-    let _swap_id_pair = params.remove_optional::<String>(SWAP_ID_PAIR)?;
+    let pin_symbol_line_width = params.remove_optional::<i32>(SYMBOL_LINE_WIDTH)?;
+    let spice_pin_name = params
+        .remove_optional::<String>("SpicePinName")?
+        .unwrap_or_default();
+    let hidden_net_name = params
+        .remove_optional::<String>("HiddenNetName")?
+        .unwrap_or_default();
+    let unique_id = params
+        .remove_optional::<String>(UNIQUE_ID)?
+        .unwrap_or_default();
+    let swap_id_pair = params
+        .remove_optional::<String>(SWAP_ID_PAIR)?
+        .unwrap_or_default();
 
     let pin_package_length = params
         .remove_optional::<String>(PIN_PACKAGE_LENGTH_KEY)?
@@ -405,43 +438,43 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
         .unwrap_or_default();
 
     // Optional text positioning/font overrides in SchDoc ASCII pin records.
-    let name_text_data = if let Some(cong) = params.remove_optional::<u8>(PIN_NAME_POSITION_CONGLOMERATE)? {
-        let position_mode_custom = (cong & 0x01) != 0;
-        let rotation_anchor_component = (cong & 0x02) != 0;
-        let rotation_relative = RotationBy90::try_from((cong & 0x0C) >> 2)?;
-        let font_mode_custom = (cong & 0x10) != 0;
+    let name_text_data =
+        if let Some(cong) = params.remove_optional::<u8>(PIN_NAME_POSITION_CONGLOMERATE)? {
+            let position_mode_custom = (cong & 0x01) != 0;
+            let rotation_anchor_component = (cong & 0x02) != 0;
+            let rotation_relative = RotationBy90::try_from((cong & 0x0C) >> 2)?;
+            let font_mode_custom = (cong & 0x10) != 0;
 
-        let custom_position_margin = if position_mode_custom {
-            params
-                .remove_optional::<Coord>(NAME_CUSTOM_POSITION_MARGIN)?
+            let custom_position_margin = if position_mode_custom {
+                params.remove_optional::<Coord>(NAME_CUSTOM_POSITION_MARGIN)?
+            } else {
+                None
+            };
+
+            let custom_font_id = if font_mode_custom {
+                params.remove_optional::<i16>(NAME_CUSTOM_FONT_ID)?
+            } else {
+                None
+            };
+
+            let custom_color = if font_mode_custom {
+                params.remove_optional::<Color>(NAME_CUSTOM_COLOR)?
+            } else {
+                None
+            };
+
+            Some(PinTextPositioning {
+                position_mode_custom,
+                rotation_anchor_component,
+                rotation_relative,
+                font_mode_custom,
+                custom_position_margin,
+                custom_font_id,
+                custom_color,
+            })
         } else {
             None
         };
-
-        let custom_font_id = if font_mode_custom {
-            params.remove_optional::<i16>(NAME_CUSTOM_FONT_ID)?
-        } else {
-            None
-        };
-
-        let custom_color = if font_mode_custom {
-            params.remove_optional::<Color>(NAME_CUSTOM_COLOR)?
-        } else {
-            None
-        };
-
-        Some(PinTextPositioning {
-            position_mode_custom,
-            rotation_anchor_component,
-            rotation_relative,
-            font_mode_custom,
-            custom_position_margin,
-            custom_font_id,
-            custom_color,
-        })
-    } else {
-        None
-    };
 
     let designator_text_data =
         if let Some(cong) = params.remove_optional::<u8>(PIN_DESIGNATOR_POSITION_CONGLOMERATE)? {
@@ -451,8 +484,7 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
             let font_mode_custom = (cong & 0x10) != 0;
 
             let custom_position_margin = if position_mode_custom {
-                params
-                    .remove_optional::<Coord>(DESIGNATOR_CUSTOM_POSITION_MARGIN)?
+                params.remove_optional::<Coord>(DESIGNATOR_CUSTOM_POSITION_MARGIN)?
             } else {
                 None
             };
@@ -506,6 +538,11 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
         symbol_outer_edge,
         symbol_inside,
         symbol_outside,
+        symbol_inner_edge_present: symbol_inner_edge_raw.is_some(),
+        symbol_outer_edge_present: symbol_outer_edge_raw.is_some(),
+        symbol_inside_present: symbol_inside_raw.is_some(),
+        symbol_outside_present: symbol_outside_raw.is_some(),
+        symbol,
         description,
         formal_type,
         electrical,
@@ -516,7 +553,11 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
         designator,
         swap_id_pin,
         swap_id_part,
+        swap_id_pair,
         default_value,
+        spice_pin_name,
+        hidden_net_name,
+        unique_id,
         orientation: cong.orientation,
         is_hidden: cong.is_hidden,
         show_name: cong.show_name,
@@ -524,7 +565,7 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
         is_not_accessible: cong.is_not_accessible,
         graphically_locked: cong.graphically_locked,
         owner_index_additional_list: cong.owner_index_additional_list,
-        pin_symbol_line_width: None,
+        pin_symbol_line_width,
         pin_package_length,
         propagation_delay,
         selected_functions,
@@ -594,9 +635,12 @@ pub(crate) struct SchComponent {
     pub custom_display_mode_names: Vec<String>,
 }
 
-pub(crate) fn parse_component_record(params: &mut crate::param_collection::ParameterCollection) -> crate::Result<SchComponent> {
+pub(crate) fn parse_component_record(
+    params: &mut crate::param_collection::ParameterCollection,
+) -> crate::Result<SchComponent> {
     let lib_reference: String = params.remove_with_default(LIB_REFERENCE, String::new())?;
-    let component_description: String = params.remove_with_default(COMPONENT_DESCRIPTION, String::new())?;
+    let component_description: String =
+        params.remove_with_default(COMPONENT_DESCRIPTION, String::new())?;
     let part_count: i32 = params.remove_with_default(PART_COUNT, 1i32)?;
     let display_mode_count: i32 = params.remove_with_default(DISPLAY_MODE_COUNT, 0i32)?;
 
@@ -621,14 +665,18 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
 
     let display_mode: i32 = params.remove_with_default(DISPLAY_MODE, 0i32)?;
     let is_mirrored: bool = params.remove_with_default(IS_MIRRORED, false)?;
-    let orientation: RotationBy90 = params.remove_with_default(ORIENTATION, RotationBy90::Rotate0)?;
+    let orientation: RotationBy90 =
+        params.remove_with_default(ORIENTATION, RotationBy90::Rotate0)?;
     let current_part_id: i32 = params.remove_with_default(CURRENT_PART_ID, 1i32)?;
     let show_hidden_fields: bool = params.remove_with_default(SHOW_HIDDEN_FIELDS, false)?;
     let show_hidden_pins: bool = params.remove_with_default(SHOW_HIDDEN_PINS, false)?;
     let library_path: String = params.remove_with_default(LIBRARY_PATH, String::new())?;
-    let source_library_name: String = params.remove_with_default(SOURCE_LIBRARY_NAME, String::new())?;
-    let database_table_name: String = params.remove_with_default(DATABASE_TABLE_NAME, String::new())?;
-    let sheet_part_file_name: String = params.remove_with_default(SHEET_PART_FILE_NAME, String::new())?;
+    let source_library_name: String =
+        params.remove_with_default(SOURCE_LIBRARY_NAME, String::new())?;
+    let database_table_name: String =
+        params.remove_with_default(DATABASE_TABLE_NAME, String::new())?;
+    let sheet_part_file_name: String =
+        params.remove_with_default(SHEET_PART_FILE_NAME, String::new())?;
     let target_file_name: String = params.remove_with_default(TARGET_FILE_NAME, String::new())?;
     let unique_id: String = params.remove_with_default(UNIQUE_ID, String::new())?;
     let area_color: Color = params.remove_with_default(AREA_COLOR, Color::BLACK)?;
@@ -649,19 +697,30 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
     let revision_guid: String = params.remove_with_default(REVISION_GUID, String::new())?;
     let symbol_vault_guid: String = params.remove_with_default(SYMBOL_VAULT_GUID, String::new())?;
     let symbol_item_guid: String = params.remove_with_default(SYMBOL_ITEM_GUID, String::new())?;
-    let symbol_revision_guid: String = params.remove_with_default(SYMBOL_REVISION_GUID, String::new())?;
-    let generic_component_template_guid: String = params.remove_with_default(GENERIC_COMPONENT_TEMPLATE_GUID, String::new())?;
-    let has_only_current_part_info: bool = params.remove_with_default(HAS_ONLY_CURRENT_PART_INFO, false)?;
+    let symbol_revision_guid: String =
+        params.remove_with_default(SYMBOL_REVISION_GUID, String::new())?;
+    let generic_component_template_guid: String =
+        params.remove_with_default(GENERIC_COMPONENT_TEMPLATE_GUID, String::new())?;
+    let has_only_current_part_info: bool =
+        params.remove_with_default(HAS_ONLY_CURRENT_PART_INFO, false)?;
     let all_pin_count: i32 = params.remove_with_default(ALL_PIN_COUNT, 0i32)?;
-    let key_component_unique_id: String = params.remove_with_default(KEY_COMPONENT_UNIQUE_ID, String::new())?;
-    let component_kind: ComponentKind = params.remove_with_default(COMPONENT_KIND, ComponentKind::Standard)?;
-    let component_kind_version2: ComponentKind = params.remove_with_default(COMPONENT_KIND_VERSION2, ComponentKind::Standard)?;
-    let component_kind_version3: ComponentKind = params.remove_with_default(COMPONENT_KIND_VERSION3, ComponentKind::Standard)?;
+    let key_component_unique_id: String =
+        params.remove_with_default(KEY_COMPONENT_UNIQUE_ID, String::new())?;
+    let component_kind: ComponentKind =
+        params.remove_with_default(COMPONENT_KIND, ComponentKind::Standard)?;
+    let component_kind_version2: ComponentKind =
+        params.remove_with_default(COMPONENT_KIND_VERSION2, ComponentKind::Standard)?;
+    let component_kind_version3: ComponentKind =
+        params.remove_with_default(COMPONENT_KIND_VERSION3, ComponentKind::Standard)?;
 
     // CustomDisplayModeName0..N-1
     let mut custom_display_mode_names = Vec::with_capacity(display_mode_count as usize);
     for i in 0..display_mode_count {
-        let key = format!("{}{}", altium_format_types::constants::component::CUSTOM_DISPLAY_MODE_NAME, i);
+        let key = format!(
+            "{}{}",
+            altium_format_types::constants::component::CUSTOM_DISPLAY_MODE_NAME,
+            i
+        );
         let name: String = params.remove_with_default(&key, String::new())?;
         custom_display_mode_names.push(name);
     }
@@ -1303,7 +1362,11 @@ impl SchMapDefiner {
             }
             extra_i += 1;
         }
-        Ok(SchMapDefiner { base, des_intf, des_imps })
+        Ok(SchMapDefiner {
+            base,
+            des_intf,
+            des_imps,
+        })
     }
 }
 
@@ -1898,12 +1961,24 @@ pub(crate) struct SchLibComponent {
 /// Encodes the PinConglomerate bitmask byte from individual fields.
 fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
     let mut byte = pin.orientation as u8 & PIN_CONGLOMERATE_ORIENTATION_MASK;
-    if pin.is_hidden { byte |= PIN_CONGLOMERATE_IS_HIDDEN; }
-    if pin.show_name { byte |= PIN_CONGLOMERATE_SHOW_NAME; }
-    if pin.show_designator { byte |= PIN_CONGLOMERATE_SHOW_DESIGNATOR; }
-    if pin.is_not_accessible { byte |= PIN_CONGLOMERATE_NOT_ACCESSIBLE; }
-    if pin.graphically_locked { byte |= PIN_CONGLOMERATE_GRAPHICALLY_LOCKED; }
-    if pin.owner_index_additional_list { byte |= PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST; }
+    if pin.is_hidden {
+        byte |= PIN_CONGLOMERATE_IS_HIDDEN;
+    }
+    if pin.show_name {
+        byte |= PIN_CONGLOMERATE_SHOW_NAME;
+    }
+    if pin.show_designator {
+        byte |= PIN_CONGLOMERATE_SHOW_DESIGNATOR;
+    }
+    if pin.is_not_accessible {
+        byte |= PIN_CONGLOMERATE_NOT_ACCESSIBLE;
+    }
+    if pin.graphically_locked {
+        byte |= PIN_CONGLOMERATE_GRAPHICALLY_LOCKED;
+    }
+    if pin.owner_index_additional_list {
+        byte |= PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST;
+    }
     byte
 }
 
@@ -1949,7 +2024,10 @@ pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
 pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut ParameterCollection) {
     params.insert(LIB_REFERENCE, comp.lib_reference.to_param_value());
     if comp.component_description != String::new() {
-        params.insert(COMPONENT_DESCRIPTION, comp.component_description.to_param_value());
+        params.insert(
+            COMPONENT_DESCRIPTION,
+            comp.component_description.to_param_value(),
+        );
     }
     if comp.part_count != 0 {
         params.insert(PART_COUNT, comp.part_count.to_param_value());
@@ -1972,7 +2050,10 @@ pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut Param
         params.insert(OWNER_PART_ID, comp.owner_part_id.to_param_value());
     }
     if comp.owner_part_display_mode != 0 {
-        params.insert(OWNER_PART_DISPLAY_MODE, comp.owner_part_display_mode.to_param_value());
+        params.insert(
+            OWNER_PART_DISPLAY_MODE,
+            comp.owner_part_display_mode.to_param_value(),
+        );
     }
     if comp.graphically_locked {
         params.insert(GRAPHICALLY_LOCKED, comp.graphically_locked.to_param_value());
@@ -2011,13 +2092,22 @@ pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut Param
         params.insert(LIBRARY_PATH, comp.library_path.to_param_value());
     }
     if !comp.source_library_name.is_empty() {
-        params.insert(SOURCE_LIBRARY_NAME, comp.source_library_name.to_param_value());
+        params.insert(
+            SOURCE_LIBRARY_NAME,
+            comp.source_library_name.to_param_value(),
+        );
     }
     if !comp.database_table_name.is_empty() {
-        params.insert(DATABASE_TABLE_NAME, comp.database_table_name.to_param_value());
+        params.insert(
+            DATABASE_TABLE_NAME,
+            comp.database_table_name.to_param_value(),
+        );
     }
     if !comp.sheet_part_file_name.is_empty() {
-        params.insert(SHEET_PART_FILE_NAME, comp.sheet_part_file_name.to_param_value());
+        params.insert(
+            SHEET_PART_FILE_NAME,
+            comp.sheet_part_file_name.to_param_value(),
+        );
     }
     if !comp.target_file_name.is_empty() {
         params.insert(TARGET_FILE_NAME, comp.target_file_name.to_param_value());
@@ -2038,7 +2128,10 @@ pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut Param
         params.insert(OVERIDE_COLORS, comp.override_colors.to_param_value());
     }
     if comp.display_field_names {
-        params.insert(DISPLAY_FIELD_NAMES, comp.display_field_names.to_param_value());
+        params.insert(
+            DISPLAY_FIELD_NAMES,
+            comp.display_field_names.to_param_value(),
+        );
     }
     if comp.designator_locked {
         params.insert(DESIGNATOR_LOCKED, comp.designator_locked.to_param_value());
@@ -2052,10 +2145,16 @@ pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut Param
         params.insert(ALIAS_LIST, comp.alias_list.to_param_value());
     }
     if comp.not_use_library_name {
-        params.insert(NOT_USE_LIBRARY_NAME, comp.not_use_library_name.to_param_value());
+        params.insert(
+            NOT_USE_LIBRARY_NAME,
+            comp.not_use_library_name.to_param_value(),
+        );
     }
     if comp.not_use_db_table_name {
-        params.insert(NOT_USE_DB_TABLE_NAME, comp.not_use_db_table_name.to_param_value());
+        params.insert(
+            NOT_USE_DB_TABLE_NAME,
+            comp.not_use_db_table_name.to_param_value(),
+        );
     }
     if !comp.design_item_id.is_empty() {
         params.insert(DESIGN_ITEM_ID, comp.design_item_id.to_param_value());
@@ -2076,34 +2175,56 @@ pub(crate) fn serialize_component_record(comp: &SchComponent, params: &mut Param
         params.insert(SYMBOL_ITEM_GUID, comp.symbol_item_guid.to_param_value());
     }
     if !comp.symbol_revision_guid.is_empty() {
-        params.insert(SYMBOL_REVISION_GUID, comp.symbol_revision_guid.to_param_value());
+        params.insert(
+            SYMBOL_REVISION_GUID,
+            comp.symbol_revision_guid.to_param_value(),
+        );
     }
     if !comp.generic_component_template_guid.is_empty() {
-        params.insert(GENERIC_COMPONENT_TEMPLATE_GUID, comp.generic_component_template_guid.to_param_value());
+        params.insert(
+            GENERIC_COMPONENT_TEMPLATE_GUID,
+            comp.generic_component_template_guid.to_param_value(),
+        );
     }
     if comp.has_only_current_part_info {
-        params.insert(HAS_ONLY_CURRENT_PART_INFO, comp.has_only_current_part_info.to_param_value());
+        params.insert(
+            HAS_ONLY_CURRENT_PART_INFO,
+            comp.has_only_current_part_info.to_param_value(),
+        );
     }
     if comp.all_pin_count != 0 {
         params.insert(ALL_PIN_COUNT, comp.all_pin_count.to_param_value());
     }
     if !comp.key_component_unique_id.is_empty() {
-        params.insert(KEY_COMPONENT_UNIQUE_ID, comp.key_component_unique_id.to_param_value());
+        params.insert(
+            KEY_COMPONENT_UNIQUE_ID,
+            comp.key_component_unique_id.to_param_value(),
+        );
     }
     if comp.component_kind != ComponentKind::Standard {
         params.insert(COMPONENT_KIND, comp.component_kind.to_param_value());
     }
     if comp.component_kind_version2 != ComponentKind::Standard {
-        params.insert(COMPONENT_KIND_VERSION2, comp.component_kind_version2.to_param_value());
+        params.insert(
+            COMPONENT_KIND_VERSION2,
+            comp.component_kind_version2.to_param_value(),
+        );
     }
     if comp.component_kind_version3 != ComponentKind::Standard {
-        params.insert(COMPONENT_KIND_VERSION3, comp.component_kind_version3.to_param_value());
+        params.insert(
+            COMPONENT_KIND_VERSION3,
+            comp.component_kind_version3.to_param_value(),
+        );
     }
 
     // CustomDisplayModeName0..N-1
     for (i, name) in comp.custom_display_mode_names.iter().enumerate() {
         if !name.is_empty() {
-            let key = format!("{}{}", altium_format_types::constants::component::CUSTOM_DISPLAY_MODE_NAME, i);
+            let key = format!(
+                "{}{}",
+                altium_format_types::constants::component::CUSTOM_DISPLAY_MODE_NAME,
+                i
+            );
             params.insert(&key, name.to_param_value());
         }
     }
@@ -2255,7 +2376,10 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
 
 #[cfg(test)]
 mod tests {
-    use altium_format_types::{IeeeSymbol, PinElectricalType, RotationBy90, PenWidth, LineStyle, TextJustification, ParameterReadOnlyState, ParameterType};
+    use altium_format_types::{
+        IeeeSymbol, LineStyle, ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType,
+        RotationBy90, TextJustification,
+    };
 
     use super::*;
 
@@ -2281,7 +2405,9 @@ mod tests {
 
     #[test]
     fn primitive_base_explicit_fields() {
-        let mut params = pc("|OwnerIndex=3|IsNotAccesible=T|OwnerPartId=2|OwnerPartDisplayMode=1|GraphicallyLocked=T|IndexInSheet=5|");
+        let mut params = pc(
+            "|OwnerIndex=3|IsNotAccesible=T|OwnerPartId=2|OwnerPartDisplayMode=1|GraphicallyLocked=T|IndexInSheet=5|",
+        );
         let base = SchPrimitiveBase::from_params(&mut params).unwrap();
         assert_eq!(base.owner_index, 3);
         assert!(base.is_not_accessible);
@@ -2304,7 +2430,8 @@ mod tests {
 
     #[test]
     fn graphical_base_fractional_coords() {
-        let mut params = pc("|Location.X=100|Location.X_Frac=50000|Location.Y=200|Location.Y_Frac=75000|");
+        let mut params =
+            pc("|Location.X=100|Location.X_Frac=50000|Location.Y=200|Location.Y_Frac=75000|");
         let base = SchGraphicalBase::from_params(&mut params).unwrap();
         // 100 * 100_000 + 50_000 = 10_050_000
         assert_eq!(base.location.x.to_internal(), 10_050_000);
@@ -2382,19 +2509,26 @@ mod tests {
     #[test]
     fn parse_binary_pin_minimal() {
         let data = make_pin_bytes(
-            0, 1, 0,      // owner_index, owner_part_id, owner_part_display_mode
-            0, 0, 0, 0,   // no symbols
-            b"",          // empty description
-            0,            // formal_type
-            4,            // Passive
-            0x00,         // conglomerate: Rotate0, no flags
-            3,            // pin_length = 3 DXP units
-            10,           // location_x = 10
-            20,           // location_y = 20
+            0,
+            1,
+            0, // owner_index, owner_part_id, owner_part_display_mode
+            0,
+            0,
+            0,
+            0,             // no symbols
+            b"",           // empty description
+            0,             // formal_type
+            4,             // Passive
+            0x00,          // conglomerate: Rotate0, no flags
+            3,             // pin_length = 3 DXP units
+            10,            // location_x = 10
+            20,            // location_y = 20
             0x0000FF00i32, // green in BGR
-            b"A1",        // name
-            b"PA0",       // designator
-            b"", b"", b"", // swap_id_pin, swap_id_part, default_value
+            b"A1",         // name
+            b"PA0",        // designator
+            b"",
+            b"",
+            b"", // swap_id_pin, swap_id_part, default_value
         );
         let pin = parse_binary_pin(&data).unwrap();
         assert_eq!(pin.symbol_inner_edge, IeeeSymbol::NoSymbol);
@@ -2439,7 +2573,9 @@ mod tests {
         // All bits set: Rotate270 (0x03) | IsHidden | ShowName | ShowDesignator
         //             | NotAccessible | GraphicallyLocked | OwnerIndexAdditionalList
         let cong: u8 = 0x03 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80;
-        let data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, 4, cong, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+        let data = make_pin_bytes(
+            0, 1, 0, 0, 0, 0, 0, b"", 0, 4, cong, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+        );
         let pin = parse_binary_pin(&data).unwrap();
         assert_eq!(pin.orientation, RotationBy90::Rotate270);
         assert!(pin.is_hidden);
@@ -2458,16 +2594,23 @@ mod tests {
             (2u8, RotationBy90::Rotate180),
             (3u8, RotationBy90::Rotate270),
         ] {
-            let data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, 4, raw, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+            let data = make_pin_bytes(
+                0, 1, 0, 0, 0, 0, 0, b"", 0, 4, raw, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+            );
             let pin = parse_binary_pin(&data).unwrap();
-            assert_eq!(pin.orientation, expected, "orientation for conglomerate {raw}");
+            assert_eq!(
+                pin.orientation, expected,
+                "orientation for conglomerate {raw}"
+            );
         }
     }
 
     #[test]
     fn parse_binary_pin_coord_conversion() {
         // pin_length=5, x=100, y=-50 in DXP units
-        let data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 5, 100, -50, 0, b"", b"", b"", b"", b"");
+        let data = make_pin_bytes(
+            0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 5, 100, -50, 0, b"", b"", b"", b"", b"",
+        );
         let pin = parse_binary_pin(&data).unwrap();
         assert_eq!(pin.pin_length.to_internal(), 5 * 100_000);
         assert_eq!(pin.location.x.to_internal(), 100 * 100_000);
@@ -2477,7 +2620,9 @@ mod tests {
     #[test]
     fn parse_binary_pin_all_ieee_symbols() {
         for sym in 0u8..=36 {
-            let data = make_pin_bytes(0, 1, 0, sym, sym, sym, sym, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+            let data = make_pin_bytes(
+                0, 1, 0, sym, sym, sym, sym, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+            );
             let pin = parse_binary_pin(&data).unwrap();
             let expected = IeeeSymbol::try_from(sym).unwrap();
             assert_eq!(pin.symbol_inner_edge, expected);
@@ -2490,7 +2635,9 @@ mod tests {
     #[test]
     fn parse_binary_pin_all_electrical_types() {
         for elec in 0u8..=7 {
-            let data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, elec, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+            let data = make_pin_bytes(
+                0, 1, 0, 0, 0, 0, 0, b"", 0, elec, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+            );
             let pin = parse_binary_pin(&data).unwrap();
             let expected = PinElectricalType::try_from(elec).unwrap();
             assert_eq!(pin.electrical, expected);
@@ -2499,7 +2646,9 @@ mod tests {
 
     #[test]
     fn parse_binary_pin_invalid_binary_code() {
-        let mut data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+        let mut data = make_pin_bytes(
+            0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+        );
         data[0] = 0x01; // wrong code
         let err = parse_binary_pin(&data).unwrap_err();
         assert!(
@@ -2521,7 +2670,9 @@ mod tests {
 
     #[test]
     fn parse_binary_pin_trailing_bytes() {
-        let mut data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+        let mut data = make_pin_bytes(
+            0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+        );
         data.push(0xFF); // extra byte
         let err = parse_binary_pin(&data).unwrap_err();
         assert!(
@@ -2555,7 +2706,9 @@ mod tests {
 
     #[test]
     fn sidecar_fields_initialized_to_defaults() {
-        let data = make_pin_bytes(0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"");
+        let data = make_pin_bytes(
+            0, 1, 0, 0, 0, 0, 0, b"", 0, 4, 0, 1, 0, 0, 0, b"", b"", b"", b"", b"",
+        );
         let pin = parse_binary_pin(&data).unwrap();
         assert_eq!(pin.owner_index, 0);
         assert_eq!(pin.owner_part_id, 1);
@@ -2575,7 +2728,8 @@ mod tests {
 
     #[test]
     fn line_parsed() {
-        let mut params = pc("|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|LineWidth=1|LineStyle=2|");
+        let mut params =
+            pc("|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|LineWidth=1|LineStyle=2|");
         let line = SchLine::from_params(&mut params).unwrap();
         assert_eq!(line.location.x.to_internal(), 10 * 100_000);
         assert_eq!(line.location.y.to_internal(), 20 * 100_000);
@@ -2595,7 +2749,9 @@ mod tests {
 
     #[test]
     fn rectangle_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Corner.X=50|Corner.Y=60|LineWidth=2|LineStyleExt=1|IsSolid=T|Transparent=F|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Corner.X=50|Corner.Y=60|LineWidth=2|LineStyleExt=1|IsSolid=T|Transparent=F|",
+        );
         let rect = SchRectangle::from_params(&mut params).unwrap();
         assert_eq!(rect.corner.x.to_internal(), 50 * 100_000);
         assert_eq!(rect.corner.y.to_internal(), 60 * 100_000);
@@ -2607,7 +2763,8 @@ mod tests {
 
     #[test]
     fn arc_parsed() {
-        let mut params = pc("|Location.X=5|Location.Y=5|Radius=100|StartAngle=45|EndAngle=270|LineWidth=1|");
+        let mut params =
+            pc("|Location.X=5|Location.Y=5|Radius=100|StartAngle=45|EndAngle=270|LineWidth=1|");
         let arc = SchArc::from_params(&mut params).unwrap();
         assert_eq!(arc.radius.to_internal(), 100 * 100_000);
         assert_eq!(arc.start_angle, SchAngle(45.0));
@@ -2617,14 +2774,18 @@ mod tests {
 
     #[test]
     fn arc_with_frac_radius() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Radius=10|Radius_Frac=50000|StartAngle=0|EndAngle=360|LineWidth=0|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Radius=10|Radius_Frac=50000|StartAngle=0|EndAngle=360|LineWidth=0|",
+        );
         let arc = SchArc::from_params(&mut params).unwrap();
         assert_eq!(arc.radius.to_internal(), 10 * 100_000 + 50_000);
     }
 
     #[test]
     fn elliptical_arc_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Radius=50|SecondaryRadius=25|StartAngle=0|EndAngle=180|LineWidth=0|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Radius=50|SecondaryRadius=25|StartAngle=0|EndAngle=180|LineWidth=0|",
+        );
         let ea = SchEllipticalArc::from_params(&mut params).unwrap();
         assert_eq!(ea.radius.to_internal(), 50 * 100_000);
         assert_eq!(ea.secondary_radius.to_internal(), 25 * 100_000);
@@ -2634,7 +2795,9 @@ mod tests {
 
     #[test]
     fn ellipse_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Radius=30|SecondaryRadius=20|LineWidth=0|IsSolid=T|Transparent=F|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Radius=30|SecondaryRadius=20|LineWidth=0|IsSolid=T|Transparent=F|",
+        );
         let el = SchEllipse::from_params(&mut params).unwrap();
         assert_eq!(el.radius.to_internal(), 30 * 100_000);
         assert_eq!(el.secondary_radius.to_internal(), 20 * 100_000);
@@ -2644,7 +2807,9 @@ mod tests {
 
     #[test]
     fn pie_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Radius=40|StartAngle=30|EndAngle=150|LineWidth=0|IsSolid=T|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Radius=40|StartAngle=30|EndAngle=150|LineWidth=0|IsSolid=T|",
+        );
         let pie = SchPie::from_params(&mut params).unwrap();
         assert_eq!(pie.radius.to_internal(), 40 * 100_000);
         assert_eq!(pie.start_angle, SchAngle(30.0));
@@ -2654,7 +2819,9 @@ mod tests {
 
     #[test]
     fn polyline_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|LocationCount=3|X1=1|Y1=2|X2=3|Y2=4|X3=5|Y3=6|LineWidth=1|LineStyle=0|LineShapeSize=0|StartLineShape=0|EndLineShape=0|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|LocationCount=3|X1=1|Y1=2|X2=3|Y2=4|X3=5|Y3=6|LineWidth=1|LineStyle=0|LineShapeSize=0|StartLineShape=0|EndLineShape=0|",
+        );
         let pl = SchPolyline::from_params(&mut params).unwrap();
         assert_eq!(pl.vertices.len(), 3);
         assert_eq!(pl.vertices[0].x.to_internal(), 1 * 100_000);
@@ -2666,7 +2833,9 @@ mod tests {
 
     #[test]
     fn polygon_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|LocationCount=2|X1=10|Y1=20|X2=30|Y2=40|LineWidth=0|LineStyle=0|IsSolid=T|Transparent=F|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|LocationCount=2|X1=10|Y1=20|X2=30|Y2=40|LineWidth=0|LineStyle=0|IsSolid=T|Transparent=F|",
+        );
         let pg = SchPolygon::from_params(&mut params).unwrap();
         assert_eq!(pg.vertices.len(), 2);
         assert_eq!(pg.vertices[1].x.to_internal(), 30 * 100_000);
@@ -2675,7 +2844,9 @@ mod tests {
 
     #[test]
     fn bezier_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|LocationCount=4|X1=0|Y1=0|X2=10|Y2=20|X3=30|Y3=20|X4=40|Y4=0|LineWidth=1|LineStyle=0|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|LocationCount=4|X1=0|Y1=0|X2=10|Y2=20|X3=30|Y3=20|X4=40|Y4=0|LineWidth=1|LineStyle=0|",
+        );
         let bz = SchBezier::from_params(&mut params).unwrap();
         assert_eq!(bz.vertices.len(), 4);
         assert_eq!(bz.vertices[3].x.to_internal(), 40 * 100_000);
@@ -2684,7 +2855,9 @@ mod tests {
 
     #[test]
     fn image_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Corner.X=100|Corner.Y=80|EmbedImage=T|FileName=test.bmp|KeepAspect=T|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Corner.X=100|Corner.Y=80|EmbedImage=T|FileName=test.bmp|KeepAspect=T|",
+        );
         let img = SchImage::from_params(&mut params).unwrap();
         assert_eq!(img.corner.x.to_internal(), 100 * 100_000);
         assert_eq!(img.corner.y.to_internal(), 80 * 100_000);
@@ -2706,7 +2879,9 @@ mod tests {
 
     #[test]
     fn label_parsed() {
-        let mut params = pc("|Location.X=10|Location.Y=20|Text=Hello|FontID=2|Justification=3|Orientation=1|IsMirrored=T|");
+        let mut params = pc(
+            "|Location.X=10|Location.Y=20|Text=Hello|FontID=2|Justification=3|Orientation=1|IsMirrored=T|",
+        );
         let label = SchLabel::from_params(&mut params).unwrap();
         assert_eq!(label.location.x.to_internal(), 10 * 100_000);
         assert_eq!(label.text, "Hello");
@@ -2729,7 +2904,9 @@ mod tests {
 
     #[test]
     fn designator_parsed() {
-        let mut params = pc("|Location.X=5|Location.Y=5|Text=U1|Name=Designator|FontID=1|UniqueID=ABCDEF|ReadOnlyState=1|IsHidden=F|Orientation=0|IsMirrored=F|Justification=0|NotAutoPosition=F|");
+        let mut params = pc(
+            "|Location.X=5|Location.Y=5|Text=U1|Name=Designator|FontID=1|UniqueID=ABCDEF|ReadOnlyState=1|IsHidden=F|Orientation=0|IsMirrored=F|Justification=0|NotAutoPosition=F|",
+        );
         let des = SchDesignator::from_params(&mut params).unwrap();
         assert_eq!(des.text, "U1");
         assert_eq!(des.name, "Designator");
@@ -2753,7 +2930,9 @@ mod tests {
 
     #[test]
     fn parameter_comment_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Text=100nF|Name=Comment|FontID=1|UniqueID=XYZ|ReadOnlyState=0|IsHidden=F|Orientation=0|IsMirrored=F|Justification=0|NotAutoPosition=F|ShowName=T|ParamType=0|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Text=100nF|Name=Comment|FontID=1|UniqueID=XYZ|ReadOnlyState=0|IsHidden=F|Orientation=0|IsMirrored=F|Justification=0|NotAutoPosition=F|ShowName=T|ParamType=0|",
+        );
         let param = SchParameter::from_params(&mut params).unwrap();
         assert_eq!(param.text, "100nF");
         assert_eq!(param.name, "Comment");
@@ -2780,7 +2959,9 @@ mod tests {
 
     #[test]
     fn text_frame_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Corner.X=200|Corner.Y=100|Text=Hello World|FontID=2|Alignment=1|WordWrap=T|IsSolid=F|LineWidth=1|TextMargin=5|ShowBorder=T|Transparent=T|ClipToRect=F|");
+        let mut params = pc(
+            "|Location.X=0|Location.Y=0|Corner.X=200|Corner.Y=100|Text=Hello World|FontID=2|Alignment=1|WordWrap=T|IsSolid=F|LineWidth=1|TextMargin=5|ShowBorder=T|Transparent=T|ClipToRect=F|",
+        );
         let tf = SchTextFrame::from_params(&mut params).unwrap();
         assert_eq!(tf.corner.x.to_internal(), 200 * 100_000);
         assert_eq!(tf.text, "Hello World");
@@ -2802,10 +2983,10 @@ mod tests {
         assert!(tf.text.is_empty());
         assert_eq!(tf.font_id, 1);
         assert_eq!(tf.alignment, TextJustification::BottomLeft);
-        assert!(!tf.word_wrap);      // parse default: false (absent = false)
+        assert!(!tf.word_wrap); // parse default: false (absent = false)
         assert_eq!(tf.line_width, PenWidth::Zero); // C# default: eZeroSize
-        assert!(!tf.show_border);    // C# default: false
-        assert!(!tf.transparent);    // C# default: false
+        assert!(!tf.show_border); // C# default: false
+        assert!(!tf.transparent); // C# default: false
     }
 
     // ── Implementation/model record tests ────────────────────────────────────
@@ -2819,7 +3000,9 @@ mod tests {
 
     #[test]
     fn implementation_parsed() {
-        let mut params = pc("|ModelName=SOIC127P600X175-8N|ModelType=PCBLIB|Description=SOP-8|IsCurrent=T|DatalinksLocked=F|DatabaseDatalinksLocked=F|IntegratedModel=F|DatabaseModel=F|UniqueID=ABC123|DatafileCount=1|ModelDatafile0=Lib.PcbLib|ModelDatafileEntity0=SOIC127P600X175-8N|ModelDatafileKind0=PCBLIB|UseComponentLibrary=F|");
+        let mut params = pc(
+            "|ModelName=SOIC127P600X175-8N|ModelType=PCBLIB|Description=SOP-8|IsCurrent=T|DatalinksLocked=F|DatabaseDatalinksLocked=F|IntegratedModel=F|DatabaseModel=F|UniqueID=ABC123|DatafileCount=1|ModelDatafile0=Lib.PcbLib|ModelDatafileEntity0=SOIC127P600X175-8N|ModelDatafileKind0=PCBLIB|UseComponentLibrary=F|",
+        );
         let imp = SchImplementation::from_params(&mut params).unwrap();
         assert_eq!(imp.model_name, "SOIC127P600X175-8N");
         assert_eq!(imp.model_type, "PCBLIB");
@@ -2882,7 +3065,9 @@ mod tests {
 
     #[test]
     fn primitive_base_roundtrip_explicit_fields() {
-        let mut params = pc("|OwnerIndex=3|IsNotAccesible=T|OwnerPartId=2|OwnerPartDisplayMode=1|GraphicallyLocked=T|IndexInSheet=5|");
+        let mut params = pc(
+            "|OwnerIndex=3|IsNotAccesible=T|OwnerPartId=2|OwnerPartDisplayMode=1|GraphicallyLocked=T|IndexInSheet=5|",
+        );
         let base = SchPrimitiveBase::from_params(&mut params).unwrap();
         params.assert_exhausted().unwrap();
 
@@ -2923,7 +3108,9 @@ mod tests {
 
     #[test]
     fn line_roundtrip() {
-        let mut params = pc("|OwnerIndex=0|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|LineWidth=1|LineStyle=2|LineStyleExt=1|UniqueID=ABC|");
+        let mut params = pc(
+            "|OwnerIndex=0|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|LineWidth=1|LineStyle=2|LineStyleExt=1|UniqueID=ABC|",
+        );
         let line = SchLine::from_params(&mut params).unwrap();
         params.assert_exhausted().unwrap();
 
@@ -2968,7 +3155,9 @@ mod tests {
 
     #[test]
     fn arc_with_frac_roundtrip() {
-        let mut params = pc("|Location.X=5|Location.X_Frac=25000|Location.Y=10|Radius=100|Radius_Frac=50000|StartAngle=45|EndAngle=270|LineWidth=2|");
+        let mut params = pc(
+            "|Location.X=5|Location.X_Frac=25000|Location.Y=10|Radius=100|Radius_Frac=50000|StartAngle=45|EndAngle=270|LineWidth=2|",
+        );
         let arc = SchArc::from_params(&mut params).unwrap();
         params.assert_exhausted().unwrap();
 
@@ -2988,7 +3177,9 @@ mod tests {
 
     #[test]
     fn implementation_roundtrip() {
-        let mut params = pc("|ModelName=SOIC|ModelType=PCBLIB|Description=SOP-8|IsCurrent=T|DatafileCount=1|ModelDatafile0=Lib.PcbLib|ModelDatafileEntity0=SOIC|ModelDatafileKind0=PCBLIB|");
+        let mut params = pc(
+            "|ModelName=SOIC|ModelType=PCBLIB|Description=SOP-8|IsCurrent=T|DatafileCount=1|ModelDatafile0=Lib.PcbLib|ModelDatafileEntity0=SOIC|ModelDatafileKind0=PCBLIB|",
+        );
         let imp = SchImplementation::from_params(&mut params).unwrap();
         params.assert_exhausted().unwrap();
 
@@ -3019,6 +3210,11 @@ mod tests {
             symbol_outer_edge: IeeeSymbol::NoSymbol,
             symbol_inside: IeeeSymbol::NoSymbol,
             symbol_outside: IeeeSymbol::NoSymbol,
+            symbol_inner_edge_present: true,
+            symbol_outer_edge_present: true,
+            symbol_inside_present: true,
+            symbol_outside_present: true,
+            symbol: None,
             description: String::new(),
             formal_type: StdLogicState::Uninitialized,
             electrical: PinElectricalType::Input,
@@ -3030,13 +3226,20 @@ mod tests {
             graphically_locked: false,
             owner_index_additional_list: false,
             pin_length: Coord::from_internal(3 * 100_000),
-            location: CoordPoint::new(Coord::from_internal(10 * 100_000), Coord::from_internal(20 * 100_000)),
+            location: CoordPoint::new(
+                Coord::from_internal(10 * 100_000),
+                Coord::from_internal(20 * 100_000),
+            ),
             color: Color::new(0x00800000),
             name: "A0".to_owned(),
             designator: "1".to_owned(),
             swap_id_pin: String::new(),
             swap_id_part: String::new(),
+            swap_id_pair: String::new(),
             default_value: String::new(),
+            spice_pin_name: String::new(),
+            hidden_net_name: String::new(),
+            unique_id: String::new(),
             // Sidecar fields (not serialized in binary pin format)
             pin_symbol_line_width: None,
             pin_package_length: String::new(),
@@ -3084,7 +3287,8 @@ mod tests {
         pin.is_not_accessible = true;
         pin.graphically_locked = true;
         pin.pin_length = Coord::from_internal(5 * 100_000);
-        pin.location = CoordPoint::new(Coord::from_internal(-10 * 100_000), Coord::from_internal(0));
+        pin.location =
+            CoordPoint::new(Coord::from_internal(-10 * 100_000), Coord::from_internal(0));
         pin.color = Color::new(0x000000FF);
         pin.name = "DATA".to_owned();
         pin.designator = "2".to_owned();
@@ -3121,9 +3325,11 @@ mod tests {
 
     #[test]
     fn serialize_record_line_roundtrip() {
-        use crate::block_stream::{parse_blocks, BlockFormat};
+        use crate::block_stream::{BlockFormat, parse_blocks};
 
-        let mut params = pc("|OwnerIndex=0|OwnerPartId=1|LineWidth=1|Color=128|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|");
+        let mut params = pc(
+            "|OwnerIndex=0|OwnerPartId=1|LineWidth=1|Color=128|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|",
+        );
         let line = SchLine::from_params(&mut params).unwrap();
         params.assert_exhausted().unwrap();
 
@@ -3148,13 +3354,16 @@ mod tests {
 
     #[test]
     fn serialize_record_pin_roundtrip() {
-        use crate::block_stream::{parse_blocks, BlockFormat};
+        use crate::block_stream::{BlockFormat, parse_blocks};
 
         let mut pin = make_test_pin();
         pin.electrical = PinElectricalType::Passive;
         pin.orientation = RotationBy90::Rotate180;
         pin.pin_length = Coord::from_internal(2 * 100_000);
-        pin.location = CoordPoint::new(Coord::from_internal(5 * 100_000), Coord::from_internal(-3 * 100_000));
+        pin.location = CoordPoint::new(
+            Coord::from_internal(5 * 100_000),
+            Coord::from_internal(-3 * 100_000),
+        );
         pin.name = "GND".to_owned();
         pin.designator = "4".to_owned();
 

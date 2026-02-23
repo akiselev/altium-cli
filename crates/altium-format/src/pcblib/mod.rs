@@ -10,11 +10,14 @@ use std::path::Path;
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
-use altium_format_types::{Color, Coord, CoordPoint, HoleType, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind, TCacheState, TextKind, V6Layer, V7Layer};
+use altium_format_types::{
+    Color, Coord, CoordPoint, HoleType, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle,
+    RegionKind, TCacheState, TextKind, V6Layer, V7Layer,
+};
 
 use crate::block_stream::iter_blocks;
 use crate::pcb_binary_stream::parse_pcb_section_header;
-use crate::pcb_file_header::{parse_pcb_file_header, PcbFileHeader};
+use crate::pcb_file_header::{PcbFileHeader, parse_pcb_file_header};
 use crate::pcblib::library::{
     PcbEmbeddedFontEntry, PcbLayerKindMapping, PcbLibComponentTocEntry, PcbLibModelEntry,
     PcbLibraryData, PcbPadViaLibraryConfig, PcbTextureEntry, parse_component_toc,
@@ -91,11 +94,12 @@ pub(crate) struct PcbTrack {
     pub(crate) end: CoordPoint,
     pub(crate) width: Coord,
     pub(crate) subpoly_index: u16,
+    // AD26+ extension fields (10 or 14 extra bytes)
     pub(crate) user_routed: bool,
     pub(crate) union_index: i32,
-    pub(crate) v7_layer: V7Layer,
+    pub(crate) track_kind: u8,
+    pub(crate) layer_enum_index: i32,
     pub(crate) keepout_restrictions: i32,
-    pub(crate) subnet_jumper: bool,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -106,6 +110,22 @@ pub(crate) struct PcbVia {
     pub(crate) hole_size: Coord,
     pub(crate) from_layer: V6Layer,
     pub(crate) to_layer: V6Layer,
+    // Extended fields (offset 31+, present when subrecord > 31 bytes)
+    pub(crate) thermal_relief_air_gap: Coord,
+    pub(crate) thermal_relief_conductor_count: u8,
+    pub(crate) thermal_relief_conductor_width: Coord,
+    pub(crate) solder_mask_expansion_front: Coord,
+    pub(crate) solder_mask_expansion_manual: bool,
+    pub(crate) via_mode: u8,
+    pub(crate) diameters_per_layer: [Coord; 32],
+    // Additional extended (offset 203+)
+    pub(crate) solder_mask_expansion_linked: bool,
+    pub(crate) solder_mask_expansion_back: Coord,
+    // Premium extended (offset 246+, AD26)
+    pub(crate) pos_tolerance: Coord,
+    pub(crate) neg_tolerance: Coord,
+    // Post-section-1 data (sections 2-5, consumed as raw bytes)
+    pub(crate) post_section_data: Vec<u8>,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -381,7 +401,10 @@ impl PcbLib {
 
     /// Returns the display names of all footprints in this library.
     pub fn footprint_names(&self) -> Vec<&str> {
-        self.footprints.iter().map(|fp| fp.display_name.as_str()).collect()
+        self.footprints
+            .iter()
+            .map(|fp| fp.display_name.as_str())
+            .collect()
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -409,11 +432,12 @@ impl PcbLib {
 
         // 3. Library/ storage
         let lib_header_data = doc.read_stream("/Library/Header")?;
-        let _lib_header_count = crate::pcb_binary_stream::parse_pcb_section_header(&lib_header_data)?;
+        let _lib_header_count =
+            crate::pcb_binary_stream::parse_pcb_section_header(&lib_header_data)?;
 
         let lib_data_raw = doc.read_stream("/Library/Data")?;
-        let (library, suffix_names) = parse_library_data(&lib_data_raw)
-            .context("parsing /Library/Data")?;
+        let (library, suffix_names) =
+            parse_library_data(&lib_data_raw).context("parsing /Library/Data")?;
 
         let lib_toc_header = doc.read_stream("/Library/ComponentParamsTOC/Header")?;
         let lib_toc_data = doc.read_stream("/Library/ComponentParamsTOC/Data")?;
@@ -454,7 +478,11 @@ impl PcbLib {
             let _ = doc.list_entries("/Library/LayerKindMapping")?;
             entries
         } else {
-            PcbLayerKindMapping { version: String::new(), hash: 0, entries: Vec::new() }
+            PcbLayerKindMapping {
+                version: String::new(),
+                hash: 0,
+                entries: Vec::new(),
+            }
         };
         let pad_via_library = if doc.exists("/Library/PadViaLibrary/Header") {
             let pvl_header = doc.read_stream("/Library/PadViaLibrary/Header")?;
@@ -734,7 +762,11 @@ mod tests {
             },
             component_toc: Vec::new(),
             model_entries: Vec::new(),
-            layer_kind_mapping: PcbLayerKindMapping { version: String::new(), hash: 0, entries: Vec::new() },
+            layer_kind_mapping: PcbLayerKindMapping {
+                version: String::new(),
+                hash: 0,
+                entries: Vec::new(),
+            },
             pad_via_library: None,
             embedded_fonts: Vec::new(),
             texture_entries: Vec::new(),

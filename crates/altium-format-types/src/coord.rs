@@ -78,7 +78,10 @@ impl Coord {
     /// Split into DXP integer + fractional parts using Euclidean division.
     /// Returns (integer_part, fractional_remainder) where 0 <= frac < DXP_BASE_UNIT.
     pub fn to_dxp_frac(self) -> (i32, i32) {
-        (self.0.div_euclid(Self::DXP_BASE_UNIT), self.0.rem_euclid(Self::DXP_BASE_UNIT))
+        (
+            self.0.div_euclid(Self::DXP_BASE_UNIT),
+            self.0.rem_euclid(Self::DXP_BASE_UNIT),
+        )
     }
 
     pub fn min(self, other: Self) -> Self {
@@ -156,7 +159,10 @@ impl CoordPoint {
     }
 
     pub fn zero() -> Self {
-        Self { x: Coord::ZERO, y: Coord::ZERO }
+        Self {
+            x: Coord::ZERO,
+            y: Coord::ZERO,
+        }
     }
 }
 
@@ -204,12 +210,28 @@ impl BoundingBox {
 
     pub fn union(&self, other: &Self) -> Self {
         let min = CoordPoint {
-            x: if self.min.x <= other.min.x { self.min.x } else { other.min.x },
-            y: if self.min.y <= other.min.y { self.min.y } else { other.min.y },
+            x: if self.min.x <= other.min.x {
+                self.min.x
+            } else {
+                other.min.x
+            },
+            y: if self.min.y <= other.min.y {
+                self.min.y
+            } else {
+                other.min.y
+            },
         };
         let max = CoordPoint {
-            x: if self.max.x >= other.max.x { self.max.x } else { other.max.x },
-            y: if self.max.y >= other.max.y { self.max.y } else { other.max.y },
+            x: if self.max.x >= other.max.x {
+                self.max.x
+            } else {
+                other.max.x
+            },
+            y: if self.max.y >= other.max.y {
+                self.max.y
+            } else {
+                other.max.y
+            },
         };
         Self { min, max }
     }

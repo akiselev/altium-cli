@@ -4,11 +4,11 @@
 //! Each record: u8 object_id + u32 LE record_length + payload bytes.
 //! The high byte of record_length may contain flags; mask with SIZE_MASK.
 
-use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
 use altium_format_types::PcbObjectId;
+use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
 
-use crate::binary_io::BinaryReader;
 use crate::Result;
+use crate::binary_io::BinaryReader;
 
 /// A raw PCB binary record before type dispatch.
 #[derive(Debug)]
@@ -50,8 +50,8 @@ pub(crate) fn parse_pcb_section_header(header_data: &[u8]) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
+    use crate::binary_io::BinaryWriter;
 
     #[test]
     fn parse_single_record() {
@@ -147,6 +147,9 @@ mod tests {
         w.write_u8(0xFF); // extra byte
         let data = w.finish();
         let err = parse_pcb_section_header(&data).unwrap_err();
-        assert!(matches!(err, AltiumFormatError::UnexpectedTrailingData { .. }));
+        assert!(matches!(
+            err,
+            AltiumFormatError::UnexpectedTrailingData { .. }
+        ));
     }
 }

@@ -1,9 +1,9 @@
 use altium_format_types::V7Layer;
 
-use crate::binary_io::BinaryReader;
-use crate::pcblib::primitives::common::parse_common_header;
-use crate::pcblib::PcbFill;
 use crate::Result;
+use crate::binary_io::BinaryReader;
+use crate::pcblib::PcbFill;
+use crate::pcblib::primitives::common::parse_common_header;
 
 /// Parses a PcbFill primitive from its single subrecord (37 or 50 bytes).
 ///
@@ -53,9 +53,9 @@ pub(crate) fn parse_fill(data: &[u8]) -> Result<PcbFill> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint};
-    use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
+    use crate::binary_io::BinaryWriter;
+    use altium_format_types::{Coord, CoordPoint};
 
     fn write_common_header(w: &mut BinaryWriter) {
         w.write_u8(1);
@@ -97,14 +97,20 @@ mod tests {
     fn parse_fill_ad26_50_bytes() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
-        w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
+        w.write_coord_point(CoordPoint::new(
+            Coord::from_internal(0),
+            Coord::from_internal(0),
+        ));
+        w.write_coord_point(CoordPoint::new(
+            Coord::from_internal(0),
+            Coord::from_internal(0),
+        ));
         w.write_f64_le(90.0);
         // AD26+ extension (13 bytes)
-        w.write_u8(0);             // user_routed = false
-        w.write_i32_le(0);         // union_index = 0
+        w.write_u8(0); // user_routed = false
+        w.write_i32_le(0); // union_index = 0
         w.write_u32_le(0x01030006); // v7_layer
-        w.write_i32_le(0);         // keepout_restrictions = 0
+        w.write_i32_le(0); // keepout_restrictions = 0
         let data = w.finish();
         assert_eq!(data.len(), 50);
         let fill = parse_fill(&data).unwrap();
@@ -119,13 +125,19 @@ mod tests {
     fn parse_fill_ad26_keepout_restrictions() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
-        w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
+        w.write_coord_point(CoordPoint::new(
+            Coord::from_internal(0),
+            Coord::from_internal(0),
+        ));
+        w.write_coord_point(CoordPoint::new(
+            Coord::from_internal(0),
+            Coord::from_internal(0),
+        ));
         w.write_f64_le(0.0);
-        w.write_u8(0);             // user_routed
-        w.write_i32_le(0);         // union_index
+        w.write_u8(0); // user_routed
+        w.write_i32_le(0); // union_index
         w.write_u32_le(0x0103000d); // v7_layer
-        w.write_i32_le(0x1F);      // keepout_restrictions = 31
+        w.write_i32_le(0x1F); // keepout_restrictions = 31
         let data = w.finish();
         assert_eq!(data.len(), 50);
         let fill = parse_fill(&data).unwrap();
@@ -137,8 +149,14 @@ mod tests {
     fn parse_fill_with_extra_trailing_bytes_errors() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
-        w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
-        w.write_coord_point(CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)));
+        w.write_coord_point(CoordPoint::new(
+            Coord::from_internal(0),
+            Coord::from_internal(0),
+        ));
+        w.write_coord_point(CoordPoint::new(
+            Coord::from_internal(0),
+            Coord::from_internal(0),
+        ));
         w.write_f64_le(0.0);
         w.write_u8(0);
         w.write_i32_le(0);
@@ -148,13 +166,19 @@ mod tests {
         let data = w.finish();
         assert_eq!(data.len(), 51);
         let result = parse_fill(&data);
-        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::UnexpectedTrailingData { .. })
+        ));
     }
 
     #[test]
     fn truncated_fill_returns_error() {
         let data = [0u8; 4];
         let result = parse_fill(&data);
-        assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::BinaryReadPastEnd { .. })
+        ));
     }
 }

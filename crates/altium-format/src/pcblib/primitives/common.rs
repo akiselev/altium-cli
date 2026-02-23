@@ -1,8 +1,8 @@
 use altium_format_types::{PcbFlags, V6Layer};
 
+use crate::Result;
 use crate::binary_io::BinaryReader;
 use crate::pcblib::PcbPrimitiveCommon;
-use crate::Result;
 
 pub(crate) fn parse_common_header(reader: &mut BinaryReader) -> Result<PcbPrimitiveCommon> {
     let layer_byte = reader.read_u8()?;
@@ -33,13 +33,13 @@ mod tests {
     #[test]
     fn parse_common_header_known_bytes() {
         let mut w = BinaryWriter::new();
-        w.write_u8(1);  // layer = TopCopper (V6Layer::TopLayer)
-        w.write_u8(0);  // pad_byte
+        w.write_u8(1); // layer = TopCopper (V6Layer::TopLayer)
+        w.write_u8(0); // pad_byte
         w.write_u16_le(0x0000); // flags
         w.write_i32_le(-1); // net_index = -1 (no net)
         w.write_u16_le(0xFFFF); // polygon_index
         w.write_u16_le(0x0000); // component_index
-        w.write_u8(0);  // unknown
+        w.write_u8(0); // unknown
         let data = w.finish();
         let mut reader = BinaryReader::new(&data);
         let common = parse_common_header(&mut reader).unwrap();

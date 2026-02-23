@@ -59,9 +59,7 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
 
 // Parses the Storage-style block stream: block 0 = header params, blocks 1..N = entries.
 // Header params (RECORD, Weight) are consumed internally; callers receive only the entries.
-pub(crate) fn parse_embedded_object_stream(
-    blocks: &[Block],
-) -> Result<Vec<EmbeddedObject>> {
+pub(crate) fn parse_embedded_object_stream(blocks: &[Block]) -> Result<Vec<EmbeddedObject>> {
     if blocks.is_empty() {
         return Err(AltiumFormatError::InvalidEmbeddedObject(
             "empty block list for embedded object stream".to_owned(),
@@ -82,8 +80,10 @@ pub(crate) fn parse_embedded_object_stream(
         .remove_optional::<usize>(WEIGHT)?
         .unwrap_or(blocks.len().saturating_sub(1));
     params.assert_exhausted()?;
-    let entries: Result<Vec<EmbeddedObject>> =
-        blocks[1..].iter().map(|b| parse_embedded_object(&b.data)).collect();
+    let entries: Result<Vec<EmbeddedObject>> = blocks[1..]
+        .iter()
+        .map(|b| parse_embedded_object(&b.data))
+        .collect();
     let entries = entries?;
     if entries.len() != weight {
         return Err(AltiumFormatError::RecordCountMismatch {
@@ -97,7 +97,7 @@ pub(crate) fn parse_embedded_object_stream(
 
 /// Compresses data using zlib (standard deflate with zlib header).
 pub(crate) fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::best());
     enc.write_all(data).map_err(|e| {
         AltiumFormatError::InvalidEmbeddedObject(format!("zlib compress failed: {e}"))
     })?;
@@ -201,8 +201,14 @@ mod tests {
         };
         let entry1 = make_envelope("e1", b"abc");
         let entry2 = make_envelope("e2", b"\x01\x02");
-        let block1 = Block { format: BlockFormat::Binary, data: entry1 };
-        let block2 = Block { format: BlockFormat::Binary, data: entry2 };
+        let block1 = Block {
+            format: BlockFormat::Binary,
+            data: entry1,
+        };
+        let block2 = Block {
+            format: BlockFormat::Binary,
+            data: entry2,
+        };
         let blocks = vec![header_block, block1, block2];
         let entries = parse_embedded_object_stream(&blocks).unwrap();
         assert_eq!(entries.len(), 2);
@@ -220,7 +226,10 @@ mod tests {
             data: header_data.to_vec(),
         };
         let entry = make_envelope("e1", b"x");
-        let block1 = Block { format: BlockFormat::Binary, data: entry };
+        let block1 = Block {
+            format: BlockFormat::Binary,
+            data: entry,
+        };
         let blocks = vec![header_block, block1];
         let err = parse_embedded_object_stream(&blocks).unwrap_err();
         assert!(matches!(err, AltiumFormatError::RecordCountMismatch { .. }));

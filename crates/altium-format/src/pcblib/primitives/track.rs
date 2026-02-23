@@ -1,11 +1,9 @@
-use altium_format_types::V7Layer;
-
-use crate::binary_io::BinaryReader;
-use crate::pcblib::primitives::common::parse_common_header;
-use crate::pcblib::PcbTrack;
 use crate::Result;
+use crate::binary_io::BinaryReader;
+use crate::pcblib::PcbTrack;
+use crate::pcblib::primitives::common::parse_common_header;
 
-/// Parses a PcbTrack primitive from its single subrecord (35-49 bytes).
+/// Parses a PcbTrack primitive from its single subrecord (35, 45, or 49 bytes).
 ///
 /// Core layout (always present, 35 bytes):
 ///   0-12:  common header (13 bytes)
@@ -14,12 +12,14 @@ use crate::Result;
 ///   29-32: width (Coord, 4 bytes)
 ///   33-34: subpoly_index (u16, 2 bytes)
 ///
-/// Extended (AD26+, 49 bytes):
+/// AD26 without keepout (45 bytes, +10):
 ///   35:    user_routed (u8→bool, 1 byte)
 ///   36-39: union_index (i32, 4 bytes)
-///   40-43: v7_layer (u32→V7Layer, 4 bytes)
-///   44-47: keepout_restrictions (i32, 4 bytes)
-///   48:    subnet_jumper (u8→bool, 1 byte)
+///   40:    track_kind (u8, 1 byte)
+///   41-44: layer_enum_index (i32, 4 bytes)
+///
+/// AD26 full (49 bytes, +14):
+///   45-48: keepout_restrictions (i32, 4 bytes)
 pub(crate) fn parse_track(data: &[u8]) -> Result<PcbTrack> {
     let mut reader = BinaryReader::new(data);
     let common = parse_common_header(&mut reader)?;
@@ -28,17 +28,27 @@ pub(crate) fn parse_track(data: &[u8]) -> Result<PcbTrack> {
     let width = reader.read_coord()?;
     let subpoly_index = reader.read_u16_le()?;
 
-    // Extended fields present in AD26+ format (14 extra bytes).
-    let (user_routed, union_index, v7_layer, keepout_restrictions, subnet_jumper) =
-        if reader.remaining() > 0 {
+    // AD26+ extension: 10 bytes (no keepout) or 14 bytes (with keepout).
+    let (user_routed, union_index, track_kind, layer_enum_index, keepout_restrictions) =
+        if reader.remaining() >= 10 {
             let user_routed = reader.read_u8()? != 0;
             let union_index = reader.read_i32_le()?;
-            let v7_layer = V7Layer::new(reader.read_u32_le()?);
-            let keepout_restrictions = reader.read_i32_le()?;
-            let subnet_jumper = reader.read_u8()? != 0;
-            (user_routed, union_index, v7_layer, keepout_restrictions, subnet_jumper)
+            let track_kind = reader.read_u8()?;
+            let layer_enum_index = reader.read_i32_le()?;
+            let keepout_restrictions = if reader.remaining() >= 4 {
+                reader.read_i32_le()?
+            } else {
+                0
+            };
+            (
+                user_routed,
+                union_index,
+                track_kind,
+                layer_enum_index,
+                keepout_restrictions,
+            )
         } else {
-            (false, 0, V7Layer::default(), 0, false)
+            (false, 0, 0, 0, 0)
         };
 
     reader.assert_exhausted()?;
@@ -50,9 +60,9 @@ pub(crate) fn parse_track(data: &[u8]) -> Result<PcbTrack> {
         subpoly_index,
         user_routed,
         union_index,
-        v7_layer,
+        track_kind,
+        layer_enum_index,
         keepout_restrictions,
-        subnet_jumper,
         unique_id: None,
     })
 }
@@ -60,9 +70,9 @@ pub(crate) fn parse_track(data: &[u8]) -> Result<PcbTrack> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::{Coord, CoordPoint};
-    use crate::binary_io::BinaryWriter;
     use crate::AltiumFormatError;
+    use crate::binary_io::BinaryWriter;
+    use altium_format_types::{Coord, CoordPoint};
 
     fn write_common_header(w: &mut BinaryWriter) {
         w.write_u8(1);
@@ -101,60 +111,77 @@ mod tests {
         assert_eq!(track.end.y.to_internal(), 40_000);
         assert_eq!(track.width.to_internal(), 5_000);
         assert_eq!(track.subpoly_index, 0xFFFF);
-        // Extended fields default when not present
+        // Extension fields default when not present
         assert!(!track.user_routed);
         assert_eq!(track.union_index, 0);
-        assert_eq!(track.v7_layer.raw(), 0);
+        assert_eq!(track.track_kind, 0);
+        assert_eq!(track.layer_enum_index, 0);
         assert_eq!(track.keepout_restrictions, 0);
-        assert!(!track.subnet_jumper);
+    }
+
+    #[test]
+    fn parse_track_ad26_45_bytes() {
+        let mut w = BinaryWriter::new();
+        make_track_core(&mut w);
+        w.write_u8(1); // user_routed = true
+        w.write_i32_le(42); // union_index
+        w.write_u8(0); // track_kind
+        w.write_i32_le(0x0103_0006); // layer_enum_index
+        let data = w.finish();
+        assert_eq!(data.len(), 45);
+        let track = parse_track(&data).unwrap();
+        assert!(track.user_routed);
+        assert_eq!(track.union_index, 42);
+        assert_eq!(track.track_kind, 0);
+        assert_eq!(track.layer_enum_index, 0x0103_0006);
+        assert_eq!(track.keepout_restrictions, 0);
     }
 
     #[test]
     fn parse_track_ad26_49_bytes() {
         let mut w = BinaryWriter::new();
         make_track_core(&mut w);
-        w.write_u8(1);             // user_routed = true
-        w.write_i32_le(42);        // union_index
-        w.write_u32_le(0x0102_0021); // v7_layer (TopOverlay)
-        w.write_i32_le(7);         // keepout_restrictions
-        w.write_u8(1);             // subnet_jumper = true
+        w.write_u8(0); // user_routed = false
+        w.write_i32_le(0); // union_index
+        w.write_u8(0); // track_kind
+        w.write_i32_le(0x0103_000d); // layer_enum_index (keepout layer)
+        w.write_i32_le(0x1F); // keepout_restrictions = 31
         let data = w.finish();
         assert_eq!(data.len(), 49);
         let track = parse_track(&data).unwrap();
-        assert_eq!(track.start.x.to_internal(), 10_000);
-        assert_eq!(track.start.y.to_internal(), 20_000);
-        assert_eq!(track.end.x.to_internal(), 30_000);
-        assert_eq!(track.end.y.to_internal(), 40_000);
-        assert_eq!(track.width.to_internal(), 5_000);
-        assert_eq!(track.subpoly_index, 0xFFFF);
-        assert!(track.user_routed);
-        assert_eq!(track.union_index, 42);
-        assert_eq!(track.v7_layer.raw(), 0x0102_0021);
-        assert_eq!(track.keepout_restrictions, 7);
-        assert!(track.subnet_jumper);
-        assert!(track.unique_id.is_none());
+        assert!(!track.user_routed);
+        assert_eq!(track.union_index, 0);
+        assert_eq!(track.track_kind, 0);
+        assert_eq!(track.layer_enum_index, 0x0103_000d);
+        assert_eq!(track.keepout_restrictions, 0x1F);
     }
 
     #[test]
     fn parse_track_with_trailing_bytes_errors() {
         let mut w = BinaryWriter::new();
         make_track_core(&mut w);
-        w.write_u8(0);             // user_routed
-        w.write_i32_le(0);         // union_index
-        w.write_u32_le(0);         // v7_layer
-        w.write_i32_le(0);         // keepout_restrictions
-        w.write_u8(0);             // subnet_jumper
-        w.write_u8(0xAA);          // extra trailing byte
+        w.write_u8(0); // user_routed
+        w.write_i32_le(0); // union_index
+        w.write_u8(0); // track_kind
+        w.write_i32_le(0); // layer_enum_index
+        w.write_i32_le(0); // keepout_restrictions
+        w.write_u8(0xAA); // extra trailing byte
         let data = w.finish();
         assert_eq!(data.len(), 50);
         let result = parse_track(&data);
-        assert!(matches!(result, Err(AltiumFormatError::UnexpectedTrailingData { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::UnexpectedTrailingData { .. })
+        ));
     }
 
     #[test]
     fn truncated_track_returns_error() {
         let data = [0u8; 5];
         let result = parse_track(&data);
-        assert!(matches!(result, Err(AltiumFormatError::BinaryReadPastEnd { .. })));
+        assert!(matches!(
+            result,
+            Err(AltiumFormatError::BinaryReadPastEnd { .. })
+        ));
     }
 }
