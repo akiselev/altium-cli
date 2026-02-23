@@ -102,13 +102,13 @@ The `altium cfb` subcommand group provides low-level CFB container inspection to
 for debugging serialization roundtrip failures. These operate directly on the CFB
 container using the `cfb` crate — no `altium-format` imports.
 
-| Command | Purpose |
-|---------|---------|
-| `altium cfb ls <file>` | List streams/storages (tree view, or `--flat` for grep-friendly) |
-| `altium cfb dump <file> <stream>` | Hex+ASCII dump (`--blocks` annotates block boundaries and decodes text) |
-| `altium cfb blocks <file> <stream>` | Block-level summary (`--block N` for full detail on one block) |
-| `altium cfb diff <file1> <file2>` | Stream-by-stream comparison (`--blocks` for block-level, `--stream` to filter) |
-| `altium cfb cat <file> <stream>` | Raw bytes to stdout for piping (`\| xxd`, `\| wc -c`) |
+| Command                             | Purpose                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| `altium cfb ls <file>`              | List streams/storages (tree view, or `--flat` for grep-friendly)               |
+| `altium cfb dump <file> <stream>`   | Hex+ASCII dump (`--blocks` annotates block boundaries and decodes text)        |
+| `altium cfb blocks <file> <stream>` | Block-level summary (`--block N` for full detail on one block)                 |
+| `altium cfb diff <file1> <file2>`   | Stream-by-stream comparison (`--blocks` for block-level, `--stream` to filter) |
+| `altium cfb cat <file> <stream>`    | Raw bytes to stdout for piping (`\| xxd`, `\| wc -c`)                          |
 
 Example workflow for debugging a roundtrip failure:
 ```bash
@@ -164,3 +164,14 @@ Reverse-engineered documentation for Altium Designer binary file formats. **Star
 - **SchLib pin sidecars**: 9 streams per component (PinFrac → PinFunctionData). PinWideText is authoritative over PinDesc
 - **RECORD >= 256**: Written as `RECORD=254` + `RECORDEX=<actual_value>`
 - **Parameter keys**: Case-insensitive, first occurrence wins. `%UTF8%` prefix for Unicode keys. Byte 0x8E escapes `|` (single = pipe, double = literal 0x8E). `¦` (broken bar) also represents `|` in UTF-16LE/string contexts. `=` is never escaped (parser splits on first `=` only)
+
+
+# Test files
+
+Test files for each document type can be found in data/<document type>/ but they must be cloned from their respective repositories if they're missing:
+
+* data/schlib/ - https://github.com/akiselev/altium-cli-test-schlib
+* data/pcblib/ - https://github.com/akiselev/altium-cli-test-pcblib
+* data/intlib/ - https://github.com/akiselev/altium-cli-test-intlib
+* data/schdoc/ - https://github.com/akiselev/altium-cli-test-schdoc
+* data/pcbdoc/ - https://github.com/akiselev/altium-cli-test-pcbdoc
