@@ -8,7 +8,7 @@
 use std::io::{Read, Write};
 
 use altium_format_types::constants::parsing::{BLOCK_SIZE_MASK, INSTRUCTION_BINARY};
-use altium_format_types::constants::record_structure::HEADER;
+use altium_format_types::constants::record_structure::{HEADER, RECORD, WEIGHT};
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -74,10 +74,10 @@ pub(crate) fn parse_embedded_object_stream(
     }
     let mut params = ParameterCollection::from_bytes(&blocks[0].data)?;
     // RECORD=0 sentinel may appear on the header block; consume it without dispatch.
-    params.remove_optional::<i32>("RECORD")?;
+    params.remove_optional::<i32>(RECORD)?;
     // HEADER=<stream_name> appears in pin sidecar stream headers; consume without checking.
     params.remove_optional::<String>(HEADER)?;
-    let weight: usize = params.remove_required("Weight")?;
+    let weight: usize = params.remove_required(WEIGHT)?;
     params.assert_exhausted()?;
     let entries: Result<Vec<EmbeddedObject>> =
         blocks[1..].iter().map(|b| parse_embedded_object(&b.data)).collect();
@@ -125,9 +125,9 @@ pub(crate) fn serialize_embedded_object_stream(
 ) -> Result<Vec<u8>> {
     // Build header params
     let mut params = ParameterCollection::new();
-    params.insert("RECORD", "0".to_owned());
+    params.insert(RECORD, "0".to_owned());
     params.insert(HEADER, header_name.to_owned());
-    params.insert("Weight", entries.len().to_string());
+    params.insert(WEIGHT, entries.len().to_string());
     let header_bytes = params.to_bytes();
 
     let mut stream = write_text_block(&header_bytes);

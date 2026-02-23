@@ -6,7 +6,7 @@
 //! Insertion order is preserved (IndexMap) for deterministic serialization.
 use indexmap::IndexMap;
 use altium_format_types::{Coord, CoordPoint};
-use altium_format_types::constants::parsing::C_BASE_UNIT;
+use altium_format_types::constants::parsing::{C_BASE_UNIT, C_SCH_BROKEN_BAR, C_SCH_UTF8_PREFIX};
 
 use crate::param_value::{FromParamValue, ToParamValue};
 use crate::{AltiumFormatError, Result};
@@ -85,7 +85,7 @@ impl ParameterCollection {
             if had_unmappable {
                 // Write |%UTF8%KEY= as ASCII, then value as raw UTF-8
                 out.push(b'|');
-                out.extend_from_slice(b"%UTF8%");
+                out.extend_from_slice(C_SCH_UTF8_PREFIX.as_bytes());
                 out.extend_from_slice(key.as_bytes());
                 out.push(b'=');
                 out.extend_from_slice(escaped_value.as_bytes());
@@ -142,8 +142,8 @@ impl ParameterCollection {
             let raw_value = &segment[eq_pos + 1..];
             let (key_str, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(raw_key);
             let key_str = key_str.into_owned();
-            let value_str = if key_str.starts_with("%UTF8%") {
-                let stripped_key = key_str[6..].to_owned();
+            let value_str = if key_str.starts_with(C_SCH_UTF8_PREFIX) {
+                let stripped_key = key_str[C_SCH_UTF8_PREFIX.len()..].to_owned();
                 let value = std::str::from_utf8(raw_value).map_err(|e| {
                     AltiumFormatError::InvalidParamValue {
                         key: stripped_key.clone(),
@@ -369,7 +369,7 @@ fn unescape_param_value(s: &str) -> String {
     let s = s.replace("\u{017D}\u{017D}", "\x00");  // placeholder for literal Ž
     let s = s.replace('\u{017D}', "|");
     let s = s.replace('\x00', "\u{017D}");           // restore literal Ž (0x8E in Windows-1252)
-    let s = s.replace('\u{00a6}', "|");               // broken bar → pipe
+    let s = s.replace(C_SCH_BROKEN_BAR, "|");            // broken bar → pipe
     s.replace("[]", "|").replace("{}", "=")
 }
 

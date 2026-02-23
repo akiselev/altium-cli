@@ -71,6 +71,41 @@ pub const PIN_CONGLOMERATE_GRAPHICALLY_LOCKED: u8 = 0x40;
 /// PinConglomerate flag: OwnerIndexAdditionalList (bit 7 — OwnerIndex refers to Additional stream).
 pub const PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST: u8 = 0x80;
 
+// ---------------------------------------------------------------------------
+// Pin binary code (SchLib binary record format)
+// ---------------------------------------------------------------------------
+
+/// Binary record code identifying a pin record in SchLib binary format.
+///
+/// When a binary block's first byte matches this code, the block contains a
+/// packed binary pin structure (as opposed to pipe-delimited text parameters).
+///
+/// Corresponds to `TObjectId.ePin => 2` in `SchDataUtils.GetBinaryCodeByObjectId`.
+pub const PIN_BINARY_CODE: u8 = 0x02;
+
+// ---------------------------------------------------------------------------
+// PinTextData positioning bitmask values
+// ---------------------------------------------------------------------------
+//
+// These bitmasks apply to the flags byte in the PinTextData sidecar stream.
+// The same layout is used for both pin name and pin designator positioning.
+// See `ReadPinTextDataFromStream` / `WritePinTextDataToStream` in .NET source.
+
+/// Position mode custom flag (bit 0): 1 = custom position, 0 = default.
+pub const PIN_TEXT_POS_CUSTOM: u8 = 0x01;
+
+/// Rotation anchor flag (bit 1): 1 = component, 0 = pin. Only meaningful when position is custom.
+pub const PIN_TEXT_ROT_ANCHOR: u8 = 0x02;
+
+/// Rotation relative mask: bits [3:2], a TRotationBy90 value (0°, 90°, 180°, 270°).
+pub const PIN_TEXT_ROT_REL_MASK: u8 = 0x0C;
+
+/// Shift for extracting/placing the rotation relative field from the flags byte.
+pub const PIN_TEXT_ROT_REL_SHIFT: u32 = 2;
+
+/// Font mode custom flag (bit 4): 1 = custom font/color, 0 = default.
+pub const PIN_TEXT_FONT_CUSTOM: u8 = 0x10;
+
 /// Length of pin line in DXP coordinate units.
 ///
 /// **Wire type:** coord (i32)

@@ -1,6 +1,8 @@
 //! Layer 3 stream parser for PCB binary file headers (Format E).
 //! Used by PcbDoc FileHeader, FileHeaderSix, and PcbLib FileHeader.
 
+use altium_format_types::constants::streams::FILE_HEADER;
+
 use crate::binary_io::BinaryReader;
 use crate::{AltiumFormatError, Result};
 
@@ -58,7 +60,7 @@ pub(crate) fn parse_pcb_legacy_header(data: &[u8]) -> Result<String> {
     let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(bytes);
     if had_errors {
         return Err(AltiumFormatError::InvalidParamValue {
-            key: "FileHeader".to_owned(),
+            key: FILE_HEADER.to_owned(),
             detail: "UTF-16LE decode error in legacy PCB header".to_owned(),
         });
     }

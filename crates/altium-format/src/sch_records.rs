@@ -40,10 +40,10 @@ use altium_format_types::{
         },
         parsing::C_BASE_UNIT,
         pin::{
-            PIN_COLOR, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED, PIN_CONGLOMERATE_IS_HIDDEN,
-            PIN_CONGLOMERATE_NOT_ACCESSIBLE, PIN_CONGLOMERATE_ORIENTATION_MASK,
-            PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST, PIN_CONGLOMERATE_SHOW_DESIGNATOR,
-            PIN_CONGLOMERATE_SHOW_NAME,
+            PIN_BINARY_CODE, PIN_COLOR, PIN_CONGLOMERATE_GRAPHICALLY_LOCKED,
+            PIN_CONGLOMERATE_IS_HIDDEN, PIN_CONGLOMERATE_NOT_ACCESSIBLE,
+            PIN_CONGLOMERATE_ORIENTATION_MASK, PIN_CONGLOMERATE_OWNER_INDEX_ADDITIONAL_LIST,
+            PIN_CONGLOMERATE_SHOW_DESIGNATOR, PIN_CONGLOMERATE_SHOW_NAME,
         },
         record_structure::{
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID,
@@ -234,7 +234,7 @@ pub(crate) fn parse_binary_pin(data: &[u8]) -> Result<SchPin> {
     let mut r = BinaryReader::new(data);
 
     let binary_code = r.read_u8()?;
-    if binary_code != 0x02 {
+    if binary_code != PIN_BINARY_CODE {
         return Err(AltiumFormatError::UnknownBinaryCode(binary_code));
     }
 
@@ -999,7 +999,7 @@ fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
 pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
     let mut w = BinaryWriter::new();
 
-    w.write_u8(0x02); // binary_code
+    w.write_u8(PIN_BINARY_CODE);
     w.write_i32_le(pin.owner_index);
     w.write_i16_le(pin.owner_part_id as i16);
     w.write_u8(pin.owner_part_display_mode);

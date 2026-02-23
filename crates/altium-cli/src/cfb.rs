@@ -3,6 +3,9 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use altium_format_types::constants::parsing::{
+    BLOCK_FLAG_BINARY, BLOCK_FLAG_SHIFT, BLOCK_SIZE_MASK,
+};
 use clap::{Args, Subcommand};
 
 #[derive(Subcommand)]
@@ -82,10 +85,6 @@ pub struct CatArgs {
 }
 
 // ── Block parsing ────────────────────────────────────────────────────────────
-
-const BLOCK_SIZE_MASK: u32 = 0x00FF_FFFF;
-const BLOCK_FLAG_SHIFT: u32 = 24;
-const BLOCK_FLAG_BINARY: u8 = 0x01;
 
 struct ParsedBlock<'a> {
     index: usize,

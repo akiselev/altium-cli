@@ -12,9 +12,11 @@ use altium_format_types::constants::component::{
 use altium_format_types::constants::file_headers::SCH_LIBRARY_BINARY_HEADER_V50;
 use altium_format_types::constants::parsing::C_BASE_UNIT;
 use altium_format_types::constants::pin::{
-    DEF_VALUE, PAIR_SWAP_ID, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
+    DEF_VALUE, PAIR_SWAP_ID, PIN_BINARY_CODE, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
     PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY, PIN_PROPAGATION_DELAY as PIN_PROPAGATION_DELAY_KEY,
-    PIN_SELECTED_FUNCTION, PIN_SELECTED_FUNCTIONS_COUNT, SWAP_ID, SWAP_ID_PART, SYMBOL_LINE_WIDTH,
+    PIN_SELECTED_FUNCTION, PIN_SELECTED_FUNCTIONS_COUNT, PIN_TEXT_FONT_CUSTOM, PIN_TEXT_POS_CUSTOM,
+    PIN_TEXT_ROT_ANCHOR, PIN_TEXT_ROT_REL_MASK, PIN_TEXT_ROT_REL_SHIFT, SWAP_ID, SWAP_ID_PART,
+    SYMBOL_LINE_WIDTH,
 };
 use altium_format_types::constants::record_structure::{HEADER, KEY_COUNT, RECORD, RECORD_EX, SECTION_KEY, WEIGHT};
 use altium_format_types::constants::record_structure::ALWAYS_SHOW_CD;
@@ -268,9 +270,9 @@ fn dispatch_record(block: &Block) -> Result<SchRecord> {
             }
             let code = block.data[0];
             match code {
-                0x02 => parse_binary_pin(&block.data)
+                PIN_BINARY_CODE => parse_binary_pin(&block.data)
                     .map(SchRecord::Pin)
-                    .context("binary pin (code=0x02)"),
+                    .context("binary pin"),
                 _ => Err(AltiumFormatError::UnknownBinaryCode(code)),
             }
         }
@@ -516,11 +518,11 @@ fn merge_pin_text_data(
         // Each entry has two consecutive variable-length binary structs: name then designator
         let mut r = BinaryReader::new(&entry.inner_data);
         let name_flags = r.read_u8()?;
-        let name_pos_custom = (name_flags & 0x01) != 0;
-        let name_rot_anchor = (name_flags & 0x02) != 0;
-        let name_rot_rel_raw = (name_flags >> 2) & 0x03;
+        let name_pos_custom = (name_flags & PIN_TEXT_POS_CUSTOM) != 0;
+        let name_rot_anchor = (name_flags & PIN_TEXT_ROT_ANCHOR) != 0;
+        let name_rot_rel_raw = (name_flags & PIN_TEXT_ROT_REL_MASK) >> PIN_TEXT_ROT_REL_SHIFT;
         let name_rot_rel = RotationBy90::try_from(name_rot_rel_raw)?;
-        let name_font_custom = (name_flags & 0x10) != 0;
+        let name_font_custom = (name_flags & PIN_TEXT_FONT_CUSTOM) != 0;
         let name_margin = if name_pos_custom { Some(Coord::from_internal(r.read_i32_le()?)) } else { None };
         let (name_font_id, name_color) = if name_font_custom {
             (Some(r.read_i16_le()?), Some(Color::new(r.read_i32_le()?)))
@@ -529,11 +531,11 @@ fn merge_pin_text_data(
         };
 
         let desig_flags = r.read_u8()?;
-        let desig_pos_custom = (desig_flags & 0x01) != 0;
-        let desig_rot_anchor = (desig_flags & 0x02) != 0;
-        let desig_rot_rel_raw = (desig_flags >> 2) & 0x03;
+        let desig_pos_custom = (desig_flags & PIN_TEXT_POS_CUSTOM) != 0;
+        let desig_rot_anchor = (desig_flags & PIN_TEXT_ROT_ANCHOR) != 0;
+        let desig_rot_rel_raw = (desig_flags & PIN_TEXT_ROT_REL_MASK) >> PIN_TEXT_ROT_REL_SHIFT;
         let desig_rot_rel = RotationBy90::try_from(desig_rot_rel_raw)?;
-        let desig_font_custom = (desig_flags & 0x10) != 0;
+        let desig_font_custom = (desig_flags & PIN_TEXT_FONT_CUSTOM) != 0;
         let desig_margin = if desig_pos_custom { Some(Coord::from_internal(r.read_i32_le()?)) } else { None };
         let (desig_font_id, desig_color) = if desig_font_custom {
             (Some(r.read_i16_le()?), Some(Color::new(r.read_i32_le()?)))
@@ -858,10 +860,10 @@ fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinText
         }
     };
     let mut flags: u8 = 0;
-    if data.position_mode_custom { flags |= 0x01; }
-    if data.rotation_anchor_component { flags |= 0x02; }
-    flags |= (data.rotation_relative as u8 & 0x03) << 2;
-    if data.font_mode_custom { flags |= 0x10; }
+    if data.position_mode_custom { flags |= PIN_TEXT_POS_CUSTOM; }
+    if data.rotation_anchor_component { flags |= PIN_TEXT_ROT_ANCHOR; }
+    flags |= ((data.rotation_relative as u8) << PIN_TEXT_ROT_REL_SHIFT) & PIN_TEXT_ROT_REL_MASK;
+    if data.font_mode_custom { flags |= PIN_TEXT_FONT_CUSTOM; }
     w.write_u8(flags);
     if data.position_mode_custom {
         w.write_i32_le(data.custom_position_margin.map_or(0, |c| c.to_internal()));

@@ -29,6 +29,7 @@ version = "0.1.8"
 dependencies = [
  "altium-format",
  "altium-format-ops",
+ "altium-format-types",
  "anyhow",
  "cfb",
  "clap",
