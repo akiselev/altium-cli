@@ -96,12 +96,13 @@ The SchComponent record has additional fields in SchDoc vs SchLib:
 | `DESIGNITEMID` | Present | Absent |
 | `ALLPINCOUNT` | Present | Absent |
 | `NOTUSEDBTABLENAME` | Present | Absent |
-| `ORIENTATION` | Integer 0-3 (rotation) | Bitmask (bit 0 = ROTATED, bit 1 = FLIPPED) |
+| `ORIENTATION` | Integer 0-3 (RotationBy90) | Integer 0-3 (RotationBy90) — same encoding |
 | `COMPONENTDESCRIPTION` | Optional | Present |
 | `LIBREFERENCE` | Present | Present (identical) |
 
 Recommendation: Use a single `SchComponent` struct with optional fields for the
-SchDoc-specific additions. The Orientation encoding difference needs handling.
+SchDoc-specific additions. Orientation uses the same RotationBy90 encoding in both formats
+(confirmed: both FileFormatV4 and FileFormatV5 call `Export_RotationBy90`/`Import_RotationBy90`).
 
 ### RECORD=2: SchPin
 

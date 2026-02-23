@@ -52,15 +52,17 @@ in pin records. Each is a 1-byte value.
 
 The `PINCONGLOMERATE` field is a bitmask encoding orientation and visibility.
 
-| Bit | Name | Description |
-|-----|------|-------------|
-| 0 | HIDE | Pin is hidden |
-| 1 | DISPLAY_NAME_VISIBLE | Show pin name text |
-| 2 | DESIGNATOR_VISIBLE | Show pin number/designator text |
-| 3-4 | ROTATION | Pin orientation: `(byte >> 3) & 0x3` |
-| 5 | FLIPPED | Pin orientation is flipped |
+| Bits | Mask | Name | Description |
+|------|------|------|-------------|
+| 0-1 | 0x03 | ORIENTATION | Pin rotation: TRotationBy90 (0=0°, 1=90°, 2=180°, 3=270°) |
+| 2 | 0x04 | IS_HIDDEN | Pin is hidden |
+| 3 | 0x08 | SHOW_NAME | Show pin name text |
+| 4 | 0x10 | SHOW_DESIGNATOR | Show pin designator text |
+| 5 | 0x20 | NOT_ACCESSIBLE | Inverse accessibility (set = NOT accessible) |
+| 6 | 0x40 | GRAPHICALLY_LOCKED | Written on export but reset to 0 on import |
+| 7 | 0x80 | OWNER_INDEX_ADDITIONAL_LIST | OwnerIndex refers to Additional stream |
 
-ROTATION values: 0=0deg (right), 1=90deg (up), 2=180deg (left), 3=270deg (down).
+ORIENTATION values: `orientation = byte & 0x03`. 0=0° (right), 1=90° (up), 2=180° (left), 3=270° (down).
 
 ### LineWidth
 
@@ -129,18 +131,21 @@ Used by `COMPONENTKIND` parameter in SchComponent.
 
 Used by `STYLE` parameter in RECORD=17 (SchPowerObject).
 
-| Value | Name | Visual |
+| Value | Name | Visual / C# string |
 |-------|------|--------|
-| 0 | Circle | Circle symbol |
-| 1 | Arrow | Arrow pointing up |
-| 2 | Bar | Horizontal bar (VCC style) |
-| 3 | Wave | Wave/sine symbol |
-| 4 | PowerGround | Power ground (3 lines) |
-| 5 | SignalGround | Signal ground (triangle) |
-| 6 | Earth | Earth ground (3 decreasing lines) |
-| 7 | GndPower | Ground power |
+| 0 | Circle | "Circle" |
+| 1 | Arrow | "Arrow" |
+| 2 | Bar | "Bar" (VCC style) |
+| 3 | Wave | "Wave" |
+| 4 | GndPower | "Power Ground" |
+| 5 | GndSignal | "Signal Ground" |
+| 6 | GndEarth | "Earth" |
+| 7 | GostArrow | "GOST Arrow" |
+| 8 | GostGndPower | "GOST Power Ground" |
+| 9 | GostGndEarth | "GOST Earth" |
+| 10 | GostBar | "GOST Bar" |
 
-Observed in real files: 2 (Bar/VCC) and 4 (PowerGround/GND).
+Observed in real files: 2 (Bar/VCC) and 4 (GndPower/GND).
 
 ### PortIoType
 
@@ -157,15 +162,16 @@ Used by `IOTYPE` parameter in RECORD=18 (SchPort) and RECORD=16 (SchSheetEntry).
 
 Used by `STYLE` parameter in RECORD=18 (SchPort).
 
-| Value | Name |
-|-------|------|
-| 0 | None |
-| 1 | Left |
-| 2 | Right |
-| 3 | LeftRight |
-| 4 | Top |
-| 5 | Bottom |
-| 6 | TopBottom |
+| Value | Name | C# string |
+|-------|------|-----------|
+| 0 | None | "None (Horizontal)" |
+| 1 | Left | "Left" |
+| 2 | Right | "Right" |
+| 3 | LeftRight | "Left & Right" |
+| 4 | NoneVertical | "None (Vertical)" |
+| 5 | Top | "Top" |
+| 6 | Bottom | "Bottom" |
+| 7 | TopBottom | "Top & Bottom" |
 
 ### SheetStyle
 
@@ -209,9 +215,12 @@ Used by `ORIENTATION` parameter in RECORD=1 (SchComponent).
 
 Used by `SYMBOL` parameter in RECORD=22 (SchNoConnect).
 
-| Value | Description |
-|-------|-------------|
-| `Thin Cross` | X mark (standard) |
-| `Checkbox` | Checkbox mark |
+| Internal value | String in file | Description |
+|----------------|----------------|-------------|
+| 0 | `Thin Cross` | Thin X mark (default) |
+| 1 | `Thick Cross` | Thick X mark |
+| 2 | `Small Cross` | Small X mark |
+| 3 | `Checkbox` | Checkbox mark |
+| 4 | `Triangle` | Triangle mark |
 
-Note: This is a string value, not an integer enum.
+Note: The `SYMBOL` parameter stores a string value in the file (e.g., `SYMBOL=Thin Cross`). The internal enum is serialized/deserialized via a string lookup dictionary.

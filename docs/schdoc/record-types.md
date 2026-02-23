@@ -19,6 +19,10 @@ base types and should be shared.
 | `GRAPHICALLYLOCKED` | bool | F | Whether the primitive is locked |
 | `INDEXINSHEET` | i32 | -1 | Sequential index within sheet (SchDoc-specific, not in SchLib) |
 | `OWNERINDEXADDITIONALLIST` | bool | F | If T, OWNERINDEX refers to AdditionalWarehouse; if F, refers to BaseWarehouse |
+| `IGNOREONLOAD` | bool | F | Skip this record during loading (COND: only if true) |
+| `WIRINGDIAGRAMORIGINUNIQUEID` | string | | Wiring diagram origin ID (COND: only for containers, if non-empty) |
+| `ISSCHEMATICBLOCKOBJECT` | bool | F | Record belongs to a schematic block |
+| `UNIQUEIDINREUSEBLOCK` | string | | UniqueID within a reuse block (COND: only if non-empty) |
 
 ### SchGraphicalBase (extends SchPrimitiveBase)
 
@@ -31,6 +35,8 @@ Adds position and color to `SchPrimitiveBase`.
 | `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | 0 | Y position (DXP fractional pair) |
 | `COLOR` | i32 | 0 | Foreground color (COLORREF) |
 | `AREACOLOR` | i32 | 0 | Fill/area color (COLORREF) |
+| `SELECTIONMEMORY` | i32 | 0 | Selection state memory |
+| `UNIONINDEX` | i32 | 0 | Union group index |
 
 ---
 
@@ -223,24 +229,20 @@ but documented in .NET model.
 | `STYLE` | i32 | | Arrow style |
 | `UNIQUEID` | string | | 8-character unique identifier |
 
-### RECORD=43: SchCompileMask
+### RECORD=43: SchParameterSet
 
-Warning/compile mask marker. Suppresses compile warnings in a region.
-
-**Cross-document naming conflict:** `docs/dxp/sch-files.md` section 13 maps binary code 43
-to `eParameterSet`/`SchDataParameterSet`, while `docs/dxp/schematic-records.md` calls it
-`SchWarningSign`. Binary code 211 in sch-files.md maps to `eCompileMask`. However, real
-LimeSDR files contain 78 instances of RECORD=43 with the NAME+ORIENTATION fields shown
-below, which match compile-mask semantics. Before implementing, verify by examining
-RECORD=43 blocks in the test files and comparing against known ParameterSet keys. If the
-fields match what's documented here (NAME, ORIENTATION), use this definition. Also check
-whether RECORD=211 appears in any test files.
+Parameter set marker. Attaches named parameters to a wire or other net object. Named `eParameterSet`/`SchDataParameterSet` in the .NET source (`BinaryFileCode.cs:89: CParameterSet = 43`).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | (SchGraphicalBase fields) | | | |
-| `NAME` | string | | Mask/warning name (e.g., net name being masked) |
-| `ORIENTATION` | i32 | | Orientation (optional; absent in some instances) |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | X position (DXP fractional) |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Y position (DXP fractional) |
+| `COLOR` | i32 | | Color (COLORREF) |
+| `ORIENTATION` | i32 | 0 | Orientation (RotationBy90) |
+| `NAME` | string | | Parameter set name |
+| `STYLE` | i32 | 0 | Visual style (see `ParameterSetStyle` in enumerations.md) |
+| `UNIQUEID` | string | | 8-character unique identifier |
 
 ### RECORD=209: SchNote
 
@@ -264,6 +266,41 @@ actual `eHyperlink` type has binary code 226 (not observed in our test files).
 | `CLIPTORECT` | bool | T | Clip text to rectangle |
 | `TEXTMARGIN` | i32 | 5 | Text margin |
 
+### RECORD=210: SchProbe
+
+Simulation probe marker.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| (SchGraphicalBase fields) | | | |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | X position |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Y position |
+| `COLOR` | i32 | | Color |
+| `ORIENTATION` | i32 | 0 | Orientation (RotationBy90) |
+| `NAME` | string | | Probe name |
+| `UNIQUEID` | string | | 8-character unique identifier |
+
+### RECORD=211: SchCompileMask
+
+Compile mask / blanket region that suppresses compile warnings. Named `eCompileMask`/`SchDataCompileMask` in the .NET source (`BinaryFileCode.cs:241: CCompileMask = 211`).
+
+**Note:** RECORD=211 is the actual CompileMask. RECORD=43 is ParameterSet (see above).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| (SchGraphicalBase fields) | | | |
+| `UNIQUEID` | string | | 8-character unique identifier (exported FIRST, before Location) |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | Bottom-left corner X |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Bottom-left corner Y |
+| `CORNER.X` + `CORNER.X_FRAC` | i32 | | Top-right corner X |
+| `CORNER.Y` + `CORNER.Y_FRAC` | i32 | | Top-right corner Y |
+| `COLOR` | i32 | | Line color (COLORREF) |
+| `AREACOLOR` | i32 | | Fill color (COLORREF) |
+| `COLLAPSED` | bool | F | Whether the mask is collapsed |
+| `LINEWIDTH` | i32 | 0 | Line width (TSize enum) |
+
+UniqueID ordering anomaly: CompileMask exports UniqueID BEFORE Location/Corner, unlike most records.
+
 ---
 
 ## Shared record types (same in SchDoc and SchLib)
@@ -271,6 +308,22 @@ actual `eHyperlink` type has binary code 226 (not observed in our test files).
 These record types have the same field definitions in both SchDoc and SchLib. They should
 share a single implementation. Note: in SchDoc they always have `INDEXINSHEET` and
 frequently have `ISNOTACCESIBLE`, which are typically absent in SchLib.
+
+### RECORD=3: SchSymbol
+
+IEEE symbol graphical primitive. Named `eSymbol`/`SchDataSymbol` in .NET.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| (SchGraphicalBase fields) | | | |
+| `SYMBOL` | i32 | 0 | IEEE symbol type (IeeeSymbol enum) |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | X position |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Y position |
+| `SCALEFACTOR` | i32 | | Scale factor (coord) |
+| `ORIENTATION` | i32 | 0 | Orientation (RotationBy90) |
+| `LINEWIDTH` | i32 | 0 | Line width (TSize enum) |
+| `COLOR` | i32 | | Color (COLORREF) |
+| `MIRROR` | bool | F | Mirror flag (note: key is "Mirror", not "IsMirrored") |
 
 ### RECORD=1: SchComponent
 
@@ -413,6 +466,25 @@ Pie/wedge shape (filled arc sector).
 | `ISSOLID` | bool | F | Solid fill |
 | `LINEWIDTH` | i32 | 1 | Line width |
 
+### RECORD=10: SchRoundRectangle
+
+Rounded-corner rectangle.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| (SchGraphicalBase fields) | | | |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | Bottom-left corner X |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Bottom-left corner Y |
+| `CORNER.X` + `CORNER.X_FRAC` | i32 | | Top-right corner X |
+| `CORNER.Y` + `CORNER.Y_FRAC` | i32 | | Top-right corner Y |
+| `CORNERXRADIUS` + `CORNERXRADIUS_FRAC` | i32 | | Corner X radius |
+| `CORNERYRADIUS` + `CORNERYRADIUS_FRAC` | i32 | | Corner Y radius |
+| `LINEWIDTH` | i32 | 0 | Line width |
+| `COLOR` | i32 | | Color |
+| `AREACOLOR` | i32 | | Fill color |
+| `ISSOLID` | bool | F | Solid fill |
+| `UNIQUEID` | string | | 8-character unique identifier |
+
 ### RECORD=11: SchEllipticalArc
 
 | Key | Type | Default | Description |
@@ -494,6 +566,31 @@ Embedded image. The `FILENAME` key matches an embedded object in the `Storage` s
 Note: `OWNERINDEX` is present when the image is owned by a template (RECORD=39) but
 absent for standalone images.
 
+### RECORD=32: SchSheetName
+
+Sheet name label on a sheet symbol. Same parameter order as SchLabel with additional fields.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| (SchGraphicalBase fields) | | | |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | X position |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Y position |
+| `ORIENTATION` | i32 | 0 | Orientation (RotationBy90) |
+| `JUSTIFICATION` | i32 | 0 | Text justification |
+| `COLOR` | i32 | | Color |
+| `FONTID` | i32 | 0 | Font ID |
+| `ISHIDDEN` | bool | F | Hidden flag |
+| `TEXT` | string | | Sheet name text |
+| `ISMIRRORED` | bool | F | Mirror flag |
+| `NOTAUTOPOSITION` | bool | F | Inverted from AutoPosition |
+| `TEXTHORZANCHOR` | i32 | 0 | Horizontal anchor |
+| `TEXTVERTANCHOR` | i32 | 0 | Vertical anchor |
+| `UNIQUEID` | string | | 8-character unique identifier |
+
+### RECORD=33: SchSheetFileName
+
+Sheet filename label. Identical parameter order to RECORD=32 (SchSheetName).
+
 ### RECORD=34: SchDesignator
 
 Reference designator text (e.g., "U1", "R5", "C12"). One per component.
@@ -506,6 +603,23 @@ Reference designator text (e.g., "U1", "R5", "C12"). One per component.
 | `READONLYSTATE` | i32 | 1 | Read-only flag |
 | `FONTID` | i32 | 1 | Font ID (1-based) |
 | `UNIQUEID` | string | | 8-character unique identifier |
+
+### RECORD=37: SchBusEntry
+
+Bus tap connector.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| (SchGraphicalBase fields) | | | |
+| `UNIQUEID` | string | | 8-character unique identifier (exported FIRST, before Location) |
+| `LOCATION.X` + `LOCATION.X_FRAC` | i32 | | Start point X |
+| `LOCATION.Y` + `LOCATION.Y_FRAC` | i32 | | Start point Y |
+| `CORNER.X` + `CORNER.X_FRAC` | i32 | | End point X |
+| `CORNER.Y` + `CORNER.Y_FRAC` | i32 | | End point Y |
+| `LINEWIDTH` | i32 | 0 | Line width |
+| `COLOR` | i32 | | Color |
+
+UniqueID ordering anomaly: same as CompileMask -- UniqueID is exported first.
 
 ### RECORD=41: SchParameter
 
@@ -574,10 +688,9 @@ Pin-to-pad mapping entry. OWNERINDEX points to a SchImplementation.
 | `PINNAME` | string | Schematic pin name |
 | `PADNAME` | string | PCB pad name |
 
-### RECORD=48: SchImplementationParameters
+### RECORD=48: SchParameterList
 
-Container for implementation parameters. OWNERINDEX points to a SchImplementation. No
-additional fields beyond `OWNERINDEX` and `RECORD`.
+Container for parameter list entries. Named `CParameterList` in `BinaryFileCode.cs:99`. OWNERINDEX points to a SchImplementation. No additional fields beyond `OWNERINDEX` and `RECORD`.
 
 ---
 
@@ -610,28 +723,31 @@ Observed across 9 LimeSDR SchDoc files:
 | 34 | SchDesignator | 815 | 04-09 (1:1 with components) |
 | 39 | SchTemplate | 9 | All 9 (exactly 1 each) |
 | 41 | SchParameter | 17,713 | All 9 (most common) |
-| 43 | SchCompileMask | 78 | 04-09 |
+| 43 | SchParameterSet | 78 | 04-09 |
 | 44 | SchImplementationList | 441 | 04-09 |
 | 45 | SchImplementation | 911 | 04-09 |
 | 46 | SchImplementationMap | 911 | 04-09 |
 | 47 | SchMapDefiner | 25 | 05, 08, 09 |
-| 48 | SchImplementationParameters | 911 | 04-09 |
+| 48 | SchParameterList | 911 | 04-09 |
 | 209 | SchNote | 36 | All 9 |
 | 225 | SchDashedRectangle | 23 | 04, 05, 07-09 (in Additional stream) |
 
-Not observed in LimeSDR test files but present in binary code table
-(docs/dxp/sch-files.md section 13) and expected in real-world files:
+Documented above but not observed in LimeSDR test files:
 
-- RECORD=3: SchSymbol (graphical shape primitive -- named `eSymbol`/`SchDataSymbol` in .NET)
-- RECORD=10: SchRoundRectangle
+- RECORD=3: SchSymbol (documented above)
+- RECORD=10: SchRoundRectangle (documented above)
 - RECORD=15: SchSheetSymbol (documented above)
 - RECORD=16: SchSheetEntry (documented above)
 - RECORD=18: SchPort (documented above)
-- RECORD=23: SchErrorMarker (appears in files saved with compilation errors present)
 - RECORD=26: SchBus (documented above)
-- RECORD=32: SchSheetName (sheet name label)
-- RECORD=33: SchSheetFileName (sheet filename label)
-- RECORD=37: SchBusEntry (bus tap connector -- common in hierarchical/bus designs)
+- RECORD=32: SchSheetName (documented above)
+- RECORD=33: SchSheetFileName (documented above)
+- RECORD=37: SchBusEntry (documented above)
+- RECORD=210: SchProbe (documented above)
+- RECORD=211: SchCompileMask (documented above)
+
+Not observed in LimeSDR test files and not yet documented:
+
+- RECORD=23: SchErrorMarker (appears in files saved with compilation errors present)
 - RECORD=106-124: Harness records (appear in wire harness schematics)
-- RECORD=210: SchProbe (simulation probe marker)
 - RECORD=226: SchHyperlink (URL hyperlink -- distinct from RECORD=209 SchNote)
