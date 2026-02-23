@@ -34,3 +34,5 @@ __pycache__/
 
 # Altium test files
 /data/
+
+docs/*-diff/
