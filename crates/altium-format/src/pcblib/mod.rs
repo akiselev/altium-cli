@@ -16,9 +16,10 @@ use crate::block_stream::iter_blocks;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcb_file_header::{parse_pcb_file_header, PcbFileHeader};
 use crate::pcblib::library::{
-    PcbLibraryData, PcbLibComponentTocEntry, PcbLibModelEntry,
-    validate_empty_embedded_fonts, validate_empty_substorage, parse_library_data,
-    parse_component_toc, parse_model_metadata,
+    PcbEmbeddedFontEntry, PcbLayerKindMapping, PcbLibComponentTocEntry, PcbLibModelEntry,
+    PcbLibraryData, PcbPadViaLibraryConfig, PcbTextureEntry, parse_component_toc,
+    parse_embedded_fonts, parse_layer_kind_mapping, parse_library_data, parse_model_metadata,
+    parse_pad_via_library, parse_texture_metadata,
 };
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
@@ -29,6 +30,10 @@ pub struct PcbLib {
     pub(crate) library: PcbLibraryData,
     pub(crate) component_toc: Vec<PcbLibComponentTocEntry>,
     pub(crate) model_entries: Vec<PcbLibModelEntry>,
+    pub(crate) layer_kind_mapping: PcbLayerKindMapping,
+    pub(crate) pad_via_library: Option<PcbPadViaLibraryConfig>,
+    pub(crate) embedded_fonts: Vec<PcbEmbeddedFontEntry>,
+    pub(crate) texture_entries: Vec<PcbTextureEntry>,
     pub(crate) footprints: Vec<PcbFootprint>,
     pub(crate) file_version_info: Option<String>,
 }
@@ -292,60 +297,62 @@ impl PcbLib {
         let _ = doc.list_entries("/Library/Models")?;
 
         // Auxiliary Library sub-storages (optional)
-        if doc.exists("/Library/LayerKindMapping/Header") {
-            validate_empty_substorage(
-                &mut doc,
-                "/Library/LayerKindMapping/Header",
-                "/Library/LayerKindMapping/Data",
-            )?;
+        let layer_kind_mapping = if doc.exists("/Library/LayerKindMapping/Header") {
+            let lkm_header = doc.read_stream("/Library/LayerKindMapping/Header")?;
+            let lkm_data = doc.read_stream("/Library/LayerKindMapping/Data")?;
+            let entries = parse_layer_kind_mapping(&lkm_header, &lkm_data)
+                .context("parsing /Library/LayerKindMapping")?;
             let _ = doc.list_entries("/Library/LayerKindMapping")?;
-        }
-        if doc.exists("/Library/PadViaLibrary/Header") {
-            validate_empty_substorage(
-                &mut doc,
-                "/Library/PadViaLibrary/Header",
-                "/Library/PadViaLibrary/Data",
-            )?;
+            entries
+        } else {
+            PcbLayerKindMapping { version: String::new(), hash: 0, entries: Vec::new() }
+        };
+        let pad_via_library = if doc.exists("/Library/PadViaLibrary/Header") {
+            let pvl_header = doc.read_stream("/Library/PadViaLibrary/Header")?;
+            let pvl_data = doc.read_stream("/Library/PadViaLibrary/Data")?;
+            let config = parse_pad_via_library(&pvl_header, &pvl_data)
+                .context("parsing /Library/PadViaLibrary")?;
             let _ = doc.list_entries("/Library/PadViaLibrary")?;
-        }
-        if doc.exists("/Library/EmbeddedFonts") {
-            validate_empty_embedded_fonts(&mut doc, "/Library/EmbeddedFonts")?;
-        }
+            config
+        } else {
+            None
+        };
+        let embedded_fonts = if doc.exists("/Library/EmbeddedFonts") {
+            let ef_data = doc.read_stream("/Library/EmbeddedFonts")?;
+            parse_embedded_fonts(&ef_data).context("parsing /Library/EmbeddedFonts")?
+        } else {
+            Vec::new()
+        };
         if doc.exists("/Library/ModelsNoEmbed/Header") {
-            validate_empty_substorage(
-                &mut doc,
-                "/Library/ModelsNoEmbed/Header",
-                "/Library/ModelsNoEmbed/Data",
-            )?;
+            let mne_header = doc.read_stream("/Library/ModelsNoEmbed/Header")?;
+            let mne_count = parse_pcb_section_header(&mne_header)?;
+            let mne_data = doc.read_stream("/Library/ModelsNoEmbed/Data")?;
+            if mne_count > 0 || !mne_data.is_empty() {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "/Library/ModelsNoEmbed".to_owned(),
+                    detail: format!(
+                        "substorage has count={mne_count} and {} data bytes; parser not yet implemented",
+                        mne_data.len()
+                    ),
+                });
+            }
             let _ = doc.list_entries("/Library/ModelsNoEmbed")?;
         }
-        if doc.exists("/Library/Textures/Header") {
-            validate_empty_substorage(
-                &mut doc,
-                "/Library/Textures/Header",
-                "/Library/Textures/Data",
-            )?;
-            // Enumerate children — error if numbered texture blobs exist since
-            // the texture blob format has not been reverse-engineered yet.
-            let (_, texture_streams) = doc.list_entries("/Library/Textures")?;
-            for stream_name in &texture_streams {
-                // Header and Data were already consumed above; skip them here.
-                if stream_name == "Header" || stream_name == "Data" {
-                    continue;
-                }
-                let blob_path = format!("/Library/Textures/{stream_name}");
-                if let Some(data) = doc.read_stream_optional(&blob_path)? {
-                    return Err(AltiumFormatError::InvalidParamValue {
-                        key: "Library/Textures".to_owned(),
-                        detail: format!(
-                            "texture blob '{blob_path}' exists ({} bytes); \
-                             parser not yet implemented",
-                            data.len()
-                        ),
-                    });
-                }
+        let texture_entries = if doc.exists("/Library/Textures/Header") {
+            let tex_header = doc.read_stream("/Library/Textures/Header")?;
+            let tex_data = doc.read_stream("/Library/Textures/Data")?;
+            let mut tex_entries = parse_texture_metadata(&tex_header, &tex_data)
+                .context("parsing /Library/Textures")?;
+            // Load texture blobs from numbered streams (same pattern as Models).
+            for (i, entry) in tex_entries.iter_mut().enumerate() {
+                let blob_path = format!("/Library/Textures/{i}");
+                entry.blob = doc.read_stream_optional(&blob_path)?;
             }
-        }
+            let _ = doc.list_entries("/Library/Textures")?;
+            tex_entries
+        } else {
+            Vec::new()
+        };
 
         // Mark Library storage itself as consumed.
         let _ = doc.list_entries("/Library")?;
@@ -392,7 +399,19 @@ impl PcbLib {
         // 6. Assert all CFB entries consumed
         doc.assert_all_consumed()?;
 
-        Ok(Self { header, section_keys, library, component_toc, model_entries, footprints, file_version_info })
+        Ok(Self {
+            header,
+            section_keys,
+            library,
+            component_toc,
+            model_entries,
+            layer_kind_mapping,
+            pad_via_library,
+            embedded_fonts,
+            texture_entries,
+            footprints,
+            file_version_info,
+        })
     }
 }
 
@@ -416,16 +435,156 @@ mod tests {
                 version: String::new(),
                 date: String::new(),
                 time: String::new(),
-                board_config: library::PcbBoardConfig {
+                board_config: crate::board_config::PcbBoardConfig {
                     record: String::new(),
-                    v9_masterstack_style: String::new(),
-                    v9_masterstack_id: String::new(),
-                    v9_masterstack_name: String::new(),
-                    layer_stack: Vec::new(),
+                    v9_master_stack: None,
+                    v9_substacks: Vec::new(),
+                    v9_stack_layers: Vec::new(),
+                    v9_cache_layers: Vec::new(),
+                    v8_master_stack: None,
+                    v8_layers: Vec::new(),
+                    v7_layers: Vec::new(),
+                    legacy_layers: Vec::new(),
+                    surface_properties: crate::board_config::PcbSurfaceProperties {
+                        top_type: String::new(),
+                        top_const: String::new(),
+                        top_height: String::new(),
+                        top_material: String::new(),
+                        bottom_type: String::new(),
+                        bottom_const: String::new(),
+                        bottom_height: String::new(),
+                        bottom_material: String::new(),
+                        layer_stack_style: String::new(),
+                        show_top_dielectric: false,
+                        show_bottom_dielectric: false,
+                    },
+                    layer_sets: Vec::new(),
+                    grid_settings: crate::board_config::PcbGridSettings {
+                        big_visible_grid_size: String::new(),
+                        visible_grid_size: String::new(),
+                        snap_grid_size: String::new(),
+                        snap_grid_size_x: String::new(),
+                        snap_grid_size_y: String::new(),
+                        visible_grid_mult_factor: String::new(),
+                        big_visible_grid_mult_factor: String::new(),
+                        electrical_grid_range: String::new(),
+                        electrical_grid_enabled: false,
+                        dot_grid: false,
+                        dot_grid_large: false,
+                    },
+                    viewport: crate::board_config::PcbViewportState {
+                        lx: String::new(),
+                        hx: String::new(),
+                        ly: String::new(),
+                        hy: String::new(),
+                        lookat_x: String::new(),
+                        lookat_y: String::new(),
+                        lookat_z: String::new(),
+                        eye_rotation_x: String::new(),
+                        eye_rotation_y: String::new(),
+                        eye_rotation_z: String::new(),
+                        zoom_mult: String::new(),
+                        view_size_x: String::new(),
+                        view_size_y: String::new(),
+                    },
+                    view_configs: crate::board_config::PcbViewConfigs {
+                        config_2d_type: String::new(),
+                        configuration_2d: String::new(),
+                        config_2d_full_filename: String::new(),
+                        config_3d_type: String::new(),
+                        configuration_3d: String::new(),
+                        config_3d_full_filename: String::new(),
+                        board_insight_view_configuration_name: String::new(),
+                    },
+                    snapping: crate::board_config::PcbSnappingConfig {
+                        eg_range: String::new(),
+                        eg_mult: String::new(),
+                        eg_enabled: false,
+                        eg_snap_to_board_outline: false,
+                        eg_snap_to_arc_centers: false,
+                        eg_use_all_layers: false,
+                        og_snap_enabled: false,
+                        mg_snap_enabled: false,
+                        point_guide_enabled: false,
+                        grid_snap_enabled: false,
+                        snapping_entity_set: String::new(),
+                    },
+                    near_far_objects: crate::board_config::PcbNearFarObjects {
+                        near_objects_enabled: false,
+                        far_objects_enabled: false,
+                        near_object_set: String::new(),
+                        far_object_set: String::new(),
+                        near_distance: String::new(),
+                    },
+                    cfg2d: crate::board_config::PcbCfg2D {
+                        prim_draw_mode: String::new(),
+                        current_layer: String::new(),
+                        display_special_strings: false,
+                        show_test_points: false,
+                        show_origin_marker: false,
+                        eye_dist: String::new(),
+                        show_status_info: false,
+                        show_pad_nets: false,
+                        show_pad_numbers: false,
+                        show_via_nets: false,
+                        show_via_span: false,
+                        use_transparent_layers: false,
+                        plane_draw_mode: String::new(),
+                        display_net_names_on_tracks: String::new(),
+                        from_tos_display_mode: String::new(),
+                        pad_types_display_mode: String::new(),
+                        single_layer_mode_state: String::new(),
+                        origin_marker_color: String::new(),
+                        show_component_ref_point: false,
+                        component_ref_point_color: String::new(),
+                        positive_top_solder_mask: false,
+                        positive_bottom_solder_mask: false,
+                        top_positive_solder_mask_alpha: String::new(),
+                        bottom_positive_solder_mask_alpha: String::new(),
+                        all_connections_in_single_layer_mode: false,
+                        multi_colored_connections: false,
+                        show_special_strings_handles: false,
+                        toggle_layers: String::new(),
+                        toggle_layers_set: String::new(),
+                        mech_layer_in_single_layer_mode: String::new(),
+                        mech_layer_in_single_layer_mode_set: String::new(),
+                        layers_in_single_layer_mode_set: String::new(),
+                        mech_layer_linked_to_sheet: String::new(),
+                        mech_layer_linked_to_sheet_set: String::new(),
+                        mech_coverlay_updated: false,
+                        layer_opacity: indexmap::IndexMap::new(),
+                        workspace_col_alpha: indexmap::IndexMap::new(),
+                    },
+                    cfg3d: indexmap::IndexMap::new(),
+                    cfgall: crate::board_config::PcbCfgAll {
+                        configuration_kind: String::new(),
+                        configuration_desc: String::new(),
+                        component_body_ref_point_color: String::new(),
+                        component_body_snap_point_color: String::new(),
+                        show_component_snap_markers: false,
+                        show_component_snap_reference: false,
+                        show_component_snap_custom: false,
+                    },
+                    display_unit: 0,
+                    current_2d_3d_view_state: String::new(),
+                    toggle_layers: String::new(),
+                    show_default_sets: false,
+                    board_version: String::new(),
+                    vault_guid: String::new(),
+                    folder_guid: String::new(),
+                    lifecycle_definition_guid: String::new(),
+                    revision_naming_scheme_guid: String::new(),
+                    lib_grid_sn_guide: String::new(),
+                    unicode: String::new(),
+                    unicode_filename: String::new(),
                 },
             },
             component_toc: Vec::new(),
             model_entries: Vec::new(),
+            layer_kind_mapping: PcbLayerKindMapping { version: String::new(), hash: 0, entries: Vec::new() },
+            pad_via_library: None,
+            embedded_fonts: Vec::new(),
+            texture_entries: Vec::new(),
             footprints: Vec::new(),
             file_version_info: None,
         };

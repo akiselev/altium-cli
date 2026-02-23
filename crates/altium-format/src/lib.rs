@@ -1,6 +1,8 @@
 #[allow(dead_code)]
 mod binary_io;
 #[allow(dead_code)]
+mod board_config;
+#[allow(dead_code)]
 mod block_stream;
 #[allow(dead_code)]
 mod cfb_document;

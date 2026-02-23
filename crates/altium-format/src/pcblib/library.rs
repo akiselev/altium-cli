@@ -4,9 +4,9 @@ use altium_format_types::Coord;
 
 use crate::binary_io::BinaryReader;
 use crate::block_stream::{iter_blocks, BlockFormat};
+use crate::board_config::{parse_board_config, PcbBoardConfig};
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
-use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result};
 
 pub(crate) struct PcbLibraryData {
@@ -16,32 +16,6 @@ pub(crate) struct PcbLibraryData {
     pub(crate) date: String,
     pub(crate) time: String,
     pub(crate) board_config: PcbBoardConfig,
-}
-
-/// Board configuration parameters from the Library/Data stream.
-///
-/// These are the board defaults and layer stack definitions that Altium uses
-/// when editing footprints in the library editor. The layer stack uses indexed
-/// parameters V9_STACK_LAYER{N}_*.
-pub(crate) struct PcbBoardConfig {
-    pub(crate) record: String,
-    pub(crate) v9_masterstack_style: String,
-    pub(crate) v9_masterstack_id: String,
-    pub(crate) v9_masterstack_name: String,
-    pub(crate) layer_stack: Vec<PcbBoardLayerEntry>,
-}
-
-/// A single layer entry from the V9_STACK_LAYER{N}_* parameters.
-pub(crate) struct PcbBoardLayerEntry {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) layer_id: String,
-    pub(crate) used_by_prims: bool,
-    pub(crate) cop_thick: String,
-    pub(crate) diel_type: String,
-    pub(crate) diel_const: String,
-    pub(crate) diel_height: String,
-    pub(crate) diel_material: String,
 }
 
 pub(crate) struct PcbLibComponentTocEntry {
@@ -98,7 +72,7 @@ pub(crate) fn parse_library_data(data: &[u8]) -> Result<(PcbLibraryData, Vec<Str
     let version = params.remove_optional::<String>("VERSION")?.unwrap_or_default();
     let date = params.remove_optional::<String>("DATE")?.unwrap_or_default();
     let time = params.remove_optional::<String>("TIME")?.unwrap_or_default();
-    let board_config = parse_library_board_params(&mut params)?;
+    let board_config = parse_board_config(&mut params)?;
     params.assert_exhausted()?;
 
     // After the metadata block, the stream may contain:
@@ -110,83 +84,6 @@ pub(crate) fn parse_library_data(data: &[u8]) -> Result<(PcbLibraryData, Vec<Str
     let suffix_names = parse_library_data_suffix(&data[bytes_after_first_block..])?;
 
     Ok((PcbLibraryData { filename, kind, version, date, time, board_config }, suffix_names))
-}
-
-/// Parses board-level configuration parameters from the Library/Data stream.
-///
-/// These include the layer stack definition (V9_MASTERSTACK_* and V9_STACK_LAYER{N}_*)
-/// and continuation RECORD=Board entries. The layer stack uses 1-based indexing;
-/// we detect entries by probing for V9_STACK_LAYER{N}_ID.
-fn parse_library_board_params(params: &mut ParameterCollection) -> Result<PcbBoardConfig> {
-    let record = params.remove_optional::<String>("RECORD")?.unwrap_or_default();
-    let v9_masterstack_style = params
-        .remove_optional::<String>("V9_MASTERSTACK_STYLE")?
-        .unwrap_or_default();
-    let v9_masterstack_id = params
-        .remove_optional::<String>("V9_MASTERSTACK_ID")?
-        .unwrap_or_default();
-    let v9_masterstack_name = params
-        .remove_optional::<String>("V9_MASTERSTACK_NAME")?
-        .unwrap_or_default();
-
-    // Consume indexed layer stack entries: V9_STACK_LAYER1_*, V9_STACK_LAYER2_*, ...
-    // Probe for the next index until no _ID key is found.
-    let mut layer_stack = Vec::new();
-    let mut idx = 1u32;
-    loop {
-        let id_key = format!("V9_STACK_LAYER{idx}_ID");
-        let id: Option<String> = params.remove_optional(&id_key)?;
-        match id {
-            None => break,
-            Some(id_val) => {
-                let name = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_NAME"))?
-                    .unwrap_or_default();
-                let layer_id = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_LAYERID"))?
-                    .unwrap_or_default();
-                let used_by_prims = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_USEDBYPRIMS"))?
-                    .map(|s| s.eq_ignore_ascii_case("TRUE"))
-                    .unwrap_or(false);
-                let cop_thick = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_COPTHICK"))?
-                    .unwrap_or_default();
-                let diel_type = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELTYPE"))?
-                    .unwrap_or_default();
-                let diel_const = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELCONST"))?
-                    .unwrap_or_default();
-                let diel_height = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELHEIGHT"))?
-                    .unwrap_or_default();
-                let diel_material = params
-                    .remove_optional::<String>(&format!("V9_STACK_LAYER{idx}_DIELMATERIAL"))?
-                    .unwrap_or_default();
-                layer_stack.push(PcbBoardLayerEntry {
-                    id: id_val,
-                    name,
-                    layer_id,
-                    used_by_prims,
-                    cop_thick,
-                    diel_type,
-                    diel_const,
-                    diel_height,
-                    diel_material,
-                });
-                idx += 1;
-            }
-        }
-    }
-
-    Ok(PcbBoardConfig {
-        record,
-        v9_masterstack_style,
-        v9_masterstack_id,
-        v9_masterstack_name,
-        layer_stack,
-    })
 }
 
 /// Parse the supplementary component-name index appended to Library/Data.
@@ -385,53 +282,224 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
     Ok(entries)
 }
 
-/// Validate an auxiliary Library sub-storage with Header+Data pattern is empty.
-///
-/// Reads both Header and Data streams (marking them consumed). If the header
-/// declares a non-zero count or the data stream is non-empty, returns an error
-/// because the parser for these substorages is not yet implemented.
-pub(crate) fn validate_empty_substorage(
-    doc: &mut TrackedCfbDocument,
-    header_path: &str,
-    data_path: &str,
-) -> Result<()> {
-    let header_data = doc.read_stream(header_path)?;
-    let count = parse_pcb_section_header(&header_data)?;
-    let data = doc.read_stream(data_path)?;
-    if count > 0 || !data.is_empty() {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: header_path.to_owned(),
-            detail: format!(
-                "substorage has count={count} and {} data bytes; parser not yet implemented",
-                data.len()
-            ),
-        });
-    }
-    Ok(())
+/// Parsed LayerKindMapping substorage.
+pub(crate) struct PcbLayerKindMapping {
+    pub(crate) version: String,
+    pub(crate) hash: u32,
+    pub(crate) entries: Vec<PcbLayerKindPair>,
 }
 
-/// Validate the Library/EmbeddedFonts single-stream sub-storage is empty.
+/// Parsed PadViaLibrary substorage parameters.
+pub(crate) struct PcbPadViaLibraryConfig {
+    pub(crate) library_id: String,
+    pub(crate) library_name: String,
+    pub(crate) display_units: String,
+}
+
+/// Embedded font entry from the EmbeddedFonts stream.
+pub(crate) struct PcbEmbeddedFontEntry {
+    pub(crate) name: String,
+    pub(crate) style_name: String,
+    pub(crate) localized_name: String,
+    pub(crate) unknown_u16: u16,
+    pub(crate) flag: u8,
+    pub(crate) data: Vec<u8>,
+}
+
+/// Parsed texture metadata entry from Library/Textures.
+pub(crate) struct PcbTextureEntry {
+    pub(crate) name: String,
+    pub(crate) blob: Option<Vec<u8>>,
+}
+
+/// Decode a length-prefixed UTF-16LE string from the reader.
 ///
-/// Reads the stream (marking it consumed). If non-empty, returns an error
-/// because the embedded font parser is not yet implemented.
-pub(crate) fn validate_empty_embedded_fonts(doc: &mut TrackedCfbDocument, path: &str) -> Result<()> {
-    let data = doc.read_stream(path)?;
-    if !data.is_empty() {
+/// Format: u32_le byte_count, then byte_count bytes of UTF-16LE data (may
+/// include a NUL terminator which is stripped from the returned String).
+fn read_utf16le_string(reader: &mut BinaryReader) -> Result<String> {
+    let byte_len = reader.read_u32_le()? as usize;
+    let raw = reader.read_bytes(byte_len)?;
+    let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(raw);
+    if had_errors {
         return Err(AltiumFormatError::InvalidParamValue {
-            key: path.to_owned(),
-            detail: format!(
-                "EmbeddedFonts stream has {} bytes; parser not yet implemented",
-                data.len()
-            ),
+            key: "EmbeddedFonts".to_owned(),
+            detail: "UTF-16LE decoding error in font name string".to_owned(),
         });
     }
-    Ok(())
+    Ok(decoded.trim_end_matches('\0').to_owned())
+}
+
+/// Layer kind mapping entry (layer_id -> kind value pair).
+pub(crate) struct PcbLayerKindPair {
+    pub(crate) layer_id: u32,
+    pub(crate) kind: u32,
+}
+
+/// Parse Library/LayerKindMapping/{Header,Data} streams.
+///
+/// Format (from Delphi TLayerKindMappingSection.DataWrite in Advpcb.dll):
+///   u32_le  version_string_byte_length
+///   bytes   UTF-16LE version string (e.g. "1.0\0", 8 bytes)
+///   u32_le  hash (MurmurHash2-like over packed 5-byte in-memory items)
+///   u32_le  entry_count
+///   entry_count × 8 bytes: (u32_le TV7_Layer, u32_le TMechanicalLayerKind)
+///
+/// TMechanicalLayerKind is a u8 enum (0-48) but stored as u32 on disk.
+pub(crate) fn parse_layer_kind_mapping(
+    header: &[u8],
+    data: &[u8],
+) -> Result<PcbLayerKindMapping> {
+    let _section_count = parse_pcb_section_header(header)?;
+    if data.is_empty() {
+        return Ok(PcbLayerKindMapping {
+            version: String::new(),
+            hash: 0,
+            entries: Vec::new(),
+        });
+    }
+
+    let mut reader = BinaryReader::new(data);
+
+    // Version string: u32 byte_length + UTF-16LE bytes.
+    let version_byte_len = reader.read_u32_le()? as usize;
+    let version_bytes = reader.read_bytes(version_byte_len)?;
+    let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(version_bytes);
+    if had_errors {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Library/LayerKindMapping/Data".to_owned(),
+            detail: "UTF-16LE decoding error in version string".to_owned(),
+        });
+    }
+    let version = decoded.trim_end_matches('\0').to_owned();
+
+    // Hash and entry count.
+    let hash = reader.read_u32_le()?;
+    let count = reader.read_u32_le()? as usize;
+
+    // Entries: (u32 TV7_Layer, u32 TMechanicalLayerKind) pairs.
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let layer_id = reader.read_u32_le()?;
+        let kind = reader.read_u32_le()?;
+        entries.push(PcbLayerKindPair { layer_id, kind });
+    }
+    reader.assert_exhausted()?;
+
+    Ok(PcbLayerKindMapping { version, hash, entries })
+}
+
+/// Parse Library/PadViaLibrary/{Header,Data} streams.
+///
+/// The header count may be 0 even when the Data stream has content. Parses
+/// whatever blocks are present and returns None if the data stream is empty.
+pub(crate) fn parse_pad_via_library(
+    header: &[u8],
+    data: &[u8],
+) -> Result<Option<PcbPadViaLibraryConfig>> {
+    let _count = parse_pcb_section_header(header)?;
+    if data.is_empty() {
+        return Ok(None);
+    }
+
+    let mut blocks_iter = iter_blocks(data);
+    let block = match blocks_iter.next() {
+        Some(Ok(b)) => b,
+        Some(Err(e)) => return Err(e),
+        None => return Ok(None),
+    };
+
+    let mut params = ParameterCollection::from_bytes(&block.data)?;
+    let library_id =
+        params.remove_optional::<String>("PADVIALIBRARY.LIBRARYID")?.unwrap_or_default();
+    let library_name =
+        params.remove_optional::<String>("PADVIALIBRARY.LIBRARYNAME")?.unwrap_or_default();
+    let display_units =
+        params.remove_optional::<String>("PADVIALIBRARY.DISPLAYUNITS")?.unwrap_or_default();
+    params.assert_exhausted()?;
+
+    if let Some(extra) = blocks_iter.next() {
+        let _ = extra?;
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Library/PadViaLibrary/Data".to_owned(),
+            detail: "expected at most 1 block but found additional blocks".to_owned(),
+        });
+    }
+
+    Ok(Some(PcbPadViaLibraryConfig { library_id, library_name, display_units }))
+}
+
+/// Parse the Library/EmbeddedFonts single-stream sub-storage.
+///
+/// Format: u32_le count, then for each font: three length-prefixed UTF-16LE
+/// strings (name, style name, localized name), a u32 marker, a u32 blob size,
+/// and blob_size bytes of compressed font data (opaque binary, acceptable
+/// per the D2 exception for genuinely opaque binary payloads).
+pub(crate) fn parse_embedded_fonts(data: &[u8]) -> Result<Vec<PcbEmbeddedFontEntry>> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut reader = BinaryReader::new(data);
+    let count = reader.read_u32_le()? as usize;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name = read_utf16le_string(&mut reader)?;
+        let style_name = read_utf16le_string(&mut reader)?;
+        let localized_name = read_utf16le_string(&mut reader)?;
+        let unknown_u16 = reader.read_u16_le()?;
+        let flag = reader.read_u8()?;
+        let blob_size = reader.read_u32_le()? as usize;
+        let data_blob = reader.read_bytes(blob_size)?.to_vec();
+        entries.push(PcbEmbeddedFontEntry { name, style_name, localized_name, unknown_u16, flag, data: data_blob });
+    }
+    reader.assert_exhausted()?;
+    Ok(entries)
+}
+
+/// Parse Library/Textures/{Header,Data} streams.
+///
+/// Same pattern as Models: Header has block count, Data has one text block per
+/// entry with pipe-delimited params (e.g., `NAME=<path>`). Blob data is loaded
+/// separately from numbered streams.
+pub(crate) fn parse_texture_metadata(
+    header: &[u8],
+    data: &[u8],
+) -> Result<Vec<PcbTextureEntry>> {
+    let count = parse_pcb_section_header(header)? as usize;
+    if count == 0 && data.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::with_capacity(count);
+    for block_result in iter_blocks(data) {
+        let block = block_result?;
+        if block.format != BlockFormat::Text {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Library/Textures/Data".to_owned(),
+                detail: "expected text block for texture entry".to_owned(),
+            });
+        }
+        let mut params = ParameterCollection::from_bytes(&block.data)?;
+        let name = params.remove_optional::<String>("NAME")?.unwrap_or_default();
+        params.assert_exhausted()?;
+        entries.push(PcbTextureEntry { name, blob: None });
+    }
+
+    if entries.len() != count {
+        return Err(AltiumFormatError::RecordCountMismatch {
+            section: "Library/Textures".to_owned(),
+            expected: count,
+            actual: entries.len(),
+        });
+    }
+
+    Ok(entries)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
+    use crate::tracked_cfb::TrackedCfbDocument;
 
     fn data_path(filename: &str) -> std::path::PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -467,7 +535,7 @@ mod tests {
         let (lib, _) = parse_library_data(&block).unwrap();
         assert_eq!(lib.filename, "foo.PcbLib");
         assert_eq!(lib.version, "2.0");
-        assert_eq!(lib.board_config.v9_masterstack_style, "1");
+        assert!(lib.board_config.v9_master_stack.is_some(), "V9_MASTERSTACK_STYLE present should yield Some(master_stack)");
     }
 
     #[test]
