@@ -23,6 +23,11 @@ impl ParameterCollection {
         Self { params: IndexMap::new() }
     }
 
+    // Returns true if the collection has no parameters.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.params.is_empty()
+    }
+
     // Inserts a key=value pair. Does nothing if the key already exists (first-occurrence-wins).
     pub(crate) fn insert(&mut self, key: &str, value: String) {
         self.params.entry(key.to_owned()).or_insert(value);
@@ -54,6 +59,7 @@ impl ParameterCollection {
     }
 
     // Inserts indexed coordinates: count_key=N, then {x_prefix}1..N and {y_prefix}1..N.
+    // Uses T1 logic: each individual X/Y is skipped if the coordinate is zero.
     pub(crate) fn insert_indexed_coords(
         &mut self,
         count_key: &str,
@@ -64,12 +70,16 @@ impl ParameterCollection {
         self.insert(count_key, points.len().to_param_value());
         for (i, point) in points.iter().enumerate() {
             let idx = i + 1; // 1-based
-            let x_key = format!("{x_prefix}{idx}");
-            let y_key = format!("{y_prefix}{idx}");
-            let x_frac_key = format!("{x_prefix}{idx}_Frac");
-            let y_frac_key = format!("{y_prefix}{idx}_Frac");
-            self.insert_coord(&x_key, &x_frac_key, point.x);
-            self.insert_coord(&y_key, &y_frac_key, point.y);
+            if point.x.to_internal() != 0 {
+                let x_key = format!("{x_prefix}{idx}");
+                let x_frac_key = format!("{x_prefix}{idx}_Frac");
+                self.insert_coord(&x_key, &x_frac_key, point.x);
+            }
+            if point.y.to_internal() != 0 {
+                let y_key = format!("{y_prefix}{idx}");
+                let y_frac_key = format!("{y_prefix}{idx}_Frac");
+                self.insert_coord(&y_key, &y_frac_key, point.y);
+            }
         }
     }
 

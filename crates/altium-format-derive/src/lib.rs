@@ -77,17 +77,18 @@ fn expand_to_params(input: DeriveInput) -> syn::Result<TokenStream2> {
         let field_name = field.ident.as_ref().unwrap();
         let param_attr = get_param_attr(field)?;
 
-        let (strategy, tier2) = param_attr.parse_args_with(|input: ParseStream| {
+        let (strategy, tier2, skip_default) = param_attr.parse_args_with(|input: ParseStream| {
             let (flags, named) = collect_tokens(input)?;
             let flag_strs: Vec<String> = flags.iter().map(|f| f.to_string()).collect();
             let is_tier2 = flag_strs.iter().any(|f| f == "tier2");
+            let is_skip_default = flag_strs.iter().any(|f| f == "skip_default");
             let filtered_flags: Vec<Ident> =
-                flags.into_iter().filter(|f| f != "tier2").collect();
+                flags.into_iter().filter(|f| f != "tier2" && f != "skip_default").collect();
             let strategy = build_strategy(filtered_flags, named)?;
-            Ok((strategy, is_tier2))
+            Ok((strategy, is_tier2, is_skip_default))
         })?;
 
-        stmts.push(strategy.to_serialize_tokens(field_name, &field.ty, tier2));
+        stmts.push(strategy.to_serialize_tokens(field_name, &field.ty, tier2, skip_default));
     }
 
     Ok(quote! {
@@ -220,8 +221,9 @@ impl ParamStrategy {
 
     // Generates the statement that serializes a field into a ParameterCollection.
     // `tier2`: if true, always write (T2); if false, skip when value equals type zero (T1).
+    // `skip_default`: if true, skip when value equals the `default` expression (not type zero).
     // `field_type`: the concrete type, used for unambiguous Default::default() calls.
-    fn to_serialize_tokens(&self, field_name: &Ident, field_type: &syn::Type, tier2: bool) -> TokenStream2 {
+    fn to_serialize_tokens(&self, field_name: &Ident, field_type: &syn::Type, tier2: bool, skip_default: bool) -> TokenStream2 {
         match self {
             ParamStrategy::Required { key } => {
                 if tier2 {
@@ -236,10 +238,19 @@ impl ParamStrategy {
                     }
                 }
             }
-            ParamStrategy::WithDefault { key, default: _ } => {
+            ParamStrategy::WithDefault { key, default } => {
                 if tier2 {
                     quote! {
                         params.insert(#key, self.#field_name.to_param_value());
+                    }
+                } else if skip_default {
+                    // skip_default: skip when value equals the parse default expression.
+                    // Used when Altium omits the field when it matches the non-zero default
+                    // (e.g., Text="*" is omitted, not Text="").
+                    quote! {
+                        if self.#field_name != #default {
+                            params.insert(#key, self.#field_name.to_param_value());
+                        }
                     }
                 } else {
                     // T1: skip when value == type zero. The `default` attribute only

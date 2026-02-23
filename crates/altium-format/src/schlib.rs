@@ -818,11 +818,12 @@ fn write_pin_desc(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     Some(serialize_embedded_object_stream(PIN_DESC, &entries))
 }
 
-// Returns PinMiscData sidecar stream if any pin has a non-empty swap_id_pin.
+// Returns PinMiscData sidecar stream if any pin has a swap_id_pin that needs
+// sidecar storage (exceeds binary pin format limits per NeedToSaveParameter).
 fn write_pin_misc_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
-        if !pin.swap_id_pin.is_empty() {
+        if pin_field_needs_wide_text(&pin.swap_id_pin) {
             let mut params = ParameterCollection::new();
             params.insert(PAIR_SWAP_ID, pin.swap_id_pin.clone());
             entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
@@ -874,36 +875,44 @@ fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinText
     }
 }
 
-// Returns PinWideText sidecar stream if any pin has non-empty text fields.
+/// Returns true if a pin text field needs to be saved in the PinWideText sidecar
+/// because it cannot be faithfully represented in the binary pin format.
+///
+/// Matches Altium's `NeedToSaveParameter()` logic (SchDataExporterLibraryV5.cs:711-722):
+/// - Field exceeds 254 bytes (binary pin length-prefix is u8)
+/// - Field contains non-ANSI characters (> 0x7E, except 0x8E which is the pipe escape)
+fn pin_field_needs_wide_text(value: &str) -> bool {
+    value.len() > 254
+        || value.chars().any(|c| c as u32 > 0x7E && c as u32 != 0x8E)
+}
+
+// Returns PinWideText sidecar stream if any pin has fields that need wide text.
+//
+// Only writes fields that individually meet the NeedToSaveParameter() criteria,
+// plus sidecar-only fields (swap_id_part, default_value) that are non-empty.
 fn write_pin_wide_text(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
-        let has_data = !pin.description.is_empty()
-            || !pin.name.is_empty()
-            || !pin.designator.is_empty()
-            || !pin.swap_id_pin.is_empty()
-            || !pin.swap_id_part.is_empty()
-            || !pin.default_value.is_empty();
-        if has_data {
-            let mut params = ParameterCollection::new();
-            if !pin.description.is_empty() {
-                params.insert(DESC, pin.description.clone());
-            }
-            if !pin.name.is_empty() {
-                params.insert(NAME, pin.name.clone());
-            }
-            if !pin.designator.is_empty() {
-                params.insert(DESIG, pin.designator.clone());
-            }
-            if !pin.swap_id_pin.is_empty() {
-                params.insert(SWAP_ID, pin.swap_id_pin.clone());
-            }
-            if !pin.swap_id_part.is_empty() {
-                params.insert(SWAP_ID_PART, pin.swap_id_part.clone());
-            }
-            if !pin.default_value.is_empty() {
-                params.insert(DEF_VALUE, pin.default_value.clone());
-            }
+        let mut params = ParameterCollection::new();
+        if pin_field_needs_wide_text(&pin.description) {
+            params.insert(DESC, pin.description.clone());
+        }
+        if pin_field_needs_wide_text(&pin.name) {
+            params.insert(NAME, pin.name.clone());
+        }
+        if pin_field_needs_wide_text(&pin.designator) {
+            params.insert(DESIG, pin.designator.clone());
+        }
+        if pin_field_needs_wide_text(&pin.swap_id_pin) {
+            params.insert(SWAP_ID, pin.swap_id_pin.clone());
+        }
+        if pin_field_needs_wide_text(&pin.swap_id_part) {
+            params.insert(SWAP_ID_PART, pin.swap_id_part.clone());
+        }
+        if pin_field_needs_wide_text(&pin.default_value) {
+            params.insert(DEF_VALUE, pin.default_value.clone());
+        }
+        if !params.is_empty() {
             entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
         }
     }
@@ -1304,7 +1313,6 @@ fn serialize_component_data(comp: &SchLibComponent) -> Vec<u8> {
 // Serializes a Redirection stream for an alias.
 fn serialize_redirection_stream(canonical_name: &str) -> Vec<u8> {
     let mut params = ParameterCollection::new();
-    params.insert(RECORD, "0".to_owned());
     params.insert(SECTION_NAME, canonical_name.to_owned());
     write_text_block(&params.to_bytes())
 }
@@ -1340,32 +1348,42 @@ fn serialize_additional_data(records: &[SchRecord]) -> Vec<u8> {
 }
 
 // Builds the reverse section_keys mapping from SchLibHeader and tests key generation.
+//
+// Only generates SectionKeys entries when the sanitized name differs from the
+// default fallback in `resolve_component_key` (which replaces `/` with `_`).
+// Names that only contain `/` from the illegal character set don't need
+// SectionKeys entries because the fallback handles them.
 fn build_section_keys(header: &SchLibHeader) -> HashMap<String, String> {
     let mut keys = HashMap::new();
     let mut used_keys = std::collections::HashSet::new();
 
     for comp in &header.components {
-        let sanitized = sanitize_cfb_name(&comp.lib_ref);
-        if sanitized != comp.lib_ref || sanitized.len() > 31 {
-            let short_key = generate_unique_key(&sanitized, &mut used_keys);
-            keys.insert(comp.lib_ref.clone(), short_key.clone());
-            used_keys.insert(short_key);
-        } else {
-            used_keys.insert(sanitized);
-        }
-        // Also handle alias names
+        build_section_key_for_name(&comp.lib_ref, &mut keys, &mut used_keys);
         for alias in &comp.aliases {
-            let sanitized = sanitize_cfb_name(alias);
-            if sanitized != *alias || sanitized.len() > 31 {
-                let short_key = generate_unique_key(&sanitized, &mut used_keys);
-                keys.insert(alias.clone(), short_key.clone());
-                used_keys.insert(short_key);
-            } else {
-                used_keys.insert(sanitized);
-            }
+            build_section_key_for_name(alias, &mut keys, &mut used_keys);
         }
     }
     keys
+}
+
+fn build_section_key_for_name(
+    name: &str,
+    keys: &mut HashMap<String, String>,
+    used_keys: &mut std::collections::HashSet<String>,
+) {
+    let sanitized = sanitize_cfb_name(name);
+    // The default fallback in resolve_component_key replaces '/' with '_'.
+    // Only generate a SectionKeys entry when the sanitized name differs from
+    // that default fallback, i.e., the name contains illegal characters OTHER
+    // than '/' or the name exceeds 31 chars.
+    let default_fallback = name.replace('/', "_");
+    if sanitized != default_fallback || sanitized.len() > 31 {
+        let short_key = generate_unique_key(&sanitized, used_keys);
+        keys.insert(name.to_owned(), short_key.clone());
+        used_keys.insert(short_key);
+    } else {
+        used_keys.insert(sanitized);
+    }
 }
 
 fn sanitize_cfb_name(name: &str) -> String {

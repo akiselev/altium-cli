@@ -497,16 +497,23 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
 // ── Graphical primitive records ───────────────────────────────────────────────
 
 /// A line segment (RECORD=13).
+///
+/// Field order matches Altium's `ExportLine` (FileFormatV5.cs:1805-1821):
+/// ExportGraphicalObject, Location, Corner, LineWidth, LineStyle, Color, LineStyleExt, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchLine {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
     #[param(key = LINE_STYLE, default = LineStyle::Solid)]
     pub line_style: LineStyle,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
     #[param(key = LINE_STYLE_EXT, default = LineStyle::Solid)]
     pub line_style_ext: LineStyle,
     #[param(key = UNIQUE_ID, default = String::new())]
@@ -514,16 +521,26 @@ pub(crate) struct SchLine {
 }
 
 /// A filled or outlined rectangle (RECORD=14).
+///
+/// Field order matches Altium's `ExportRectangle` (FileFormatV5.cs:1620-1637):
+/// ExportGraphicalObject, Location, Corner, LineStyleExt, LineWidth, Color, AreaColor,
+/// IsSolid, Transparent, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchRectangle {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
-    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
-    pub line_width: PenWidth,
     #[param(key = LINE_STYLE_EXT, default = LineStyle::Solid)]
     pub line_style: LineStyle,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
     #[param(key = TRANSPARENT, default = false)]
@@ -533,71 +550,106 @@ pub(crate) struct SchRectangle {
 }
 
 /// A rounded rectangle (RECORD=10).
+///
+/// Field order matches Altium's `ExportRoundRectangle` (FileFormatV5.cs:1680-1697):
+/// ExportGraphicalObject, Location, Corner, CornerXRadius, CornerYRadius, LineWidth,
+/// Color, AreaColor, IsSolid, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchRoundRectangle {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
-    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
-    pub line_width: PenWidth,
-    #[param(key = IS_SOLID, default = false)]
-    pub is_solid: bool,
     #[param(coord, key = CORNER_X_RADIUS, frac_key = CORNER_X_RADIUS_FRAC)]
     pub corner_x_radius: Coord,
     #[param(coord, key = CORNER_Y_RADIUS, frac_key = CORNER_Y_RADIUS_FRAC)]
     pub corner_y_radius: Coord,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = IS_SOLID, default = false)]
+    pub is_solid: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
 
 /// A circular arc segment (RECORD=12).
+///
+/// Field order matches Altium's `ExportArc` (FileFormatV5.cs:177-191):
+/// ExportGraphicalObject, Location, Radius, LineWidth, StartAngle, EndAngle, Color, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchArc {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord, key = RADIUS, frac_key = RADIUS_FRAC)]
     pub radius: Coord,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
     #[param(key = START_ANGLE, default = 0.0f64)]
     pub start_angle: f64,
     #[param(key = END_ANGLE, default = 360.0f64)]
     pub end_angle: f64,
-    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
-    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
 
 /// An elliptical arc segment (RECORD=11).
+///
+/// Field order matches Altium's `ExportEllipticalArc` (FileFormatV5.cs:225-240):
+/// ExportGraphicalObject, Location, Radius, SecondaryRadius, LineWidth, StartAngle,
+/// EndAngle, Color, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchEllipticalArc {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord, key = RADIUS, frac_key = RADIUS_FRAC)]
     pub radius: Coord,
     #[param(coord, key = SECONDARY_RADIUS, frac_key = SECONDARY_RADIUS_FRAC)]
     pub secondary_radius: Coord,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
     #[param(key = START_ANGLE, default = 0.0f64)]
     pub start_angle: f64,
     #[param(key = END_ANGLE, default = 360.0f64)]
     pub end_angle: f64,
-    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
-    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
 
 /// A filled or outlined ellipse (RECORD=8).
+///
+/// Field order matches Altium's `ExportEllipse` (FileFormatV5.cs:329-345):
+/// ExportGraphicalObject, Location, Radius, SecondaryRadius, LineWidth, Color, AreaColor,
+/// IsSolid, Transparent, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchEllipse {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord, key = RADIUS, frac_key = RADIUS_FRAC)]
     pub radius: Coord,
     #[param(coord, key = SECONDARY_RADIUS, frac_key = SECONDARY_RADIUS_FRAC)]
     pub secondary_radius: Coord,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
     #[param(key = TRANSPARENT, default = false)]
@@ -607,96 +659,132 @@ pub(crate) struct SchEllipse {
 }
 
 /// A pie (filled wedge) shape (RECORD=9).
+///
+/// Field order matches Altium's `ExportPie` (FileFormatV5.cs:277-292):
+/// ExportGraphicalObject, Location, Radius, LineWidth, StartAngle, EndAngle,
+/// Color, AreaColor, IsSolid
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPie {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord, key = RADIUS, frac_key = RADIUS_FRAC)]
     pub radius: Coord,
     #[param(coord, key = SECONDARY_RADIUS, frac_key = SECONDARY_RADIUS_FRAC)]
     pub secondary_radius: Coord,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
     #[param(key = START_ANGLE, default = 0.0f64)]
     pub start_angle: f64,
     #[param(key = END_ANGLE, default = 360.0f64)]
     pub end_angle: f64,
-    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
-    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
 }
 
 /// A multi-segment polyline (RECORD=6).
+///
+/// Field order matches Altium's `ExportPolyline` (FileFormatV5.cs:1175-1191):
+/// ExportGraphicalObject, LineWidth, LineStyle, StartLineShape, EndLineShape,
+/// LineShapeSize, Color, Vertices, LineStyleExt, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPolyline {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
-    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
-    pub vertices: Vec<CoordPoint>,
+    pub base: SchPrimitiveBase,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
     #[param(key = LINE_STYLE, default = LineStyle::Solid)]
     pub line_style: LineStyle,
-    #[param(key = LINE_STYLE_EXT, default = LineStyle::Solid)]
-    pub line_style_ext: LineStyle,
-    #[param(key = LINE_SHAPE_SIZE, default = PenWidth::Zero)]
-    pub line_shape_size: PenWidth,
     #[param(key = START_LINE_SHAPE, default = LineShape::None)]
     pub start_line_shape: LineShape,
     #[param(key = END_LINE_SHAPE, default = LineShape::None)]
     pub end_line_shape: LineShape,
+    #[param(key = LINE_SHAPE_SIZE, default = PenWidth::Zero)]
+    pub line_shape_size: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
+    pub vertices: Vec<CoordPoint>,
+    #[param(key = LINE_STYLE_EXT, default = LineStyle::Solid)]
+    pub line_style_ext: LineStyle,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
 
 /// A closed polygon (RECORD=7).
+///
+/// Field order matches Altium's `ExportPolygon` (FileFormatV5.cs:1133-1146):
+/// ExportGraphicalObject, LineWidth, Color, AreaColor, IsSolid, Transparent, Vertices, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchPolygon {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
-    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
-    pub vertices: Vec<CoordPoint>,
+    pub base: SchPrimitiveBase,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
     #[param(key = TRANSPARENT, default = false)]
     pub transparent: bool,
+    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
+    pub vertices: Vec<CoordPoint>,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
 
 /// A Bezier curve (RECORD=5).
+///
+/// Field order matches Altium's `ExportBezier` (FileFormatV5.cs:1225-1235):
+/// ExportGraphicalObject, LineWidth, Color, Vertices, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchBezier {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
-    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
-    pub vertices: Vec<CoordPoint>,
+    pub base: SchPrimitiveBase,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
+    pub vertices: Vec<CoordPoint>,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
 
 /// An embedded or linked image (RECORD=30).
+///
+/// Field order matches Altium's `ExportImage` (FileFormatV5.cs:1740-1758):
+/// ExportGraphicalObject, Location, Corner, Orientation, LineWidth, Color,
+/// IsSolid, KeepAspect, EmbedImage, FileName, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchImage {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
     #[param(key = ORIENTATION, default = RotationBy90::Rotate0)]
     pub orientation: RotationBy90,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
     #[param(key = IS_SOLID, default = false)]
     pub is_solid: bool,
+    #[param(key = KEEP_ASPECT, default = false)]
+    pub keep_aspect: bool,
     #[param(key = EMBED_IMAGE, default = false)]
     pub embed_image: bool,
     #[param(key = FILE_NAME, default = String::new())]
     pub file_name: String,
-    #[param(key = KEEP_ASPECT, default = false)]
-    pub keep_aspect: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
@@ -749,9 +837,9 @@ pub(crate) struct SchDesignator {
     pub font_id: i32,
     #[param(key = IS_HIDDEN, default = false)]
     pub is_hidden: bool,
-    #[param(key = TEXT, default = String::from("*"))]
+    #[param(tier2, key = TEXT, default = String::from("*"))]
     pub text: String,
-    #[param(key = NAME, default = String::from("Designator"))]
+    #[param(tier2, key = NAME, default = String::from("Designator"))]
     pub name: String,
     #[param(key = READ_ONLY_STATE, default = ParameterReadOnlyState::Name)]
     pub read_only_state: ParameterReadOnlyState,
@@ -785,11 +873,11 @@ pub(crate) struct SchParameter {
     pub font_id: i32,
     #[param(key = IS_HIDDEN, default = false)]
     pub is_hidden: bool,
-    #[param(key = TEXT, default = String::from("*"))]
+    #[param(key = TEXT, default = String::from("*"), skip_default)]
     pub text: String,
     #[param(key = PARAM_TYPE, default = ParameterType::String)]
     pub param_type: ParameterType,
-    #[param(key = NAME, default = String::from("Comment"))]
+    #[param(tier2, key = NAME, default = String::from("Comment"))]
     pub name: String,
     #[param(key = SHOW_NAME, default = false)]
     pub show_name: bool,
@@ -816,34 +904,45 @@ pub(crate) struct SchParameter {
 }
 
 /// A text frame (bordered text box) (RECORD=28).
+///
+/// Field order matches Altium's `ExportTextFrame` (FileFormatV5.cs:1908-1931):
+/// ExportGraphicalObject, Location, Corner, LineWidth, Color, AreaColor, TextColor,
+/// FontID, IsSolid, ShowBorder, Alignment, WordWrap, ClipToRect, Text, TextMargin,
+/// Transparent, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchTextFrame {
     #[param(flatten)]
-    pub base: SchGraphicalBase,
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
-    #[param(key = TEXT, default = String::new())]
-    pub text: String,
+    #[param(key = LINE_WIDTH, default = PenWidth::Small)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = TEXT_COLOR, default = Color::BLACK)]
+    pub text_color: Color,
     #[param(key = FONT_ID, default = 1i32)]
     pub font_id: i32,
+    #[param(key = IS_SOLID, default = false)]
+    pub is_solid: bool,
+    #[param(key = SHOW_BORDER, default = true)]
+    pub show_border: bool,
     #[param(key = ALIGNMENT, default = TextJustification::BottomLeft)]
     pub alignment: TextJustification,
     #[param(key = WORD_WRAP, default = false)]
     pub word_wrap: bool,
-    #[param(key = IS_SOLID, default = false)]
-    pub is_solid: bool,
-    #[param(key = LINE_WIDTH, default = PenWidth::Small)]
-    pub line_width: PenWidth,
-    #[param(key = TEXT_COLOR, default = Color::BLACK)]
-    pub text_color: Color,
-    #[param(coord, key = TEXT_MARGIN, frac_key = TEXT_MARGIN_FRAC)]
-    pub text_margin: Coord,
-    #[param(key = SHOW_BORDER, default = true)]
-    pub show_border: bool,
-    #[param(key = TRANSPARENT, default = true)]
-    pub transparent: bool,
     #[param(key = CLIP_TO_RECT, default = false)]
     pub clip_to_rect: bool,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
+    #[param(coord, key = TEXT_MARGIN, frac_key = TEXT_MARGIN_FRAC)]
+    pub text_margin: Coord,
+    #[param(key = TRANSPARENT, default = true)]
+    pub transparent: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
@@ -859,10 +958,12 @@ pub(crate) struct SchImplementationList {
 
 /// A single footprint/model assignment (RECORD=45).
 ///
-/// Parsed from parameter stream. The datafile triplets (ModelDatafile{i},
-/// ModelDatafileEntity{i}, ModelDatafileKind{i}) are stored as flat Strings
-/// for index 0 only at this milestone; full multi-datafile support can be
-/// added when assert_exhausted reveals more entries in real files.
+/// Field order matches Altium's `ExportImplementation` (FileFormatV5.cs:2510-2540):
+/// ExportDataObject, Description, UseComponentLibrary, ModelName, ModelType,
+/// DatafileCount, ModelVaultGUID, ModelItemGUID, ModelRevisionGUID,
+/// ModelDatafile0, ModelDatafileEntity0, ModelDatafileKind0,
+/// IsCurrent, DatalinksLocked, DatabaseDatalinksLocked, IntegratedModel,
+/// DatabaseModel, UniqueID
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchImplementation {
     #[param(flatten)]
@@ -875,6 +976,20 @@ pub(crate) struct SchImplementation {
     pub model_name: String,
     #[param(key = MODEL_TYPE, default = String::new())]
     pub model_type: String,
+    #[param(key = DATAFILE_COUNT, default = 0i32)]
+    pub datafile_count: i32,
+    #[param(key = MODEL_VAULT_GUID, default = String::new())]
+    pub model_vault_guid: String,
+    #[param(key = MODEL_ITEM_GUID, default = String::new())]
+    pub model_item_guid: String,
+    #[param(key = MODEL_REVISION_GUID, default = String::new())]
+    pub model_revision_guid: String,
+    #[param(key = "ModelDatafile0", default = String::new())]
+    pub model_datafile0: String,
+    #[param(key = "ModelDatafileEntity0", default = String::new())]
+    pub model_datafile_entity0: String,
+    #[param(key = "ModelDatafileKind0", default = String::new())]
+    pub model_datafile_kind0: String,
     #[param(key = IS_CURRENT, default = false)]
     pub is_current: bool,
     #[param(key = DATALINKS_LOCKED, default = false)]
@@ -885,24 +1000,10 @@ pub(crate) struct SchImplementation {
     pub integrated_model: bool,
     #[param(key = DATABASE_MODEL, default = false)]
     pub database_model: bool,
-    #[param(key = MODEL_VAULT_GUID, default = String::new())]
-    pub model_vault_guid: String,
-    #[param(key = MODEL_ITEM_GUID, default = String::new())]
-    pub model_item_guid: String,
-    #[param(key = MODEL_REVISION_GUID, default = String::new())]
-    pub model_revision_guid: String,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
     #[param(key = MODEL_LOCATION, default = String::new())]
     pub model_location: String,
-    #[param(key = DATAFILE_COUNT, default = 0i32)]
-    pub datafile_count: i32,
-    #[param(key = "ModelDatafile0", default = String::new())]
-    pub model_datafile0: String,
-    #[param(key = "ModelDatafileEntity0", default = String::new())]
-    pub model_datafile_entity0: String,
-    #[param(key = "ModelDatafileKind0", default = String::new())]
-    pub model_datafile_kind0: String,
 }
 
 /// Container for pin-to-pad mapping entries (RECORD=46).
@@ -1637,8 +1738,8 @@ mod tests {
     fn line_parsed() {
         let mut params = pc("|Location.X=10|Location.Y=20|Corner.X=30|Corner.Y=40|LineWidth=1|LineStyle=2|");
         let line = SchLine::from_params(&mut params).unwrap();
-        assert_eq!(line.base.location.x.to_internal(), 10 * 100_000);
-        assert_eq!(line.base.location.y.to_internal(), 20 * 100_000);
+        assert_eq!(line.location.x.to_internal(), 10 * 100_000);
+        assert_eq!(line.location.y.to_internal(), 20 * 100_000);
         assert_eq!(line.corner.x.to_internal(), 30 * 100_000);
         assert_eq!(line.corner.y.to_internal(), 40 * 100_000);
         assert_eq!(line.line_width, PenWidth::Small);
@@ -1994,9 +2095,9 @@ mod tests {
         let line2 = SchLine::from_params(&mut rt).unwrap();
         rt.assert_exhausted().unwrap();
 
-        assert_eq!(line2.base.primitive.owner_index, 0);
-        assert_eq!(line2.base.location.x.to_internal(), 10 * 100_000);
-        assert_eq!(line2.base.location.y.to_internal(), 20 * 100_000);
+        assert_eq!(line2.base.owner_index, 0);
+        assert_eq!(line2.location.x.to_internal(), 10 * 100_000);
+        assert_eq!(line2.location.y.to_internal(), 20 * 100_000);
         assert_eq!(line2.corner.x.to_internal(), 30 * 100_000);
         assert_eq!(line2.corner.y.to_internal(), 40 * 100_000);
         assert_eq!(line2.line_width, PenWidth::Small);
@@ -2007,7 +2108,7 @@ mod tests {
 
     #[test]
     fn polyline_roundtrip() {
-        let mut params = pc("|Location.X=0|Location.Y=0|LocationCount=3|X1=1|Y1=2|X2=3|Y2=4|X3=5|Y3=6|LineWidth=1|");
+        let mut params = pc("|LocationCount=3|X1=1|Y1=2|X2=3|Y2=4|X3=5|Y3=6|LineWidth=1|");
         let pl = SchPolyline::from_params(&mut params).unwrap();
         params.assert_exhausted().unwrap();
 
@@ -2039,7 +2140,7 @@ mod tests {
         let arc2 = SchArc::from_params(&mut rt).unwrap();
         rt.assert_exhausted().unwrap();
 
-        assert_eq!(arc2.base.location.x.to_internal(), 5 * 100_000 + 25_000);
+        assert_eq!(arc2.location.x.to_internal(), 5 * 100_000 + 25_000);
         assert_eq!(arc2.radius.to_internal(), 100 * 100_000 + 50_000);
         assert!((arc2.start_angle - 45.0).abs() < f64::EPSILON);
         assert!((arc2.end_angle - 270.0).abs() < f64::EPSILON);
@@ -2198,11 +2299,11 @@ mod tests {
         assert_eq!(record_val, 13); // SchRecordType::Line
         let line2 = SchLine::from_params(&mut rt_params).unwrap();
         rt_params.assert_exhausted().unwrap();
-        assert_eq!(line2.base.location.x, Coord::from_dxp_frac(10, 0));
-        assert_eq!(line2.base.location.y, Coord::from_dxp_frac(20, 0));
+        assert_eq!(line2.location.x, Coord::from_dxp_frac(10, 0));
+        assert_eq!(line2.location.y, Coord::from_dxp_frac(20, 0));
         assert_eq!(line2.corner.x, Coord::from_dxp_frac(30, 0));
         assert_eq!(line2.corner.y, Coord::from_dxp_frac(40, 0));
-        assert_eq!(line2.base.color, Color::new(128));
+        assert_eq!(line2.color, Color::new(128));
     }
 
     #[test]
