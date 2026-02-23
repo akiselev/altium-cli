@@ -96,6 +96,37 @@ We MUST NEVER silently drop parsing or other errors or silently corrupt data. Ev
 We are using a red/green development workflow similar to red/green test driven development except along with tests we are using our own validate CLI command to open documents. Since we fail on the first record/type/parameter that we don't recognize, Claude Code can use the command in a loop to slowly investigate and implement every part of the Altium file format step by step.
 
 
+# CFB Debugging CLI
+
+The `altium cfb` subcommand group provides low-level CFB container inspection tools
+for debugging serialization roundtrip failures. These operate directly on the CFB
+container using the `cfb` crate — no `altium-format` imports.
+
+| Command | Purpose |
+|---------|---------|
+| `altium cfb ls <file>` | List streams/storages (tree view, or `--flat` for grep-friendly) |
+| `altium cfb dump <file> <stream>` | Hex+ASCII dump (`--blocks` annotates block boundaries and decodes text) |
+| `altium cfb blocks <file> <stream>` | Block-level summary (`--block N` for full detail on one block) |
+| `altium cfb diff <file1> <file2>` | Stream-by-stream comparison (`--blocks` for block-level, `--stream` to filter) |
+| `altium cfb cat <file> <stream>` | Raw bytes to stdout for piping (`\| xxd`, `\| wc -c`) |
+
+Example workflow for debugging a roundtrip failure:
+```bash
+# 1. Diff original vs roundtripped
+altium cfb diff original.SchLib roundtripped.SchLib --blocks
+
+# 2. Inspect the differing stream
+altium cfb blocks original.SchLib /Component_1/Data
+altium cfb blocks original.SchLib /Component_1/Data --block 0
+
+# 3. Hex dump with block annotations
+altium cfb dump original.SchLib /FileHeader --blocks
+
+# 4. Pipe raw bytes for external tools
+altium cfb cat original.SchLib /FileHeader | xxd
+```
+
+
 # DXP File Format Documentation (`docs/dxp/`)
 
 Reverse-engineered documentation for Altium Designer binary file formats. **Start with `container-format.md` for the big picture**, then dive into the domain you need.

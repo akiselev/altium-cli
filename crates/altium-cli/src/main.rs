@@ -5,6 +5,8 @@ use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_ops::{AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps};
 use clap::{Parser, Subcommand};
 
+mod cfb;
+
 #[derive(Parser)]
 #[command(name = "altium", about = "CLI tool for Altium Designer files")]
 struct Cli {
@@ -19,6 +21,11 @@ enum Commands {
         /// Path to the document to validate
         path: PathBuf,
     },
+    /// CFB container inspection and debugging tools
+    Cfb {
+        #[command(subcommand)]
+        sub: cfb::CfbSubcommand,
+    },
 }
 
 fn main() -> ExitCode {
@@ -31,6 +38,13 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        Commands::Cfb { sub } => match cfb::run(sub) {
+            Ok(code) => return code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
     }
 
     ExitCode::SUCCESS
