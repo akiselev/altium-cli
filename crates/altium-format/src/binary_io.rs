@@ -238,6 +238,34 @@ impl<'a> BinaryReader<'a> {
         Ok(BinaryReader::new(sub_data))
     }
 
+    /// Reads a fixed-size UTF-16LE string buffer (`char_count` WideChars = `char_count * 2` bytes).
+    ///
+    /// Decodes up to the first null WideChar. Bytes after the null terminator are
+    /// consumed but ignored (Delphi heap junk in fixed-size `WideChar[N]` buffers).
+    pub(crate) fn read_wide_string_fixed(&mut self, char_count: usize) -> Result<String> {
+        let byte_count = char_count * 2;
+        let bytes = self.read_bytes(byte_count)?;
+        // Find null terminator (00 00 at even offset).
+        let mut end = byte_count;
+        for i in (0..byte_count).step_by(2) {
+            if bytes[i] == 0 && bytes[i + 1] == 0 {
+                end = i;
+                break;
+            }
+        }
+        let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(&bytes[..end]);
+        if had_errors {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "UTF-16LE string".to_owned(),
+                detail: format!(
+                    "invalid UTF-16LE at buffer offset {}",
+                    self.pos - byte_count
+                ),
+            });
+        }
+        Ok(decoded.into_owned())
+    }
+
     /// Returns an error if there are any bytes remaining.
     pub(crate) fn assert_exhausted(&self) -> Result<()> {
         let count = self.remaining();
@@ -393,6 +421,27 @@ impl BinaryWriter {
         );
         self.write_u8(encoded.len() as u8);
         self.buf.extend_from_slice(&encoded);
+    }
+
+    /// Writes a string as a fixed-size UTF-16LE buffer (`char_count` WideChars = `char_count * 2` bytes).
+    ///
+    /// The string is null-terminated and zero-padded to fill the buffer.
+    /// Panics if the string exceeds `char_count - 1` characters.
+    pub(crate) fn write_wide_string_fixed(&mut self, s: &str, char_count: usize) {
+        let byte_count = char_count * 2;
+        let chars: Vec<u16> = s.encode_utf16().collect();
+        assert!(
+            chars.len() < char_count,
+            "Wide string too long: {} chars (max {})",
+            chars.len(),
+            char_count - 1
+        );
+        for &c in &chars {
+            self.buf.extend_from_slice(&c.to_le_bytes());
+        }
+        // Zero-pad remainder (null terminator + padding).
+        let written = chars.len() * 2;
+        self.buf.resize(self.buf.len() + (byte_count - written), 0);
     }
 
     /// Writes all elements of a fixed-size array using the provided closure.
