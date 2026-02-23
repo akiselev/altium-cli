@@ -77,7 +77,10 @@ pub(crate) fn parse_embedded_object_stream(
     params.remove_optional::<i32>(RECORD)?;
     // HEADER=<stream_name> appears in pin sidecar stream headers; consume without checking.
     params.remove_optional::<String>(HEADER)?;
-    let weight: usize = params.remove_required(WEIGHT)?;
+    // Some legacy files omit Weight from Storage-style headers.
+    let weight = params
+        .remove_optional::<usize>(WEIGHT)?
+        .unwrap_or(blocks.len().saturating_sub(1));
     params.assert_exhausted()?;
     let entries: Result<Vec<EmbeddedObject>> =
         blocks[1..].iter().map(|b| parse_embedded_object(&b.data)).collect();
@@ -221,6 +224,18 @@ mod tests {
         let blocks = vec![header_block, block1];
         let err = parse_embedded_object_stream(&blocks).unwrap_err();
         assert!(matches!(err, AltiumFormatError::RecordCountMismatch { .. }));
+    }
+
+    #[test]
+    fn parse_stream_without_weight_uses_block_count() {
+        let header_data = b"|HEADER=Icon storage|\0";
+        let header_block = Block {
+            format: BlockFormat::Text,
+            data: header_data.to_vec(),
+        };
+        let blocks = vec![header_block];
+        let entries = parse_embedded_object_stream(&blocks).unwrap();
+        assert!(entries.is_empty());
     }
 
     #[test]

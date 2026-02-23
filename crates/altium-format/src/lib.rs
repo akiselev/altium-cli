@@ -1,9 +1,9 @@
 #[allow(dead_code)]
 mod binary_io;
 #[allow(dead_code)]
-mod board_config;
-#[allow(dead_code)]
 mod block_stream;
+#[allow(dead_code)]
+mod board_config;
 #[allow(dead_code)]
 mod cfb_document;
 #[cfg(test)]
@@ -27,11 +27,17 @@ mod tracked_cfb;
 #[allow(dead_code)]
 mod wide_strings_tlv;
 
+#[allow(dead_code)]
 pub mod document;
+#[allow(dead_code)]
 pub mod intlib;
+#[allow(dead_code)]
 pub mod pcbdoc;
+#[allow(dead_code)]
 pub mod pcblib;
+#[allow(dead_code)]
 pub mod project;
+#[allow(dead_code)]
 pub mod schdoc;
 #[allow(dead_code)]
 pub mod schlib;
