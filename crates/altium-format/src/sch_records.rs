@@ -417,7 +417,8 @@ pub(crate) fn parse_component_record(params: &mut crate::param_collection::Param
     let override_colors: bool = params.remove_with_default(OVERIDE_COLORS, false)?;
     let display_field_names: bool = params.remove_with_default(DISPLAY_FIELD_NAMES, false)?;
     let designator_locked: bool = params.remove_with_default(DESIGNATOR_LOCKED, false)?;
-    let part_id_locked: bool = params.remove_with_default(PART_ID_LOCKED, false)?;
+    // C# Import_Boolean_WithDefault: defaults to DesignatorLocked value when absent
+    let part_id_locked: bool = params.remove_with_default(PART_ID_LOCKED, designator_locked)?;
     let pins_moveable: bool = params.remove_with_default(PINS_MOVEABLE, false)?;
     let alias_list: String = params.remove_with_default(ALIAS_LIST, String::new())?;
     let not_use_library_name: bool = params.remove_with_default(NOT_USE_LIBRARY_NAME, false)?;
@@ -676,8 +677,6 @@ pub(crate) struct SchPie {
     pub location: CoordPoint,
     #[param(coord, key = RADIUS, frac_key = RADIUS_FRAC)]
     pub radius: Coord,
-    #[param(coord, key = SECONDARY_RADIUS, frac_key = SECONDARY_RADIUS_FRAC)]
-    pub secondary_radius: Coord,
     #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
     pub line_width: PenWidth,
     #[param(key = START_ANGLE, default = SchAngle(0.0))]
@@ -1848,7 +1847,7 @@ mod tests {
 
     #[test]
     fn pie_parsed() {
-        let mut params = pc("|Location.X=0|Location.Y=0|Radius=40|SecondaryRadius=40|StartAngle=30|EndAngle=150|LineWidth=0|IsSolid=T|Transparent=F|");
+        let mut params = pc("|Location.X=0|Location.Y=0|Radius=40|StartAngle=30|EndAngle=150|LineWidth=0|IsSolid=T|");
         let pie = SchPie::from_params(&mut params).unwrap();
         assert_eq!(pie.radius.to_internal(), 40 * 100_000);
         assert_eq!(pie.start_angle, SchAngle(30.0));
