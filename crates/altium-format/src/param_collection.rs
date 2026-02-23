@@ -410,6 +410,55 @@ impl ParameterCollection {
         result
     }
 
+    /// Applies the Altium UNICODE sidecar mechanism to this collection.
+    ///
+    /// Altium uses a sidecar convention for fields that contain characters outside
+    /// Windows-1252: `UNICODE=EXISTS` is a marker flag, and `UNICODE__<KEY>` provides
+    /// the true Unicode value as comma-separated decimal UTF-16 code points.
+    ///
+    /// This method:
+    /// 1. Removes the `UNICODE` marker flag (if present; returns Ok(()) if absent)
+    /// 2. Removes all `UNICODE__*` sidecar keys
+    /// 3. Decodes each sidecar value from UTF-16 code points to a Rust String
+    /// 4. Replaces the corresponding parameter (`<KEY>`) with the decoded Unicode value
+    ///
+    /// Must be called BEFORE extracting field values so that callers receive the
+    /// correct Unicode text instead of garbled Windows-1252 bytes.
+    pub(crate) fn apply_unicode_sidecars(&mut self) -> Result<()> {
+        // If no UNICODE marker, nothing to do.
+        if self.remove_optional::<String>("UNICODE")?.is_none() {
+            return Ok(());
+        }
+
+        let sidecars = self.remove_prefixed("UNICODE__");
+        for (sidecar_key, encoded_value) in sidecars {
+            // Strip the "UNICODE__" prefix (case-insensitive) to get the target field name.
+            let lower = sidecar_key.to_ascii_lowercase();
+            let field_name = lower.strip_prefix("unicode__").ok_or_else(|| {
+                AltiumFormatError::InvalidParamValue {
+                    key: sidecar_key.clone(),
+                    detail: "UNICODE sidecar key missing expected prefix".to_owned(),
+                }
+            })?;
+
+            // Decode comma-separated decimal UTF-16 code points.
+            let decoded = decode_unicode_sidecar(&sidecar_key, &encoded_value)?;
+
+            // Replace the target parameter with the decoded Unicode value.
+            // The target key may have different casing in the map, so find it.
+            if let Some(actual_key) = self.find_key(field_name).map(|s| s.to_owned()) {
+                self.params.shift_remove(&actual_key);
+                self.params.insert(actual_key, decoded);
+            }
+            // If the target key doesn't exist (e.g., UNICODE__NAME when there's no NAME
+            // parameter), the sidecar is still consumed but doesn't produce a new entry.
+            // This can happen when the sidecar corresponds to a field stored elsewhere
+            // (e.g., NAME comes from the SectionKeys/TOC, not from this parameter block).
+        }
+
+        Ok(())
+    }
+
     // Returns the stored key whose lowercase form matches `key`, or `None` if absent.
     fn find_key(&self, key: &str) -> Option<&str> {
         let lower = key.to_ascii_lowercase();

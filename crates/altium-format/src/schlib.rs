@@ -207,7 +207,7 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
     Ok(SchLibHeader { weight, minor_version, unique_id, fonts, display_settings, components })
 }
 
-use crate::pcblib::section_keys::parse_section_keys;
+use crate::pcblib::section_keys::parse_section_keys_text;
 
 pub(crate) fn resolve_component_key(
     name: &str,
@@ -1397,7 +1397,7 @@ impl SchLib {
         // 2. SectionKeys
         let section_keys_data = doc.read_stream_optional(&format!("/{}", SECTION_KEYS))?;
         let section_keys = match section_keys_data {
-            Some(data) => parse_section_keys(&data)?,
+            Some(data) => parse_section_keys_text(&data)?,
             None => HashMap::new(),
         };
 
@@ -1592,7 +1592,7 @@ mod tests {
         let mut doc = TrackedCfbDocument::open(&path).expect("open SchLib");
         let data = doc.read_stream_optional("/SectionKeys").expect("read_stream_optional");
         let map = match data {
-            Some(d) => parse_section_keys(&d).expect("parse SectionKeys"),
+            Some(d) => parse_section_keys_text(&d).expect("parse SectionKeys"),
             None => HashMap::new(),
         };
         // BlankSchlibComponent has a short name; SectionKeys may be absent

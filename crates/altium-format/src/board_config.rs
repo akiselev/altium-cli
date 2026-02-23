@@ -44,6 +44,10 @@ pub(crate) struct PcbBoardConfig {
     pub(crate) lib_grid_sn_guide: String,
     pub(crate) unicode: String,
     pub(crate) unicode_filename: String,
+    pub(crate) unicode_name: String,
+    pub(crate) unicode_time: String,
+    pub(crate) plane_pullbacks: Vec<PcbPlanePullback>,
+    pub(crate) selection_filter: Vec<i32>,
 }
 
 pub(crate) struct PcbMasterStack {
@@ -77,6 +81,7 @@ pub(crate) struct PcbStackLayerEntry {
     pub(crate) diel_material: Option<String>,
     pub(crate) coverlay_expansion: Option<String>,
     pub(crate) mech_kind: Option<String>,
+    pub(crate) pullback_distance: Option<String>,
 }
 
 pub(crate) struct PcbCacheLayerEntry {
@@ -109,6 +114,12 @@ pub(crate) struct PcbLegacyLayerEntry {
     pub(crate) diel_const: String,
     pub(crate) diel_height: String,
     pub(crate) diel_material: String,
+}
+
+/// Legacy plane pullback entry: `PLANE{N}PULLBACK=<distance>` / `PLANE{N}PULLBACK.LAYER=<layer>`.
+pub(crate) struct PcbPlanePullback {
+    pub(crate) pullback: String,
+    pub(crate) layer: String,
 }
 
 pub(crate) struct PcbSurfaceProperties {
@@ -844,6 +855,36 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         params.remove_optional::<String>("UNICODE")?.unwrap_or_default();
     let unicode_filename =
         params.remove_optional::<String>("UNICODE__FILENAME")?.unwrap_or_default();
+    let unicode_name =
+        params.remove_optional::<String>("UNICODE__NAME")?.unwrap_or_default();
+    let unicode_time =
+        params.remove_optional::<String>("UNICODE__TIME")?.unwrap_or_default();
+
+    // 22. Legacy plane pullbacks: PLANE{N}PULLBACK / PLANE{N}PULLBACK.LAYER (1-based)
+    let mut plane_pullbacks = Vec::new();
+    {
+        let mut n = 1;
+        while let Some(pullback) =
+            params.remove_optional::<String>(&format!("PLANE{n}PULLBACK"))?
+        {
+            let layer = params
+                .remove_optional::<String>(&format!("PLANE{n}PULLBACK.LAYER"))?
+                .unwrap_or_default();
+            plane_pullbacks.push(PcbPlanePullback { pullback, layer });
+            n += 1;
+        }
+    }
+
+    // 23. Selection filter: SELECTIONFILTER_COUNT + SELECTIONFILTER_{N} (0-based)
+    let mut selection_filter = Vec::new();
+    if let Some(sf_count) = params.remove_optional::<i32>("SELECTIONFILTER_COUNT")? {
+        for i in 0..sf_count {
+            let val = params
+                .remove_optional::<i32>(&format!("SELECTIONFILTER_{i}"))?
+                .unwrap_or_default();
+            selection_filter.push(val);
+        }
+    }
 
     Ok(PcbBoardConfig {
         record,
@@ -877,6 +918,10 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         lib_grid_sn_guide,
         unicode,
         unicode_filename,
+        unicode_name,
+        unicode_time,
+        plane_pullbacks,
+        selection_filter,
     })
 }
 
@@ -906,6 +951,8 @@ fn parse_stack_layer_fields_after_id(
     let coverlay_expansion =
         params.remove_optional::<String>(&format!("{prefix}COVERLAY_EXPANSION"))?;
     let mech_kind = params.remove_optional::<String>(&format!("{prefix}MECHKIND"))?;
+    let pullback_distance =
+        params.remove_optional::<String>(&format!("{prefix}PULLBACKDISTANCE"))?;
     Ok(PcbStackLayerEntry {
         id: String::new(),
         name,
@@ -920,6 +967,7 @@ fn parse_stack_layer_fields_after_id(
         diel_material,
         coverlay_expansion,
         mech_kind,
+        pullback_distance,
     })
 }
 
@@ -950,6 +998,8 @@ fn parse_v8_layer_fields_after_id(
     let coverlay_expansion =
         params.remove_optional::<String>(&format!("{prefix}COVERLAY_EXPANSION"))?;
     let mech_kind = params.remove_optional::<String>(&format!("{prefix}MECHKIND"))?;
+    let pullback_distance =
+        params.remove_optional::<String>(&format!("{prefix}PULLBACKDISTANCE"))?;
     Ok(PcbStackLayerEntry {
         id: String::new(),
         name,
@@ -964,5 +1014,6 @@ fn parse_v8_layer_fields_after_id(
         diel_material,
         coverlay_expansion,
         mech_kind,
+        pullback_distance,
     })
 }

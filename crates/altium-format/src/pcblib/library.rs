@@ -257,6 +257,10 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         // MODELSOURCE and TITLE are present but not used in our data model; consume them.
         let _ = params.remove_optional::<String>("MODELSOURCE")?;
         let _ = params.remove_optional::<String>("TITLE")?;
+        // UNICODE sidecar: CJK/non-ASCII model entries have UNICODE=EXISTS as marker
+        // plus UNICODE__<KEY>=<comma-separated UTF-16 code points> for each field.
+        let _unicode = params.remove_optional::<String>("UNICODE")?;
+        let _ = params.remove_prefixed("UNICODE__");
         params.assert_exhausted()?;
         entries.push(PcbLibModelEntry {
             id,

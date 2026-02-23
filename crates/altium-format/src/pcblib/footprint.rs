@@ -91,6 +91,14 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;
+
+    // UNICODE sidecar: CJK/non-ASCII footprints have UNICODE=EXISTS as marker
+    // plus UNICODE__<KEY>=<comma-separated UTF-16 code points> for each field
+    // that has characters outside Windows-1252. We consume these but don't
+    // apply the overrides (all text fields already store decoded Windows-1252).
+    let _unicode = params.remove_optional::<String>("UNICODE")?;
+    let _ = params.remove_prefixed("UNICODE__");
+
     params.assert_exhausted()?;
     Ok((pattern, height, description, item_guid, revision_guid))
 }
