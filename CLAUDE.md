@@ -91,6 +91,20 @@ We MUST NEVER silently drop parsing or other errors or silently corrupt data. Ev
 * altium-format-ops uses altium-format-ops::AltiumOpsError
 * altium-cli uses anyhow
 
+**Error context is mandatory**: Every fallible call at a parsing boundary MUST use
+`.context()` or `.with_context()` (from `crate::ResultExt`) to attach location
+information. An error like "Binary read past end: needed 2 bytes at offset 2" is
+useless without knowing WHICH stream, WHICH footprint, WHICH primitive it came from.
+Wrap errors at each layer:
+- Top-level: footprint name and CFB key (e.g. `"loading footprint 'C0805' (/C0805)"`)
+- Stream level: stream path (e.g. `"parsing /C0805/Data"`)
+- Record level: record index, type, and offset (e.g. `"primitive #0 (Pad) at offset 0xA"`)
+
+This produces chained errors like:
+```
+loading footprint 'C0805' (/C0805): parsing /C0805/Data: primitive #0 (Pad) at Data offset 0xA (payload 2 bytes): Binary read past end: needed 2 bytes at offset 2, only 0 remain
+```
+
 # Red/green development
 
 We are using a red/green development workflow similar to red/green test driven development except along with tests we are using our own validate CLI command to open documents. Since we fail on the first record/type/parameter that we don't recognize, Claude Code can use the command in a loop to slowly investigate and implement every part of the Altium file format step by step.
