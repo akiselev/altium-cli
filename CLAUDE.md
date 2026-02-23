@@ -175,3 +175,5 @@ Test files for each document type can be found in data/<document type>/ but they
 * data/intlib/ - https://github.com/akiselev/altium-cli-test-intlib
 * data/schdoc/ - https://github.com/akiselev/altium-cli-test-schdoc
 * data/pcbdoc/ - https://github.com/akiselev/altium-cli-test-pcbdoc
+
+**NOTE**: Some of these files may be corrupt, use unsupported encoding like windows_1521 and so on.
