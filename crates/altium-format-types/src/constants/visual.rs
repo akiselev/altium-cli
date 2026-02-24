@@ -391,6 +391,12 @@ pub const Y_SIZE: &str = "YSize";
 /// **Used by:** various objects (power symbol style, etc.)
 pub const STYLE: &str = "Style";
 
+/// Display style table index for graphical objects.
+///
+/// **Wire type:** i32
+/// **Used by:** various schematic graphical objects (e.g. rectangle/line variants)
+pub const STYLE_ID: &str = "StyleID";
+
 /// Layer assignment.
 ///
 /// **Wire type:** u8

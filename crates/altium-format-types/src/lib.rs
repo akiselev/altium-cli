@@ -43,8 +43,8 @@ pub use sch::{
     HarnessConnectionPointStyle, HarnessLengthUnit, HarnessShieldStyle, HarnessSpliceStyle,
     HarnessWireLengthType, IeeeSymbol, LeftRightSide, LineShape, LineStyle, NoErcSymbol,
     ParameterReadOnlyState, ParameterSetStyle, ParameterType, PenWidth, PinElectricalType,
-    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle,
-    SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
-    VisibleGridStyle,
+    SchDisplaySettings, SchDisplayStyle, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor,
+    TextJustification, TextVertAnchor, VisibleGridStyle,
 };
 pub use unique_id::{UniqueId, UniqueIdError};

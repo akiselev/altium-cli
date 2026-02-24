@@ -377,6 +377,26 @@ pub struct SchFont {
     pub strikeout: bool,
 }
 
+/// Indexed display style entry from SchLib FileHeader style table.
+#[derive(Debug, Clone, Default)]
+pub struct SchDisplayStyle {
+    pub id: i32, // 1-based index
+    pub gradient_depth: Option<i32>,
+    pub shadow_opacity: Option<i32>,
+    pub shadow_distance: Option<crate::Coord>,
+    pub shadow_blur: Option<crate::Coord>,
+    pub shadow_angle_in_degrees: Option<i32>,
+    pub glow_color: Option<crate::Color>,
+    pub glow_opacity: Option<i32>,
+    pub glow_size: Option<i32>,
+    pub reflection_depth: Option<i32>,
+    pub reflection_opacity: Option<i32>,
+    pub transparency_enabled: Option<bool>,
+    pub transparency_amount: Option<i32>,
+    pub corner_radius_mode: Option<i32>,
+    pub corner_radius_value: Option<i32>,
+}
+
 /// Sheet display settings from SchLib FileHeader and SchDoc Sheet (RECORD=31).
 ///
 /// These settings control grid configuration, sheet sizing, border/reference zone
@@ -429,6 +449,7 @@ pub struct SchDisplaySettings {
 
     // Colors
     pub area_color: Option<crate::Color>,
+    pub styles: Vec<SchDisplayStyle>,
 
     // Version
     pub file_version_info: Option<String>,

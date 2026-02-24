@@ -249,6 +249,112 @@ pub const IS_BOC: &str = "IsBOC";
 pub const AREA_COLOR: &str = "AreaColor";
 
 // ---------------------------------------------------------------------------
+// Display styles (indexed style table)
+// ---------------------------------------------------------------------------
+
+/// Number of style entries in the indexed style table.
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_ID_COUNT: &str = "StyleIDCount";
+
+/// Indexed style gradient depth (`StyleGradientDepth{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_GRADIENT_DEPTH: &str = "StyleGradientDepth";
+
+/// Indexed style shadow opacity (`StyleShadowOpacity{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_SHADOW_OPACITY: &str = "StyleShadowOpacity";
+
+/// Indexed style shadow distance integer part (`StyleShadowDistance{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_SHADOW_DISTANCE: &str = "StyleShadowDistance";
+
+/// Indexed style shadow distance fractional part (`StyleShadowDistance{N}_Frac`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_SHADOW_DISTANCE_FRAC: &str = "StyleShadowDistance_Frac";
+
+/// Indexed style shadow blur integer part (`StyleShadowBlur{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_SHADOW_BLUR: &str = "StyleShadowBlur";
+
+/// Indexed style shadow blur fractional part (`StyleShadowBlur{N}_Frac`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_SHADOW_BLUR_FRAC: &str = "StyleShadowBlur_Frac";
+
+/// Indexed style shadow angle in degrees (`StyleShadowAngleInDegrees{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_SHADOW_ANGLE_IN_DEGREES: &str = "StyleShadowAngleInDegrees";
+
+/// Indexed style glow color (`StyleGlowColor{N}`).
+///
+/// **Wire type:** u32 (BGR COLORREF)
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_GLOW_COLOR: &str = "StyleGlowColor";
+
+/// Indexed style glow opacity (`StyleGlowOpacity{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_GLOW_OPACITY: &str = "StyleGlowOpacity";
+
+/// Indexed style glow size (`StyleGlowSize{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_GLOW_SIZE: &str = "StyleGlowSize";
+
+/// Indexed style reflection depth (`StyleReflectionDepth{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_REFLECTION_DEPTH: &str = "StyleReflectionDepth";
+
+/// Indexed style reflection opacity (`StyleReflectionOpacity{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_REFLECTION_OPACITY: &str = "StyleReflectionOpacity";
+
+/// Indexed style transparency enabled flag (`StyleTransparencyEnabled{N}`).
+///
+/// **Wire type:** bool
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_TRANSPARENCY_ENABLED: &str = "StyleTransparencyEnabled";
+
+/// Indexed style transparency amount (`StyleTransparencyAmount{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_TRANSPARENCY_AMOUNT: &str = "StyleTransparencyAmount";
+
+/// Indexed style corner radius mode (`StyleCornerRadiusMode{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_CORNER_RADIUS_MODE: &str = "StyleCornerRadiusMode";
+
+/// Indexed style corner radius value (`StyleCornerRadiusValue{N}`).
+///
+/// **Wire type:** i32
+/// **Used by:** SchLib `FileHeader` stream
+pub const STYLE_CORNER_RADIUS_VALUE: &str = "StyleCornerRadiusValue";
+
+// ---------------------------------------------------------------------------
 // Cross-reference and document info
 // ---------------------------------------------------------------------------
 
