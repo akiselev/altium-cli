@@ -30,8 +30,3 @@ jobs:
 
       - name: Run workspace tests
         run: cargo test --workspace --all-targets --verbose
-
-      - name: Run extended proptest suites
-        run: |
-          cargo test -p altium-format --lib prop_ --verbose
-          cargo test -p altium-format-ops --test executor_proptest --test executor_schdoc_proptest --verbose
