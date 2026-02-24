@@ -96,7 +96,7 @@ use altium_format_types::{
             LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION,
             OVERIDE_COLORS, RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR, SCALE_FACTOR_FRAC,
             SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE, START_LINE_SHAPE, STYLE,
-            TRANSPARENT, WIDTH, X_SIZE, Y_SIZE,
+            STYLE_ID, TRANSPARENT, WIDTH, X_SIZE, Y_SIZE,
         },
     },
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle, SchFont},
@@ -128,6 +128,8 @@ pub(crate) struct SchPrimitiveBase {
     pub graphically_locked: bool,
     #[param(key = UNION_INDEX, default = 0i32)]
     pub union_index: i32,
+    #[param(key = STYLE_ID, default = 0i32)]
+    pub style_id: i32,
 }
 
 /// Extends `SchPrimitiveBase` with location and color fields for graphical objects.
@@ -1459,6 +1461,7 @@ impl SchSheet {
             use_mbcs: params.remove_optional(USE_MBCS)?,
             is_boc: params.remove_optional(IS_BOC)?,
             area_color: params.remove_optional::<i32>(AREA_COLOR)?.map(Color::new),
+            styles: Vec::new(),
             file_version_info: params.remove_optional(FILE_VERSION_INFO)?,
         };
 

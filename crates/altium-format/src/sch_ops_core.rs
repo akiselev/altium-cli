@@ -2211,6 +2211,7 @@ fn primitive_base_with_owner(
         owner_part_display_mode,
         graphically_locked: false,
         union_index: 0,
+        style_id: 0,
     }
 }
 
@@ -2487,6 +2488,7 @@ fn primitive_base(owner_index: i32) -> SchPrimitiveBase {
         owner_part_display_mode: 0,
         graphically_locked: false,
         union_index: 0,
+        style_id: 0,
     }
 }
 

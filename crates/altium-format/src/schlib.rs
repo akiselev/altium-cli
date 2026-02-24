@@ -26,9 +26,13 @@ use altium_format_types::constants::sheet::{
     CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT, DOCUMENT_BORDER_STYLE, FILE_VERSION_INFO,
     HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, IS_BOC, REFERENCE_ZONE_STYLE,
     REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE, SHEET_STYLE, SHOW_HIDDEN_PINS,
-    SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, SYSTEM_FONT,
-    TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS, VISIBLE_GRID_ON,
-    VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
+    SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, STYLE_CORNER_RADIUS_MODE,
+    STYLE_CORNER_RADIUS_VALUE, STYLE_GLOW_COLOR, STYLE_GLOW_OPACITY, STYLE_GLOW_SIZE,
+    STYLE_GRADIENT_DEPTH, STYLE_ID_COUNT, STYLE_REFLECTION_DEPTH, STYLE_REFLECTION_OPACITY,
+    STYLE_SHADOW_ANGLE_IN_DEGREES, STYLE_SHADOW_BLUR, STYLE_SHADOW_DISTANCE, STYLE_SHADOW_OPACITY,
+    STYLE_TRANSPARENCY_AMOUNT, STYLE_TRANSPARENCY_ENABLED, SYSTEM_FONT, TEMPLATE_FILE_NAME,
+    TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS, VISIBLE_GRID_ON, VISIBLE_GRID_SIZE,
+    VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
 };
 use altium_format_types::constants::streams::{
     ADDITIONAL, FILE_HEADER, LIB_ADDITIONAL, PIN_DESC, PIN_FRAC, PIN_FUNCTION_DATA, PIN_MISC_DATA,
@@ -38,7 +42,7 @@ use altium_format_types::constants::streams::{
 use altium_format_types::constants::text::NAME;
 use altium_format_types::constants::text::{BOLD, DESC, DESIG, ITALIC, STRIKE_OUT, UNDERLINE};
 use altium_format_types::constants::visual::{FONT_ID_COUNT, FONT_NAME, ROTATION, SIZE};
-use altium_format_types::sch::SchFont;
+use altium_format_types::sch::{SchDisplayStyle, SchFont};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, LineStyle, PenWidth, RotationBy90, SchDisplaySettings,
     SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle, SheetStyle,
@@ -201,6 +205,61 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
         })
     })?;
 
+    let mut styles = Vec::new();
+    if let Some(style_count) = params.remove_optional::<usize>(STYLE_ID_COUNT)? {
+        styles.reserve(style_count);
+        for i in 1..=style_count {
+            let idx = i.to_string();
+            let parse_style_coord = |p: &mut ParameterCollection,
+                                     base: &str,
+                                     frac_suffix: &str,
+                                     idx: &str|
+             -> Result<Option<Coord>> {
+                let base_key = format!("{base}{idx}");
+                let frac_key = format!("{base}{idx}{frac_suffix}");
+                let integer = p.remove_optional::<i32>(&base_key)?;
+                let frac = p.remove_optional::<i32>(&frac_key)?;
+                match (integer, frac) {
+                    (None, None) => Ok(None),
+                    (int_part, frac_part) => Ok(Some(Coord::from_dxp_frac(
+                        int_part.unwrap_or(0),
+                        frac_part.unwrap_or(0),
+                    ))),
+                }
+            };
+
+            styles.push(SchDisplayStyle {
+                id: i as i32,
+                gradient_depth: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_GRADIENT_DEPTH, idx))?,
+                shadow_opacity: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_SHADOW_OPACITY, idx))?,
+                shadow_distance: parse_style_coord(&mut params, STYLE_SHADOW_DISTANCE, "_FRAC", &idx)?,
+                shadow_blur: parse_style_coord(&mut params, STYLE_SHADOW_BLUR, "_FRAC", &idx)?,
+                shadow_angle_in_degrees: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_SHADOW_ANGLE_IN_DEGREES, idx))?,
+                glow_color: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_GLOW_COLOR, idx))?
+                    .map(Color::new),
+                glow_opacity: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_GLOW_OPACITY, idx))?,
+                glow_size: params.remove_optional::<i32>(&format!("{}{}", STYLE_GLOW_SIZE, idx))?,
+                reflection_depth: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_REFLECTION_DEPTH, idx))?,
+                reflection_opacity: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_REFLECTION_OPACITY, idx))?,
+                transparency_enabled: params
+                    .remove_optional::<bool>(&format!("{}{}", STYLE_TRANSPARENCY_ENABLED, idx))?,
+                transparency_amount: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_TRANSPARENCY_AMOUNT, idx))?,
+                corner_radius_mode: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_CORNER_RADIUS_MODE, idx))?,
+                corner_radius_value: params
+                    .remove_optional::<i32>(&format!("{}{}", STYLE_CORNER_RADIUS_VALUE, idx))?,
+            });
+        }
+    }
+
     // Display settings — library-level sheet display preferences, preserved for round-trip
     let display_settings = SchDisplaySettings {
         snap_grid_on: params.remove_optional(SNAP_GRID_ON)?,
@@ -249,6 +308,7 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
         use_mbcs: params.remove_optional(USE_MBCS)?,
         is_boc: params.remove_optional(IS_BOC)?,
         area_color: params.remove_optional::<i32>(AREA_COLOR)?.map(Color::new),
+        styles,
         file_version_info: params.remove_optional(FILE_VERSION_INFO)?,
     };
 
@@ -1355,6 +1415,86 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
     if let Some(v) = ds.area_color {
         params.insert(AREA_COLOR, v.raw().to_param_value());
     }
+    if !ds.styles.is_empty() {
+        params.insert(STYLE_ID_COUNT, (ds.styles.len() as i32).to_param_value());
+        for style in &ds.styles {
+            let idx = style.id.to_string();
+            if let Some(v) = style.gradient_depth {
+                params.insert(
+                    &format!("{}{}", STYLE_GRADIENT_DEPTH, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.shadow_opacity {
+                params.insert(&format!("{}{}", STYLE_SHADOW_OPACITY, idx), v.to_param_value());
+            }
+            if let Some(v) = style.shadow_distance {
+                params.insert_coord(
+                    &format!("{}{}", STYLE_SHADOW_DISTANCE, idx),
+                    &format!("{}{}_FRAC", STYLE_SHADOW_DISTANCE, idx),
+                    v,
+                );
+            }
+            if let Some(v) = style.shadow_blur {
+                params.insert_coord(
+                    &format!("{}{}", STYLE_SHADOW_BLUR, idx),
+                    &format!("{}{}_FRAC", STYLE_SHADOW_BLUR, idx),
+                    v,
+                );
+            }
+            if let Some(v) = style.shadow_angle_in_degrees {
+                params.insert(
+                    &format!("{}{}", STYLE_SHADOW_ANGLE_IN_DEGREES, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.glow_color {
+                params.insert(&format!("{}{}", STYLE_GLOW_COLOR, idx), v.raw().to_param_value());
+            }
+            if let Some(v) = style.glow_opacity {
+                params.insert(&format!("{}{}", STYLE_GLOW_OPACITY, idx), v.to_param_value());
+            }
+            if let Some(v) = style.glow_size {
+                params.insert(&format!("{}{}", STYLE_GLOW_SIZE, idx), v.to_param_value());
+            }
+            if let Some(v) = style.reflection_depth {
+                params.insert(
+                    &format!("{}{}", STYLE_REFLECTION_DEPTH, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.reflection_opacity {
+                params.insert(
+                    &format!("{}{}", STYLE_REFLECTION_OPACITY, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.transparency_enabled {
+                params.insert(
+                    &format!("{}{}", STYLE_TRANSPARENCY_ENABLED, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.transparency_amount {
+                params.insert(
+                    &format!("{}{}", STYLE_TRANSPARENCY_AMOUNT, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.corner_radius_mode {
+                params.insert(
+                    &format!("{}{}", STYLE_CORNER_RADIUS_MODE, idx),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = style.corner_radius_value {
+                params.insert(
+                    &format!("{}{}", STYLE_CORNER_RADIUS_VALUE, idx),
+                    v.to_param_value(),
+                );
+            }
+        }
+    }
     if let Some(v) = ds.snap_grid_on {
         params.insert(SNAP_GRID_ON, v.to_param_value());
     }
@@ -1909,6 +2049,7 @@ impl SchLib {
                 owner_part_display_mode: 0,
                 graphically_locked: false,
                 union_index: 0,
+                style_id: 0,
             },
             location: CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)),
             orientation: RotationBy90::Rotate0,
@@ -1947,6 +2088,7 @@ impl SchLib {
                 owner_part_display_mode: 0,
                 graphically_locked: false,
                 union_index: 0,
+                style_id: 0,
             },
             location: CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)),
             orientation: RotationBy90::Rotate0,
@@ -2032,6 +2174,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
+                style_id: 0,
                 },
             }));
         self.ops_recompute_header_weight();
@@ -2064,6 +2207,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
+                style_id: 0,
                 },
                 description: String::new(),
                 use_component_library: false,
@@ -2111,6 +2255,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
+                style_id: 0,
                 },
                 unique_id: generate_unique_id(),
             }));
@@ -2141,6 +2286,7 @@ impl SchLib {
                 owner_part_display_mode: 0,
                 graphically_locked: false,
                 union_index: 0,
+                style_id: 0,
             },
             des_intf: pin_designator.to_owned(),
             des_imps: vec![pad_designator.to_owned()],
@@ -2171,6 +2317,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
+                style_id: 0,
                 },
             }));
         self.ops_recompute_header_weight();
@@ -2198,6 +2345,7 @@ impl SchLib {
                 owner_part_display_mode: 0,
                 graphically_locked: false,
                 union_index: 0,
+                style_id: 0,
             },
             location: CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)),
             orientation: RotationBy90::Rotate0,
@@ -3004,6 +3152,7 @@ fn primitive_base_with_owner(
         owner_part_display_mode,
         graphically_locked: false,
         union_index: 0,
+        style_id: 0,
     }
 }
 
@@ -3751,18 +3900,30 @@ mod tests {
             "empty shard {shard}/{shards} for {} fixtures",
             fixtures.len()
         );
+        let mut failures = Vec::new();
         for path in shard_paths {
             let mut lib = SchLib::open(path).expect("open schlib");
             lib.header.weight += 1;
-            let err = lib
-                .validate_invariants()
-                .expect_err("mutated weight must fail");
-            assert!(
-                err.to_string().contains("weight mismatch"),
-                "{}: expected weight mismatch, got {err}",
-                path.display()
-            );
+            match lib.validate_invariants() {
+                Ok(()) => failures.push(format!(
+                    "{}: mutated weight unexpectedly validated",
+                    path.display()
+                )),
+                Err(err) => {
+                    if !err.to_string().contains("weight mismatch") {
+                        failures.push(format!(
+                            "{}: expected weight mismatch, got {err}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
         }
+        assert!(
+            failures.is_empty(),
+            "schlib mutated-weight invariant failures:\n{}",
+            failures.join("\n")
+        );
     }
 
     #[test]

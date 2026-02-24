@@ -71,6 +71,7 @@ impl SchDoc {
                 owner_part_display_mode: 0,
                 graphically_locked: false,
                 union_index: 0,
+                style_id: 0,
             },
             fonts: vec![SchFont {
                 id: 1,
