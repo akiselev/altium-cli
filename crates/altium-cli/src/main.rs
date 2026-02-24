@@ -97,10 +97,6 @@ enum NewSubcommand {
     },
 }
 
-const BLANK_SCHLIB_TEMPLATE: &[u8] = include_bytes!("../../../data/BlankSchlibComponent.SchLib");
-const BLANK_SCHDOC_TEMPLATE: &[u8] =
-    include_bytes!("../../../data/schdoc/qfsae_pcb__reference_UNOR3Shield_Blank__ArduinoUnoShield.SchDoc");
-
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -162,24 +158,26 @@ fn run_ops(sub: OpsSubcommand) -> anyhow::Result<()> {
 fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
     match sub {
         NewSubcommand::Schdoc { output } => {
-            write_template_file(&output, BLANK_SCHDOC_TEMPLATE)?;
+            if let Some(parent) = output.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let doc = SchDoc::new_blank_ad26();
+            doc.save_as(output.as_path())?;
             println!("Created {}", output.display());
         }
         NewSubcommand::Schlib { output } => {
-            write_template_file(&output, BLANK_SCHLIB_TEMPLATE)?;
+            if let Some(parent) = output.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let lib = SchLib::new_blank_ad26();
+            lib.save_as(output.as_path())?;
             println!("Created {}", output.display());
         }
     }
-    Ok(())
-}
-
-fn write_template_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-    std::fs::write(path, bytes)?;
     Ok(())
 }
 

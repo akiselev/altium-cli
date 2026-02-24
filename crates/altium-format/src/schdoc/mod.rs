@@ -4,6 +4,8 @@ mod types;
 
 use std::path::Path;
 
+use altium_format_types::sch::SchFont;
+use altium_format_types::{Color, Coord, SchDisplaySettings};
 use altium_format_types::constants::component::DESIGNATOR;
 use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
 use altium_format_types::constants::pin::{
@@ -48,7 +50,8 @@ use crate::cfb_document::CfbDocument;
 use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
 use crate::param_value::ToParamValue;
-use crate::sch_records::{SchPin, SchRecord, SchSheet, serialize_record};
+use crate::sch_ops_core::generate_unique_id;
+use crate::sch_records::{SchPin, SchPrimitiveBase, SchRecord, SchSheet, serialize_record};
 use crate::schdoc::dispatch::dispatch_record_type;
 use crate::schdoc::fileheader::parse_fileheader_stream;
 use crate::schdoc::types::{SchDocEmbeddedObject, SchDocHeaderMetadata};
@@ -58,6 +61,66 @@ use crate::{AltiumFormatError, Result, ResultExt};
 pub use types::SchDoc;
 
 impl SchDoc {
+    pub fn new_blank_ad26() -> Self {
+        let sheet = SchSheet {
+            base: SchPrimitiveBase {
+                owner_index: 0,
+                is_not_accessible: false,
+                index_in_sheet: 0,
+                owner_part_id: 0,
+                owner_part_display_mode: 0,
+                graphically_locked: false,
+                union_index: 0,
+            },
+            fonts: vec![SchFont {
+                id: 1,
+                name: "Times New Roman".to_owned(),
+                size: 10,
+                rotation: 0,
+                bold: false,
+                italic: false,
+                underline: false,
+                strikeout: false,
+            }],
+            display_settings: SchDisplaySettings {
+                snap_grid_on: Some(true),
+                snap_grid_size: Some(Coord::from_mils(10)),
+                visible_grid_on: Some(true),
+                visible_grid_size: Some(Coord::from_mils(10)),
+                hot_spot_grid_on: Some(true),
+                hot_spot_grid_size: Some(Coord::from_mils(4)),
+                use_custom_sheet: Some(true),
+                custom_x: Some(Coord::from_mils(1500)),
+                custom_y: Some(Coord::from_mils(950)),
+                border_on: Some(true),
+                title_block_on: Some(true),
+                reference_zones_on: Some(true),
+                custom_x_zones: Some(6),
+                custom_y_zones: Some(4),
+                custom_margin_width: Some(Coord::from_mils(20)),
+                sheet_number_space_size: Some(4),
+                display_unit: Some(4),
+                system_font: Some(1),
+                use_mbcs: Some(true),
+                is_boc: Some(true),
+                area_color: Some(Color::new(16_317_695)),
+                ..SchDisplaySettings::default()
+            },
+        };
+
+        Self {
+            header: SchDocHeaderMetadata {
+                header: SCH_SHEET_BINARY_HEADER_V50.to_owned(),
+                weight: 1,
+                minor_version: 0,
+                unique_id: generate_unique_id(),
+            },
+            records: vec![SchRecord::Sheet(sheet)],
+            additional_records: Vec::new(),
+            embedded_objects: Vec::new(),
+        }
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut tracked =
             TrackedCfbDocument::open(path.as_ref()).context("opening SchDoc CFB container")?;
@@ -856,6 +919,20 @@ mod tests {
             .validate_invariants()
             .expect_err("broken owner index must fail invariants");
         assert!(err.to_string().contains("OwnerIndex"));
+    }
+
+    #[test]
+    fn schdoc_new_blank_ad26_roundtrip_validates() {
+        let doc = SchDoc::new_blank_ad26();
+        doc.validate_invariants()
+            .expect("new blank schdoc should validate");
+
+        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+        doc.save(tmp.path()).expect("save blank schdoc");
+        let reopened = SchDoc::open(tmp.path()).expect("reopen blank schdoc");
+        reopened
+            .validate_invariants()
+            .expect("reopened blank schdoc should validate");
     }
 
     #[test]

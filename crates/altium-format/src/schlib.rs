@@ -1600,6 +1600,71 @@ fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>
 }
 
 impl SchLib {
+    pub fn new_blank_ad26() -> Self {
+        let mut params = ParameterCollection::new();
+        params.insert(LIB_REFERENCE, "Component_1".to_owned());
+        let mut component = parse_component_record(&mut params)
+            .expect("internal default component parse should not fail");
+        component.lib_reference = "Component_1".to_owned();
+        component.part_count = 2;
+        component.current_part_id = 1;
+        component.unique_id = generate_unique_id();
+
+        let mut lib = Self {
+            header: SchLibHeader {
+                weight: 0,
+                minor_version: 9,
+                unique_id: generate_unique_id(),
+                fonts: vec![SchFont {
+                    id: 1,
+                    name: "Times New Roman".to_owned(),
+                    size: 10,
+                    rotation: 0,
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    strikeout: false,
+                }],
+                display_settings: SchDisplaySettings {
+                    snap_grid_on: Some(true),
+                    snap_grid_size: Some(Coord::from_mils(10)),
+                    visible_grid_on: Some(true),
+                    visible_grid_size: Some(Coord::from_mils(10)),
+                    sheet_style: Some(SheetStyle::E),
+                    use_custom_sheet: Some(true),
+                    custom_x: Some(Coord::from_mils(18_000)),
+                    custom_y: Some(Coord::from_mils(18_000)),
+                    border_on: Some(true),
+                    reference_zones_on: Some(true),
+                    sheet_number_space_size: Some(12),
+                    display_unit: Some(0),
+                    use_mbcs: Some(true),
+                    is_boc: Some(true),
+                    area_color: Some(Color::new(16_317_695)),
+                    ..SchDisplaySettings::default()
+                },
+                components: vec![SchLibComponentIndex {
+                    lib_ref: "Component_1".to_owned(),
+                    description: String::new(),
+                    part_count: 2,
+                    aliases: Vec::new(),
+                }],
+            },
+            components: vec![SchLibComponent {
+                component,
+                records: Vec::new(),
+                additional_records: Vec::new(),
+            }],
+            embedded_images: Vec::new(),
+            aliases: Vec::new(),
+        };
+        lib.ops_append_designator(0, "U?")
+            .expect("internal default designator append should not fail");
+        lib.ops_append_comment(0, "*")
+            .expect("internal default comment append should not fail");
+        lib
+    }
+
     pub(crate) fn component_count(&self) -> usize {
         self.components.len()
     }
@@ -3657,5 +3722,19 @@ mod tests {
     #[test]
     fn roundtrip_synthiam_schlib() {
         roundtrip_stream_compare("Synthiam.SchLib");
+    }
+
+    #[test]
+    fn schlib_new_blank_ad26_roundtrip_validates() {
+        let lib = SchLib::new_blank_ad26();
+        lib.validate_invariants()
+            .expect("new blank schlib should validate");
+
+        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+        lib.save(tmp.path()).expect("save blank schlib");
+        let reopened = SchLib::open(tmp.path()).expect("reopen blank schlib");
+        reopened
+            .validate_invariants()
+            .expect("reopened blank schlib should validate");
     }
 }
