@@ -829,4 +829,49 @@ mod tests {
             .validate_invariants()
             .expect("saved SchDoc must validate");
     }
+
+    #[test]
+    fn schdoc_validate_invariants_ok_on_fixture() {
+        let path = schdoc_fixture_path(
+            "myriadrf_LimeSDR-XTRX__hardware_1v0_Schematics__03_Clock_Diagram.SchDoc",
+        );
+        let doc = SchDoc::open(path).expect("open schdoc");
+        doc.validate_invariants()
+            .expect("fixture should satisfy schdoc invariants");
+    }
+
+    #[test]
+    fn schdoc_validate_invariants_detects_broken_owner_index() {
+        let path = schdoc_fixture_path(
+            "myriadrf_LimeSDR-XTRX__hardware_1v0_Schematics__03_Clock_Diagram.SchDoc",
+        );
+        let mut doc = SchDoc::open(path).expect("open schdoc");
+        let len = doc.records.len() as i32;
+        let first = doc.records.get_mut(0).expect("record 0");
+        match first {
+            SchRecord::Sheet(v) => v.base.owner_index = len + 10,
+            _ => panic!("unexpected first SchDoc record type"),
+        }
+        let err = doc
+            .validate_invariants()
+            .expect_err("broken owner index must fail invariants");
+        assert!(err.to_string().contains("OwnerIndex"));
+    }
+
+    #[test]
+    #[ignore = "mutation-test demo: should fail when run explicitly"]
+    fn schdoc_broken_invariant_demo_unchecked_should_fail() {
+        let path = schdoc_fixture_path(
+            "myriadrf_LimeSDR-XTRX__hardware_1v0_Schematics__03_Clock_Diagram.SchDoc",
+        );
+        let mut doc = SchDoc::open(path).expect("open schdoc");
+        let len = doc.records.len() as i32;
+        let first = doc.records.get_mut(0).expect("record 0");
+        match first {
+            SchRecord::Sheet(v) => v.base.owner_index = len + 10,
+            _ => panic!("unexpected first SchDoc record type"),
+        }
+        doc.validate_invariants()
+            .expect("this assertion is intentionally wrong; invariant checker must fail");
+    }
 }

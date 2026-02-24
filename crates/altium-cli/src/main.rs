@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
-use altium_format_ops::{AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps};
+use altium_format_ops::{
+    AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps, apply_schdoc,
+    apply_schlib, parse_apply_spec_json, parse_apply_spec_yaml,
+};
 use clap::{Parser, Subcommand};
 
 mod cfb;
@@ -38,6 +41,11 @@ enum Commands {
         #[command(subcommand)]
         sub: GetSubcommand,
     },
+    /// High-level operations
+    Ops {
+        #[command(subcommand)]
+        sub: OpsSubcommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -46,6 +54,27 @@ enum GetSubcommand {
     Version {
         /// Path to the document
         path: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum OpsSubcommand {
+    /// Apply operations from a YAML/JSON spec file
+    Apply {
+        /// Path to target .SchDoc or .SchLib file
+        path: PathBuf,
+        /// Path to spec file (.yaml/.yml/.json)
+        #[arg(long)]
+        spec_file: PathBuf,
+        /// Optional output path (default: in-place)
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Resolve and execute ops without saving output
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Print full result table as JSON
+        #[arg(long, default_value_t = false)]
+        report_json: bool,
     },
 }
 
@@ -78,9 +107,116 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        Commands::Ops { sub } => {
+            if let Err(e) = run_ops(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_ops(sub: OpsSubcommand) -> anyhow::Result<()> {
+    match sub {
+        OpsSubcommand::Apply {
+            path,
+            spec_file,
+            output,
+            dry_run,
+            report_json,
+        } => apply_ops(&path, &spec_file, output.as_ref(), dry_run, report_json),
+    }
+}
+
+fn apply_ops(
+    path: &PathBuf,
+    spec_file: &PathBuf,
+    output: Option<&PathBuf>,
+    dry_run: bool,
+    report_json: bool,
+) -> anyhow::Result<()> {
+    let spec_data = std::fs::read_to_string(spec_file)?;
+    let spec_ext = spec_file
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| {
+            anyhow::anyhow!("cannot determine spec file type: {}", spec_file.display())
+        })?;
+    let ops = match spec_ext.as_str() {
+        "yaml" | "yml" => parse_apply_spec_yaml(&spec_data)?,
+        "json" => parse_apply_spec_json(&spec_data)?,
+        _ => anyhow::bail!("unsupported spec extension .{spec_ext} (supported: .yaml/.yml/.json)"),
+    };
+
+    let doc_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| anyhow::anyhow!("cannot determine document type: {}", path.display()))?;
+
+    let out_path = output.cloned().unwrap_or_else(|| path.clone());
+
+    match doc_ext.as_str() {
+        "schdoc" => {
+            let mut doc = SchDoc::open(path)?;
+            let report = apply_schdoc(&mut doc, &ops)?;
+            if !dry_run {
+                doc.save_as(out_path.as_path())?;
+            }
+            print_apply_report(&report, dry_run, &out_path, report_json)?;
+        }
+        "schlib" => {
+            let mut lib = SchLib::open(path)?;
+            let report = apply_schlib(&mut lib, &ops)?;
+            if !dry_run {
+                lib.save_as(out_path.as_path())?;
+            }
+            print_apply_report(&report, dry_run, &out_path, report_json)?;
+        }
+        _ => anyhow::bail!(
+            "ops apply not yet supported for .{doc_ext} files (supported: .schdoc, .schlib)"
+        ),
+    }
+
+    Ok(())
+}
+
+fn print_apply_report(
+    report: &altium_format_ops::ApplyReport,
+    dry_run: bool,
+    out_path: &PathBuf,
+    report_json: bool,
+) -> anyhow::Result<()> {
+    if report_json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+
+    let mode = if dry_run {
+        "Dry-run executed"
+    } else {
+        "Applied"
+    };
+    println!(
+        "{mode} {} high ops ({} composed, {} low) {} {}",
+        report.high_op_count,
+        report.composed_op_count,
+        report.low_op_count,
+        if dry_run { "for" } else { "to" },
+        out_path.display()
+    );
+    for (opid, result) in &report.results {
+        let ref_display = result
+            .ref_
+            .as_ref()
+            .map(|r| r.display_path.clone())
+            .unwrap_or_else(|| "-".to_owned());
+        println!("  {opid}: kind={} ref={}", result.kind, ref_display);
+    }
+    Ok(())
 }
 
 fn run_get(sub: GetSubcommand) -> anyhow::Result<()> {
@@ -136,6 +272,10 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
             let doc = SchLib::open(input)?;
             doc.save_as(output.as_path())?;
         }
+        // "pcblib" => {
+        //     let doc = PcbLib::open(input)?;
+        //     doc.save_as(output.as_path())?;
+        // }
         _ => anyhow::bail!(
             "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib)"
         ),

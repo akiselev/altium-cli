@@ -10,6 +10,7 @@ pub trait SchLibOps {
 
 impl SchLibOps for altium_format::SchLib {
     fn validate(&self) -> crate::Result<()> {
+        self.validate_invariants()?;
         Ok(())
     }
 
