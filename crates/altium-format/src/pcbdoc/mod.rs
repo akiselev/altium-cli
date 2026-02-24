@@ -328,7 +328,9 @@ impl PcbDoc {
 }
 
 fn validate_pcbdoc_invariants(doc: &PcbDoc) -> Result<()> {
-    if !PCB_DOC_BINARY_HEADER_V5.starts_with(&doc.legacy_header) || !doc.legacy_header.starts_with("PCB ") {
+    if !PCB_DOC_BINARY_HEADER_V5.starts_with(&doc.legacy_header)
+        || !doc.legacy_header.starts_with("PCB ")
+    {
         return Err(AltiumFormatError::InvalidParamValue {
             key: FILE_HEADER.to_owned(),
             detail: format!(

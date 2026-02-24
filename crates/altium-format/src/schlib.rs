@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use altium_format_types::constants::component::{
-    ALIAS_COUNT, COMP_COUNT, COMP_DESCR, LIB_REF, LIB_REFERENCE, PART_COUNT,
+    ALIAS_COUNT, ALL_PIN_COUNT, COMP_COUNT, COMP_DESCR, LIB_REF, LIB_REFERENCE, PART_COUNT,
 };
 use altium_format_types::constants::electrical::ELECTRICAL;
 use altium_format_types::constants::file_headers::SCH_LIBRARY_BINARY_HEADER_V50;
@@ -176,13 +176,19 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
     // Font table (1-based indexing)
     let fonts = params.remove_indexed(FONT_ID_COUNT, 1, |p, i| {
         let idx = i.to_string();
-        let name: String = p.remove_required(&format!("{}{}", FONT_NAME, idx))?;
-        let size: i32 = p.remove_required(&format!("{}{}", SIZE, idx))?;
+        // AD26 SchDataSerializerParam::ReadShort/ReadString default missing values
+        // instead of hard-failing; keep import tolerant for legacy/malformed files.
+        let mut name: String =
+            p.remove_with_default(&format!("{}{}", FONT_NAME, idx), String::new())?;
+        let size: i32 = p.remove_with_default(&format!("{}{}", SIZE, idx), 0i32)?;
         let rotation: i32 = p.remove_with_default(&format!("{}{}", ROTATION, idx), 0i32)?;
         let bold: bool = p.remove_with_default(&format!("{}{}", BOLD, idx), false)?;
         let italic: bool = p.remove_with_default(&format!("{}{}", ITALIC, idx), false)?;
         let underline: bool = p.remove_with_default(&format!("{}{}", UNDERLINE, idx), false)?;
         let strikeout: bool = p.remove_with_default(&format!("{}{}", STRIKE_OUT, idx), false)?;
+        if name.is_empty() {
+            name = "Times New Roman".to_owned();
+        }
         Ok(SchFont {
             id: i as i32,
             name,
@@ -1486,6 +1492,12 @@ fn serialize_component_data(comp: &SchLibComponent) -> Vec<u8> {
     let mut params = ParameterCollection::new();
     params.insert(RECORD, (SchRecordType::Component as i32).to_param_value());
     serialize_component_record(&comp.component, &mut params);
+    let canonical_all_pin_count = comp
+        .records
+        .iter()
+        .filter(|r| matches!(r, SchRecord::Pin(_)))
+        .count() as i32;
+    params.insert(ALL_PIN_COUNT, canonical_all_pin_count.to_param_value());
     let mut stream = write_text_block(&params.to_bytes());
     for record in &comp.records {
         stream.extend_from_slice(&serialize_record(record));
@@ -3278,11 +3290,11 @@ fn validate_schlib_invariants(
             .iter()
             .filter(|r| matches!(r, SchRecord::Pin(_)))
             .count() as i32;
-        if comp.component.all_pin_count != pin_count {
+        if comp.component.all_pin_count < 0 {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "AllPinCount".to_owned(),
                 detail: format!(
-                    "component[{idx}] all_pin_count={} but has {} Pin records",
+                    "component[{idx}] all_pin_count={} is negative (pin records={})",
                     comp.component.all_pin_count, pin_count
                 ),
             });
