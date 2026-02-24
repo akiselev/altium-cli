@@ -3128,6 +3128,27 @@ impl SchLib {
         cfb.save_to_file(path)?;
         Ok(())
     }
+
+    /// Render a single component by lib reference name.
+    pub fn render_component(&self, name: &str, canvas: &mut dyn crate::render::AltiumCanvas) -> crate::Result<()> {
+        let comp = self.components
+            .iter()
+            .find(|c| c.component.lib_reference == name)
+            .ok_or_else(|| crate::AltiumFormatError::StreamNotFound(format!("component '{name}' not found")))?;
+        comp.render(canvas, &self.header.fonts);
+        Ok(())
+    }
+}
+
+impl SchLibComponent {
+    pub(crate) fn render(&self, canvas: &mut dyn crate::render::AltiumCanvas, fonts: &[altium_format_types::sch::SchFont]) {
+        for record in &self.records {
+            crate::render::sch::draw_sch_record(record, canvas, fonts);
+        }
+        for record in &self.additional_records {
+            crate::render::sch::draw_sch_record(record, canvas, fonts);
+        }
+    }
 }
 
 fn select_record_indices(records: &[SchRecord], selector: &RecordSelector) -> Vec<usize> {

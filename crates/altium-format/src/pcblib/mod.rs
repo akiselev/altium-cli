@@ -640,6 +640,24 @@ impl PcbLib {
             .context("validating PcbLib invariants")?;
         Ok(lib)
     }
+
+    /// Render a single footprint by display name.
+    pub fn render_footprint(&self, name: &str, canvas: &mut dyn crate::render::AltiumCanvas) -> crate::Result<()> {
+        let fp = self.footprints
+            .iter()
+            .find(|f| f.display_name == name)
+            .ok_or_else(|| crate::AltiumFormatError::StreamNotFound(format!("footprint '{name}' not found")))?;
+        fp.render(canvas);
+        Ok(())
+    }
+}
+
+impl PcbFootprint {
+    pub(crate) fn render(&self, canvas: &mut dyn crate::render::AltiumCanvas) {
+        for prim in &self.primitives {
+            crate::render::pcb::draw_pcb_primitive(prim, canvas);
+        }
+    }
 }
 
 fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {

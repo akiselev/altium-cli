@@ -43,6 +43,7 @@ pub mod project;
 pub mod schdoc;
 #[allow(dead_code)]
 pub mod schlib;
+pub mod render;
 
 pub use document::Document;
 pub use intlib::IntLib;

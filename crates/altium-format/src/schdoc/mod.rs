@@ -248,6 +248,21 @@ impl SchDoc {
             .context("saving SchDoc CFB to file")?;
         Ok(())
     }
+
+    /// Render the entire schematic sheet.
+    pub fn render(&self, canvas: &mut dyn crate::render::AltiumCanvas) -> crate::Result<()> {
+        let fonts = self.records.iter()
+            .find_map(|r| if let crate::sch_records::SchRecord::Sheet(s) = r { Some(&s.fonts) } else { None })
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        for record in &self.records {
+            crate::render::sch::draw_sch_record(record, canvas, fonts);
+        }
+        for record in &self.additional_records {
+            crate::render::sch::draw_sch_record(record, canvas, fonts);
+        }
+        Ok(())
+    }
 }
 
 fn serialize_fileheader_stream(
