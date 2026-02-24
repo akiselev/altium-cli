@@ -5,7 +5,7 @@ pub(crate) mod section_keys;
 pub(crate) mod sidecar;
 pub(crate) mod wide_strings;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
@@ -449,6 +449,11 @@ impl PcbLib {
             .collect()
     }
 
+    /// Validates strict structural invariants for a parsed PcbLib document.
+    pub fn validate_invariants(&self) -> Result<()> {
+        validate_pcblib_invariants(self)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let mut doc = TrackedCfbDocument::open(path)?;
@@ -618,7 +623,7 @@ impl PcbLib {
         // 6. Assert all CFB entries consumed
         doc.assert_all_consumed()?;
 
-        Ok(Self {
+        let lib = Self {
             header,
             section_keys,
             library,
@@ -630,14 +635,100 @@ impl PcbLib {
             texture_entries,
             footprints,
             file_version_info,
-        })
+        };
+        lib.validate_invariants()
+            .context("validating PcbLib invariants")?;
+        Ok(lib)
     }
+}
+
+fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
+    if lib.header.version_string != PCB_LIBRARY_BINARY_HEADER_V6 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: FILE_HEADER.to_owned(),
+            detail: format!(
+                "expected header {:?}, got {:?}",
+                PCB_LIBRARY_BINARY_HEADER_V6, lib.header.version_string
+            ),
+        });
+    }
+
+    if !lib.header.version.is_finite() || lib.header.version <= 0.0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "FileHeader.version".to_owned(),
+            detail: format!("invalid version number {}", lib.header.version),
+        });
+    }
+
+    let mut seen_display_names = HashSet::new();
+    let mut seen_cfb_keys = HashSet::new();
+    for (idx, fp) in lib.footprints.iter().enumerate() {
+        if fp.display_name.trim().is_empty() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Footprint.display_name".to_owned(),
+                detail: format!("footprint[{idx}] has empty display name"),
+            });
+        }
+        if fp.cfb_key.trim().is_empty() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Footprint.cfb_key".to_owned(),
+                detail: format!("footprint[{idx}] has empty storage key"),
+            });
+        }
+        if fp.pattern.trim().is_empty() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Footprint.pattern".to_owned(),
+                detail: format!("footprint[{}:{}] has empty pattern", idx, fp.display_name),
+            });
+        }
+        if !seen_display_names.insert(fp.display_name.clone()) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Footprint.display_name".to_owned(),
+                detail: format!("duplicate footprint display name {:?}", fp.display_name),
+            });
+        }
+        if !seen_cfb_keys.insert(fp.cfb_key.clone()) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Footprint.cfb_key".to_owned(),
+                detail: format!("duplicate footprint storage key {:?}", fp.cfb_key),
+            });
+        }
+
+        let expected_key = section_keys::resolve_footprint_key(&fp.display_name, &lib.section_keys);
+        if expected_key != fp.cfb_key {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: SECTION_KEYS.to_owned(),
+                detail: format!(
+                    "footprint key mismatch for {:?}: expected {:?}, got {:?}",
+                    fp.display_name, expected_key, fp.cfb_key
+                ),
+            });
+        }
+    }
+
+    let footprint_names: HashSet<&str> = lib
+        .footprints
+        .iter()
+        .map(|fp| fp.display_name.as_str())
+        .collect();
+    for entry in &lib.component_toc {
+        if !footprint_names.contains(entry.name.as_str()) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Library/ComponentParamsTOC".to_owned(),
+                detail: format!("TOC entry {:?} has no corresponding footprint", entry.name),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use altium_format_types::PcbObjectId;
+    use proptest::prelude::*;
+    use std::fs;
 
     #[test]
     fn pcblib_struct_compiles() {
@@ -827,5 +918,48 @@ mod tests {
         let _ = PcbObjectId::Fill;
         let _ = PcbObjectId::Region;
         let _ = PcbObjectId::ComponentBody;
+    }
+
+    fn fixture_paths() -> Vec<std::path::PathBuf> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/pcblib");
+        let mut out = Vec::new();
+        let entries = fs::read_dir(dir).expect("read data/pcblib");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_pcblib = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("pcblib"))
+                .unwrap_or(false);
+            if is_pcblib {
+                out.push(path);
+            }
+        }
+        out.sort();
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
+
+        #[test]
+        fn prop_pcblib_invariants_hold_for_known_fixtures(idx in 0usize..4096usize) {
+            let fixtures = fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let lib = PcbLib::open(&path)?;
+            lib.validate_invariants()?;
+        }
+
+        #[test]
+        fn prop_pcblib_invariants_reject_broken_header(idx in 0usize..4096usize) {
+            let fixtures = fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let mut lib = PcbLib::open(&path)?;
+            lib.header.version_string = "BROKEN".to_owned();
+            let err = lib.validate_invariants().expect_err("broken header should fail");
+            prop_assert!(err.to_string().contains("expected header"));
+        }
     }
 }

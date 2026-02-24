@@ -1,6 +1,7 @@
 mod primitives;
 mod records;
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use altium_format_types::constants::file_headers::{
@@ -92,6 +93,11 @@ impl PcbDoc {
 
     pub fn minor_version(&self) -> f64 {
         self.header.version
+    }
+
+    /// Validates strict structural invariants for a parsed PcbDoc document.
+    pub fn validate_invariants(&self) -> Result<()> {
+        validate_pcbdoc_invariants(self)
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -310,11 +316,87 @@ impl PcbDoc {
 
         doc.assert_all_consumed()?;
 
-        Ok(Self {
+        let doc = Self {
             legacy_header,
             header,
             sections,
-        })
+        };
+        doc.validate_invariants()
+            .context("validating PcbDoc invariants")?;
+        Ok(doc)
+    }
+}
+
+fn validate_pcbdoc_invariants(doc: &PcbDoc) -> Result<()> {
+    if !PCB_DOC_BINARY_HEADER_V5.starts_with(&doc.legacy_header) || !doc.legacy_header.starts_with("PCB ") {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: FILE_HEADER.to_owned(),
+            detail: format!(
+                "expected legacy header prefix of {:?}, got {:?}",
+                PCB_DOC_BINARY_HEADER_V5, doc.legacy_header
+            ),
+        });
+    }
+    if doc.header.version_string != PCB_DOC_BINARY_HEADER_V6 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "FileHeaderSix".to_owned(),
+            detail: format!(
+                "expected v6 header {:?}, got {:?}",
+                PCB_DOC_BINARY_HEADER_V6, doc.header.version_string
+            ),
+        });
+    }
+    if !doc.header.version.is_finite() || doc.header.version <= 0.0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "FileHeaderSix.version".to_owned(),
+            detail: format!("invalid version number {}", doc.header.version),
+        });
+    }
+
+    let mut seen = HashSet::new();
+    for section in &doc.sections {
+        let id = section_identity(section);
+        if !seen.insert(id.clone()) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "PcbDoc.sections".to_owned(),
+                detail: format!("duplicate section {id}"),
+            });
+        }
+
+        if let PcbDocSection::UnionNames(v) = section {
+            if v.format_version != 1 {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "UnionNames/Header".to_owned(),
+                    detail: format!("expected format version 1, got {}", v.format_version),
+                });
+            }
+        }
+        if let PcbDocSection::EmbeddedFonts(v) = section {
+            if v.header_count as usize != v.entries.len() {
+                return Err(AltiumFormatError::RecordCountMismatch {
+                    section: "EmbeddedFonts6".to_owned(),
+                    expected: v.header_count as usize,
+                    actual: v.entries.len(),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn section_identity(section: &PcbDocSection) -> String {
+    match section {
+        PcbDocSection::Primitive(v) => format!("Primitive::{:?}", v.kind),
+        PcbDocSection::Parameter(v) => format!("Parameter::{:?}", v.kind),
+        PcbDocSection::Binary(v) => format!("Binary::{:?}", v.kind),
+        PcbDocSection::UnionNames(_) => "UnionNames".to_owned(),
+        PcbDocSection::PrefixedParameter(v) => format!("Prefixed::{:?}", v.kind),
+        PcbDocSection::WideStrings(_) => "WideStrings6".to_owned(),
+        PcbDocSection::Models(_) => "Models".to_owned(),
+        PcbDocSection::EmbeddedFonts(_) => "EmbeddedFonts6".to_owned(),
+        PcbDocSection::PadViaLibrary(v) => format!("PadVia::{:?}", v.section_name),
+        PcbDocSection::LayerKindMapping(_) => "LayerKindMapping".to_owned(),
     }
 }
 
@@ -443,4 +525,54 @@ fn parse_embedded_fonts6_data(
     }
     reader.assert_exhausted()?;
     Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::fs;
+
+    fn fixture_paths() -> Vec<std::path::PathBuf> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/pcbdoc");
+        let mut out = Vec::new();
+        let entries = fs::read_dir(dir).expect("read data/pcbdoc");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_pcbdoc = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("pcbdoc"))
+                .unwrap_or(false);
+            if is_pcbdoc {
+                out.push(path);
+            }
+        }
+        out.sort();
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
+
+        #[test]
+        fn prop_pcbdoc_invariants_hold_for_fixtures(idx in 0usize..4096usize) {
+            let fixtures = fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let doc = PcbDoc::open(path).expect("open pcbdoc");
+            doc.validate_invariants().expect("pcbdoc invariant check");
+        }
+
+        #[test]
+        fn prop_pcbdoc_invariants_reject_broken_header(idx in 0usize..4096usize) {
+            let fixtures = fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let mut doc = PcbDoc::open(path).expect("open pcbdoc");
+            doc.header.version_string = "BROKEN".to_owned();
+            let err = doc.validate_invariants().expect_err("broken header should fail");
+            prop_assert!(err.to_string().contains("expected v6 header"));
+        }
+    }
 }

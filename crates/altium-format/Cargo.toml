@@ -50,3 +50,4 @@ slotmap = "1"
 
 [dev-dependencies]
 tempfile = "3.25.0"
+proptest = "1"

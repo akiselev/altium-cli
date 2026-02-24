@@ -1974,10 +1974,16 @@ impl SchLib {
             let code = parse_electrical_type(electrical)? as u8;
             params.insert(ELECTRICAL, (code as i32).to_param_value());
         }
-        if let Some(length_mils) = pin.length_mils {
-            params.insert_coord(PIN_LENGTH, "PinLength_Frac", Coord::from_mils(length_mils));
+        if let Some(length) = pin.length {
+            params.insert_coord(PIN_LENGTH, "PinLength_Frac", length);
         }
         let mut rec = parse_text_pin(&mut params)?;
+        if let Some(at) = pin.at {
+            rec.location = at;
+        }
+        if let Some(rotation) = pin.rotation {
+            rec.orientation = rotation;
+        }
         rec.unique_id = generate_unique_id();
         comp.records.push(SchRecord::Pin(rec));
         comp.component.all_pin_count += 1;
@@ -2208,8 +2214,8 @@ impl SchLib {
                 op.owner_part_id.unwrap_or(0),
                 op.owner_part_display_mode.unwrap_or(0),
             ),
-            location: CoordPoint::new(Coord::from_mils(op.x1_mils), Coord::from_mils(op.y1_mils)),
-            corner: CoordPoint::new(Coord::from_mils(op.x2_mils), Coord::from_mils(op.y2_mils)),
+            location: op.from,
+            corner: op.to,
             line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
             line_style: LineStyle::try_from(op.line_style.unwrap_or(0) as u8)?,
             color: op.color.map(Color::new).unwrap_or(Color::BLACK),
@@ -2232,8 +2238,8 @@ impl SchLib {
                 op.owner_part_id.unwrap_or(0),
                 op.owner_part_display_mode.unwrap_or(0),
             ),
-            location: CoordPoint::new(Coord::from_mils(op.x1_mils), Coord::from_mils(op.y1_mils)),
-            corner: CoordPoint::new(Coord::from_mils(op.x2_mils), Coord::from_mils(op.y2_mils)),
+            location: op.from,
+            corner: op.to,
             line_style: LineStyle::Solid,
             line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
             color: op.color.map(Color::new).unwrap_or(Color::BLACK),
@@ -2459,11 +2465,8 @@ impl SchLib {
                     op.owner_part_id.unwrap_or(0),
                     op.owner_part_display_mode.unwrap_or(0),
                 ),
-                location: CoordPoint::new(
-                    Coord::from_mils(op.x1_mils),
-                    Coord::from_mils(op.y1_mils),
-                ),
-                corner: CoordPoint::new(Coord::from_mils(op.x2_mils), Coord::from_mils(op.y2_mils)),
+                location: op.from,
+                corner: op.to,
                 corner_x_radius: Coord::from_mils(op.corner_x_radius_mils),
                 corner_y_radius: Coord::from_mils(op.corner_y_radius_mils),
                 line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
@@ -2515,8 +2518,8 @@ impl SchLib {
                 op.owner_part_id.unwrap_or(0),
                 op.owner_part_display_mode.unwrap_or(0),
             ),
-            location: CoordPoint::new(Coord::from_mils(op.x1_mils), Coord::from_mils(op.y1_mils)),
-            corner: CoordPoint::new(Coord::from_mils(op.x2_mils), Coord::from_mils(op.y2_mils)),
+            location: op.from,
+            corner: op.to,
             line_width: PenWidth::Small,
             color: op.color.map(Color::new).unwrap_or(Color::BLACK),
             area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
@@ -2554,8 +2557,8 @@ impl SchLib {
                 op.owner_part_id.unwrap_or(0),
                 op.owner_part_display_mode.unwrap_or(0),
             ),
-            location: CoordPoint::new(Coord::from_mils(op.x1_mils), Coord::from_mils(op.y1_mils)),
-            corner: CoordPoint::new(Coord::from_mils(op.x2_mils), Coord::from_mils(op.y2_mils)),
+            location: op.from,
+            corner: op.to,
             orientation: RotationBy90::Rotate0,
             line_width: PenWidth::Small,
             color: Color::BLACK,
@@ -3411,6 +3414,8 @@ fn validate_schlib_invariants(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use std::fs;
 
     fn data_path(filename: &str) -> std::path::PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -3736,5 +3741,50 @@ mod tests {
         reopened
             .validate_invariants()
             .expect("reopened blank schlib should validate");
+    }
+
+    fn proptest_fixture_paths() -> Vec<std::path::PathBuf> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schlib");
+        let mut out = Vec::new();
+        let entries = fs::read_dir(dir).expect("read data/schlib");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_schlib = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("schlib"))
+                .unwrap_or(false);
+            if is_schlib {
+                out.push(path);
+            }
+        }
+        out.sort();
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
+
+        #[test]
+        fn prop_schlib_invariants_hold_for_fixtures(idx in 0usize..4096usize) {
+            let fixtures = proptest_fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let lib = SchLib::open(path).expect("open schlib");
+            lib.validate_invariants().expect("schlib invariant check");
+        }
+
+        #[test]
+        fn prop_schlib_invariants_reject_mutated_weight(idx in 0usize..4096usize) {
+            let fixtures = proptest_fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let mut lib = SchLib::open(path).expect("open schlib");
+            lib.header.weight += 1;
+            let err = lib
+                .validate_invariants()
+                .expect_err("mutated weight must fail");
+            prop_assert!(err.to_string().contains("weight mismatch"));
+        }
     }
 }

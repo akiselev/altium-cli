@@ -1,9 +1,11 @@
 use crate::param_collection::ParameterCollection;
+use crate::param_value::SchAngle;
 use crate::param_value::ToParamValue;
 use crate::sch_records::{
-    SchDesignator, SchImplementation, SchImplementationList, SchImplementationMap, SchMapDefiner,
-    SchParameter, SchParameterList, SchPin, SchPrimitiveBase, SchRecord, parse_component_record,
-    parse_text_pin,
+    SchArc, SchBezier, SchDesignator, SchEllipse, SchEllipticalArc, SchImage, SchImplementation,
+    SchImplementationList, SchImplementationMap, SchLabel, SchLine, SchMapDefiner, SchParameter,
+    SchParameterList, SchPie, SchPin, SchPolygon, SchPolyline, SchPrimitiveBase, SchRecord,
+    SchRectangle, SchRoundRectangle, SchTextFrame, parse_component_record, parse_text_pin,
 };
 use crate::schdoc::SchDoc;
 use crate::schlib::SchLib;
@@ -14,8 +16,9 @@ use altium_format_types::constants::pin::PIN_LENGTH;
 use altium_format_types::constants::record_structure::OWNER_INDEX;
 use altium_format_types::constants::text::NAME;
 use altium_format_types::{
-    Color, Coord, CoordPoint, ParameterReadOnlyState, ParameterType, PinElectricalType,
-    RotationBy90, TextHorzAnchor, TextJustification, TextVertAnchor,
+    Color, ComponentKind, Coord, CoordPoint, LineShape, LineStyle, ParameterReadOnlyState,
+    ParameterType, PenWidth, PinElectricalType, RotationBy90, TextHorzAnchor, TextJustification,
+    TextVertAnchor,
 };
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -147,7 +150,9 @@ pub struct PinOp {
     pub designator: String,
     pub name: Option<String>,
     pub electrical: Option<String>,
-    pub length_mils: Option<i32>,
+    pub length: Option<Coord>,
+    pub at: Option<CoordPoint>,
+    pub rotation: Option<RotationBy90>,
 }
 
 #[derive(Debug, Clone)]
@@ -269,10 +274,8 @@ pub struct QueryRecordsOp {
 pub struct AddLineOp {
     pub opid: OpId,
     pub component_ref: Option<RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: CoordPoint,
+    pub to: CoordPoint,
     pub color: Option<i32>,
     pub line_width: Option<i32>,
     pub line_style: Option<i32>,
@@ -284,10 +287,8 @@ pub struct AddLineOp {
 pub struct AddRectangleOp {
     pub opid: OpId,
     pub component_ref: Option<RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: CoordPoint,
+    pub to: CoordPoint,
     pub color: Option<i32>,
     pub area_color: Option<i32>,
     pub is_solid: Option<bool>,
@@ -401,10 +402,8 @@ pub struct AddPieOp {
 pub struct AddRoundRectangleOp {
     pub opid: OpId,
     pub component_ref: Option<RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: CoordPoint,
+    pub to: CoordPoint,
     pub corner_x_radius_mils: i32,
     pub corner_y_radius_mils: i32,
     pub color: Option<i32>,
@@ -435,10 +434,8 @@ pub struct AddLabelOp {
 pub struct AddTextFrameOp {
     pub opid: OpId,
     pub component_ref: Option<RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: CoordPoint,
+    pub to: CoordPoint,
     pub text: String,
     pub color: Option<i32>,
     pub area_color: Option<i32>,
@@ -456,10 +453,8 @@ pub struct AddTextFrameOp {
 pub struct AddImageOp {
     pub opid: OpId,
     pub component_ref: Option<RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: CoordPoint,
+    pub to: CoordPoint,
     pub file_name: String,
     pub image_data: Option<Vec<u8>>,
     pub keep_aspect: Option<bool>,
@@ -699,32 +694,112 @@ fn apply_schdoc_low_op(
             schdoc_append_parameter_list(doc, implementation_idx)?;
             Ok(op_result(&v.opid, "create_parameter_list", None, vec![]))
         }
-        SchDocLowOp::AddParameter(_)
-        | SchDocLowOp::AddAlias(_)
-        | SchDocLowOp::RemoveAlias(_)
-        | SchDocLowOp::RemoveComponent(_)
-        | SchDocLowOp::EditComponent(_)
-        | SchDocLowOp::EditRecord(_)
-        | SchDocLowOp::RemoveRecords(_)
-        | SchDocLowOp::QueryComponents(_)
-        | SchDocLowOp::QueryPins(_)
-        | SchDocLowOp::QueryRecords(_)
-        | SchDocLowOp::AddLine(_)
-        | SchDocLowOp::AddRectangle(_)
-        | SchDocLowOp::AddArc(_)
-        | SchDocLowOp::AddEllipticalArc(_)
-        | SchDocLowOp::AddEllipse(_)
-        | SchDocLowOp::AddPolyline(_)
-        | SchDocLowOp::AddPolygon(_)
-        | SchDocLowOp::AddBezier(_)
-        | SchDocLowOp::AddPie(_)
-        | SchDocLowOp::AddRoundRectangle(_)
-        | SchDocLowOp::AddLabel(_)
-        | SchDocLowOp::AddTextFrame(_)
-        | SchDocLowOp::AddImage(_) => Err(AltiumFormatError::InvalidParamValue {
-            key: "op".to_owned(),
-            detail: "operation is not supported for SchDoc".to_owned(),
-        }),
+        SchDocLowOp::AddParameter(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_parameter(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_parameter", None, vec![]))
+        }
+        SchDocLowOp::AddAlias(_) | SchDocLowOp::RemoveAlias(_) => {
+            Err(AltiumFormatError::InvalidParamValue {
+                key: "op".to_owned(),
+                detail: "operation is not supported for SchDoc".to_owned(),
+            })
+        }
+        SchDocLowOp::RemoveComponent(v) => {
+            let idx = resolve_component_index_schdoc(Some(&v.component_ref), ctx)?;
+            schdoc_remove_component(doc, idx)?;
+            rebuild_schdoc_ctx(doc, ctx);
+            Ok(op_result(&v.opid, "remove_component", None, vec![]))
+        }
+        SchDocLowOp::EditComponent(v) => {
+            let idx = resolve_component_index_schdoc(Some(&v.component_ref), ctx)?;
+            schdoc_edit_component(doc, idx, v)?;
+            Ok(op_result(&v.opid, "edit_component", None, vec![]))
+        }
+        SchDocLowOp::EditRecord(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            let changed = schdoc_edit_records(doc, idx, &v.selector, &v.patch)?;
+            let mut r = op_result(&v.opid, "edit_record", None, vec![]);
+            r.fields
+                .insert("changed".to_owned(), Value::I64(changed as i64));
+            Ok(r)
+        }
+        SchDocLowOp::RemoveRecords(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            let removed = schdoc_remove_records(doc, idx, &v.selector)?;
+            let mut r = op_result(&v.opid, "remove_records", None, vec![]);
+            r.fields
+                .insert("removed".to_owned(), Value::I64(removed as i64));
+            Ok(r)
+        }
+        SchDocLowOp::QueryComponents(v) => schdoc_query_components(doc, v),
+        SchDocLowOp::QueryPins(v) => schdoc_query_pins(doc, v, ctx),
+        SchDocLowOp::QueryRecords(v) => schdoc_query_records(doc, v, ctx),
+        SchDocLowOp::AddLine(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_line(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_line", None, vec![]))
+        }
+        SchDocLowOp::AddRectangle(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_rectangle(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_rectangle", None, vec![]))
+        }
+        SchDocLowOp::AddArc(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_arc(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_arc", None, vec![]))
+        }
+        SchDocLowOp::AddEllipticalArc(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_elliptical_arc(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_elliptical_arc", None, vec![]))
+        }
+        SchDocLowOp::AddEllipse(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_ellipse(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_ellipse", None, vec![]))
+        }
+        SchDocLowOp::AddPolyline(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_polyline(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_polyline", None, vec![]))
+        }
+        SchDocLowOp::AddPolygon(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_polygon(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_polygon", None, vec![]))
+        }
+        SchDocLowOp::AddBezier(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_bezier(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_bezier", None, vec![]))
+        }
+        SchDocLowOp::AddPie(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_pie(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_pie", None, vec![]))
+        }
+        SchDocLowOp::AddRoundRectangle(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_round_rectangle(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_round_rectangle", None, vec![]))
+        }
+        SchDocLowOp::AddLabel(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_label(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_label", None, vec![]))
+        }
+        SchDocLowOp::AddTextFrame(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_text_frame(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_text_frame", None, vec![]))
+        }
+        SchDocLowOp::AddImage(v) => {
+            let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
+            schdoc_append_image(doc, idx, v)?;
+            Ok(op_result(&v.opid, "add_image", None, vec![]))
+        }
         SchDocLowOp::Query(v) => schdoc_query(doc, v),
     }
 }
@@ -1276,10 +1351,16 @@ fn schdoc_append_pin(doc: &mut SchDoc, component_index: usize, pin: &PinOp) -> R
         let code = parse_electrical_type(electrical)? as u8;
         params.insert(ELECTRICAL, (code as i32).to_param_value());
     }
-    if let Some(length_mils) = pin.length_mils {
-        params.insert_coord(PIN_LENGTH, "PinLength_Frac", Coord::from_mils(length_mils));
+    if let Some(length) = pin.length {
+        params.insert_coord(PIN_LENGTH, "PinLength_Frac", length);
     }
     let mut record: SchPin = parse_text_pin(&mut params)?;
+    if let Some(at) = pin.at {
+        record.location = at;
+    }
+    if let Some(rotation) = pin.rotation {
+        record.orientation = rotation;
+    }
     record.unique_id = generate_unique_id();
     let idx = doc.records.len();
     doc.records.push(SchRecord::Pin(record));
@@ -1358,6 +1439,1022 @@ fn schdoc_append_parameter_list(doc: &mut SchDoc, implementation_index: usize) -
         base: primitive_base(implementation_index as i32),
     }));
     Ok(())
+}
+
+fn schdoc_append_parameter(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &ParameterOp,
+) -> Result<()> {
+    doc.records.push(SchRecord::Parameter(SchParameter {
+        base: primitive_base(component_index as i32),
+        location: CoordPoint::new(Coord::from_internal(0), Coord::from_internal(0)),
+        orientation: RotationBy90::Rotate0,
+        justification: TextJustification::BottomLeft,
+        color: Color::BLACK,
+        font_id: 1,
+        is_hidden: op.is_hidden.unwrap_or(false),
+        text: op.text.clone(),
+        param_type: ParameterType::String,
+        name: op.name.clone(),
+        show_name: false,
+        read_only_state: ParameterReadOnlyState::None,
+        unique_id: generate_unique_id(),
+        description: String::new(),
+        not_allow_library_synchronize: false,
+        not_allow_database_synchronize: false,
+        not_auto_position: false,
+        override_not_auto_position: false,
+        is_mirrored: false,
+        text_horz_anchor: TextHorzAnchor::None,
+        text_vert_anchor: TextVertAnchor::None,
+        is_image_parameter: false,
+    }));
+    Ok(())
+}
+
+fn schdoc_append_line(doc: &mut SchDoc, component_index: usize, op: &AddLineOp) -> Result<()> {
+    doc.records.push(SchRecord::Line(SchLine {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: op.from,
+        corner: op.to,
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        line_style: LineStyle::try_from(op.line_style.unwrap_or(0) as u8)?,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        line_style_ext: LineStyle::try_from(op.line_style.unwrap_or(0) as u8)?,
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_rectangle(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddRectangleOp,
+) -> Result<()> {
+    doc.records.push(SchRecord::Rectangle(SchRectangle {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: op.from,
+        corner: op.to,
+        line_style: LineStyle::Solid,
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
+        is_solid: op.is_solid.unwrap_or(true),
+        transparent: op.transparent.unwrap_or(false),
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_arc(doc: &mut SchDoc, component_index: usize, op: &AddArcOp) -> Result<()> {
+    doc.records.push(SchRecord::Arc(SchArc {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: CoordPoint::new(Coord::from_mils(op.cx_mils), Coord::from_mils(op.cy_mils)),
+        radius: Coord::from_mils(op.radius_mils),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        start_angle: SchAngle(op.start_angle.unwrap_or(0.0)),
+        end_angle: Some(SchAngle(op.end_angle.unwrap_or(360.0))),
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_elliptical_arc(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddEllipticalArcOp,
+) -> Result<()> {
+    doc.records.push(SchRecord::EllipticalArc(SchEllipticalArc {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: CoordPoint::new(Coord::from_mils(op.cx_mils), Coord::from_mils(op.cy_mils)),
+        radius: Coord::from_mils(op.radius_mils),
+        secondary_radius: Coord::from_mils(op.secondary_radius_mils),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        start_angle: SchAngle(op.start_angle.unwrap_or(0.0)),
+        end_angle: Some(SchAngle(op.end_angle.unwrap_or(360.0))),
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_ellipse(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddEllipseOp,
+) -> Result<()> {
+    doc.records.push(SchRecord::Ellipse(SchEllipse {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: CoordPoint::new(Coord::from_mils(op.cx_mils), Coord::from_mils(op.cy_mils)),
+        radius: Coord::from_mils(op.radius_mils),
+        secondary_radius: Coord::from_mils(op.secondary_radius_mils),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
+        is_solid: op.is_solid.unwrap_or(true),
+        transparent: false,
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_polyline(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddPolylineOp,
+) -> Result<()> {
+    let vertices = op
+        .points_mils
+        .iter()
+        .map(|(x, y)| CoordPoint::new(Coord::from_mils(*x), Coord::from_mils(*y)))
+        .collect();
+    doc.records.push(SchRecord::Polyline(SchPolyline {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        line_style: LineStyle::try_from(op.line_style.unwrap_or(0) as u8)?,
+        start_line_shape: LineShape::None,
+        end_line_shape: LineShape::None,
+        line_shape_size: PenWidth::Zero,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        vertices,
+        line_style_ext: LineStyle::try_from(op.line_style.unwrap_or(0) as u8)?,
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_polygon(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddPolygonOp,
+) -> Result<()> {
+    let vertices = op
+        .points_mils
+        .iter()
+        .map(|(x, y)| CoordPoint::new(Coord::from_mils(*x), Coord::from_mils(*y)))
+        .collect();
+    doc.records.push(SchRecord::Polygon(SchPolygon {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
+        is_solid: op.is_solid.unwrap_or(true),
+        transparent: false,
+        vertices,
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_bezier(doc: &mut SchDoc, component_index: usize, op: &AddBezierOp) -> Result<()> {
+    if op.points_mils.len() != 4 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "points_mils".to_owned(),
+            detail: "bezier requires exactly 4 points".to_owned(),
+        });
+    }
+    let vertices = op
+        .points_mils
+        .iter()
+        .map(|(x, y)| CoordPoint::new(Coord::from_mils(*x), Coord::from_mils(*y)))
+        .collect();
+    doc.records.push(SchRecord::Bezier(SchBezier {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        vertices,
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_pie(doc: &mut SchDoc, component_index: usize, op: &AddPieOp) -> Result<()> {
+    doc.records.push(SchRecord::Pie(SchPie {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: CoordPoint::new(Coord::from_mils(op.cx_mils), Coord::from_mils(op.cy_mils)),
+        radius: Coord::from_mils(op.radius_mils),
+        line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+        start_angle: SchAngle(op.start_angle.unwrap_or(0.0)),
+        end_angle: Some(SchAngle(op.end_angle.unwrap_or(360.0))),
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
+        is_solid: op.is_solid.unwrap_or(true),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_round_rectangle(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddRoundRectangleOp,
+) -> Result<()> {
+    doc.records
+        .push(SchRecord::RoundRectangle(SchRoundRectangle {
+            base: primitive_base_with_owner(
+                component_index as i32,
+                op.owner_part_id.unwrap_or(0),
+                op.owner_part_display_mode.unwrap_or(0),
+            ),
+            location: op.from,
+            corner: op.to,
+            corner_x_radius: Coord::from_mils(op.corner_x_radius_mils),
+            corner_y_radius: Coord::from_mils(op.corner_y_radius_mils),
+            line_width: PenWidth::try_from(op.line_width.unwrap_or(1) as u8)?,
+            color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+            area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
+            is_solid: op.is_solid.unwrap_or(true),
+            unique_id: generate_unique_id(),
+        }));
+    Ok(())
+}
+
+fn schdoc_append_label(doc: &mut SchDoc, component_index: usize, op: &AddLabelOp) -> Result<()> {
+    let rot = op.orientation.unwrap_or(0) / 90;
+    doc.records.push(SchRecord::Label(SchLabel {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: CoordPoint::new(Coord::from_mils(op.x_mils), Coord::from_mils(op.y_mils)),
+        orientation: RotationBy90::try_from(rot as u8)?,
+        justification: TextJustification::try_from(op.justification.unwrap_or(0) as u8)?,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        font_id: op.font_id.unwrap_or(1),
+        text: op.text.clone(),
+        is_mirrored: op.is_mirrored.unwrap_or(false),
+        url: String::new(),
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_text_frame(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &AddTextFrameOp,
+) -> Result<()> {
+    doc.records.push(SchRecord::TextFrame(SchTextFrame {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: op.from,
+        corner: op.to,
+        line_width: PenWidth::Small,
+        color: op.color.map(Color::new).unwrap_or(Color::BLACK),
+        area_color: op.area_color.map(Color::new).unwrap_or(Color::WHITE),
+        text_color: Color::BLACK,
+        font_id: op.font_id.unwrap_or(1),
+        is_solid: op.is_solid.unwrap_or(true),
+        show_border: op.show_border.unwrap_or(true),
+        alignment: TextJustification::try_from(op.alignment.unwrap_or(0) as u8)?,
+        word_wrap: op.word_wrap.unwrap_or(false),
+        clip_to_rect: op.clip_to_rect.unwrap_or(false),
+        text: op.text.clone(),
+        text_margin: Coord::from_mils(5),
+        transparent: false,
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_append_image(doc: &mut SchDoc, component_index: usize, op: &AddImageOp) -> Result<()> {
+    if op.image_data.is_some() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "image_data".to_owned(),
+            detail: "embedded image payload is not yet supported for SchDoc ops".to_owned(),
+        });
+    }
+    doc.records.push(SchRecord::Image(SchImage {
+        base: primitive_base_with_owner(
+            component_index as i32,
+            op.owner_part_id.unwrap_or(0),
+            op.owner_part_display_mode.unwrap_or(0),
+        ),
+        location: op.from,
+        corner: op.to,
+        orientation: RotationBy90::Rotate0,
+        line_width: PenWidth::Small,
+        color: Color::BLACK,
+        is_solid: false,
+        keep_aspect: op.keep_aspect.unwrap_or(true),
+        embed_image: false,
+        file_name: op.file_name.clone(),
+        unique_id: generate_unique_id(),
+    }));
+    Ok(())
+}
+
+fn schdoc_edit_component(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &EditComponentOp,
+) -> Result<()> {
+    let comp = doc.records.get_mut(component_index).ok_or_else(|| {
+        AltiumFormatError::InvalidParamValue {
+            key: "component_ref".to_owned(),
+            detail: format!("component index out of range: {component_index}"),
+        }
+    })?;
+    let SchRecord::Component(comp) = comp else {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "component_ref".to_owned(),
+            detail: "target is not a component record".to_owned(),
+        });
+    };
+    if let Some(v) = &op.description {
+        comp.component_description = v.clone();
+    }
+    if let Some(v) = op.part_count {
+        comp.part_count = v;
+    }
+    if let Some(v) = op.display_mode_count {
+        comp.display_mode_count = v;
+    }
+    if let Some(v) = op.component_kind {
+        let kind = ComponentKind::try_from(v as u8)?;
+        comp.component_kind = kind;
+        comp.component_kind_version2 = kind;
+        comp.component_kind_version3 = kind;
+    }
+    if let Some(v) = op.show_hidden_pins {
+        comp.show_hidden_pins = v;
+    }
+    Ok(())
+}
+
+fn schdoc_edit_records(
+    doc: &mut SchDoc,
+    component_index: usize,
+    selector: &RecordSelector,
+    patch: &RecordPatch,
+) -> Result<usize> {
+    let targets = schdoc_select_record_indices(doc, component_index, selector)?;
+    let mut changed = 0usize;
+    for idx in targets {
+        if apply_record_patch(&mut doc.records[idx], patch)? {
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+fn schdoc_remove_component(doc: &mut SchDoc, component_index: usize) -> Result<()> {
+    let removed = schdoc_remove_base_records(doc, &[component_index])?;
+    if removed == 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "component_ref".to_owned(),
+            detail: format!("component index out of range: {component_index}"),
+        });
+    }
+    Ok(())
+}
+
+fn schdoc_remove_records(
+    doc: &mut SchDoc,
+    component_index: usize,
+    selector: &RecordSelector,
+) -> Result<usize> {
+    let targets = schdoc_select_record_indices(doc, component_index, selector)?;
+    schdoc_remove_base_records(doc, &targets)
+}
+
+fn schdoc_remove_base_records(doc: &mut SchDoc, targets: &[usize]) -> Result<usize> {
+    if targets.is_empty() {
+        return Ok(0);
+    }
+    let mut remove = vec![false; doc.records.len()];
+    for &idx in targets {
+        if idx < remove.len() {
+            remove[idx] = true;
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (idx, rec) in doc.records.iter().enumerate() {
+            if remove[idx] {
+                continue;
+            }
+            let (owner, owner_is_additional) = record_owner_ref(rec);
+            if owner_is_additional || owner < 0 {
+                continue;
+            }
+            let parent = owner as usize;
+            if parent < remove.len() && remove[parent] {
+                remove[idx] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let removed_count = remove.iter().filter(|v| **v).count();
+    if removed_count == 0 {
+        return Ok(0);
+    }
+
+    let mut old_to_new = vec![None; doc.records.len()];
+    let mut next_idx = 0usize;
+    for (old_idx, drop_it) in remove.iter().enumerate() {
+        if !drop_it {
+            old_to_new[old_idx] = Some(next_idx);
+            next_idx += 1;
+        }
+    }
+
+    let mut kept = Vec::with_capacity(next_idx);
+    for (old_idx, rec) in doc.records.drain(..).enumerate() {
+        if remove[old_idx] {
+            continue;
+        }
+        kept.push(rec);
+    }
+    doc.records = kept;
+
+    remap_owner_indices_after_base_compaction(
+        &old_to_new,
+        &mut doc.records,
+        &mut doc.additional_records,
+    )?;
+    schdoc_recompute_all_pin_count(doc);
+    Ok(removed_count)
+}
+
+fn remap_owner_indices_after_base_compaction(
+    old_to_new: &[Option<usize>],
+    records: &mut [SchRecord],
+    additional_records: &mut [SchRecord],
+) -> Result<()> {
+    for rec in records.iter_mut() {
+        let (owner, owner_is_additional) = record_owner_ref(rec);
+        if owner_is_additional || owner < 0 {
+            continue;
+        }
+        let old_owner = owner as usize;
+        let Some(new_owner) = old_to_new.get(old_owner).and_then(|v| *v) else {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "OwnerIndex".to_owned(),
+                detail: format!("record owner index {old_owner} points to removed base record"),
+            });
+        };
+        set_record_owner_ref(rec, new_owner as i32, false);
+    }
+
+    for rec in additional_records.iter_mut() {
+        let (owner, owner_is_additional) = record_owner_ref(rec);
+        if owner_is_additional || owner < 0 {
+            continue;
+        }
+        let old_owner = owner as usize;
+        let Some(new_owner) = old_to_new.get(old_owner).and_then(|v| *v) else {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "OwnerIndex".to_owned(),
+                detail: format!(
+                    "additional record owner index {old_owner} points to removed base record"
+                ),
+            });
+        };
+        set_record_owner_ref(rec, new_owner as i32, false);
+    }
+
+    Ok(())
+}
+
+fn schdoc_recompute_all_pin_count(doc: &mut SchDoc) {
+    let mut pin_counts: HashMap<usize, i32> = HashMap::new();
+    for rec in &doc.records {
+        if let SchRecord::Pin(pin) = rec {
+            if !pin.owner_index_additional_list && pin.owner_index >= 0 {
+                *pin_counts.entry(pin.owner_index as usize).or_insert(0) += 1;
+            }
+        }
+    }
+    for (idx, rec) in doc.records.iter_mut().enumerate() {
+        if let SchRecord::Component(comp) = rec {
+            comp.all_pin_count = pin_counts.get(&idx).copied().unwrap_or(0);
+        }
+    }
+}
+
+fn schdoc_query_components(doc: &SchDoc, op: &QueryComponentsOp) -> Result<OpResult> {
+    let mut refs = Vec::new();
+    let mut components = Vec::new();
+    for (idx, rec) in doc.records.iter().enumerate() {
+        let SchRecord::Component(component) = rec else {
+            continue;
+        };
+        if let Some(pattern) = &op.pattern {
+            if !component.lib_reference.contains(pattern)
+                && !component.component_description.contains(pattern)
+            {
+                continue;
+            }
+        }
+
+        let eref = component_ref_schdoc(idx, Some(&component.lib_reference));
+        refs.push(eref);
+
+        let pin_count = doc
+            .records
+            .iter()
+            .filter(|r| matches!(r, SchRecord::Pin(pin) if pin.owner_index == idx as i32 && !pin.owner_index_additional_list))
+            .count() as i32;
+        let has_footprint = doc.records.iter().any(|r| {
+            matches!(
+                r,
+                SchRecord::ImplementationList(v) if v.base.owner_index == idx as i32
+            ) || matches!(
+                r,
+                SchRecord::Implementation(v) if schdoc_record_is_descendant_of(doc, record_owner_ref(r).0, idx)
+            )
+        });
+
+        let mut m = IndexMap::new();
+        m.insert("index".to_owned(), Value::I64(idx as i64));
+        m.insert(
+            "lib_reference".to_owned(),
+            Value::String(component.lib_reference.clone()),
+        );
+        m.insert(
+            "description".to_owned(),
+            Value::String(component.component_description.clone()),
+        );
+        m.insert(
+            "part_count".to_owned(),
+            Value::I64(component.part_count as i64),
+        );
+        m.insert("pin_count".to_owned(), Value::I64(pin_count as i64));
+        m.insert("aliases".to_owned(), Value::List(Vec::new()));
+        m.insert("has_footprint".to_owned(), Value::Bool(has_footprint));
+        components.push(Value::Map(m));
+    }
+    let mut r = op_result(&op.opid, "query_components", None, refs);
+    r.fields
+        .insert("components".to_owned(), Value::List(components));
+    Ok(r)
+}
+
+fn schdoc_query_pins(doc: &SchDoc, op: &QueryPinsOp, ctx: &SchDocExecCtx) -> Result<OpResult> {
+    let idx = resolve_component_index_schdoc(Some(&op.component_ref), ctx)?;
+    let mut pins = Vec::new();
+    for rec in &doc.records {
+        let SchRecord::Pin(pin) = rec else {
+            continue;
+        };
+        if pin.owner_index_additional_list || pin.owner_index != idx as i32 {
+            continue;
+        }
+        let mut m = IndexMap::new();
+        m.insert(
+            "designator".to_owned(),
+            Value::String(pin.designator.clone()),
+        );
+        m.insert("name".to_owned(), Value::String(pin.name.clone()));
+        m.insert(
+            "electrical".to_owned(),
+            Value::String(format!("{:?}", pin.electrical)),
+        );
+        m.insert("x".to_owned(), Value::I64(pin.location.x.to_mils() as i64));
+        m.insert("y".to_owned(), Value::I64(pin.location.y.to_mils() as i64));
+        m.insert(
+            "length".to_owned(),
+            Value::I64(pin.pin_length.to_mils() as i64),
+        );
+        m.insert(
+            "orientation".to_owned(),
+            Value::I64(pin.orientation.to_degrees() as i64),
+        );
+        m.insert("is_hidden".to_owned(), Value::Bool(pin.is_hidden));
+        m.insert(
+            "owner_part_id".to_owned(),
+            Value::I64(pin.owner_part_id as i64),
+        );
+        pins.push(Value::Map(m));
+    }
+    let mut r = op_result(&op.opid, "query_pins", None, vec![]);
+    r.fields.insert("pins".to_owned(), Value::List(pins));
+    Ok(r)
+}
+
+fn schdoc_query_records(
+    doc: &SchDoc,
+    op: &QueryRecordsOp,
+    ctx: &SchDocExecCtx,
+) -> Result<OpResult> {
+    let component_idx = resolve_component_index_schdoc(Some(&op.component_ref), ctx)?;
+    let scope = schdoc_component_scope_indices(doc, component_idx)?;
+    let mut records = Vec::new();
+    for (local_idx, global_idx) in scope.iter().enumerate() {
+        let rec = &doc.records[*global_idx];
+        let ty = record_type_num(rec);
+        if let Some(want) = op.record_type {
+            if want != ty {
+                continue;
+            }
+        }
+        let mut m = IndexMap::new();
+        m.insert("index".to_owned(), Value::I64(local_idx as i64));
+        m.insert("record_type".to_owned(), Value::I64(ty as i64));
+        m.insert(
+            "owner_index".to_owned(),
+            Value::I64(record_owner_ref(rec).0 as i64),
+        );
+        m.insert("summary".to_owned(), Value::String(record_summary(rec)));
+        records.push(Value::Map(m));
+    }
+    let mut r = op_result(&op.opid, "query_records", None, vec![]);
+    r.fields.insert("records".to_owned(), Value::List(records));
+    Ok(r)
+}
+
+fn schdoc_select_record_indices(
+    doc: &SchDoc,
+    component_index: usize,
+    selector: &RecordSelector,
+) -> Result<Vec<usize>> {
+    let scope = schdoc_component_scope_indices(doc, component_index)?;
+    let mut out = Vec::new();
+    for (local_idx, global_idx) in scope.into_iter().enumerate() {
+        let rec = &doc.records[global_idx];
+        let matched = match selector {
+            RecordSelector::ByDesignator(v) => match rec {
+                SchRecord::Pin(pin) => pin.designator == *v,
+                SchRecord::Designator(d) => d.text == *v,
+                _ => false,
+            },
+            RecordSelector::ByRecordType(v) => record_type_num(rec) == *v,
+            RecordSelector::ByIndex(v) => local_idx == *v,
+            RecordSelector::ByName(v) => match rec {
+                SchRecord::Parameter(p) => p.name == *v,
+                _ => false,
+            },
+        };
+        if matched {
+            out.push(global_idx);
+        }
+    }
+    Ok(out)
+}
+
+fn schdoc_component_scope_indices(doc: &SchDoc, component_index: usize) -> Result<Vec<usize>> {
+    if !matches!(
+        doc.records.get(component_index),
+        Some(SchRecord::Component(_))
+    ) {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "component_ref".to_owned(),
+            detail: format!("component index out of range: {component_index}"),
+        });
+    }
+    let mut out = Vec::new();
+    for idx in 0..doc.records.len() {
+        if idx == component_index {
+            continue;
+        }
+        if schdoc_record_is_descendant_of(doc, idx as i32, component_index) {
+            out.push(idx);
+        }
+    }
+    Ok(out)
+}
+
+fn schdoc_record_is_descendant_of(doc: &SchDoc, mut idx: i32, component_index: usize) -> bool {
+    let mut seen = HashSet::new();
+    while idx >= 0 {
+        let i = idx as usize;
+        if i == component_index {
+            return true;
+        }
+        if i >= doc.records.len() || !seen.insert(i) {
+            return false;
+        }
+        let (owner, owner_is_additional) = record_owner_ref(&doc.records[i]);
+        if owner_is_additional {
+            return false;
+        }
+        idx = owner;
+    }
+    false
+}
+
+fn rebuild_schdoc_ctx(doc: &SchDoc, ctx: &mut SchDocExecCtx) {
+    ctx.alias_to_component.clear();
+    ctx.entity_id_to_component.clear();
+    for (idx, record) in doc.records.iter().enumerate() {
+        if matches!(record, SchRecord::Component(_)) {
+            ctx.entity_id_to_component
+                .insert(format!("schdoc:component:{idx}"), idx);
+        }
+        if let SchRecord::Designator(d) = record {
+            if d.base.owner_index >= 0 {
+                ctx.alias_to_component
+                    .insert(d.text.clone(), d.base.owner_index as usize);
+            }
+        }
+    }
+    ctx.last_component = None;
+    ctx.chain_state.clear();
+}
+
+fn primitive_base_with_owner(
+    owner_index: i32,
+    owner_part_id: i32,
+    owner_part_display_mode: i32,
+) -> SchPrimitiveBase {
+    SchPrimitiveBase {
+        owner_index,
+        is_not_accessible: false,
+        index_in_sheet: 0,
+        owner_part_id,
+        owner_part_display_mode,
+        graphically_locked: false,
+        union_index: 0,
+    }
+}
+
+fn record_owner_ref(rec: &SchRecord) -> (i32, bool) {
+    match rec {
+        SchRecord::Sheet(v) => (v.base.owner_index, false),
+        SchRecord::Template(v) => (v.base.owner_index, false),
+        SchRecord::Wire(v) => (v.base.owner_index, false),
+        SchRecord::Bus(v) => (v.base.owner_index, false),
+        SchRecord::NetLabel(v) => (v.base.owner_index, false),
+        SchRecord::PowerObject(v) => (v.base.owner_index, false),
+        SchRecord::Port(v) => (v.base.owner_index, false),
+        SchRecord::NoConnect(v) => (v.base.owner_index, false),
+        SchRecord::Junction(v) => (v.base.owner_index, false),
+        SchRecord::SheetName(v) => (v.base.owner_index, false),
+        SchRecord::SheetFileName(v) => (v.base.owner_index, false),
+        SchRecord::SheetSymbol(v) => (v.base.owner_index, false),
+        SchRecord::SheetEntry(v) => (v.base.owner_index, false),
+        SchRecord::BusEntry(v) => (v.base.owner_index, false),
+        SchRecord::ParameterSet(v) => (v.base.owner_index, false),
+        SchRecord::Note(v) => (v.base.owner_index, false),
+        SchRecord::Probe(v) => (v.base.owner_index, false),
+        SchRecord::CompileMask(v) => (v.base.owner_index, false),
+        SchRecord::Blanket(v) => (v.base.owner_index, false),
+        SchRecord::Component(v) => (v.owner_index, false),
+        SchRecord::Pin(v) => (v.owner_index, v.owner_index_additional_list),
+        SchRecord::Symbol(v) => (v.base.owner_index, false),
+        SchRecord::Line(v) => (v.base.owner_index, false),
+        SchRecord::Rectangle(v) => (v.base.owner_index, false),
+        SchRecord::RoundRectangle(v) => (v.base.owner_index, false),
+        SchRecord::Arc(v) => (v.base.owner_index, false),
+        SchRecord::EllipticalArc(v) => (v.base.owner_index, false),
+        SchRecord::Ellipse(v) => (v.base.owner_index, false),
+        SchRecord::Pie(v) => (v.base.owner_index, false),
+        SchRecord::Polyline(v) => (v.base.owner_index, false),
+        SchRecord::Polygon(v) => (v.base.owner_index, false),
+        SchRecord::Bezier(v) => (v.base.owner_index, false),
+        SchRecord::Image(v) => (v.base.owner_index, false),
+        SchRecord::Label(v) => (v.base.owner_index, false),
+        SchRecord::Designator(v) => (v.base.owner_index, false),
+        SchRecord::Parameter(v) => (v.base.owner_index, false),
+        SchRecord::TextFrame(v) => (v.base.owner_index, false),
+        SchRecord::ImplementationList(v) => (v.base.owner_index, false),
+        SchRecord::Implementation(v) => (v.base.owner_index, false),
+        SchRecord::ImplementationMap(v) => (v.base.owner_index, false),
+        SchRecord::MapDefiner(v) => (v.base.owner_index, false),
+        SchRecord::ParameterList(v) => (v.base.owner_index, false),
+    }
+}
+
+fn set_record_owner_ref(rec: &mut SchRecord, owner_index: i32, owner_is_additional: bool) {
+    match rec {
+        SchRecord::Sheet(v) => v.base.owner_index = owner_index,
+        SchRecord::Template(v) => v.base.owner_index = owner_index,
+        SchRecord::Wire(v) => v.base.owner_index = owner_index,
+        SchRecord::Bus(v) => v.base.owner_index = owner_index,
+        SchRecord::NetLabel(v) => v.base.owner_index = owner_index,
+        SchRecord::PowerObject(v) => v.base.owner_index = owner_index,
+        SchRecord::Port(v) => v.base.owner_index = owner_index,
+        SchRecord::NoConnect(v) => v.base.owner_index = owner_index,
+        SchRecord::Junction(v) => v.base.owner_index = owner_index,
+        SchRecord::SheetName(v) => v.base.owner_index = owner_index,
+        SchRecord::SheetFileName(v) => v.base.owner_index = owner_index,
+        SchRecord::SheetSymbol(v) => v.base.owner_index = owner_index,
+        SchRecord::SheetEntry(v) => v.base.owner_index = owner_index,
+        SchRecord::BusEntry(v) => v.base.owner_index = owner_index,
+        SchRecord::ParameterSet(v) => v.base.owner_index = owner_index,
+        SchRecord::Note(v) => v.base.owner_index = owner_index,
+        SchRecord::Probe(v) => v.base.owner_index = owner_index,
+        SchRecord::CompileMask(v) => v.base.owner_index = owner_index,
+        SchRecord::Blanket(v) => v.base.owner_index = owner_index,
+        SchRecord::Component(v) => v.owner_index = owner_index,
+        SchRecord::Pin(v) => {
+            v.owner_index = owner_index;
+            v.owner_index_additional_list = owner_is_additional;
+        }
+        SchRecord::Symbol(v) => v.base.owner_index = owner_index,
+        SchRecord::Line(v) => v.base.owner_index = owner_index,
+        SchRecord::Rectangle(v) => v.base.owner_index = owner_index,
+        SchRecord::RoundRectangle(v) => v.base.owner_index = owner_index,
+        SchRecord::Arc(v) => v.base.owner_index = owner_index,
+        SchRecord::EllipticalArc(v) => v.base.owner_index = owner_index,
+        SchRecord::Ellipse(v) => v.base.owner_index = owner_index,
+        SchRecord::Pie(v) => v.base.owner_index = owner_index,
+        SchRecord::Polyline(v) => v.base.owner_index = owner_index,
+        SchRecord::Polygon(v) => v.base.owner_index = owner_index,
+        SchRecord::Bezier(v) => v.base.owner_index = owner_index,
+        SchRecord::Image(v) => v.base.owner_index = owner_index,
+        SchRecord::Label(v) => v.base.owner_index = owner_index,
+        SchRecord::Designator(v) => v.base.owner_index = owner_index,
+        SchRecord::Parameter(v) => v.base.owner_index = owner_index,
+        SchRecord::TextFrame(v) => v.base.owner_index = owner_index,
+        SchRecord::ImplementationList(v) => v.base.owner_index = owner_index,
+        SchRecord::Implementation(v) => v.base.owner_index = owner_index,
+        SchRecord::ImplementationMap(v) => v.base.owner_index = owner_index,
+        SchRecord::MapDefiner(v) => v.base.owner_index = owner_index,
+        SchRecord::ParameterList(v) => v.base.owner_index = owner_index,
+    }
+}
+
+fn apply_record_patch(rec: &mut SchRecord, patch: &RecordPatch) -> Result<bool> {
+    let mut changed = false;
+    match rec {
+        SchRecord::Parameter(v) => {
+            if let Some(s) = &patch.text {
+                v.text = s.clone();
+                changed = true;
+            }
+            if let Some(s) = &patch.name {
+                v.name = s.clone();
+                changed = true;
+            }
+            if let Some(b) = patch.is_hidden {
+                v.is_hidden = b;
+                changed = true;
+            }
+            if let Some(c) = patch.color {
+                v.color = Color::new(c);
+                changed = true;
+            }
+        }
+        SchRecord::Designator(v) => {
+            if let Some(s) = &patch.text {
+                v.text = s.clone();
+                changed = true;
+            }
+            if let Some(b) = patch.is_hidden {
+                v.is_hidden = b;
+                changed = true;
+            }
+            if let Some(c) = patch.color {
+                v.color = Color::new(c);
+                changed = true;
+            }
+        }
+        SchRecord::Pin(v) => {
+            if let Some(s) = &patch.designator {
+                v.designator = s.clone();
+                changed = true;
+            }
+            if let Some(s) = &patch.name {
+                v.name = s.clone();
+                changed = true;
+            }
+            if let Some(b) = patch.is_hidden {
+                v.is_hidden = b;
+                changed = true;
+            }
+            if let Some(c) = patch.color {
+                v.color = Color::new(c);
+                changed = true;
+            }
+        }
+        SchRecord::Line(v) => {
+            if let Some(c) = patch.color {
+                v.color = Color::new(c);
+                changed = true;
+            }
+            if let Some(w) = patch.line_width {
+                v.line_width = PenWidth::try_from(w as u8)?;
+                changed = true;
+            }
+        }
+        SchRecord::Rectangle(v) => {
+            if let Some(c) = patch.color {
+                v.color = Color::new(c);
+                changed = true;
+            }
+            if let Some(w) = patch.line_width {
+                v.line_width = PenWidth::try_from(w as u8)?;
+                changed = true;
+            }
+        }
+        _ => {}
+    }
+    Ok(changed)
+}
+
+fn record_type_num(rec: &SchRecord) -> i32 {
+    let ty = match rec {
+        SchRecord::Sheet(_) => altium_format_types::SchRecordType::Sheet,
+        SchRecord::Template(_) => altium_format_types::SchRecordType::Template,
+        SchRecord::Wire(_) => altium_format_types::SchRecordType::Wire,
+        SchRecord::Bus(_) => altium_format_types::SchRecordType::Bus,
+        SchRecord::NetLabel(_) => altium_format_types::SchRecordType::NetLabel,
+        SchRecord::PowerObject(_) => altium_format_types::SchRecordType::PowerObject,
+        SchRecord::Port(_) => altium_format_types::SchRecordType::Port,
+        SchRecord::NoConnect(_) => altium_format_types::SchRecordType::NoErc,
+        SchRecord::Junction(_) => altium_format_types::SchRecordType::Junction,
+        SchRecord::SheetName(_) => altium_format_types::SchRecordType::SheetName,
+        SchRecord::SheetFileName(_) => altium_format_types::SchRecordType::SheetFileName,
+        SchRecord::SheetSymbol(_) => altium_format_types::SchRecordType::SheetSymbol,
+        SchRecord::SheetEntry(_) => altium_format_types::SchRecordType::SheetEntry,
+        SchRecord::BusEntry(_) => altium_format_types::SchRecordType::BusEntry,
+        SchRecord::ParameterSet(_) => altium_format_types::SchRecordType::ParameterSet,
+        SchRecord::Note(_) => altium_format_types::SchRecordType::Note,
+        SchRecord::Probe(_) => altium_format_types::SchRecordType::Probe,
+        SchRecord::CompileMask(_) => altium_format_types::SchRecordType::CompileMask,
+        SchRecord::Blanket(_) => altium_format_types::SchRecordType::Blanket,
+        SchRecord::Component(_) => altium_format_types::SchRecordType::Component,
+        SchRecord::Pin(_) => altium_format_types::SchRecordType::Pin,
+        SchRecord::Symbol(_) => altium_format_types::SchRecordType::Symbol,
+        SchRecord::Line(_) => altium_format_types::SchRecordType::Line,
+        SchRecord::Rectangle(_) => altium_format_types::SchRecordType::Rectangle,
+        SchRecord::RoundRectangle(_) => altium_format_types::SchRecordType::RoundRectangle,
+        SchRecord::Arc(_) => altium_format_types::SchRecordType::Arc,
+        SchRecord::EllipticalArc(_) => altium_format_types::SchRecordType::EllipticalArc,
+        SchRecord::Ellipse(_) => altium_format_types::SchRecordType::Ellipse,
+        SchRecord::Pie(_) => altium_format_types::SchRecordType::Pie,
+        SchRecord::Polyline(_) => altium_format_types::SchRecordType::Polyline,
+        SchRecord::Polygon(_) => altium_format_types::SchRecordType::Polygon,
+        SchRecord::Bezier(_) => altium_format_types::SchRecordType::Bezier,
+        SchRecord::Image(_) => altium_format_types::SchRecordType::Image,
+        SchRecord::Label(_) => altium_format_types::SchRecordType::Label,
+        SchRecord::Designator(_) => altium_format_types::SchRecordType::Designator,
+        SchRecord::Parameter(_) => altium_format_types::SchRecordType::Parameter,
+        SchRecord::TextFrame(_) => altium_format_types::SchRecordType::TextFrame,
+        SchRecord::ImplementationList(_) => altium_format_types::SchRecordType::ImplementationList,
+        SchRecord::Implementation(_) => altium_format_types::SchRecordType::Implementation,
+        SchRecord::ImplementationMap(_) => altium_format_types::SchRecordType::ImplementationMap,
+        SchRecord::MapDefiner(_) => altium_format_types::SchRecordType::MapDefiner,
+        SchRecord::ParameterList(_) => altium_format_types::SchRecordType::ParameterList,
+    };
+    ty as i32
+}
+
+fn record_summary(rec: &SchRecord) -> String {
+    match rec {
+        SchRecord::Pin(v) => format!("Pin {} {}", v.designator, v.name),
+        SchRecord::Parameter(v) => format!("Parameter {}={}", v.name, v.text),
+        SchRecord::Designator(v) => format!("Designator {}", v.text),
+        SchRecord::Line(_) => "Line".to_owned(),
+        SchRecord::Rectangle(_) => "Rectangle".to_owned(),
+        SchRecord::Arc(_) => "Arc".to_owned(),
+        SchRecord::EllipticalArc(_) => "EllipticalArc".to_owned(),
+        SchRecord::Ellipse(_) => "Ellipse".to_owned(),
+        SchRecord::Polyline(v) => format!("Polyline {} points", v.vertices.len()),
+        SchRecord::Polygon(v) => format!("Polygon {} points", v.vertices.len()),
+        SchRecord::Bezier(v) => format!("Bezier {} points", v.vertices.len()),
+        SchRecord::Label(v) => format!("Label {}", v.text),
+        SchRecord::TextFrame(v) => format!("TextFrame {}", v.text),
+        SchRecord::Image(v) => format!("Image {}", v.file_name),
+        _ => format!("{:?}", rec),
+    }
 }
 
 pub(crate) fn parse_electrical_type(v: &str) -> Result<PinElectricalType> {

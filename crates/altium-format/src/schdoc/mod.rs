@@ -4,8 +4,6 @@ mod types;
 
 use std::path::Path;
 
-use altium_format_types::sch::SchFont;
-use altium_format_types::{Color, Coord, SchDisplaySettings};
 use altium_format_types::constants::component::DESIGNATOR;
 use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
 use altium_format_types::constants::pin::{
@@ -44,6 +42,8 @@ use altium_format_types::constants::visual::{
     COLOR, FONT_ID_COUNT, FONT_NAME, LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC,
     ROTATION, SIZE,
 };
+use altium_format_types::sch::SchFont;
+use altium_format_types::{Color, Coord, SchDisplaySettings};
 
 use crate::block_stream::{BlockFormat, parse_blocks, write_text_block};
 use crate::cfb_document::CfbDocument;
@@ -834,6 +834,7 @@ fn owner_ref(record: &SchRecord) -> (i32, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::fs;
 
     fn schdoc_fixture_path(name: &str) -> std::path::PathBuf {
@@ -950,5 +951,55 @@ mod tests {
         }
         doc.validate_invariants()
             .expect("this assertion is intentionally wrong; invariant checker must fail");
+    }
+
+    fn proptest_fixture_paths() -> Vec<std::path::PathBuf> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+        let mut out = Vec::new();
+        let entries = fs::read_dir(dir).expect("read data/schdoc");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_schdoc = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("schdoc"))
+                .unwrap_or(false);
+            if is_schdoc {
+                out.push(path);
+            }
+        }
+        out.sort();
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
+
+        #[test]
+        fn prop_schdoc_invariants_hold_for_fixtures(idx in 0usize..4096usize) {
+            let fixtures = proptest_fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let doc = SchDoc::open(path).expect("open schdoc");
+            doc.validate_invariants().expect("schdoc invariant check");
+        }
+
+        #[test]
+        fn prop_schdoc_invariants_reject_broken_owner_index(idx in 0usize..4096usize) {
+            let fixtures = proptest_fixture_paths();
+            prop_assume!(!fixtures.is_empty());
+            let path = &fixtures[idx % fixtures.len()];
+            let mut doc = SchDoc::open(path).expect("open schdoc");
+            let len = doc.records.len() as i32;
+            let first = doc.records.get_mut(0).expect("record 0");
+            match first {
+                SchRecord::Sheet(v) => v.base.owner_index = len + 10,
+                _ => panic!("unexpected first SchDoc record type"),
+            }
+            let err = doc
+                .validate_invariants()
+                .expect_err("broken owner index must fail");
+            prop_assert!(err.to_string().contains("OwnerIndex"));
+        }
     }
 }
