@@ -121,14 +121,8 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     let multiline = reader.read_bool()?;
     let barcode_font_name = reader.read_wide_string_fixed(FONT_NAME_WCHAR_COUNT)?;
 
-    // --- Version-dependent tail (offsets 225+) ---
-    // Skip remaining bytes based on format version. The tail fields are
-    // non-critical metadata (autoposition, snap points, advance justification)
-    // that grow with each Altium version.
-    let tail = reader.remaining();
-    if tail > 0 {
-        reader.skip(tail)?;
-    }
+    // Preserve version-dependent tail bytes (offsets 225+) explicitly.
+    let trailing_bytes = reader.read_bytes(reader.remaining())?.to_vec();
 
     reader.assert_exhausted()?;
 
@@ -163,6 +157,7 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
         barcode_render_mode,
         multiline,
         barcode_font_name,
+        trailing_bytes,
         text,
         unique_id: None,
     })

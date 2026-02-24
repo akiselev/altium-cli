@@ -253,9 +253,17 @@ pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6
 
         // Format A (common): [u32 index][u32 utf16_byte_len][bytes...]
         let try_full = if offset + 8 <= data.len() {
-            let index = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+            let index_bytes = &data[offset..offset + 4];
+            let index = u32::from_le_bytes([
+                index_bytes[0],
+                index_bytes[1],
+                index_bytes[2],
+                index_bytes[3],
+            ]);
+            let len_bytes = &data[offset + 4..offset + 8];
             let byte_len =
-                u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                    as usize;
             let data_off = offset + 8;
             (index, byte_len, data_off)
         } else {
@@ -272,9 +280,12 @@ pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6
         } else if offset + 6 <= data.len() {
             // Format B (observed variant): [u16=0][u32 utf16_byte_len][bytes...]
             // Index is implicit and must equal the next sequential index.
-            let sentinel = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap());
+            let sentinel_bytes = &data[offset..offset + 2];
+            let sentinel = u16::from_le_bytes([sentinel_bytes[0], sentinel_bytes[1]]);
+            let len_bytes = &data[offset + 2..offset + 6];
             let byte_len =
-                u32::from_le_bytes(data[offset + 2..offset + 6].try_into().unwrap()) as usize;
+                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                    as usize;
             let data_off = offset + 6;
             if sentinel == 0
                 && (byte_len % 2) == 0

@@ -124,9 +124,10 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
     let ext = input
         .extension()
         .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
         .ok_or_else(|| anyhow::anyhow!("cannot determine file type: {}", input.display()))?;
 
-    match ext.to_ascii_lowercase().as_str() {
+    match ext.as_str() {
         "schdoc" => {
             let doc = SchDoc::open(input)?;
             doc.save_as(output.as_path())?;
@@ -135,7 +136,9 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
             let doc = SchLib::open(input)?;
             doc.save_as(output.as_path())?;
         }
-        _ => anyhow::bail!("save-as not yet supported for .{ext} files"),
+        _ => anyhow::bail!(
+            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib)"
+        ),
     }
 
     println!("Saved: {} -> {}", input.display(), output.display());

@@ -62,6 +62,16 @@ impl TrackedCfbDocument {
         self.inner.list_entries(normalized)
     }
 
+    // Explicitly marks a storage path as consumed without enumerating children.
+    pub(crate) fn consume_storage(&mut self, path: &str) {
+        let normalized = if path == "/" {
+            "/"
+        } else {
+            path.trim_end_matches('/')
+        };
+        self.consumed.insert(normalized.to_owned());
+    }
+
     // Returns Err(UnconsumedStreams) if any enumerated entry was never read or listed.
     // Call at the end of SchLib::open to enforce the total-consumption invariant.
     pub(crate) fn assert_all_consumed(&self) -> Result<()> {

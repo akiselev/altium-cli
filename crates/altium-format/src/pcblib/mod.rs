@@ -207,6 +207,7 @@ pub(crate) struct PcbText {
     pub(crate) barcode_render_mode: u8,
     pub(crate) multiline: bool,
     pub(crate) barcode_font_name: String,
+    pub(crate) trailing_bytes: Vec<u8>,
     pub(crate) text: String,
     pub(crate) unique_id: Option<String>,
 }
@@ -484,7 +485,7 @@ impl PcbLib {
         let lib_toc_data = doc.read_stream("/Library/ComponentParamsTOC/Data")?;
         let component_toc = parse_component_toc(&lib_toc_header, &lib_toc_data)
             .context("parsing /Library/ComponentParamsTOC")?;
-        let _ = doc.list_entries("/Library/ComponentParamsTOC")?;
+        doc.consume_storage("/Library/ComponentParamsTOC");
 
         // Cross-validate Library/Data suffix names against ComponentParamsTOC.
         if !suffix_names.is_empty() {
@@ -508,7 +509,7 @@ impl PcbLib {
             let blob_path = format!("/Library/Models/{i}");
             entry.blob = doc.read_stream_optional(&blob_path)?;
         }
-        let _ = doc.list_entries("/Library/Models")?;
+        doc.consume_storage("/Library/Models");
 
         // Auxiliary Library sub-storages (optional)
         let layer_kind_mapping = if doc.exists("/Library/LayerKindMapping/Header") {
@@ -516,7 +517,7 @@ impl PcbLib {
             let lkm_data = doc.read_stream("/Library/LayerKindMapping/Data")?;
             let entries = parse_layer_kind_mapping(&lkm_header, &lkm_data)
                 .context("parsing /Library/LayerKindMapping")?;
-            let _ = doc.list_entries("/Library/LayerKindMapping")?;
+            doc.consume_storage("/Library/LayerKindMapping");
             entries
         } else {
             PcbLayerKindMapping {
@@ -530,7 +531,7 @@ impl PcbLib {
             let pvl_data = doc.read_stream("/Library/PadViaLibrary/Data")?;
             let config = parse_pad_via_library(&pvl_header, &pvl_data)
                 .context("parsing /Library/PadViaLibrary")?;
-            let _ = doc.list_entries("/Library/PadViaLibrary")?;
+            doc.consume_storage("/Library/PadViaLibrary");
             config
         } else {
             None
@@ -554,7 +555,7 @@ impl PcbLib {
                     ),
                 });
             }
-            let _ = doc.list_entries("/Library/ModelsNoEmbed")?;
+            doc.consume_storage("/Library/ModelsNoEmbed");
         }
         let texture_entries = if doc.exists("/Library/Textures/Header") {
             let tex_header = doc.read_stream("/Library/Textures/Header")?;
@@ -566,24 +567,24 @@ impl PcbLib {
                 let blob_path = format!("/Library/Textures/{i}");
                 entry.blob = doc.read_stream_optional(&blob_path)?;
             }
-            let _ = doc.list_entries("/Library/Textures")?;
+            doc.consume_storage("/Library/Textures");
             tex_entries
         } else {
             Vec::new()
         };
 
         // Mark Library storage itself as consumed.
-        let _ = doc.list_entries("/Library")?;
+        doc.consume_storage("/Library");
 
         // 4. FileVersionInfo (optional Header/Data substorage)
         let file_version_info = if doc.exists("/FileVersionInfo/Header") {
             let fvi_header = doc.read_stream("/FileVersionInfo/Header")?;
             let fvi_data = doc.read_stream("/FileVersionInfo/Data")?;
-            let _ = doc.list_entries("/FileVersionInfo")?;
+            doc.consume_storage("/FileVersionInfo");
             Some(parse_file_version_info(&fvi_header, &fvi_data)?)
         } else {
-            let _ = doc.read_stream_optional("/FileVersionInfo/Header")?;
-            let _ = doc.read_stream_optional("/FileVersionInfo/Data")?;
+            doc.read_stream_optional("/FileVersionInfo/Header")?;
+            doc.read_stream_optional("/FileVersionInfo/Data")?;
             None
         };
 

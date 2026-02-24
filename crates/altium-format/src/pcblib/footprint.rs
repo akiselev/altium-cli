@@ -70,7 +70,7 @@ pub(crate) fn load_footprint(
         .with_context(|| format!("loading sidecars for /{cfb_key}"))?;
 
     // Mark the footprint storage node itself as consumed.
-    let _ = doc.list_entries(&format!("/{cfb_key}"))?;
+    doc.consume_storage(&format!("/{cfb_key}"));
 
     Ok(footprint)
 }
@@ -203,7 +203,7 @@ fn load_sidecars(
             doc.read_stream(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/UniqueIDPrimitiveInformation/Data"))?;
         // Mark the parent storage node as consumed.
-        let _ = doc.list_entries(&format!("/{cfb_key}/UniqueIDPrimitiveInformation"))?;
+        doc.consume_storage(&format!("/{cfb_key}/UniqueIDPrimitiveInformation"));
         parse_unique_id_primitive_information(&header_data, &data)?
     } else {
         // Ensure the optional stream path is marked consumed even when absent.
@@ -219,7 +219,7 @@ fn load_sidecars(
         let header_data =
             doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
-        let _ = doc.list_entries(&format!("/{cfb_key}/ExtendedPrimitiveInformation"))?;
+        doc.consume_storage(&format!("/{cfb_key}/ExtendedPrimitiveInformation"));
         parse_extended_primitive_information(&header_data, &data)?;
     } else {
         let _ =
@@ -232,11 +232,11 @@ fn load_sidecars(
     if doc.exists(&format!("/{cfb_key}/PrimitiveGuids/Header")) {
         let header_data = doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
-        let _ = doc.list_entries(&format!("/{cfb_key}/PrimitiveGuids"))?;
+        doc.consume_storage(&format!("/{cfb_key}/PrimitiveGuids"));
         validate_primitive_guids(&header_data, &data)?;
     } else {
-        let _ = doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
-        let _ = doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
+        doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
+        doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
     }
 
     // CustomShapes: optional stream present in some footprints (e.g. MLP, WSON packages).

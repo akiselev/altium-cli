@@ -496,11 +496,11 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         barcode_margin_y = reader.read_i32_le()?;
         unk32 = reader.read_i32_le()?;
         barcode_type = reader.read_u8()?;
-        reader.skip(1)?;
+        let _reserved_barcode_flag = reader.read_u8()?;
         barcode_inverted = reader.read_bool()?;
         barcode_font_type = reader.read_u8()?;
         barcode_font_name = reader.read_wide_string_fixed(32)?;
-        reader.skip(5)?;
+        let _reserved_barcode_tail = reader.read_bytes(5)?;
     }
 
     if reader.remaining() >= 2 {
@@ -520,7 +520,7 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
     }
 
     if reader.remaining() >= 22 {
-        reader.skip(1)?;
+        let _reserved_extended_header = reader.read_u8()?;
         layer_enum_index = reader.read_i32_le()?;
         sentinel_1 = reader.read_i32_le()?;
         sentinel_2 = reader.read_i32_le()?;
