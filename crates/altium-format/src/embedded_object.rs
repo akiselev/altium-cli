@@ -97,7 +97,9 @@ pub(crate) fn parse_embedded_object_stream(blocks: &[Block]) -> Result<Vec<Embed
 
 /// Compresses data using zlib (standard deflate with zlib header).
 pub(crate) fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut enc = ZlibEncoder::new(Vec::new(), Compression::best());
+    // Altium's serializer uses Ionic.Zlib with default compression settings.
+    // Use flate2 default level to match on-disk byte patterns for roundtrips.
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
     enc.write_all(data).map_err(|e| {
         AltiumFormatError::InvalidEmbeddedObject(format!("zlib compress failed: {e}"))
     })?;

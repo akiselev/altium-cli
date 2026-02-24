@@ -1492,12 +1492,19 @@ fn serialize_component_data(comp: &SchLibComponent) -> Vec<u8> {
     let mut params = ParameterCollection::new();
     params.insert(RECORD, (SchRecordType::Component as i32).to_param_value());
     serialize_component_record(&comp.component, &mut params);
-    let canonical_all_pin_count = comp
-        .records
-        .iter()
-        .filter(|r| matches!(r, SchRecord::Pin(_)))
-        .count() as i32;
-    params.insert(ALL_PIN_COUNT, canonical_all_pin_count.to_param_value());
+    // FileFormatV5 exports GetAllPinCount(). In engine code, the stored value is only
+    // recomputed when it is <= 0; otherwise an existing positive value is preserved.
+    let mut all_pin_count_for_export = comp.component.all_pin_count;
+    if all_pin_count_for_export <= 0 {
+        all_pin_count_for_export = comp
+            .records
+            .iter()
+            .filter(|r| matches!(r, SchRecord::Pin(_)))
+            .count() as i32;
+    }
+    if all_pin_count_for_export != 0 {
+        params.insert(ALL_PIN_COUNT, all_pin_count_for_export.to_param_value());
+    }
     let mut stream = write_text_block(&params.to_bytes());
     for record in &comp.records {
         stream.extend_from_slice(&serialize_record(record));
@@ -3613,7 +3620,7 @@ mod tests {
     // ── Roundtrip serialization tests ─────────────────────────────────────
 
     fn roundtrip_stream_compare(filename: &str) {
-        use crate::cfb_document::CfbDocument;
+        use crate::test_utils::assert_cfb_files_semantic_eq;
 
         let path = data_path(filename);
         if !path.exists() {
@@ -3626,103 +3633,7 @@ mod tests {
         // Save to temp file
         let tmp = tempfile::NamedTempFile::new().expect("create temp file");
         lib.save(tmp.path()).expect("SchLib::save must succeed");
-
-        // Compare stream-by-stream: open both as raw CFB
-        let mut original = CfbDocument::open(&path).expect("open original");
-        let mut roundtripped = CfbDocument::open(tmp.path()).expect("open roundtripped");
-
-        let orig_entries = original
-            .enumerate_all_entries()
-            .expect("enumerate original");
-        let rt_entries = roundtripped
-            .enumerate_all_entries()
-            .expect("enumerate roundtripped");
-
-        // Check same set of entries
-        let mut orig_sorted: Vec<&String> = orig_entries.iter().collect();
-        orig_sorted.sort();
-        let mut rt_sorted: Vec<&String> = rt_entries.iter().collect();
-        rt_sorted.sort();
-        assert_eq!(
-            orig_sorted, rt_sorted,
-            "CFB entry sets differ for {filename}"
-        );
-
-        // Compare each stream's raw bytes
-        let mut storage_diffs = Vec::new();
-        for entry in &orig_sorted {
-            // Skip storages (they have no data)
-            if original.read_stream(entry).is_err() {
-                continue;
-            }
-            let orig_data = original.read_stream(entry).expect("read original stream");
-            let rt_data = roundtripped
-                .read_stream(entry)
-                .expect("read roundtripped stream");
-            if orig_data != rt_data {
-                // For Storage streams, the zlib compression level may differ;
-                // collect these separately and compare decompressed contents.
-                if entry.ends_with("/Storage") || *entry == "/Storage" {
-                    storage_diffs.push((entry.to_string(), orig_data, rt_data));
-                    continue;
-                }
-                // Find first difference for debugging
-                let min_len = orig_data.len().min(rt_data.len());
-                let first_diff = (0..min_len).find(|&i| orig_data[i] != rt_data[i]);
-                match first_diff {
-                    Some(offset) => panic!(
-                        "{filename}: stream {entry} differs at byte {offset}: \
-                         original={:#04x}, roundtripped={:#04x} \
-                         (orig_len={}, rt_len={})",
-                        orig_data[offset],
-                        rt_data[offset],
-                        orig_data.len(),
-                        rt_data.len()
-                    ),
-                    None => panic!(
-                        "{filename}: stream {entry} length mismatch: \
-                         original={}, roundtripped={}",
-                        orig_data.len(),
-                        rt_data.len()
-                    ),
-                }
-            }
-        }
-
-        // For Storage streams, compare decompressed embedded object contents
-        // (zlib compression level may differ but decompressed data must match)
-        for (entry, orig_data, rt_data) in &storage_diffs {
-            use crate::block_stream::parse_blocks;
-            use crate::embedded_object::parse_embedded_object_stream;
-            let orig_blocks = parse_blocks(orig_data).expect("parse original storage blocks");
-            let rt_blocks = parse_blocks(rt_data).expect("parse roundtripped storage blocks");
-            let orig_objects = parse_embedded_object_stream(&orig_blocks)
-                .expect("parse original embedded objects");
-            let rt_objects = parse_embedded_object_stream(&rt_blocks)
-                .expect("parse roundtripped embedded objects");
-            assert_eq!(
-                orig_objects.len(),
-                rt_objects.len(),
-                "{filename}: {entry} embedded object count mismatch: orig={}, rt={}",
-                orig_objects.len(),
-                rt_objects.len()
-            );
-            for (i, (orig_obj, rt_obj)) in orig_objects.iter().zip(rt_objects.iter()).enumerate() {
-                assert_eq!(
-                    orig_obj.id, rt_obj.id,
-                    "{filename}: {entry} object[{i}] id mismatch"
-                );
-                assert_eq!(
-                    orig_obj.inner_data,
-                    rt_obj.inner_data,
-                    "{filename}: {entry} object[{i}] (id={}) decompressed data mismatch \
-                     (orig_len={}, rt_len={})",
-                    orig_obj.id,
-                    orig_obj.inner_data.len(),
-                    rt_obj.inner_data.len()
-                );
-            }
-        }
+        assert_cfb_files_semantic_eq(&path, tmp.path());
     }
 
     #[test]
@@ -3792,12 +3703,32 @@ mod tests {
         out
     }
 
-    #[test]
-    fn prop_schlib_invariants_hold_for_fixtures() {
+    const SCHLIB_PROP_SHARDS: usize = 8;
+
+    fn fixture_paths_for_shard(
+        fixtures: &[std::path::PathBuf],
+        shard: usize,
+        shards: usize,
+    ) -> Vec<&std::path::PathBuf> {
+        fixtures
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, path)| (idx % shards == shard).then_some(path))
+            .collect()
+    }
+
+    fn run_invariants_hold_for_fixtures_shard(shard: usize, shards: usize) {
         let fixtures = schlib_fixture_paths();
         assert!(!fixtures.is_empty(), "no schlib fixtures found");
+        assert!(shard < shards, "invalid shard {shard}/{shards}");
+        let shard_paths = fixture_paths_for_shard(&fixtures, shard, shards);
+        assert!(
+            !shard_paths.is_empty(),
+            "empty shard {shard}/{shards} for {} fixtures",
+            fixtures.len()
+        );
         let mut failures = Vec::new();
-        for path in &fixtures {
+        for path in shard_paths {
             match SchLib::open(path).and_then(|lib| lib.validate_invariants()) {
                 Ok(()) => {}
                 Err(err) => failures.push(format!("{}: {err}", path.display())),
@@ -3810,11 +3741,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prop_schlib_invariants_reject_mutated_weight() {
+    fn run_invariants_reject_mutated_weight_shard(shard: usize, shards: usize) {
         let fixtures = schlib_fixture_paths();
         assert!(!fixtures.is_empty(), "no schlib fixtures found");
-        for path in &fixtures {
+        assert!(shard < shards, "invalid shard {shard}/{shards}");
+        let shard_paths = fixture_paths_for_shard(&fixtures, shard, shards);
+        assert!(
+            !shard_paths.is_empty(),
+            "empty shard {shard}/{shards} for {} fixtures",
+            fixtures.len()
+        );
+        for path in shard_paths {
             let mut lib = SchLib::open(path).expect("open schlib");
             lib.header.weight += 1;
             let err = lib
@@ -3826,5 +3763,85 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_0() {
+        run_invariants_hold_for_fixtures_shard(0, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_1() {
+        run_invariants_hold_for_fixtures_shard(1, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_2() {
+        run_invariants_hold_for_fixtures_shard(2, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_3() {
+        run_invariants_hold_for_fixtures_shard(3, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_4() {
+        run_invariants_hold_for_fixtures_shard(4, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_5() {
+        run_invariants_hold_for_fixtures_shard(5, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_6() {
+        run_invariants_hold_for_fixtures_shard(6, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures_shard_7() {
+        run_invariants_hold_for_fixtures_shard(7, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_0() {
+        run_invariants_reject_mutated_weight_shard(0, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_1() {
+        run_invariants_reject_mutated_weight_shard(1, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_2() {
+        run_invariants_reject_mutated_weight_shard(2, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_3() {
+        run_invariants_reject_mutated_weight_shard(3, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_4() {
+        run_invariants_reject_mutated_weight_shard(4, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_5() {
+        run_invariants_reject_mutated_weight_shard(5, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_6() {
+        run_invariants_reject_mutated_weight_shard(6, SCHLIB_PROP_SHARDS);
+    }
+
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight_shard_7() {
+        run_invariants_reject_mutated_weight_shard(7, SCHLIB_PROP_SHARDS);
     }
 }

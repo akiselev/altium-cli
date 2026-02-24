@@ -28,6 +28,13 @@ pub fn save_reopen_schdoc(doc: &SchDoc) {
 }
 
 #[allow(dead_code)]
+pub fn save_bytes_schdoc(doc: &SchDoc) -> Vec<u8> {
+    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+    doc.save(tmp.path()).expect("save schdoc output");
+    std::fs::read(tmp.path()).expect("read saved schdoc")
+}
+
+#[allow(dead_code)]
 pub fn save_reopen_schlib(lib: &SchLib) {
     lib.validate_invariants()
         .expect("schlib validates before save");
@@ -37,6 +44,13 @@ pub fn save_reopen_schlib(lib: &SchLib) {
     reopened
         .validate_invariants()
         .expect("reopened schlib validates");
+}
+
+#[allow(dead_code)]
+pub fn save_bytes_schlib(lib: &SchLib) -> Vec<u8> {
+    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+    lib.save(tmp.path()).expect("save schlib output");
+    std::fs::read(tmp.path()).expect("read saved schlib")
 }
 
 #[allow(dead_code)]

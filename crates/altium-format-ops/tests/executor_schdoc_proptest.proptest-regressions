@@ -4,5 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 0757b040759aaba22a321dcb2964f567101b76717733a2ec5df04d80aa4d9810 # shrinks to plans = [[]]
-cc 9f40de90b744c08b76b4b0f0a57c0b0d080d2f9cb0ff8e73ef305d8ec85e7f83 # shrinks to plans = [[(18, 0, 0, -453, 0)]]
+cc f27cd25e3ed1ca97783dc5f60f94ceea2332102f8f7186d959e9c9c722bdaf7b # shrinks to plans = [[(17, -89, 0, 0)]]
