@@ -3426,7 +3426,6 @@ fn validate_schlib_invariants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
     use std::fs;
 
     fn data_path(filename: &str) -> std::path::PathBuf {
@@ -3755,48 +3754,77 @@ mod tests {
             .expect("reopened blank schlib should validate");
     }
 
-    fn proptest_fixture_paths() -> Vec<std::path::PathBuf> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schlib");
+    fn schlib_fixture_paths() -> Vec<std::path::PathBuf> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schlib");
         let mut out = Vec::new();
-        let entries = fs::read_dir(dir).expect("read data/schlib");
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_schlib = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case("schlib"))
-                .unwrap_or(false);
-            if is_schlib {
-                out.push(path);
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let entries = match fs::read_dir(&dir) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let is_excluded_dir = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|s| {
+                            s.eq_ignore_ascii_case("corrupt") || s.eq_ignore_ascii_case("encoding")
+                        })
+                        .unwrap_or(false);
+                    if !is_excluded_dir {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                let is_schlib = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.eq_ignore_ascii_case("schlib"))
+                    .unwrap_or(false);
+                if is_schlib {
+                    out.push(path);
+                }
             }
         }
         out.sort();
         out
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
-
-        #[test]
-        fn prop_schlib_invariants_hold_for_fixtures(idx in 0usize..4096usize) {
-            let fixtures = proptest_fixture_paths();
-            prop_assume!(!fixtures.is_empty());
-            let path = &fixtures[idx % fixtures.len()];
-            let lib = SchLib::open(path).expect("open schlib");
-            lib.validate_invariants().expect("schlib invariant check");
+    #[test]
+    fn prop_schlib_invariants_hold_for_fixtures() {
+        let fixtures = schlib_fixture_paths();
+        assert!(!fixtures.is_empty(), "no schlib fixtures found");
+        let mut failures = Vec::new();
+        for path in &fixtures {
+            match SchLib::open(path).and_then(|lib| lib.validate_invariants()) {
+                Ok(()) => {}
+                Err(err) => failures.push(format!("{}: {err}", path.display())),
+            }
         }
+        assert!(
+            failures.is_empty(),
+            "schlib invariant failures:\n{}",
+            failures.join("\n")
+        );
+    }
 
-        #[test]
-        fn prop_schlib_invariants_reject_mutated_weight(idx in 0usize..4096usize) {
-            let fixtures = proptest_fixture_paths();
-            prop_assume!(!fixtures.is_empty());
-            let path = &fixtures[idx % fixtures.len()];
+    #[test]
+    fn prop_schlib_invariants_reject_mutated_weight() {
+        let fixtures = schlib_fixture_paths();
+        assert!(!fixtures.is_empty(), "no schlib fixtures found");
+        for path in &fixtures {
             let mut lib = SchLib::open(path).expect("open schlib");
             lib.header.weight += 1;
             let err = lib
                 .validate_invariants()
                 .expect_err("mutated weight must fail");
-            prop_assert!(err.to_string().contains("weight mismatch"));
+            assert!(
+                err.to_string().contains("weight mismatch"),
+                "{}: expected weight mismatch, got {err}",
+                path.display()
+            );
         }
     }
 }
