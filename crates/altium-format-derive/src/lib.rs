@@ -554,3 +554,288 @@ impl Parse for ParamStrategy {
         build_strategy(flags, named)
     }
 }
+
+// ── OpsSchema / OpsEnum derives ─────────────────────────────────────────────
+
+#[proc_macro_derive(OpsSchema, attributes(ops))]
+pub fn derive_ops_schema(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match expand_ops_schema(input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+#[proc_macro_derive(OpsEnum, attributes(ops))]
+pub fn derive_ops_enum(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match expand_ops_enum(input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn expand_ops_schema(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let struct_name = &input.ident;
+    let fields = get_named_fields(&input)?;
+    let (op_name, domain) = parse_ops_struct_attr(&input)?;
+
+    let mut field_entries = Vec::new();
+    for field in fields {
+        let rust_field_ident = field
+            .ident
+            .as_ref()
+            .ok_or_else(|| syn::Error::new_spanned(field, "expected named field"))?;
+        let rust_field_name = rust_field_ident.to_string();
+        let field_spec = parse_ops_field_attr(field, rust_field_ident)?;
+        let field_name = field_spec.name.unwrap_or_else(|| rust_field_name.clone());
+        let field_ty = field_spec.ty.to_token_stream()?;
+        let required = field_spec.required;
+
+        field_entries.push(quote! {
+            crate::ops::schema::FieldSchema {
+                rust_field: #rust_field_name,
+                name: #field_name,
+                ty: #field_ty,
+                required: #required,
+            }
+        });
+    }
+
+    let schema_ident = Ident::new(
+        &format!("__OPS_SCHEMA_{}", struct_name),
+        proc_macro2::Span::call_site(),
+    );
+
+    Ok(quote! {
+        impl crate::ops::schema::HasOpsSchema for #struct_name {
+            fn ops_schema() -> &'static crate::ops::schema::OpSchema {
+                static #schema_ident: crate::ops::schema::OpSchema = crate::ops::schema::OpSchema {
+                    op_name: #op_name,
+                    domain: #domain,
+                    fields: &[#(#field_entries),*],
+                };
+                &#schema_ident
+            }
+        }
+    })
+}
+
+fn expand_ops_enum(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let enum_name = &input.ident;
+    let Data::Enum(data_enum) = &input.data else {
+        return Err(syn::Error::new_spanned(
+            enum_name,
+            "OpsEnum can only be derived for enums",
+        ));
+    };
+
+    let mut variants = Vec::new();
+    for variant in &data_enum.variants {
+        if !matches!(variant.fields, Fields::Unit) {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "OpsEnum variants must be unit variants",
+            ));
+        }
+        let canonical = variant.ident.to_string();
+        let normalized = canonical.replace('_', "").to_ascii_lowercase();
+        variants.push(quote! {
+            crate::ops::schema::EnumVariantSchema {
+                canonical: #canonical,
+                normalized: #normalized,
+            }
+        });
+    }
+
+    let schema_ident = Ident::new(
+        &format!("__OPS_ENUM_SCHEMA_{}", enum_name),
+        proc_macro2::Span::call_site(),
+    );
+
+    Ok(quote! {
+        impl crate::ops::schema::HasOpsEnum for #enum_name {
+            fn ops_enum_schema() -> &'static crate::ops::schema::EnumSchema {
+                static #schema_ident: crate::ops::schema::EnumSchema = crate::ops::schema::EnumSchema {
+                    name: stringify!(#enum_name),
+                    variants: &[#(#variants),*],
+                };
+                &#schema_ident
+            }
+        }
+    })
+}
+
+struct OpsFieldSpec {
+    name: Option<String>,
+    ty: OpsFieldType,
+    required: bool,
+}
+
+#[derive(Clone, Copy)]
+enum OpsFieldType {
+    Any,
+    String,
+    Integer,
+    Float,
+    Bool,
+    Dim,
+    Coord,
+    Color,
+    RefExpr,
+    Object,
+    ObjectArray,
+    Selector,
+}
+
+impl OpsFieldType {
+    fn parse(value: &str) -> syn::Result<Self> {
+        match value {
+            "any" => Ok(Self::Any),
+            "string" => Ok(Self::String),
+            "integer" => Ok(Self::Integer),
+            "float" => Ok(Self::Float),
+            "bool" => Ok(Self::Bool),
+            "dim" => Ok(Self::Dim),
+            "coord" => Ok(Self::Coord),
+            "color" => Ok(Self::Color),
+            "refexpr" => Ok(Self::RefExpr),
+            "object" => Ok(Self::Object),
+            "object_array" => Ok(Self::ObjectArray),
+            "selector" => Ok(Self::Selector),
+            _ => Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "unknown ops field type '{value}' (expected any|string|integer|float|bool|dim|coord|color|refexpr|object|object_array|selector)"
+                ),
+            )),
+        }
+    }
+
+    fn to_token_stream(self) -> syn::Result<TokenStream2> {
+        let ts = match self {
+            Self::Any => quote! { crate::ops::schema::FieldType::Any },
+            Self::String => quote! { crate::ops::schema::FieldType::String },
+            Self::Integer => quote! { crate::ops::schema::FieldType::Integer },
+            Self::Float => quote! { crate::ops::schema::FieldType::Float },
+            Self::Bool => quote! { crate::ops::schema::FieldType::Bool },
+            Self::Dim => quote! { crate::ops::schema::FieldType::Dim },
+            Self::Coord => quote! { crate::ops::schema::FieldType::Coord },
+            Self::Color => quote! { crate::ops::schema::FieldType::Color },
+            Self::RefExpr => quote! { crate::ops::schema::FieldType::RefExpr },
+            Self::Object => quote! { crate::ops::schema::FieldType::Object },
+            Self::ObjectArray => quote! { crate::ops::schema::FieldType::ObjectArray },
+            Self::Selector => quote! { crate::ops::schema::FieldType::Selector },
+        };
+        Ok(ts)
+    }
+}
+
+fn parse_ops_struct_attr(input: &DeriveInput) -> syn::Result<(String, &'static str)> {
+    let attr = input
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("ops"))
+        .ok_or_else(|| syn::Error::new_spanned(&input.ident, "missing #[ops(...)] attribute"))?;
+
+    let (flags, named) = collect_ops_tokens(attr)?;
+    let op_name = named
+        .get("op")
+        .ok_or_else(|| syn::Error::new_spanned(attr, "#[ops(...)] requires op = \"...\""))?;
+    let op_name = expr_to_string_literal(op_name, "op")?;
+
+    let domain = if let Some(domain_expr) = named.get("domain") {
+        match expr_to_string_literal(domain_expr, "domain")?.as_str() {
+            "schdoc" => "schdoc",
+            "schlib" => "schlib",
+            "sch" => "sch",
+            "pcbdoc" => "pcbdoc",
+            "pcblib" => "pcblib",
+            "pcb" => "pcb",
+            "all" => "all",
+            other => {
+                return Err(syn::Error::new_spanned(
+                    domain_expr,
+                    format!("invalid domain '{other}'"),
+                ));
+            }
+        }
+    } else if flags.iter().any(|f| f == "sch") {
+        "sch"
+    } else if flags.iter().any(|f| f == "pcb") {
+        "pcb"
+    } else {
+        "all"
+    };
+
+    Ok((op_name, domain))
+}
+
+fn parse_ops_field_attr(field: &syn::Field, field_name: &Ident) -> syn::Result<OpsFieldSpec> {
+    let attr = field
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("ops"))
+        .ok_or_else(|| {
+            syn::Error::new_spanned(field_name, "field missing #[ops(...)] attribute")
+        })?;
+
+    let (flags, named) = collect_ops_tokens(attr)?;
+    let ty_expr = named
+        .get("ty")
+        .ok_or_else(|| syn::Error::new_spanned(attr, "#[ops(...)] requires ty = \"...\""))?;
+    let ty = OpsFieldType::parse(&expr_to_string_literal(ty_expr, "ty")?)?;
+    let name = named
+        .get("name")
+        .map(|e| expr_to_string_literal(e, "name"))
+        .transpose()?;
+    let required = flags.iter().any(|f| f == "required");
+
+    Ok(OpsFieldSpec { name, ty, required })
+}
+
+fn collect_ops_tokens(
+    attr: &syn::Attribute,
+) -> syn::Result<(Vec<String>, std::collections::HashMap<String, Expr>)> {
+    let mut flags = Vec::new();
+    let mut named = std::collections::HashMap::new();
+
+    attr.parse_nested_meta(|meta| {
+        if meta.input.peek(Token![=]) {
+            let value: Expr = meta.value()?.parse()?;
+            named.insert(
+                meta.path
+                    .get_ident()
+                    .ok_or_else(|| syn::Error::new_spanned(&meta.path, "expected identifier key"))?
+                    .to_string(),
+                value,
+            );
+        } else {
+            flags.push(
+                meta.path
+                    .get_ident()
+                    .ok_or_else(|| syn::Error::new_spanned(&meta.path, "expected identifier flag"))?
+                    .to_string(),
+            );
+        }
+        Ok(())
+    })?;
+
+    Ok((flags, named))
+}
+
+fn expr_to_string_literal(expr: &Expr, field: &str) -> syn::Result<String> {
+    match expr {
+        Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Str(v) => Ok(v.value()),
+            _ => Err(syn::Error::new_spanned(
+                expr,
+                format!("expected string literal for {field}"),
+            )),
+        },
+        _ => Err(syn::Error::new_spanned(
+            expr,
+            format!("expected string literal for {field}"),
+        )),
+    }
+}

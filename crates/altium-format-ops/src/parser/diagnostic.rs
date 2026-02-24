@@ -12,6 +12,14 @@ pub enum ParseErrorCode {
     E1006,
     E1007,
     E1008,
+    E2001,
+    E2002,
+    E2003,
+    E2004,
+    E2005,
+    E2006,
+    E2007,
+    E2008,
 }
 
 impl ParseErrorCode {
@@ -25,6 +33,14 @@ impl ParseErrorCode {
             Self::E1006 => "E1006",
             Self::E1007 => "E1007",
             Self::E1008 => "E1008",
+            Self::E2001 => "E2001",
+            Self::E2002 => "E2002",
+            Self::E2003 => "E2003",
+            Self::E2004 => "E2004",
+            Self::E2005 => "E2005",
+            Self::E2006 => "E2006",
+            Self::E2007 => "E2007",
+            Self::E2008 => "E2008",
         }
     }
 }

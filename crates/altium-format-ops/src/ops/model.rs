@@ -1,4 +1,5 @@
 use altium_format::sch_ops_core;
+use altium_format_derive::{OpsEnum, OpsSchema};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,142 +33,206 @@ pub enum HighOp {
     AddImage(AddImageHighOp),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "query", domain = "sch")]
 pub struct QueryHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "selector", required)]
     pub selector: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "query_components", domain = "sch")]
 pub struct QueryComponentsHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
     #[serde(default)]
+    #[ops(ty = "string")]
     pub pattern: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "query_pins", domain = "sch")]
 pub struct QueryPinsHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "refexpr", required)]
     pub component_ref: sch_ops_core::RefExpr,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "query_records", domain = "sch")]
 pub struct QueryRecordsHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "refexpr", required)]
     pub component_ref: sch_ops_core::RefExpr,
     #[serde(default)]
+    #[ops(ty = "integer")]
     pub record_type: Option<i32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "add_component", domain = "sch")]
 pub struct AddComponentOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
     #[serde(default)]
+    #[ops(ty = "any")]
     pub id: Option<String>,
     #[serde(default)]
+    #[ops(ty = "refexpr")]
     pub component_ref: Option<sch_ops_core::RefExpr>,
+    #[ops(ty = "string", required)]
     pub lib_reference: String,
     #[serde(default)]
+    #[ops(ty = "string")]
     pub designator: Option<String>,
     #[serde(default)]
+    #[ops(ty = "string")]
     pub value: Option<String>,
     #[serde(default)]
+    #[ops(ty = "object_array")]
     pub pins: Vec<AddPinOp>,
     #[serde(default)]
+    #[ops(ty = "object")]
     pub footprint: Option<FootprintOp>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "add_pin", domain = "sch")]
 pub struct AddPinOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
     #[serde(default)]
+    #[ops(ty = "any")]
     pub id: Option<String>,
     #[serde(default)]
+    #[ops(ty = "refexpr")]
     pub component_ref: Option<sch_ops_core::RefExpr>,
+    #[ops(ty = "string", required)]
     pub designator: String,
     #[serde(default)]
+    #[ops(ty = "string")]
     pub name: Option<String>,
     #[serde(default)]
+    #[ops(ty = "string")]
     pub electrical: Option<String>,
     #[serde(default)]
+    #[ops(ty = "dim")]
     pub length_mils: Option<i32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "add_parameter", domain = "sch")]
 pub struct AddParameterOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
     #[serde(default)]
+    #[ops(ty = "refexpr")]
     pub component_ref: Option<sch_ops_core::RefExpr>,
+    #[ops(ty = "string", required)]
     pub name: String,
+    #[ops(ty = "string", required)]
     pub text: String,
     #[serde(default)]
+    #[ops(ty = "bool")]
     pub is_hidden: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "add_alias", domain = "sch")]
 pub struct AddAliasOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "refexpr", required)]
     pub component_ref: sch_ops_core::RefExpr,
+    #[ops(ty = "string", required)]
     pub alias_name: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "remove_alias", domain = "sch")]
 pub struct RemoveAliasOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "refexpr", required)]
     pub component_ref: sch_ops_core::RefExpr,
+    #[ops(ty = "string", required)]
     pub alias_name: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "remove_component", domain = "sch")]
 pub struct RemoveComponentOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "refexpr", required)]
     pub component_ref: sch_ops_core::RefExpr,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "edit_component", domain = "sch")]
 pub struct EditComponentHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
+    #[ops(ty = "refexpr", required)]
     pub component_ref: sch_ops_core::RefExpr,
     #[serde(default)]
+    #[ops(ty = "string")]
     pub description: Option<String>,
     #[serde(default)]
+    #[ops(ty = "integer")]
     pub part_count: Option<i32>,
     #[serde(default)]
+    #[ops(ty = "integer")]
     pub display_mode_count: Option<i32>,
     #[serde(default)]
+    #[ops(ty = "integer")]
     pub component_kind: Option<i32>,
     #[serde(default)]
+    #[ops(ty = "bool")]
     pub show_hidden_pins: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "edit_record", domain = "sch")]
 pub struct EditRecordHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
     #[serde(default)]
+    #[ops(ty = "refexpr")]
     pub component_ref: Option<sch_ops_core::RefExpr>,
+    #[ops(ty = "object", required)]
     pub selector: sch_ops_core::RecordSelector,
     #[serde(default)]
+    #[ops(ty = "object")]
     pub patch: sch_ops_core::RecordPatch,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "remove_records", domain = "sch")]
 pub struct RemoveRecordsHighOp {
     #[serde(default)]
+    #[ops(ty = "any")]
     pub opid: Option<String>,
     #[serde(default)]
+    #[ops(ty = "refexpr")]
     pub component_ref: Option<sch_ops_core::RefExpr>,
+    #[ops(ty = "object", required)]
     pub selector: sch_ops_core::RecordSelector,
 }
 
@@ -479,17 +544,35 @@ pub struct AddImageHighOp {
     pub owner_part_display_mode: Option<i32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "footprint", domain = "sch")]
 pub struct FootprintOp {
+    #[ops(ty = "string", required)]
     pub model_name: String,
     #[serde(default)]
+    #[ops(ty = "object_array")]
     pub map: Vec<FootprintMapEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
+#[ops(op = "footprint_map_entry", domain = "sch")]
 pub struct FootprintMapEntry {
+    #[ops(ty = "string", required)]
     pub pin: String,
+    #[ops(ty = "string", required)]
     pub pad: String,
+}
+
+#[derive(Debug, Clone, Copy, OpsEnum)]
+pub enum PinElectricalName {
+    Input,
+    Output,
+    Io,
+    Passive,
+    Power,
+    OpenCollector,
+    OpenEmitter,
+    Hiz,
 }
 
 #[derive(Debug, Clone)]

@@ -84,6 +84,7 @@ name = "altium-format-ops"
 version = "0.1.8"
 dependencies = [
  "altium-format",
+ "altium-format-derive",
  "cfb",
  "indexmap",
  "proptest",

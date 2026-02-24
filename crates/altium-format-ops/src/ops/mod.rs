@@ -1,5 +1,6 @@
 mod lower;
 pub mod model;
+pub mod schema;
 
 use lower::composed_to_schdoc_low::lower_composed_to_schdoc_low;
 use lower::composed_to_schlib_low::lower_composed_to_schlib_low;

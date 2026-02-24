@@ -2,9 +2,13 @@ mod ast;
 mod diagnostic;
 mod lexer;
 mod selector;
+mod typecheck;
 
 pub use ast::*;
 pub use diagnostic::*;
+pub use typecheck::{
+    OpsDomain, compile_ops_to_high, compile_ops_to_high_schdoc, compile_ops_to_high_schlib,
+};
 
 use lexer::{Token, TokenKind};
 
@@ -472,7 +476,6 @@ impl<'a> Parser<'a> {
                     let expr =
                         self.parse_expr_bp(0, &[TokenKind::Comma, TokenKind::RBracket], true)?;
                     items.push(expr);
-                    self.skip_newlines();
                     if self.at(&TokenKind::RBracket) {
                         break;
                     }
@@ -1054,7 +1057,9 @@ mod tests {
                     assert_expr_spans_valid(item, src_len);
                 }
             }
-            Expr::Object(o) => assert_object_spans_valid(&Spanned::new(o.clone(), expr.span), src_len),
+            Expr::Object(o) => {
+                assert_object_spans_valid(&Spanned::new(o.clone(), expr.span), src_len)
+            }
             Expr::TemplateString(t) => {
                 for p in &t.parts {
                     assert_span(p.span, src_len);
@@ -1103,7 +1108,10 @@ remove C*
             panic!("expected op");
         };
         let selector = op.selector.as_ref().expect("selector");
-        assert_eq!(selector.node.raw, "component[designator^=R] AND NOT pin:power");
+        assert_eq!(
+            selector.node.raw,
+            "component[designator^=R] AND NOT pin:power"
+        );
         assert!(matches!(
             selector.node.expr.node,
             SelectorExpr::And(_) | SelectorExpr::Or(_) | SelectorExpr::Chain(_)

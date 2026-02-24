@@ -953,11 +953,17 @@ mod tests {
         match expr {
             SelectorExpr::Or(v) => format!(
                 "or({})",
-                v.iter().map(|x| shape(&x.node)).collect::<Vec<_>>().join(",")
+                v.iter()
+                    .map(|x| shape(&x.node))
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
             SelectorExpr::And(v) => format!(
                 "and({})",
-                v.iter().map(|x| shape(&x.node)).collect::<Vec<_>>().join(",")
+                v.iter()
+                    .map(|x| shape(&x.node))
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
             SelectorExpr::Not(v) => format!("not({})", shape(&v.node)),
             SelectorExpr::Chain(chain) => {

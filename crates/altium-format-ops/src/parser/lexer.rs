@@ -311,14 +311,16 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
             b'#' => {
                 let end = i + 7;
                 if end <= bytes.len() {
-                    let lit = &input[i + 1..end];
-                    if lit.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                        let r = u8::from_str_radix(&lit[0..2], 16).unwrap_or(0);
-                        let g = u8::from_str_radix(&lit[2..4], 16).unwrap_or(0);
-                        let b = u8::from_str_radix(&lit[4..6], 16).unwrap_or(0);
-                        out.push(tok(TokenKind::Color(r, g, b), i, end));
-                        i = end;
-                        continue;
+                    let lit_bytes = &bytes[i + 1..end];
+                    if lit_bytes.iter().all(|b| b.is_ascii_hexdigit()) {
+                        if let Ok(lit) = std::str::from_utf8(lit_bytes) {
+                            let r = u8::from_str_radix(&lit[0..2], 16).unwrap_or(0);
+                            let g = u8::from_str_radix(&lit[2..4], 16).unwrap_or(0);
+                            let b = u8::from_str_radix(&lit[4..6], 16).unwrap_or(0);
+                            out.push(tok(TokenKind::Color(r, g, b), i, end));
+                            i = end;
+                            continue;
+                        }
                     }
                 }
                 out.push(tok(TokenKind::Hash, i, i + 1));

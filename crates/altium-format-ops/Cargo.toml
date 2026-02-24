@@ -21,6 +21,7 @@ serde_yaml = "0.9"
 cfb = "0.12.1"
 thiserror = "2"
 indexmap = { version = "2", features = ["serde"] }
+altium-format-derive = { version = "0.1.8", path = "../altium-format-derive" }
 
 [dev-dependencies]
 tempfile = "3"
