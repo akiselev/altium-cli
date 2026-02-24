@@ -1,13 +1,17 @@
 use altium_format::SchDoc;
+use altium_format::sch_ops_core::{RecordPatch, RecordSelector};
 use altium_format_ops::{
-    AddComponentOp, AddPinOp, ApplySpec, HighOp, QueryHighOp, apply_schdoc, parse_apply_spec_json,
+    AddComponentOp, AddLineHighOp, AddParameterOp, AddPinOp, AddRectangleHighOp, ApplySpec,
+    EditComponentHighOp, EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp,
+    QueryPinsHighOp, QueryRecordsHighOp, RemoveRecordsHighOp, apply_schdoc, parse_apply_spec_json,
 };
+use altium_format_types::SchRecordType;
 use proptest::prelude::*;
 
 mod harness;
-use harness::{save_reopen_schdoc, schdoc_fixture_path};
+use harness::{list_len_field, save_reopen_schdoc, schdoc_fixture_path};
 
-fn build_ops(plans: Vec<Vec<(u8, i32)>>) -> Vec<HighOp> {
+fn build_ops(plans: Vec<Vec<(u8, i32, i32)>>) -> Vec<HighOp> {
     let mut out = Vec::new();
     let mut op_counter = 0usize;
 
@@ -28,30 +32,95 @@ fn build_ops(plans: Vec<Vec<(u8, i32)>>) -> Vec<HighOp> {
         let cref = altium_format_ops::RefExpr::op(format!("{comp_base}/create_component_root[0]"))
             .member("ref");
 
-        for (code, n) in actions {
+        for (code, a, b) in actions {
             let opid = format!("op_{op_counter:04}");
             op_counter += 1;
-            match code % 3 {
+            match code % 10 {
                 0 => out.push(HighOp::AddPin(AddPinOp {
                     opid: Some(opid),
                     id: None,
                     component_ref: Some(cref.clone()),
-                    designator: format!("{}", (n.abs() % 200) + 1),
-                    name: Some(format!("N{}", n.abs() % 200)),
+                    designator: format!("{}", (a.abs() % 200) + 1),
+                    name: Some(format!("N{}", b.abs() % 200)),
                     electrical: Some("passive".to_owned()),
-                    length_mils: Some((n.abs() % 300) + 10),
+                    length_mils: Some((a.abs() % 300) + 10),
+                    at: Some((a.abs() % 200, b.abs() % 120)),
+                    rotation: Some(0),
                 })),
-                1 => out.push(HighOp::Query(QueryHighOp {
+                1 => out.push(HighOp::AddParameter(AddParameterOp {
                     opid: Some(opid),
-                    selector: format!("component[designator={designator}]"),
+                    component_ref: Some(cref.clone()),
+                    name: "Manufacturer".to_owned(),
+                    text: format!("V{}", a.abs() % 500),
+                    is_hidden: Some((b & 1) == 1),
+                })),
+                2 => out.push(HighOp::AddLine(AddLineHighOp {
+                    opid: Some(opid),
+                    component_ref: Some(cref.clone()),
+                    from: (a.abs() % 200, b.abs() % 200),
+                    to: ((a.abs() % 200) + 20, (b.abs() % 200) + 20),
+                    color: Some(0),
+                    line_width: Some((a.abs() % 3) + 1),
+                    line_style: Some(a.abs() % 4),
+                    owner_part_id: Some(0),
+                    owner_part_display_mode: Some(0),
+                })),
+                3 => out.push(HighOp::AddRectangle(AddRectangleHighOp {
+                    opid: Some(opid),
+                    component_ref: Some(cref.clone()),
+                    from: (a.abs() % 200, b.abs() % 200),
+                    to: ((a.abs() % 200) + 40, (b.abs() % 200) + 30),
+                    color: Some(0),
+                    area_color: Some(0x00FF_FFFF),
+                    is_solid: Some(true),
+                    transparent: Some(false),
+                    line_width: Some((a.abs() % 3) + 1),
+                    owner_part_id: Some(0),
+                    owner_part_display_mode: Some(0),
+                })),
+                4 => out.push(HighOp::EditComponent(EditComponentHighOp {
+                    opid: Some(opid),
+                    component_ref: cref.clone(),
+                    description: Some(format!("DESC_{a}")),
+                    part_count: Some((a.abs() % 3) + 1),
+                    display_mode_count: None,
+                    component_kind: Some(0),
+                    show_hidden_pins: Some((b & 1) == 1),
+                })),
+                5 => out.push(HighOp::EditRecord(EditRecordHighOp {
+                    opid: Some(opid),
+                    component_ref: Some(cref.clone()),
+                    selector: RecordSelector::ByName("Manufacturer".to_owned()),
+                    patch: RecordPatch {
+                        text: Some(format!("M{}", a.abs() % 1000)),
+                        ..RecordPatch::default()
+                    },
+                })),
+                6 => out.push(HighOp::RemoveRecords(RemoveRecordsHighOp {
+                    opid: Some(opid),
+                    component_ref: Some(cref.clone()),
+                    selector: RecordSelector::ByRecordType(SchRecordType::Parameter as i32),
+                })),
+                7 => out.push(HighOp::QueryPins(QueryPinsHighOp {
+                    opid: Some(opid),
+                    component_ref: cref.clone(),
+                })),
+                8 => out.push(HighOp::QueryRecords(QueryRecordsHighOp {
+                    opid: Some(opid),
+                    component_ref: cref.clone(),
+                    record_type: Some(SchRecordType::Parameter as i32),
                 })),
                 _ => out.push(HighOp::Query(QueryHighOp {
                     opid: Some(opid),
-                    selector: "component".to_owned(),
+                    selector: format!("component[designator={designator}]"),
                 })),
             }
         }
     }
+    out.push(HighOp::QueryComponents(QueryComponentsHighOp {
+        opid: Some("tail_query_components".to_owned()),
+        pattern: Some("PBT_LIB_".to_owned()),
+    }));
     out
 }
 
@@ -63,7 +132,7 @@ proptest! {
     #[test]
     fn schdoc_generated_programs_are_stable_and_roundtrip(
         plans in prop::collection::vec(
-            prop::collection::vec((0u8..=2, -500i32..=500), 0..=12),
+            prop::collection::vec((0u8..=9, -500i32..=500, -500i32..=500), 0..=14),
             1..=3
         )
     ) {
@@ -87,6 +156,10 @@ proptest! {
         prop_assert_eq!(report_direct.low_op_count, report_parsed.low_op_count);
         prop_assert_eq!(report_direct.results.len(), report_parsed.results.len());
         prop_assert!(report_direct.results.len() >= report_direct.low_op_count);
+        prop_assert_eq!(
+            list_len_field(&report_direct, "tail_query_components", "components"),
+            list_len_field(&report_parsed, "tail_query_components", "components")
+        );
 
         doc_direct.validate_invariants().expect("direct invariants");
         doc_parsed.validate_invariants().expect("parsed invariants");
@@ -117,6 +190,8 @@ fn schdoc_model_based_manual_vs_json_equivalent() {
             name: Some("P1".to_owned()),
             electrical: Some("passive".to_owned()),
             length_mils: Some(120),
+            at: Some((0, 0)),
+            rotation: Some(0),
         }),
         HighOp::Query(QueryHighOp {
             opid: Some("q0".to_owned()),

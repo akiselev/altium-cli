@@ -29,9 +29,14 @@ pub fn save_reopen_schdoc(doc: &SchDoc) {
 
 #[allow(dead_code)]
 pub fn save_reopen_schlib(lib: &SchLib) {
+    lib.validate_invariants()
+        .expect("schlib validates before save");
     let tmp = tempfile::NamedTempFile::new().expect("create temp file");
     lib.save(tmp.path()).expect("save schlib output");
-    SchLib::open(tmp.path()).expect("reopen saved schlib");
+    let reopened = SchLib::open(tmp.path()).expect("reopen saved schlib");
+    reopened
+        .validate_invariants()
+        .expect("reopened schlib validates");
 }
 
 #[allow(dead_code)]

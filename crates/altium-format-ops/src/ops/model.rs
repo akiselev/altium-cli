@@ -128,6 +128,12 @@ pub struct AddPinOp {
     #[serde(default)]
     #[ops(ty = "dim")]
     pub length_mils: Option<i32>,
+    #[serde(default)]
+    #[ops(ty = "coord")]
+    pub at: Option<(i32, i32)>,
+    #[serde(default)]
+    #[ops(ty = "integer")]
+    pub rotation: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
@@ -242,10 +248,8 @@ pub struct AddLineHighOp {
     pub opid: Option<String>,
     #[serde(default)]
     pub component_ref: Option<sch_ops_core::RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: (i32, i32),
+    pub to: (i32, i32),
     #[serde(default)]
     pub color: Option<i32>,
     #[serde(default)]
@@ -264,10 +268,8 @@ pub struct AddRectangleHighOp {
     pub opid: Option<String>,
     #[serde(default)]
     pub component_ref: Option<sch_ops_core::RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: (i32, i32),
+    pub to: (i32, i32),
     #[serde(default)]
     pub color: Option<i32>,
     #[serde(default)]
@@ -445,10 +447,8 @@ pub struct AddRoundRectangleHighOp {
     pub opid: Option<String>,
     #[serde(default)]
     pub component_ref: Option<sch_ops_core::RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: (i32, i32),
+    pub to: (i32, i32),
     pub corner_x_radius_mils: i32,
     pub corner_y_radius_mils: i32,
     #[serde(default)]
@@ -496,10 +496,8 @@ pub struct AddTextFrameHighOp {
     pub opid: Option<String>,
     #[serde(default)]
     pub component_ref: Option<sch_ops_core::RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: (i32, i32),
+    pub to: (i32, i32),
     pub text: String,
     #[serde(default)]
     pub color: Option<i32>,
@@ -529,10 +527,8 @@ pub struct AddImageHighOp {
     pub opid: Option<String>,
     #[serde(default)]
     pub component_ref: Option<sch_ops_core::RefExpr>,
-    pub x1_mils: i32,
-    pub y1_mils: i32,
-    pub x2_mils: i32,
-    pub y2_mils: i32,
+    pub from: (i32, i32),
+    pub to: (i32, i32),
     pub file_name: String,
     #[serde(default)]
     pub image_data: Option<Vec<u8>>,
@@ -661,6 +657,8 @@ pub struct PinNode {
     pub name: Option<String>,
     pub electrical: Option<String>,
     pub length_mils: Option<i32>,
+    pub at: Option<(i32, i32)>,
+    pub rotation: Option<i32>,
 }
 
 #[derive(Debug, Clone)]

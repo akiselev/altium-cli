@@ -6,6 +6,7 @@ use crate::ops::model::{
     ImplementationNode, MapDefinerNode, ParameterNode, PinNode, QueryComponentsNode, QueryNode,
     QueryPinsNode, QueryRecordsNode, RemoveComponentNode, RemoveRecordsNode,
 };
+use altium_format_types::{Coord, CoordPoint};
 
 pub fn lower_high_ops(high_ops: &[HighOp]) -> Vec<ComposedOp> {
     let mut out = Vec::new();
@@ -85,10 +86,8 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
             altium_format::sch_ops_core::AddLineOp {
                 opid: base_opid.to_owned(),
                 component_ref: v.component_ref.clone(),
-                x1_mils: v.x1_mils,
-                y1_mils: v.y1_mils,
-                x2_mils: v.x2_mils,
-                y2_mils: v.y2_mils,
+                from: CoordPoint::new(Coord::from_mils(v.from.0), Coord::from_mils(v.from.1)),
+                to: CoordPoint::new(Coord::from_mils(v.to.0), Coord::from_mils(v.to.1)),
                 color: v.color,
                 line_width: v.line_width,
                 line_style: v.line_style,
@@ -100,10 +99,8 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
             altium_format::sch_ops_core::AddRectangleOp {
                 opid: base_opid.to_owned(),
                 component_ref: v.component_ref.clone(),
-                x1_mils: v.x1_mils,
-                y1_mils: v.y1_mils,
-                x2_mils: v.x2_mils,
-                y2_mils: v.y2_mils,
+                from: CoordPoint::new(Coord::from_mils(v.from.0), Coord::from_mils(v.from.1)),
+                to: CoordPoint::new(Coord::from_mils(v.to.0), Coord::from_mils(v.to.1)),
                 color: v.color,
                 area_color: v.area_color,
                 is_solid: v.is_solid,
@@ -217,10 +214,8 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
             AddRoundRectangleNode(altium_format::sch_ops_core::AddRoundRectangleOp {
                 opid: base_opid.to_owned(),
                 component_ref: v.component_ref.clone(),
-                x1_mils: v.x1_mils,
-                y1_mils: v.y1_mils,
-                x2_mils: v.x2_mils,
-                y2_mils: v.y2_mils,
+                from: CoordPoint::new(Coord::from_mils(v.from.0), Coord::from_mils(v.from.1)),
+                to: CoordPoint::new(Coord::from_mils(v.to.0), Coord::from_mils(v.to.1)),
                 corner_x_radius_mils: v.corner_x_radius_mils,
                 corner_y_radius_mils: v.corner_y_radius_mils,
                 color: v.color,
@@ -251,10 +246,8 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
             altium_format::sch_ops_core::AddTextFrameOp {
                 opid: base_opid.to_owned(),
                 component_ref: v.component_ref.clone(),
-                x1_mils: v.x1_mils,
-                y1_mils: v.y1_mils,
-                x2_mils: v.x2_mils,
-                y2_mils: v.y2_mils,
+                from: CoordPoint::new(Coord::from_mils(v.from.0), Coord::from_mils(v.from.1)),
+                to: CoordPoint::new(Coord::from_mils(v.to.0), Coord::from_mils(v.to.1)),
                 text: v.text.clone(),
                 color: v.color,
                 area_color: v.area_color,
@@ -272,10 +265,8 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
             altium_format::sch_ops_core::AddImageOp {
                 opid: base_opid.to_owned(),
                 component_ref: v.component_ref.clone(),
-                x1_mils: v.x1_mils,
-                y1_mils: v.y1_mils,
-                x2_mils: v.x2_mils,
-                y2_mils: v.y2_mils,
+                from: CoordPoint::new(Coord::from_mils(v.from.0), Coord::from_mils(v.from.1)),
+                to: CoordPoint::new(Coord::from_mils(v.to.0), Coord::from_mils(v.to.1)),
                 file_name: v.file_name.clone(),
                 image_data: v.image_data.clone(),
                 keep_aspect: v.keep_aspect,
@@ -360,6 +351,8 @@ fn pin_from_add_pin(v: &AddPinOp, fallback_opid: &str) -> PinNode {
         name: v.name.clone(),
         electrical: v.electrical.clone(),
         length_mils: v.length_mils,
+        at: v.at,
+        rotation: v.rotation,
     }
 }
 
@@ -423,6 +416,8 @@ mod tests {
                     name: None,
                     electrical: Some("passive".to_owned()),
                     length_mils: Some(25),
+                    at: None,
+                    rotation: None,
                 },
                 AddPinOp {
                     opid: None,
@@ -432,6 +427,8 @@ mod tests {
                     name: None,
                     electrical: Some("passive".to_owned()),
                     length_mils: Some(25),
+                    at: None,
+                    rotation: None,
                 },
             ],
             footprint: Some(FootprintOp {

@@ -59,15 +59,7 @@ query component[lib_reference=OPS_EQV_U2]
     let report_b = apply_ops_source_schlib(&mut lib_b, src_b).expect("apply B");
 
     assert_eq!(
-        report_a
-            .results
-            .get("op_0002")
-            .expect("query A")
-            .kind,
-        report_b
-            .results
-            .get("op_0002")
-            .expect("query B")
-            .kind
+        report_a.results.get("op_0002").expect("query A").kind,
+        report_b.results.get("op_0002").expect("query B").kind
     );
 }

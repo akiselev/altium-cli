@@ -405,16 +405,12 @@ ops:
         electrical: passive
   - opid: add_line
     op: add_line
-    x1_mils: 0
-    y1_mils: 0
-    x2_mils: 100
-    y2_mils: 100
+    from: [0, 0]
+    to: [100, 100]
   - opid: add_rect
     op: add_rectangle
-    x1_mils: 0
-    y1_mils: 0
-    x2_mils: 80
-    y2_mils: 40
+    from: [0, 0]
+    to: [80, 40]
   - opid: q_pins
     op: query_pins
     component_ref:

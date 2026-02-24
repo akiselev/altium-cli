@@ -1,4 +1,5 @@
 use crate::ops::model::ComposedOp;
+use altium_format_types::{Coord, CoordPoint, RotationBy90};
 
 use altium_format::sch_ops_core::{
     AddAliasOp, ComponentRefOp, ComponentRootOp, ComponentTextOp, EditComponentOp, EditRecordOp,
@@ -39,7 +40,11 @@ pub fn lower_composed_to_schdoc_low(composed_ops: &[ComposedOp]) -> Vec<SchDocLo
                 designator: v.designator.clone(),
                 name: v.name.clone(),
                 electrical: v.electrical.clone(),
-                length_mils: v.length_mils,
+                length: v.length_mils.map(Coord::from_mils),
+                at: v
+                    .at
+                    .map(|(x, y)| CoordPoint::new(Coord::from_mils(x), Coord::from_mils(y))),
+                rotation: v.rotation.map(rotation_from_degrees),
             }),
             ComposedOp::CreateImplementationList(v) => {
                 SchDocLowOp::CreateImplementationList(ComponentRefOp {
@@ -147,4 +152,14 @@ pub fn lower_composed_to_schdoc_low(composed_ops: &[ComposedOp]) -> Vec<SchDocLo
             ComposedOp::AddImage(v) => SchDocLowOp::AddImage(v.0.clone()),
         })
         .collect()
+}
+
+fn rotation_from_degrees(deg: i32) -> RotationBy90 {
+    match deg.rem_euclid(360) {
+        0 => RotationBy90::Rotate0,
+        90 => RotationBy90::Rotate90,
+        180 => RotationBy90::Rotate180,
+        270 => RotationBy90::Rotate270,
+        _ => RotationBy90::Rotate0,
+    }
 }

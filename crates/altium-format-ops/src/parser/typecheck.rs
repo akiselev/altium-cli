@@ -10,12 +10,12 @@ use super::ast::{
 use super::diagnostic::{ParseError, ParseErrorCode};
 use super::parse_ops;
 use crate::ops::model::{
-    AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipticalArcHighOp,
-    AddEllipseHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp, AddParameterOp, AddPieHighOp,
-    AddPinOp, AddPolygonHighOp, AddPolylineHighOp, AddRectangleHighOp, AddRoundRectangleHighOp,
-    AddTextFrameHighOp, EditComponentHighOp, EditRecordHighOp, FootprintMapEntry, FootprintOp,
-    HighOp, PinElectricalName, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp,
-    QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
+    AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipseHighOp,
+    AddEllipticalArcHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp, AddParameterOp,
+    AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp, AddRectangleHighOp,
+    AddRoundRectangleHighOp, AddTextFrameHighOp, EditComponentHighOp, EditRecordHighOp,
+    FootprintMapEntry, FootprintOp, HighOp, PinElectricalName, QueryComponentsHighOp, QueryHighOp,
+    QueryPinsHighOp, QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
 };
 use crate::ops::schema::{FieldType, HasOpsEnum, HasOpsSchema, normalize_enum_ident};
 
@@ -304,6 +304,8 @@ impl<'a> Compiler<'a> {
             name: self.opt_string(&map, "name")?,
             electrical: self.opt_string(&map, "electrical")?,
             length_mils: self.opt_i32_or_dim_mils(&map, "length_mils")?,
+            at: self.opt_coord_mils(&map, "at")?,
+            rotation: self.opt_rotation_90(&map, "rotation")?,
         }))
     }
 
@@ -332,6 +334,14 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_add_alias(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        if matches!(self.domain, OpsDomain::SchDoc) {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "add_alias is a SchLib-only operation",
+                op.name.span,
+            )
+            .with_help("use add_alias only when compiling for SchLib"));
+        }
         let body = self.expect_body(op)?;
         self.validate_body_against_schema::<AddAliasOp>(body)?;
         let map = self.eval_object(body)?;
@@ -354,6 +364,14 @@ impl<'a> Compiler<'a> {
         op: &Op,
         opid: Option<String>,
     ) -> Result<HighOp, ParseError> {
+        if matches!(self.domain, OpsDomain::SchDoc) {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "remove_alias is a SchLib-only operation",
+                op.name.span,
+            )
+            .with_help("use remove_alias only when compiling for SchLib"));
+        }
         let body = self.expect_body(op)?;
         self.validate_body_against_schema::<RemoveAliasOp>(body)?;
         let map = self.eval_object(body)?;
@@ -560,6 +578,8 @@ impl<'a> Compiler<'a> {
             &map,
             &[
                 "component_ref",
+                "from",
+                "to",
                 "x1_mils",
                 "y1_mils",
                 "x2_mils",
@@ -579,14 +599,13 @@ impl<'a> Compiler<'a> {
         } else {
             self.opt_refexpr(&map, "component_ref")?
         };
+        let (from, to) = self.req_from_to_mils(&map, body.span)?;
 
         Ok(HighOp::AddLine(AddLineHighOp {
             opid,
             component_ref,
-            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
-            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
-            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
-            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            from,
+            to,
             color: self.opt_i32(&map, "color")?,
             line_width: self.opt_i32(&map, "line_width")?,
             line_style: self.opt_i32(&map, "line_style")?,
@@ -606,6 +625,8 @@ impl<'a> Compiler<'a> {
             &map,
             &[
                 "component_ref",
+                "from",
+                "to",
                 "x1_mils",
                 "y1_mils",
                 "x2_mils",
@@ -627,14 +648,13 @@ impl<'a> Compiler<'a> {
         } else {
             self.opt_refexpr(&map, "component_ref")?
         };
+        let (from, to) = self.req_from_to_mils(&map, body.span)?;
 
         Ok(HighOp::AddRectangle(AddRectangleHighOp {
             opid,
             component_ref,
-            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
-            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
-            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
-            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            from,
+            to,
             color: self.opt_i32(&map, "color")?,
             area_color: self.opt_i32(&map, "area_color")?,
             is_solid: self.opt_bool(&map, "is_solid")?,
@@ -777,11 +797,7 @@ impl<'a> Compiler<'a> {
         }))
     }
 
-    fn compile_add_ellipse(
-        &mut self,
-        op: &Op,
-        opid: Option<String>,
-    ) -> Result<HighOp, ParseError> {
+    fn compile_add_ellipse(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
         let body = self.expect_body(op)?;
         let map = self.eval_object(body)?;
         self.reject_unknown_keys(
@@ -861,11 +877,7 @@ impl<'a> Compiler<'a> {
         }))
     }
 
-    fn compile_add_polygon(
-        &mut self,
-        op: &Op,
-        opid: Option<String>,
-    ) -> Result<HighOp, ParseError> {
+    fn compile_add_polygon(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
         let body = self.expect_body(op)?;
         let map = self.eval_object(body)?;
         self.reject_unknown_keys(
@@ -901,11 +913,7 @@ impl<'a> Compiler<'a> {
         }))
     }
 
-    fn compile_add_bezier(
-        &mut self,
-        op: &Op,
-        opid: Option<String>,
-    ) -> Result<HighOp, ParseError> {
+    fn compile_add_bezier(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
         let body = self.expect_body(op)?;
         let map = self.eval_object(body)?;
         self.reject_unknown_keys(
@@ -992,6 +1000,8 @@ impl<'a> Compiler<'a> {
             &map,
             &[
                 "component_ref",
+                "from",
+                "to",
                 "x1_mils",
                 "y1_mils",
                 "x2_mils",
@@ -1013,13 +1023,12 @@ impl<'a> Compiler<'a> {
         } else {
             self.opt_refexpr(&map, "component_ref")?
         };
+        let (from, to) = self.req_from_to_mils(&map, body.span)?;
         Ok(HighOp::AddRoundRectangle(AddRoundRectangleHighOp {
             opid,
             component_ref,
-            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
-            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
-            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
-            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            from,
+            to,
             corner_x_radius_mils: self.req_i32_or_dim_mils(&map, "corner_x_radius_mils")?,
             corner_y_radius_mils: self.req_i32_or_dim_mils(&map, "corner_y_radius_mils")?,
             color: self.opt_i32(&map, "color")?,
@@ -1042,6 +1051,8 @@ impl<'a> Compiler<'a> {
             &map,
             &[
                 "component_ref",
+                "from",
+                "to",
                 "x1_mils",
                 "y1_mils",
                 "x2_mils",
@@ -1066,13 +1077,12 @@ impl<'a> Compiler<'a> {
         } else {
             self.opt_refexpr(&map, "component_ref")?
         };
+        let (from, to) = self.req_from_to_mils(&map, body.span)?;
         Ok(HighOp::AddTextFrame(AddTextFrameHighOp {
             opid,
             component_ref,
-            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
-            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
-            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
-            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            from,
+            to,
             text: self.req_string(&map, "text")?,
             color: self.opt_i32(&map, "color")?,
             area_color: self.opt_i32(&map, "area_color")?,
@@ -1087,17 +1097,15 @@ impl<'a> Compiler<'a> {
         }))
     }
 
-    fn compile_add_image(
-        &mut self,
-        op: &Op,
-        opid: Option<String>,
-    ) -> Result<HighOp, ParseError> {
+    fn compile_add_image(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
         let body = self.expect_body(op)?;
         let map = self.eval_object(body)?;
         self.reject_unknown_keys(
             &map,
             &[
                 "component_ref",
+                "from",
+                "to",
                 "x1_mils",
                 "y1_mils",
                 "x2_mils",
@@ -1116,13 +1124,12 @@ impl<'a> Compiler<'a> {
         } else {
             self.opt_refexpr(&map, "component_ref")?
         };
+        let (from, to) = self.req_from_to_mils(&map, body.span)?;
         Ok(HighOp::AddImage(AddImageHighOp {
             opid,
             component_ref,
-            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
-            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
-            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
-            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            from,
+            to,
             file_name: self.req_string(&map, "file_name")?,
             image_data: self.opt_u8_array(&map, "image_data")?,
             keep_aspect: self.opt_bool(&map, "keep_aspect")?,
@@ -1779,7 +1786,9 @@ impl<'a> Compiler<'a> {
                 "selector shape is not yet supported for direct edit/remove lowering",
                 selector.span,
             )
-            .with_help("for now, use a single op-result selector like `edit $r1 { ... }` or `remove $r1`"));
+            .with_help(
+                "for now, use a single op-result selector like `edit $r1 { ... }` or `remove $r1`",
+            ));
         };
         if !chain.rest.is_empty() {
             return Err(ParseError::new(
@@ -2092,6 +2101,24 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn opt_rotation_90(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        key: &str,
+    ) -> Result<Option<i32>, ParseError> {
+        let Some(v) = self.opt_i32(map, key)? else {
+            return Ok(None);
+        };
+        match v.rem_euclid(360) {
+            0 | 90 | 180 | 270 => Ok(Some(v)),
+            _ => Err(ParseError::new(
+                ParseErrorCode::E2003,
+                format!("field '{key}' must be one of 0, 90, 180, 270"),
+                map.get(key).expect("rotation key exists").span,
+            )),
+        }
+    }
+
     fn req_points_mils(
         &self,
         map: &IndexMap<String, TypedValue>,
@@ -2116,6 +2143,52 @@ impl<'a> Compiler<'a> {
             out.push(self.value_to_point_mils(item)?);
         }
         Ok(out)
+    }
+
+    fn opt_coord_mils(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        key: &str,
+    ) -> Result<Option<(i32, i32)>, ParseError> {
+        let Some(value) = map.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some(self.value_to_point_mils(value)?))
+    }
+
+    fn req_from_to_mils(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        span: super::ast::Span,
+    ) -> Result<((i32, i32), (i32, i32)), ParseError> {
+        let from = self.opt_coord_mils(map, "from")?;
+        let to = self.opt_coord_mils(map, "to")?;
+        if let (Some(from), Some(to)) = (from, to) {
+            return Ok((from, to));
+        }
+
+        if map.contains_key("x1_mils")
+            || map.contains_key("y1_mils")
+            || map.contains_key("x2_mils")
+            || map.contains_key("y2_mils")
+        {
+            let from = (
+                self.req_i32_or_dim_mils(map, "x1_mils")?,
+                self.req_i32_or_dim_mils(map, "y1_mils")?,
+            );
+            let to = (
+                self.req_i32_or_dim_mils(map, "x2_mils")?,
+                self.req_i32_or_dim_mils(map, "y2_mils")?,
+            );
+            return Ok((from, to));
+        }
+
+        Err(ParseError::new(
+            ParseErrorCode::E2002,
+            "missing geometry coordinates: use `from` and `to` coordinate tuples",
+            span,
+        )
+        .with_help("example: from: (0mil, 0mil), to: (100mil, 50mil)"))
     }
 
     fn value_to_point_mils(&self, value: &TypedValue) -> Result<(i32, i32), ParseError> {
@@ -2217,6 +2290,8 @@ impl<'a> Compiler<'a> {
                 length_mils: self
                     .opt_i32_or_dim_mils(obj, "length")?
                     .or_else(|| self.opt_i32_or_dim_mils(obj, "length_mils").ok().flatten()),
+                at: self.opt_coord_mils(obj, "at")?,
+                rotation: self.opt_rotation_90(obj, "rotation")?,
             });
         }
         Ok(out)
@@ -2502,6 +2577,13 @@ remove $r1
     #[test]
     fn rejects_unsupported_edit_selector_shape() {
         let src = r#"edit component[designator=R1] { description: "x" }"#;
+        let err = compile_ops_to_high_schdoc(src).expect_err("expected error");
+        assert_eq!(err.code.as_str(), "E2008");
+    }
+
+    #[test]
+    fn rejects_alias_ops_in_schdoc_domain() {
+        let src = r#"add_alias $last { alias_name: "A1" }"#;
         let err = compile_ops_to_high_schdoc(src).expect_err("expected error");
         assert_eq!(err.code.as_str(), "E2008");
     }
