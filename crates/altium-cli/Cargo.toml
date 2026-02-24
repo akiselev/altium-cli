@@ -1,6 +1,6 @@
 [package]
 name = "altium-cli"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 
@@ -18,9 +18,9 @@ categories = ["command-line-utilities"]
 workspace = true
 
 [dependencies]
-altium-format = { version = "0.1.0", path = "../altium-format" }
-altium-format-ops = { version = "0.1.0", path = "../altium-format-ops" }
-altium-format-types = { version = "0.1.0", path = "../altium-format-types" }
+altium-format = { version = "0.2.0", path = "../altium-format" }
+altium-format-ops = { version = "0.2.0", path = "../altium-format-ops" }
+altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 serde = { version = "1.0", features = ["derive"] }

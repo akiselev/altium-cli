@@ -1,6 +1,6 @@
 [package]
 name = "altium-format"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 
@@ -24,8 +24,8 @@ include = [
 ]
 
 [dependencies]
-altium-format-types = { version = "0.1.8", path = "../altium-format-types" }
-altium-format-derive = { version = "0.1.0", path = "../altium-format-derive" }
+altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+altium-format-derive = { version = "0.2.0", path = "../altium-format-derive" }
 bitflags = "2.10.0"
 byteorder = "1.5.0"
 cfb = "0.12.1"
