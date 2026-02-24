@@ -166,6 +166,53 @@ If so, it parses a path expression before `{`. Targets are always simple path
 expressions (`$ref`, `$ref.field`, etc.) — never objects or arrays — so `{` is
 an unambiguous body boundary.
 
+### 4.1.1 Placement Op (`place`)
+
+```
+place TARGET { placement_fields }
+NAME = place TARGET { placement_fields }
+```
+
+Place an existing entity relative to an anchor entity without requiring raw
+coordinates in the op body.
+
+```
+comp = add_component { designator: "U1", lib_reference: "IC" }
+rect = add_rectangle $comp { from: (-200mil, -100mil), to: (200mil, 100mil) }
+pin1 = add_pin $comp { designator: "1" }
+pin2 = add_pin $comp { designator: "2" }
+pin3 = add_pin $comp { designator: "3" }
+
+place_defaults = { gap: 20mm, side: outside, orientation: auto }
+
+place $pin1 { on: $rect.top, at: start }
+place $pin2 { ...place_defaults, on: $rect.top, after: $pin1 }
+place $pin3 { on: $rect.left, at: center }
+```
+
+Placement fields:
+
+- `on` (required): anchor reference (for example `$rect.top`, `$rect.left`, `$track.start`)
+- exactly one of: `at` (`start`|`center`|`end`), `after`, `before`
+- `gap` (optional dim): spacing for `after`/`before`
+- `offset` (optional coord): post-placement translation
+- `side` (optional): `inside`|`outside`|`center`
+- `orientation` (optional): `auto`|`0`|`90`|`180`|`270`
+- `mode` (optional): `translate`|`project`
+
+Geometry-class semantics:
+
+- point objects (pin, label, junction, via, pad, text): resolve final point and set location
+- segment objects (line, wire, bus, track): default `translate`; `project` snaps nearest endpoint
+- box objects (rectangle, round-rectangle, text-frame, image, fill): translate box preserving size
+- center+radii objects (arc, ellipse, pie): move center, preserve radii unless explicitly edited
+- vertex-list objects (polyline, polygon, bezier, region outlines): translate all vertices
+
+Non-placeable objects (metadata/container records such as implementation list/map, map-definer,
+parameter list, aliases) must fail typechecking with a placement error.
+
+Anchor style: placement anchors use member access (`$rect.top`) rather than quoted index keys.
+
 ### 4.2 Edit Ops
 
 ```
@@ -278,7 +325,7 @@ add_wire { ... }                  // unnamed, result in $last
 The parser distinguishes bindings from ops by look-ahead: IDENT followed by `=`
 is a binding; IDENT followed by `{` or AQL tokens is a bare op.
 
-**What follows `=`:** If the RHS starts with an op name (`add_component`, `edit`,
+**What follows `=`:** If the RHS starts with an op name (`add_component`, `place`, `edit`,
 `remove`, `query`, etc.), it's an op result binding. Otherwise it's an expression
 binding (lazy — evaluated at each use site, §4.7).
 
@@ -581,6 +628,7 @@ pin_defaults                // let-bound object (for spread)
 $r1                         // OpResult from r1 =op ...
 $r1.location                // primary entity's location
 $r1.location.x              // x component
+$r1.top                     // named anchor (when provided by entity/op result)
 $r1.ref                     // primary EntityRef
 $r1.refs[0]                 // first secondary entity
 $r1.count                   // number of entities
@@ -1014,6 +1062,7 @@ pub struct OpResult {
 | `add_component` | created component | children (pins, etc.) | placement coord | 1 | — |
 | `add_wire` | created wire | wire points | — | 1 | — |
 | `add_track` | created track | — | start coord | 1 | — |
+| `place` | placed entity | — | resulting location/anchor | 1 | — |
 | `edit` | — | modified entities | — | modified count | first/last modified |
 | `remove` | — | removed entities | — | removed count | first/last removed |
 | `query` | — | matched entities | — | match count | first/last match |
@@ -1192,11 +1241,13 @@ compare_op      = "==" | "!=" | ">" | "<" | ">=" | "<=" ;
 template        = '`' { char | '{' expr '}' | '{{' | '}}' } '`' ;
 
 op              = create_op
+                | place_op
                 | edit_op
                 | remove_op
                 | query_op ;
 
 create_op       = IDENT [ target ] object ;
+place_op        = "place" target object ;
 edit_op         = "edit" selector object ;
 remove_op       = "remove" selector ;
 query_op        = "query" selector ;
@@ -1312,6 +1363,22 @@ r1 =add_component {
         { designator: "2", electrical: passive, offset: (50, 0), length: 25 }
     ]
 }
+```
+
+### Example 1b: Relative placement without explicit coordinates
+
+```
+comp = add_component { designator: "U1", lib_reference: "IC" }
+body = add_rectangle $comp { from: (-300mil, -150mil), to: (300mil, 150mil) }
+p1 = add_pin $comp { designator: "1" }
+p2 = add_pin $comp { designator: "2" }
+p3 = add_pin $comp { designator: "3" }
+
+place_defaults = { gap: 100mil, side: outside, orientation: auto }
+
+place $p1 { on: $body.top, at: start }
+place $p2 { ...place_defaults, on: $body.top, after: $p1 }
+place $p3 { on: $body.left, at: center }
 ```
 
 ### Example 2: Wire from one pin to another

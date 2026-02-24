@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 
 description = "CLI tool for inspecting and manipulating Altium Designer files"
-license = "GPL-3.0-only"
+license = "Apache-2.0"
 repository = "https://github.com/akiselev/altium-cli"
 homepage = "https://github.com/akiselev/altium-cli"
 documentation = "https://docs.rs/altium-cli"

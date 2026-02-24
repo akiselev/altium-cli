@@ -6,7 +6,7 @@ rust-version = "1.85"
 
 
 description = "Proc-macro derives for the altium-format crate."
-license = "GPL-3.0-only"
+license = "Apache-2.0"
 repository = "https://github.com/akiselev/altium-cli"
 homepage = "https://github.com/akiselev/altium-cli"
 documentation = "https://docs.rs/altium-format-derive"

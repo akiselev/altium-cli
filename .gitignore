@@ -36,3 +36,6 @@ __pycache__/
 /data/
 
 docs/*-diff/
+
+# Generated files by the cli
+/generated/

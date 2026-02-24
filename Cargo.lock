@@ -59,6 +59,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "png",
+ "proptest",
  "regex",
  "resvg",
  "schemars",
@@ -85,6 +86,7 @@ version = "0.1.8"
 dependencies = [
  "altium-format",
  "altium-format-derive",
+ "altium-format-types",
  "cfb",
  "indexmap",
  "proptest",
