@@ -140,6 +140,43 @@ altium cfb dump original.SchLib /FileHeader --blocks
 altium cfb cat original.SchLib /FileHeader | xxd
 ```
 
+# Test Utilities (Semantic CFB Diff)
+
+`altium-format` now has a test-only semantic CFB diff helper in:
+
+- `crates/altium-format/src/test_utils.rs`
+
+Primary API:
+
+- `diff_cfb_files_semantic(path_a, path_b) -> Result<CfbSemanticDiffReport>`
+- `assert_cfb_files_semantic_eq(path_a, path_b)` (panic with detailed report)
+
+What it compares:
+
+- Entry set and entry kind (stream vs storage)
+- Stream block framing (`parse_blocks`) with strict block-type mismatch detection
+- Text blocks as **order-agnostic parameter pairs**
+  - missing/added pairs are errors
+  - changed values for the same key are errors
+  - duplicate identical key/value pairs are tolerated (to handle known Altium duplication bugs)
+- Binary blocks byte-for-byte
+- Embedded-object envelopes (`0xD0`) in binary blocks are compared in **decompressed form**
+  - zlib output-level differences are ignored
+  - decompressed payload differences are hard failures
+
+Why: this gives stronger roundtrip diagnostics than raw byte diffs while still preserving
+fail-fast behavior and surfacing real format misunderstandings.
+
+Example use in tests:
+
+```rust
+use crate::test_utils::assert_cfb_files_semantic_eq;
+
+let tmp = tempfile::NamedTempFile::new().unwrap();
+doc.save(tmp.path()).unwrap();
+assert_cfb_files_semantic_eq(original_path, tmp.path());
+```
+
 
 # DXP File Format Documentation (`docs/dxp/`)
 
@@ -191,6 +228,35 @@ Test files for each document type can be found in data/<document type>/ but they
 * data/pcbdoc/ - https://github.com/akiselev/altium-cli-test-pcbdoc
 
 **NOTE**: Some of these files may be corrupt, use unsupported encoding like windows_1521 and so on.
+
+# Testing Infrastructure (Agent Guidance)
+
+Current testing layers in this repo:
+
+1. Unit tests in source modules (`#[cfg(test)]` blocks in `crates/altium-format/src/*`).
+2. Integration tests in `crates/altium-format-ops/tests/` with shared helpers in:
+   - `crates/altium-format-ops/tests/harness/mod.rs`
+3. Property tests (proptest):
+   - `crates/altium-format/src/schdoc/mod.rs`
+   - `crates/altium-format/src/pcblib/mod.rs`
+   - `crates/altium-format-ops/tests/executor_proptest.rs`
+   - `crates/altium-format-ops/tests/executor_schdoc_proptest.rs`
+4. Regression seeds:
+   - `crates/altium-format/proptest-regressions/*`
+   - `crates/altium-format-ops/proptest-regressions/*`
+   - `crates/altium-format-ops/tests/*.proptest-regressions`
+
+Agent rules for tests:
+
+- Always prefer fail-fast assertions with explicit context (stream path, record index, opid, selector).
+- Validate invariants after structural edits (`validate_invariants()`), and after save/reopen for roundtrip flows.
+- For CFB roundtrip assertions, prefer `assert_cfb_files_semantic_eq` over ad-hoc byte-by-byte compares.
+- Never weaken tests to hide unknown data. Unknown stream/record/field handling must fail until implemented.
+- When proptest finds a failure, keep/minimize the seed and commit/update regression files with the fix.
+- Use targeted test runs while developing:
+  - `cargo test -p altium-format <test_name>`
+  - `cargo test -p altium-format-ops <test_name>`
+  then run broader suites before finishing.
 
 
 # Older versions
