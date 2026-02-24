@@ -3,8 +3,8 @@ use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_ops::{
-    AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps, apply_schdoc,
-    apply_schlib, parse_apply_spec_json, parse_apply_spec_yaml,
+    AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps,
+    apply_ops_source_schdoc, apply_ops_source_schlib,
 };
 use clap::{Parser, Subcommand};
 
@@ -19,6 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a new Altium document with Altium-default template contents
+    New {
+        #[command(subcommand)]
+        sub: NewSubcommand,
+    },
     /// Validate an Altium Designer document
     Validate {
         /// Path to the document to validate
@@ -59,11 +64,11 @@ enum GetSubcommand {
 
 #[derive(Subcommand)]
 enum OpsSubcommand {
-    /// Apply operations from a YAML/JSON spec file
+    /// Apply operations from an .ops source file
     Apply {
         /// Path to target .SchDoc or .SchLib file
         path: PathBuf,
-        /// Path to spec file (.yaml/.yml/.json)
+        /// Path to .ops source file
         #[arg(long)]
         spec_file: PathBuf,
         /// Optional output path (default: in-place)
@@ -78,10 +83,34 @@ enum OpsSubcommand {
     },
 }
 
+#[derive(Subcommand)]
+enum NewSubcommand {
+    /// Create a new blank .SchDoc
+    Schdoc {
+        /// Output path for the new .SchDoc
+        output: PathBuf,
+    },
+    /// Create a new blank .SchLib
+    Schlib {
+        /// Output path for the new .SchLib
+        output: PathBuf,
+    },
+}
+
+const BLANK_SCHLIB_TEMPLATE: &[u8] = include_bytes!("../../../data/BlankSchlibComponent.SchLib");
+const BLANK_SCHDOC_TEMPLATE: &[u8] =
+    include_bytes!("../../../data/schdoc/qfsae_pcb__reference_UNOR3Shield_Blank__ArduinoUnoShield.SchDoc");
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::New { sub } => {
+            if let Err(e) = run_new(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
         Commands::Validate { path } => {
             if let Err(e) = validate(&path) {
                 eprintln!("Error: {e}");
@@ -130,6 +159,30 @@ fn run_ops(sub: OpsSubcommand) -> anyhow::Result<()> {
     }
 }
 
+fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
+    match sub {
+        NewSubcommand::Schdoc { output } => {
+            write_template_file(&output, BLANK_SCHDOC_TEMPLATE)?;
+            println!("Created {}", output.display());
+        }
+        NewSubcommand::Schlib { output } => {
+            write_template_file(&output, BLANK_SCHLIB_TEMPLATE)?;
+            println!("Created {}", output.display());
+        }
+    }
+    Ok(())
+}
+
+fn write_template_file(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
+
 fn apply_ops(
     path: &PathBuf,
     spec_file: &PathBuf,
@@ -145,11 +198,9 @@ fn apply_ops(
         .ok_or_else(|| {
             anyhow::anyhow!("cannot determine spec file type: {}", spec_file.display())
         })?;
-    let ops = match spec_ext.as_str() {
-        "yaml" | "yml" => parse_apply_spec_yaml(&spec_data)?,
-        "json" => parse_apply_spec_json(&spec_data)?,
-        _ => anyhow::bail!("unsupported spec extension .{spec_ext} (supported: .yaml/.yml/.json)"),
-    };
+    if spec_ext.as_str() != "ops" {
+        anyhow::bail!("unsupported spec extension .{spec_ext} (supported: .ops)");
+    }
 
     let doc_ext = path
         .extension()
@@ -162,7 +213,7 @@ fn apply_ops(
     match doc_ext.as_str() {
         "schdoc" => {
             let mut doc = SchDoc::open(path)?;
-            let report = apply_schdoc(&mut doc, &ops)?;
+            let report = apply_ops_source_schdoc(&mut doc, &spec_data)?;
             if !dry_run {
                 doc.save_as(out_path.as_path())?;
             }
@@ -170,7 +221,7 @@ fn apply_ops(
         }
         "schlib" => {
             let mut lib = SchLib::open(path)?;
-            let report = apply_schlib(&mut lib, &ops)?;
+            let report = apply_ops_source_schlib(&mut lib, &spec_data)?;
             if !dry_run {
                 lib.save_as(out_path.as_path())?;
             }

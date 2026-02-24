@@ -85,7 +85,8 @@ proptest! {
         prop_assert_eq!(report_direct.high_op_count, report_parsed.high_op_count);
         prop_assert_eq!(report_direct.composed_op_count, report_parsed.composed_op_count);
         prop_assert_eq!(report_direct.low_op_count, report_parsed.low_op_count);
-        prop_assert_eq!(report_direct.results.len(), report_direct.low_op_count);
+        prop_assert_eq!(report_direct.results.len(), report_parsed.results.len());
+        prop_assert!(report_direct.results.len() >= report_direct.low_op_count);
 
         doc_direct.validate_invariants().expect("direct invariants");
         doc_parsed.validate_invariants().expect("parsed invariants");

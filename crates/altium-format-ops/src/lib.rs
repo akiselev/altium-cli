@@ -17,8 +17,8 @@ pub use ops::{
     AddRoundRectangleHighOp, AddTextFrameHighOp, ApplyReport, ApplySpec, EditComponentHighOp,
     EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp,
     QueryRecordsHighOp, Ref, RefExpr, RefRoot, RefStep, RemoveAliasOp, RemoveComponentOp,
-    RemoveRecordsHighOp, Value, apply_schdoc, apply_schlib, parse_apply_spec_json,
-    parse_apply_spec_yaml,
+    RemoveRecordsHighOp, Value, apply_ops_source_schdoc, apply_ops_source_schlib, apply_schdoc,
+    apply_schlib, parse_apply_spec_json, parse_apply_spec_yaml,
 };
 pub use pcbdoc_ops::PcbDocOps;
 pub use pcblib_ops::PcbLibOps;

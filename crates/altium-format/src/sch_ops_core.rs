@@ -18,7 +18,7 @@ use altium_format_types::{
     RotationBy90, TextHorzAnchor, TextJustification, TextVertAnchor,
 };
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub type OpId = String;
 
@@ -1542,6 +1542,21 @@ fn resolve_component_index_from_expr(
                     })
                 }
             }
+            Value::Map(m) => {
+                if let Some(Value::Ref(r)) = m.get("ref") {
+                    return Ok(entity_id_to_component.get(&r.id).copied());
+                }
+                if let Some(Value::Refs(rs)) = m.get("refs") {
+                    if rs.len() == 1 {
+                        return Ok(entity_id_to_component.get(&rs[0].id).copied());
+                    }
+                    return Err(AltiumFormatError::InvalidParamValue {
+                        key: "component_ref".to_owned(),
+                        detail: "reference resolved to multiple entities".to_owned(),
+                    });
+                }
+                Ok(None)
+            }
             _ => Ok(None),
         }
     } else {
@@ -1555,10 +1570,10 @@ fn try_eval_ref_expr(
     last_opid: Option<&OpId>,
 ) -> Option<Value> {
     let mut current = match &expr.root {
-        RefRoot::OpId(id) => results.get(id).map(op_result_to_value)?,
+        RefRoot::OpId(id) => resolve_opid_value(results, id)?,
         RefRoot::Last => {
             let id = last_opid?;
-            results.get(id).map(op_result_to_value)?
+            resolve_opid_value(results, id)?
         }
         RefRoot::Self_ | RefRoot::Sheet => return None,
     };
@@ -1572,6 +1587,69 @@ fn try_eval_ref_expr(
         };
     }
     Some(current)
+}
+
+fn resolve_opid_value(results: &IndexMap<OpId, OpResult>, id: &str) -> Option<Value> {
+    if let Some(result) = results.get(id) {
+        return Some(op_result_to_value(result));
+    }
+
+    let prefix = format!("{id}/");
+    let children: Vec<&OpResult> = results
+        .iter()
+        .filter_map(|(opid, result)| {
+            if opid.starts_with(&prefix) {
+                Some(result)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if children.is_empty() {
+        return None;
+    }
+
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+    for child in &children {
+        if let Some(r) = &child.ref_ {
+            if seen.insert(r.id.clone()) {
+                refs.push(r.clone());
+            }
+        }
+        for r in &child.refs {
+            if seen.insert(r.id.clone()) {
+                refs.push(r.clone());
+            }
+        }
+    }
+
+    let primary = children
+        .iter()
+        .find(|child| child.kind == "create_component_root")
+        .and_then(|child| child.ref_.clone())
+        .or_else(|| refs.first().cloned());
+
+    let mut fields = IndexMap::new();
+    if let Some(r) = &primary {
+        fields.insert("ref".to_owned(), Value::Ref(r.clone()));
+    }
+    if !refs.is_empty() {
+        fields.insert("refs".to_owned(), Value::Refs(refs.clone()));
+    }
+
+    Some(Value::Map({
+        let mut m = IndexMap::new();
+        m.insert("opid".to_owned(), Value::String(id.to_owned()));
+        m.insert("kind".to_owned(), Value::String("aggregate".to_owned()));
+        m.insert(
+            "ref".to_owned(),
+            primary.clone().map(Value::Ref).unwrap_or(Value::Null),
+        );
+        m.insert("refs".to_owned(), Value::Refs(refs));
+        m.insert("fields".to_owned(), Value::Map(fields));
+        m
+    }))
 }
 
 fn op_result_to_value(r: &OpResult) -> Value {

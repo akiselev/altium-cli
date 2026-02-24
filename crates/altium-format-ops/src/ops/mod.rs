@@ -2,6 +2,9 @@ mod lower;
 pub mod model;
 pub mod schema;
 
+use std::collections::HashSet;
+
+use crate::parser::{compile_ops_to_high_schdoc, compile_ops_to_high_schlib};
 use lower::composed_to_schdoc_low::lower_composed_to_schdoc_low;
 use lower::composed_to_schlib_low::lower_composed_to_schlib_low;
 use lower::high_to_composed::lower_high_ops;
@@ -29,6 +32,7 @@ pub fn apply_schdoc(
     for r in results {
         table.insert(r.opid.clone(), r);
     }
+    synthesize_aggregate_results(high_ops, &mut table);
 
     Ok(ApplyReport {
         high_op_count: high_ops.len(),
@@ -50,6 +54,7 @@ pub fn apply_schlib(
     for r in results {
         table.insert(r.opid.clone(), r);
     }
+    synthesize_aggregate_results(high_ops, &mut table);
 
     Ok(ApplyReport {
         high_op_count: high_ops.len(),
@@ -57,6 +62,169 @@ pub fn apply_schlib(
         low_op_count: low.len(),
         results: table,
     })
+}
+
+fn synthesize_aggregate_results(
+    high_ops: &[HighOp],
+    table: &mut model::IndexMap<String, altium_format::sch_ops_core::OpResult>,
+) {
+    for (i, op) in high_ops.iter().enumerate() {
+        let base = op
+            .opid()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("op_{:04}", i + 1));
+        if table.contains_key(&base) {
+            continue;
+        }
+        let prefix = format!("{base}/");
+        let children: Vec<&altium_format::sch_ops_core::OpResult> = table
+            .iter()
+            .filter_map(|(opid, result)| {
+                if opid.starts_with(&prefix) {
+                    Some(result)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if children.is_empty() {
+            continue;
+        }
+
+        let mut seen = HashSet::new();
+        let mut refs = Vec::new();
+        for child in &children {
+            if let Some(r) = &child.ref_ {
+                if seen.insert(r.id.clone()) {
+                    refs.push(r.clone());
+                }
+            }
+            for r in &child.refs {
+                if seen.insert(r.id.clone()) {
+                    refs.push(r.clone());
+                }
+            }
+        }
+        let primary = children
+            .iter()
+            .find(|child| child.kind == "create_component_root")
+            .and_then(|child| child.ref_.clone())
+            .or_else(|| refs.first().cloned());
+
+        let mut fields = model::IndexMap::new();
+        if let Some(r) = &primary {
+            fields.insert("ref".to_owned(), Value::Ref(r.clone()));
+        }
+        if !refs.is_empty() {
+            fields.insert("refs".to_owned(), Value::Refs(refs.clone()));
+        }
+
+        table.insert(
+            base.clone(),
+            altium_format::sch_ops_core::OpResult {
+                opid: base,
+                kind: high_op_kind(op).to_owned(),
+                ref_: primary,
+                refs,
+                fields,
+                warnings: vec!["synthetic aggregate result".to_owned()],
+            },
+        );
+    }
+}
+
+fn high_op_kind(op: &HighOp) -> &'static str {
+    match op {
+        HighOp::AddComponent(_) => "add_component",
+        HighOp::AddPin(_) => "add_pin",
+        HighOp::AddParameter(_) => "add_parameter",
+        HighOp::AddAlias(_) => "add_alias",
+        HighOp::RemoveAlias(_) => "remove_alias",
+        HighOp::RemoveComponent(_) => "remove_component",
+        HighOp::EditComponent(_) => "edit_component",
+        HighOp::EditRecord(_) => "edit_record",
+        HighOp::RemoveRecords(_) => "remove_records",
+        HighOp::Query(_) => "query",
+        HighOp::QueryComponents(_) => "query_components",
+        HighOp::QueryPins(_) => "query_pins",
+        HighOp::QueryRecords(_) => "query_records",
+        HighOp::AddLine(_) => "add_line",
+        HighOp::AddRectangle(_) => "add_rectangle",
+        HighOp::AddArc(_) => "add_arc",
+        HighOp::AddEllipticalArc(_) => "add_elliptical_arc",
+        HighOp::AddEllipse(_) => "add_ellipse",
+        HighOp::AddPolyline(_) => "add_polyline",
+        HighOp::AddPolygon(_) => "add_polygon",
+        HighOp::AddBezier(_) => "add_bezier",
+        HighOp::AddPie(_) => "add_pie",
+        HighOp::AddRoundRectangle(_) => "add_round_rectangle",
+        HighOp::AddLabel(_) => "add_label",
+        HighOp::AddTextFrame(_) => "add_text_frame",
+        HighOp::AddImage(_) => "add_image",
+    }
+}
+
+trait HighOpIdExt {
+    fn opid(&self) -> Option<&str>;
+}
+
+impl HighOpIdExt for HighOp {
+    fn opid(&self) -> Option<&str> {
+        match self {
+            HighOp::AddComponent(v) => v.opid.as_deref(),
+            HighOp::AddPin(v) => v.opid.as_deref(),
+            HighOp::AddParameter(v) => v.opid.as_deref(),
+            HighOp::AddAlias(v) => v.opid.as_deref(),
+            HighOp::RemoveAlias(v) => v.opid.as_deref(),
+            HighOp::RemoveComponent(v) => v.opid.as_deref(),
+            HighOp::EditComponent(v) => v.opid.as_deref(),
+            HighOp::EditRecord(v) => v.opid.as_deref(),
+            HighOp::RemoveRecords(v) => v.opid.as_deref(),
+            HighOp::Query(v) => v.opid.as_deref(),
+            HighOp::QueryComponents(v) => v.opid.as_deref(),
+            HighOp::QueryPins(v) => v.opid.as_deref(),
+            HighOp::QueryRecords(v) => v.opid.as_deref(),
+            HighOp::AddLine(v) => v.opid.as_deref(),
+            HighOp::AddRectangle(v) => v.opid.as_deref(),
+            HighOp::AddArc(v) => v.opid.as_deref(),
+            HighOp::AddEllipticalArc(v) => v.opid.as_deref(),
+            HighOp::AddEllipse(v) => v.opid.as_deref(),
+            HighOp::AddPolyline(v) => v.opid.as_deref(),
+            HighOp::AddPolygon(v) => v.opid.as_deref(),
+            HighOp::AddBezier(v) => v.opid.as_deref(),
+            HighOp::AddPie(v) => v.opid.as_deref(),
+            HighOp::AddRoundRectangle(v) => v.opid.as_deref(),
+            HighOp::AddLabel(v) => v.opid.as_deref(),
+            HighOp::AddTextFrame(v) => v.opid.as_deref(),
+            HighOp::AddImage(v) => v.opid.as_deref(),
+        }
+    }
+}
+
+pub fn apply_ops_source_schdoc(
+    doc: &mut altium_format::SchDoc,
+    source: &str,
+) -> crate::Result<ApplyReport> {
+    let high_ops = compile_ops_to_high_schdoc(source).map_err(|e| {
+        crate::AltiumOperationError::Unimplemented(format!(
+            "ops parse/typecheck failed:\n{}",
+            e.render("input.ops", source)
+        ))
+    })?;
+    apply_schdoc(doc, &high_ops)
+}
+
+pub fn apply_ops_source_schlib(
+    lib: &mut altium_format::SchLib,
+    source: &str,
+) -> crate::Result<ApplyReport> {
+    let high_ops = compile_ops_to_high_schlib(source).map_err(|e| {
+        crate::AltiumOperationError::Unimplemented(format!(
+            "ops parse/typecheck failed:\n{}",
+            e.render("input.ops", source)
+        ))
+    })?;
+    apply_schlib(lib, &high_ops)
 }
 
 pub fn parse_apply_spec_json(data: &str) -> crate::Result<Vec<HighOp>> {

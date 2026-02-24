@@ -672,6 +672,12 @@ fn lex_selector(input: &str, base_offset: u32) -> Result<Vec<Tok>, ParseError> {
                 out.push(tok(kind, base_offset, start, end));
                 i = end;
             }
+            b'-' if peek(bytes, i + 1).is_some_and(|next| (next as char).is_ascii_digit()) => {
+                let start = i;
+                let (kind, end) = read_number_or_dim(input, i, base_offset)?;
+                out.push(tok(kind, base_offset, start, end));
+                i = end;
+            }
             _ => {
                 let ch = input[i..].chars().next().expect("utf8");
                 if is_ident_start(ch) {
@@ -833,6 +839,9 @@ fn read_number_or_dim(
     base_offset: u32,
 ) -> Result<(TokKind, usize), ParseError> {
     let mut end = start;
+    if end < input.len() && input.as_bytes()[end] == b'-' {
+        end += 1;
+    }
     while end < input.len() && input.as_bytes()[end].is_ascii_digit() {
         end += 1;
     }
@@ -984,6 +993,12 @@ mod tests {
                 s
             }
         }
+    }
+
+    #[test]
+    fn parses_negative_numeric_selector_values() {
+        let expr = ok(r#"component[x>=-10][y<-2.5mm]"#);
+        assert!(matches!(expr.node, SelectorExpr::Chain(_)));
     }
 
     fn simple_shape(v: &SelectorSimple) -> &'static str {

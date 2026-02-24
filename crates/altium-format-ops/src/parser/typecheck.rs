@@ -10,11 +10,14 @@ use super::ast::{
 use super::diagnostic::{ParseError, ParseErrorCode};
 use super::parse_ops;
 use crate::ops::model::{
-    AddAliasOp, AddComponentOp, AddParameterOp, AddPinOp, EditComponentHighOp, EditRecordHighOp,
-    FootprintMapEntry, FootprintOp, HighOp, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp,
+    AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipticalArcHighOp,
+    AddEllipseHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp, AddParameterOp, AddPieHighOp,
+    AddPinOp, AddPolygonHighOp, AddPolylineHighOp, AddRectangleHighOp, AddRoundRectangleHighOp,
+    AddTextFrameHighOp, EditComponentHighOp, EditRecordHighOp, FootprintMapEntry, FootprintOp,
+    HighOp, PinElectricalName, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp,
     QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
 };
-use crate::ops::schema::{FieldType, HasOpsSchema};
+use crate::ops::schema::{FieldType, HasOpsEnum, HasOpsSchema, normalize_enum_ident};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpsDomain {
@@ -131,6 +134,8 @@ impl<'a> Compiler<'a> {
         }
 
         match op_name {
+            "edit" => self.compile_edit(op, opid),
+            "remove" => self.compile_remove(op, opid),
             "add_component" => self.compile_add_component(op, opid),
             "add_pin" => self.compile_add_pin(op, opid),
             "add_parameter" => self.compile_add_parameter(op, opid),
@@ -144,13 +149,103 @@ impl<'a> Compiler<'a> {
             "query_records" => self.compile_query_records(op, opid),
             "edit_record" => self.compile_edit_record(op, opid),
             "remove_records" => self.compile_remove_records(op, opid),
+            "add_line" => self.compile_add_line(op, opid),
+            "add_rectangle" => self.compile_add_rectangle(op, opid),
+            "add_arc" => self.compile_add_arc(op, opid),
+            "add_elliptical_arc" => self.compile_add_elliptical_arc(op, opid),
+            "add_ellipse" => self.compile_add_ellipse(op, opid),
+            "add_polyline" => self.compile_add_polyline(op, opid),
+            "add_polygon" => self.compile_add_polygon(op, opid),
+            "add_bezier" => self.compile_add_bezier(op, opid),
+            "add_pie" => self.compile_add_pie(op, opid),
+            "add_round_rectangle" => self.compile_add_round_rectangle(op, opid),
+            "add_label" => self.compile_add_label(op, opid),
+            "add_text_frame" => self.compile_add_text_frame(op, opid),
+            "add_image" => self.compile_add_image(op, opid),
             _ => Err(ParseError::new(
                 ParseErrorCode::E2001,
                 format!("unsupported op '{op_name}' in pass-2 compiler"),
                 op.name.span,
             )
-            .with_help("supported ops: add_component, add_pin, add_parameter, add_alias, remove_alias, remove_component, edit_component, query, query_components, query_pins, query_records, edit_record, remove_records")),
+            .with_help("supported ops: edit, remove, add_component, add_pin, add_parameter, add_alias, remove_alias, remove_component, edit_component, query, query_components, query_pins, query_records, edit_record, remove_records, add_line, add_rectangle, add_arc, add_elliptical_arc, add_ellipse, add_polyline, add_polygon, add_bezier, add_pie, add_round_rectangle, add_label, add_text_frame, add_image")),
         }
+    }
+
+    fn compile_edit(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        if op.target.is_some() {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "edit does not accept a target expression",
+                op.name.span,
+            )
+            .with_help("use `edit SELECTOR { ... }`"));
+        }
+
+        let selector = op.selector.as_ref().ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::E2008,
+                "edit requires a selector",
+                op.name.span,
+            )
+        })?;
+        let component_ref = self.selector_to_single_component_ref(selector)?;
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "description",
+                "part_count",
+                "display_mode_count",
+                "component_kind",
+                "show_hidden_pins",
+            ],
+            body.span,
+            "edit",
+        )?;
+
+        Ok(HighOp::EditComponent(EditComponentHighOp {
+            opid,
+            component_ref,
+            description: self.opt_string(&map, "description")?,
+            part_count: self.opt_i32(&map, "part_count")?,
+            display_mode_count: self.opt_i32(&map, "display_mode_count")?,
+            component_kind: self.opt_i32(&map, "component_kind")?,
+            show_hidden_pins: self.opt_bool(&map, "show_hidden_pins")?,
+        }))
+    }
+
+    fn compile_remove(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        if op.target.is_some() {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "remove does not accept a target expression",
+                op.name.span,
+            )
+            .with_help("use `remove SELECTOR`"));
+        }
+        if op.body.is_some() {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "remove does not accept an object body",
+                op.name.span,
+            )
+            .with_help("use `remove SELECTOR` without `{ ... }`"));
+        }
+
+        let selector = op.selector.as_ref().ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::E2008,
+                "remove requires a selector",
+                op.name.span,
+            )
+        })?;
+        let component_ref = self.selector_to_single_component_ref(selector)?;
+        Ok(HighOp::RemoveComponent(RemoveComponentOp {
+            opid,
+            component_ref,
+        }))
     }
 
     fn compile_add_component(
@@ -458,6 +553,584 @@ impl<'a> Compiler<'a> {
         }))
     }
 
+    fn compile_add_line(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "x1_mils",
+                "y1_mils",
+                "x2_mils",
+                "y2_mils",
+                "color",
+                "line_width",
+                "line_style",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_line",
+        )?;
+
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+
+        Ok(HighOp::AddLine(AddLineHighOp {
+            opid,
+            component_ref,
+            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
+            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
+            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
+            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            line_style: self.opt_i32(&map, "line_style")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_rectangle(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "x1_mils",
+                "y1_mils",
+                "x2_mils",
+                "y2_mils",
+                "color",
+                "area_color",
+                "is_solid",
+                "transparent",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_rectangle",
+        )?;
+
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+
+        Ok(HighOp::AddRectangle(AddRectangleHighOp {
+            opid,
+            component_ref,
+            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
+            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
+            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
+            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            area_color: self.opt_i32(&map, "area_color")?,
+            is_solid: self.opt_bool(&map, "is_solid")?,
+            transparent: self.opt_bool(&map, "transparent")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_label(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "x_mils",
+                "y_mils",
+                "text",
+                "color",
+                "font_id",
+                "orientation",
+                "justification",
+                "is_mirrored",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_label",
+        )?;
+
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+
+        Ok(HighOp::AddLabel(AddLabelHighOp {
+            opid,
+            component_ref,
+            x_mils: self.req_i32_or_dim_mils(&map, "x_mils")?,
+            y_mils: self.req_i32_or_dim_mils(&map, "y_mils")?,
+            text: self.req_string(&map, "text")?,
+            color: self.opt_i32(&map, "color")?,
+            font_id: self.opt_i32(&map, "font_id")?,
+            orientation: self.opt_i32(&map, "orientation")?,
+            justification: self.opt_i32(&map, "justification")?,
+            is_mirrored: self.opt_bool(&map, "is_mirrored")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_arc(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "cx_mils",
+                "cy_mils",
+                "radius_mils",
+                "start_angle",
+                "end_angle",
+                "color",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_arc",
+        )?;
+
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddArc(AddArcHighOp {
+            opid,
+            component_ref,
+            cx_mils: self.req_i32_or_dim_mils(&map, "cx_mils")?,
+            cy_mils: self.req_i32_or_dim_mils(&map, "cy_mils")?,
+            radius_mils: self.req_i32_or_dim_mils(&map, "radius_mils")?,
+            start_angle: self.opt_f64(&map, "start_angle")?,
+            end_angle: self.opt_f64(&map, "end_angle")?,
+            color: self.opt_i32(&map, "color")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_elliptical_arc(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "cx_mils",
+                "cy_mils",
+                "radius_mils",
+                "secondary_radius_mils",
+                "start_angle",
+                "end_angle",
+                "color",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_elliptical_arc",
+        )?;
+
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddEllipticalArc(AddEllipticalArcHighOp {
+            opid,
+            component_ref,
+            cx_mils: self.req_i32_or_dim_mils(&map, "cx_mils")?,
+            cy_mils: self.req_i32_or_dim_mils(&map, "cy_mils")?,
+            radius_mils: self.req_i32_or_dim_mils(&map, "radius_mils")?,
+            secondary_radius_mils: self.req_i32_or_dim_mils(&map, "secondary_radius_mils")?,
+            start_angle: self.opt_f64(&map, "start_angle")?,
+            end_angle: self.opt_f64(&map, "end_angle")?,
+            color: self.opt_i32(&map, "color")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_ellipse(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "cx_mils",
+                "cy_mils",
+                "radius_mils",
+                "secondary_radius_mils",
+                "color",
+                "area_color",
+                "is_solid",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_ellipse",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddEllipse(AddEllipseHighOp {
+            opid,
+            component_ref,
+            cx_mils: self.req_i32_or_dim_mils(&map, "cx_mils")?,
+            cy_mils: self.req_i32_or_dim_mils(&map, "cy_mils")?,
+            radius_mils: self.req_i32_or_dim_mils(&map, "radius_mils")?,
+            secondary_radius_mils: self.req_i32_or_dim_mils(&map, "secondary_radius_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            area_color: self.opt_i32(&map, "area_color")?,
+            is_solid: self.opt_bool(&map, "is_solid")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_polyline(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "points_mils",
+                "color",
+                "line_width",
+                "line_style",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_polyline",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddPolyline(AddPolylineHighOp {
+            opid,
+            component_ref,
+            points_mils: self.req_points_mils(&map, "points_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            line_style: self.opt_i32(&map, "line_style")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_polygon(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "points_mils",
+                "color",
+                "area_color",
+                "is_solid",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_polygon",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddPolygon(AddPolygonHighOp {
+            opid,
+            component_ref,
+            points_mils: self.req_points_mils(&map, "points_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            area_color: self.opt_i32(&map, "area_color")?,
+            is_solid: self.opt_bool(&map, "is_solid")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_bezier(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "points_mils",
+                "color",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_bezier",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddBezier(AddBezierHighOp {
+            opid,
+            component_ref,
+            points_mils: self.req_points_mils(&map, "points_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_pie(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "cx_mils",
+                "cy_mils",
+                "radius_mils",
+                "start_angle",
+                "end_angle",
+                "color",
+                "area_color",
+                "is_solid",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_pie",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddPie(AddPieHighOp {
+            opid,
+            component_ref,
+            cx_mils: self.req_i32_or_dim_mils(&map, "cx_mils")?,
+            cy_mils: self.req_i32_or_dim_mils(&map, "cy_mils")?,
+            radius_mils: self.req_i32_or_dim_mils(&map, "radius_mils")?,
+            start_angle: self.opt_f64(&map, "start_angle")?,
+            end_angle: self.opt_f64(&map, "end_angle")?,
+            color: self.opt_i32(&map, "color")?,
+            area_color: self.opt_i32(&map, "area_color")?,
+            is_solid: self.opt_bool(&map, "is_solid")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_round_rectangle(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "x1_mils",
+                "y1_mils",
+                "x2_mils",
+                "y2_mils",
+                "corner_x_radius_mils",
+                "corner_y_radius_mils",
+                "color",
+                "area_color",
+                "is_solid",
+                "line_width",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_round_rectangle",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddRoundRectangle(AddRoundRectangleHighOp {
+            opid,
+            component_ref,
+            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
+            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
+            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
+            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            corner_x_radius_mils: self.req_i32_or_dim_mils(&map, "corner_x_radius_mils")?,
+            corner_y_radius_mils: self.req_i32_or_dim_mils(&map, "corner_y_radius_mils")?,
+            color: self.opt_i32(&map, "color")?,
+            area_color: self.opt_i32(&map, "area_color")?,
+            is_solid: self.opt_bool(&map, "is_solid")?,
+            line_width: self.opt_i32(&map, "line_width")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_text_frame(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "x1_mils",
+                "y1_mils",
+                "x2_mils",
+                "y2_mils",
+                "text",
+                "color",
+                "area_color",
+                "font_id",
+                "alignment",
+                "word_wrap",
+                "show_border",
+                "is_solid",
+                "clip_to_rect",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_text_frame",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddTextFrame(AddTextFrameHighOp {
+            opid,
+            component_ref,
+            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
+            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
+            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
+            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            text: self.req_string(&map, "text")?,
+            color: self.opt_i32(&map, "color")?,
+            area_color: self.opt_i32(&map, "area_color")?,
+            font_id: self.opt_i32(&map, "font_id")?,
+            alignment: self.opt_i32(&map, "alignment")?,
+            word_wrap: self.opt_bool(&map, "word_wrap")?,
+            show_border: self.opt_bool(&map, "show_border")?,
+            is_solid: self.opt_bool(&map, "is_solid")?,
+            clip_to_rect: self.opt_bool(&map, "clip_to_rect")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_image(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "component_ref",
+                "x1_mils",
+                "y1_mils",
+                "x2_mils",
+                "y2_mils",
+                "file_name",
+                "image_data",
+                "keep_aspect",
+                "owner_part_id",
+                "owner_part_display_mode",
+            ],
+            body.span,
+            "add_image",
+        )?;
+        let component_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "component_ref")?
+        };
+        Ok(HighOp::AddImage(AddImageHighOp {
+            opid,
+            component_ref,
+            x1_mils: self.req_i32_or_dim_mils(&map, "x1_mils")?,
+            y1_mils: self.req_i32_or_dim_mils(&map, "y1_mils")?,
+            x2_mils: self.req_i32_or_dim_mils(&map, "x2_mils")?,
+            y2_mils: self.req_i32_or_dim_mils(&map, "y2_mils")?,
+            file_name: self.req_string(&map, "file_name")?,
+            image_data: self.opt_u8_array(&map, "image_data")?,
+            keep_aspect: self.opt_bool(&map, "keep_aspect")?,
+            owner_part_id: self.opt_i32(&map, "owner_part_id")?,
+            owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
     fn eval_assert(&mut self, stmt: &super::ast::AssertStmt) -> Result<(), ParseError> {
         let ok = match &stmt.condition.node {
             AssertCondition::Existence(expr) => !matches!(self.eval_expr(expr)?.value, Value::Null),
@@ -580,7 +1253,7 @@ impl<'a> Compiler<'a> {
                         }
                         key.push_str(&seg.node);
                     }
-                    let value = self.eval_expr(&field.value)?;
+                    let value = self.eval_field_value(&key, &field.value)?;
                     out.insert(key, value);
                 }
             }
@@ -761,6 +1434,51 @@ impl<'a> Compiler<'a> {
             value,
             span: expr.span,
         })
+    }
+
+    fn eval_field_value(
+        &mut self,
+        key: &str,
+        expr: &Spanned<Expr>,
+    ) -> Result<TypedValue, ParseError> {
+        match self.eval_expr(expr) {
+            Ok(v) => Ok(v),
+            Err(err) => {
+                let Expr::Ident(ident) = &expr.node else {
+                    return Err(err);
+                };
+                if self.lookup_binding(ident).is_some() {
+                    return Err(err);
+                }
+                if key == "electrical" {
+                    let normalized = normalize_enum_ident(ident);
+                    let schema = PinElectricalName::ops_enum_schema();
+                    if let Some(variant) = schema
+                        .variants
+                        .iter()
+                        .find(|variant| variant.normalized == normalized)
+                    {
+                        return Ok(TypedValue {
+                            value: Value::String(variant.canonical.to_ascii_lowercase()),
+                            span: expr.span,
+                        });
+                    }
+                    let choices = schema
+                        .variants
+                        .iter()
+                        .map(|v| v.canonical.to_ascii_lowercase())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(ParseError::new(
+                        ParseErrorCode::E2003,
+                        format!("unknown enum variant '{ident}' for field '{key}'"),
+                        expr.span,
+                    )
+                    .with_help(format!("expected one of: {choices}")));
+                }
+                Err(err)
+            }
+        }
     }
 
     fn eval_binop(
@@ -1050,6 +1768,76 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    fn selector_to_single_component_ref(
+        &self,
+        selector: &Spanned<super::ast::Selector>,
+    ) -> Result<altium_format::sch_ops_core::RefExpr, ParseError> {
+        let expr = &selector.node.expr.node;
+        let SelectorExpr::Chain(chain) = expr else {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "selector shape is not yet supported for direct edit/remove lowering",
+                selector.span,
+            )
+            .with_help("for now, use a single op-result selector like `edit $r1 { ... }` or `remove $r1`"));
+        };
+        if !chain.rest.is_empty() {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "selector combinators are not yet supported for direct edit/remove lowering",
+                selector.span,
+            )
+            .with_help("for now, use a single op-result selector like `$r1`"));
+        }
+        let compound = &chain.first.node;
+        if !compound.filters.is_empty() {
+            return Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "selector filters are not yet supported for direct edit/remove lowering",
+                selector.span,
+            )
+            .with_help("for now, use a plain op-result selector like `$r1`"));
+        }
+
+        match &compound.head.node {
+            SelectorSimple::DollarRef(name) if self.op_bindings.contains(name) => {
+                Ok(altium_format::sch_ops_core::RefExpr::op(name.clone()))
+            }
+            SelectorSimple::DollarRef(name) => Err(ParseError::new(
+                ParseErrorCode::E2005,
+                format!("unknown op-result reference '${name}'"),
+                compound.head.span,
+            )
+            .with_help("bind an op with `name = op ...` before referencing `$name`")),
+            _ => Err(ParseError::new(
+                ParseErrorCode::E2008,
+                "selector head is not yet supported for direct edit/remove lowering",
+                compound.head.span,
+            )
+            .with_help("for now, use an op-result selector `$name` from `name = op ...`")),
+        }
+    }
+
+    fn reject_unknown_keys(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        allowed: &[&str],
+        span: super::ast::Span,
+        op_name: &str,
+    ) -> Result<(), ParseError> {
+        let allowed_set: HashSet<&str> = allowed.iter().copied().collect();
+        for key in map.keys() {
+            if !allowed_set.contains(key.as_str()) {
+                return Err(ParseError::new(
+                    ParseErrorCode::E2002,
+                    format!("unknown field '{key}' for op '{op_name}'"),
+                    span,
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn value_to_string(&self, value: &Value) -> Result<String, ParseError> {
         Ok(match value {
             Value::String(v) => v.clone(),
@@ -1231,6 +2019,56 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn req_i32_or_dim_mils(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        key: &str,
+    ) -> Result<i32, ParseError> {
+        match map.get(key) {
+            Some(TypedValue {
+                value: Value::Integer(v),
+                ..
+            }) => Ok(*v),
+            Some(TypedValue {
+                value: Value::Dim(v),
+                ..
+            }) => Ok(*v as i32),
+            Some(v) => Err(ParseError::new(
+                ParseErrorCode::E2003,
+                format!("field '{key}' must be integer or dim"),
+                v.span,
+            )),
+            None => Err(ParseError::new(
+                ParseErrorCode::E2002,
+                format!("missing required field '{key}'"),
+                super::ast::Span::new(0, self.source.len() as u32),
+            )),
+        }
+    }
+
+    fn opt_f64(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        key: &str,
+    ) -> Result<Option<f64>, ParseError> {
+        match map.get(key) {
+            Some(TypedValue {
+                value: Value::Float(v),
+                ..
+            }) => Ok(Some(*v)),
+            Some(TypedValue {
+                value: Value::Integer(v),
+                ..
+            }) => Ok(Some(*v as f64)),
+            Some(v) => Err(ParseError::new(
+                ParseErrorCode::E2003,
+                format!("field '{key}' must be float or integer"),
+                v.span,
+            )),
+            None => Ok(None),
+        }
+    }
+
     fn opt_i32_or_dim_mils(
         &self,
         map: &IndexMap<String, TypedValue>,
@@ -1252,6 +2090,84 @@ impl<'a> Compiler<'a> {
             )),
             None => Ok(None),
         }
+    }
+
+    fn req_points_mils(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        key: &str,
+    ) -> Result<Vec<(i32, i32)>, ParseError> {
+        let value = map.get(key).ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::E2002,
+                format!("missing required field '{key}'"),
+                super::ast::Span::new(0, self.source.len() as u32),
+            )
+        })?;
+        let Value::Array(items) = &value.value else {
+            return Err(ParseError::new(
+                ParseErrorCode::E2003,
+                format!("field '{key}' must be array of points"),
+                value.span,
+            ));
+        };
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            out.push(self.value_to_point_mils(item)?);
+        }
+        Ok(out)
+    }
+
+    fn value_to_point_mils(&self, value: &TypedValue) -> Result<(i32, i32), ParseError> {
+        match &value.value {
+            Value::Coord(x, y) => Ok((*x as i32, *y as i32)),
+            Value::Array(v) if v.len() == 2 => {
+                let x = as_scalar_mils(&v[0].value, v[0].span)? as i32;
+                let y = as_scalar_mils(&v[1].value, v[1].span)? as i32;
+                Ok((x, y))
+            }
+            _ => Err(ParseError::new(
+                ParseErrorCode::E2003,
+                "point must be coord tuple `(x, y)` or `[x, y]`",
+                value.span,
+            )),
+        }
+    }
+
+    fn opt_u8_array(
+        &self,
+        map: &IndexMap<String, TypedValue>,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>, ParseError> {
+        let Some(value) = map.get(key) else {
+            return Ok(None);
+        };
+        let Value::Array(items) = &value.value else {
+            return Err(ParseError::new(
+                ParseErrorCode::E2003,
+                format!("field '{key}' must be array of byte values"),
+                value.span,
+            ));
+        };
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            let Value::Integer(v) = item.value else {
+                return Err(ParseError::new(
+                    ParseErrorCode::E2003,
+                    format!("field '{key}' must contain only integer byte values"),
+                    item.span,
+                ));
+            };
+            if !(0..=255).contains(&v) {
+                return Err(ParseError::new(
+                    ParseErrorCode::E2003,
+                    format!("byte value out of range in field '{key}': {v}"),
+                    item.span,
+                ));
+            }
+            out.push(v as u8);
+        }
+        Ok(Some(out))
     }
 
     fn opt_bool(
@@ -1563,10 +2479,90 @@ query component[designator=R1]
     }
 
     #[test]
+    fn compiles_edit_and_remove_for_op_result_selector() {
+        let src = r#"
+r1 = add_component { lib_reference: "R", designator: "R1", value: "10K" }
+edit $r1 { description: "updated" }
+remove $r1
+"#;
+        let ops = compile_ok(src);
+        assert_eq!(ops.len(), 3);
+        assert!(matches!(ops[0], HighOp::AddComponent(_)));
+        assert!(matches!(ops[1], HighOp::EditComponent(_)));
+        assert!(matches!(ops[2], HighOp::RemoveComponent(_)));
+    }
+
+    #[test]
     fn rejects_unknown_field() {
         let src = r#"add_component { lib_reference: "R", bad_field: 1 }"#;
         let err = compile_ops_to_high_schdoc(src).expect_err("expected error");
         assert_eq!(err.code.as_str(), "E2002");
+    }
+
+    #[test]
+    fn rejects_unsupported_edit_selector_shape() {
+        let src = r#"edit component[designator=R1] { description: "x" }"#;
+        let err = compile_ops_to_high_schdoc(src).expect_err("expected error");
+        assert_eq!(err.code.as_str(), "E2008");
+    }
+
+    #[test]
+    fn resolves_bare_enum_ident_for_electrical() {
+        let src = r#"add_pin $last { designator: "1", electrical: passive }"#;
+        let ops = compile_ok(src);
+        let HighOp::AddPin(pin) = &ops[0] else {
+            panic!("expected add_pin");
+        };
+        assert_eq!(pin.electrical.as_deref(), Some("passive"));
+    }
+
+    #[test]
+    fn rejects_unknown_bare_enum_ident_for_electrical() {
+        let src = r#"add_pin $last { designator: "1", electrical: passthru }"#;
+        let err = compile_ops_to_high_schdoc(src).expect_err("expected enum error");
+        assert_eq!(err.code.as_str(), "E2003");
+    }
+
+    #[test]
+    fn selector_supports_negative_numeric_values() {
+        let src = r#"query component[x>=-10][y<-2.5mm]"#;
+        let ops = compile_ok(src);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(ops[0], HighOp::Query(_)));
+    }
+
+    #[test]
+    fn compiles_graphics_ops_with_dim_inputs() {
+        let src = r#"
+add_line { x1_mils: 0mil, y1_mils: 0, x2_mils: 100, y2_mils: 100mil }
+add_rectangle { x1_mils: 0, y1_mils: 0, x2_mils: 40mil, y2_mils: 20mil, is_solid: true }
+add_arc { cx_mils: 0, cy_mils: 0, radius_mils: 10 }
+add_elliptical_arc { cx_mils: 0, cy_mils: 0, radius_mils: 10, secondary_radius_mils: 5 }
+add_ellipse { cx_mils: 0, cy_mils: 0, radius_mils: 10, secondary_radius_mils: 5 }
+add_polyline { points_mils: [(0, 0), (10, 10)] }
+add_polygon { points_mils: [(0, 0), (10, 0), (10, 10)] }
+add_bezier { points_mils: [[0, 0], [10, 10], [20, 0], [30, 10]] }
+add_pie { cx_mils: 0, cy_mils: 0, radius_mils: 10 }
+add_round_rectangle { x1_mils: 0, y1_mils: 0, x2_mils: 20, y2_mils: 10, corner_x_radius_mils: 2, corner_y_radius_mils: 2 }
+add_label { x_mils: 10mil, y_mils: 20, text: "U1" }
+add_text_frame { x1_mils: 0, y1_mils: 0, x2_mils: 100, y2_mils: 50, text: "hello" }
+add_image { x1_mils: 0, y1_mils: 0, x2_mils: 10, y2_mils: 10, file_name: "x.png", image_data: [1, 2, 3] }
+"#;
+        let ops = compile_ok(src);
+        assert_eq!(ops.len(), 13);
+        assert!(matches!(ops[0], HighOp::AddLine(_)));
+        assert!(matches!(ops[1], HighOp::AddRectangle(_)));
+        assert!(matches!(ops[2], HighOp::AddArc(_)));
+        assert!(matches!(ops[3], HighOp::AddEllipticalArc(_)));
+        assert!(matches!(ops[4], HighOp::AddEllipse(_)));
+        assert!(matches!(ops[5], HighOp::AddPolyline(_)));
+        assert!(matches!(ops[6], HighOp::AddPolygon(_)));
+        assert!(matches!(ops[7], HighOp::AddBezier(_)));
+        assert!(matches!(ops[8], HighOp::AddPie(_)));
+        assert!(matches!(ops[9], HighOp::AddRoundRectangle(_)));
+        assert!(matches!(ops[10], HighOp::AddLabel(_)));
+        assert!(matches!(ops[11], HighOp::AddTextFrame(_)));
+        assert!(matches!(ops[12], HighOp::AddImage(_)));
     }
 
     #[test]
