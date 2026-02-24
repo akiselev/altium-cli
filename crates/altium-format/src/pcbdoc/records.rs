@@ -179,6 +179,11 @@ pub(crate) struct WideString6Record {
     pub(crate) text: String,
 }
 
+pub(crate) struct UnionNameRecord {
+    pub(crate) union_index: u32,
+    pub(crate) name: String,
+}
+
 pub(crate) fn parse_standard_param_records(data: &[u8]) -> Result<Vec<StandardParamRecord>> {
     let mut reader = BinaryReader::new(data);
     let mut out = Vec::new();
@@ -240,18 +245,60 @@ pub(crate) fn parse_len_prefixed_binary_records(data: &[u8]) -> Result<Vec<Binar
 }
 
 pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6Record>> {
-    let mut reader = BinaryReader::new(data);
     let mut out = Vec::new();
-    while reader.remaining() > 0 {
-        let index = reader.read_u32_le()?;
-        let size = reader.read_u32_le()? as usize;
-        if (size % 2) != 0 {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: "WideStrings6/Data".to_owned(),
-                detail: format!("string byte length must be even for UTF-16LE, got {size}"),
-            });
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let expected_index = out.len() as u32;
+
+        // Format A (common): [u32 index][u32 utf16_byte_len][bytes...]
+        let try_full = if offset + 8 <= data.len() {
+            let index = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+            let byte_len =
+                u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+            let data_off = offset + 8;
+            (index, byte_len, data_off)
+        } else {
+            (u32::MAX, usize::MAX, usize::MAX)
+        };
+
+        let mut parsed = None;
+        if try_full.0 == expected_index
+            && (try_full.1 % 2) == 0
+            && try_full.2 <= data.len()
+            && try_full.1 <= (data.len() - try_full.2)
+        {
+            parsed = Some((try_full.0, try_full.1, try_full.2));
+        } else if offset + 6 <= data.len() {
+            // Format B (observed variant): [u16=0][u32 utf16_byte_len][bytes...]
+            // Index is implicit and must equal the next sequential index.
+            let sentinel = u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap());
+            let byte_len =
+                u32::from_le_bytes(data[offset + 2..offset + 6].try_into().unwrap()) as usize;
+            let data_off = offset + 6;
+            if sentinel == 0
+                && (byte_len % 2) == 0
+                && data_off <= data.len()
+                && byte_len <= (data.len() - data_off)
+            {
+                parsed = Some((expected_index, byte_len, data_off));
+            }
         }
-        let payload = reader.read_bytes(size)?;
+
+        let (index, size, payload_off) = parsed.ok_or_else(|| {
+            let remaining = data.len() - offset;
+            let sample_len = remaining.min(16);
+            let sample = &data[offset..offset + sample_len];
+            AltiumFormatError::InvalidParamValue {
+                key: "WideStrings6/Data".to_owned(),
+                detail: format!(
+                    "cannot decode entry at offset {offset} (expected index {expected_index}); next bytes {:02x?}",
+                    sample
+                ),
+            }
+        })?;
+
+        let payload = &data[payload_off..payload_off + size];
         let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(payload);
         if had_errors {
             return Err(AltiumFormatError::InvalidParamValue {
@@ -259,10 +306,14 @@ pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6
                 detail: format!("invalid UTF-16LE sequence for string index {index}"),
             });
         }
-        let text = decoded.trim_end_matches('\0').to_owned();
-        out.push(WideString6Record { index, text });
+
+        out.push(WideString6Record {
+            index,
+            text: decoded.trim_end_matches('\0').to_owned(),
+        });
+        offset = payload_off + size;
     }
-    reader.assert_exhausted()?;
+
     Ok(out)
 }
 
@@ -283,5 +334,38 @@ pub(crate) fn parse_prefixed_param_records(data: &[u8]) -> Result<Vec<PrefixedPa
             params,
         });
     }
+    Ok(out)
+}
+
+pub(crate) fn parse_union_name_records(data: &[u8]) -> Result<Vec<UnionNameRecord>> {
+    let mut reader = BinaryReader::new(data);
+    let count = reader.read_u32_le()? as usize;
+    let mut out = Vec::with_capacity(count);
+
+    for _ in 0..count {
+        let union_index = reader.read_u32_le()?;
+        let byte_len = reader.read_u32_le()? as usize;
+        if (byte_len % 2) != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "UnionNames/Data".to_owned(),
+                detail: format!("UTF-16LE byte length must be even, got {byte_len}"),
+            });
+        }
+        let payload = reader.read_bytes(byte_len)?;
+        let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(payload);
+        if had_errors {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "UnionNames/Data".to_owned(),
+                detail: format!("invalid UTF-16LE for union index {union_index}"),
+            });
+        }
+
+        out.push(UnionNameRecord {
+            union_index,
+            name: decoded.trim_end_matches('\0').to_owned(),
+        });
+    }
+
+    reader.assert_exhausted()?;
     Ok(out)
 }

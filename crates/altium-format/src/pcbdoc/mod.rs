@@ -42,6 +42,11 @@ pub(crate) struct BinarySectionData {
     pub(crate) records: Vec<records::BinaryLenRecord>,
 }
 
+pub(crate) struct UnionNamesSectionData {
+    pub(crate) format_version: u32,
+    pub(crate) records: Vec<records::UnionNameRecord>,
+}
+
 pub(crate) struct ModelsSectionData {
     pub(crate) metadata: Vec<PcbLibModelEntry>,
     pub(crate) blobs: Vec<(String, Vec<u8>)>,
@@ -65,6 +70,7 @@ pub(crate) enum PcbDocSection {
     Primitive(PrimitiveSectionData),
     Parameter(ParamSectionData),
     Binary(BinarySectionData),
+    UnionNames(UnionNamesSectionData),
     PrefixedParameter(PrefixedParamSectionData),
     WideStrings(WideStringsSectionData),
     Models(ModelsSectionData),
@@ -149,6 +155,26 @@ impl PcbDoc {
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::WideStrings(WideStringsSectionData {
                     entries,
+                }));
+                continue;
+            }
+
+            if storage_name == "UnionNames" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let format_version = parse_pcb_section_header(&header_data)?;
+                if format_version != 1 {
+                    return Err(AltiumFormatError::InvalidParamValue {
+                        key: "UnionNames/Header".to_owned(),
+                        detail: format!("expected format version 1, got {format_version}"),
+                    });
+                }
+                let records = records::parse_union_name_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::UnionNames(UnionNamesSectionData {
+                    format_version,
+                    records,
                 }));
                 continue;
             }

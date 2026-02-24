@@ -150,6 +150,7 @@ pub(crate) struct PcbText {
     pub(crate) use_text_alignment_by_snap: Option<i32>,
     pub(crate) snap_point_x: Option<i32>,
     pub(crate) snap_point_y: Option<i32>,
+    pub(crate) subrecord1_tail: Vec<u8>,
     pub(crate) text: String,
 }
 
@@ -404,7 +405,8 @@ fn parse_text_records(
         let len_1 = (raw_len_1 & BLOCK_SIZE_MASK) as usize;
         let subrecord_1 = reader.read_bytes(len_1)?;
 
-        let len_2 = reader.read_u32_le()? as usize;
+        let raw_len_2 = reader.read_u32_le()?;
+        let len_2 = (raw_len_2 & BLOCK_SIZE_MASK) as usize;
         let subrecord_2 = reader.read_bytes(len_2)?;
 
         let primitive = parse_text_subrecords(subrecord_1, subrecord_2)?;
@@ -528,15 +530,9 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
 
     if reader.remaining() == 1 {
         trailing_is_justification_valid = Some(reader.read_bool()?);
-    } else if reader.remaining() > 0 {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: "Text.subrecord1".to_owned(),
-            detail: format!(
-                "unexpected trailing bytes in subrecord1: {}",
-                reader.remaining()
-            ),
-        });
     }
+
+    let subrecord1_tail = reader.read_bytes(reader.remaining())?.to_vec();
 
     reader.assert_exhausted()?;
     let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(subrecord_2);
@@ -588,6 +584,7 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         use_text_alignment_by_snap,
         snap_point_x,
         snap_point_y,
+        subrecord1_tail,
         text,
     })
 }
