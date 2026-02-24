@@ -36,14 +36,21 @@ pub fn save_bytes_schdoc(doc: &SchDoc) -> Vec<u8> {
 
 #[allow(dead_code)]
 pub fn save_reopen_schlib(lib: &SchLib) {
+    use altium_format::test_utils::assert_cfb_files_semantic_eq;
+
     lib.validate_invariants()
         .expect("schlib validates before save");
-    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
-    lib.save(tmp.path()).expect("save schlib output");
-    let reopened = SchLib::open(tmp.path()).expect("reopen saved schlib");
+    let tmp1 = tempfile::NamedTempFile::new().expect("create temp file");
+    lib.save(tmp1.path()).expect("save schlib output");
+    let reopened = SchLib::open(tmp1.path()).expect("reopen saved schlib");
     reopened
         .validate_invariants()
         .expect("reopened schlib validates");
+    let tmp2 = tempfile::NamedTempFile::new().expect("create second temp file");
+    reopened
+        .save(tmp2.path())
+        .expect("save reopened schlib output");
+    assert_cfb_files_semantic_eq(tmp1.path(), tmp2.path());
 }
 
 #[allow(dead_code)]

@@ -10,18 +10,18 @@ use crate::embedded_object::parse_embedded_object;
 use crate::{AltiumFormatError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CfbSemanticDiffReport {
-    pub(crate) file_a: PathBuf,
-    pub(crate) file_b: PathBuf,
-    pub(crate) issues: Vec<DiffIssue>,
+pub struct CfbSemanticDiffReport {
+    pub file_a: PathBuf,
+    pub file_b: PathBuf,
+    pub issues: Vec<DiffIssue>,
 }
 
 impl CfbSemanticDiffReport {
-    pub(crate) fn is_identical(&self) -> bool {
+    pub fn is_identical(&self) -> bool {
         self.issues.is_empty()
     }
 
-    pub(crate) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         let mut out = String::new();
         let _ = writeln!(
             out,
@@ -42,7 +42,7 @@ impl CfbSemanticDiffReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DiffIssue {
+pub enum DiffIssue {
     EntryMissingInA {
         path: String,
         kind: &'static str,
@@ -304,10 +304,7 @@ impl EntryKind {
     }
 }
 
-pub(crate) fn diff_cfb_files_semantic(
-    path_a: &Path,
-    path_b: &Path,
-) -> Result<CfbSemanticDiffReport> {
+pub fn diff_cfb_files_semantic(path_a: &Path, path_b: &Path) -> Result<CfbSemanticDiffReport> {
     let mut cfb_a = open_cfb(path_a)?;
     let mut cfb_b = open_cfb(path_b)?;
 
@@ -356,7 +353,7 @@ pub(crate) fn diff_cfb_files_semantic(
     })
 }
 
-pub(crate) fn assert_cfb_files_semantic_eq(path_a: &Path, path_b: &Path) {
+pub fn assert_cfb_files_semantic_eq(path_a: &Path, path_b: &Path) {
     match diff_cfb_files_semantic(path_a, path_b) {
         Ok(report) => {
             assert!(report.is_identical(), "{}", report.render());
@@ -737,9 +734,17 @@ mod tests {
     use crate::embedded_object::serialize_embedded_object;
 
     fn make_cfb(streams: &[(&str, Vec<u8>)]) -> tempfile::NamedTempFile {
+        make_cfb_layout(streams, &[])
+    }
+
+    fn make_cfb_layout(streams: &[(&str, Vec<u8>)], storages: &[&str]) -> tempfile::NamedTempFile {
         let tmp = tempfile::NamedTempFile::new().expect("create temp file");
         let cursor = std::io::Cursor::new(Vec::<u8>::new());
         let mut cfb = cfb::CompoundFile::create(cursor).expect("create cfb");
+        for path in storages {
+            cfb.create_storage(Path::new(path))
+                .expect("create storage in cfb");
+        }
         for (path, data) in streams {
             let mut stream = cfb
                 .create_stream(Path::new(path))
@@ -862,6 +867,123 @@ mod tests {
                 .issues
                 .iter()
                 .any(|i| matches!(i, DiffIssue::EmbeddedObjectDataMismatch { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn missing_entries_are_reported() {
+        let a = make_cfb(&[("/OnlyInA", write_text_block(b"|A=1|\0"))]);
+        let b = make_cfb(&[("/OnlyInB", write_text_block(b"|B=2|\0"))]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::EntryMissingInA { .. })),
+            "{}",
+            report.render()
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::EntryMissingInB { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn entry_kind_mismatch_is_reported() {
+        let a = make_cfb_layout(&[("/X", write_text_block(b"|A=1|\0"))], &[]);
+        let b = make_cfb_layout(&[("/X/Child", write_text_block(b"|A=1|\0"))], &["/X"]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::EntryKindMismatch { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn block_count_mismatch_is_reported() {
+        let mut a_stream = write_text_block(b"|A=1|\0");
+        a_stream.extend_from_slice(&write_text_block(b"|B=2|\0"));
+        let b_stream = write_text_block(b"|A=1|\0");
+
+        let a = make_cfb(&[("/FileHeader", a_stream)]);
+        let b = make_cfb(&[("/FileHeader", b_stream)]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::BlockCountMismatch { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn block_type_mismatch_is_reported() {
+        let a = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|\0"))]);
+        let b = make_cfb(&[("/FileHeader", write_binary_block(&[0xAA, 0xBB]))]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::BlockTypeMismatch { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn block_parse_error_is_reported() {
+        let a = make_cfb(&[("/Bad", vec![0x01, 0x02, 0x03])]);
+        let b = make_cfb(&[("/Bad", write_text_block(b"|A=1|\0"))]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::BlockParseError { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn utf8_prefixed_param_equivalence() {
+        let a = make_cfb(&[("/FileHeader", write_text_block(b"|%UTF8%NAME=hello||\0"))]);
+        let b = make_cfb(&[("/FileHeader", write_text_block(b"|NAME=hello|\0"))]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(report.is_identical(), "{}", report.render());
+    }
+
+    #[test]
+    fn duplicate_param_pair_count_mismatch_is_reported() {
+        let a = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|A=1|\0"))]);
+        let b = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|A=1|A=1|\0"))]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::DuplicateParamPairCountMismatch { .. })),
             "{}",
             report.render()
         );

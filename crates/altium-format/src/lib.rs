@@ -23,8 +23,7 @@ mod prefixed_param_stream;
 pub mod sch_ops_core;
 #[allow(dead_code)]
 mod sch_records;
-#[cfg(test)]
-pub(crate) mod test_utils;
+pub mod test_utils;
 #[allow(dead_code)]
 mod tracked_cfb;
 #[allow(dead_code)]

@@ -26,13 +26,13 @@ use altium_format_types::constants::sheet::{
     CUSTOM_Y_FRAC, CUSTOM_Y_ZONES, DISPLAY_UNIT, DOCUMENT_BORDER_STYLE, FILE_VERSION_INFO,
     HOT_SPOT_GRID_ON, HOT_SPOT_GRID_SIZE, HOT_SPOT_GRID_SIZE_FRAC, IS_BOC, REFERENCE_ZONE_STYLE,
     REFERENCE_ZONES_ON, SHEET_NUMBER_SPACE_SIZE, SHEET_STYLE, SHOW_HIDDEN_PINS,
-    SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC, STYLE_CORNER_RADIUS_MODE,
-    STYLE_CORNER_RADIUS_VALUE, STYLE_GLOW_COLOR, STYLE_GLOW_OPACITY, STYLE_GLOW_SIZE,
-    STYLE_GRADIENT_DEPTH, STYLE_ID_COUNT, STYLE_REFLECTION_DEPTH, STYLE_REFLECTION_OPACITY,
-    STYLE_SHADOW_ANGLE_IN_DEGREES, STYLE_SHADOW_BLUR, STYLE_SHADOW_DISTANCE, STYLE_SHADOW_OPACITY,
-    STYLE_TRANSPARENCY_AMOUNT, STYLE_TRANSPARENCY_ENABLED, SYSTEM_FONT, TEMPLATE_FILE_NAME,
-    TITLE_BLOCK_ON, USE_CUSTOM_SHEET, USE_MBCS, VISIBLE_GRID_ON, VISIBLE_GRID_SIZE,
-    VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
+    SHOW_TEMPLATE_GRAPHICS, SNAP_GRID_ON, SNAP_GRID_SIZE, SNAP_GRID_SIZE_FRAC,
+    STYLE_CORNER_RADIUS_MODE, STYLE_CORNER_RADIUS_VALUE, STYLE_GLOW_COLOR, STYLE_GLOW_OPACITY,
+    STYLE_GLOW_SIZE, STYLE_GRADIENT_DEPTH, STYLE_ID_COUNT, STYLE_REFLECTION_DEPTH,
+    STYLE_REFLECTION_OPACITY, STYLE_SHADOW_ANGLE_IN_DEGREES, STYLE_SHADOW_BLUR,
+    STYLE_SHADOW_DISTANCE, STYLE_SHADOW_OPACITY, STYLE_TRANSPARENCY_AMOUNT,
+    STYLE_TRANSPARENCY_ENABLED, SYSTEM_FONT, TEMPLATE_FILE_NAME, TITLE_BLOCK_ON, USE_CUSTOM_SHEET,
+    USE_MBCS, VISIBLE_GRID_ON, VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
 };
 use altium_format_types::constants::streams::{
     ADDITIONAL, FILE_HEADER, LIB_ADDITIONAL, PIN_DESC, PIN_FRAC, PIN_FUNCTION_DATA, PIN_MISC_DATA,
@@ -234,7 +234,12 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
                     .remove_optional::<i32>(&format!("{}{}", STYLE_GRADIENT_DEPTH, idx))?,
                 shadow_opacity: params
                     .remove_optional::<i32>(&format!("{}{}", STYLE_SHADOW_OPACITY, idx))?,
-                shadow_distance: parse_style_coord(&mut params, STYLE_SHADOW_DISTANCE, "_FRAC", &idx)?,
+                shadow_distance: parse_style_coord(
+                    &mut params,
+                    STYLE_SHADOW_DISTANCE,
+                    "_FRAC",
+                    &idx,
+                )?,
                 shadow_blur: parse_style_coord(&mut params, STYLE_SHADOW_BLUR, "_FRAC", &idx)?,
                 shadow_angle_in_degrees: params
                     .remove_optional::<i32>(&format!("{}{}", STYLE_SHADOW_ANGLE_IN_DEGREES, idx))?,
@@ -1426,7 +1431,10 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
                 );
             }
             if let Some(v) = style.shadow_opacity {
-                params.insert(&format!("{}{}", STYLE_SHADOW_OPACITY, idx), v.to_param_value());
+                params.insert(
+                    &format!("{}{}", STYLE_SHADOW_OPACITY, idx),
+                    v.to_param_value(),
+                );
             }
             if let Some(v) = style.shadow_distance {
                 params.insert_coord(
@@ -1449,10 +1457,16 @@ fn serialize_file_header(header: &SchLibHeader) -> Vec<u8> {
                 );
             }
             if let Some(v) = style.glow_color {
-                params.insert(&format!("{}{}", STYLE_GLOW_COLOR, idx), v.raw().to_param_value());
+                params.insert(
+                    &format!("{}{}", STYLE_GLOW_COLOR, idx),
+                    v.raw().to_param_value(),
+                );
             }
             if let Some(v) = style.glow_opacity {
-                params.insert(&format!("{}{}", STYLE_GLOW_OPACITY, idx), v.to_param_value());
+                params.insert(
+                    &format!("{}{}", STYLE_GLOW_OPACITY, idx),
+                    v.to_param_value(),
+                );
             }
             if let Some(v) = style.glow_size {
                 params.insert(&format!("{}{}", STYLE_GLOW_SIZE, idx), v.to_param_value());
@@ -2174,7 +2188,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
-                style_id: 0,
+                    style_id: 0,
                 },
             }));
         self.ops_recompute_header_weight();
@@ -2207,7 +2221,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
-                style_id: 0,
+                    style_id: 0,
                 },
                 description: String::new(),
                 use_component_library: false,
@@ -2255,7 +2269,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
-                style_id: 0,
+                    style_id: 0,
                 },
                 unique_id: generate_unique_id(),
             }));
@@ -2317,7 +2331,7 @@ impl SchLib {
                     owner_part_display_mode: 0,
                     graphically_locked: false,
                     union_index: 0,
-                style_id: 0,
+                    style_id: 0,
                 },
             }));
         self.ops_recompute_header_weight();
