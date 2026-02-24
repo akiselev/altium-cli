@@ -22,7 +22,10 @@ impl PcbDocOps for altium_format::PcbDoc {
             return Err(crate::AltiumOperationError::AltiumFormat(
                 altium_format::AltiumFormatError::InvalidParamValue {
                     key: "FileHeaderSix.minor_version".to_owned(),
-                    detail: format!("expected positive minor version, got {}", self.minor_version()),
+                    detail: format!(
+                        "expected positive minor version, got {}",
+                        self.minor_version()
+                    ),
                 },
             ));
         }

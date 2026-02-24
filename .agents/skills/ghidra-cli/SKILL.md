@@ -84,7 +84,7 @@ Both auto-start bridge. `--detach` returns immediately.
 
 ```bash
 ghidra program list [--project P]          # alias: prog, programs
-ghidra program open --program PROG [--project P]
+ghidra program open --program PROG [--project P]   # --program required by runtime
 ghidra program close [--project P]
 ghidra program delete --program PROG [--project P]
 ghidra program info [--project P]
@@ -109,7 +109,7 @@ ghidra function delete TARGET [QUERY_OPTS]
 
 ```bash
 ghidra decompile TARGET [QUERY_OPTS]        # aliases: decomp, dec
-ghidra disasm ADDRESS [-n COUNT] [QUERY_OPTS]  # aliases: disassemble, dis
+ghidra disasm TARGET [-n COUNT] [QUERY_OPTS]   # TARGET = name or 0xADDRESS; aliases: disassemble, dis
 ```
 
 ### String Operations
@@ -143,8 +143,10 @@ ghidra memory search PATTERN [QUERY_OPTS]
 ```bash
 ghidra x-ref to ADDRESS [QUERY_OPTS]        # aliases: xref, xrefs, crossref
 ghidra x-ref from ADDRESS [QUERY_OPTS]
-ghidra x-ref list [QUERY_OPTS]
+ghidra x-ref list [TARGET] [QUERY_OPTS]
 ```
+
+Note: `x-ref list` currently accepts an optional target in clap, but runtime ignores it and lists all xrefs.
 
 ### Type Operations
 
@@ -163,6 +165,8 @@ ghidra comment get ADDRESS [QUERY_OPTS]
 ghidra comment set ADDRESS TEXT [--comment-type TYPE] [--project P] [--program PROG]
 ghidra comment delete ADDRESS [QUERY_OPTS]
 ```
+
+Note: current bridge expects `comment_type`, but client sends `type`; in practice comment type falls back to `EOL`.
 
 ### Search / Find
 
@@ -207,6 +211,8 @@ ghidra patch bytes ADDRESS HEX [--project P] [--program PROG]
 ghidra patch nop ADDRESS [--count N] [--project P] [--program PROG]
 ghidra patch export -o OUTPUT [--project P] [--program PROG]
 ```
+
+Note: `--count` is parsed but currently not forwarded to the bridge. Runtime NOP behavior is single-address based.
 
 ### Script Execution
 
@@ -260,8 +266,8 @@ All query commands accept these:
 
 | Option | Description |
 |--------|-------------|
-| `--project P` | Project name or path (env: `GHIDRA_DEFAULT_PROJECT`) |
-| `--program PROG` | Program within project (env: `GHIDRA_DEFAULT_PROGRAM`) |
+| `--project P` | Project name or path |
+| `--program PROG` | Program within project |
 | `--filter EXPR` | Filter expression |
 | `--fields LIST` | Comma-separated fields to return |
 | `-o FORMAT` | Output format |
@@ -386,8 +392,10 @@ ghidra patch export -o patched.exe --project analysis
 | Variable | Purpose |
 |----------|---------|
 | `GHIDRA_INSTALL_DIR` | Ghidra installation path |
-| `GHIDRA_DEFAULT_PROJECT` | Default `--project` value |
-| `GHIDRA_DEFAULT_PROGRAM` | Default `--program` value |
+| `GHIDRA_PROJECT_DIR` | Base directory for projects |
+| `GHIDRA_DEFAULT_PROJECT` | Default `--project` for `ghidra query` |
+| `GHIDRA_DEFAULT_PROGRAM` | Default `--program` for `ghidra query` and program auto-selection |
+| `GHIDRA_CLI_CONFIG` | Override config path |
 
 ## File Locations
 
@@ -395,7 +403,8 @@ ghidra patch export -o patched.exe --project analysis
 |------|---------|
 | `~/.local/share/ghidra-cli/bridge-{md5}.port` | TCP port for running bridge |
 | `~/.local/share/ghidra-cli/bridge-{md5}.pid` | Bridge process PID |
-| `~/.local/share/ghidra-cli/config.yaml` | Configuration |
+| `~/.config/ghidra-cli/config.yaml` | Configuration |
+| `~/.config/ghidra-cli/scripts/GhidraCliBridge.java` | Materialized Java bridge script |
 | `~/.local/share/ghidra-cli/ghidra-cli.log` | Debug log |
 
 ## Error Recovery

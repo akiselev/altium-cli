@@ -237,6 +237,7 @@ pub(crate) struct PcbRegion {
 /// TV6_PadCache — 38 bytes at pad main subrecord offsets 67-104.
 ///
 /// Confirmed by C# `TV6_PadCache` struct (Pack=1) + Ghidra setter functions.
+#[derive(Debug)]
 pub(crate) struct PcbPadCache {
     pub(crate) plane_connection_style: PlaneConnectionStyle,
     pub(crate) relief_conductor_width: Coord,
@@ -261,6 +262,7 @@ pub(crate) struct PcbPadCache {
 /// Per-layer stack data for pads (subrecord 5, 596+ bytes when present).
 ///
 /// Confirmed by Ghidra FUN_018a2840 (init) + FUN_0187c7d0 (per-layer loop).
+#[derive(Debug)]
 pub(crate) struct PcbPadStackData {
     pub(crate) inner_size_x: [Coord; 29],
     pub(crate) inner_size_y: [Coord; 29],
