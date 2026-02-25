@@ -25,16 +25,23 @@ pub(crate) fn parse_fill(data: &[u8]) -> Result<PcbFill> {
     let corner2 = reader.read_coord_point()?;
     let rotation = reader.read_f64_le()?;
 
-    // Extended fields present in AD26+ format (13 extra bytes).
-    let (user_routed, union_index, v7_layer, keepout_restrictions) = if reader.remaining() > 0 {
-        let user_routed = reader.read_u8()? != 0;
-        let union_index = reader.read_i32_le()?;
-        let v7_layer = V7Layer::new(reader.read_u32_le()?);
-        let keepout_restrictions = reader.read_i32_le()?;
-        (user_routed, union_index, v7_layer, keepout_restrictions)
-    } else {
-        (false, 0, V7Layer::default(), 0)
-    };
+    // Extended fields are version-dependent and may be partially present.
+    let mut user_routed = false;
+    let mut union_index = 0;
+    let mut v7_layer = V7Layer::default();
+    let mut keepout_restrictions = 0;
+    if reader.remaining() >= 1 {
+        user_routed = reader.read_u8()? != 0;
+    }
+    if reader.remaining() >= 4 {
+        union_index = reader.read_i32_le()?;
+    }
+    if reader.remaining() >= 4 {
+        v7_layer = V7Layer::new(reader.read_u32_le()?);
+    }
+    if reader.remaining() >= 4 {
+        keepout_restrictions = reader.read_i32_le()?;
+    }
 
     reader.assert_exhausted()?;
     Ok(PcbFill {

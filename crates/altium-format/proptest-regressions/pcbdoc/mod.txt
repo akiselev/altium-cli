@@ -6,3 +6,5 @@
 # everyone who runs the test benefits from these saved cases.
 cc 9a6fac2f0599912a2f9e619c29597d4a22e7e15432e3699efc414f51909a514d # shrinks to idx = 0
 cc 52193ce5cc148241d61600c8c33526af303c5a508c71461ba1b31c342ce9cbbf # shrinks to idx = 0
+cc c80c11d2d77a4b2496146bb8227ccd82dc79ad41a9635434639f97f5c5e66bbc # shrinks to idx = 1109
+cc aa52d6b17126a9320732e6b55d749918683c40887e46ce881565682e7e31d412 # shrinks to idx = 4000

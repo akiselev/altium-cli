@@ -190,11 +190,37 @@ pub(crate) fn parse_standard_param_records(data: &[u8]) -> Result<Vec<StandardPa
     while reader.remaining() > 0 {
         let size = reader.read_u32_le()? as usize;
         let payload = reader.read_bytes(size)?;
-        let params = ParameterCollection::from_bytes(payload)?;
+        let params = match ParameterCollection::from_bytes(payload) {
+            Ok(v) => v,
+            Err(AltiumFormatError::InvalidParamValue { detail, .. })
+                if detail == "segment has no '=' separator" =>
+            {
+                let repaired = repair_param_payload_with_bare_flags(payload);
+                ParameterCollection::from_bytes(&repaired)?
+            }
+            Err(e) => return Err(e),
+        };
         out.push(StandardParamRecord { params });
     }
     reader.assert_exhausted()?;
     Ok(out)
+}
+
+fn repair_param_payload_with_bare_flags(payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(payload.len() + 16);
+    for segment in payload.split(|b| *b == b'|') {
+        if segment.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(b'|');
+        }
+        out.extend_from_slice(segment);
+        if !segment.contains(&b'=') {
+            out.extend_from_slice(b"=1");
+        }
+    }
+    out
 }
 
 pub(crate) fn parse_len_prefixed_binary_records(data: &[u8]) -> Result<Vec<BinaryLenRecord>> {

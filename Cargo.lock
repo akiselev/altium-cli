@@ -29,15 +29,19 @@ version = "0.2.0"
 dependencies = [
  "altium-format",
  "altium-format-ops",
+ "altium-format-render-png",
+ "altium-format-render-svg",
  "altium-format-types",
  "anyhow",
  "cfb",
  "clap",
  "clap_complete",
  "encoding_rs",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -95,6 +99,24 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "altium-format-render-png"
+version = "0.2.0"
+dependencies = [
+ "altium-format",
+ "altium-format-render-svg",
+ "resvg",
+]
+
+[[package]]
+name = "altium-format-render-svg"
+version = "0.2.0"
+dependencies = [
+ "altium-format",
+ "altium-format-types",
+ "svg",
 ]
 
 [[package]]
@@ -1311,6 +1333,12 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "svg"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94afda9cd163c04f6bee8b4bf2501c91548deae308373c436f36aeff3cf3c4a3"
 
 [[package]]
 name = "svgtypes"

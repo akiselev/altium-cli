@@ -2,7 +2,7 @@ use crate::ops::model::{
     AddArcNode, AddBezierNode, AddComponentOp, AddEllipseNode, AddEllipticalArcNode,
     AddFootprintNode, AddImageNode, AddLabelNode, AddLineNode, AddPieNode, AddPinOp,
     AddPolygonNode, AddPolylineNode, AddRectangleNode, AddRoundRectangleNode, AddTextFrameNode,
-    AddTrackNode, AliasNode, ComponentRefNode, ComponentRoot, ComponentText, ComposedOp,
+    AddTrackNode, AddViaNode, AliasNode, ComponentRefNode, ComponentRoot, ComponentText, ComposedOp,
     EditComponentNode, EditRecordNode, HighOp, ImplementationNode, MapDefinerNode, ParameterNode,
     PinNode, QueryComponentsNode, QueryNode, QueryPinsNode, QueryRecordsNode, RemoveComponentNode,
     RemoveRecordsNode,
@@ -285,6 +285,17 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
                 layer: v.layer.clone(),
             },
         ))),
+        HighOp::AddVia(v) => out.push(ComposedOp::AddVia(AddViaNode(
+            altium_format::pcb_ops_core::AddViaOp {
+                opid: base_opid.to_owned(),
+                footprint_ref: v.footprint_ref.clone(),
+                at: CoordPoint::new(Coord::from_mils(v.at.0), Coord::from_mils(v.at.1)),
+                diameter: v.diameter_mils.map(Coord::from_mils),
+                hole_size: v.hole_size_mils.map(Coord::from_mils),
+                from_layer: v.from_layer.clone(),
+                to_layer: v.to_layer.clone(),
+            },
+        ))),
         HighOp::AddFootprint(v) => out.push(ComposedOp::AddFootprint(AddFootprintNode(
             altium_format::pcb_ops_core::AddFootprintOp {
                 opid: base_opid.to_owned(),
@@ -410,6 +421,7 @@ impl HighOpExt for HighOp {
             HighOp::AddTextFrame(v) => v.opid.as_deref(),
             HighOp::AddImage(v) => v.opid.as_deref(),
             HighOp::AddTrack(v) => v.opid.as_deref(),
+            HighOp::AddVia(v) => v.opid.as_deref(),
             HighOp::AddFootprint(v) => v.opid.as_deref(),
         }
     }

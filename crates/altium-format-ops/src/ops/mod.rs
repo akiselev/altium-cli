@@ -19,9 +19,10 @@ pub use model::{
     AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipseHighOp,
     AddEllipticalArcHighOp, AddFootprintHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp,
     AddParameterOp, AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp,
-    AddRectangleHighOp, AddRoundRectangleHighOp, AddTextFrameHighOp, AddTrackHighOp, ApplyReport,
-    ApplySpec, EditComponentHighOp, EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp,
-    QueryPinsHighOp, QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
+    AddRectangleHighOp, AddRoundRectangleHighOp, AddTextFrameHighOp, AddTrackHighOp, AddViaHighOp,
+    ApplyReport, ApplySpec, EditComponentHighOp, EditRecordHighOp, HighOp, QueryComponentsHighOp,
+    QueryHighOp, QueryPinsHighOp, QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp,
+    RemoveRecordsHighOp,
 };
 pub type Ref = RefExpr;
 
@@ -119,7 +120,7 @@ pub fn apply_pcblib(
 
 fn ensure_sch_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
     for op in high_ops {
-        if matches!(op, HighOp::AddTrack(_) | HighOp::AddFootprint(_)) {
+        if matches!(op, HighOp::AddTrack(_) | HighOp::AddVia(_) | HighOp::AddFootprint(_)) {
             return Err(crate::AltiumOperationError::Unimplemented(
                 "pcb-specific op is not supported in schematic domains".to_owned(),
             ));
@@ -130,7 +131,7 @@ fn ensure_sch_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
 
 fn ensure_pcbdoc_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
     for op in high_ops {
-        if !matches!(op, HighOp::Query(_) | HighOp::AddTrack(_)) {
+        if !matches!(op, HighOp::Query(_) | HighOp::AddTrack(_) | HighOp::AddVia(_)) {
             return Err(crate::AltiumOperationError::Unimplemented(
                 "op is not supported for pcbdoc domain".to_owned(),
             ));
@@ -141,7 +142,10 @@ fn ensure_pcbdoc_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
 
 fn ensure_pcblib_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
     for op in high_ops {
-        if !matches!(op, HighOp::Query(_) | HighOp::AddTrack(_) | HighOp::AddFootprint(_)) {
+        if !matches!(
+            op,
+            HighOp::Query(_) | HighOp::AddTrack(_) | HighOp::AddVia(_) | HighOp::AddFootprint(_)
+        ) {
             return Err(crate::AltiumOperationError::Unimplemented(
                 "op is not supported for pcblib domain".to_owned(),
             ));
@@ -248,6 +252,7 @@ fn high_op_kind(op: &HighOp) -> &'static str {
         HighOp::AddTextFrame(_) => "add_text_frame",
         HighOp::AddImage(_) => "add_image",
         HighOp::AddTrack(_) => "add_track",
+        HighOp::AddVia(_) => "add_via",
         HighOp::AddFootprint(_) => "add_footprint",
     }
 }
@@ -286,6 +291,7 @@ impl HighOpIdExt for HighOp {
             HighOp::AddTextFrame(v) => v.opid.as_deref(),
             HighOp::AddImage(v) => v.opid.as_deref(),
             HighOp::AddTrack(v) => v.opid.as_deref(),
+            HighOp::AddVia(v) => v.opid.as_deref(),
             HighOp::AddFootprint(v) => v.opid.as_deref(),
         }
     }

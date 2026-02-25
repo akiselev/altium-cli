@@ -121,10 +121,15 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     let multiline = reader.read_bool()?;
     let barcode_font_name = reader.read_wide_string_fixed(FONT_NAME_WCHAR_COUNT)?;
 
-    // Preserve version-dependent tail bytes (offsets 225+) explicitly.
-    let trailing_bytes = reader.read_bytes(reader.remaining())?.to_vec();
-
-    reader.assert_exhausted()?;
+    if reader.remaining() != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Text subrecord 0".to_owned(),
+            detail: format!(
+                "unsupported trailing bytes after known Text layout: {} bytes remain",
+                reader.remaining()
+            ),
+        });
+    }
 
     // Subrecord 1 contains the text string (Win1252 encoded).
     let text_bytes = subrecords[1];
@@ -157,7 +162,6 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
         barcode_render_mode,
         multiline,
         barcode_font_name,
-        trailing_bytes,
         text,
         unique_id: None,
     })

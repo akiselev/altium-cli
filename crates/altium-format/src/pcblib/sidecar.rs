@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use altium_format_types::{MaskExpansionMode, PcbObjectId};
 
 use crate::block_stream::iter_blocks;
+use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcblib::PcbPrimitive;
@@ -87,6 +88,14 @@ pub(crate) struct ExtendedPrimitiveInfoEntry {
     pub(crate) solder_mask_expansion_manual: String,
     pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
     pub(crate) paste_mask_expansion_manual: String,
+}
+
+/// One entry from PrimitiveGuids.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PrimitiveGuidEntry {
+    pub(crate) object_id: PcbObjectId,
+    pub(crate) index_for_save: i32,
+    pub(crate) guid: [u8; 16],
 }
 
 /// Parses a mask expansion mode string ("None", "NoMask", "Rule", "Manual").
@@ -183,13 +192,14 @@ pub(crate) fn parse_extended_primitive_information(
 /// Size of a single PrimitiveGuids record: ObjectId (4) + IndexForSave (4) + GUID (16).
 const PRIMITIVE_GUID_RECORD_SIZE: usize = 24;
 
-/// Validates the PrimitiveGuids/Header and Data streams.
+/// Parses PrimitiveGuids/Header and Data streams.
 ///
 /// The Data stream contains `count` fixed-size 24-byte binary records
-/// (TPrimitiveGUID struct: i32 ObjectId + i32 IndexForSave + 16-byte GUID).
-/// One extra entry (ObjectId=0x55, Component) exists per footprint beyond the
-/// primitive count. We validate the format but do not use the GUIDs.
-pub(crate) fn validate_primitive_guids(header_data: &[u8], data: &[u8]) -> Result<()> {
+/// (`RT_PCB.TPrimitiveGUID`: i32 ObjectId + i32 IndexForSave + Guid).
+pub(crate) fn parse_primitive_guids(
+    header_data: &[u8],
+    data: &[u8],
+) -> Result<Vec<PrimitiveGuidEntry>> {
     let count = parse_pcb_section_header(header_data)? as usize;
     let expected_bytes = count * PRIMITIVE_GUID_RECORD_SIZE;
     if data.len() != expected_bytes {
@@ -204,7 +214,33 @@ pub(crate) fn validate_primitive_guids(header_data: &[u8], data: &[u8]) -> Resul
             ),
         });
     }
-    Ok(())
+    let mut reader = BinaryReader::new(data);
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let object_id_value = reader.read_i32_le()?;
+        let object_id_u8 = u8::try_from(object_id_value).map_err(|_| {
+            AltiumFormatError::InvalidParamValue {
+                key: "PrimitiveGuids.ObjectId".to_owned(),
+                detail: format!("object id out of byte range: {object_id_value}"),
+            }
+        })?;
+        let object_id = PcbObjectId::try_from(object_id_u8).map_err(|_| {
+            AltiumFormatError::InvalidParamValue {
+                key: "PrimitiveGuids.ObjectId".to_owned(),
+                detail: format!("unknown object id value: {object_id_value}"),
+            }
+        })?;
+        let index_for_save = reader.read_i32_le()?;
+        let mut guid = [0u8; 16];
+        guid.copy_from_slice(reader.read_bytes(16)?);
+        entries.push(PrimitiveGuidEntry {
+            object_id,
+            index_for_save,
+            guid,
+        });
+    }
+    reader.assert_exhausted()?;
+    Ok(entries)
 }
 
 /// Merges parsed sidecar data into footprint primitives in place.
@@ -260,6 +296,36 @@ pub(crate) fn merge_sidecars(
         set_unique_id(primitive, entry.unique_id);
     }
 
+    Ok(())
+}
+
+/// Validates that ExtendedPrimitiveInformation entries reference valid primitives.
+pub(crate) fn validate_extended_entries(
+    primitives: &[PcbPrimitive],
+    entries: &[ExtendedPrimitiveInfoEntry],
+) -> Result<()> {
+    let primitive_count = primitives.len();
+    for entry in entries {
+        let idx = entry.primitive_index;
+        let primitive = primitives.get(idx).ok_or_else(|| {
+            AltiumFormatError::InvalidParamValue {
+                key: "PRIMITIVEINDEX".to_owned(),
+                detail: format!(
+                    "extended info primitive index {idx} out of range (footprint has {primitive_count} primitives)"
+                ),
+            }
+        })?;
+        let actual_object_id = primitive_object_id(primitive);
+        if actual_object_id != entry.primitive_object_id {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "PRIMITIVEOBJECTID".to_owned(),
+                detail: format!(
+                    "extended info at index {idx} is {:?} but sidecar says {:?}",
+                    actual_object_id, entry.primitive_object_id
+                ),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -358,25 +424,27 @@ mod tests {
     }
 
     #[test]
-    fn validate_primitive_guids_empty_is_ok() {
+    fn parse_primitive_guids_empty_is_ok() {
         let header = make_header(0);
-        validate_primitive_guids(&header, &[]).unwrap();
+        let entries = parse_primitive_guids(&header, &[]).unwrap();
+        assert!(entries.is_empty());
     }
 
     #[test]
-    fn validate_primitive_guids_with_entries() {
+    fn parse_primitive_guids_with_entries() {
         let header = make_header(2);
         // 2 entries * 24 bytes = 48 bytes
         let data = vec![0u8; 48];
-        validate_primitive_guids(&header, &data).unwrap();
+        let entries = parse_primitive_guids(&header, &data).unwrap();
+        assert_eq!(entries.len(), 2);
     }
 
     #[test]
-    fn validate_primitive_guids_wrong_size_returns_error() {
+    fn parse_primitive_guids_wrong_size_returns_error() {
         let header = make_header(1);
         // 1 entry expects 24 bytes, provide only 10
         let data = vec![0u8; 10];
-        let err = validate_primitive_guids(&header, &data).unwrap_err();
+        let err = parse_primitive_guids(&header, &data).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidParamValue { .. }));
     }
 }

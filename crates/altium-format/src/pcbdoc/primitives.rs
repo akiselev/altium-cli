@@ -155,21 +155,12 @@ pub(crate) struct PcbText {
 }
 
 #[derive(Debug)]
-pub(crate) struct PcbRawPrimitive {
-    pub(crate) common: PcbPrimitiveCommon,
-    pub(crate) raw_payload: Vec<u8>,
-}
-
-#[derive(Debug)]
 pub(crate) enum PcbPrimitive {
     Arc(PcbArc),
     Track(PcbTrack),
     Fill(PcbFill),
     Pad(PcbPad),
-    Via(PcbRawPrimitive),
     Text(PcbText),
-    Region(PcbRawPrimitive),
-    ComponentBody(PcbRawPrimitive),
 }
 
 #[derive(Debug)]
@@ -246,14 +237,24 @@ fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8]) -> Result<Pcb
             detail: "Pad parsing requires 6-subrecord framing; reached single-payload path"
                 .to_owned(),
         }),
-        PcbObjectId::Via => parse_raw(payload).map(PcbPrimitive::Via),
+        PcbObjectId::Via => Err(AltiumFormatError::InvalidParamValue {
+            key: "Vias6/Data".to_owned(),
+            detail: "Via parsing is not implemented without raw payload passthrough".to_owned(),
+        }),
         PcbObjectId::Text => Err(AltiumFormatError::InvalidParamValue {
             key: "Texts/Data".to_owned(),
             detail: "Text parsing requires 2-subrecord framing; reached single-payload path"
                 .to_owned(),
         }),
-        PcbObjectId::Region => parse_raw(payload).map(PcbPrimitive::Region),
-        PcbObjectId::ComponentBody => parse_raw(payload).map(PcbPrimitive::ComponentBody),
+        PcbObjectId::Region => Err(AltiumFormatError::InvalidParamValue {
+            key: "Regions6/Data".to_owned(),
+            detail: "Region parsing is not implemented without raw payload passthrough".to_owned(),
+        }),
+        PcbObjectId::ComponentBody => Err(AltiumFormatError::InvalidParamValue {
+            key: "ComponentBodies6/Data".to_owned(),
+            detail: "ComponentBody parsing is not implemented without raw payload passthrough"
+                .to_owned(),
+        }),
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
     }
 }
@@ -869,7 +870,15 @@ fn parse_pad_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     let mut per_layer_overrides = [0u8; 32];
     per_layer_overrides.copy_from_slice(reader.read_bytes(32)?);
 
-    let extended_stack_data = reader.read_bytes(reader.remaining())?.to_vec();
+    if reader.remaining() != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad stack subrecord".to_owned(),
+            detail: format!(
+                "unsupported trailing bytes after known stack layout: {} bytes remain",
+                reader.remaining()
+            ),
+        });
+    }
 
     Ok(Some(PcbPadStackData {
         inner_size_x,
@@ -885,16 +894,5 @@ fn parse_pad_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
         alt_shape,
         corner_radius_pct,
         per_layer_overrides,
-        extended_stack_data,
     }))
-}
-
-fn parse_raw(data: &[u8]) -> Result<PcbRawPrimitive> {
-    let mut reader = BinaryReader::new(data);
-    let common = parse_common_header(&mut reader)?;
-    let raw_payload = reader.read_bytes(reader.remaining())?.to_vec();
-    Ok(PcbRawPrimitive {
-        common,
-        raw_payload,
-    })
 }

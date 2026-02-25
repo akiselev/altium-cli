@@ -11,6 +11,7 @@ pub fn lower_composed_to_pcbdoc_low(composed_ops: &[ComposedOp]) -> crate::Resul
                 selector: v.selector.clone(),
             })),
             ComposedOp::AddTrack(v) => out.push(PcbDocLowOp::AddTrack(v.0.clone())),
+            ComposedOp::AddVia(v) => out.push(PcbDocLowOp::AddVia(v.0.clone())),
             _ => {
                 return Err(crate::AltiumOperationError::Unimplemented(
                     "op is not supported for pcbdoc domain".to_owned(),

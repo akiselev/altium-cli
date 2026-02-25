@@ -88,6 +88,8 @@ pub enum EntityType {
     Implementation,
     Footprint,
     Track,
+    Via,
+    Pad,
     Other,
 }
 

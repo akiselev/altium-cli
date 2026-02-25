@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use altium_format_types::{Coord, CoordPoint, PcbFlags, PcbObjectId, V6Layer, V7Layer};
+use altium_format_types::pcb::TentingMode;
+use altium_format_types::{
+    Coord, CoordPoint, MaskExpansionMode, PcbFlags, PcbObjectId, PlaneConnectionStyle,
+    TCacheState, V6Layer, V7Layer,
+};
 use indexmap::IndexMap;
 
 use crate::pcbdoc::primitives::{
@@ -11,7 +15,7 @@ use crate::pcbdoc::records::PrimitiveSectionKind;
 use crate::pcbdoc::{PcbDoc, PcbDocSection, PrimitiveSectionData};
 use crate::pcblib::library::PcbLibComponentTocEntry;
 use crate::pcblib::section_keys::resolve_footprint_key;
-use crate::pcblib::{PcbFootprint, PcbPrimitive, PcbPrimitiveCommon, PcbTrack, PcbLib};
+use crate::pcblib::{PcbFootprint, PcbLib, PcbPrimitive, PcbPrimitiveCommon, PcbTrack, PcbVia};
 use crate::sch_ops_core::{EntityRef, EntityType, OpResult, RefExpr, RefRoot, RefStep, Value};
 use crate::{AltiumFormatError, Result};
 
@@ -32,6 +36,17 @@ pub struct AddTrackOp {
 }
 
 #[derive(Debug, Clone)]
+pub struct AddViaOp {
+    pub opid: String,
+    pub footprint_ref: Option<RefExpr>,
+    pub at: CoordPoint,
+    pub diameter: Option<Coord>,
+    pub hole_size: Option<Coord>,
+    pub from_layer: Option<String>,
+    pub to_layer: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AddFootprintOp {
     pub opid: String,
     pub id: Option<String>,
@@ -44,6 +59,7 @@ pub struct AddFootprintOp {
 pub enum PcbDocLowOp {
     Query(QueryOp),
     AddTrack(AddTrackOp),
+    AddVia(AddViaOp),
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +67,7 @@ pub enum PcbLibLowOp {
     Query(QueryOp),
     AddFootprint(AddFootprintOp),
     AddTrack(AddTrackOp),
+    AddVia(AddViaOp),
 }
 
 pub fn apply_pcbdoc_low_ops(doc: &mut PcbDoc, ops: &[PcbDocLowOp]) -> Result<Vec<OpResult>> {
@@ -59,6 +76,7 @@ pub fn apply_pcbdoc_low_ops(doc: &mut PcbDoc, ops: &[PcbDocLowOp]) -> Result<Vec
         let result = match op {
             PcbDocLowOp::Query(v) => pcbdoc_query(doc, v)?,
             PcbDocLowOp::AddTrack(v) => pcbdoc_add_track(doc, v)?,
+            PcbDocLowOp::AddVia(v) => pcbdoc_add_via(doc, v)?,
         };
         out.push(result);
     }
@@ -73,6 +91,7 @@ pub fn apply_pcblib_low_ops(lib: &mut PcbLib, ops: &[PcbLibLowOp]) -> Result<Vec
             PcbLibLowOp::Query(v) => pcblib_query(lib, v)?,
             PcbLibLowOp::AddFootprint(v) => pcblib_add_footprint(lib, v)?,
             PcbLibLowOp::AddTrack(v) => pcblib_add_track(lib, v, &ctx)?,
+            PcbLibLowOp::AddVia(v) => pcblib_add_via(lib, v, &ctx)?,
         };
         ctx.last_opid = Some(result.opid.clone());
         ctx.results.insert(result.opid.clone(), result.clone());
@@ -152,6 +171,38 @@ fn pcbdoc_track_refs(doc: &PcbDoc, selector: &str) -> Result<Vec<EntityRef>> {
     Ok(refs)
 }
 
+fn pcbdoc_primitive_refs(
+    doc: &PcbDoc,
+    selector: &str,
+    kind: PrimitiveSectionKind,
+    entity_type: EntityType,
+    prefix: &str,
+) -> Result<Vec<EntityRef>> {
+    if selector != prefix {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "selector".to_owned(),
+            detail: format!("unsupported pcbdoc query selector: {selector}"),
+        });
+    }
+    let mut refs = Vec::new();
+    for (sidx, section) in doc.sections.iter().enumerate() {
+        if let PcbDocSection::Primitive(p) = section {
+            if p.kind != kind {
+                continue;
+            }
+            for ridx in 0..p.records.len() {
+                refs.push(EntityRef {
+                    domain: "PcbDoc".to_owned(),
+                    entity_type: entity_type.clone(),
+                    id: format!("pcbdoc:{prefix}:{sidx}:{ridx}"),
+                    display_path: format!("{prefix}[{ridx}]"),
+                });
+            }
+        }
+    }
+    Ok(refs)
+}
+
 fn pcblib_refs(lib: &PcbLib, selector: &str) -> Result<Vec<EntityRef>> {
     if selector == "footprint" {
         return Ok(lib
@@ -205,6 +256,52 @@ fn pcblib_refs(lib: &PcbLib, selector: &str) -> Result<Vec<EntityRef>> {
         return Ok(refs);
     }
 
+    let selector_fp = parse_selector_value(selector, "via", "footprint");
+    if selector == "via" || selector_fp.is_some() {
+        let mut refs = Vec::new();
+        for (fidx, fp) in lib.footprints.iter().enumerate() {
+            if let Some(want) = &selector_fp {
+                if fp.display_name != *want {
+                    continue;
+                }
+            }
+            for (pidx, prim) in fp.primitives.iter().enumerate() {
+                if matches!(prim, PcbPrimitive::Via(_)) {
+                    refs.push(EntityRef {
+                        domain: "PcbLib".to_owned(),
+                        entity_type: EntityType::Via,
+                        id: format!("pcblib:via:{fidx}:{pidx}"),
+                        display_path: format!("{}.via[{pidx}]", fp.display_name),
+                    });
+                }
+            }
+        }
+        return Ok(refs);
+    }
+
+    let selector_fp = parse_selector_value(selector, "pad", "footprint");
+    if selector == "pad" || selector_fp.is_some() {
+        let mut refs = Vec::new();
+        for (fidx, fp) in lib.footprints.iter().enumerate() {
+            if let Some(want) = &selector_fp {
+                if fp.display_name != *want {
+                    continue;
+                }
+            }
+            for (pidx, prim) in fp.primitives.iter().enumerate() {
+                if matches!(prim, PcbPrimitive::Pad(_)) {
+                    refs.push(EntityRef {
+                        domain: "PcbLib".to_owned(),
+                        entity_type: EntityType::Pad,
+                        id: format!("pcblib:pad:{fidx}:{pidx}"),
+                        display_path: format!("{}.pad[{pidx}]", fp.display_name),
+                    });
+                }
+            }
+        }
+        return Ok(refs);
+    }
+
     Err(AltiumFormatError::InvalidParamValue {
         key: "selector".to_owned(),
         detail: format!("unsupported pcblib query selector: {selector}"),
@@ -212,7 +309,30 @@ fn pcblib_refs(lib: &PcbLib, selector: &str) -> Result<Vec<EntityRef>> {
 }
 
 fn pcbdoc_query(doc: &PcbDoc, op: &QueryOp) -> Result<OpResult> {
-    let refs = pcbdoc_track_refs(doc, &op.selector)?;
+    let refs = if op.selector == "track" {
+        pcbdoc_track_refs(doc, &op.selector)?
+    } else if op.selector == "via" {
+        pcbdoc_primitive_refs(
+            doc,
+            &op.selector,
+            PrimitiveSectionKind::Vias6,
+            EntityType::Via,
+            "via",
+        )?
+    } else if op.selector == "pad" {
+        pcbdoc_primitive_refs(
+            doc,
+            &op.selector,
+            PrimitiveSectionKind::Pads6,
+            EntityType::Pad,
+            "pad",
+        )?
+    } else {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "selector".to_owned(),
+            detail: format!("unsupported pcbdoc query selector: {}", op.selector),
+        });
+    };
     let primary = if refs.len() == 1 {
         refs.first().cloned()
     } else {
@@ -247,6 +367,27 @@ fn ensure_track_section(doc: &mut PcbDoc) -> &mut PrimitiveSectionData {
                 kind: PrimitiveSectionKind::Tracks6,
                 records: Vec::new(),
             }));
+        doc.sections.len() - 1
+    };
+    match &mut doc.sections[idx] {
+        PcbDocSection::Primitive(p) => p,
+        _ => unreachable!("created section must be primitive"),
+    }
+}
+
+fn ensure_primitive_section(doc: &mut PcbDoc, kind: PrimitiveSectionKind) -> &mut PrimitiveSectionData {
+    let existing = doc.sections.iter().position(|section| {
+        if let PcbDocSection::Primitive(p) = section {
+            p.kind == kind
+        } else {
+            false
+        }
+    });
+    let idx = if let Some(idx) = existing {
+        idx
+    } else {
+        doc.sections
+            .push(PcbDocSection::Primitive(PrimitiveSectionData { kind, records: Vec::new() }));
         doc.sections.len() - 1
     };
     match &mut doc.sections[idx] {
@@ -294,6 +435,21 @@ fn pcbdoc_add_track(doc: &mut PcbDoc, op: &AddTrackOp) -> Result<OpResult> {
     Ok(op_result("add_track", &op.opid, Some(r), vec![]))
 }
 
+fn parse_layer_pair(from: Option<&str>, to: Option<&str>) -> Result<(V6Layer, V6Layer)> {
+    let from = parse_layer_name(from)?;
+    let to = parse_layer_name(to)?;
+    Ok((from, to))
+}
+
+fn pcbdoc_add_via(doc: &mut PcbDoc, op: &AddViaOp) -> Result<OpResult> {
+    let _ = (doc, op);
+    Err(AltiumFormatError::InvalidParamValue {
+        key: "pcbdoc.add_via".to_owned(),
+        detail: "PcbDoc via low-op is disabled until typed Via parsing/serialization is implemented"
+            .to_owned(),
+    })
+}
+
 fn pcblib_add_footprint(lib: &mut PcbLib, op: &AddFootprintOp) -> Result<OpResult> {
     if lib.footprints.iter().any(|fp| fp.display_name == op.name) {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -318,6 +474,8 @@ fn pcblib_add_footprint(lib: &mut PcbLib, op: &AddFootprintOp) -> Result<OpResul
         item_guid: String::new(),
         revision_guid: String::new(),
         primitives: Vec::new(),
+        extended_primitive_info: Vec::new(),
+        primitive_guids: Vec::new(),
     });
     lib.component_toc.push(PcbLibComponentTocEntry {
         name: op.name.clone(),
@@ -471,4 +629,80 @@ fn pcblib_add_track(lib: &mut PcbLib, op: &AddTrackOp, ctx: &PcbLibExecCtx) -> R
         display_path: format!("{}.track[{pidx}]", fp.display_name),
     };
     Ok(op_result("add_track", &op.opid, Some(r), vec![]))
+}
+
+fn pcblib_add_via(lib: &mut PcbLib, op: &AddViaOp, ctx: &PcbLibExecCtx) -> Result<OpResult> {
+    let idx = resolve_pcblib_footprint_index(lib, &op.footprint_ref, ctx)?;
+    let (from_layer, to_layer) = parse_layer_pair(op.from_layer.as_deref(), op.to_layer.as_deref())?;
+    let fp = &mut lib.footprints[idx];
+    let diameter = op.diameter.unwrap_or_else(|| Coord::from_mils(20));
+    let hole_size = op.hole_size.unwrap_or_else(|| Coord::from_mils(8));
+    let prim = PcbPrimitive::Via(PcbVia {
+        common: PcbPrimitiveCommon {
+            layer: from_layer,
+            pad_byte: 0,
+            flags: PcbFlags::new(0),
+            net_index: -1,
+            polygon_index: 0,
+            component_index: 0,
+            unknown: 0,
+        },
+        location: op.at,
+        diameter,
+        hole_size,
+        from_layer,
+        to_layer,
+        via_properties_version: 0,
+        thermal_relief_air_gap: Coord::ZERO,
+        thermal_relief_conductor_count: 0,
+        thermal_relief_rotation_code: 0,
+        thermal_relief_conductor_width: Coord::ZERO,
+        power_plane_relief_expansion: Coord::ZERO,
+        power_plane_clearance: Coord::ZERO,
+        paste_mask_expansion: Coord::ZERO,
+        solder_mask_expansion_front: Coord::ZERO,
+        planes: 0,
+        plane_connection_style_valid: TCacheState::Invalid,
+        relief_conductor_width_valid: TCacheState::Invalid,
+        relief_entries_valid: TCacheState::Invalid,
+        relief_air_gap_valid: TCacheState::Invalid,
+        power_plane_relief_expansion_valid: TCacheState::Invalid,
+        paste_mask_expansion_valid: TCacheState::Invalid,
+        solder_mask_expansion_manual: false,
+        solder_mask_expansion_valid: TCacheState::Invalid,
+        power_plane_clearance_valid: TCacheState::Invalid,
+        planes_valid: TCacheState::Invalid,
+        plane_connection_style: PlaneConnectionStyle::NoConnect,
+        solder_mask_expansion_mode: MaskExpansionMode::NoMask,
+        paste_mask_expansion_mode: MaskExpansionMode::NoMask,
+        tenting_mode: TentingMode::None,
+        via_mode: 0,
+        diameters_per_layer: [Coord::ZERO; 32],
+        layer_enum_index: 0,
+        stack_start_layer: 0,
+        stack_end_layer: 0,
+        extension_coord_209: Coord::ZERO,
+        extension_coord_213: Coord::ZERO,
+        extension_coord_217: Coord::ZERO,
+        extension_coord_221: Coord::ZERO,
+        extension_coord_225: Coord::ZERO,
+        extension_coord_229: Coord::ZERO,
+        extension_coord_233: Coord::ZERO,
+        extension_coord_237: Coord::ZERO,
+        solder_mask_expansion_linked: false,
+        solder_mask_expansion_back: Coord::ZERO,
+        pos_tolerance: Coord::ZERO,
+        neg_tolerance: Coord::ZERO,
+        layer_diameter_overrides: Vec::new(),
+        unique_id: None,
+    });
+    fp.primitives.push(prim);
+    let pidx = fp.primitives.len() - 1;
+    let r = EntityRef {
+        domain: "PcbLib".to_owned(),
+        entity_type: EntityType::Via,
+        id: format!("pcblib:via:{idx}:{pidx}"),
+        display_path: format!("{}.via[{pidx}]", fp.display_name),
+    };
+    Ok(op_result("add_via", &op.opid, Some(r), vec![]))
 }

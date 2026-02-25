@@ -32,6 +32,7 @@ pub enum HighOp {
     AddTextFrame(AddTextFrameHighOp),
     AddImage(AddImageHighOp),
     AddTrack(AddTrackHighOp),
+    AddVia(AddViaHighOp),
     AddFootprint(AddFootprintHighOp),
 }
 
@@ -557,6 +558,23 @@ pub struct AddTrackHighOp {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AddViaHighOp {
+    #[serde(default)]
+    pub opid: Option<String>,
+    #[serde(default)]
+    pub footprint_ref: Option<sch_ops_core::RefExpr>,
+    pub at: (i32, i32),
+    #[serde(default)]
+    pub diameter_mils: Option<i32>,
+    #[serde(default)]
+    pub hole_size_mils: Option<i32>,
+    #[serde(default)]
+    pub from_layer: Option<String>,
+    #[serde(default)]
+    pub to_layer: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AddFootprintHighOp {
     #[serde(default)]
     pub opid: Option<String>,
@@ -636,6 +654,7 @@ pub enum ComposedOp {
     AddTextFrame(AddTextFrameNode),
     AddImage(AddImageNode),
     AddTrack(AddTrackNode),
+    AddVia(AddViaNode),
     AddFootprint(AddFootprintNode),
 }
 
@@ -789,6 +808,8 @@ pub struct AddTextFrameNode(pub sch_ops_core::AddTextFrameOp);
 pub struct AddImageNode(pub sch_ops_core::AddImageOp);
 #[derive(Debug, Clone)]
 pub struct AddTrackNode(pub altium_format::pcb_ops_core::AddTrackOp);
+#[derive(Debug, Clone)]
+pub struct AddViaNode(pub altium_format::pcb_ops_core::AddViaOp);
 #[derive(Debug, Clone)]
 pub struct AddFootprintNode(pub altium_format::pcb_ops_core::AddFootprintOp);
 

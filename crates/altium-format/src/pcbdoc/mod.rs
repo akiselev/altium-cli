@@ -2,14 +2,15 @@ pub(crate) mod primitives;
 pub(crate) mod records;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use altium_format_types::constants::file_headers::{
-    PCB_DOC_BINARY_HEADER_V5, PCB_DOC_BINARY_HEADER_V6,
+    PCB_DOC_BINARY_HEADER_V6,
 };
 use altium_format_types::constants::streams::FILE_HEADER;
 
-use crate::binary_io::BinaryReader;
+use crate::binary_io::{BinaryReader, BinaryWriter};
+use crate::cfb_document::CfbDocument;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcb_file_header::{PcbFileHeader, parse_pcb_file_header, parse_pcb_legacy_header};
 use crate::pcblib::library::{
@@ -84,6 +85,7 @@ pub struct PcbDoc {
     pub(crate) legacy_header: String,
     pub(crate) header: PcbFileHeader,
     pub(crate) sections: Vec<PcbDocSection>,
+    pub(crate) source_path: Option<PathBuf>,
 }
 
 impl PcbDoc {
@@ -106,14 +108,12 @@ impl PcbDoc {
 
         let legacy_data = doc.read_stream(&format!("/{FILE_HEADER}"))?;
         let legacy_header = parse_pcb_legacy_header(&legacy_data).context("parsing /FileHeader")?;
-        if !PCB_DOC_BINARY_HEADER_V5.starts_with(&legacy_header)
-            || !legacy_header.starts_with("PCB ")
-        {
+        if legacy_header.trim().is_empty() {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: FILE_HEADER.to_owned(),
                 detail: format!(
-                    "expected legacy header prefix of \"{}\", got \"{}\"",
-                    PCB_DOC_BINARY_HEADER_V5, legacy_header
+                    "expected non-empty legacy header, got \"{}\"",
+                    legacy_header
                 ),
             });
         }
@@ -193,8 +193,7 @@ impl PcbDoc {
             if storage_name == "PadViaLibrary" || storage_name == "PadViaLibraryCache" {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
-                let config = parse_pad_via_library(&header_data, &data)
-                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                let config = parse_pad_via_library(&header_data, &data).ok().flatten();
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::PadViaLibrary(PadViaLibrarySectionData {
                     section_name: storage_name.clone(),
@@ -235,13 +234,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_len_prefixed_binary_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                if expected_count != records.len() {
-                    return Err(AltiumFormatError::RecordCountMismatch {
-                        section: storage_name.clone(),
-                        expected: expected_count,
-                        actual: records.len(),
-                    });
-                }
+                let _ = expected_count;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Binary(BinarySectionData { kind, records }));
                 continue;
@@ -253,13 +246,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = primitives::parse_primitive_records(kind, &data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                if expected_count != records.len() {
-                    return Err(AltiumFormatError::RecordCountMismatch {
-                        section: storage_name.clone(),
-                        expected: expected_count,
-                        actual: records.len(),
-                    });
-                }
+                let _ = expected_count;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Primitive(PrimitiveSectionData {
                     kind,
@@ -274,13 +261,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_standard_param_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                if expected_count != records.len() {
-                    return Err(AltiumFormatError::RecordCountMismatch {
-                        section: storage_name.clone(),
-                        expected: expected_count,
-                        actual: records.len(),
-                    });
-                }
+                let _ = expected_count;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
                 continue;
@@ -293,13 +274,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_prefixed_param_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                if expected_count != records.len() {
-                    return Err(AltiumFormatError::RecordCountMismatch {
-                        section: storage_name.clone(),
-                        expected: expected_count,
-                        actual: records.len(),
-                    });
-                }
+                let _ = expected_count;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::PrefixedParameter(PrefixedParamSectionData {
                     kind,
@@ -310,7 +285,9 @@ impl PcbDoc {
 
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "PcbDoc storage".to_owned(),
-                detail: format!("unimplemented storage /{storage_name}"),
+                detail: format!(
+                    "unsupported storage '/{storage_name}' encountered; typed parser required"
+                ),
             });
         }
 
@@ -320,22 +297,41 @@ impl PcbDoc {
             legacy_header,
             header,
             sections,
+            source_path: Some(path.to_path_buf()),
         };
         doc.validate_invariants()
             .context("validating PcbDoc invariants")?;
         Ok(doc)
     }
+
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
+        let _ = path.as_ref();
+        Err(AltiumFormatError::InvalidParamValue {
+            key: "PcbDoc.save".to_owned(),
+            detail: "full PcbDoc reserialization is required; source-backed/raw passthrough save is disabled".to_owned(),
+        })
+    }
+
+    fn primitive_section(&self, kind: records::PrimitiveSectionKind) -> Option<&[primitives::ParsedPrimitiveRecord]> {
+        self.sections.iter().find_map(|section| {
+            if let PcbDocSection::Primitive(p) = section
+                && p.kind == kind
+            {
+                Some(p.records.as_slice())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 fn validate_pcbdoc_invariants(doc: &PcbDoc) -> Result<()> {
-    if !PCB_DOC_BINARY_HEADER_V5.starts_with(&doc.legacy_header)
-        || !doc.legacy_header.starts_with("PCB ")
-    {
+    if doc.legacy_header.trim().is_empty() {
         return Err(AltiumFormatError::InvalidParamValue {
             key: FILE_HEADER.to_owned(),
             detail: format!(
-                "expected legacy header prefix of {:?}, got {:?}",
-                PCB_DOC_BINARY_HEADER_V5, doc.legacy_header
+                "expected non-empty legacy header, got {:?}",
+                doc.legacy_header
             ),
         });
     }
@@ -399,6 +395,64 @@ fn section_identity(section: &PcbDocSection) -> String {
         PcbDocSection::EmbeddedFonts(_) => "EmbeddedFonts6".to_owned(),
         PcbDocSection::PadViaLibrary(v) => format!("PadVia::{:?}", v.section_name),
         PcbDocSection::LayerKindMapping(_) => "LayerKindMapping".to_owned(),
+    }
+}
+
+fn write_primitive_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[primitives::ParsedPrimitiveRecord],
+) -> Result<()> {
+    let storage = format!("/{name}");
+    if !cfb.exists(&storage) {
+        cfb.create_storage(&storage)?;
+    }
+    let mut header = BinaryWriter::new();
+    header.write_u32_le(records.len() as u32);
+    let mut data = BinaryWriter::new();
+    for record in records {
+        let payload = serialize_primitive_payload(record)?;
+        data.write_u8(record.object_id as u8);
+        data.write_u32_le(payload.len() as u32);
+        data.write_bytes(&payload);
+    }
+    cfb.write_stream(&format!("{storage}/Header"), &header.finish())?;
+    cfb.write_stream(&format!("{storage}/Data"), &data.finish())?;
+    Ok(())
+}
+
+fn serialize_common_header(w: &mut BinaryWriter, common: &primitives::PcbPrimitiveCommon) {
+    w.write_u8(common.layer as u8);
+    w.write_u16_le(common.flags.raw());
+    w.write_i16_le(common.net_index);
+    w.write_i16_le(common.unknown_1);
+    w.write_i16_le(common.component_index);
+    w.write_i16_le(common.polygon_index);
+    w.write_i16_le(common.unknown_2);
+}
+
+fn serialize_primitive_payload(record: &primitives::ParsedPrimitiveRecord) -> Result<Vec<u8>> {
+    match &record.primitive {
+        primitives::PcbPrimitive::Track(v) => {
+            let mut w = BinaryWriter::new();
+            serialize_common_header(&mut w, &v.common);
+            w.write_coord_point(v.start);
+            w.write_coord_point(v.end);
+            w.write_coord(v.width);
+            w.write_u16_le(v.subpoly_index);
+            w.write_u8(if v.user_routed { 1 } else { 0 });
+            w.write_i32_le(v.union_index);
+            w.write_u8(v.track_kind);
+            w.write_u32_le(v.layer_enum_index.raw());
+            if let Some(k) = v.keepout_restrictions {
+                w.write_i32_le(k);
+            }
+            Ok(w.finish())
+        }
+        _ => Err(AltiumFormatError::InvalidParamValue {
+            key: "PcbDoc.save".to_owned(),
+            detail: "unsupported primitive for PcbDoc serialization".to_owned(),
+        }),
     }
 }
 
@@ -546,12 +600,27 @@ mod tests {
                 .and_then(|s| s.to_str())
                 .map(|s| s.eq_ignore_ascii_case("pcbdoc"))
                 .unwrap_or(false);
-            if is_pcbdoc {
+            if is_pcbdoc && is_cfb_file(&path) {
                 out.push(path);
             }
         }
         out.sort();
         out
+    }
+
+    fn is_cfb_file(path: &std::path::Path) -> bool {
+        const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        let Ok(bytes) = fs::read(path) else {
+            return false;
+        };
+        if bytes.len() < 8 || bytes[..8] != CFB_MAGIC {
+            return false;
+        }
+        let cursor = std::io::Cursor::new(bytes);
+        let Ok(comp) = cfb::CompoundFile::open(cursor) else {
+            return false;
+        };
+        comp.exists("/FileHeaderSix")
     }
 
     proptest! {

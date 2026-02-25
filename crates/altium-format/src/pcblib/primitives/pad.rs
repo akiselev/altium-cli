@@ -132,8 +132,15 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
         false
     };
 
-    // Post-172 variable data (stack extension, if present)
-    let post_172_data = reader.read_bytes(reader.remaining())?.to_vec();
+    if reader.remaining() != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad subrecord 4".to_owned(),
+            detail: format!(
+                "unsupported trailing bytes after known pad layout: {} bytes remain",
+                reader.remaining()
+            ),
+        });
+    }
 
     // --- Subrecord 5: per-layer stack data ---
     let stack_data = parse_stack_subrecord(subrecords[5])?;
@@ -174,7 +181,6 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
         hole_negative_tolerance,
         unknown_170,
         has_stack_data,
-        post_172_data,
         stack_data,
         unique_id: None,
     })
@@ -301,7 +307,15 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     let mut per_layer_overrides = [0u8; 32];
     per_layer_overrides.copy_from_slice(reader.read_bytes(32)?);
 
-    let extended_stack_data = reader.read_bytes(reader.remaining())?.to_vec();
+    if reader.remaining() != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad subrecord 5".to_owned(),
+            detail: format!(
+                "unsupported trailing bytes after known stack layout: {} bytes remain",
+                reader.remaining()
+            ),
+        });
+    }
 
     Ok(Some(PcbPadStackData {
         inner_size_x,
@@ -317,7 +331,6 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
         alt_shape,
         corner_radius_pct,
         per_layer_overrides,
-        extended_stack_data,
     }))
 }
 
@@ -445,7 +458,6 @@ mod tests {
         );
         assert_eq!(pad.cache.relief_entries, 4);
         assert!(!pad.has_stack_data);
-        assert!(pad.post_172_data.is_empty());
         assert!(pad.stack_data.is_none());
     }
 
@@ -468,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_pad_with_post_172_data() {
+    fn parse_pad_with_post_172_data_errors() {
         let mut w = BinaryWriter::new();
         write_pad_core(&mut w);
         write_pad_extended(&mut w);
@@ -476,8 +488,11 @@ mod tests {
         main_data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05]);
         let subs = make_pad_subrecords(&main_data);
         let sub_refs: Vec<&[u8]> = subs.iter().map(|s| s.as_slice()).collect();
-        let pad = parse_pad(&sub_refs).unwrap();
-        assert_eq!(pad.post_172_data.len(), 5);
+        let err = parse_pad(&sub_refs);
+        assert!(matches!(
+            err,
+            Err(AltiumFormatError::InvalidParamValue { .. })
+        ));
     }
 
     #[test]

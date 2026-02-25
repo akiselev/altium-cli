@@ -14,6 +14,7 @@ use crate::ops::model::{
     AddEllipticalArcHighOp, AddFootprintHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp,
     AddParameterOp, AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp,
     AddRectangleHighOp, AddRoundRectangleHighOp, AddTextFrameHighOp, AddTrackHighOp,
+    AddViaHighOp,
     EditComponentHighOp, EditRecordHighOp, FootprintMapEntry, FootprintOp, HighOp,
     PinElectricalName, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp, QueryRecordsHighOp,
     RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
@@ -180,23 +181,25 @@ impl<'a> Compiler<'a> {
             OpsDomain::PcbDoc => match op_name {
                 "query" => self.compile_query(op, opid),
                 "add_track" => self.compile_add_track(op, opid),
+                "add_via" => self.compile_add_via(op, opid),
                 _ => Err(ParseError::new(
                     ParseErrorCode::E2001,
                     format!("unsupported op '{op_name}' in pcbdoc domain"),
                     op.name.span,
                 )
-                .with_help("supported ops in pcbdoc domain: query, add_track")),
+                .with_help("supported ops in pcbdoc domain: query, add_track, add_via")),
             },
             OpsDomain::PcbLib => match op_name {
                 "query" => self.compile_query(op, opid),
                 "add_track" => self.compile_add_track(op, opid),
+                "add_via" => self.compile_add_via(op, opid),
                 "add_footprint" => self.compile_add_footprint(op, opid),
                 _ => Err(ParseError::new(
                     ParseErrorCode::E2001,
                     format!("unsupported op '{op_name}' in pcblib domain"),
                     op.name.span,
                 )
-                .with_help("supported ops in pcblib domain: query, add_track, add_footprint")),
+                .with_help("supported ops in pcblib domain: query, add_track, add_via, add_footprint")),
             },
         }
     }
@@ -1231,6 +1234,51 @@ impl<'a> Compiler<'a> {
             name: self.req_string(&map, "name")?,
             pattern: self.opt_string(&map, "pattern")?,
             description: self.opt_string(&map, "description")?,
+        }))
+    }
+
+    fn compile_add_via(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "footprint_ref",
+                "at",
+                "x_mils",
+                "y_mils",
+                "diameter_mils",
+                "hole_size_mils",
+                "from_layer",
+                "to_layer",
+            ],
+            body.span,
+            "add_via",
+        )?;
+
+        let footprint_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "footprint_ref")?
+        };
+
+        let at = if let Some(v) = self.opt_coord_mils(&map, "at")? {
+            v
+        } else {
+            (
+                self.req_i32_or_dim_mils(&map, "x_mils")?,
+                self.req_i32_or_dim_mils(&map, "y_mils")?,
+            )
+        };
+
+        Ok(HighOp::AddVia(AddViaHighOp {
+            opid,
+            footprint_ref,
+            at,
+            diameter_mils: self.opt_i32_or_dim_mils(&map, "diameter_mils")?,
+            hole_size_mils: self.opt_i32_or_dim_mils(&map, "hole_size_mils")?,
+            from_layer: self.opt_string(&map, "from_layer")?,
+            to_layer: self.opt_string(&map, "to_layer")?,
         }))
     }
 
@@ -2626,6 +2674,7 @@ mod tests {
             HighOp::AddTextFrame(_) => "add_text_frame",
             HighOp::AddImage(_) => "add_image",
             HighOp::AddTrack(_) => "add_track",
+            HighOp::AddVia(_) => "add_via",
             HighOp::AddFootprint(_) => "add_footprint",
         }
     }
@@ -2710,6 +2759,22 @@ query footprint[name="OPS_FP"]
         assert!(matches!(ops[0], HighOp::AddFootprint(_)));
         assert!(matches!(ops[1], HighOp::AddTrack(_)));
         assert!(matches!(ops[2], HighOp::Query(_)));
+    }
+
+    #[test]
+    fn compiles_pcb_add_via_ops() {
+        let src = r#"
+add_via { at: (10, 20), diameter_mils: 24, hole_size_mils: 10, from_layer: "TopLayer", to_layer: "BottomLayer" }
+query via
+"#;
+        let doc_ops = compile_ops_to_high_pcbdoc(src).expect("pcbdoc compile");
+        let lib_ops = compile_ops_to_high_pcblib(src).expect("pcblib compile");
+        assert_eq!(doc_ops.len(), 2);
+        assert_eq!(lib_ops.len(), 2);
+        assert!(matches!(doc_ops[0], HighOp::AddVia(_)));
+        assert!(matches!(lib_ops[0], HighOp::AddVia(_)));
+        assert!(matches!(doc_ops[1], HighOp::Query(_)));
+        assert!(matches!(lib_ops[1], HighOp::Query(_)));
     }
 
     #[test]

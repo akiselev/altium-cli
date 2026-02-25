@@ -9,8 +9,8 @@ use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcblib::PcbFootprint;
 use crate::pcblib::primitives;
 use crate::pcblib::sidecar::{
-    merge_sidecars, parse_extended_primitive_information, parse_unique_id_primitive_information,
-    validate_primitive_guids,
+    merge_sidecars, parse_extended_primitive_information, parse_primitive_guids,
+    parse_unique_id_primitive_information, validate_extended_entries,
 };
 use crate::pcblib::wide_strings::parse_pcblib_wide_strings;
 use crate::tracked_cfb::TrackedCfbDocument;
@@ -64,6 +64,8 @@ pub(crate) fn load_footprint(
         item_guid,
         revision_guid,
         primitives: primitives_vec,
+        extended_primitive_info: Vec::new(),
+        primitive_guids: Vec::new(),
     };
 
     load_sidecars(doc, cfb_key, &mut footprint)
@@ -100,6 +102,10 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;
+    let _grid_sn_guide = params.remove_optional::<String>("GRIDSNGUIDE")?;
+    // Optional smart-union metadata appears in some vendor libraries.
+    let _smart_union_storage = params.remove_optional::<String>("SMARTUNIONSSTORAGE")?;
+    let _smart_union_items = params.remove_prefixed("SMARTUNION_");
     params.assert_exhausted()?;
     Ok((pattern, height, description, item_guid, revision_guid))
 }
@@ -146,12 +152,8 @@ fn parse_pcblib_data_stream(data: &[u8]) -> Result<(String, Vec<crate::pcblib::P
     let mut name_block = reader.sub_reader(block_len)?;
     let str_len = name_block.read_u8()? as usize;
     let name_bytes = name_block.read_bytes(str_len)?;
-    let pattern_name = std::str::from_utf8(name_bytes)
-        .map_err(|e| AltiumFormatError::InvalidParamValue {
-            key: "pattern_name".to_owned(),
-            detail: format!("non-UTF8 pattern name: {e}"),
-        })?
-        .to_owned();
+    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(name_bytes);
+    let pattern_name = decoded.into_owned();
     name_block.assert_exhausted()?;
 
     let mut records = Vec::new();
@@ -163,8 +165,8 @@ fn parse_pcblib_data_stream(data: &[u8]) -> Result<(String, Vec<crate::pcblib::P
 
         let mut subrecords: Vec<&[u8]> = Vec::with_capacity(n_subrecords);
         for _ in 0..n_subrecords {
-            let raw_len = reader.read_u32_le()?;
-            let payload_len = (raw_len & BLOCK_SIZE_MASK) as usize;
+            let encoded_len = reader.read_u32_le()?;
+            let payload_len = (encoded_len & BLOCK_SIZE_MASK) as usize;
             let payload = reader.read_bytes(payload_len)?;
             subrecords.push(payload);
         }
@@ -215,42 +217,51 @@ fn load_sidecars(
     };
 
     // ExtendedPrimitiveInformation: optional Header/Data substorage.
-    if doc.exists(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header")) {
+    let extended_info =
+        if doc.exists(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header")) {
         let header_data =
             doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
         doc.consume_storage(&format!("/{cfb_key}/ExtendedPrimitiveInformation"));
-        parse_extended_primitive_information(&header_data, &data)?;
+        parse_extended_primitive_information(&header_data, &data)?
     } else {
         let _ =
             doc.read_stream_optional(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"))?;
         let _ =
             doc.read_stream_optional(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
-    }
+        vec![]
+    };
+    validate_extended_entries(&footprint.primitives, &extended_info)?;
+    footprint.extended_primitive_info = extended_info;
 
     // PrimitiveGuids: optional Header/Data substorage.
     if doc.exists(&format!("/{cfb_key}/PrimitiveGuids/Header")) {
         let header_data = doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
         doc.consume_storage(&format!("/{cfb_key}/PrimitiveGuids"));
-        validate_primitive_guids(&header_data, &data)?;
+        footprint.primitive_guids = parse_primitive_guids(&header_data, &data)?;
     } else {
         doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Header"))?;
         doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
     }
 
-    // CustomShapes: optional stream present in some footprints (e.g. MLP, WSON packages).
-    // Error if present — the format has not been reverse-engineered yet.
-    let custom_shapes_path = format!("/{cfb_key}/CustomShapes");
-    if let Some(data) = doc.read_stream_optional(&custom_shapes_path)? {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: "CustomShapes".to_owned(),
-            detail: format!(
-                "CustomShapes stream exists ({} bytes) at {custom_shapes_path}; \
-                 parser not yet implemented",
-                data.len()
-            ),
-        });
+    // Unsupported sidecars must fail hard until fully implemented.
+    for stream_name in [
+        "CustomShapes",
+        "CustomMaskShapes",
+        "SharedUnion",
+        "CornerRadiusChamfer",
+    ] {
+        let path = format!("/{cfb_key}/{stream_name}");
+        if let Some(data) = doc.read_stream_optional(&path)? {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: stream_name.to_owned(),
+                detail: format!(
+                    "{stream_name} stream exists at {path} ({} bytes); parser not implemented",
+                    data.len()
+                ),
+            });
+        }
     }
 
     merge_sidecars(&mut footprint.primitives, wide_strings, unique_ids)?;
@@ -363,7 +374,7 @@ mod tests {
         let header_data = make_header_stream(5);
         let data_data = make_data_stream_with_pattern("FP");
 
-        let (pattern, height, description, item_guid, revision_guid) =
+        let (pattern, _height, _description, _item_guid, _revision_guid) =
             parse_parameters_stream(&params_data).unwrap();
         let expected_count = parse_pcb_section_header(&header_data).unwrap() as usize;
         let (data_pattern, primitives_vec) = parse_pcblib_data_stream(&data_data).unwrap();

@@ -89,14 +89,29 @@ pub(crate) fn parse_pcb_legacy_header(data: &[u8]) -> Result<String> {
     }
     let bytes = reader.read_bytes(byte_count)?;
     let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(bytes);
+    reader.assert_exhausted()?;
+    let utf16 = decoded.into_owned();
+    if !had_errors && utf16.starts_with("PCB ") {
+        return Ok(utf16);
+    }
+    // Some observed files store the legacy header payload in single-byte encoding.
+    let (ansi, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+    let ansi = ansi.into_owned();
+    if ansi.starts_with("PCB ") {
+        return Ok(ansi);
+    }
+    let (utf16be, _, _) = encoding_rs::UTF_16BE.decode(bytes);
+    let utf16be = utf16be.into_owned();
+    if utf16be.starts_with("PCB ") {
+        return Ok(utf16be);
+    }
     if had_errors {
         return Err(AltiumFormatError::InvalidParamValue {
             key: FILE_HEADER.to_owned(),
             detail: "UTF-16LE decode error in legacy PCB header".to_owned(),
         });
     }
-    reader.assert_exhausted()?;
-    Ok(decoded.into_owned())
+    Ok(utf16)
 }
 
 #[cfg(test)]

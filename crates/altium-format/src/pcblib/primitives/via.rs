@@ -11,10 +11,6 @@ use crate::pcblib::{PcbVia, PcbViaSection2Entry};
 /// Parsed coverage:
 /// - Core section (31-byte legacy and 246-byte extended formats)
 /// - Section 2 layer-diameter overrides (stride=9 records)
-///
-/// Fail-fast behavior:
-/// - Sections 3-5 are known to exist in AD26 but are not semantically mapped yet.
-///   If present, parsing returns an error instead of preserving opaque bytes.
 pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut reader = BinaryReader::new(data);
     let common = parse_common_header(&mut reader)?;
@@ -70,7 +66,6 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut solder_mask_expansion_back = Coord::ZERO;
 
     let mut layer_diameter_overrides = Vec::new();
-
     let pos_tolerance = Coord::ZERO;
     let neg_tolerance = Coord::ZERO;
 
@@ -149,9 +144,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
 
         if reader.remaining() > 0 {
             return Err(crate::AltiumFormatError::InvalidParamValue {
-                key: "via.section3_5".to_owned(),
+                key: "Via".to_owned(),
                 detail: format!(
-                    "unmapped AD26 Via sections 3-5 present: {} bytes remain",
+                    "unsupported trailing bytes after known via layout: {} bytes remain",
                     reader.remaining()
                 ),
             });
@@ -370,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_via_with_unmapped_sections_returns_error() {
+    fn parse_via_with_unmapped_sections_errors() {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_coord_point(CoordPoint::new(Coord::ZERO, Coord::ZERO));
@@ -414,13 +409,11 @@ mod tests {
         }
 
         let data = w.finish();
-        match parse_via(&data) {
-            Err(AltiumFormatError::InvalidParamValue { key, .. }) => {
-                assert_eq!(key, "via.section3_5");
-            }
-            Ok(_) => panic!("expected via.section3_5 error, got Ok"),
-            Err(other) => panic!("expected via.section3_5 error, got {other}"),
-        }
+        let err = parse_via(&data);
+        assert!(matches!(
+            err,
+            Err(AltiumFormatError::InvalidParamValue { .. })
+        ));
     }
 
     #[test]

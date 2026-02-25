@@ -6,6 +6,7 @@ Rust workspace for reading, writing, and querying Altium Designer files.
 
 
 * **crates/altium-format-derive** Derive macros for serialization code generation
+* **crates/altium-format-types** Raw types types reverse engineered from Altium
 * **crates/altium-format-ops**  High level operations for manipulating Altium files (used by altium-cli)
 * **crates/altium-format**  Core library for Altium file parsing and manipulation
 * **crates/altium-cli**  Command-line tool for file inspection and manipulation
@@ -34,6 +35,27 @@ altium-cli (binary: CLI interface, output formatting)
 capture, no opaque blobs. If our parser encounters data it doesn't understand, that is a
 bug in our code that must be fixed -- never silently skipped. These files control PCB
 fabrication; a silently dropped field could cost thousands of dollars.
+
+## CARDINAL RULE: NEVER RETAIN OPAQUE FORMAT DATA
+
+This rule is non-negotiable and overrides convenience during implementation:
+
+- NEVER add "opaque"/"raw" retention fields for format sections or sidecars
+  (examples of forbidden patterns: `opaque_sidecars`, `raw_*`, `unknown_bytes`,
+  `Vec<u8>` placeholders used to carry undecoded file-format content).
+- NEVER "temporarily" keep sidecar bytes for later reverse engineering.
+- NEVER bypass this by claiming "source-backed save" if bytes are not fully typed and
+  semantically represented in the in-memory model.
+- If a stream/sidecar exists and is not understood:
+  1. reverse engineer it now (C#/Delphi + fixture analysis), and
+  2. implement typed parse + typed serialize, or
+  3. return a hard error with full context.
+- "Parse later" placeholders are forbidden in merged code.
+
+Pre-merge self-check for agents:
+- Search touched code for forbidden escape hatches:
+  `opaque|raw_payload|unknown_bytes|unparsed|todo.*sidecar|Custom.*opaque|retain.*bytes`
+- If found, remove by implementing typed support or restoring hard fail-fast behavior.
 
 **NEVER skip or suppress unconsumed data**: Do NOT mark streams, records, or fields as
 "consumed" without actually parsing them. This includes any form of "skip_known",

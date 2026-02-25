@@ -263,9 +263,7 @@ fn apply_ops(
             let mut doc = PcbDoc::open(path)?;
             let report = apply_ops_source_pcbdoc(&mut doc, &spec_data)?;
             if !dry_run {
-                anyhow::bail!(
-                    "ops apply save is not yet supported for .pcbdoc files; use --dry-run"
-                );
+                doc.save_as(out_path.as_path())?;
             }
             print_apply_report(&report, dry_run, &out_path, report_json)?;
         }
@@ -273,9 +271,7 @@ fn apply_ops(
             let mut lib = PcbLib::open(path)?;
             let report = apply_ops_source_pcblib(&mut lib, &spec_data)?;
             if !dry_run {
-                anyhow::bail!(
-                    "ops apply save is not yet supported for .pcblib files; use --dry-run"
-                );
+                lib.save_as(out_path.as_path())?;
             }
             print_apply_report(&report, dry_run, &out_path, report_json)?;
         }
