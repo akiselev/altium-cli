@@ -74,6 +74,9 @@ pub struct DiffArgs {
     /// Filter comparison to a single stream
     #[arg(long)]
     stream: Option<String>,
+    /// Use semantic diff (order-agnostic params, embedded object decompression)
+    #[arg(long)]
+    semantic: bool,
 }
 
 #[derive(Args)]
@@ -226,7 +229,11 @@ pub fn run(sub: CfbSubcommand) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         CfbSubcommand::Diff(args) => {
-            let identical = cmd_diff(&args)?;
+            let identical = if args.semantic {
+                cmd_diff_semantic(&args)?
+            } else {
+                cmd_diff(&args)?
+            };
             Ok(if identical {
                 ExitCode::SUCCESS
             } else {
@@ -573,6 +580,25 @@ fn cmd_diff(args: &DiffArgs) -> anyhow::Result<bool> {
     }
 
     Ok(!any_diff)
+}
+
+fn cmd_diff_semantic(args: &DiffArgs) -> anyhow::Result<bool> {
+    let report =
+        altium_format::test_utils::diff_cfb_files_semantic(&args.file1, &args.file2)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if report.is_identical() {
+        println!("No semantic differences.");
+        return Ok(true);
+    }
+
+    if args.verbose {
+        print!("{}", report.render());
+    } else {
+        print!("{}", report.render_categorized());
+    }
+
+    Ok(false)
 }
 
 fn print_hex_context(data1: &[u8], data2: &[u8], offset: usize) {

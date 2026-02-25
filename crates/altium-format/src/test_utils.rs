@@ -39,6 +39,71 @@ impl CfbSemanticDiffReport {
         }
         out
     }
+
+    /// Render a categorized report: summary by category, then by stream, then details.
+    pub fn render_categorized(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "CFB semantic diff: {} vs {}",
+            self.file_a.display(),
+            self.file_b.display()
+        );
+
+        if self.issues.is_empty() {
+            let _ = writeln!(out, "  No semantic differences.");
+            return out;
+        }
+
+        // Category summary
+        let mut by_category: BTreeMap<&str, usize> = BTreeMap::new();
+        for issue in &self.issues {
+            *by_category.entry(issue.category_name()).or_default() += 1;
+        }
+        let _ = writeln!(out, "  Total issues: {}", self.issues.len());
+        let _ = writeln!(out, "  By category:");
+        for (cat, count) in &by_category {
+            let _ = writeln!(out, "    {cat}: {count}");
+        }
+
+        // Group by stream path, tracking global index for each issue
+        let mut by_stream: BTreeMap<&str, Vec<(usize, &DiffIssue)>> = BTreeMap::new();
+        for (idx, issue) in self.issues.iter().enumerate() {
+            by_stream
+                .entry(issue.stream_path())
+                .or_default()
+                .push((idx + 1, issue));
+        }
+
+        let _ = writeln!(out, "  By stream ({} streams affected):", by_stream.len());
+        for (stream, issues) in &by_stream {
+            // Sub-summary per stream
+            let mut stream_cats: BTreeMap<&str, usize> = BTreeMap::new();
+            for (_, issue) in issues {
+                *stream_cats.entry(issue.category_name()).or_default() += 1;
+            }
+            let cats_str: Vec<String> = stream_cats
+                .iter()
+                .map(|(cat, count)| format!("{cat}={count}"))
+                .collect();
+            let _ = writeln!(
+                out,
+                "    {stream} ({} issues: {})",
+                issues.len(),
+                cats_str.join(", ")
+            );
+            // Show up to 5 detail lines per stream
+            let shown = issues.len().min(5);
+            for (num, issue) in &issues[..shown] {
+                let _ = writeln!(out, "      [{}] {}", num, issue.render());
+            }
+            if issues.len() > shown {
+                let _ = writeln!(out, "      ... and {} more", issues.len() - shown);
+            }
+        }
+
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -168,6 +233,50 @@ pub enum DiffIssue {
 }
 
 impl DiffIssue {
+    /// Returns a human-readable category label for grouping issues in reports.
+    pub fn category_name(&self) -> &'static str {
+        match self {
+            Self::EntryMissingInA { .. } => "EntryMissingInA",
+            Self::EntryMissingInB { .. } => "EntryMissingInB",
+            Self::EntryKindMismatch { .. } => "EntryKindMismatch",
+            Self::StreamLengthMismatch { .. } => "StreamLengthMismatch",
+            Self::RawByteMismatch { .. } => "RawByteMismatch",
+            Self::BlockParseError { .. } => "BlockParseError",
+            Self::BlockCountMismatch { .. } => "BlockCountMismatch",
+            Self::BlockTypeMismatch { .. } => "BlockTypeMismatch",
+            Self::BlockLengthMismatch { .. } => "BlockLengthMismatch",
+            Self::TextParamParseError { .. } => "TextParamParseError",
+            Self::MissingParamPair { .. } => "MissingParamPair",
+            Self::DuplicateParamPairCountMismatch { .. } => "DuplicateParamPairCountMismatch",
+            Self::UpdatedParamValues { .. } => "UpdatedParamValues",
+            Self::BinaryBlockMismatch { .. } => "BinaryBlockMismatch",
+            Self::EmbeddedObjectIdMismatch { .. } => "EmbeddedObjectIdMismatch",
+            Self::EmbeddedObjectDataMismatch { .. } => "EmbeddedObjectDataMismatch",
+        }
+    }
+
+    /// Returns the stream/entry path this issue pertains to.
+    pub fn stream_path(&self) -> &str {
+        match self {
+            Self::EntryMissingInA { path, .. }
+            | Self::EntryMissingInB { path, .. }
+            | Self::EntryKindMismatch { path, .. }
+            | Self::StreamLengthMismatch { path, .. }
+            | Self::RawByteMismatch { path, .. }
+            | Self::BlockParseError { path, .. }
+            | Self::BlockCountMismatch { path, .. }
+            | Self::BlockTypeMismatch { path, .. }
+            | Self::BlockLengthMismatch { path, .. }
+            | Self::TextParamParseError { path, .. }
+            | Self::MissingParamPair { path, .. }
+            | Self::DuplicateParamPairCountMismatch { path, .. }
+            | Self::UpdatedParamValues { path, .. }
+            | Self::BinaryBlockMismatch { path, .. }
+            | Self::EmbeddedObjectIdMismatch { path, .. }
+            | Self::EmbeddedObjectDataMismatch { path, .. } => path,
+        }
+    }
+
     fn render(&self) -> String {
         match self {
             Self::EntryMissingInA { path, kind } => {

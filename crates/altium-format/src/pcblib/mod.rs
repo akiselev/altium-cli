@@ -57,6 +57,7 @@ pub(crate) struct PcbFootprint {
     pub(crate) description: String,
     pub(crate) item_guid: String,
     pub(crate) revision_guid: String,
+    pub(crate) component_kind: Option<i32>,
     pub(crate) primitives: Vec<PcbPrimitive>,
     pub(crate) extended_primitive_info: Vec<ExtendedPrimitiveInfoEntry>,
     pub(crate) primitive_guids: Vec<PrimitiveGuidEntry>,
@@ -217,7 +218,10 @@ pub(crate) struct PcbText {
     pub(crate) is_bold: bool,
     pub(crate) font_name: String,
     pub(crate) inverted: bool,
+    pub(crate) inverted_tt_text_border: Coord,
     pub(crate) wide_string_index: i32,
+    pub(crate) union_index: i32,
+    pub(crate) is_inverted_rect: bool,
     pub(crate) ttf_text_width: Coord,
     pub(crate) ttf_text_height: Coord,
     pub(crate) font_id: i32,
@@ -1009,6 +1013,9 @@ fn serialize_footprint_parameters(fp: &PcbFootprint) -> Vec<u8> {
     params.insert("DESCRIPTION", fp.description.clone());
     params.insert("ITEMGUID", fp.item_guid.clone());
     params.insert("REVISIONGUID", fp.revision_guid.clone());
+    if let Some(kind) = fp.component_kind {
+        params.insert("COMPONENTKIND", kind.to_string());
+    }
     let data = params.to_bytes();
     let mut w = BinaryWriter::new();
     w.write_u32_le(data.len() as u32);
@@ -1133,9 +1140,10 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     w0.write_u8(0);
     w0.write_wide_string_fixed(&p.font_name, 32);
     w0.write_u8(p.inverted as u8);
-    w0.write_bytes(&[0, 0, 0]);
+    w0.write_coord(p.inverted_tt_text_border);
     w0.write_i32_le(p.wide_string_index);
-    w0.write_bytes(&[0, 0, 0, 0, 0, 0]);
+    w0.write_i32_le(p.union_index);
+    w0.write_u8(p.is_inverted_rect as u8);
     w0.write_coord(p.ttf_text_width);
     w0.write_coord(p.ttf_text_height);
     w0.write_i32_le(p.font_id);

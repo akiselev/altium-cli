@@ -42,9 +42,10 @@ const TEXT_BASE_SIZE: usize = 225;
 ///   45       1    (reserved)
 ///   46-109  64    font_name (UTF-16LE, 32 WideChar fixed buffer)
 ///   110      1    inverted (bool)
-///   111-113  3    (reserved)
-///   114-117  4    wide_string_index (i32)
-///   118-123  6    (reserved)
+///   111-114  4    inverted_tt_text_border (Coord) — IPCB_Text.InvertedTTTextBorder
+///   115-118  4    wide_string_index (i32)
+///   119-122  4    union_index (i32)
+///   123      1    is_inverted_rect (bool) — IPCB_Text.IsInvertedRect
 ///   124-127  4    ttf_text_width (Coord)
 ///   128-131  4    ttf_text_height (Coord)
 ///   132-135  4    font_id (i32)
@@ -110,9 +111,10 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     reader.read_reserved_zero(1)?; // reserved byte 45
     let font_name = reader.read_wide_string_fixed(FONT_NAME_WCHAR_COUNT)?;
     let inverted = reader.read_bool()?;
-    reader.read_reserved_zero(3)?; // reserved bytes 111-113
-    let wide_string_index = reader.read_i32_le()?;
-    reader.read_reserved_zero(6)?; // reserved bytes 118-123
+    let inverted_tt_text_border = reader.read_coord()?; // InvertedTTTextBorder (offset 111-114)
+    let wide_string_index = reader.read_i32_le()?; // offset 115-118
+    let union_index = reader.read_i32_le()?; // offset 119-122
+    let is_inverted_rect = reader.read_bool()?; // offset 123
     let ttf_text_width = reader.read_coord()?;
     let ttf_text_height = reader.read_coord()?;
     let font_id = reader.read_i32_le()?;
@@ -213,7 +215,10 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
         is_bold,
         font_name,
         inverted,
+        inverted_tt_text_border,
         wide_string_index,
+        union_index,
+        is_inverted_rect,
         ttf_text_width,
         ttf_text_height,
         font_id,
@@ -284,9 +289,10 @@ mod tests {
         w.write_u8(0); // reserved
         w.write_wide_string_fixed(font_name, FONT_NAME_WCHAR_COUNT); // font_name
         w.write_bool(false); // inverted
-        w.write_bytes(&[0, 0, 0]); // reserved
+        w.write_i32_le(0); // inverted_tt_text_border
         w.write_i32_le(0); // wide_string_index
-        w.write_bytes(&[0, 0, 0, 0, 0, 0]); // reserved
+        w.write_i32_le(0); // union_index
+        w.write_bool(false); // is_inverted_rect
         w.write_coord(Coord::from_internal(250_000)); // ttf_text_width
         w.write_coord(Coord::from_internal(80_000)); // ttf_text_height
         w.write_i32_le(3); // font_id

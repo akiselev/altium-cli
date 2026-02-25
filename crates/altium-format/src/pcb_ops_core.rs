@@ -473,6 +473,7 @@ fn pcblib_add_footprint(lib: &mut PcbLib, op: &AddFootprintOp) -> Result<OpResul
         description: op.description.clone().unwrap_or_default(),
         item_guid: String::new(),
         revision_guid: String::new(),
+        component_kind: None,
         primitives: Vec::new(),
         extended_primitive_info: Vec::new(),
         primitive_guids: Vec::new(),

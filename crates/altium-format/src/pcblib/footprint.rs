@@ -26,7 +26,7 @@ pub(crate) fn load_footprint(
     let data_path = format!("/{cfb_key}/Data");
 
     let params_raw = doc.read_stream(&params_path)?;
-    let (pattern, height, description, item_guid, revision_guid) =
+    let (pattern, height, description, item_guid, revision_guid, component_kind) =
         parse_parameters_stream(&params_raw).with_context(|| format!("parsing {params_path}"))?;
 
     let header_raw = doc.read_stream(&header_path)?;
@@ -63,6 +63,7 @@ pub(crate) fn load_footprint(
         description,
         item_guid,
         revision_guid,
+        component_kind,
         primitives: primitives_vec,
         extended_primitive_info: Vec::new(),
         primitive_guids: Vec::new(),
@@ -77,7 +78,7 @@ pub(crate) fn load_footprint(
     Ok(footprint)
 }
 
-fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String, String)> {
+fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String, String, Option<i32>)> {
     let mut reader = BinaryReader::new(data);
     let str_len = reader.read_u32_le()? as usize;
     let str_bytes = reader.read_bytes(str_len)?;
@@ -99,6 +100,7 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     let revision_guid = params
         .remove_optional::<String>("REVISIONGUID")?
         .unwrap_or_default();
+    let component_kind = params.remove_optional::<i32>("COMPONENTKIND")?;
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;
@@ -107,7 +109,7 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     let _smart_union_storage = params.remove_optional::<String>("SMARTUNIONSSTORAGE")?;
     let _smart_union_items = params.remove_prefixed("SMARTUNION_");
     params.assert_exhausted()?;
-    Ok((pattern, height, description, item_guid, revision_guid))
+    Ok((pattern, height, description, item_guid, revision_guid, component_kind))
 }
 
 /// Parses the HEIGHT parameter from PcbLib footprint Parameters.
@@ -305,13 +307,14 @@ mod tests {
     #[test]
     fn parse_parameters_stream_extracts_pattern() {
         let data = make_parameters_stream("TestFootprint");
-        let (pattern, height, description, item_guid, revision_guid) =
+        let (pattern, height, description, item_guid, revision_guid, component_kind) =
             parse_parameters_stream(&data).unwrap();
         assert_eq!(pattern, "TestFootprint");
         assert_eq!(height, Coord::ZERO);
         assert!(description.is_empty());
         assert!(item_guid.is_empty());
         assert!(revision_guid.is_empty());
+        assert!(component_kind.is_none());
     }
 
     #[test]
@@ -374,7 +377,7 @@ mod tests {
         let header_data = make_header_stream(5);
         let data_data = make_data_stream_with_pattern("FP");
 
-        let (pattern, _height, _description, _item_guid, _revision_guid) =
+        let (pattern, _height, _description, _item_guid, _revision_guid, _component_kind) =
             parse_parameters_stream(&params_data).unwrap();
         let expected_count = parse_pcb_section_header(&header_data).unwrap() as usize;
         let (data_pattern, primitives_vec) = parse_pcblib_data_stream(&data_data).unwrap();
