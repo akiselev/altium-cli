@@ -1,3 +1,5 @@
+#![cfg(feature = "proptest")]
+
 use altium_format::SchLib;
 use altium_format::sch_ops_core::{RecordPatch, RecordSelector};
 use altium_format_ops::{

@@ -1,3 +1,5 @@
+#![cfg(feature = "proptest")]
+
 use altium_format::{PcbDoc, PcbLib};
 use altium_format_ops::{
     AddFootprintHighOp, AddTrackHighOp, ApplySpec, HighOp, QueryHighOp, RefExpr, apply_pcbdoc,

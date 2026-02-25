@@ -34,6 +34,7 @@ pub(crate) struct PcbLibModelEntry {
     pub(crate) rotation_z: f64,
     pub(crate) standoff: f64,
     pub(crate) checksum: String,
+    pub(crate) model_source: String,
     pub(crate) blob: Option<Vec<u8>>,
 }
 
@@ -290,8 +291,10 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         let checksum = params
             .remove_optional::<String>("CHECKSUM")?
             .unwrap_or_default();
-        // MODELSOURCE and TITLE are present but not used in our data model; consume them.
-        let _ = params.remove_optional::<String>("MODELSOURCE")?;
+        let model_source = params
+            .remove_optional::<String>("MODELSOURCE")?
+            .unwrap_or_default();
+        // TITLE is present but not used in our data model; consume it.
         let _ = params.remove_optional::<String>("TITLE")?;
         params.assert_exhausted()?;
         entries.push(PcbLibModelEntry {
@@ -303,6 +306,7 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
             rotation_z,
             standoff,
             checksum,
+            model_source,
             blob: None,
         });
     }

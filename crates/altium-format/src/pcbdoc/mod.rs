@@ -585,10 +585,14 @@ fn parse_embedded_fonts6_data(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "proptest")]
     use super::*;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "proptest")]
     use std::fs;
 
+    #[cfg(feature = "proptest")]
     fn fixture_paths() -> Vec<std::path::PathBuf> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/pcbdoc");
         let mut out = Vec::new();
@@ -608,6 +612,7 @@ mod tests {
         out
     }
 
+    #[cfg(feature = "proptest")]
     fn is_cfb_file(path: &std::path::Path) -> bool {
         const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         let Ok(bytes) = fs::read(path) else {
@@ -623,6 +628,7 @@ mod tests {
         comp.exists("/FileHeaderSix")
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
 

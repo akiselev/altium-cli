@@ -938,14 +938,18 @@ fn remap_op_span(op: ast::Op, offset: u32) -> ast::Op {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "proptest")]
     use proptest::string::string_regex;
+    #[cfg(feature = "proptest")]
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     fn parse_ok(src: &str) -> OpsFile {
         parse_ops(src).unwrap_or_else(|e| panic!("{}", e.render("test.ops", src)))
     }
 
+    #[cfg(feature = "proptest")]
     fn statement_kinds(file: &OpsFile) -> Vec<&'static str> {
         file.statements
             .iter()
@@ -957,6 +961,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_spans_valid(file: &OpsFile, src_len: u32) {
         for stmt in &file.statements {
             assert!(stmt.span.start <= stmt.span.end);
@@ -969,11 +974,13 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_span(span: Span, src_len: u32) {
         assert!(span.start <= span.end);
         assert!(span.end <= src_len);
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_binding_spans_valid(binding: &Binding, src_len: u32) {
         assert_span(binding.name.span, src_len);
         assert_span(binding.value.span, src_len);
@@ -985,6 +992,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_assert_spans_valid(a: &AssertStmt, src_len: u32) {
         assert_span(a.condition.span, src_len);
         match &a.condition.node {
@@ -1000,6 +1008,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_op_spans_valid(op: &Op, src_len: u32) {
         assert_span(op.name.span, src_len);
         if let Some(target) = &op.target {
@@ -1014,6 +1023,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_object_spans_valid(object: &Spanned<Object>, src_len: u32) {
         assert_span(object.span, src_len);
         for item in &object.node.items {
@@ -1032,6 +1042,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "proptest")]
     fn assert_expr_spans_valid(expr: &Spanned<Expr>, src_len: u32) {
         assert_span(expr.span, src_len);
         match &expr.node {
@@ -1145,6 +1156,7 @@ remove C*
         assert!(matches!(&rhs.node, Expr::BinOp(_, inner_op, _) if inner_op.node == BinOp::Mul));
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #[test]
         fn prop_mul_binds_tighter_than_add(a in -1000i32..1000, b in -1000i32..1000, c in -1000i32..1000) {

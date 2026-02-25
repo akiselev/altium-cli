@@ -519,10 +519,14 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "proptest")]
     use super::*;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "proptest")]
     use std::io::Write;
 
+    #[cfg(feature = "proptest")]
     fn write_minimal_ops_file(dir: &std::path::Path) -> PathBuf {
         let path = dir.join("input.ops");
         let mut file = std::fs::File::create(&path).expect("create input.ops");
@@ -534,6 +538,7 @@ mod tests {
         path
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #![proptest_config(ProptestConfig { cases: 32, .. ProptestConfig::default() })]
 

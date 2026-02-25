@@ -950,14 +950,18 @@ fn is_type_keyword(v: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "proptest")]
     use proptest::string::string_regex;
+    #[cfg(feature = "proptest")]
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     fn ok(src: &str) -> Spanned<SelectorExpr> {
         parse_selector(src, 0).unwrap_or_else(|e| panic!("{}", e.render("sel", src)))
     }
 
+    #[cfg(feature = "proptest")]
     fn shape(expr: &SelectorExpr) -> String {
         match expr {
             SelectorExpr::Or(v) => format!(
@@ -1001,6 +1005,7 @@ mod tests {
         assert!(matches!(expr.node, SelectorExpr::Chain(_)));
     }
 
+    #[cfg(feature = "proptest")]
     fn simple_shape(v: &SelectorSimple) -> &'static str {
         match v {
             SelectorSimple::Any => "any",
@@ -1045,6 +1050,7 @@ mod tests {
         assert!(rendered.contains("expected attribute operator"));
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #[test]
         fn prop_selector_parser_never_panics(s in string_regex(r"(?s).{0,180}").expect("regex")) {

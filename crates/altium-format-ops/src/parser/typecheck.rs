@@ -2637,8 +2637,11 @@ fn matches_field_type(expected: FieldType, value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "proptest")]
     use proptest::string::string_regex;
+    #[cfg(feature = "proptest")]
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     fn compile_ok(src: &str) -> Vec<HighOp> {
@@ -2876,6 +2879,7 @@ query component[designator=R1]
         }
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #[test]
         fn prop_typecheck_never_panics(s in string_regex(r"(?s).{0,240}").expect("regex")) {

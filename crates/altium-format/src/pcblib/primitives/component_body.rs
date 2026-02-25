@@ -26,6 +26,45 @@ fn decode_identifier(raw: &str) -> Result<String> {
     })
 }
 
+/// Encodes an identifier string as comma-separated UTF-16 code units.
+///
+/// Inverse of [`decode_identifier`]. Example: `"CAPC2012"` → `"67,65,80,67,50,48,49,50"`.
+pub(crate) fn encode_identifier(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+    s.encode_utf16()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Formats a float in Altium's scientific notation: `" 0.00000000000000E+0000"`.
+///
+/// Altium uses a Delphi-style format with 14 decimal digits, 4-digit exponent with
+/// explicit sign, and a leading space for non-negative values.
+pub(crate) fn format_scientific_float(value: f64) -> String {
+    if value == 0.0 {
+        return " 0.00000000000000E+0000".to_owned();
+    }
+    let (mantissa, exponent) = if value == 0.0 {
+        (0.0, 0)
+    } else {
+        let exp = value.abs().log10().floor() as i32;
+        let man = value / 10_f64.powi(exp);
+        (man, exp)
+    };
+    let sign_char = if exponent >= 0 { '+' } else { '-' };
+    let prefix = if mantissa >= 0.0 { " " } else { "-" };
+    format!(
+        "{}{:.14}E{}{:04}",
+        prefix,
+        mantissa.abs(),
+        sign_char,
+        exponent.unsigned_abs()
+    )
+}
+
 /// Parses a float parameter that may use scientific notation (e.g. " 0.00000000000000E+0000").
 /// Returns `0.0` if key is absent.
 fn parse_scientific_float(params: &mut ParameterCollection, key: &str) -> Result<f64> {

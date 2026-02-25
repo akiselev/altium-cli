@@ -794,7 +794,7 @@ impl PcbLib {
 
         if let Some(cfg) = &self.pad_via_library {
             cfb.create_storage("/Library/PadViaLibrary")?;
-            cfb.write_stream("/Library/PadViaLibrary/Header", &serialize_u32_header(1))?;
+            cfb.write_stream("/Library/PadViaLibrary/Header", &serialize_u32_header(0))?;
             cfb.write_stream("/Library/PadViaLibrary/Data", &serialize_pad_via_library(cfg))?;
         }
 
@@ -875,6 +875,24 @@ impl PcbLib {
                 cfb.write_stream(&format!("{storage}/PrimitiveGuids/Header"), &header)?;
                 cfb.write_stream(&format!("{storage}/PrimitiveGuids/Data"), &data)?;
             }
+
+            // CustomShapes sidecar: per-pad custom shape definitions.
+            if !fp.custom_shapes.is_empty() {
+                let data = crate::pcblib::custom_shapes::serialize_custom_shapes(&fp.custom_shapes);
+                cfb.write_stream(&format!("{storage}/CustomShapes"), &data)?;
+            }
+
+            // CustomMaskShapes sidecar: per-pad custom mask shape definitions.
+            if !fp.custom_mask_shapes.is_empty() {
+                let data = crate::pcblib::custom_shapes::serialize_custom_mask_shapes(&fp.custom_mask_shapes);
+                cfb.write_stream(&format!("{storage}/CustomMaskShapes"), &data)?;
+            }
+
+            // CornerRadiusChamfer sidecar: per-pad corner radius settings.
+            if !fp.corner_radius_chamfer.is_empty() {
+                let data = crate::pcblib::custom_shapes::serialize_corner_radius_chamfer(&fp.corner_radius_chamfer);
+                cfb.write_stream(&format!("{storage}/CornerRadiusChamfer"), &data)?;
+            }
         }
 
         if !self.section_keys.is_empty() {
@@ -916,6 +934,21 @@ impl PcbFootprint {
     }
 }
 
+/// Formats a `Coord` as an Altium mil string, stripping unnecessary trailing zeros.
+///
+/// Altium writes mil values with minimal precision: `0mil`, `0.5mil`, `47.744mil`.
+/// Never `0.0000mil` or `0.5000mil`.
+fn format_mil(coord: Coord) -> String {
+    let mils = coord.to_mils();
+    if mils == 0.0 {
+        return "0mil".to_owned();
+    }
+    // Format with 4 decimal places, then strip trailing zeros.
+    let formatted = format!("{:.4}", mils);
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    format!("{}mil", trimmed)
+}
+
 fn serialize_u32_header(count: u32) -> Vec<u8> {
     let mut w = BinaryWriter::new();
     w.write_u32_le(count);
@@ -951,12 +984,15 @@ fn serialize_component_toc_data(entries: &[PcbLibComponentTocEntry]) -> Vec<u8> 
         if i != 0 {
             text.push_str("\r\n");
         }
+        // TOC Height uses bare `0` for zero (no unit suffix), otherwise mil format.
+        let height_str = if e.height == Coord::ZERO {
+            "0".to_owned()
+        } else {
+            format_mil(e.height)
+        };
         text.push_str(&format!(
-            "Name={}|Pad Count={}|Height={:.4}mil|Description={}",
-            e.name,
-            e.pad_count,
-            e.height.to_mils(),
-            e.description
+            "Name={}|Pad Count={}|Height={}|Description={}",
+            e.name, e.pad_count, height_str, e.description
         ));
     }
     let mut bytes = text.into_bytes();
@@ -970,10 +1006,11 @@ fn serialize_model_entries_data(entries: &[PcbLibModelEntry]) -> Vec<u8> {
         let mut params = crate::param_collection::ParameterCollection::new();
         params.insert("EMBED", if entry.embed { "TRUE".to_owned() } else { "FALSE".to_owned() });
         params.insert("ID", entry.id.clone());
-        params.insert("ROTX", entry.rotation_x.to_string());
-        params.insert("ROTY", entry.rotation_y.to_string());
-        params.insert("ROTZ", entry.rotation_z.to_string());
+        params.insert("ROTX", format!("{:.3}", entry.rotation_x));
+        params.insert("ROTY", format!("{:.3}", entry.rotation_y));
+        params.insert("ROTZ", format!("{:.3}", entry.rotation_z));
         params.insert("DZ", entry.standoff.to_string());
+        params.insert("MODELSOURCE", entry.model_source.clone());
         params.insert("CHECKSUM", entry.checksum.clone());
         params.insert("NAME", entry.name.clone());
         out.extend_from_slice(&write_text_block(&params.to_bytes()));
@@ -1059,7 +1096,7 @@ fn serialize_section_keys(keys: &HashMap<String, String>) -> Vec<u8> {
 fn serialize_footprint_parameters(fp: &PcbFootprint) -> Vec<u8> {
     let mut params = crate::param_collection::ParameterCollection::new();
     params.insert("PATTERN", fp.pattern.clone());
-    params.insert("HEIGHT", format!("{:.4}mil", fp.height.to_mils()));
+    params.insert("HEIGHT", format_mil(fp.height));
     params.insert("DESCRIPTION", fp.description.clone());
     params.insert("ITEMGUID", fp.item_guid.clone());
     params.insert("REVISIONGUID", fp.revision_guid.clone());
@@ -1208,6 +1245,20 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     w0.write_u8(p.barcode_render_mode);
     w0.write_u8(p.multiline as u8);
     w0.write_wide_string_fixed(&p.barcode_font_name, 32);
+    // AD26 tail fields (bytes 225-251). Always write full 252-byte format
+    // (upgrade to latest on save). Use 0/default for any None fields.
+    w0.write_u8(p.ttf_inverted_justify.map_or(0, |v| v as u8));
+    w0.write_u8(p.ttf_offset_from_inverted_rect.unwrap_or(0));
+    w0.write_u8(p.tail_reserved_227.unwrap_or(0));
+    w0.write_u8(p.multiline_auto_position.map_or(0, |v| v as u8));
+    w0.write_u8(p.is_advance_justification_valid.map_or(0, |v| v as u8));
+    w0.write_u8(p.advance_snapping.unwrap_or(0));
+    w0.write_u8(p.tail_reserved_231.unwrap_or(0));
+    w0.write_i32_le(p.advance_justification_x.unwrap_or(0));
+    w0.write_i32_le(p.advance_justification_y.unwrap_or(0));
+    w0.write_i32_le(p.use_text_alignment_by_snap.unwrap_or(0));
+    w0.write_coord(p.snap_point_x.unwrap_or(Coord::ZERO));
+    w0.write_coord(p.snap_point_y.unwrap_or(Coord::ZERO));
     let (s1, _, _) = encoding_rs::WINDOWS_1252.encode(&p.text);
     vec![w0.finish(), s1.to_vec()]
 }
@@ -1347,9 +1398,9 @@ fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     params.insert("KIND", p.param_kind.to_string());
     params.insert("SUBPOLYINDEX", p.subpoly_index.to_string());
     params.insert("UNIONINDEX", p.union_index.to_string());
-    params.insert("ARCRESOLUTION", format!("{:.4}mil", p.arc_resolution.to_mils()));
+    params.insert("ARCRESOLUTION", format_mil(p.arc_resolution));
     params.insert("ISSHAPEBASED", if p.is_shape_based { "TRUE".to_owned() } else { "FALSE".to_owned() });
-    params.insert("CAVITYHEIGHT", format!("{:.4}mil", p.cavity_height.to_mils()));
+    params.insert("CAVITYHEIGHT", format_mil(p.cavity_height));
     params.insert("KEEPOUTRESTRICTIONS", p.keepout_restrictions.to_string());
     params.insert("LAYER", p.layer.clone());
     params.insert("KEEPOUT", if p.keepout { "TRUE".to_owned() } else { "FALSE".to_owned() });
@@ -1374,6 +1425,8 @@ fn serialize_region(p: &PcbRegion) -> Vec<u8> {
 }
 
 fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
+    use crate::pcblib::primitives::component_body::{encode_identifier, format_scientific_float};
+
     let mut w = BinaryWriter::new();
     write_primitive_common(&mut w, &p.common);
     w.write_u8(0);
@@ -1384,29 +1437,55 @@ fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     params.insert("KIND", p.kind.to_string());
     params.insert("SUBPOLYINDEX", p.subpoly_index.to_string());
     params.insert("UNIONINDEX", p.union_index.to_string());
-    params.insert("ARCRESOLUTION", format!("{:.4}mil", p.arc_resolution.to_mils()));
+    params.insert("ARCRESOLUTION", format_mil(p.arc_resolution));
     params.insert("ISSHAPEBASED", if p.is_shape_based { "TRUE".to_owned() } else { "FALSE".to_owned() });
-    params.insert("CAVITYHEIGHT", format!("{:.4}mil", p.cavity_height.to_mils()));
-    params.insert("STANDOFFHEIGHT", format!("{:.4}mil", p.standoff_height.to_mils()));
-    params.insert("OVERALLHEIGHT", format!("{:.4}mil", p.overall_height.to_mils()));
+    params.insert("CAVITYHEIGHT", format_mil(p.cavity_height));
+    params.insert("STANDOFFHEIGHT", format_mil(p.standoff_height));
+    params.insert("OVERALLHEIGHT", format_mil(p.overall_height));
     params.insert("BODYPROJECTION", p.body_projection.to_string());
     params.insert("BODYCOLOR3D", p.body_color_3d.raw().to_string());
-    params.insert("BODYOPACITY3D", p.body_opacity_3d.to_string());
+    params.insert("BODYOPACITY3D", format!("{:.3}", p.body_opacity_3d));
+    // Issue 2a: IDENTIFIER
+    params.insert("IDENTIFIER", encode_identifier(&p.identifier));
     params.insert("TEXTURE", p.texture.clone());
+    // Issue 2b: TEXTURE* coordinate/rotation parameters
+    params.insert("TEXTURECENTERX", format_mil(p.texture_center_x));
+    params.insert("TEXTURECENTERY", format_mil(p.texture_center_y));
+    params.insert("TEXTURESIZEX", format_mil(p.texture_size_x));
+    params.insert("TEXTURESIZEY", format_mil(p.texture_size_y));
+    params.insert("TEXTUREROTATION", format_scientific_float(p.texture_rotation));
+    // Issue 2c: BODYOVERRIDECOLOR
+    params.insert("BODYOVERRIDECOLOR", if p.body_override_color { "TRUE".to_owned() } else { "FALSE".to_owned() });
     params.insert("MODELID", p.model_guid.clone());
     params.insert("MODEL.CHECKSUM", p.model_checksum.clone());
     params.insert("MODEL.EMBED", if p.model_embed { "TRUE".to_owned() } else { "FALSE".to_owned() });
     params.insert("MODEL.NAME", p.model_name.clone());
-    params.insert("MODEL.2D.X", format!("{:.4}mil", p.model_2d_x.to_mils()));
-    params.insert("MODEL.2D.Y", format!("{:.4}mil", p.model_2d_y.to_mils()));
-    params.insert("MODEL.2D.ROTATION", p.model_2d_rotation.to_string());
-    params.insert("MODEL.3D.ROTX", p.rotation_x.to_string());
-    params.insert("MODEL.3D.ROTY", p.rotation_y.to_string());
-    params.insert("MODEL.3D.ROTZ", p.rotation_z.to_string());
-    params.insert("MODEL.3D.DZ", format!("{:.4}mil", p.model_3d_dz.to_mils()));
+    params.insert("MODEL.2D.X", format_mil(p.model_2d_x));
+    params.insert("MODEL.2D.Y", format_mil(p.model_2d_y));
+    params.insert("MODEL.2D.ROTATION", format!("{:.3}", p.model_2d_rotation));
+    params.insert("MODEL.3D.ROTX", format!("{:.3}", p.rotation_x));
+    params.insert("MODEL.3D.ROTY", format!("{:.3}", p.rotation_y));
+    params.insert("MODEL.3D.ROTZ", format!("{:.3}", p.rotation_z));
+    params.insert("MODEL.3D.DZ", format_mil(p.model_3d_dz));
     params.insert("MODEL.MODELTYPE", p.model_type.to_string());
     params.insert("MODEL.MODELSOURCE", p.model_source.clone());
+    // Issue 2d: MODEL snap points
     params.insert("MODEL.SNAPCOUNT", p.model_snap_points.len().to_string());
+    for (i, (sx, sy, sz)) in p.model_snap_points.iter().enumerate() {
+        params.insert(&format!("MODEL.S{}X", i), sx.to_internal().to_string());
+        params.insert(&format!("MODEL.S{}Y", i), sy.to_internal().to_string());
+        params.insert(&format!("MODEL.S{}Z", i), sz.to_internal().to_string());
+    }
+    // Extruded body parameters (only present for extruded model types)
+    if p.model_extruded_min_z != Coord::ZERO || p.model_extruded_max_z != Coord::ZERO {
+        params.insert("MODEL.EXTRUDED.MINZ", format_mil(p.model_extruded_min_z));
+        params.insert("MODEL.EXTRUDED.MAXZ", format_mil(p.model_extruded_max_z));
+    }
+    // Cylinder model parameters (only present for cylinder model types)
+    if p.model_cylinder_radius != Coord::ZERO || p.model_cylinder_height != Coord::ZERO {
+        params.insert("MODEL.CYLINDER.RADIUS", format_mil(p.model_cylinder_radius));
+        params.insert("MODEL.CYLINDER.HEIGHT", format_mil(p.model_cylinder_height));
+    }
     let pbytes = params.to_bytes();
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
@@ -1499,7 +1578,9 @@ fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
 mod tests {
     use super::*;
     use altium_format_types::PcbObjectId;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "test-fixtures")]
     use std::fs;
 
     #[test]
@@ -1694,6 +1775,7 @@ mod tests {
         let _ = PcbObjectId::ComponentBody;
     }
 
+    #[cfg(feature = "test-fixtures")]
     fn fixture_paths() -> Vec<std::path::PathBuf> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/pcblib");
         let mut out = Vec::new();
@@ -1713,6 +1795,7 @@ mod tests {
         out
     }
 
+    #[cfg(feature = "test-fixtures")]
     fn roundtrip_semantic_report(path: &std::path::Path) -> crate::test_utils::CfbSemanticDiffReport {
         let lib = PcbLib::open(path).expect("PcbLib::open must succeed");
         let tmp = tempfile::NamedTempFile::new().expect("create temp file");
@@ -1720,6 +1803,7 @@ mod tests {
         crate::test_utils::diff_cfb_files_semantic(path, tmp.path()).expect("semantic diff must succeed")
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn pcblib_roundtrip_semantic_diff_report_is_generated() {
         let fixtures = fixture_paths();
@@ -1733,6 +1817,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     #[ignore = "enable once full pcblib serializer reaches semantic parity"]
     fn pcblib_roundtrip_semantic_eq_fixture() {
@@ -1747,6 +1832,7 @@ mod tests {
         crate::test_utils::assert_cfb_files_semantic_eq(&path, tmp.path());
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
 

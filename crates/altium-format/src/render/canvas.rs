@@ -16,15 +16,58 @@ pub(crate) fn c_to_f(c: Coord) -> f64 {
     c.to_mils()
 }
 
-/// Convert a PenWidth to mils. Zero maps to 0.0 (hairline).
+/// Convert a PenWidth (wire/line) to mils.
+///
+/// From `Rt_Schematic.Consts.LineWidthArrayC` (Consts.cs lines 2880-2885):
+/// - eZeroSize = 0        → 0.0 mils (hairline)
+/// - eSmall    = 100,000  → 10.0 mils
+/// - eMedium   = 300,000  → 30.0 mils
+/// - eLarge    = 500,000  → 50.0 mils
 pub(crate) fn pen_width_to_mils(pw: altium_format_types::PenWidth) -> f64 {
     use altium_format_types::PenWidth;
     match pw {
         PenWidth::Zero => 0.0,
-        PenWidth::Small => 1.0,
-        PenWidth::Medium => 2.0,
-        PenWidth::Large => 5.0,
+        PenWidth::Small => 10.0,
+        PenWidth::Medium => 30.0,
+        PenWidth::Large => 50.0,
         _ => 0.0,
+    }
+}
+
+/// Convert a PenWidth (bus) to mils. Buses use a separate, wider lookup table.
+///
+/// From `Rt_Schematic.Consts.BusLineWidthArrayC` (Consts.cs lines 2886-2891):
+/// - eZeroSize = 200,000  → 20.0 mils
+/// - eSmall    = 300,000  → 30.0 mils
+/// - eMedium   = 500,000  → 50.0 mils
+/// - eLarge    = 700,000  → 70.0 mils
+pub(crate) fn bus_width_to_mils(pw: altium_format_types::PenWidth) -> f64 {
+    use altium_format_types::PenWidth;
+    match pw {
+        PenWidth::Zero => 20.0,
+        PenWidth::Small => 30.0,
+        PenWidth::Medium => 50.0,
+        PenWidth::Large => 70.0,
+        _ => 20.0,
+    }
+}
+
+/// Convert a junction TSize to radius in mils.
+///
+/// From `Rt_Schematic.Consts.cJunctionSizeArray` (Consts.cs lines 2458-2463).
+/// The array stores **diameters**; this function returns **radius** (half).
+/// - eZeroSize = 200,000  → diameter 20.0 mils → radius 10.0
+/// - eSmall    = 300,000  → diameter 30.0 mils → radius 15.0
+/// - eMedium   = 500,000  → diameter 50.0 mils → radius 25.0
+/// - eLarge    = 1,000,000 → diameter 100.0 mils → radius 50.0
+pub(crate) fn junction_radius_mils(pw: altium_format_types::PenWidth) -> f64 {
+    use altium_format_types::PenWidth;
+    match pw {
+        PenWidth::Zero => 10.0,
+        PenWidth::Small => 15.0,
+        PenWidth::Medium => 25.0,
+        PenWidth::Large => 50.0,
+        _ => 15.0, // default to Small
     }
 }
 
@@ -84,7 +127,7 @@ pub struct FontSpec {
 impl Default for FontSpec {
     fn default() -> Self {
         Self {
-            name: "Times New Roman".to_owned(),
+            name: "Tahoma".to_owned(),
             size_mils: 10.0,
             bold: false,
             italic: false,

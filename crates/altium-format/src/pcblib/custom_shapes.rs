@@ -12,7 +12,7 @@
 
 use altium_format_types::{Coord, PadShapeSubKind};
 
-use crate::binary_io::BinaryReader;
+use crate::binary_io::{BinaryReader, BinaryWriter};
 use crate::param_collection::ParameterCollection;
 use crate::{AltiumFormatError, Result};
 
@@ -389,10 +389,121 @@ pub(crate) fn validate_custom_shape_entries(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Serialization
+// ---------------------------------------------------------------------------
+
+/// Serializes a list of parameter byte buffers into the parameter-block format.
+///
+/// Format: u32 count + (u32 len + param bytes) per entry.
+/// Each entry is already NUL-terminated (from `ParameterCollection::to_bytes()`).
+fn serialize_param_block_entries(entries: &[Vec<u8>]) -> Vec<u8> {
+    let mut w = BinaryWriter::new();
+    w.write_u32_le(entries.len() as u32);
+    for bytes in entries {
+        w.write_u32_le(bytes.len() as u32);
+        w.write_bytes(bytes);
+    }
+    w.finish()
+}
+
+fn bool_str(v: bool) -> &'static str {
+    if v { "TRUE" } else { "FALSE" }
+}
+
+/// Serializes CustomShapes entries to the sidecar stream format.
+pub(crate) fn serialize_custom_shapes(entries: &[CustomShapeEntry]) -> Vec<u8> {
+    let param_entries: Vec<Vec<u8>> = entries
+        .iter()
+        .map(|entry| {
+            let mut params = ParameterCollection::new();
+            params.insert("PRIMITIVEINDEX", entry.primitive_index.to_string());
+            for (n, def) in entry.layer_defs.iter().enumerate() {
+                let prefix = format!("S{n}.");
+                params.insert(&format!("{prefix}LAYER"), def.layer.clone());
+                params.insert(
+                    &format!("{prefix}XSIZE"),
+                    def.x_size.to_internal().to_string(),
+                );
+                params.insert(
+                    &format!("{prefix}YSIZE"),
+                    def.y_size.to_internal().to_string(),
+                );
+                params.insert(
+                    &format!("{prefix}SHAPEKIND"),
+                    (def.shape_kind as u8).to_string(),
+                );
+                if let Some(corners) = &def.corners {
+                    let cps = format!("{prefix}CPS.");
+                    params.insert(&format!("{cps}BLCE"), bool_str(corners.bottom_left).to_owned());
+                    params.insert(&format!("{cps}BRCE"), bool_str(corners.bottom_right).to_owned());
+                    params.insert(&format!("{cps}TRCE"), bool_str(corners.top_right).to_owned());
+                    params.insert(&format!("{cps}TLCE"), bool_str(corners.top_left).to_owned());
+                    params.insert(
+                        &format!("{cps}CS"),
+                        corners.corner_size.to_internal().to_string(),
+                    );
+                }
+            }
+            params.to_bytes()
+        })
+        .collect();
+    serialize_param_block_entries(&param_entries)
+}
+
+/// Serializes CustomMaskShapes entries to the sidecar stream format.
+pub(crate) fn serialize_custom_mask_shapes(entries: &[CustomMaskShapeEntry]) -> Vec<u8> {
+    let param_entries: Vec<Vec<u8>> = entries
+        .iter()
+        .map(|entry| {
+            let mut params = ParameterCollection::new();
+            params.insert("PRIMITIVEINDEX", entry.primitive_index.to_string());
+            for (n, def) in entry.mask_defs.iter().enumerate() {
+                let prefix = format!("SPM{n}.");
+                params.insert(&format!("{prefix}LAYER"), def.layer.clone());
+                params.insert(&format!("{prefix}SHAPE"), def.shape.clone());
+                params.insert(
+                    &format!("{prefix}XSIZE"),
+                    def.x_size.to_internal().to_string(),
+                );
+                params.insert(
+                    &format!("{prefix}YSIZE"),
+                    def.y_size.to_internal().to_string(),
+                );
+                if let Some(crpct) = def.corner_radius_percent {
+                    params.insert(&format!("{prefix}CRPCT"), crpct.to_string());
+                }
+            }
+            params.to_bytes()
+        })
+        .collect();
+    serialize_param_block_entries(&param_entries)
+}
+
+/// Serializes CornerRadiusChamfer entries to the sidecar stream format.
+pub(crate) fn serialize_corner_radius_chamfer(entries: &[CornerRadiusChamferEntry]) -> Vec<u8> {
+    let param_entries: Vec<Vec<u8>> = entries
+        .iter()
+        .map(|entry| {
+            let mut params = ParameterCollection::new();
+            for (n, def) in entry.layer_defs.iter().enumerate() {
+                let prefix = format!("SCR{n}.");
+                params.insert(&format!("{prefix}LAYER"), def.layer.clone());
+                params.insert(
+                    &format!("{prefix}CRSIZE"),
+                    def.corner_radius_size.to_internal().to_string(),
+                );
+            }
+            params.insert("PRIMITIVEINDEX", entry.primitive_index.to_string());
+            params.to_bytes()
+        })
+        .collect();
+    serialize_param_block_entries(&param_entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary_io::BinaryWriter;
 
     /// Builds a parameter-block stream from a list of parameter strings.
     fn make_param_block_stream(entries: &[&str]) -> Vec<u8> {
@@ -549,5 +660,54 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xFF]);
         let err = parse_custom_shapes(&data).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidParamValue { .. }));
+    }
+
+    #[test]
+    fn custom_shapes_serialize_roundtrip() {
+        let data = make_param_block_stream(&[
+            "|PRIMITIVEINDEX=3|S0.LAYER=TOP|S0.XSIZE=275592|S0.YSIZE=110236|S0.SHAPEKIND=3|S0.CPS.BLCE=FALSE|S0.CPS.BRCE=TRUE|S0.CPS.TRCE=TRUE|S0.CPS.TLCE=FALSE|S0.CPS.CS=0",
+            "|PRIMITIVEINDEX=4|S0.LAYER=TOP|S0.XSIZE=275592|S0.YSIZE=110236|S0.SHAPEKIND=3|S0.CPS.BLCE=TRUE|S0.CPS.BRCE=FALSE|S0.CPS.TRCE=FALSE|S0.CPS.TLCE=TRUE|S0.CPS.CS=0",
+        ]);
+        let entries = parse_custom_shapes(&data).unwrap();
+        let serialized = serialize_custom_shapes(&entries);
+        let reparsed = parse_custom_shapes(&serialized).unwrap();
+        assert_eq!(reparsed.len(), 2);
+        assert_eq!(reparsed[0].primitive_index, 3);
+        assert_eq!(reparsed[1].primitive_index, 4);
+        assert_eq!(reparsed[0].layer_defs[0].layer, "TOP");
+        assert_eq!(reparsed[0].layer_defs[0].x_size, Coord::from_internal(275592));
+        let corners = reparsed[0].layer_defs[0].corners.as_ref().unwrap();
+        assert!(!corners.bottom_left);
+        assert!(corners.bottom_right);
+    }
+
+    #[test]
+    fn custom_mask_shapes_serialize_roundtrip() {
+        let data = make_param_block_stream(&[
+            "|PRIMITIVEINDEX=7|SPM0.LAYER=TOPPASTE|SPM0.SHAPE=ROUNDEDRECTANGLE|SPM0.XSIZE=3543307|SPM0.YSIZE=2755906|SPM0.CRPCT=20",
+        ]);
+        let entries = parse_custom_mask_shapes(&data).unwrap();
+        let serialized = serialize_custom_mask_shapes(&entries);
+        let reparsed = parse_custom_mask_shapes(&serialized).unwrap();
+        assert_eq!(reparsed.len(), 1);
+        assert_eq!(reparsed[0].primitive_index, 7);
+        assert_eq!(reparsed[0].mask_defs[0].shape, "ROUNDEDRECTANGLE");
+        assert_eq!(reparsed[0].mask_defs[0].corner_radius_percent, Some(20));
+    }
+
+    #[test]
+    fn corner_radius_chamfer_serialize_roundtrip() {
+        let data = make_param_block_stream(&[
+            "|SCR0.LAYER=TOP|SCR0.CRSIZE=275590|PRIMITIVEINDEX=0",
+            "|SCR0.LAYER=TOP|SCR0.CRSIZE=39370|PRIMITIVEINDEX=1",
+        ]);
+        let entries = parse_corner_radius_chamfer(&data).unwrap();
+        let serialized = serialize_corner_radius_chamfer(&entries);
+        let reparsed = parse_corner_radius_chamfer(&serialized).unwrap();
+        assert_eq!(reparsed.len(), 2);
+        assert_eq!(reparsed[0].primitive_index, 0);
+        assert_eq!(reparsed[0].layer_defs[0].corner_radius_size, Coord::from_internal(275590));
+        assert_eq!(reparsed[1].primitive_index, 1);
+        assert_eq!(reparsed[1].layer_defs[0].corner_radius_size, Coord::from_internal(39370));
     }
 }

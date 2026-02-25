@@ -24,6 +24,10 @@ thiserror = "2"
 indexmap = { version = "2", features = ["serde"] }
 altium-format-derive = { version = "0.2.0", path = "../altium-format-derive" }
 
+[features]
+test-fixtures = []
+proptest = ["test-fixtures"]
+
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"

@@ -32,6 +32,10 @@ anyhow = "1.0.102"
 cfb = "0.12.1"
 encoding_rs = "0.8"
 
+[features]
+test-fixtures = []
+proptest = ["test-fixtures"]
+
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"

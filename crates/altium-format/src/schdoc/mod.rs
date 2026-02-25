@@ -895,15 +895,19 @@ fn owner_ref(record: &SchRecord) -> (i32, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "proptest")]
     use proptest::prelude::*;
+    #[cfg(feature = "test-fixtures")]
     use std::fs;
 
+    #[cfg(feature = "test-fixtures")]
     fn schdoc_fixture_path(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../data/schdoc")
             .join(name)
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn open_schdoc_fixture_reaches_parser_path() {
         let path = schdoc_fixture_path(
@@ -918,6 +922,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schdoc_save_roundtrip_reopens() {
         let fixture_dir =
@@ -971,6 +976,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schdoc_validate_invariants_ok_on_fixture() {
         let path = schdoc_fixture_path(
@@ -981,6 +987,7 @@ mod tests {
             .expect("fixture should satisfy schdoc invariants");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schdoc_validate_invariants_detects_broken_owner_index() {
         let path = schdoc_fixture_path(
@@ -1013,6 +1020,7 @@ mod tests {
             .expect("reopened blank schdoc should validate");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     #[ignore = "mutation-test demo: should fail when run explicitly"]
     fn schdoc_broken_invariant_demo_unchecked_should_fail() {
@@ -1030,6 +1038,7 @@ mod tests {
             .expect("this assertion is intentionally wrong; invariant checker must fail");
     }
 
+    #[cfg(feature = "proptest")]
     fn proptest_fixture_paths() -> Vec<std::path::PathBuf> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
         let mut out = Vec::new();
@@ -1049,6 +1058,7 @@ mod tests {
         out
     }
 
+    #[cfg(feature = "proptest")]
     proptest! {
         #![proptest_config(ProptestConfig { cases: 16, .. ProptestConfig::default() })]
 

@@ -1,7 +1,8 @@
 //! Schematic record draw dispatch for AltiumCanvas.
 
 use crate::render::canvas::{
-    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, c_to_f, pen_width_to_mils, to_dp,
+    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, bus_width_to_mils, c_to_f,
+    junction_radius_mils, pen_width_to_mils, to_dp,
 };
 use crate::sch_records::SchRecord;
 use altium_format_types::sch::SchFont;
@@ -19,8 +20,7 @@ pub(crate) fn draw_sch_record(
         }
         SchRecord::Bus(b) => {
             let pts: Vec<_> = b.vertices.iter().copied().map(to_dp).collect();
-            let width = pen_width_to_mils(b.line_width) + 1.0;
-            let pen = Pen::new(b.color, width);
+            let pen = Pen::new(b.color, bus_width_to_mils(b.line_width));
             canvas.draw_polyline(&pts, &pen);
         }
         SchRecord::BusEntry(be) => {
@@ -221,9 +221,12 @@ pub(crate) fn draw_sch_record(
             canvas.draw_text(&t.text, to_dp(t.location), 0.0, &font, &text_pen);
         }
         SchRecord::Junction(j) => {
+            // TODO: SchJunction should parse JUNCTIONSIZE parameter (TSize enum).
+            // For now, use Small as default (15 mil radius = 30 mil diameter).
+            let r = junction_radius_mils(altium_format_types::PenWidth::Small);
             let pen = Pen::new(j.color, 0.0);
             let brush = Brush::solid(j.color);
-            canvas.draw_ellipse(to_dp(j.location), 5.0, 5.0, &pen, Some(&brush));
+            canvas.draw_ellipse(to_dp(j.location), r, r, &pen, Some(&brush));
         }
         SchRecord::NoConnect(n) => {
             let pen = Pen::new(n.color, 1.0);

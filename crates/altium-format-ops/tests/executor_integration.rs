@@ -1,3 +1,4 @@
+#![cfg(feature = "test-fixtures")]
 use altium_format::{SchDoc, SchLib};
 use altium_format_ops::{apply_schdoc, apply_schlib, parse_apply_spec_yaml};
 

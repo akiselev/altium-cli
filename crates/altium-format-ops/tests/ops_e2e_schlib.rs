@@ -1,3 +1,4 @@
+#![cfg(feature = "test-fixtures")]
 use altium_format::SchLib;
 use altium_format_ops::apply_ops_source_schlib;
 

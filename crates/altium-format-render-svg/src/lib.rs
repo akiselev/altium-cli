@@ -2,10 +2,15 @@
 //!
 //! Implements SVG output by collecting draw calls via [`altium_format::render::RecordingCanvas`]
 //! and replaying them with Y-axis flip (Altium Y+ up → SVG Y+ down).
+//!
+//! Supports transform stack (`<g transform="...">` groups), line dash patterns
+//! (`stroke-dasharray`), and Altium-matching stroke defaults (round caps and joins).
 
-use altium_format::render::{Brush, DrawCall, DrawPoint, RecordingCanvas};
+use altium_format::render::{
+    Brush, DrawCall, DrawPoint, RecordingCanvas, RenderTransform,
+};
 use altium_format_types::Color;
-use svg::Document;
+use std::fmt::Write;
 use svg::node::element::{
     Ellipse, Line, Path, Polygon, Polyline, Rectangle, Text as SvgText, path::Data,
 };
@@ -19,6 +24,20 @@ fn fill_to_css(fill: Option<&Brush>) -> String {
         None => "none".to_owned(),
         Some(b) if b.transparent => "none".to_owned(),
         Some(b) => color_to_css(b.color),
+    }
+}
+
+/// Return SVG `stroke-dasharray` attribute string for a given line style.
+/// Returns empty string for Solid (no attribute needed).
+/// Values match Altium's own SVG exporter (from `SvgGraphics.cs`).
+fn dash_attr(style: altium_format_types::LineStyle) -> &'static str {
+    use altium_format_types::LineStyle;
+    match style {
+        LineStyle::Solid => "",
+        LineStyle::Dashed => " stroke-dasharray=\"8 4\"",
+        LineStyle::Dotted => " stroke-dasharray=\"2 4\"",
+        LineStyle::DashDotted => " stroke-dasharray=\"8 4 2 4\"",
+        _ => "",
     }
 }
 
@@ -91,7 +110,11 @@ fn compute_bounds(calls: &[DrawCall]) -> (f64, f64, f64, f64) {
 
 /// Render a list of `DrawCall`s to an SVG document string.
 ///
-/// Handles the Y-axis flip (Altium Y+ up → SVG Y+ down).
+/// Handles:
+/// - Y-axis flip (Altium Y+ up → SVG Y+ down)
+/// - Transform stack via `<g transform="...">` groups
+/// - Round stroke caps and joins (matching Altium's `PenInfo.cs` defaults)
+/// - Line dash patterns via `stroke-dasharray`
 pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
     let bounds = compute_bounds(calls);
     let margin = 10.0_f64;
@@ -105,22 +128,19 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
     let flip_y = |y: f64| max_y - y;
     let to_svg = |p: DrawPoint| (p.0 - min_x, flip_y(p.1));
 
-    let mut doc = Document::new()
-        .set("viewBox", format!("0 0 {w:.1} {h:.1}"))
-        .set("width", format!("{w:.1}"))
-        .set("height", format!("{h:.1}"))
-        .set("xmlns", "http://www.w3.org/2000/svg");
-
-    let bg = Rectangle::new()
-        .set("x", 0)
-        .set("y", 0)
-        .set("width", format!("{w:.1}"))
-        .set("height", format!("{h:.1}"))
-        .set("fill", "white");
-    doc = doc.add(bg);
+    // Build SVG body as a string to support <g> nesting for transforms.
+    // Individual elements are built via the `svg` crate then serialized.
+    let mut body = String::new();
 
     for call in calls {
         match call {
+            DrawCall::PushTransform(t) => {
+                let attr = transform_to_svg(t, min_x, max_y, &to_svg);
+                write!(body, "<g transform=\"{attr}\">").unwrap();
+            }
+            DrawCall::PopTransform => {
+                body.push_str("</g>");
+            }
             DrawCall::Line { p1, p2, pen } => {
                 let (x1, y1) = to_svg(*p1);
                 let (x2, y2) = to_svg(*p2);
@@ -131,7 +151,8 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("y2", format!("{y2:.2}"))
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)));
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
+                body.push_str(dash_attr(pen.style));
             }
             DrawCall::Polyline { points, pen } => {
                 if points.len() < 2 {
@@ -149,7 +170,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", "none");
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::Arc {
                 center,
@@ -177,7 +198,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", "none");
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::Ellipse {
                 center,
@@ -195,7 +216,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", fill_to_css(fill.as_ref()));
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::Rect { p1, p2, pen, fill } => {
                 let (x1, y1) = to_svg(*p1);
@@ -212,7 +233,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", fill_to_css(fill.as_ref()));
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::RoundedRect {
                 p1,
@@ -238,7 +259,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", fill_to_css(fill.as_ref()));
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::Polygon { points, pen, fill } => {
                 if points.is_empty() {
@@ -256,7 +277,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", fill_to_css(fill.as_ref()));
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::Bezier { ctrl_pts, pen } => {
                 if ctrl_pts.len() < 4 {
@@ -277,7 +298,7 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     .set("stroke", color_to_css(pen.color))
                     .set("stroke-width", format!("{:.2}", pen.width_mils.max(0.5)))
                     .set("fill", "none");
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             DrawCall::Text {
                 text,
@@ -300,19 +321,65 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                         "transform",
                         format!("rotate({:.1},{:.2},{:.2})", -angle_deg, x, y),
                     );
-                doc = doc.add(elem);
+                write!(body, "{elem}").unwrap();
             }
             // Skip embedded images — pixel data is not available here
             DrawCall::Image { .. } => {}
-            // Transform and clip calls require a full stack; skip for now
-            DrawCall::PushTransform(_)
-            | DrawCall::PopTransform
-            | DrawCall::PushClip { .. }
-            | DrawCall::PopClip => {}
+            // Clip calls: not yet implemented
+            DrawCall::PushClip { .. } | DrawCall::PopClip => {}
         }
     }
 
-    doc.to_string()
+    // Build final SVG document with:
+    // - Root <g> setting stroke-linecap and stroke-linejoin to "round" (Altium defaults)
+    // - White background rectangle
+    // - Body content (may contain nested <g> groups for transforms)
+    format!(
+        "<svg viewBox=\"0 0 {w:.1} {h:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" \
+         xmlns=\"http://www.w3.org/2000/svg\">\
+         <g stroke-linecap=\"round\" stroke-linejoin=\"round\">\
+         <rect x=\"0\" y=\"0\" width=\"{w:.1}\" height=\"{h:.1}\" fill=\"white\"/>\
+         {body}\
+         </g></svg>"
+    )
+}
+
+/// Convert a `RenderTransform` to an SVG transform attribute string.
+///
+/// Accounts for the Y-axis flip (Altium Y+ up → SVG Y+ down):
+/// - Rotation angles are negated (CCW in Altium → CW in SVG)
+/// - Mirror is about a vertical axis (X-flip, unaffected by Y-flip direction)
+/// - Scale origins are converted to SVG space
+fn transform_to_svg(
+    t: &RenderTransform,
+    min_x: f64,
+    _max_y: f64,
+    to_svg: &dyn Fn(DrawPoint) -> (f64, f64),
+) -> String {
+    match t {
+        RenderTransform::Rotate { degrees, origin } => {
+            let (ox, oy) = to_svg(*origin);
+            // Negate angle: Altium CCW positive → SVG CW positive (Y-flip)
+            format!("rotate({:.2},{:.2},{:.2})", -degrees, ox, oy)
+        }
+        RenderTransform::Mirror { axis_x } => {
+            // Mirror about vertical line x = axis_x.
+            // In SVG coords: svg_ax = axis_x - min_x.
+            // Matrix form: translate(svg_ax) scale(-1,1) translate(-svg_ax)
+            let svg_ax = axis_x - min_x;
+            format!(
+                "translate({:.2},0) scale(-1,1) translate({:.2},0)",
+                svg_ax, -svg_ax
+            )
+        }
+        RenderTransform::Scale { sx, sy, origin } => {
+            let (ox, oy) = to_svg(*origin);
+            format!(
+                "translate({:.2},{:.2}) scale({:.2},{:.2}) translate({:.2},{:.2})",
+                ox, oy, sx, sy, -ox, -oy
+            )
+        }
+    }
 }
 
 /// Render a SchLib component by name to an SVG string.
