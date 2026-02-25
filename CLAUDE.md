@@ -297,22 +297,57 @@ Test files for each document type can be found in data/<document type>/ but they
 
 # Testing Infrastructure (Agent Guidance)
 
-Current testing layers in this repo:
+## Test feature flags
+
+Slow and fixture-dependent tests are gated behind cargo features so that
+`cargo test` runs fast by default:
+
+| Feature          | What it gates                                              | Implies        |
+| ---------------- | ---------------------------------------------------------- | -------------- |
+| `test-fixtures`  | Tests that read files from `data/` fixture directories     | —              |
+| `proptest`       | Property-based (proptest) tests (slow, randomised)         | `test-fixtures`|
+
+These features are defined in `altium-format`, `altium-format-ops`, and `altium-cli`.
+
+```bash
+# Fast unit tests only (default)
+cargo test --workspace
+
+# Include fixture-dependent tests
+cargo test --workspace --features test-fixtures
+
+# Include everything (fixtures + proptests)
+cargo test --workspace --features proptest
+```
+
+When adding new tests:
+- Tests that **do not** read from `data/` should work without any feature flag.
+- Tests that **read fixture files** from `data/` must be gated with
+  `#[cfg(feature = "test-fixtures")]`.
+- Property tests (`proptest!` blocks) must be gated with
+  `#[cfg(feature = "proptest")]`. Helper functions and imports used exclusively
+  by proptest blocks should also be gated.
+
+## Current testing layers
 
 1. Unit tests in source modules (`#[cfg(test)]` blocks in `crates/altium-format/src/*`).
 2. Integration tests in `crates/altium-format-ops/tests/` with shared helpers in:
    - `crates/altium-format-ops/tests/harness/mod.rs`
-3. Property tests (proptest):
+3. Property tests (proptest) — behind `--features proptest`:
    - `crates/altium-format/src/schdoc/mod.rs`
    - `crates/altium-format/src/pcblib/mod.rs`
+   - `crates/altium-format/src/pcbdoc/mod.rs`
    - `crates/altium-format-ops/tests/executor_proptest.rs`
    - `crates/altium-format-ops/tests/executor_schdoc_proptest.rs`
+   - `crates/altium-format-ops/tests/executor_pcb_proptest.rs`
+   - `crates/altium-format-ops/src/parser/{mod,selector,typecheck}.rs`
+   - `crates/altium-cli/src/main.rs`
 4. Regression seeds:
    - `crates/altium-format/proptest-regressions/*`
    - `crates/altium-format-ops/proptest-regressions/*`
    - `crates/altium-format-ops/tests/*.proptest-regressions`
 
-Agent rules for tests:
+## Agent rules for tests
 
 - Always prefer fail-fast assertions with explicit context (stream path, record index, opid, selector).
 - Validate invariants after structural edits (`validate_invariants()`), and after save/reopen for roundtrip flows.
