@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use altium_format_types::{MaskExpansionMode, PcbObjectId};
+use altium_format_types::{MaskExpansionMode, PcbObjectId, ViewableObjectId};
 
 use crate::block_stream::iter_blocks;
 use crate::binary_io::BinaryReader;
@@ -91,9 +91,13 @@ pub(crate) struct ExtendedPrimitiveInfoEntry {
 }
 
 /// One entry from PrimitiveGuids.
+///
+/// Uses `ViewableObjectId` (not `PcbObjectId`) because the PrimitiveGuids sidecar
+/// tracks GUIDs for all viewable object types, including groups, rules, dimension
+/// subtypes, etc. — not just binary-record primitive types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrimitiveGuidEntry {
-    pub(crate) object_id: PcbObjectId,
+    pub(crate) object_id: ViewableObjectId,
     pub(crate) index_for_save: i32,
     pub(crate) guid: [u8; 16],
 }
@@ -224,10 +228,10 @@ pub(crate) fn parse_primitive_guids(
                 detail: format!("object id out of byte range: {object_id_value}"),
             }
         })?;
-        let object_id = PcbObjectId::try_from(object_id_u8).map_err(|_| {
+        let object_id = ViewableObjectId::try_from(object_id_u8).map_err(|_| {
             AltiumFormatError::InvalidParamValue {
                 key: "PrimitiveGuids.ObjectId".to_owned(),
-                detail: format!("unknown object id value: {object_id_value}"),
+                detail: format!("unknown viewable object id value: {object_id_value}"),
             }
         })?;
         let index_for_save = reader.read_i32_le()?;

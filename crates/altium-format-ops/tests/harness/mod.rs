@@ -85,6 +85,25 @@ pub fn validate_pcblib(lib: &PcbLib) {
 }
 
 #[allow(dead_code)]
+pub fn save_reopen_pcblib(lib: &PcbLib) {
+    use altium_format::test_utils::assert_cfb_files_semantic_eq;
+
+    lib.validate_invariants()
+        .expect("pcblib validates before save");
+    let tmp1 = tempfile::NamedTempFile::new().expect("create temp file");
+    lib.save(tmp1.path()).expect("save pcblib output");
+    let reopened = PcbLib::open(tmp1.path()).expect("reopen saved pcblib");
+    reopened
+        .validate_invariants()
+        .expect("reopened pcblib validates");
+    let tmp2 = tempfile::NamedTempFile::new().expect("create second temp file");
+    reopened
+        .save(tmp2.path())
+        .expect("save reopened pcblib output");
+    assert_cfb_files_semantic_eq(tmp1.path(), tmp2.path());
+}
+
+#[allow(dead_code)]
 pub fn list_len_field(report: &ApplyReport, opid: &str, field: &str) -> usize {
     let q = report.results.get(opid).expect("query result exists");
     let value = q.fields.get(field).expect("list field exists");

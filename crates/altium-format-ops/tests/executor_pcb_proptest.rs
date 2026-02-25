@@ -6,7 +6,9 @@ use altium_format_ops::{
 use proptest::prelude::*;
 
 mod harness;
-use harness::{pcbdoc_fixture_path, pcblib_fixture_path, validate_pcbdoc, validate_pcblib};
+use harness::{
+    pcbdoc_fixture_path, pcblib_fixture_path, save_reopen_pcblib, validate_pcbdoc, validate_pcblib,
+};
 
 fn edge_i32(v: i32, fallback: i32) -> i32 {
     match v.rem_euclid(9) {
@@ -208,6 +210,8 @@ fn run_pcblib_stability_program(plans: Vec<Vec<(u8, i32, i32, i32, i32)>>) {
 
     validate_pcblib(&lib_direct);
     validate_pcblib(&lib_parsed);
+    save_reopen_pcblib(&lib_direct);
+    save_reopen_pcblib(&lib_parsed);
 }
 
 proptest! {
@@ -389,4 +393,7 @@ fn pcblib_model_based_manual_vs_json_equivalent() {
         count_field(&report_manual, "q0"),
         count_field(&report_json, "q0")
     );
+
+    save_reopen_pcblib(&lib_manual);
+    save_reopen_pcblib(&lib_json);
 }

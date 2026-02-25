@@ -262,6 +262,30 @@ fn parse_sub4_extension(
         0.0
     };
 
+    let x_pad_offset_all_layers = if header_reader.remaining() >= 4 {
+        header_reader.read_coord()?
+    } else {
+        Coord::from_internal(0)
+    };
+    let y_pad_offset_all_layers = if header_reader.remaining() >= 4 {
+        header_reader.read_coord()?
+    } else {
+        Coord::from_internal(0)
+    };
+
+    // Assert these are zero - all 37,669 pads with 26-byte headers have zeros here.
+    // If non-zero values appear, investigate to confirm the XPadOffsetAllLayers hypothesis.
+    if x_pad_offset_all_layers != Coord::from_internal(0) || y_pad_offset_all_layers != Coord::from_internal(0) {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad subrecord 4 extension".to_owned(),
+            detail: format!(
+                "extension header bytes 18..25 (hypothesized XPadOffset/YPadOffset) are non-zero: x={}, y={}",
+                x_pad_offset_all_layers.to_internal(),
+                y_pad_offset_all_layers.to_internal(),
+            ),
+        });
+    }
+
     if header_reader.remaining() != 0 {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "Pad subrecord 4 extension".to_owned(),
@@ -349,6 +373,8 @@ fn parse_sub4_extension(
             flags8,
             flags9,
             propagation_delay_f64,
+            x_pad_offset_all_layers,
+            y_pad_offset_all_layers,
         }),
         thermal_reliefs,
     ))

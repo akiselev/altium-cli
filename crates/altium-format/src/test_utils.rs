@@ -430,6 +430,14 @@ fn compare_stream(
             error: err_b.to_string(),
         }),
         (Err(err_a), Err(err_b)) => {
+            // Both sides failed to parse as block-encoded streams. This is
+            // normal for PCB binary streams (footprint Data, Header, etc.)
+            // that use raw binary format instead of block encoding. Only
+            // report parse errors if the raw bytes actually differ — if they
+            // match, there is no difference to report.
+            if stream_a == stream_b {
+                return;
+            }
             issues.push(DiffIssue::BlockParseError {
                 path: path.to_owned(),
                 side: "A",
@@ -511,7 +519,36 @@ fn compare_text_block(
     options: &CfbSemanticDiffOptions,
     issues: &mut Vec<DiffIssue>,
 ) {
-    let params_a = match parse_param_pairs(data_a) {
+    let parsed_a = parse_param_pairs(data_a);
+    let parsed_b = parse_param_pairs(data_b);
+
+    // When both sides fail to parse as parameter pairs (e.g. PCB
+    // LayerKindMapping version strings, or other non-pipe-delimited text
+    // blocks), fall back to raw byte comparison of the text block data.
+    if parsed_a.is_err() && parsed_b.is_err() {
+        if data_a != data_b {
+            if data_a.len() != data_b.len() {
+                issues.push(DiffIssue::BlockLengthMismatch {
+                    path: path.to_owned(),
+                    block_index,
+                    len_a: data_a.len(),
+                    len_b: data_b.len(),
+                    kind: "text",
+                });
+            }
+            let (offset, byte_a, byte_b) = first_byte_diff(data_a, data_b);
+            issues.push(DiffIssue::BinaryBlockMismatch {
+                path: path.to_owned(),
+                block_index,
+                offset,
+                byte_a,
+                byte_b,
+            });
+        }
+        return;
+    }
+
+    let params_a = match parsed_a {
         Ok(v) => v,
         Err(detail) => {
             issues.push(DiffIssue::TextParamParseError {
@@ -523,7 +560,7 @@ fn compare_text_block(
             return;
         }
     };
-    let params_b = match parse_param_pairs(data_b) {
+    let params_b = match parsed_b {
         Ok(v) => v,
         Err(detail) => {
             issues.push(DiffIssue::TextParamParseError {
@@ -1085,6 +1122,78 @@ mod tests {
                 | DiffIssue::DuplicateParamPairCountMismatch { key, .. } => key == "UniqueID",
                 _ => false,
             }),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn raw_binary_streams_identical_no_issues() {
+        // PCB footprint Header/Data streams are raw binary, not block-encoded.
+        // When both sides have identical bytes, no issues should be reported.
+        let raw_data = vec![0x04, 0x00, 0x00, 0x00]; // u32 count = 4
+        let a = make_cfb_layout(&[("/FP/Header", raw_data.clone())], &["/FP"]);
+        let b = make_cfb_layout(&[("/FP/Header", raw_data)], &["/FP"]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(report.is_identical(), "{}", report.render());
+    }
+
+    #[test]
+    fn raw_binary_streams_differ_reports_mismatch() {
+        // When both sides fail block parsing but bytes differ, report the diff.
+        let a = make_cfb_layout(&[("/FP/Header", vec![0x04, 0x00, 0x00, 0x00])], &["/FP"]);
+        let b = make_cfb_layout(&[("/FP/Header", vec![0x08, 0x00, 0x00, 0x00])], &["/FP"]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(!report.is_identical(), "expected differences");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::RawByteMismatch { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn non_param_text_block_identical_no_issues() {
+        // PCB LayerKindMapping uses text blocks that aren't pipe-delimited params.
+        // When both sides parse as text blocks but fail param parsing identically,
+        // and the bytes are equal, no issues should be reported.
+        let version_data = b"1\x00.\x000\x00\x00\x00"; // UTF-16LE "1.0\0"
+        let a = make_cfb_layout(
+            &[("/LKM/Data", write_text_block(version_data))],
+            &["/LKM"],
+        );
+        let b = make_cfb_layout(
+            &[("/LKM/Data", write_text_block(version_data))],
+            &["/LKM"],
+        );
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(report.is_identical(), "{}", report.render());
+    }
+
+    #[test]
+    fn non_param_text_block_differ_reports_mismatch() {
+        let a = make_cfb_layout(
+            &[("/LKM/Data", write_text_block(b"1\x00.\x000\x00"))],
+            &["/LKM"],
+        );
+        let b = make_cfb_layout(
+            &[("/LKM/Data", write_text_block(b"2\x00.\x000\x00"))],
+            &["/LKM"],
+        );
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(!report.is_identical(), "expected differences");
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| matches!(i, DiffIssue::BinaryBlockMismatch { .. })),
             "{}",
             report.render()
         );

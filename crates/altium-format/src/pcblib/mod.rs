@@ -394,6 +394,12 @@ pub(crate) struct PcbPadSub4Extension {
     pub(crate) flags8: u8,
     pub(crate) flags9: u8,
     pub(crate) propagation_delay_f64: f64,
+    /// Extension header bytes 18..21: hypothesized as `XPadOffsetAllLayers` (IPCB_Pad3).
+    /// Always zero in all 37,669 test pads with 26-byte headers. Asserted zero on parse.
+    pub(crate) x_pad_offset_all_layers: Coord,
+    /// Extension header bytes 22..25: hypothesized as `YPadOffsetAllLayers` (IPCB_Pad3).
+    /// Always zero in all 37,669 test pads with 26-byte headers. Asserted zero on parse.
+    pub(crate) y_pad_offset_all_layers: Coord,
 }
 
 #[derive(Debug)]
@@ -1218,6 +1224,8 @@ fn serialize_pad(p: &PcbPad) -> Vec<Vec<u8>> {
         hdr.write_u8(ext.flags8);
         hdr.write_u8(ext.flags9);
         hdr.write_f64_le(ext.propagation_delay_f64);
+        hdr.write_coord(ext.x_pad_offset_all_layers);
+        hdr.write_coord(ext.y_pad_offset_all_layers);
         let mut hdr_bytes = hdr.finish();
         hdr_bytes.truncate(ext.header_len as usize);
         sub4.write_bytes(&hdr_bytes);
