@@ -477,6 +477,9 @@ fn pcblib_add_footprint(lib: &mut PcbLib, op: &AddFootprintOp) -> Result<OpResul
         primitives: Vec::new(),
         extended_primitive_info: Vec::new(),
         primitive_guids: Vec::new(),
+        custom_shapes: Vec::new(),
+        custom_mask_shapes: Vec::new(),
+        corner_radius_chamfer: Vec::new(),
     });
     lib.component_toc.push(PcbLibComponentTocEntry {
         name: op.name.clone(),

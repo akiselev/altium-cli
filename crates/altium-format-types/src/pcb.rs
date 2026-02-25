@@ -912,6 +912,12 @@ impl TryFrom<u8> for PadShapeSubKind {
     }
 }
 
+impl std::fmt::Display for PadShapeSubKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Pad stack mode (0-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
