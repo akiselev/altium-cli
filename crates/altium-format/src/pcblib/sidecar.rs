@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use altium_format_types::{MaskExpansionMode, PcbObjectId, ViewableObjectId};
 
-use crate::block_stream::iter_blocks;
-use crate::binary_io::BinaryReader;
+use crate::block_stream::{iter_blocks, write_text_block};
+use crate::binary_io::{BinaryReader, BinaryWriter};
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcblib::PcbPrimitive;
@@ -359,6 +359,127 @@ fn set_unique_id(primitive: &mut PcbPrimitive, unique_id: String) {
         PcbPrimitive::Region(p) => p.unique_id = Some(unique_id),
         PcbPrimitive::ComponentBody(p) => p.unique_id = Some(unique_id),
     }
+}
+
+/// Returns the unique_id field of a primitive variant.
+pub(crate) fn get_unique_id(primitive: &PcbPrimitive) -> Option<&str> {
+    match primitive {
+        PcbPrimitive::Arc(p) => p.unique_id.as_deref(),
+        PcbPrimitive::Pad(p) => p.unique_id.as_deref(),
+        PcbPrimitive::Via(p) => p.unique_id.as_deref(),
+        PcbPrimitive::Track(p) => p.unique_id.as_deref(),
+        PcbPrimitive::Text(p) => p.unique_id.as_deref(),
+        PcbPrimitive::Fill(p) => p.unique_id.as_deref(),
+        PcbPrimitive::Region(p) => p.unique_id.as_deref(),
+        PcbPrimitive::ComponentBody(p) => p.unique_id.as_deref(),
+    }
+}
+
+/// Converts MaskExpansionMode to the string used by Altium files.
+///
+/// Altium uses "None" for the no-mask case (our parser accepts both "None" and
+/// "NoMask", but Altium files consistently write "None").
+fn mask_expansion_mode_to_str(mode: MaskExpansionMode) -> &'static str {
+    match mode {
+        MaskExpansionMode::NoMask => "None",
+        MaskExpansionMode::Rule => "Rule",
+        MaskExpansionMode::Manual => "Manual",
+        _ => unreachable!("unknown MaskExpansionMode variant"),
+    }
+}
+
+/// Serializes UniqueIDPrimitiveInformation Header and Data streams.
+///
+/// Iterates primitives and emits a text block for each that has a non-empty
+/// unique_id. Returns (header_bytes, data_bytes).
+pub(crate) fn serialize_unique_id_primitive_information(
+    primitives: &[PcbPrimitive],
+) -> (Vec<u8>, Vec<u8>) {
+    let mut data = Vec::new();
+    let mut count: u32 = 0;
+
+    for (index, primitive) in primitives.iter().enumerate() {
+        if let Some(uid) = get_unique_id(primitive) {
+            let object_id = primitive_object_id(primitive);
+            let param_str = format!(
+                "|PRIMITIVEINDEX={}|PRIMITIVEOBJECTID={}|UNIQUEID={}\x00",
+                index, object_id, uid
+            );
+            let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&param_str);
+            data.extend_from_slice(&write_text_block(&encoded));
+            count += 1;
+        }
+    }
+
+    let mut w = BinaryWriter::new();
+    w.write_u32_le(count);
+    (w.finish(), data)
+}
+
+/// Serializes ExtendedPrimitiveInformation Header and Data streams.
+///
+/// Each entry becomes a text block with mask expansion parameters.
+/// Returns (header_bytes, data_bytes).
+pub(crate) fn serialize_extended_primitive_information(
+    entries: &[ExtendedPrimitiveInfoEntry],
+) -> (Vec<u8>, Vec<u8>) {
+    let mut data = Vec::new();
+
+    for entry in entries {
+        let mut params = ParameterCollection::new();
+        params.insert("PRIMITIVEINDEX", entry.primitive_index.to_string());
+        params.insert(
+            "PRIMITIVEOBJECTID",
+            entry.primitive_object_id.to_string(),
+        );
+        if !entry.info_type.is_empty() {
+            params.insert("TYPE", entry.info_type.clone());
+        }
+        params.insert(
+            "SOLDERMASKEXPANSIONMODE",
+            mask_expansion_mode_to_str(entry.solder_mask_expansion_mode).to_owned(),
+        );
+        if !entry.solder_mask_expansion_manual.is_empty() {
+            params.insert(
+                "SOLDERMASKEXPANSION_MANUAL",
+                entry.solder_mask_expansion_manual.clone(),
+            );
+        }
+        params.insert(
+            "PASTEMASKEXPANSIONMODE",
+            mask_expansion_mode_to_str(entry.paste_mask_expansion_mode).to_owned(),
+        );
+        if !entry.paste_mask_expansion_manual.is_empty() {
+            params.insert(
+                "PASTEMASKEXPANSION_MANUAL",
+                entry.paste_mask_expansion_manual.clone(),
+            );
+        }
+        data.extend_from_slice(&write_text_block(&params.to_bytes()));
+    }
+
+    let mut w = BinaryWriter::new();
+    w.write_u32_le(entries.len() as u32);
+    (w.finish(), data)
+}
+
+/// Serializes PrimitiveGuids Header and Data streams.
+///
+/// Each entry is a 24-byte binary record: i32 object_id + i32 index_for_save + 16-byte GUID.
+/// Returns (header_bytes, data_bytes).
+pub(crate) fn serialize_primitive_guids(
+    entries: &[PrimitiveGuidEntry],
+) -> (Vec<u8>, Vec<u8>) {
+    let mut w = BinaryWriter::new();
+    for entry in entries {
+        w.write_i32_le(entry.object_id as u8 as i32);
+        w.write_i32_le(entry.index_for_save);
+        w.write_bytes(&entry.guid);
+    }
+
+    let mut header = BinaryWriter::new();
+    header.write_u32_le(entries.len() as u32);
+    (header.finish(), w.finish())
 }
 
 #[cfg(test)]

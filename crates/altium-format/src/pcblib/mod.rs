@@ -1,3 +1,4 @@
+pub(crate) mod custom_shapes;
 pub(crate) mod footprint;
 pub(crate) mod library;
 pub(crate) mod primitives;
@@ -28,6 +29,9 @@ use crate::pcblib::library::{
     PcbLibraryData, PcbPadViaLibraryConfig, PcbTextureEntry, parse_component_toc,
     parse_embedded_fonts, parse_layer_kind_mapping, parse_library_data, parse_model_metadata,
     parse_pad_via_library, parse_texture_metadata,
+};
+use crate::pcblib::custom_shapes::{
+    CornerRadiusChamferEntry, CustomMaskShapeEntry, CustomShapeEntry,
 };
 use crate::pcblib::sidecar::{ExtendedPrimitiveInfoEntry, PrimitiveGuidEntry};
 use crate::tracked_cfb::TrackedCfbDocument;
@@ -61,6 +65,9 @@ pub(crate) struct PcbFootprint {
     pub(crate) primitives: Vec<PcbPrimitive>,
     pub(crate) extended_primitive_info: Vec<ExtendedPrimitiveInfoEntry>,
     pub(crate) primitive_guids: Vec<PrimitiveGuidEntry>,
+    pub(crate) custom_shapes: Vec<CustomShapeEntry>,
+    pub(crate) custom_mask_shapes: Vec<CustomMaskShapeEntry>,
+    pub(crate) corner_radius_chamfer: Vec<CornerRadiusChamferEntry>,
 }
 
 pub(crate) struct PcbPrimitiveCommon {
@@ -765,17 +772,16 @@ impl PcbLib {
             }
         }
 
-        if !self.model_no_embed_entries.is_empty() {
-            cfb.create_storage("/Library/ModelsNoEmbed")?;
-            cfb.write_stream(
-                "/Library/ModelsNoEmbed/Header",
-                &serialize_u32_header(self.model_no_embed_entries.len() as u32),
-            )?;
-            cfb.write_stream(
-                "/Library/ModelsNoEmbed/Data",
-                &serialize_model_entries_data(&self.model_no_embed_entries),
-            )?;
-        }
+        // ModelsNoEmbed: Altium always writes this storage, even when empty.
+        cfb.create_storage("/Library/ModelsNoEmbed")?;
+        cfb.write_stream(
+            "/Library/ModelsNoEmbed/Header",
+            &serialize_u32_header(self.model_no_embed_entries.len() as u32),
+        )?;
+        cfb.write_stream(
+            "/Library/ModelsNoEmbed/Data",
+            &serialize_model_entries_data(&self.model_no_embed_entries),
+        )?;
 
         if !self.layer_kind_mapping.entries.is_empty() || !self.layer_kind_mapping.version.is_empty() {
             cfb.create_storage("/Library/LayerKindMapping")?;
@@ -799,20 +805,19 @@ impl PcbLib {
             )?;
         }
 
-        if !self.texture_entries.is_empty() {
-            cfb.create_storage("/Library/Textures")?;
-            cfb.write_stream(
-                "/Library/Textures/Header",
-                &serialize_u32_header(self.texture_entries.len() as u32),
-            )?;
-            cfb.write_stream(
-                "/Library/Textures/Data",
-                &serialize_texture_entries_data(&self.texture_entries),
-            )?;
-            for (i, entry) in self.texture_entries.iter().enumerate() {
-                if let Some(blob) = &entry.blob {
-                    cfb.write_stream(&format!("/Library/Textures/{i}"), blob)?;
-                }
+        // Textures: Altium always writes this storage, even when empty.
+        cfb.create_storage("/Library/Textures")?;
+        cfb.write_stream(
+            "/Library/Textures/Header",
+            &serialize_u32_header(self.texture_entries.len() as u32),
+        )?;
+        cfb.write_stream(
+            "/Library/Textures/Data",
+            &serialize_texture_entries_data(&self.texture_entries),
+        )?;
+        for (i, entry) in self.texture_entries.iter().enumerate() {
+            if let Some(blob) = &entry.blob {
+                cfb.write_stream(&format!("/Library/Textures/{i}"), blob)?;
             }
         }
 
@@ -825,6 +830,51 @@ impl PcbLib {
                 &serialize_u32_header(fp.primitives.len() as u32),
             )?;
             cfb.write_stream(&format!("{storage}/Data"), &serialize_footprint_data(fp)?)?;
+
+            // WideStrings sidecar: encode all Text primitive content as ENCODEDTEXT params.
+            // Altium always writes this stream, even for footprints with no Text primitives.
+            let wide_strings_data = wide_strings::serialize_pcblib_wide_strings(&fp.primitives);
+            cfb.write_stream(&format!("{storage}/WideStrings"), &wide_strings_data)?;
+
+            // UniqueIDPrimitiveInformation sidecar: tracking IDs for primitives.
+            let has_unique_ids = fp.primitives.iter().any(|p| sidecar::get_unique_id(p).is_some());
+            if has_unique_ids {
+                let (header, data) =
+                    sidecar::serialize_unique_id_primitive_information(&fp.primitives);
+                cfb.create_storage(&format!("{storage}/UniqueIDPrimitiveInformation"))?;
+                cfb.write_stream(
+                    &format!("{storage}/UniqueIDPrimitiveInformation/Header"),
+                    &header,
+                )?;
+                cfb.write_stream(
+                    &format!("{storage}/UniqueIDPrimitiveInformation/Data"),
+                    &data,
+                )?;
+            }
+
+            // ExtendedPrimitiveInformation sidecar: mask expansion settings.
+            if !fp.extended_primitive_info.is_empty() {
+                let (header, data) =
+                    sidecar::serialize_extended_primitive_information(&fp.extended_primitive_info);
+                cfb.create_storage(&format!("{storage}/ExtendedPrimitiveInformation"))?;
+                cfb.write_stream(
+                    &format!("{storage}/ExtendedPrimitiveInformation/Header"),
+                    &header,
+                )?;
+                cfb.write_stream(
+                    &format!("{storage}/ExtendedPrimitiveInformation/Data"),
+                    &data,
+                )?;
+            }
+
+            // PrimitiveGuids sidecar: GUIDs for all viewable primitives.
+            if !fp.primitive_guids.is_empty() {
+                let (header, data) =
+                    sidecar::serialize_primitive_guids(&fp.primitive_guids);
+                cfb.create_storage(&format!("{storage}/PrimitiveGuids"))?;
+                cfb.write_stream(&format!("{storage}/PrimitiveGuids/Header"), &header)?;
+                cfb.write_stream(&format!("{storage}/PrimitiveGuids/Data"), &data)?;
+            }
         }
 
         if !self.section_keys.is_empty() {

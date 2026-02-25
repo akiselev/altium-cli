@@ -12,6 +12,10 @@ use crate::pcblib::sidecar::{
     merge_sidecars, parse_extended_primitive_information, parse_primitive_guids,
     parse_unique_id_primitive_information, validate_extended_entries,
 };
+use crate::pcblib::custom_shapes::{
+    parse_corner_radius_chamfer, parse_custom_mask_shapes, parse_custom_shapes,
+    validate_custom_shape_entries,
+};
 use crate::pcblib::wide_strings::parse_pcblib_wide_strings;
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
@@ -67,6 +71,9 @@ pub(crate) fn load_footprint(
         primitives: primitives_vec,
         extended_primitive_info: Vec::new(),
         primitive_guids: Vec::new(),
+        custom_shapes: Vec::new(),
+        custom_mask_shapes: Vec::new(),
+        corner_radius_chamfer: Vec::new(),
     };
 
     load_sidecars(doc, cfb_key, &mut footprint)
@@ -247,13 +254,39 @@ fn load_sidecars(
         doc.read_stream_optional(&format!("/{cfb_key}/PrimitiveGuids/Data"))?;
     }
 
+    // CustomShapes: optional single stream.
+    footprint.custom_shapes = match doc.read_stream_optional(&format!("/{cfb_key}/CustomShapes"))? {
+        Some(data) => parse_custom_shapes(&data)
+            .with_context(|| format!("parsing /{cfb_key}/CustomShapes"))?,
+        None => vec![],
+    };
+
+    // CustomMaskShapes: optional single stream.
+    footprint.custom_mask_shapes =
+        match doc.read_stream_optional(&format!("/{cfb_key}/CustomMaskShapes"))? {
+            Some(data) => parse_custom_mask_shapes(&data)
+                .with_context(|| format!("parsing /{cfb_key}/CustomMaskShapes"))?,
+            None => vec![],
+        };
+
+    // CornerRadiusChamfer: optional single stream.
+    footprint.corner_radius_chamfer =
+        match doc.read_stream_optional(&format!("/{cfb_key}/CornerRadiusChamfer"))? {
+            Some(data) => parse_corner_radius_chamfer(&data)
+                .with_context(|| format!("parsing /{cfb_key}/CornerRadiusChamfer"))?,
+            None => vec![],
+        };
+
+    // Validate that custom shape entries reference valid pad primitives.
+    validate_custom_shape_entries(
+        &footprint.primitives,
+        &footprint.custom_shapes,
+        &footprint.custom_mask_shapes,
+        &footprint.corner_radius_chamfer,
+    )?;
+
     // Unsupported sidecars must fail hard until fully implemented.
-    for stream_name in [
-        "CustomShapes",
-        "CustomMaskShapes",
-        "SharedUnion",
-        "CornerRadiusChamfer",
-    ] {
+    for stream_name in ["SharedUnion"] {
         let path = format!("/{cfb_key}/{stream_name}");
         if let Some(data) = doc.read_stream_optional(&path)? {
             return Err(AltiumFormatError::InvalidParamValue {

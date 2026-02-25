@@ -1,4 +1,4 @@
-//! PcbLib WideStrings sidecar stream parser.
+//! PcbLib WideStrings sidecar stream parser and serializer.
 //!
 //! Format: u32_le(length) + NUL-terminated parameter string.
 //! Empty stream (single 0x00 byte or completely empty) means no wide strings.
@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
+use crate::block_stream::write_text_block;
 use crate::param_collection::ParameterCollection;
+use crate::pcblib::PcbPrimitive;
 use crate::{AltiumFormatError, Result};
 
 /// Parses the PcbLib WideStrings sidecar stream.
@@ -107,6 +109,42 @@ fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
             key: key.to_owned(),
             detail: format!("decoded bytes are not valid UTF-8: {e}"),
         })
+}
+
+/// Encodes a UTF-8 string as comma-separated decimal byte values.
+fn encode_text_for_wide_strings(text: &str) -> String {
+    text.as_bytes()
+        .iter()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Serializes the WideStrings sidecar stream for a footprint.
+///
+/// Iterates primitives, encoding each Text primitive's content as an
+/// ENCODEDTEXT{N} parameter (N = text-primitive index, 0-based).
+/// Returns the complete stream bytes (text block with u32 length prefix),
+/// or an empty Vec if the footprint has no Text primitives.
+pub(crate) fn serialize_pcblib_wide_strings(primitives: &[PcbPrimitive]) -> Vec<u8> {
+    let mut params = ParameterCollection::new();
+    let mut text_count = 0usize;
+
+    for primitive in primitives {
+        if let PcbPrimitive::Text(text) = primitive {
+            let encoded = encode_text_for_wide_strings(&text.text);
+            params.insert(&format!("ENCODEDTEXT{text_count}"), encoded);
+            text_count += 1;
+        }
+    }
+
+    if text_count == 0 {
+        // Altium writes a minimal WideStrings stream even for footprints with
+        // no Text primitives: a text block containing a single NUL byte.
+        return write_text_block(&[0x00]);
+    }
+
+    write_text_block(&params.to_bytes())
 }
 
 #[cfg(test)]
