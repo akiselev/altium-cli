@@ -4,6 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 91cab9c88042f76b6d3147903623c85d466f29ce7ceac3f49dc77e287c963220 # shrinks to idx = 482
-cc c87e3ab905a6ca64b6dfb491be63669222b94816fda1c54bfa3b786b427cd892 # shrinks to idx = 1404
-cc 2e0c1b80a8ee18451f7d2adf6384d23eeedf7cad91525a6c63982254a6d8a6b1 # shrinks to idx = 2821
+cc e0ae404527cf41a8e07c7b95720e2ed3c613ab1935fa0062b9c21201fa1a231d # shrinks to x = "a", y = "a", z = "or"

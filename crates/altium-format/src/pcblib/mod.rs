@@ -10,10 +10,11 @@ use std::path::{Path, PathBuf};
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
-use altium_format_types::pcb::TentingMode;
+use altium_format_types::pcb::{PolygonReliefAngle, TentingMode};
 use altium_format_types::{
-    Color, Coord, CoordPoint, HoleType, MaskExpansionMode, PadShape, PadStackMode, PcbFlags,
-    PcbObjectId, PlaneConnectionStyle, RegionKind, TCacheState, TextKind, V6Layer, V7Layer,
+    Color, Coord, CoordPoint, DaisyChainStyle, MaskExpansionMode, PadShape, PadStackMode,
+    PcbFlags, PcbObjectId, PlaneConnectionStyle, RegionKind, TCacheState, TextAutoposition,
+    TextKind, V6Layer, V7Layer, ViaStructureType,
 };
 
 use crate::block_stream::iter_blocks;
@@ -160,10 +161,25 @@ pub(crate) struct PcbVia {
     pub(crate) extension_coord_237: Coord,
     pub(crate) solder_mask_expansion_linked: bool,
     pub(crate) solder_mask_expansion_back: Coord,
-    // Premium extended (offset 246+, AD26)
-    pub(crate) pos_tolerance: Coord,
-    pub(crate) neg_tolerance: Coord,
-    // Post-section-1 data (sections 2-5) is currently unsupported and must fail at parse-time.
+    // Via template link extended block (after section2, 46-byte trailing data).
+    // Present in AD26 files from ~2019+. Format: u8 version + GUID[16] + GUID[16] + i32 HolePosTol + i32 HoleNegTol + u8 flags.
+    pub(crate) template_link_version: Option<u8>,
+    pub(crate) template_link_library_id: Option<[u8; 16]>,
+    pub(crate) template_link_template_id: Option<[u8; 16]>,
+    pub(crate) hole_positive_tolerance: Option<Coord>,
+    pub(crate) hole_negative_tolerance: Option<Coord>,
+    pub(crate) template_link_flags: Option<u8>,
+    // IPC-4761 via structure block (21 bytes, ~2022+).
+    // Binary layout: i32 + i32 + i32 + f64 + TViaStructureType(u8) = 21 bytes.
+    // Related C# interfaces: IHoleSizeInfo, IPCB_ViaStructureSupport.
+    // The f64 is confirmed as counter_hole_angle (IHoleSizeInfo.GetCounterHoleAngle() -> double).
+    // One i32 is likely counter_hole_depth (IHoleSizeInfo.GetCounterHoleDepth() -> int).
+    // Exact i32 field ordering unknown — Delphi save/load code not yet decompiled.
+    pub(crate) ipc4761_field_0: Option<i32>,
+    pub(crate) ipc4761_field_1: Option<i32>,
+    pub(crate) ipc4761_field_2: Option<i32>,
+    pub(crate) ipc4761_counter_hole_angle: Option<f64>,
+    pub(crate) via_structure_type: Option<ViaStructureType>,
     pub(crate) layer_diameter_overrides: Vec<PcbViaSection2Entry>,
     pub(crate) unique_id: Option<String>,
 }
@@ -215,6 +231,20 @@ pub(crate) struct PcbText {
     pub(crate) barcode_render_mode: u8,
     pub(crate) multiline: bool,
     pub(crate) barcode_font_name: String,
+    // Extended text fields (offset 225+, version-dependent).
+    // Confirmed by C# IPCB_Text3 and IPCB_Text_SaveLoadParameters interfaces.
+    pub(crate) ttf_inverted_justify: Option<TextAutoposition>,
+    pub(crate) ttf_offset_from_inverted_rect: Option<u8>,
+    pub(crate) tail_reserved_227: Option<u8>,
+    pub(crate) multiline_auto_position: Option<TextAutoposition>,
+    pub(crate) is_advance_justification_valid: Option<bool>,
+    pub(crate) advance_snapping: Option<u8>,
+    pub(crate) tail_reserved_231: Option<u8>,
+    pub(crate) advance_justification_x: Option<i32>,
+    pub(crate) advance_justification_y: Option<i32>,
+    pub(crate) use_text_alignment_by_snap: Option<i32>,
+    pub(crate) snap_point_x: Option<Coord>,
+    pub(crate) snap_point_y: Option<Coord>,
     pub(crate) text: String,
     pub(crate) unique_id: Option<String>,
 }
@@ -285,6 +315,25 @@ pub(crate) struct PcbPadStackData {
     pub(crate) alt_shape: [u8; 32],
     pub(crate) corner_radius_pct: [u8; 32],
     pub(crate) per_layer_overrides: [u8; 32],
+    /// Extended per-layer corner radius entries (offset 628+).
+    /// Confirmed by C# IPCB_Pad3: StackCRPctExOnLayer, StackCRSizeOnLayer, StackCRUsePercentOnLayer.
+    pub(crate) extended_cr: Vec<PcbPadExtendedCrEntry>,
+}
+
+/// Extended per-layer corner radius entry (15 bytes each).
+///
+/// Confirmed by C# IPCB_Pad3 and IPCB_PadTemplateStackData interfaces:
+/// - CRPctEx (double in C#, stored as Coord in binary)
+/// - CRSize (int)
+/// - UseCRPct (bool)
+#[derive(Debug)]
+pub(crate) struct PcbPadExtendedCrEntry {
+    pub(crate) layer_id: u32,
+    pub(crate) alt_shape: u8,
+    pub(crate) cr_pct_ex: Coord,
+    pub(crate) cr_size: Coord,
+    pub(crate) cr_pct: u8,
+    pub(crate) use_percent: bool,
 }
 
 pub(crate) struct PcbPad {
@@ -305,34 +354,62 @@ pub(crate) struct PcbPad {
     pub(crate) shape_bot: PadShape,
     pub(crate) rotation: f64,
     pub(crate) is_plated: bool,
-    pub(crate) hole_type: HoleType,
-    pub(crate) stack_mode: PadStackMode,
+    pub(crate) daisy_chain_style: DaisyChainStyle,
+    pub(crate) pad_mode: PadStackMode,
     // Field at offset 63 (FUN_01811110)
     pub(crate) unknown_63: i32,
     // TV6_PadCache (offsets 67-104)
     pub(crate) cache: PcbPadCache,
     // Post-cache fields (offsets 105-113)
-    pub(crate) user_routed: bool,
+    pub(crate) selection_memory_flags: u8,
     pub(crate) union_index: i32,
-    pub(crate) unknown_110: i32,
+    pub(crate) jumper_id: i32,
     // Extended fields (offsets 114-171, from FUN_0187b7c0)
-    pub(crate) layer_override: i32,
-    pub(crate) hole_flag_1: bool,
-    pub(crate) hole_flag_2: bool,
-    pub(crate) stack_flag: bool,
-    pub(crate) stack_conditional: i32,
-    pub(crate) unknown_125: bool,
-    pub(crate) swap_id_pad: [u8; 16],
-    pub(crate) swap_id_part: [u8; 16],
+    pub(crate) v7_layer_override: i32,
+    pub(crate) is_assy_testpoint_top: bool,
+    pub(crate) is_assy_testpoint_bottom: bool,
+    pub(crate) use_separate_expansions: bool,
+    pub(crate) solder_mask_bottom_expansion: i32,
+    pub(crate) solder_mask_expansion_from_hole_edge: bool,
+    pub(crate) template_link_library_id: [u8; 16],
+    pub(crate) template_link_template_id: [u8; 16],
     pub(crate) pin_package_length: Coord,
     pub(crate) hole_positive_tolerance: i32,
     pub(crate) hole_negative_tolerance: i32,
-    pub(crate) unknown_170: u8,
-    pub(crate) has_stack_data: bool,
+    pub(crate) reserved_170: u8,
+    pub(crate) has_sub4_extension: bool,
+    pub(crate) sub4_extension: Option<PcbPadSub4Extension>,
+    pub(crate) thermal_reliefs: Vec<PcbPadThermalReliefEntry>,
     // Subrecord 5: per-layer stack data (0 or 596+ bytes)
     pub(crate) stack_data: Option<PcbPadStackData>,
     // Sidecar
     pub(crate) unique_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PcbPadSub4Extension {
+    pub(crate) header_len: u32,
+    pub(crate) thermal_relief_count: u32,
+    pub(crate) propagation_delay_f32: f32,
+    pub(crate) flags8: u8,
+    pub(crate) flags9: u8,
+    pub(crate) propagation_delay_f64: f64,
+}
+
+#[derive(Debug)]
+pub(crate) struct PcbPadThermalReliefEntry {
+    pub(crate) layer: V7Layer,
+    pub(crate) defined_type: u8,
+    pub(crate) connect_style: PlaneConnectionStyle,
+    pub(crate) air_gap_width: Coord,
+    pub(crate) conductor_width: Coord,
+    pub(crate) rotation: PolygonReliefAngle,
+    pub(crate) entries: u32,
+    pub(crate) expansion: Coord,
+    pub(crate) conductor_by_pad_edge: bool,
+    pub(crate) min_distance: Coord,
+    pub(crate) enable_min_distance: bool,
+    pub(crate) use_custom_relief: bool,
 }
 
 pub(crate) struct PcbComponentBody {
@@ -1096,8 +1173,8 @@ fn serialize_pad(p: &PcbPad) -> Vec<Vec<u8>> {
     sub4.write_u8(p.shape_bot as u8);
     sub4.write_f64_le(p.rotation);
     sub4.write_u8(p.is_plated as u8);
-    sub4.write_u8(p.hole_type as u8);
-    sub4.write_u8(p.stack_mode as u8);
+    sub4.write_u8(p.daisy_chain_style as u8);
+    sub4.write_u8(p.pad_mode as u8);
     sub4.write_i32_le(p.unknown_63);
     sub4.write_u8(p.cache.plane_connection_style as u8);
     sub4.write_coord(p.cache.relief_conductor_width);
@@ -1117,22 +1194,51 @@ fn serialize_pad(p: &PcbPad) -> Vec<Vec<u8>> {
     sub4.write_u8(p.cache.solder_mask_expansion_valid as u8);
     sub4.write_u8(p.cache.power_plane_clearance_valid as u8);
     sub4.write_u8(p.cache.planes_valid as u8);
-    sub4.write_u8(p.user_routed as u8);
+    sub4.write_u8(p.selection_memory_flags);
     sub4.write_i32_le(p.union_index);
-    sub4.write_i32_le(p.unknown_110);
-    sub4.write_i32_le(p.layer_override);
-    sub4.write_u8(p.hole_flag_1 as u8);
-    sub4.write_u8(p.hole_flag_2 as u8);
-    sub4.write_u8(p.stack_flag as u8);
-    sub4.write_i32_le(p.stack_conditional);
-    sub4.write_u8(p.unknown_125 as u8);
-    sub4.write_bytes(&p.swap_id_pad);
-    sub4.write_bytes(&p.swap_id_part);
+    sub4.write_i32_le(p.jumper_id);
+    sub4.write_i32_le(p.v7_layer_override);
+    sub4.write_u8(p.is_assy_testpoint_top as u8);
+    sub4.write_u8(p.is_assy_testpoint_bottom as u8);
+    sub4.write_u8(p.use_separate_expansions as u8);
+    sub4.write_i32_le(p.solder_mask_bottom_expansion);
+    sub4.write_u8(p.solder_mask_expansion_from_hole_edge as u8);
+    sub4.write_bytes(&p.template_link_library_id);
+    sub4.write_bytes(&p.template_link_template_id);
     sub4.write_coord(p.pin_package_length);
     sub4.write_i32_le(p.hole_positive_tolerance);
     sub4.write_i32_le(p.hole_negative_tolerance);
-    sub4.write_u8(p.unknown_170);
-    sub4.write_u8(p.has_stack_data as u8);
+    sub4.write_u8(p.reserved_170);
+    sub4.write_u8(p.has_sub4_extension as u8);
+    if let Some(ext) = &p.sub4_extension {
+        sub4.write_u32_le(ext.header_len);
+        let mut hdr = BinaryWriter::new();
+        hdr.write_u32_le(ext.thermal_relief_count);
+        hdr.write_f32_le(ext.propagation_delay_f32);
+        hdr.write_u8(ext.flags8);
+        hdr.write_u8(ext.flags9);
+        hdr.write_f64_le(ext.propagation_delay_f64);
+        let mut hdr_bytes = hdr.finish();
+        hdr_bytes.truncate(ext.header_len as usize);
+        sub4.write_bytes(&hdr_bytes);
+        if !p.thermal_reliefs.is_empty() {
+            sub4.write_u32_le(30);
+            for relief in &p.thermal_reliefs {
+                sub4.write_u32_le(relief.layer.raw());
+                sub4.write_u8(relief.defined_type);
+                sub4.write_u8(relief.connect_style as u8);
+                sub4.write_coord(relief.air_gap_width);
+                sub4.write_coord(relief.conductor_width);
+                sub4.write_u8(relief.rotation as u8);
+                sub4.write_u32_le(relief.entries);
+                sub4.write_coord(relief.expansion);
+                sub4.write_u8(relief.conductor_by_pad_edge as u8);
+                sub4.write_coord(relief.min_distance);
+                sub4.write_u8(relief.enable_min_distance as u8);
+                sub4.write_u8(relief.use_custom_relief as u8);
+            }
+        }
+    }
 
     let mut sub5 = BinaryWriter::new();
     if let Some(stack) = &p.stack_data {

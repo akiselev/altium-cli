@@ -1,11 +1,13 @@
+use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::constants::parsing::PAD_SUBRECORD_COUNT;
 use altium_format_types::{
-    Coord, CoordPoint, HoleType, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState,
+    Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode, PlaneConnectionStyle,
+    TCacheState, V7Layer,
 };
 
 use crate::binary_io::BinaryReader;
 use crate::pcblib::primitives::common::parse_common_header;
-use crate::pcblib::{PcbPad, PcbPadCache, PcbPadStackData};
+use crate::pcblib::{PcbPad, PcbPadCache, PcbPadExtendedCrEntry, PcbPadStackData};
 use crate::{AltiumFormatError, Result};
 
 /// The index of the main pad data subrecord (within the 6 pad subrecords).
@@ -71,8 +73,8 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
     let shape_bot = PadShape::try_from(reader.read_u8()?)?;
     let rotation = reader.read_f64_le()?;
     let is_plated = reader.read_u8()? != 0;
-    let hole_type = HoleType::try_from(reader.read_u8()?)?;
-    let stack_mode = PadStackMode::try_from(reader.read_u8()?)?;
+    let daisy_chain_style = DaisyChainStyle::try_from(reader.read_u8()?)?;
+    let pad_mode = PadStackMode::try_from(reader.read_u8()?)?;
 
     // Field at offset 63 (FUN_01811110, always present)
     let unknown_63 = reader.read_i32_le()?;
@@ -81,66 +83,72 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
     let cache = parse_pad_cache(&mut reader)?;
 
     // Post-cache fields (offsets 105-113, always present)
-    let user_routed = reader.read_u8()? != 0;
+    let selection_memory_flags = reader.read_u8()?;
     let union_index = reader.read_i32_le()?;
-    let unknown_110 = reader.read_i32_le()?;
+    let jumper_id = reader.read_i32_le()?;
 
     // --- Extended fields (offsets 114+, version-dependent) ---
     // FUN_0187b7c0 reads these conditionally based on remaining data.
 
     // Layer override + hole flags (offsets 114-119, 6 bytes)
-    let (layer_override, hole_flag_1, hole_flag_2) = if reader.remaining() >= 6 {
-        let lo = reader.read_i32_le()?;
-        let hf1 = reader.read_u8()? != 0;
-        let hf2 = reader.read_u8()? != 0;
-        (lo, hf1, hf2)
-    } else {
-        (0, false, false)
-    };
-
-    // Stack fields + swap IDs (offsets 120-157, 38 bytes)
-    let (stack_flag, stack_conditional, unknown_125, swap_id_pad, swap_id_part) =
-        if reader.remaining() >= 38 {
-            let sf = reader.read_u8()? != 0;
-            let sc = reader.read_i32_le()?;
-            let u125 = reader.read_u8()? != 0;
-            let mut sid_pad = [0u8; 16];
-            sid_pad.copy_from_slice(reader.read_bytes(16)?);
-            let mut sid_part = [0u8; 16];
-            sid_part.copy_from_slice(reader.read_bytes(16)?);
-            (sf, sc, u125, sid_pad, sid_part)
+    let (v7_layer_override, is_assy_testpoint_top, is_assy_testpoint_bottom) =
+        if reader.remaining() >= 6 {
+            let v7 = reader.read_i32_le()?;
+            let top = reader.read_u8()? != 0;
+            let bottom = reader.read_u8()? != 0;
+            (v7, top, bottom)
         } else {
-            (false, 0, false, [0u8; 16], [0u8; 16])
+            (0, false, false)
         };
 
+    // Mask expansion linkage + bottom solder mask (offsets 120-125, 6 bytes)
+    let (use_separate_expansions, solder_mask_bottom_expansion, solder_mask_expansion_from_hole_edge) =
+        if reader.remaining() >= 6 {
+            let separate = reader.read_u8()? != 0;
+            let bottom = reader.read_i32_le()?;
+            let from_hole = reader.read_u8()? != 0;
+            (separate, bottom, from_hole)
+        } else {
+            (false, 0, false)
+        };
+
+    // Template link IDs (offsets 126-157, 32 bytes)
+    let (template_link_library_id, template_link_template_id) = if reader.remaining() >= 32 {
+        let mut library_id = [0u8; 16];
+        library_id.copy_from_slice(reader.read_bytes(16)?);
+        let mut template_id = [0u8; 16];
+        template_id.copy_from_slice(reader.read_bytes(16)?);
+        (library_id, template_id)
+    } else {
+        ([0u8; 16], [0u8; 16])
+    };
+
     // Tolerances + unknown_170 (offsets 158-170, 13 bytes)
-    let (pin_package_length, hole_positive_tolerance, hole_negative_tolerance, unknown_170) =
+    let (pin_package_length, hole_positive_tolerance, hole_negative_tolerance, reserved_170) =
         if reader.remaining() >= 13 {
             let ppl = reader.read_coord()?;
             let hpt = reader.read_i32_le()?;
             let hnt = reader.read_i32_le()?;
-            let u170 = reader.read_u8()?;
-            (ppl, hpt, hnt, u170)
+            let reserved = reader.read_u8()?;
+            if reserved != 0 {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "reserved byte 170".to_owned(),
+                    detail: format!("expected 0, got {reserved:#04X}"),
+                });
+            }
+            (ppl, hpt, hnt, reserved)
         } else {
             (Coord::from_internal(0), 0x7FFFFFFF, 0x7FFFFFFF, 0u8)
         };
 
-    // has_stack_data (offset 171, 1 byte)
-    let has_stack_data = if reader.remaining() >= 1 {
+    // has_sub4_extension (offset 171, 1 byte)
+    let has_sub4_extension = if reader.remaining() >= 1 {
         reader.read_u8()? != 0
     } else {
         false
     };
 
-    if reader.remaining() != 0 {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: "Pad subrecord 4".to_owned(),
-            detail: format!(
-                "unsupported trailing bytes after known pad layout: {} bytes remain",
-                reader.remaining()
-            ),
-        });
-    }
+    let (sub4_extension, thermal_reliefs) = parse_sub4_extension(&mut reader, has_sub4_extension)?;
 
     // --- Subrecord 5: per-layer stack data ---
     let stack_data = parse_stack_subrecord(subrecords[5])?;
@@ -161,29 +169,189 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
         shape_bot,
         rotation,
         is_plated,
-        hole_type,
-        stack_mode,
+        daisy_chain_style,
+        pad_mode,
         unknown_63,
         cache,
-        user_routed,
+        selection_memory_flags,
         union_index,
-        unknown_110,
-        layer_override,
-        hole_flag_1,
-        hole_flag_2,
-        stack_flag,
-        stack_conditional,
-        unknown_125,
-        swap_id_pad,
-        swap_id_part,
+        jumper_id,
+        v7_layer_override,
+        is_assy_testpoint_top,
+        is_assy_testpoint_bottom,
+        use_separate_expansions,
+        solder_mask_bottom_expansion,
+        solder_mask_expansion_from_hole_edge,
+        template_link_library_id,
+        template_link_template_id,
         pin_package_length,
         hole_positive_tolerance,
         hole_negative_tolerance,
-        unknown_170,
-        has_stack_data,
+        reserved_170,
+        has_sub4_extension,
+        sub4_extension,
+        thermal_reliefs,
         stack_data,
         unique_id: None,
     })
+}
+
+fn parse_sub4_extension(
+    reader: &mut BinaryReader<'_>,
+    has_sub4_extension: bool,
+) -> Result<(
+    Option<crate::pcblib::PcbPadSub4Extension>,
+    Vec<crate::pcblib::PcbPadThermalReliefEntry>,
+)> {
+    if !has_sub4_extension {
+        if reader.remaining() != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad subrecord 4".to_owned(),
+                detail: format!(
+                    "unexpected trailing bytes without sub4 extension flag: {}",
+                    reader.remaining()
+                ),
+            });
+        }
+        return Ok((None, Vec::new()));
+    }
+
+    if reader.remaining() == 0 {
+        return Ok((None, Vec::new()));
+    }
+
+    if reader.remaining() < 4 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad subrecord 4 extension".to_owned(),
+            detail: format!(
+                "expected u32 extension header length, only {} bytes remain",
+                reader.remaining()
+            ),
+        });
+    }
+
+    let header_len = reader.read_u32_le()? as usize;
+    let available = reader.remaining();
+    let effective_header_len = header_len.min(available);
+    let header = reader.read_bytes(effective_header_len)?;
+
+    let mut header_reader = BinaryReader::new(header);
+    let thermal_relief_count = if header_reader.remaining() >= 4 {
+        header_reader.read_u32_le()?
+    } else {
+        0
+    };
+    let propagation_delay_f32 = if header_reader.remaining() >= 4 {
+        header_reader.read_f32_le()?
+    } else {
+        0.0
+    };
+    let flags8 = if header_reader.remaining() >= 1 {
+        header_reader.read_u8()?
+    } else {
+        0
+    };
+    let flags9 = if header_reader.remaining() >= 1 {
+        header_reader.read_u8()?
+    } else {
+        0
+    };
+    let propagation_delay_f64 = if header_reader.remaining() >= 8 {
+        header_reader.read_f64_le()?
+    } else {
+        0.0
+    };
+
+    if header_reader.remaining() != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad subrecord 4 extension".to_owned(),
+            detail: format!(
+                "unsupported extension header bytes after known fields: {}",
+                header_reader.remaining()
+            ),
+        });
+    }
+
+    let mut thermal_reliefs = Vec::new();
+    if thermal_relief_count > 0 {
+        if reader.remaining() < 4 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad subrecord 4 extension thermal entries".to_owned(),
+                detail: "missing thermal entry size".to_owned(),
+            });
+        }
+        let entry_size = reader.read_u32_le()? as usize;
+        if entry_size != 30 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad subrecord 4 extension thermal entries".to_owned(),
+                detail: format!("unsupported thermal entry size {entry_size}, expected 30"),
+            });
+        }
+
+        let needed = (thermal_relief_count as usize)
+            .checked_mul(entry_size)
+            .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                key: "Pad subrecord 4 extension thermal entries".to_owned(),
+                detail: "thermal entry payload size overflow".to_owned(),
+            })?;
+        if reader.remaining() < needed {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad subrecord 4 extension thermal entries".to_owned(),
+                detail: format!(
+                    "insufficient thermal entry bytes: need {needed}, have {}",
+                    reader.remaining()
+                ),
+            });
+        }
+
+        for _ in 0..thermal_relief_count {
+            let layer = V7Layer::new(reader.read_u32_le()?);
+            let defined_type = reader.read_u8()?;
+            let connect_style = PlaneConnectionStyle::try_from(reader.read_u8()?)?;
+            let air_gap_width = reader.read_coord()?;
+            let conductor_width = reader.read_coord()?;
+            let rotation = PolygonReliefAngle::try_from(reader.read_u8()?)?;
+            let entries = reader.read_u32_le()?;
+            let expansion = reader.read_coord()?;
+            let conductor_by_pad_edge = reader.read_u8()? != 0;
+            let min_distance = reader.read_coord()?;
+            let enable_min_distance = reader.read_u8()? != 0;
+            let use_custom_relief = reader.read_u8()? != 0;
+            thermal_reliefs.push(crate::pcblib::PcbPadThermalReliefEntry {
+                layer,
+                defined_type,
+                connect_style,
+                air_gap_width,
+                conductor_width,
+                rotation,
+                entries,
+                expansion,
+                conductor_by_pad_edge,
+                min_distance,
+                enable_min_distance,
+                use_custom_relief,
+            });
+        }
+    }
+
+    if reader.remaining() != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "Pad subrecord 4 extension".to_owned(),
+            detail: format!("unsupported trailing extension bytes: {}", reader.remaining()),
+        });
+    }
+
+    Ok((
+        Some(crate::pcblib::PcbPadSub4Extension {
+            header_len: header_len as u32,
+            thermal_relief_count,
+            propagation_delay_f32,
+            flags8,
+            flags9,
+            propagation_delay_f64,
+        }),
+        thermal_reliefs,
+    ))
 }
 
 /// Parses a string subrecord (subrecords 0-3): u8 length prefix + Windows-1252 bytes.
@@ -307,6 +475,53 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     let mut per_layer_overrides = [0u8; 32];
     per_layer_overrides.copy_from_slice(reader.read_bytes(32)?);
 
+    // Extended per-layer CR entries (offset 628+).
+    // Format: u32 count + u32 entry_size (must be 15) + count * 15 bytes.
+    let extended_cr = if reader.remaining() >= 8 {
+        let count = reader.read_u32_le()? as usize;
+        let entry_size = reader.read_u32_le()? as usize;
+        if entry_size != 15 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad stack subrecord extended CR".to_owned(),
+                detail: format!(
+                    "expected extended CR entry size 15, got {}",
+                    entry_size
+                ),
+            });
+        }
+        if reader.remaining() < count * entry_size {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad stack subrecord extended CR".to_owned(),
+                detail: format!(
+                    "need {} bytes for {} extended CR entries (15 bytes each), only {} remain",
+                    count * entry_size,
+                    count,
+                    reader.remaining()
+                ),
+            });
+        }
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let layer_id = reader.read_u32_le()?;
+            let alt_shape_val = reader.read_u8()?;
+            let cr_pct_ex = reader.read_coord()?;
+            let cr_size = reader.read_coord()?;
+            let cr_pct = reader.read_u8()?;
+            let use_percent = reader.read_u8()? != 0;
+            entries.push(PcbPadExtendedCrEntry {
+                layer_id,
+                alt_shape: alt_shape_val,
+                cr_pct_ex,
+                cr_size,
+                cr_pct,
+                use_percent,
+            });
+        }
+        entries
+    } else {
+        Vec::new()
+    };
+
     if reader.remaining() != 0 {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "Pad subrecord 5".to_owned(),
@@ -331,6 +546,7 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
         alt_shape,
         corner_radius_pct,
         per_layer_overrides,
+        extended_cr,
     }))
 }
 
@@ -338,7 +554,7 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
 mod tests {
     use super::*;
     use crate::binary_io::BinaryWriter;
-    use altium_format_types::{Coord, CoordPoint, HoleType, PadShape, PadStackMode};
+    use altium_format_types::{Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode};
 
     fn write_common_header(w: &mut BinaryWriter) {
         w.write_u8(74); // layer = MultiLayer
@@ -377,8 +593,8 @@ mod tests {
         w.write_u8(1); // shape_bot = Round
         w.write_f64_le(0.0); // rotation
         w.write_u8(1); // is_plated = true
-        w.write_u8(0); // hole_type = Round
-        w.write_u8(0); // stack_mode = Simple
+        w.write_u8(0); // daisy_chain_style = Load
+        w.write_u8(0); // pad_mode = Simple
         // unknown_63 (offset 63)
         w.write_i32_le(0);
         // TV6_PadCache (offsets 67-104, 38 bytes)
@@ -401,26 +617,26 @@ mod tests {
         w.write_u8(0); // power_plane_clearance_valid
         w.write_u8(0); // planes_valid
         // Post-cache fields (offsets 105-113)
-        w.write_u8(0); // user_routed
+        w.write_u8(0); // selection_memory_flags
         w.write_i32_le(0); // union_index
-        w.write_i32_le(0); // unknown_110
+        w.write_i32_le(0); // jumper_id
     }
 
     /// Write extended fields (offsets 114-171, 58 bytes).
     fn write_pad_extended(w: &mut BinaryWriter) {
-        w.write_i32_le(0); // layer_override
-        w.write_u8(0); // hole_flag_1
-        w.write_u8(0); // hole_flag_2
-        w.write_u8(0); // stack_flag
-        w.write_i32_le(0); // stack_conditional
-        w.write_u8(0); // unknown_125
-        w.write_bytes(&[0u8; 16]); // swap_id_pad
-        w.write_bytes(&[0u8; 16]); // swap_id_part
+        w.write_i32_le(0); // v7_layer_override
+        w.write_u8(0); // is_assy_testpoint_top
+        w.write_u8(0); // is_assy_testpoint_bottom
+        w.write_u8(0); // use_separate_expansions
+        w.write_i32_le(0); // solder_mask_bottom_expansion
+        w.write_u8(0); // solder_mask_expansion_from_hole_edge
+        w.write_bytes(&[0u8; 16]); // template_link_library_id
+        w.write_bytes(&[0u8; 16]); // template_link_template_id
         w.write_i32_le(0); // pin_package_length
         w.write_i32_le(0x7FFFFFFF); // hole_positive_tolerance
         w.write_i32_le(0x7FFFFFFF); // hole_negative_tolerance
-        w.write_u8(0); // unknown_170
-        w.write_u8(0); // has_stack_data
+        w.write_u8(0); // reserved_170
+        w.write_u8(0); // has_sub4_extension
     }
 
     fn make_pad_subrecords(main_data: &[u8]) -> [Vec<u8>; 6] {
@@ -450,14 +666,14 @@ mod tests {
         assert_eq!(pad.hole_size.to_internal(), 15_000);
         assert_eq!(pad.shape_top, PadShape::Round);
         assert!(pad.is_plated);
-        assert_eq!(pad.hole_type, HoleType::Round);
-        assert_eq!(pad.stack_mode, PadStackMode::Simple);
+        assert_eq!(pad.daisy_chain_style, DaisyChainStyle::Load);
+        assert_eq!(pad.pad_mode, PadStackMode::Simple);
         assert_eq!(
             pad.cache.plane_connection_style,
             PlaneConnectionStyle::NoConnect
         );
         assert_eq!(pad.cache.relief_entries, 4);
-        assert!(!pad.has_stack_data);
+        assert!(!pad.has_sub4_extension);
         assert!(pad.stack_data.is_none());
     }
 
@@ -473,10 +689,10 @@ mod tests {
         assert_eq!(pad.pad_name, "1");
         assert_eq!(pad.location.x.to_internal(), 50_000);
         // Extended fields default to zero/false
-        assert_eq!(pad.layer_override, 0);
-        assert!(!pad.hole_flag_1);
-        assert!(!pad.stack_flag);
-        assert!(!pad.has_stack_data);
+        assert_eq!(pad.v7_layer_override, 0);
+        assert!(!pad.is_assy_testpoint_top);
+        assert!(!pad.use_separate_expansions);
+        assert!(!pad.has_sub4_extension);
     }
 
     #[test]

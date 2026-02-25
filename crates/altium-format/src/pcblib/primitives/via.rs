@@ -1,5 +1,5 @@
 use altium_format_types::pcb::TentingMode;
-use altium_format_types::{Coord, MaskExpansionMode, PlaneConnectionStyle, TCacheState, V6Layer};
+use altium_format_types::{Coord, MaskExpansionMode, PlaneConnectionStyle, TCacheState, V6Layer, ViaStructureType};
 
 use crate::Result;
 use crate::binary_io::BinaryReader;
@@ -66,8 +66,17 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut solder_mask_expansion_back = Coord::ZERO;
 
     let mut layer_diameter_overrides = Vec::new();
-    let pos_tolerance = Coord::ZERO;
-    let neg_tolerance = Coord::ZERO;
+    let mut template_link_version: Option<u8> = None;
+    let mut template_link_library_id: Option<[u8; 16]> = None;
+    let mut template_link_template_id: Option<[u8; 16]> = None;
+    let mut hole_positive_tolerance: Option<Coord> = None;
+    let mut hole_negative_tolerance: Option<Coord> = None;
+    let mut template_link_flags: Option<u8> = None;
+    let mut ipc4761_field_0: Option<i32> = None;
+    let mut ipc4761_field_1: Option<i32> = None;
+    let mut ipc4761_field_2: Option<i32> = None;
+    let mut ipc4761_counter_hole_angle: Option<f64> = None;
+    let mut via_structure_type: Option<ViaStructureType> = None;
 
     if reader.remaining() > 0 {
         via_properties_version = reader.read_u8()?;
@@ -142,6 +151,46 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             }
         }
 
+        // Via template link block: size-prefixed (4-byte size + payload).
+        // Payload format (42 bytes): version(1) + LibraryID GUID(16) + TemplateID GUID(16)
+        //   + HolePositiveTolerance(4, i32) + HoleNegativeTolerance(4, i32) + flags(1).
+        if reader.remaining() >= 46 {
+            let ext_size = reader.read_u32_le()? as usize;
+            if ext_size < 42 || reader.remaining() < ext_size {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via template link block".to_owned(),
+                    detail: format!("declared size {ext_size} but only {} bytes remain", reader.remaining()),
+                });
+            }
+            let mut ext = crate::binary_io::BinaryReader::new(reader.read_bytes(ext_size)?);
+            template_link_version = Some(ext.read_u8()?);
+            let mut guid1 = [0u8; 16];
+            guid1.copy_from_slice(ext.read_bytes(16)?);
+            template_link_library_id = Some(guid1);
+            let mut guid2 = [0u8; 16];
+            guid2.copy_from_slice(ext.read_bytes(16)?);
+            template_link_template_id = Some(guid2);
+            hole_positive_tolerance = Some(Coord::from_internal(ext.read_i32_le()?));
+            hole_negative_tolerance = Some(Coord::from_internal(ext.read_i32_le()?));
+            template_link_flags = Some(ext.read_u8()?);
+            if ext.remaining() > 0 {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via template link block".to_owned(),
+                    detail: format!("unexpected {} bytes remain after parsing", ext.remaining()),
+                });
+            }
+        }
+
+        // IPC-4761 via structure block (21 bytes): present in newer files (~2022+).
+        // Format: i32(field0) + i32(field1) + i32(field2) + f64(angle) + TViaStructureType(1).
+        if reader.remaining() >= 21 {
+            ipc4761_field_0 = Some(reader.read_i32_le()?);
+            ipc4761_field_1 = Some(reader.read_i32_le()?);
+            ipc4761_field_2 = Some(reader.read_i32_le()?);
+            ipc4761_counter_hole_angle = Some(reader.read_f64_le()?);
+            via_structure_type = Some(ViaStructureType::try_from(reader.read_u8()?)?);
+        }
+
         if reader.remaining() > 0 {
             return Err(crate::AltiumFormatError::InvalidParamValue {
                 key: "Via".to_owned(),
@@ -199,8 +248,17 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         extension_coord_237,
         solder_mask_expansion_linked,
         solder_mask_expansion_back,
-        pos_tolerance,
-        neg_tolerance,
+        template_link_version,
+        template_link_library_id,
+        template_link_template_id,
+        hole_positive_tolerance,
+        hole_negative_tolerance,
+        template_link_flags,
+        ipc4761_field_0,
+        ipc4761_field_1,
+        ipc4761_field_2,
+        ipc4761_counter_hole_angle,
+        via_structure_type,
         layer_diameter_overrides,
         unique_id: None,
     })

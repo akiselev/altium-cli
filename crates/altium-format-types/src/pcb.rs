@@ -779,6 +779,52 @@ impl TryFrom<u8> for TextKind {
     }
 }
 
+/// Text autoposition setting controlling where text anchors relative to a component.
+///
+/// Source: `AD26-dotnet/Altium.Edp.Interfaces/RT_PCB/TTextAutoposition.cs`
+/// `TTextAutoposition = (eAutoPos_Manual, eAutoPos_TopLeft, ..., eAutoPos_BottomRight)`
+///
+/// Used by `IPCB_Text::GetState_TTFInvertedTextJustify` and
+/// `IPCB_Text::GetState_MultilineTextAutoPosition`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum TextAutoposition {
+    #[default]
+    Manual = 0,
+    TopLeft = 1,
+    CenterLeft = 2,
+    BottomLeft = 3,
+    TopCenter = 4,
+    CenterCenter = 5,
+    BottomCenter = 6,
+    TopRight = 7,
+    CenterRight = 8,
+    BottomRight = 9,
+}
+
+impl TryFrom<u8> for TextAutoposition {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Manual),
+            1 => Ok(Self::TopLeft),
+            2 => Ok(Self::CenterLeft),
+            3 => Ok(Self::BottomLeft),
+            4 => Ok(Self::TopCenter),
+            5 => Ok(Self::CenterCenter),
+            6 => Ok(Self::BottomCenter),
+            7 => Ok(Self::TopRight),
+            8 => Ok(Self::CenterRight),
+            9 => Ok(Self::BottomRight),
+            _ => Err(InvalidEnumValue {
+                type_name: "TextAutoposition",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
 /// Barcode kind (0-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -1046,6 +1092,37 @@ impl std::fmt::Display for TentingMode {
             Self::Top => write!(f, "Top"),
             Self::Bottom => write!(f, "Bottom"),
             Self::Both => write!(f, "Both"),
+        }
+    }
+}
+
+/// Daisy chain connection style for pads.
+///
+/// Source: `AD26-dotnet/Altium.Edp.Interfaces/RT_PCB/TDaisyChainStyle.cs`
+/// `TDaisyChainStyle = (eDaisyChainLoad, eDaisyChainTerminator, eDaisyChainSource)`
+///
+/// Used by `IPCB_Pad3::GetState_DaisyChainStyle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum DaisyChainStyle {
+    #[default]
+    Load = 0,
+    Terminator = 1,
+    Source = 2,
+}
+
+impl TryFrom<u8> for DaisyChainStyle {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Load),
+            1 => Ok(Self::Terminator),
+            2 => Ok(Self::Source),
+            _ => Err(InvalidEnumValue {
+                type_name: "DaisyChainStyle",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -1825,4 +1902,70 @@ pub mod constants {
         "PadHoleLayer",    // 81
         "ViaHoleLayer",    // 82
     ];
+}
+
+/// IPC-4761 via structure type for via fill/plug/tent classification.
+///
+/// Corresponds to `TViaStructureType` from `RT_PCB/TViaStructureType.cs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ViaStructureType {
+    #[default]
+    None = 0,
+    /// Type 1A: Tenting, applied from top.
+    Type1ATenting = 1,
+    /// Type 1B: Tenting, applied from bottom.
+    Type1BTenting = 2,
+    /// Type 2A: Tenting and covering, applied from top.
+    Type2ATentingAndCovering = 3,
+    /// Type 2B: Tenting and covering, applied from bottom.
+    Type2BTentingAndCovering = 4,
+    /// Type 3A: Plugging, applied from top.
+    Type3APlugging = 5,
+    /// Type 3B: Plugging, applied from bottom.
+    Type3BPlugging = 6,
+    /// Type 4A: Plugging and covering, applied from top.
+    Type4APluggingAndCovering = 7,
+    /// Type 4B: Plugging and covering, applied from bottom.
+    Type4BPluggingAndCovering = 8,
+    /// Type 5: Filling.
+    Type5Filling = 9,
+    /// Type 6A: Filling and covering, applied from top.
+    Type6AFillingAndCovering = 10,
+    /// Type 6B: Filling and covering, applied from bottom.
+    Type6BFillingAndCovering = 11,
+    /// Type 7: Filling and capping.
+    Type7FillingAndCapping = 12,
+}
+
+impl TryFrom<u8> for ViaStructureType {
+    type Error = crate::InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Type1ATenting),
+            2 => Ok(Self::Type1BTenting),
+            3 => Ok(Self::Type2ATentingAndCovering),
+            4 => Ok(Self::Type2BTentingAndCovering),
+            5 => Ok(Self::Type3APlugging),
+            6 => Ok(Self::Type3BPlugging),
+            7 => Ok(Self::Type4APluggingAndCovering),
+            8 => Ok(Self::Type4BPluggingAndCovering),
+            9 => Ok(Self::Type5Filling),
+            10 => Ok(Self::Type6AFillingAndCovering),
+            11 => Ok(Self::Type6BFillingAndCovering),
+            12 => Ok(Self::Type7FillingAndCapping),
+            _ => Err(crate::InvalidEnumValue {
+                type_name: "ViaStructureType",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for ViaStructureType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }

@@ -371,12 +371,12 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
             let doc = SchLib::open(input)?;
             doc.save_as(output.as_path())?;
         }
-        // "pcblib" => {
-        //     let doc = PcbLib::open(input)?;
-        //     doc.save_as(output.as_path())?;
-        // }
+        "pcblib" => {
+            let doc = PcbLib::open(input)?;
+            doc.save_as(output.as_path())?;
+        }
         _ => anyhow::bail!(
-            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib)"
+            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib, .pcblib)"
         ),
     }
 

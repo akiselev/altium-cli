@@ -1,4 +1,4 @@
-use altium_format_types::TextKind;
+use altium_format_types::{TextAutoposition, TextKind};
 use altium_format_types::constants::parsing::TEXT_SUBRECORD_COUNT;
 
 use crate::binary_io::BinaryReader;
@@ -60,11 +60,18 @@ const TEXT_BASE_SIZE: usize = 225;
 ///   160      1    multiline (bool)
 ///   161-224 64    barcode_font_name (UTF-16LE, 32 WideChar fixed buffer)
 ///   --- version-dependent tail ---
-///   225-229  5    tail flags (autoposition, etc.)
-///   230-231  2    advance_snapping + reserved
-///   232-239  8    advance_justification X/Y (i32, i32)
-///   240-243  4    use_text_alignment_by_snap + padding
-///   244-251  8    snap_point X/Y (Coord, Coord)
+///   225      1    ttf_inverted_justify (TTextAutoposition, u8)
+///   226      1    ttf_offset_from_inverted_rect (u8)
+///   227      1    (reserved, always 0)
+///   228      1    multiline_auto_position (TTextAutoposition, u8)
+///   229      1    is_advance_justification_valid (bool)
+///   230      1    advance_snapping (u8)
+///   231      1    (reserved, always 0)
+///   232-235  4    advance_justification_x (i32; 0x80000000 = not set)
+///   236-239  4    advance_justification_y (i32; 0x80000000 = not set)
+///   240-243  4    use_text_alignment_by_snap (i32)
+///   244-247  4    snap_point_x (Coord)
+///   248-251  4    snap_point_y (Coord)
 pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     if subrecords.len() != TEXT_SUBRECORD_COUNT {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -93,19 +100,19 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     let location = reader.read_coord_point()?;
     let height = reader.read_coord()?;
     let text_kind = TextKind::try_from(reader.read_u8()?)?;
-    reader.skip(1)?; // reserved byte 26
+    reader.read_reserved_zero(1)?; // reserved byte 26
     let rotation = reader.read_f64_le()?;
     let is_mirrored = reader.read_bool()?;
     let stroke_width = reader.read_coord()?;
-    reader.skip(3)?; // reserved bytes 40-42
+    reader.read_reserved_zero(3)?; // reserved bytes 40-42
     let is_italic = reader.read_bool()?;
     let is_bold = reader.read_bool()?;
-    reader.skip(1)?; // reserved byte 45
+    reader.read_reserved_zero(1)?; // reserved byte 45
     let font_name = reader.read_wide_string_fixed(FONT_NAME_WCHAR_COUNT)?;
     let inverted = reader.read_bool()?;
-    reader.skip(3)?; // reserved bytes 111-113
+    reader.read_reserved_zero(3)?; // reserved bytes 111-113
     let wide_string_index = reader.read_i32_le()?;
-    reader.skip(6)?; // reserved bytes 118-123
+    reader.read_reserved_zero(6)?; // reserved bytes 118-123
     let ttf_text_width = reader.read_coord()?;
     let ttf_text_height = reader.read_coord()?;
     let font_id = reader.read_i32_le()?;
@@ -115,11 +122,69 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     let barcode_x_margin = reader.read_coord()?;
     let barcode_y_margin = reader.read_coord()?;
     let barcode_min_width = reader.read_coord()?;
-    reader.skip(1)?; // reserved byte 157
+    reader.read_reserved_zero(1)?; // reserved byte 157
     let barcode_show_text = reader.read_bool()?;
     let barcode_render_mode = reader.read_u8()?;
     let multiline = reader.read_bool()?;
     let barcode_font_name = reader.read_wide_string_fixed(FONT_NAME_WCHAR_COUNT)?;
+
+    // --- Version-dependent tail fields (offset 225+) ---
+    //
+    // Bytes 225-229: TTF inverted justify, TTF offset from rect, padding, multiline
+    //                auto-position, is_advance_justification_valid.
+    // Bytes 230-231: advance_snapping, reserved.
+    // Bytes 232-239: advance_justification X/Y (i32 each; 0x80000000 = not set).
+    // Bytes 240-243: use_text_alignment_by_snap (i32).
+    // Bytes 244-251: snap_point X/Y (Coord each).
+    let mut ttf_inverted_justify = None;
+    let mut ttf_offset_from_inverted_rect = None;
+    let mut tail_reserved_227 = None;
+    let mut multiline_auto_position = None;
+    let mut is_advance_justification_valid = None;
+    let mut advance_snapping = None;
+    let mut tail_reserved_231 = None;
+    let mut advance_justification_x = None;
+    let mut advance_justification_y = None;
+    let mut use_text_alignment_by_snap = None;
+    let mut snap_point_x = None;
+    let mut snap_point_y = None;
+
+    if reader.remaining() >= 5 {
+        ttf_inverted_justify = Some(TextAutoposition::try_from(reader.read_u8()?)?);
+        ttf_offset_from_inverted_rect = Some(reader.read_u8()?);
+        let reserved = reader.read_u8()?;
+        if reserved != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "reserved byte 227".to_owned(),
+                detail: format!("expected 0, got {reserved:#04X}"),
+            });
+        }
+        tail_reserved_227 = Some(reserved);
+        multiline_auto_position = Some(TextAutoposition::try_from(reader.read_u8()?)?);
+        is_advance_justification_valid = Some(reader.read_bool()?);
+    }
+    if reader.remaining() >= 2 {
+        advance_snapping = Some(reader.read_u8()?);
+        let reserved = reader.read_u8()?;
+        if reserved != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "reserved byte 231".to_owned(),
+                detail: format!("expected 0, got {reserved:#04X}"),
+            });
+        }
+        tail_reserved_231 = Some(reserved);
+    }
+    if reader.remaining() >= 8 {
+        advance_justification_x = Some(reader.read_i32_le()?);
+        advance_justification_y = Some(reader.read_i32_le()?);
+    }
+    if reader.remaining() >= 4 {
+        use_text_alignment_by_snap = Some(reader.read_i32_le()?);
+    }
+    if reader.remaining() >= 8 {
+        snap_point_x = Some(reader.read_coord()?);
+        snap_point_y = Some(reader.read_coord()?);
+    }
 
     if reader.remaining() != 0 {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -162,6 +227,18 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
         barcode_render_mode,
         multiline,
         barcode_font_name,
+        ttf_inverted_justify,
+        ttf_offset_from_inverted_rect,
+        tail_reserved_227,
+        multiline_auto_position,
+        is_advance_justification_valid,
+        advance_snapping,
+        tail_reserved_231,
+        advance_justification_x,
+        advance_justification_y,
+        use_text_alignment_by_snap,
+        snap_point_x,
+        snap_point_y,
         text,
         unique_id: None,
     })

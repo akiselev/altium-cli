@@ -230,6 +230,25 @@ impl<'a> BinaryReader<'a> {
         Ok(())
     }
 
+    /// Reads `count` reserved bytes and asserts they are all zero.
+    ///
+    /// Returns an error if any byte is non-zero, including the offset and
+    /// actual values for debugging. Use this instead of `skip()` for reserved
+    /// fields to enforce the fail-fast invariant.
+    pub(crate) fn read_reserved_zero(&mut self, count: usize) -> Result<()> {
+        let offset = self.pos;
+        let bytes = self.read_bytes(count)?;
+        if bytes.iter().any(|&b| b != 0) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: format!("reserved bytes at offset {offset}"),
+                detail: format!(
+                    "expected {count} zero bytes, got {bytes:02X?}",
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// Creates a sub-reader over the next `len` bytes and advances the parent by `len`.
     pub(crate) fn sub_reader(&mut self, len: usize) -> Result<BinaryReader<'a>> {
         self.check_available(len)?;

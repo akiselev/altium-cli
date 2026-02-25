@@ -5,7 +5,7 @@ use altium_format_types::{
 };
 
 use crate::binary_io::BinaryReader;
-use crate::pcblib::{PcbPadCache, PcbPadStackData};
+use crate::pcblib::{PcbPadCache, PcbPadExtendedCrEntry, PcbPadStackData};
 use crate::{AltiumFormatError, Result};
 
 use super::records::PrimitiveSectionKind;
@@ -497,16 +497,23 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         barcode_margin_y = reader.read_i32_le()?;
         unk32 = reader.read_i32_le()?;
         barcode_type = reader.read_u8()?;
-        let _reserved_barcode_flag = reader.read_u8()?;
+        reader.read_reserved_zero(1)?; // reserved barcode flag
         barcode_inverted = reader.read_bool()?;
         barcode_font_type = reader.read_u8()?;
         barcode_font_name = reader.read_wide_string_fixed(32)?;
-        let _reserved_barcode_tail = reader.read_bytes(5)?;
+        reader.read_reserved_zero(5)?; // reserved barcode tail
     }
 
     if reader.remaining() >= 2 {
         advance_snapping = Some(reader.read_u8()?);
-        advance_reserved = Some(reader.read_u8()?);
+        let reserved = reader.read_u8()?;
+        if reserved != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "advance reserved byte".to_owned(),
+                detail: format!("expected 0, got {reserved:#04X}"),
+            });
+        }
+        advance_reserved = Some(reserved);
     }
     if reader.remaining() >= 8 {
         advance_justification_x = Some(reader.read_i32_le()?);
@@ -521,7 +528,7 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
     }
 
     if reader.remaining() >= 22 {
-        let _reserved_extended_header = reader.read_u8()?;
+        reader.read_reserved_zero(1)?; // reserved extended header byte
         layer_enum_index = reader.read_i32_le()?;
         sentinel_1 = reader.read_i32_le()?;
         sentinel_2 = reader.read_i32_le()?;
@@ -870,6 +877,53 @@ fn parse_pad_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     let mut per_layer_overrides = [0u8; 32];
     per_layer_overrides.copy_from_slice(reader.read_bytes(32)?);
 
+    // Extended per-layer CR entries (offset 628+).
+    // Format: u32 count + u32 entry_size (must be 15) + count * 15 bytes.
+    let extended_cr = if reader.remaining() >= 8 {
+        let count = reader.read_u32_le()? as usize;
+        let entry_size = reader.read_u32_le()? as usize;
+        if entry_size != 15 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad stack subrecord extended CR".to_owned(),
+                detail: format!(
+                    "expected extended CR entry size 15, got {}",
+                    entry_size
+                ),
+            });
+        }
+        if reader.remaining() < count * entry_size {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad stack subrecord extended CR".to_owned(),
+                detail: format!(
+                    "need {} bytes for {} extended CR entries (15 bytes each), only {} remain",
+                    count * entry_size,
+                    count,
+                    reader.remaining()
+                ),
+            });
+        }
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let layer_id = reader.read_u32_le()?;
+            let alt_shape_val = reader.read_u8()?;
+            let cr_pct_ex = reader.read_coord()?;
+            let cr_size = reader.read_coord()?;
+            let cr_pct = reader.read_u8()?;
+            let use_percent = reader.read_u8()? != 0;
+            entries.push(PcbPadExtendedCrEntry {
+                layer_id,
+                alt_shape: alt_shape_val,
+                cr_pct_ex,
+                cr_size,
+                cr_pct,
+                use_percent,
+            });
+        }
+        entries
+    } else {
+        Vec::new()
+    };
+
     if reader.remaining() != 0 {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "Pad stack subrecord".to_owned(),
@@ -894,5 +948,6 @@ fn parse_pad_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
         alt_shape,
         corner_radius_pct,
         per_layer_overrides,
+        extended_cr,
     }))
 }
