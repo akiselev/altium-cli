@@ -21,6 +21,7 @@ use altium_format_types::{
 use crate::block_stream::iter_blocks;
 use crate::block_stream::write_text_block;
 use crate::binary_io::BinaryWriter;
+use crate::board_config::serialize_board_config;
 use crate::cfb_document::CfbDocument;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcb_file_header::{PcbFileHeader, parse_pcb_file_header};
@@ -28,7 +29,7 @@ use crate::pcblib::library::{
     PcbEmbeddedFontEntry, PcbLayerKindMapping, PcbLibComponentTocEntry, PcbLibModelEntry,
     PcbLibraryData, PcbPadViaLibraryConfig, PcbTextureEntry, parse_component_toc,
     parse_embedded_fonts, parse_layer_kind_mapping, parse_library_data, parse_model_metadata,
-    parse_pad_via_library, parse_texture_metadata,
+    parse_pad_via_library, parse_texture_metadata, serialize_library_data_suffix,
 };
 use crate::pcblib::custom_shapes::{
     CornerRadiusChamferEntry, CustomMaskShapeEntry, CustomShapeEntry,
@@ -743,7 +744,8 @@ impl PcbLib {
 
         cfb.create_storage("/Library")?;
         cfb.write_stream("/Library/Header", &serialize_u32_header(1))?;
-        cfb.write_stream("/Library/Data", &serialize_library_data_block(&self.library))?;
+        let component_names: Vec<String> = self.component_toc.iter().map(|e| e.name.clone()).collect();
+        cfb.write_stream("/Library/Data", &serialize_library_data(&self.library, &component_names))?;
 
         cfb.create_storage("/Library/ComponentParamsTOC")?;
         cfb.write_stream(
@@ -968,14 +970,17 @@ fn serialize_pcblib_file_header(header: &PcbFileHeader) -> Vec<u8> {
     w.finish()
 }
 
-fn serialize_library_data_block(library: &PcbLibraryData) -> Vec<u8> {
+fn serialize_library_data(library: &PcbLibraryData, component_names: &[String]) -> Vec<u8> {
     let mut params = crate::param_collection::ParameterCollection::new();
     params.insert("FILENAME", library.filename.clone());
     params.insert("KIND", library.kind.clone());
     params.insert("VERSION", library.version.clone());
     params.insert("DATE", library.date.clone());
     params.insert("TIME", library.time.clone());
-    write_text_block(&params.to_bytes())
+    serialize_board_config(&library.board_config, &mut params);
+    let mut out = write_text_block(&params.to_bytes());
+    out.extend_from_slice(&serialize_library_data_suffix(component_names));
+    out
 }
 
 fn serialize_component_toc_data(entries: &[PcbLibComponentTocEntry]) -> Vec<u8> {
@@ -1608,6 +1613,7 @@ mod tests {
                     v8_layers: Vec::new(),
                     v7_layers: Vec::new(),
                     legacy_layers: Vec::new(),
+                    mech_pairs: Vec::new(),
                     surface_properties: crate::board_config::PcbSurfaceProperties {
                         top_type: String::new(),
                         top_const: String::new(),

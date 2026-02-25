@@ -34,11 +34,11 @@ pub use color::Color;
 pub use common::{ComponentKind, RotationBy90, TextAutoPosition, Unit};
 pub use coord::{BoundingBox, Coord, CoordPoint};
 pub use pcb::{
-    BoardSide, CornerStyle, DaisyChainStyle, DielectricType, DimensionKind, HoleType,
-    MaskExpansionMode, PadShape, PadShapeSubKind, PadStackMode, PcbFileFormatVersion, PcbFlags,
-    PcbObjectId, PlaneConnectionStyle, RegionKind, RuleKind, TCacheState, TextAutoposition,
-    ViewableObjectId, ViaStructureType,
-    TextKind, V6Layer, V7Layer,
+    BoardSide, ComponentPlacementType, CornerStyle, DaisyChainStyle, DielectricType,
+    DimensionKind, HoleType, LayerStackStyle, MaskExpansionMode, PadShape, PadShapeSubKind,
+    PadStackMode, PcbFileFormatVersion, PcbFlags, PcbObjectId, PlaneConnectionStyle, RegionKind,
+    RuleKind, TCacheState, TextAutoposition, ViewableObjectId, ViaStructureType, TextKind,
+    V6Layer, V7Layer,
 };
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,

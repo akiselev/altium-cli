@@ -99,7 +99,6 @@ pub(crate) struct PcbPad {
     pub(crate) hole_negative_tolerance: Option<i32>,
     pub(crate) unknown_170: Option<u8>,
     pub(crate) has_stack_data: Option<bool>,
-    pub(crate) post_172_data: Vec<u8>,
     pub(crate) stack_data: Option<PcbPadStackData>,
 }
 
@@ -150,7 +149,6 @@ pub(crate) struct PcbText {
     pub(crate) use_text_alignment_by_snap: Option<i32>,
     pub(crate) snap_point_x: Option<i32>,
     pub(crate) snap_point_y: Option<i32>,
-    pub(crate) subrecord1_tail: Vec<u8>,
     pub(crate) text: String,
 }
 
@@ -540,8 +538,6 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         trailing_is_justification_valid = Some(reader.read_bool()?);
     }
 
-    let subrecord1_tail = reader.read_bytes(reader.remaining())?.to_vec();
-
     reader.assert_exhausted()?;
     let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(subrecord_2);
     let text = decoded.trim_end_matches('\0').to_owned();
@@ -592,7 +588,6 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         use_text_alignment_by_snap,
         snap_point_x,
         snap_point_y,
-        subrecord1_tail,
         text,
     })
 }
@@ -719,7 +714,7 @@ fn parse_pad_subrecords(subrecords: &[&[u8]]) -> Result<PcbPad> {
     } else {
         None
     };
-    let post_172_data = reader.read_bytes(reader.remaining())?.to_vec();
+    reader.assert_exhausted()?;
 
     let stack_data = parse_pad_stack_subrecord(subrecords[5])?;
 
@@ -759,7 +754,6 @@ fn parse_pad_subrecords(subrecords: &[&[u8]]) -> Result<PcbPad> {
         hole_negative_tolerance,
         unknown_170,
         has_stack_data,
-        post_172_data,
         stack_data,
     })
 }

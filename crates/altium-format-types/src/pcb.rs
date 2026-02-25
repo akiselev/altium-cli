@@ -1551,7 +1551,7 @@ impl TryFrom<u8> for CornerStyle {
     }
 }
 
-/// Dielectric layer type (0-3). From TDielectricType in altium-types.md.
+/// Dielectric layer type (0-4). From TDielectricType in TDielectricType.cs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1561,6 +1561,7 @@ pub enum DielectricType {
     Core = 1,
     PrePreg = 2,
     SurfaceMaterial = 3,
+    Film = 4,
 }
 
 impl TryFrom<u8> for DielectricType {
@@ -1571,8 +1572,63 @@ impl TryFrom<u8> for DielectricType {
             1 => Ok(Self::Core),
             2 => Ok(Self::PrePreg),
             3 => Ok(Self::SurfaceMaterial),
+            4 => Ok(Self::Film),
             _ => Err(InvalidEnumValue {
                 type_name: "DielectricType",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+/// Layer stack style (0-3). From TLayerStackStyle in TLayerStackStyle.cs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum LayerStackStyle {
+    #[default]
+    Pairs = 0,
+    InsidePairs = 1,
+    Buildup = 2,
+    Custom = 3,
+}
+
+impl TryFrom<u8> for LayerStackStyle {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Pairs),
+            1 => Ok(Self::InsidePairs),
+            2 => Ok(Self::Buildup),
+            3 => Ok(Self::Custom),
+            _ => Err(InvalidEnumValue {
+                type_name: "LayerStackStyle",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+/// Component placement type (0-2). From TComponentPlacementType in TComponentPlacementType.cs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ComponentPlacementType {
+    #[default]
+    None = 0,
+    BodyUp = 1,
+    BodyDown = 2,
+}
+
+impl TryFrom<u8> for ComponentPlacementType {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::None),
+            1 => Ok(Self::BodyUp),
+            2 => Ok(Self::BodyDown),
+            _ => Err(InvalidEnumValue {
+                type_name: "ComponentPlacementType",
                 value: v as i64,
             }),
         }

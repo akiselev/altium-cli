@@ -2,7 +2,7 @@
 
 use altium_format_types::Coord;
 
-use crate::binary_io::BinaryReader;
+use crate::binary_io::{BinaryReader, BinaryWriter};
 use crate::block_stream::{BlockFormat, iter_blocks};
 use crate::board_config::{PcbBoardConfig, parse_board_config};
 use crate::param_collection::ParameterCollection;
@@ -128,6 +128,21 @@ fn parse_library_data_suffix(data: &[u8]) -> Result<Vec<String>> {
     }
     reader.assert_exhausted()?;
     Ok(names)
+}
+
+/// Serialize the component-name index suffix for Library/Data.
+///
+/// Format: u32_le(count) then count entries of u32_le(1 + name.len()) +
+/// u8(name.len()) + name bytes (pascal string).
+pub(crate) fn serialize_library_data_suffix(names: &[String]) -> Vec<u8> {
+    let mut w = BinaryWriter::new();
+    w.write_u32_le(names.len() as u32);
+    for name in names {
+        // entry_size = 1 (pascal length byte) + name bytes
+        w.write_u32_le((1 + name.len()) as u32);
+        w.write_pascal_string(name);
+    }
+    w.finish()
 }
 
 /// Parse Library/ComponentParamsTOC/{Header,Data} streams.

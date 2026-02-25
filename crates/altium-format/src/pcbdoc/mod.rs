@@ -193,7 +193,8 @@ impl PcbDoc {
             if storage_name == "PadViaLibrary" || storage_name == "PadViaLibraryCache" {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
-                let config = parse_pad_via_library(&header_data, &data).ok().flatten();
+                let config = parse_pad_via_library(&header_data, &data)
+                    .with_context(|| format!("parsing {storage_path}"))?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::PadViaLibrary(PadViaLibrarySectionData {
                     section_name: storage_name.clone(),
@@ -234,7 +235,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_len_prefixed_binary_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                let _ = expected_count;
+                validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Binary(BinarySectionData { kind, records }));
                 continue;
@@ -246,7 +247,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = primitives::parse_primitive_records(kind, &data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                let _ = expected_count;
+                validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Primitive(PrimitiveSectionData {
                     kind,
@@ -261,7 +262,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_standard_param_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                let _ = expected_count;
+                validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
                 continue;
@@ -274,7 +275,7 @@ impl PcbDoc {
                 let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_prefixed_param_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
-                let _ = expected_count;
+                validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::PrefixedParameter(PrefixedParamSectionData {
                     kind,
@@ -454,6 +455,17 @@ fn serialize_primitive_payload(record: &primitives::ParsedPrimitiveRecord) -> Re
             detail: "unsupported primitive for PcbDoc serialization".to_owned(),
         }),
     }
+}
+
+fn validate_record_count(section: &str, expected: usize, actual: usize) -> Result<()> {
+    if expected != actual {
+        return Err(AltiumFormatError::RecordCountMismatch {
+            section: section.to_owned(),
+            expected,
+            actual,
+        });
+    }
+    Ok(())
 }
 
 fn assert_known_section_layout(
