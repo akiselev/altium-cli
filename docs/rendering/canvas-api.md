@@ -44,14 +44,15 @@ Constructors:
 
 ```rust
 pub struct FontSpec {
-    pub name: String,         // Font family name (e.g., "Times New Roman")
+    pub name: String,         // Font family name (e.g., "Tahoma")
     pub size_mils: f64,       // Font size in mils
     pub bold: bool,
     pub italic: bool,
 }
 ```
 
-Default: `"Times New Roman"`, 10.0 mils, not bold, not italic.
+Default: `"Tahoma"`, 10.0 mils, not bold, not italic.
+(Source: `DrawGraphObjectBase.GetFontInfo()` fallback in Altium .NET assemblies.)
 
 ### RenderTransform
 
@@ -182,18 +183,42 @@ pub(crate) fn c_to_f(c: Coord) -> f64
 pub(crate) fn pen_width_to_mils(pw: PenWidth) -> f64
 ```
 
-### PenWidth Mapping
+### PenWidth Mapping (Wire/Line Widths)
 
-| `PenWidth` variant | Mils | Notes |
+From `Rt_Schematic.Consts.LineWidthArrayC` (decompiled C#, `Consts.cs` lines 2880-2885):
+
+| `PenWidth` variant | Internal units | Mils | Notes |
+|---|---|---|---|
+| `Zero` | 0 | 0.0 | Hairline — backends render as ~0.5 mil or 1px minimum |
+| `Small` | 100,000 | 10.0 | Standard wire width |
+| `Medium` | 300,000 | 30.0 | |
+| `Large` | 500,000 | 50.0 | |
+| `_` (unknown) | — | 0.0 | Fallback to hairline |
+
+### Bus Width Mapping (separate table)
+
+From `Rt_Schematic.Consts.BusLineWidthArrayC` (`Consts.cs` lines 2886-2891):
+
+| `PenWidth` variant | Internal units | Mils |
 |---|---|---|
-| `Zero` | 0.0 | Hairline — backends should render as ~0.5 mil or 1px minimum |
-| `Small` | 1.0 | Standard wire width |
-| `Medium` | 2.0 | |
-| `Large` | 5.0 | |
-| `_` (unknown) | 0.0 | Fallback to hairline |
+| `Zero` | 200,000 | 20.0 |
+| `Small` | 300,000 | 30.0 |
+| `Medium` | 500,000 | 50.0 |
+| `Large` | 700,000 | 70.0 |
 
-These values were verified against `FileFormatConsts.cs` in the decompiled Altium
-.NET assemblies.
+**Important**: Bus widths are NOT derived from wire widths. They use a completely
+separate lookup table. The old approach of `wire_width + 1.0` was wrong.
+
+### Junction Size Mapping (diameters)
+
+From `Rt_Schematic.Consts.cJunctionSizeArray` (`Consts.cs` lines 2458-2463):
+
+| `PenWidth`/TSize | Internal units | Mils (diameter) | Radius |
+|---|---|---|---|
+| `Zero` | 200,000 | 20.0 | 10.0 |
+| `Small` | 300,000 | 30.0 | 15.0 |
+| `Medium` | 500,000 | 50.0 | 25.0 |
+| `Large` | 1,000,000 | 100.0 | 50.0 |
 
 ## Provided Implementations
 

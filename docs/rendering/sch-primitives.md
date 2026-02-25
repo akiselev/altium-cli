@@ -30,7 +30,8 @@ fn lookup_font(fonts: &[SchFont], font_id: i32) -> FontSpec {
 }
 ```
 
-Default font (when ID is out of range or no font table): `"Times New Roman"`, 10 mils, regular.
+Default font (when ID is out of range or no font table): `"Tahoma"`, 10 mils, regular.
+(Source: `DrawGraphObjectBase.GetFontInfo()` fallback.)
 
 For SchLib components rendered standalone, there is no Sheet record, so the font table
 is empty and all text uses the default font.
@@ -42,7 +43,7 @@ is empty and all text uses the default font.
 | SchRecord variant | Canvas calls | Notes |
 |---|---|---|
 | `Wire` | `draw_polyline(vertices, pen(line_width, color, line_style))` | Standard electrical wire |
-| `Bus` | `draw_polyline(vertices, pen(line_width+1, color))` | Buses rendered 1 mil thicker than stated |
+| `Bus` | `draw_polyline(vertices, pen(bus_width, color))` | Uses separate `BusLineWidthArrayC` lookup (NOT wire width + offset) |
 | `BusEntry` | `draw_line(location, corner, pen(line_width, color))` | Diagonal entry into bus |
 | `Pin` | `draw_line(loc → loc+dir*len)` + `draw_text(name)` + `draw_text(designator)` | See Pin geometry below |
 | `Line` | `draw_line(location, corner, pen(line_width, color, line_style))` | Generic line |
@@ -60,7 +61,7 @@ is empty and all text uses the default font.
 | `Designator` | `draw_text(text, location, rotation, font(font_id), pen(color))` | Component designator (hidden check) |
 | `Parameter` | `draw_text(text, location, rotation, font(font_id), pen(color))` | Component parameter (hidden check) |
 | `TextFrame` | `draw_rect(location, corner)` (if show_border) + `draw_text(text)` | Frame with text content |
-| `Junction` | `draw_ellipse(location, 5, 5, pen, solid_brush)` | Filled dot, 5 mil radius |
+| `Junction` | `draw_ellipse(location, r, r, pen, solid_brush)` | Filled dot, radius from `cJunctionSizeArray` (default Small=15 mils radius) |
 | `NoConnect` | 2x `draw_line` forming X shape | Arms: ±5 mils from location |
 | `PowerObject` | `draw_ellipse(location, 5, 5, pen, None)` + `draw_text(text)` | Simplified; see Power symbols below |
 | `Port` | `draw_rect(location, location+w,location+h)` + `draw_text(name)` | Rectangular port shape |
@@ -158,13 +159,31 @@ Line: (x+5, y-5) → (x-5, y+5)    (diagonal ↖)
 
 ### Bus Width
 
-Buses are rendered 1 mil thicker than their stated `line_width`:
-```rust
-let width = pen_width_to_mils(b.line_width) + 1.0;
-```
+Buses use a **completely separate width lookup table** from wires
+(`BusLineWidthArrayC`, NOT `LineWidthArrayC + offset`):
 
-This matches Altium's visual convention where buses are visually distinguished
-from wires by being slightly thicker.
+| PenWidth | Bus width (mils) | Wire width (mils) |
+|---|---|---|
+| Zero | 20.0 | 0.0 |
+| Small | 30.0 | 10.0 |
+| Medium | 50.0 | 30.0 |
+| Large | 70.0 | 50.0 |
+
+Source: `Rt_Schematic.Consts.BusLineWidthArrayC` in `Consts.cs` lines 2886-2891.
+
+### Junction Size
+
+Junctions use `cJunctionSizeArray` which stores **diameters** (not radii):
+
+| TSize | Diameter (mils) | Radius (mils) |
+|---|---|---|
+| Zero | 20.0 | 10.0 |
+| Small | 30.0 | 15.0 |
+| Medium | 50.0 | 25.0 |
+| Large | 100.0 | 50.0 |
+
+The junction record stores a `JUNCTIONSIZE` parameter mapping to `TSize`.
+Source: `Consts.cs` lines 2458-2463, `SchJunction.cs` line 73.
 
 ## Power Symbol Shapes
 
@@ -174,18 +193,30 @@ Altium has ~15 distinct power symbol shapes controlled by the `PowerObject.style
 These are defined in `Altium.Sch.DataModel.FileFormats.FileFormatConsts` and rendered
 by dedicated factory methods in `GraphicsFactory`.
 
-Known power symbol styles (from C# decompilation):
-- **Power Bar** — Horizontal bar (VCC, VDD style)
-- **Power Rail** — Vertical rail with ticks
-- **Power GND** — Standard ground symbol (three decreasing horizontal lines)
-- **Signal GND** — Triangle ground symbol
-- **Earth GND** — Earth ground (three lines with decreasing length + bottom wavy line)
-- **Power Arrow** — Arrow pointing at net
-- **Power Wave** — Sine wave symbol
-- **Circle** — Simple circle (current implementation)
+All 11 styles with exact geometry constants from `PowerObjectDrawGraphObject.cs`
+and `Rt_Schematic.Consts` (all dimensions in mils, converted from internal units ÷ 10,000):
 
-Each shape has specific geometry (line patterns, angles, sizes) documented in
-`FileFormatConsts.cs` as constant values. Implementing all shapes is future work.
+| Style | Enum | Description | Key dimensions |
+|---|---|---|---|
+| Circle | 0 | Circle at pin endpoint | radius=30 mils |
+| Arrow | 1 | Two angled lines from endpoint | spread=30 mils, optionally closed |
+| Bar | 2 (default) | Single horizontal bar | half-width=50 mils |
+| Wave | 3 | Sine wave symbol | radius=40 mils |
+| GndPower | 4 | 4 decreasing horizontal lines | widths: 100,70,40,10 mils; spacing=30 mils |
+| GndSignal | 5 | Triangle ground | 3 lines forming triangle |
+| GndEarth | 6 | 3 angled lines from vertical bar | Earth ground symbol |
+| GostArrow | 7 | Arrow (GOST variant) | length=160 mils |
+| GostGndPower | 8 | 3 decreasing lines (GOST) | widths: 100,60,20 mils; spacing=40 mils |
+| GostGndEarth | 9 | GOST earth + circle | circle radius=120 mils |
+| GostBar | 10 | Thick bar | half-width=80 mils, length=200 mils |
+
+Power object line width: 10 mils (100,000 internal units).
+Standard pin length: 100 mils; GOST: 160 mils; GOST Bar: 200 mils.
+
+Each style also has 4 orientation variants (0°, 90°, 180°, 270°) which rotate
+the entire symbol geometry about the connection point.
+
+Source: `AD26-dotnet/Altium.Sch.Painter/Altium.Sch.Painter/PowerObjectDrawGraphObject.cs`.
 
 ## Altium's Schematic Rendering Pipeline (Reference)
 

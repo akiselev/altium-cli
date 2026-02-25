@@ -146,8 +146,24 @@ These map 1:1 to our `AltiumCanvas` trait methods.
 
 **Font handling**: The schematic document carries a font table in the `Sheet` record
 (record type 31). Font IDs are 1-based indices into this table. Each font entry stores
-name, size, bold, italic flags. Components in a SchLib don't have their own sheet record,
-so a default font is used when rendering standalone components.
+name, size, bold, italic flags. When fontId=0, Altium uses the system font ID from
+preferences (`HorizontalSysFontId` or `VerticalSysFontId`). Components in a SchLib
+don't have their own sheet record, so the font table is empty and all text uses the
+default font.
+
+Default font (from `DrawGraphObjectBase.GetFontInfo()` fallback): **"Tahoma"**, 10 mils.
+Font size is stored as `argSize * 100000` internal units (size 10 = 1,000,000 = 100 mils).
+
+**Stroke defaults** (from `PenInfo.cs`):
+- Default line cap: `Round` (for start, end, and dash caps)
+- Default line join: `Round`
+- MiterLimit: 1000.0
+
+**Line dash patterns** (from `DashStyleInfoHelper.cs` and `SvgGraphics.cs`):
+- Solid: no dash
+- Dashed: pattern `[2.0, 2.0]` × pen width, SVG: `stroke-dasharray="4"`
+- Dotted: pattern `[1.0, 2.0]` × pen width, SVG: `stroke-dasharray="2"`
+- DashDot: SVG: `stroke-dasharray="4 2"`
 
 ### PCB Rendering (Delphi / Native)
 
@@ -186,13 +202,33 @@ Both schematic and PCB renderers share:
 2. **Coordinate precision**: Internally everything uses 10nm resolution (i32).
    Rendering converts to floating-point mils at the canvas boundary.
 
-3. **PenWidth enum mapping** (verified against `FileFormatConsts.cs`):
-   | PenWidth enum | Width in mils |
-   |---|---|
-   | `Zero` (Smallest) | 0.0 (hairline — backends render as ~0.5 mil or 1px minimum) |
-   | `Small` | 1.0 |
-   | `Medium` | 2.0 |
-   | `Large` | 5.0 |
+3. **PenWidth enum mapping** (from `Rt_Schematic.Consts.LineWidthArrayC` in decompiled C#):
+
+   **Wire/line widths** (`LineWidthArrayC`):
+   | PenWidth enum | Internal units | Mils |
+   |---|---|---|
+   | `Zero` (Smallest) | 0 | 0.0 (hairline — backends render as ~0.5 mil or 1px minimum) |
+   | `Small` | 100,000 | 10.0 |
+   | `Medium` | 300,000 | 30.0 |
+   | `Large` | 500,000 | 50.0 |
+
+   **Bus widths** (`BusLineWidthArrayC` — separate lookup table, NOT wire width + offset):
+   | PenWidth enum | Internal units | Mils |
+   |---|---|---|
+   | `Zero` | 200,000 | 20.0 |
+   | `Small` | 300,000 | 30.0 |
+   | `Medium` | 500,000 | 50.0 |
+   | `Large` | 700,000 | 70.0 |
+
+   **Junction sizes** (`cJunctionSizeArray` — diameters, not radii):
+   | PenWidth/TSize enum | Internal units | Mils (diameter) |
+   |---|---|---|
+   | `Zero` | 200,000 | 20.0 |
+   | `Small` | 300,000 | 30.0 |
+   | `Medium` | 500,000 | 50.0 |
+   | `Large` | 1,000,000 | 100.0 |
+
+   Source: `AD26-dotnet/Altium.Edp.Interfaces/Rt_Schematic/Consts.cs` lines 2458-2891.
 
 4. **Transform stack**: Both use push/pop transform semantics. Component instances
    apply mirror + rotation transforms before rendering child primitives:
@@ -210,24 +246,16 @@ Both schematic and PCB renderers share:
 
 ## Known Limitations
 
-Current renderer simplifications vs. Altium's full implementation:
+See `plan.md` for the full prioritized gap list. Current simplifications:
 
 1. **No layer filtering** — PCB renders all layers in black (Altium filters by visibility)
-2. **No transform stack in SVG** — PushTransform/PopTransform are recorded but not replayed
-   in the SVG backend (geometry is already in world coordinates for most cases)
-3. **No embedded images** — `draw_image()` is called but SVG backend skips image data
-4. **Simplified power symbols** — PowerObject renders as circle + text; Altium has
-   ~15 distinct power symbol shapes (VCC bar, GND rake, etc.)
-5. **No text metrics** — Text bounding boxes are not computed; overlap may occur
-6. **No line styles** — LineStyle (dashed, dotted) is captured in Pen but not rendered in SVG
-7. **Pad shape approximations** — RoundedRectangular uses 25% corner radius heuristic;
+2. **No embedded images** — `draw_image()` is called but SVG backend skips image data
+3. **Simplified power symbols** — PowerObject renders as circle + text; Altium has
+   11 distinct power symbol shapes (see plan.md Phase 2.1)
+4. **No text metrics** — Text bounding boxes are not computed; overlap may occur
+5. **Pad shape approximations** — RoundedRectangular uses 25% corner radius heuristic;
    Altium stores exact corner radius percentage per pad
-
-## Future Work
-
-- Implement transform stack replay in SVG backend (`<g transform="...">` groups)
-- Add layer color support for PCB rendering
-- Implement all power symbol shapes (reference `Altium.Sch.Painter` factory methods)
-- Add proper text metrics (measure text width for bounding box computation)
-- Support line dash patterns in SVG (`stroke-dasharray`)
-- Add PcbDoc rendering (full board, not just single footprints)
+6. **Placeholder port/sheet entry shapes** — Ports render as rectangles, sheet entries
+   as circles; Altium has 7 port styles and 4 sheet entry arrow kinds
+7. **No pin IEEE symbols** — 13+ pin decoration types (dot, clock, active-low) not rendered
+8. **No sheet/document rendering** — Border, reference zones, grid, title block missing
