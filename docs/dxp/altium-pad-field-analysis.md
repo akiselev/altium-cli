@@ -1,6 +1,23 @@
 # Altium Designer PCB Pad Binary Format Analysis
 ## AdvPCB.dll (Delphi x64) - TServerPad Object
 
+## AD26 Resolution Update
+
+Most previously "unknown" offsets in subrecord-4 are now resolved (see `altium-pad-unknowns-REPORT.md` for proof and call traces). Key corrections:
+- `offset 61` is `DaisyChainStyle` (not `HoleType`).
+- `offset 105` is `SelectionMemoryFlags` (not `UserRouted`).
+- `offset 110` is `JumperID`.
+- `offset 118/119` are `IsAssyTestPoint_Top/Bottom`.
+- `offset 120` is `UseSeparateExpansions`.
+- `offset 121..124` is `SolderMaskBottomExpansion`.
+- `offset 125` is `SolderMaskExpansionFromHoleEdge`.
+- `offset 126..157` are template-link GUID IDs (`LibraryID`, `TemplateID`).
+- `offset 158` is `PinPackageLength`.
+- `offset 162/166` are hole positive/negative tolerances.
+- `offset 171` is the `sub4 extension present` flag.
+
+Unresolved in AD26 loader path: `offset 170` (reserved byte, not consumed by `FUN_0186d700`/`FUN_0187b7c0`).
+
 ### Known Structure (from KiCad parser)
 
 Subrecord 5 - Pad core data (minimum 110 bytes, can be 114, 120, 171, 202+):
