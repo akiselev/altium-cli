@@ -12,6 +12,7 @@ Reference documentation for implementing the PcbLib (PCB Footprint Library) pars
 | [footprint-data-stream.md](footprint-data-stream.md) | Per-footprint `Data` stream: pattern name block and packed binary primitives |
 | [parameters-stream.md](parameters-stream.md) | Per-footprint `Parameters` stream: footprint metadata (pattern, height, description) |
 | [sidecar-streams.md](sidecar-streams.md) | WideStrings, UniqueIDPrimitiveInformation, ExtendedPrimitiveInformation, PrimitiveGuids |
+| [CustomShape.md](CustomShape.md) | CustomShapes, CustomMaskShapes, CustomReliefs sidecar streams (custom pad shapes) |
 | [binary-primitives.md](binary-primitives.md) | PCB binary primitive record layouts for all object types found in PcbLib |
 | [sectionkeys.md](sectionkeys.md) | `/SectionKeys` stream: mapping long footprint names to truncated CFB storage keys |
 | [loading-pipeline.md](loading-pipeline.md) | Complete load pipeline in exact execution order |
@@ -38,6 +39,9 @@ Each footprint storage contains:
 - `PrimitiveGuids/{Header,Data}` - binary GUID table (24 bytes/entry)
 - `UniqueIDPrimitiveInformation/{Header,Data}` - per-primitive unique IDs
 - `ExtendedPrimitiveInformation/{Header,Data}` - per-primitive extended properties (rare)
+- `CustomShapes` - custom pad shape parameters (rounded rect corners, donut, etc.)
+- `CustomMaskShapes` - custom mask shape overrides (rare)
+- `CustomReliefs` - custom thermal relief shapes (not yet observed)
 
 The main parsing challenge compared to SchLib is that PcbLib uses **binary primitive records**
 (not pipe-delimited text), so parsing requires knowing the exact byte layout of each object type.
