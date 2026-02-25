@@ -21,6 +21,7 @@ mod pcb_file_header;
 #[allow(dead_code)]
 mod prefixed_param_stream;
 pub mod sch_ops_core;
+pub mod pcb_ops_core;
 #[allow(dead_code)]
 mod sch_records;
 pub mod test_utils;
@@ -39,11 +40,11 @@ pub mod pcbdoc;
 pub mod pcblib;
 #[allow(dead_code)]
 pub mod project;
+pub mod render;
 #[allow(dead_code)]
 pub mod schdoc;
 #[allow(dead_code)]
 pub mod schlib;
-pub mod render;
 
 pub use document::Document;
 pub use intlib::IntLib;

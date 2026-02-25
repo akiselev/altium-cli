@@ -150,6 +150,9 @@ pub fn lower_composed_to_schlib_low(composed_ops: &[ComposedOp]) -> Vec<SchLibLo
             ComposedOp::AddLabel(v) => SchLibLowOp::AddLabel(v.0.clone()),
             ComposedOp::AddTextFrame(v) => SchLibLowOp::AddTextFrame(v.0.clone()),
             ComposedOp::AddImage(v) => SchLibLowOp::AddImage(v.0.clone()),
+            ComposedOp::AddTrack(_) | ComposedOp::AddFootprint(_) => {
+                unreachable!("pcb-only composed op lowered into schlib")
+            }
         })
         .collect()
 }

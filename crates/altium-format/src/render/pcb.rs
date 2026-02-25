@@ -1,8 +1,10 @@
 //! PCB primitive draw dispatch for AltiumCanvas.
 
-use altium_format_types::PadShape;
 use crate::pcblib::PcbPrimitive;
-use crate::render::canvas::{AltiumCanvas, Brush, DrawPoint, FontSpec, Pen, RenderTransform, c_to_f, to_dp};
+use crate::render::canvas::{
+    AltiumCanvas, Brush, DrawPoint, FontSpec, Pen, RenderTransform, c_to_f, to_dp,
+};
+use altium_format_types::PadShape;
 
 pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCanvas) {
     match prim {
@@ -22,7 +24,13 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
             canvas.draw_ellipse(to_dp(v.location), outer_r, outer_r, &annular_pen, None);
             let hole_pen = Pen::new(altium_format_types::Color::BLACK, 0.0);
             let hole_brush = Brush::solid(altium_format_types::Color::BLACK);
-            canvas.draw_ellipse(to_dp(v.location), inner_r, inner_r, &hole_pen, Some(&hole_brush));
+            canvas.draw_ellipse(
+                to_dp(v.location),
+                inner_r,
+                inner_r,
+                &hole_pen,
+                Some(&hole_brush),
+            );
         }
         PcbPrimitive::Pad(p) => {
             let pen = Pen::new(altium_format_types::Color::BLACK, 0.0);
@@ -35,8 +43,16 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
                     canvas.draw_ellipse(loc, w, h, &pen, fill.as_ref());
                 }
                 PadShape::Rectangular => {
-                    canvas.push_transform(&RenderTransform::Rotate { degrees: p.rotation, origin: loc });
-                    canvas.draw_rect((loc.0 - w, loc.1 - h), (loc.0 + w, loc.1 + h), &pen, fill.as_ref());
+                    canvas.push_transform(&RenderTransform::Rotate {
+                        degrees: p.rotation,
+                        origin: loc,
+                    });
+                    canvas.draw_rect(
+                        (loc.0 - w, loc.1 - h),
+                        (loc.0 + w, loc.1 + h),
+                        &pen,
+                        fill.as_ref(),
+                    );
                     canvas.pop_transform();
                 }
                 PadShape::Octagonal => {
@@ -44,16 +60,27 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
                     canvas.draw_polygon(&pts, &pen, fill.as_ref());
                 }
                 PadShape::RoundedRectangular => {
-                    canvas.push_transform(&RenderTransform::Rotate { degrees: p.rotation, origin: loc });
+                    canvas.push_transform(&RenderTransform::Rotate {
+                        degrees: p.rotation,
+                        origin: loc,
+                    });
                     canvas.draw_rounded_rect(
-                        (loc.0 - w, loc.1 - h), (loc.0 + w, loc.1 + h),
-                        w * 0.25, h * 0.25,
-                        &pen, fill.as_ref(),
+                        (loc.0 - w, loc.1 - h),
+                        (loc.0 + w, loc.1 + h),
+                        w * 0.25,
+                        h * 0.25,
+                        &pen,
+                        fill.as_ref(),
                     );
                     canvas.pop_transform();
                 }
                 _ => {
-                    canvas.draw_rect((loc.0 - w, loc.1 - h), (loc.0 + w, loc.1 + h), &pen, fill.as_ref());
+                    canvas.draw_rect(
+                        (loc.0 - w, loc.1 - h),
+                        (loc.0 + w, loc.1 + h),
+                        &pen,
+                        fill.as_ref(),
+                    );
                 }
             }
         }
@@ -61,7 +88,10 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
             let pen = Pen::new(altium_format_types::Color::BLACK, 0.0);
             let fill = Some(Brush::solid(altium_format_types::Color::BLACK));
             let loc = to_dp(f.corner1);
-            canvas.push_transform(&RenderTransform::Rotate { degrees: f.rotation, origin: loc });
+            canvas.push_transform(&RenderTransform::Rotate {
+                degrees: f.rotation,
+                origin: loc,
+            });
             canvas.draw_rect(to_dp(f.corner1), to_dp(f.corner2), &pen, fill.as_ref());
             canvas.pop_transform();
         }
@@ -99,21 +129,21 @@ fn octagon_points(center: DrawPoint, w: f64, h: f64) -> [DrawPoint; 8] {
     [
         (center.0 - hw + cx, center.1 - hh),
         (center.0 + hw - cx, center.1 - hh),
-        (center.0 + hw,      center.1 - hh + cy),
-        (center.0 + hw,      center.1 + hh - cy),
+        (center.0 + hw, center.1 - hh + cy),
+        (center.0 + hw, center.1 + hh - cy),
         (center.0 + hw - cx, center.1 + hh),
         (center.0 - hw + cx, center.1 + hh),
-        (center.0 - hw,      center.1 + hh - cy),
-        (center.0 - hw,      center.1 - hh + cy),
+        (center.0 - hw, center.1 + hh - cy),
+        (center.0 - hw, center.1 - hh + cy),
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use altium_format_types::{Coord, CoordPoint, PcbFlags, V6Layer};
+    use super::*;
     use crate::pcblib::{PcbPrimitive, PcbPrimitiveCommon, PcbTrack};
     use crate::render::recording::{DrawCall, RecordingCanvas};
-    use super::*;
+    use altium_format_types::{Coord, CoordPoint, PcbFlags, V6Layer};
 
     fn make_common() -> PcbPrimitiveCommon {
         PcbPrimitiveCommon {

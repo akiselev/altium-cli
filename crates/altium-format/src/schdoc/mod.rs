@@ -2,6 +2,7 @@ mod dispatch;
 mod fileheader;
 mod types;
 
+use std::io::Read as _;
 use std::path::Path;
 
 use altium_format_types::constants::component::DESIGNATOR;
@@ -59,6 +60,37 @@ use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
 
 pub use types::SchDoc;
+
+const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+const SCHDOC_ASCII_HEADER_PREFIX: &[u8] =
+    b"|HEADER=Protel for Windows - Schematic Capture Ascii File Version";
+
+fn preflight_check_schdoc_container(path: &Path) -> Result<()> {
+    let mut file = std::fs::File::open(path)?;
+    let mut head = [0u8; 128];
+    let read = file.read(&mut head)?;
+    let head = &head[..read];
+
+    if head.starts_with(&CFB_MAGIC) {
+        return Ok(());
+    }
+    if head.starts_with(b"<<<<<<< ") {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "HEADER".to_owned(),
+            detail: "unsupported SchDoc input: file contains unresolved merge conflict markers"
+                .to_owned(),
+        });
+    }
+    if head.starts_with(SCHDOC_ASCII_HEADER_PREFIX) {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "HEADER".to_owned(),
+            detail: "unsupported SchDoc document type: ASCII SchDoc is not supported yet (expected CFB/Binary SchDoc)"
+                .to_owned(),
+        });
+    }
+
+    Ok(())
+}
 
 impl SchDoc {
     pub fn new_blank_ad26() -> Self {
@@ -123,6 +155,8 @@ impl SchDoc {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        preflight_check_schdoc_container(path.as_ref())
+            .context("detecting SchDoc container format")?;
         let mut tracked =
             TrackedCfbDocument::open(path.as_ref()).context("opening SchDoc CFB container")?;
 
@@ -251,8 +285,16 @@ impl SchDoc {
 
     /// Render the entire schematic sheet.
     pub fn render(&self, canvas: &mut dyn crate::render::AltiumCanvas) -> crate::Result<()> {
-        let fonts = self.records.iter()
-            .find_map(|r| if let crate::sch_records::SchRecord::Sheet(s) = r { Some(&s.fonts) } else { None })
+        let fonts = self
+            .records
+            .iter()
+            .find_map(|r| {
+                if let crate::sch_records::SchRecord::Sheet(s) = r {
+                    Some(&s.fonts)
+                } else {
+                    None
+                }
+            })
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
         for record in &self.records {
@@ -287,7 +329,10 @@ fn serialize_fileheader_stream(
 fn serialize_additional_stream(records: &[SchRecord]) -> Result<Vec<u8>> {
     let mut header_params = ParameterCollection::new();
     header_params.insert(HEADER, SCH_SHEET_BINARY_HEADER_V50.to_owned());
-    header_params.insert(WEIGHT, (records.len() as i32).to_param_value());
+    // AD26 omits Weight when Additional has no records.
+    if !records.is_empty() {
+        header_params.insert(WEIGHT, (records.len() as i32).to_param_value());
+    }
 
     let mut stream = write_text_block(&header_params.to_bytes());
     for (idx, record) in records.iter().enumerate() {
@@ -908,6 +953,22 @@ mod tests {
         saved
             .validate_invariants()
             .expect("saved SchDoc must validate");
+    }
+
+    #[test]
+    fn schdoc_ascii_format_reports_unsupported_type() {
+        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+        std::fs::write(
+            tmp.path(),
+            b"|HEADER=Protel for Windows - Schematic Capture Ascii File Version 5.0|WEIGHT=1\n",
+        )
+        .expect("write temp schdoc");
+        let err = SchDoc::open(tmp.path()).expect_err("ASCII SchDoc must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported SchDoc document type: ASCII SchDoc"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]

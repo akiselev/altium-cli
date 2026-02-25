@@ -11,11 +11,12 @@ use super::diagnostic::{ParseError, ParseErrorCode};
 use super::parse_ops;
 use crate::ops::model::{
     AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipseHighOp,
-    AddEllipticalArcHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp, AddParameterOp,
-    AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp, AddRectangleHighOp,
-    AddRoundRectangleHighOp, AddTextFrameHighOp, EditComponentHighOp, EditRecordHighOp,
-    FootprintMapEntry, FootprintOp, HighOp, PinElectricalName, QueryComponentsHighOp, QueryHighOp,
-    QueryPinsHighOp, QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
+    AddEllipticalArcHighOp, AddFootprintHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp,
+    AddParameterOp, AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp,
+    AddRectangleHighOp, AddRoundRectangleHighOp, AddTextFrameHighOp, AddTrackHighOp,
+    EditComponentHighOp, EditRecordHighOp, FootprintMapEntry, FootprintOp, HighOp,
+    PinElectricalName, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp, QueryRecordsHighOp,
+    RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
 };
 use crate::ops::schema::{FieldType, HasOpsEnum, HasOpsSchema, normalize_enum_ident};
 
@@ -38,6 +39,14 @@ pub fn compile_ops_to_high_schdoc(source: &str) -> Result<Vec<HighOp>, ParseErro
 
 pub fn compile_ops_to_high_schlib(source: &str) -> Result<Vec<HighOp>, ParseError> {
     compile_ops_to_high(source, OpsDomain::SchLib)
+}
+
+pub fn compile_ops_to_high_pcbdoc(source: &str) -> Result<Vec<HighOp>, ParseError> {
+    compile_ops_to_high(source, OpsDomain::PcbDoc)
+}
+
+pub fn compile_ops_to_high_pcblib(source: &str) -> Result<Vec<HighOp>, ParseError> {
+    compile_ops_to_high(source, OpsDomain::PcbLib)
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +90,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_file(&mut self, ast: &super::ast::OpsFile) -> Result<Vec<HighOp>, ParseError> {
-        self.ensure_sch_domain()?;
+        self.ensure_supported_domain()?;
 
         let mut out = Vec::new();
         for stmt in &ast.statements {
@@ -115,59 +124,80 @@ impl<'a> Compiler<'a> {
         Ok(out)
     }
 
-    fn ensure_sch_domain(&self) -> Result<(), ParseError> {
+    fn ensure_supported_domain(&self) -> Result<(), ParseError> {
         match self.domain {
-            OpsDomain::SchDoc | OpsDomain::SchLib => Ok(()),
-            OpsDomain::PcbDoc | OpsDomain::PcbLib => Err(ParseError::new(
-                ParseErrorCode::E2008,
-                "pass-2 compiler is currently implemented for SchDoc/SchLib only",
-                super::ast::Span::new(0, self.source.len() as u32),
-            )
-            .with_help("use OpsDomain::SchDoc or OpsDomain::SchLib for this milestone")),
+            OpsDomain::SchDoc | OpsDomain::SchLib | OpsDomain::PcbDoc | OpsDomain::PcbLib => {
+                Ok(())
+            }
         }
     }
 
     fn compile_op(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
         let op_name = op.name.node.as_str();
-        if let Some(sel) = &op.selector {
+        if let Some(sel) = &op.selector
+            && matches!(self.domain, OpsDomain::SchDoc | OpsDomain::SchLib)
+        {
             self.validate_selector_semantics(sel)?;
         }
 
-        match op_name {
-            "edit" => self.compile_edit(op, opid),
-            "remove" => self.compile_remove(op, opid),
-            "add_component" => self.compile_add_component(op, opid),
-            "add_pin" => self.compile_add_pin(op, opid),
-            "add_parameter" => self.compile_add_parameter(op, opid),
-            "add_alias" => self.compile_add_alias(op, opid),
-            "remove_alias" => self.compile_remove_alias(op, opid),
-            "remove_component" => self.compile_remove_component(op, opid),
-            "edit_component" => self.compile_edit_component(op, opid),
-            "query" => self.compile_query(op, opid),
-            "query_components" => self.compile_query_components(op, opid),
-            "query_pins" => self.compile_query_pins(op, opid),
-            "query_records" => self.compile_query_records(op, opid),
-            "edit_record" => self.compile_edit_record(op, opid),
-            "remove_records" => self.compile_remove_records(op, opid),
-            "add_line" => self.compile_add_line(op, opid),
-            "add_rectangle" => self.compile_add_rectangle(op, opid),
-            "add_arc" => self.compile_add_arc(op, opid),
-            "add_elliptical_arc" => self.compile_add_elliptical_arc(op, opid),
-            "add_ellipse" => self.compile_add_ellipse(op, opid),
-            "add_polyline" => self.compile_add_polyline(op, opid),
-            "add_polygon" => self.compile_add_polygon(op, opid),
-            "add_bezier" => self.compile_add_bezier(op, opid),
-            "add_pie" => self.compile_add_pie(op, opid),
-            "add_round_rectangle" => self.compile_add_round_rectangle(op, opid),
-            "add_label" => self.compile_add_label(op, opid),
-            "add_text_frame" => self.compile_add_text_frame(op, opid),
-            "add_image" => self.compile_add_image(op, opid),
-            _ => Err(ParseError::new(
-                ParseErrorCode::E2001,
-                format!("unsupported op '{op_name}' in pass-2 compiler"),
-                op.name.span,
-            )
-            .with_help("supported ops: edit, remove, add_component, add_pin, add_parameter, add_alias, remove_alias, remove_component, edit_component, query, query_components, query_pins, query_records, edit_record, remove_records, add_line, add_rectangle, add_arc, add_elliptical_arc, add_ellipse, add_polyline, add_polygon, add_bezier, add_pie, add_round_rectangle, add_label, add_text_frame, add_image")),
+        match self.domain {
+            OpsDomain::SchDoc | OpsDomain::SchLib => match op_name {
+                "edit" => self.compile_edit(op, opid),
+                "remove" => self.compile_remove(op, opid),
+                "add_component" => self.compile_add_component(op, opid),
+                "add_pin" => self.compile_add_pin(op, opid),
+                "add_parameter" => self.compile_add_parameter(op, opid),
+                "add_alias" => self.compile_add_alias(op, opid),
+                "remove_alias" => self.compile_remove_alias(op, opid),
+                "remove_component" => self.compile_remove_component(op, opid),
+                "edit_component" => self.compile_edit_component(op, opid),
+                "query" => self.compile_query(op, opid),
+                "query_components" => self.compile_query_components(op, opid),
+                "query_pins" => self.compile_query_pins(op, opid),
+                "query_records" => self.compile_query_records(op, opid),
+                "edit_record" => self.compile_edit_record(op, opid),
+                "remove_records" => self.compile_remove_records(op, opid),
+                "add_line" => self.compile_add_line(op, opid),
+                "add_rectangle" => self.compile_add_rectangle(op, opid),
+                "add_arc" => self.compile_add_arc(op, opid),
+                "add_elliptical_arc" => self.compile_add_elliptical_arc(op, opid),
+                "add_ellipse" => self.compile_add_ellipse(op, opid),
+                "add_polyline" => self.compile_add_polyline(op, opid),
+                "add_polygon" => self.compile_add_polygon(op, opid),
+                "add_bezier" => self.compile_add_bezier(op, opid),
+                "add_pie" => self.compile_add_pie(op, opid),
+                "add_round_rectangle" => self.compile_add_round_rectangle(op, opid),
+                "add_label" => self.compile_add_label(op, opid),
+                "add_text_frame" => self.compile_add_text_frame(op, opid),
+                "add_image" => self.compile_add_image(op, opid),
+                _ => Err(ParseError::new(
+                    ParseErrorCode::E2001,
+                    format!("unsupported op '{op_name}' in schematic domains"),
+                    op.name.span,
+                )
+                .with_help("supported ops in schematic domains: edit, remove, add_component, add_pin, add_parameter, add_alias, remove_alias, remove_component, edit_component, query, query_components, query_pins, query_records, edit_record, remove_records, add_line, add_rectangle, add_arc, add_elliptical_arc, add_ellipse, add_polyline, add_polygon, add_bezier, add_pie, add_round_rectangle, add_label, add_text_frame, add_image")),
+            },
+            OpsDomain::PcbDoc => match op_name {
+                "query" => self.compile_query(op, opid),
+                "add_track" => self.compile_add_track(op, opid),
+                _ => Err(ParseError::new(
+                    ParseErrorCode::E2001,
+                    format!("unsupported op '{op_name}' in pcbdoc domain"),
+                    op.name.span,
+                )
+                .with_help("supported ops in pcbdoc domain: query, add_track")),
+            },
+            OpsDomain::PcbLib => match op_name {
+                "query" => self.compile_query(op, opid),
+                "add_track" => self.compile_add_track(op, opid),
+                "add_footprint" => self.compile_add_footprint(op, opid),
+                _ => Err(ParseError::new(
+                    ParseErrorCode::E2001,
+                    format!("unsupported op '{op_name}' in pcblib domain"),
+                    op.name.span,
+                )
+                .with_help("supported ops in pcblib domain: query, add_track, add_footprint")),
+            },
         }
     }
 
@@ -1135,6 +1165,72 @@ impl<'a> Compiler<'a> {
             keep_aspect: self.opt_bool(&map, "keep_aspect")?,
             owner_part_id: self.opt_i32(&map, "owner_part_id")?,
             owner_part_display_mode: self.opt_i32(&map, "owner_part_display_mode")?,
+        }))
+    }
+
+    fn compile_add_track(&mut self, op: &Op, opid: Option<String>) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &[
+                "footprint_ref",
+                "start",
+                "end",
+                "x1_mils",
+                "y1_mils",
+                "x2_mils",
+                "y2_mils",
+                "width_mils",
+                "layer",
+            ],
+            body.span,
+            "add_track",
+        )?;
+
+        let footprint_ref = if let Some(target) = &op.target {
+            Some(self.eval_as_refexpr(target, "target must be a reference expression")?)
+        } else {
+            self.opt_refexpr(&map, "footprint_ref")?
+        };
+        let start = self.opt_coord_mils(&map, "start")?;
+        let end = self.opt_coord_mils(&map, "end")?;
+        let (start, end) = if let (Some(start), Some(end)) = (start, end) {
+            (start, end)
+        } else {
+            self.req_from_to_mils(&map, body.span)?
+        };
+
+        Ok(HighOp::AddTrack(AddTrackHighOp {
+            opid,
+            footprint_ref,
+            start,
+            end,
+            width_mils: self.opt_i32_or_dim_mils(&map, "width_mils")?,
+            layer: self.opt_string(&map, "layer")?,
+        }))
+    }
+
+    fn compile_add_footprint(
+        &mut self,
+        op: &Op,
+        opid: Option<String>,
+    ) -> Result<HighOp, ParseError> {
+        let body = self.expect_body(op)?;
+        let map = self.eval_object(body)?;
+        self.reject_unknown_keys(
+            &map,
+            &["id", "name", "pattern", "description"],
+            body.span,
+            "add_footprint",
+        )?;
+
+        Ok(HighOp::AddFootprint(AddFootprintHighOp {
+            opid,
+            id: self.opt_string(&map, "id")?,
+            name: self.req_string(&map, "name")?,
+            pattern: self.opt_string(&map, "pattern")?,
+            description: self.opt_string(&map, "description")?,
         }))
     }
 
@@ -2529,6 +2625,8 @@ mod tests {
             HighOp::AddLabel(_) => "add_label",
             HighOp::AddTextFrame(_) => "add_text_frame",
             HighOp::AddImage(_) => "add_image",
+            HighOp::AddTrack(_) => "add_track",
+            HighOp::AddFootprint(_) => "add_footprint",
         }
     }
 
@@ -2586,6 +2684,32 @@ remove $r1
         let src = r#"add_alias $last { alias_name: "A1" }"#;
         let err = compile_ops_to_high_schdoc(src).expect_err("expected error");
         assert_eq!(err.code.as_str(), "E2008");
+    }
+
+    #[test]
+    fn compiles_pcbdoc_track_ops() {
+        let src = r#"
+add_track { start: (0, 0), end: (100mil, 0), width_mils: 10, layer: "TopLayer" }
+query track
+"#;
+        let ops = compile_ops_to_high_pcbdoc(src).expect("pcbdoc compile");
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(ops[0], HighOp::AddTrack(_)));
+        assert!(matches!(ops[1], HighOp::Query(_)));
+    }
+
+    #[test]
+    fn compiles_pcblib_footprint_and_track_ops() {
+        let src = r#"
+fp = add_footprint { name: "OPS_FP" }
+add_track $fp.ref { start: (0, 0), end: (100, 0), width_mils: 8 }
+query footprint[name="OPS_FP"]
+"#;
+        let ops = compile_ops_to_high_pcblib(src).expect("pcblib compile");
+        assert_eq!(ops.len(), 3);
+        assert!(matches!(ops[0], HighOp::AddFootprint(_)));
+        assert!(matches!(ops[1], HighOp::AddTrack(_)));
+        assert!(matches!(ops[2], HighOp::Query(_)));
     }
 
     #[test]

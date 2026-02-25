@@ -12,13 +12,14 @@ pub mod schlib_ops;
 pub use intlib_ops::IntLibOps;
 pub use ops::{
     AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipseHighOp,
-    AddEllipticalArcHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp, AddParameterOp,
-    AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp, AddRectangleHighOp,
-    AddRoundRectangleHighOp, AddTextFrameHighOp, ApplyReport, ApplySpec, EditComponentHighOp,
-    EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp,
-    QueryRecordsHighOp, Ref, RefExpr, RefRoot, RefStep, RemoveAliasOp, RemoveComponentOp,
-    RemoveRecordsHighOp, Value, apply_ops_source_schdoc, apply_ops_source_schlib, apply_schdoc,
-    apply_schlib, parse_apply_spec_json, parse_apply_spec_yaml,
+    AddEllipticalArcHighOp, AddFootprintHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp,
+    AddParameterOp, AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp,
+    AddRectangleHighOp, AddRoundRectangleHighOp, AddTextFrameHighOp, AddTrackHighOp, ApplyReport,
+    ApplySpec, EditComponentHighOp, EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp,
+    QueryPinsHighOp, QueryRecordsHighOp, Ref, RefExpr, RefRoot, RefStep, RemoveAliasOp,
+    RemoveComponentOp, RemoveRecordsHighOp, Value, apply_ops_source_pcbdoc,
+    apply_ops_source_pcblib, apply_ops_source_schdoc, apply_ops_source_schlib, apply_pcbdoc,
+    apply_pcblib, apply_schdoc, apply_schlib, parse_apply_spec_json, parse_apply_spec_yaml,
 };
 pub use pcbdoc_ops::PcbDocOps;
 pub use pcblib_ops::PcbLibOps;

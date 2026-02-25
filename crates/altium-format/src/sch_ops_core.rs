@@ -86,6 +86,8 @@ pub enum EntityType {
     Component,
     Pin,
     Implementation,
+    Footprint,
+    Track,
     Other,
 }
 

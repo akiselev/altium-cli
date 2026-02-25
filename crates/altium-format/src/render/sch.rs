@@ -1,10 +1,16 @@
 //! Schematic record draw dispatch for AltiumCanvas.
 
-use altium_format_types::sch::SchFont;
-use crate::render::canvas::{AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, c_to_f, pen_width_to_mils, to_dp};
+use crate::render::canvas::{
+    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, c_to_f, pen_width_to_mils, to_dp,
+};
 use crate::sch_records::SchRecord;
+use altium_format_types::sch::SchFont;
 
-pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas, fonts: &[SchFont]) {
+pub(crate) fn draw_sch_record(
+    record: &SchRecord,
+    canvas: &mut dyn AltiumCanvas,
+    fonts: &[SchFont],
+) {
     match record {
         SchRecord::Wire(w) => {
             let pts: Vec<_> = w.vertices.iter().copied().map(to_dp).collect();
@@ -22,7 +28,9 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
             canvas.draw_line(to_dp(be.location), to_dp(be.corner), &pen);
         }
         SchRecord::Pin(p) => {
-            if p.is_hidden { return; }
+            if p.is_hidden {
+                return;
+            }
             let (dx, dy) = match p.orientation {
                 altium_format_types::RotationBy90::Rotate0 => (1.0, 0.0),
                 altium_format_types::RotationBy90::Rotate90 => (0.0, 1.0),
@@ -67,9 +75,12 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
                 None
             };
             canvas.draw_rounded_rect(
-                to_dp(r.location), to_dp(r.corner),
-                c_to_f(r.corner_x_radius), c_to_f(r.corner_y_radius),
-                &pen, fill.as_ref(),
+                to_dp(r.location),
+                to_dp(r.corner),
+                c_to_f(r.corner_x_radius),
+                c_to_f(r.corner_y_radius),
+                &pen,
+                fill.as_ref(),
             );
         }
         SchRecord::Arc(a) => {
@@ -83,8 +94,11 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
             let end = a.end_angle.as_ref().map(|e| e.0).unwrap_or(360.0);
             canvas.draw_arc(
                 to_dp(a.location),
-                c_to_f(a.radius), c_to_f(a.secondary_radius),
-                a.start_angle.0, end, &pen,
+                c_to_f(a.radius),
+                c_to_f(a.secondary_radius),
+                a.start_angle.0,
+                end,
+                &pen,
             );
         }
         SchRecord::Ellipse(e) => {
@@ -98,8 +112,10 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
             };
             canvas.draw_ellipse(
                 to_dp(e.location),
-                c_to_f(e.radius), c_to_f(e.secondary_radius),
-                &pen, fill.as_ref(),
+                c_to_f(e.radius),
+                c_to_f(e.secondary_radius),
+                &pen,
+                fill.as_ref(),
             );
         }
         SchRecord::Pie(p) => {
@@ -115,8 +131,19 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
             canvas.draw_arc(center, r, r, p.start_angle.0, end, &pen);
             let start_rad = p.start_angle.0.to_radians();
             let end_rad = end.to_radians();
-            canvas.draw_line(center, (center.0 + r * start_rad.cos(), center.1 + r * start_rad.sin()), &pen);
-            canvas.draw_line(center, (center.0 + r * end_rad.cos(), center.1 + r * end_rad.sin()), &pen);
+            canvas.draw_line(
+                center,
+                (
+                    center.0 + r * start_rad.cos(),
+                    center.1 + r * start_rad.sin(),
+                ),
+                &pen,
+            );
+            canvas.draw_line(
+                center,
+                (center.0 + r * end_rad.cos(), center.1 + r * end_rad.sin()),
+                &pen,
+            );
             if p.is_solid {
                 let fill_brush = fill.unwrap();
                 let steps = 32;
@@ -154,13 +181,27 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
         SchRecord::Label(l) => {
             let pen = Pen::new(l.color, 0.0);
             let font = lookup_font(fonts, l.font_id);
-            canvas.draw_text(&l.text, to_dp(l.location), l.orientation.to_degrees() as f64, &font, &pen);
+            canvas.draw_text(
+                &l.text,
+                to_dp(l.location),
+                l.orientation.to_degrees() as f64,
+                &font,
+                &pen,
+            );
         }
         SchRecord::NetLabel(n) => {
-            if n.is_hidden { return; }
+            if n.is_hidden {
+                return;
+            }
             let pen = Pen::new(n.color, 0.0);
             let font = lookup_font(fonts, n.font_id);
-            canvas.draw_text(&n.text, to_dp(n.location), n.orientation.to_degrees() as f64, &font, &pen);
+            canvas.draw_text(
+                &n.text,
+                to_dp(n.location),
+                n.orientation.to_degrees() as f64,
+                &font,
+                &pen,
+            );
             let dot_pen = Pen::new(n.color, 0.0);
             let dot_brush = Brush::solid(n.color);
             canvas.draw_ellipse(to_dp(n.location), 2.0, 2.0, &dot_pen, Some(&dot_brush));
@@ -223,7 +264,8 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
             canvas.draw_rect(
                 loc,
                 (loc.0 + c_to_f(s.x_size), loc.1 - c_to_f(s.y_size)),
-                &pen, fill.as_ref(),
+                &pen,
+                fill.as_ref(),
             );
         }
         SchRecord::SheetEntry(e) => {
@@ -251,21 +293,39 @@ pub(crate) fn draw_sch_record(record: &SchRecord, canvas: &mut dyn AltiumCanvas,
         }
         SchRecord::Symbol(s) => {
             use altium_format_types::IeeeSymbol;
-            if s.symbol == IeeeSymbol::NoSymbol { return; }
+            if s.symbol == IeeeSymbol::NoSymbol {
+                return;
+            }
             let pen = Pen::new(s.color, pen_width_to_mils(s.line_width));
             canvas.draw_ellipse(to_dp(s.location), 5.0, 5.0, &pen, None);
         }
         SchRecord::Designator(d) => {
-            if d.is_hidden { return; }
+            if d.is_hidden {
+                return;
+            }
             let pen = Pen::new(d.color, 0.0);
             let font = lookup_font(fonts, d.font_id);
-            canvas.draw_text(&d.text, to_dp(d.location), d.orientation.to_degrees() as f64, &font, &pen);
+            canvas.draw_text(
+                &d.text,
+                to_dp(d.location),
+                d.orientation.to_degrees() as f64,
+                &font,
+                &pen,
+            );
         }
         SchRecord::Parameter(p) => {
-            if p.is_hidden { return; }
+            if p.is_hidden {
+                return;
+            }
             let pen = Pen::new(p.color, 0.0);
             let font = lookup_font(fonts, p.font_id);
-            canvas.draw_text(&p.text, to_dp(p.location), p.orientation.to_degrees() as f64, &font, &pen);
+            canvas.draw_text(
+                &p.text,
+                to_dp(p.location),
+                p.orientation.to_degrees() as f64,
+                &font,
+                &pen,
+            );
         }
         // Non-graphical records: skip
         SchRecord::Sheet(_)
@@ -301,10 +361,10 @@ fn lookup_font(fonts: &[SchFont], font_id: i32) -> FontSpec {
 
 #[cfg(test)]
 mod tests {
-    use altium_format_types::{Color, Coord, CoordPoint, PenWidth};
+    use super::*;
     use crate::render::recording::{DrawCall, RecordingCanvas};
     use crate::sch_records::{SchPrimitiveBase, SchWire};
-    use super::*;
+    use altium_format_types::{Color, Coord, CoordPoint, PenWidth};
 
     fn make_base() -> SchPrimitiveBase {
         SchPrimitiveBase {

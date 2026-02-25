@@ -38,7 +38,11 @@ pub struct Pen {
 
 impl Pen {
     pub fn new(color: Color, width_mils: f64) -> Self {
-        Self { color, width_mils, style: altium_format_types::LineStyle::Solid }
+        Self {
+            color,
+            width_mils,
+            style: altium_format_types::LineStyle::Solid,
+        }
     }
     pub fn with_style(mut self, style: altium_format_types::LineStyle) -> Self {
         self.style = style;
@@ -55,10 +59,16 @@ pub struct Brush {
 
 impl Brush {
     pub fn solid(color: Color) -> Self {
-        Self { color, transparent: false }
+        Self {
+            color,
+            transparent: false,
+        }
     }
     pub fn transparent(color: Color) -> Self {
-        Self { color, transparent: true }
+        Self {
+            color,
+            transparent: true,
+        }
     }
 }
 
@@ -100,18 +110,43 @@ pub enum RenderTransform {
 pub trait AltiumCanvas {
     fn draw_line(&mut self, p1: DrawPoint, p2: DrawPoint, pen: &Pen);
     fn draw_polyline(&mut self, points: &[DrawPoint], pen: &Pen);
-    fn draw_arc(&mut self, center: DrawPoint, rx: f64, ry: f64,
-                start_deg: f64, end_deg: f64, pen: &Pen);
-    fn draw_ellipse(&mut self, center: DrawPoint, rx: f64, ry: f64,
-                    pen: &Pen, fill: Option<&Brush>);
-    fn draw_rect(&mut self, p1: DrawPoint, p2: DrawPoint,
-                 pen: &Pen, fill: Option<&Brush>);
-    fn draw_rounded_rect(&mut self, p1: DrawPoint, p2: DrawPoint, rx: f64, ry: f64,
-                         pen: &Pen, fill: Option<&Brush>);
+    fn draw_arc(
+        &mut self,
+        center: DrawPoint,
+        rx: f64,
+        ry: f64,
+        start_deg: f64,
+        end_deg: f64,
+        pen: &Pen,
+    );
+    fn draw_ellipse(
+        &mut self,
+        center: DrawPoint,
+        rx: f64,
+        ry: f64,
+        pen: &Pen,
+        fill: Option<&Brush>,
+    );
+    fn draw_rect(&mut self, p1: DrawPoint, p2: DrawPoint, pen: &Pen, fill: Option<&Brush>);
+    fn draw_rounded_rect(
+        &mut self,
+        p1: DrawPoint,
+        p2: DrawPoint,
+        rx: f64,
+        ry: f64,
+        pen: &Pen,
+        fill: Option<&Brush>,
+    );
     fn draw_polygon(&mut self, points: &[DrawPoint], pen: &Pen, fill: Option<&Brush>);
     fn draw_bezier(&mut self, ctrl_pts: &[DrawPoint], pen: &Pen);
-    fn draw_text(&mut self, text: &str, pos: DrawPoint, angle_deg: f64,
-                 font: &FontSpec, color: &Pen);
+    fn draw_text(
+        &mut self,
+        text: &str,
+        pos: DrawPoint,
+        angle_deg: f64,
+        font: &FontSpec,
+        color: &Pen,
+    );
     fn draw_image(&mut self, data: &[u8], p1: DrawPoint, p2: DrawPoint);
     fn push_transform(&mut self, t: &RenderTransform);
     fn pop_transform(&mut self);

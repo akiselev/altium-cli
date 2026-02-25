@@ -7,7 +7,8 @@ mod typecheck;
 pub use ast::*;
 pub use diagnostic::*;
 pub use typecheck::{
-    OpsDomain, compile_ops_to_high, compile_ops_to_high_schdoc, compile_ops_to_high_schlib,
+    OpsDomain, compile_ops_to_high, compile_ops_to_high_pcbdoc, compile_ops_to_high_pcblib,
+    compile_ops_to_high_schdoc, compile_ops_to_high_schlib,
 };
 
 use lexer::{Token, TokenKind};

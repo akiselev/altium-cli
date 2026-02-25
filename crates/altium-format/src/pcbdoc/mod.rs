@@ -1,5 +1,5 @@
-mod primitives;
-mod records;
+pub(crate) mod primitives;
+pub(crate) mod records;
 
 use std::collections::HashSet;
 use std::path::Path;

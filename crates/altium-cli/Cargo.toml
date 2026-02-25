@@ -20,6 +20,8 @@ workspace = true
 [dependencies]
 altium-format = { version = "0.2.0", path = "../altium-format" }
 altium-format-ops = { version = "0.2.0", path = "../altium-format-ops" }
+altium-format-render-svg = { version = "0.2.0", path = "../altium-format-render-svg" }
+altium-format-render-png = { version = "0.2.0", path = "../altium-format-render-png" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
@@ -29,3 +31,7 @@ schemars = "0.8"
 anyhow = "1.0.102"
 cfb = "0.12.1"
 encoding_rs = "0.8"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"

@@ -1,10 +1,11 @@
 use crate::ops::model::{
-    AddArcNode, AddBezierNode, AddComponentOp, AddEllipseNode, AddEllipticalArcNode, AddImageNode,
-    AddLabelNode, AddLineNode, AddPieNode, AddPinOp, AddPolygonNode, AddPolylineNode,
-    AddRectangleNode, AddRoundRectangleNode, AddTextFrameNode, AliasNode, ComponentRefNode,
-    ComponentRoot, ComponentText, ComposedOp, EditComponentNode, EditRecordNode, HighOp,
-    ImplementationNode, MapDefinerNode, ParameterNode, PinNode, QueryComponentsNode, QueryNode,
-    QueryPinsNode, QueryRecordsNode, RemoveComponentNode, RemoveRecordsNode,
+    AddArcNode, AddBezierNode, AddComponentOp, AddEllipseNode, AddEllipticalArcNode,
+    AddFootprintNode, AddImageNode, AddLabelNode, AddLineNode, AddPieNode, AddPinOp,
+    AddPolygonNode, AddPolylineNode, AddRectangleNode, AddRoundRectangleNode, AddTextFrameNode,
+    AddTrackNode, AliasNode, ComponentRefNode, ComponentRoot, ComponentText, ComposedOp,
+    EditComponentNode, EditRecordNode, HighOp, ImplementationNode, MapDefinerNode, ParameterNode,
+    PinNode, QueryComponentsNode, QueryNode, QueryPinsNode, QueryRecordsNode, RemoveComponentNode,
+    RemoveRecordsNode,
 };
 use altium_format_types::{Coord, CoordPoint};
 
@@ -274,6 +275,25 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
                 owner_part_display_mode: v.owner_part_display_mode,
             },
         ))),
+        HighOp::AddTrack(v) => out.push(ComposedOp::AddTrack(AddTrackNode(
+            altium_format::pcb_ops_core::AddTrackOp {
+                opid: base_opid.to_owned(),
+                footprint_ref: v.footprint_ref.clone(),
+                start: CoordPoint::new(Coord::from_mils(v.start.0), Coord::from_mils(v.start.1)),
+                end: CoordPoint::new(Coord::from_mils(v.end.0), Coord::from_mils(v.end.1)),
+                width: v.width_mils.map(Coord::from_mils),
+                layer: v.layer.clone(),
+            },
+        ))),
+        HighOp::AddFootprint(v) => out.push(ComposedOp::AddFootprint(AddFootprintNode(
+            altium_format::pcb_ops_core::AddFootprintOp {
+                opid: base_opid.to_owned(),
+                id: v.id.clone(),
+                name: v.name.clone(),
+                pattern: v.pattern.clone(),
+                description: v.description.clone(),
+            },
+        ))),
     }
 }
 
@@ -389,6 +409,8 @@ impl HighOpExt for HighOp {
             HighOp::AddLabel(v) => v.opid.as_deref(),
             HighOp::AddTextFrame(v) => v.opid.as_deref(),
             HighOp::AddImage(v) => v.opid.as_deref(),
+            HighOp::AddTrack(v) => v.opid.as_deref(),
+            HighOp::AddFootprint(v) => v.opid.as_deref(),
         }
     }
 }

@@ -642,11 +642,18 @@ impl PcbLib {
     }
 
     /// Render a single footprint by display name.
-    pub fn render_footprint(&self, name: &str, canvas: &mut dyn crate::render::AltiumCanvas) -> crate::Result<()> {
-        let fp = self.footprints
+    pub fn render_footprint(
+        &self,
+        name: &str,
+        canvas: &mut dyn crate::render::AltiumCanvas,
+    ) -> crate::Result<()> {
+        let fp = self
+            .footprints
             .iter()
             .find(|f| f.display_name == name)
-            .ok_or_else(|| crate::AltiumFormatError::StreamNotFound(format!("footprint '{name}' not found")))?;
+            .ok_or_else(|| {
+                crate::AltiumFormatError::StreamNotFound(format!("footprint '{name}' not found"))
+            })?;
         fp.render(canvas);
         Ok(())
     }

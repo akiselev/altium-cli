@@ -4,7 +4,12 @@ pub mod schema;
 
 use std::collections::HashSet;
 
-use crate::parser::{compile_ops_to_high_schdoc, compile_ops_to_high_schlib};
+use crate::parser::{
+    compile_ops_to_high_pcbdoc, compile_ops_to_high_pcblib, compile_ops_to_high_schdoc,
+    compile_ops_to_high_schlib,
+};
+use lower::composed_to_pcbdoc_low::lower_composed_to_pcbdoc_low;
+use lower::composed_to_pcblib_low::lower_composed_to_pcblib_low;
 use lower::composed_to_schdoc_low::lower_composed_to_schdoc_low;
 use lower::composed_to_schlib_low::lower_composed_to_schlib_low;
 use lower::high_to_composed::lower_high_ops;
@@ -12,11 +17,11 @@ use lower::high_to_composed::lower_high_ops;
 pub use altium_format::sch_ops_core::{RefExpr, RefRoot, RefStep, Value};
 pub use model::{
     AddAliasOp, AddArcHighOp, AddBezierHighOp, AddComponentOp, AddEllipseHighOp,
-    AddEllipticalArcHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp, AddParameterOp,
-    AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp, AddRectangleHighOp,
-    AddRoundRectangleHighOp, AddTextFrameHighOp, ApplyReport, ApplySpec, EditComponentHighOp,
-    EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp, QueryPinsHighOp,
-    QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
+    AddEllipticalArcHighOp, AddFootprintHighOp, AddImageHighOp, AddLabelHighOp, AddLineHighOp,
+    AddParameterOp, AddPieHighOp, AddPinOp, AddPolygonHighOp, AddPolylineHighOp,
+    AddRectangleHighOp, AddRoundRectangleHighOp, AddTextFrameHighOp, AddTrackHighOp, ApplyReport,
+    ApplySpec, EditComponentHighOp, EditRecordHighOp, HighOp, QueryComponentsHighOp, QueryHighOp,
+    QueryPinsHighOp, QueryRecordsHighOp, RemoveAliasOp, RemoveComponentOp, RemoveRecordsHighOp,
 };
 pub type Ref = RefExpr;
 
@@ -24,6 +29,7 @@ pub fn apply_schdoc(
     doc: &mut altium_format::SchDoc,
     high_ops: &[HighOp],
 ) -> crate::Result<ApplyReport> {
+    ensure_sch_domain_ops(high_ops)?;
     let composed = lower_high_ops(high_ops);
     let low = lower_composed_to_schdoc_low(&composed);
     let results = altium_format::sch_ops_core::apply_schdoc_low_ops(doc, &low)?;
@@ -46,6 +52,7 @@ pub fn apply_schlib(
     lib: &mut altium_format::SchLib,
     high_ops: &[HighOp],
 ) -> crate::Result<ApplyReport> {
+    ensure_sch_domain_ops(high_ops)?;
     let composed = lower_high_ops(high_ops);
     let low = lower_composed_to_schlib_low(&composed);
     let results = altium_format::sch_ops_core::apply_schlib_low_ops(lib, &low)?;
@@ -62,6 +69,85 @@ pub fn apply_schlib(
         low_op_count: low.len(),
         results: table,
     })
+}
+
+pub fn apply_pcbdoc(
+    doc: &mut altium_format::PcbDoc,
+    high_ops: &[HighOp],
+) -> crate::Result<ApplyReport> {
+    ensure_pcbdoc_domain_ops(high_ops)?;
+    let composed = lower_high_ops(high_ops);
+    let low = lower_composed_to_pcbdoc_low(&composed)?;
+    let results = altium_format::pcb_ops_core::apply_pcbdoc_low_ops(doc, &low)?;
+
+    let mut table = model::IndexMap::new();
+    for r in results {
+        table.insert(r.opid.clone(), r);
+    }
+    synthesize_aggregate_results(high_ops, &mut table);
+
+    Ok(ApplyReport {
+        high_op_count: high_ops.len(),
+        composed_op_count: composed.len(),
+        low_op_count: low.len(),
+        results: table,
+    })
+}
+
+pub fn apply_pcblib(
+    lib: &mut altium_format::PcbLib,
+    high_ops: &[HighOp],
+) -> crate::Result<ApplyReport> {
+    ensure_pcblib_domain_ops(high_ops)?;
+    let composed = lower_high_ops(high_ops);
+    let low = lower_composed_to_pcblib_low(&composed)?;
+    let results = altium_format::pcb_ops_core::apply_pcblib_low_ops(lib, &low)?;
+
+    let mut table = model::IndexMap::new();
+    for r in results {
+        table.insert(r.opid.clone(), r);
+    }
+    synthesize_aggregate_results(high_ops, &mut table);
+
+    Ok(ApplyReport {
+        high_op_count: high_ops.len(),
+        composed_op_count: composed.len(),
+        low_op_count: low.len(),
+        results: table,
+    })
+}
+
+fn ensure_sch_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
+    for op in high_ops {
+        if matches!(op, HighOp::AddTrack(_) | HighOp::AddFootprint(_)) {
+            return Err(crate::AltiumOperationError::Unimplemented(
+                "pcb-specific op is not supported in schematic domains".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_pcbdoc_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
+    for op in high_ops {
+        if !matches!(op, HighOp::Query(_) | HighOp::AddTrack(_)) {
+            return Err(crate::AltiumOperationError::Unimplemented(
+                "op is not supported for pcbdoc domain".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_pcblib_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
+    for op in high_ops {
+        if !matches!(op, HighOp::Query(_) | HighOp::AddTrack(_) | HighOp::AddFootprint(_)) {
+            return Err(crate::AltiumOperationError::Unimplemented(
+                "op is not supported for pcblib domain".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn synthesize_aggregate_results(
@@ -161,6 +247,8 @@ fn high_op_kind(op: &HighOp) -> &'static str {
         HighOp::AddLabel(_) => "add_label",
         HighOp::AddTextFrame(_) => "add_text_frame",
         HighOp::AddImage(_) => "add_image",
+        HighOp::AddTrack(_) => "add_track",
+        HighOp::AddFootprint(_) => "add_footprint",
     }
 }
 
@@ -197,6 +285,8 @@ impl HighOpIdExt for HighOp {
             HighOp::AddLabel(v) => v.opid.as_deref(),
             HighOp::AddTextFrame(v) => v.opid.as_deref(),
             HighOp::AddImage(v) => v.opid.as_deref(),
+            HighOp::AddTrack(v) => v.opid.as_deref(),
+            HighOp::AddFootprint(v) => v.opid.as_deref(),
         }
     }
 }
@@ -225,6 +315,32 @@ pub fn apply_ops_source_schlib(
         ))
     })?;
     apply_schlib(lib, &high_ops)
+}
+
+pub fn apply_ops_source_pcbdoc(
+    doc: &mut altium_format::PcbDoc,
+    source: &str,
+) -> crate::Result<ApplyReport> {
+    let high_ops = compile_ops_to_high_pcbdoc(source).map_err(|e| {
+        crate::AltiumOperationError::Unimplemented(format!(
+            "ops parse/typecheck failed:\n{}",
+            e.render("input.ops", source)
+        ))
+    })?;
+    apply_pcbdoc(doc, &high_ops)
+}
+
+pub fn apply_ops_source_pcblib(
+    lib: &mut altium_format::PcbLib,
+    source: &str,
+) -> crate::Result<ApplyReport> {
+    let high_ops = compile_ops_to_high_pcblib(source).map_err(|e| {
+        crate::AltiumOperationError::Unimplemented(format!(
+            "ops parse/typecheck failed:\n{}",
+            e.render("input.ops", source)
+        ))
+    })?;
+    apply_pcblib(lib, &high_ops)
 }
 
 pub fn parse_apply_spec_json(data: &str) -> crate::Result<Vec<HighOp>> {

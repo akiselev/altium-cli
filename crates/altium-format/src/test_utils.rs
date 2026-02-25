@@ -41,6 +41,31 @@ impl CfbSemanticDiffReport {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CfbSemanticDiffOptions {
+    ignored_param_keys_lower: BTreeSet<String>,
+}
+
+impl CfbSemanticDiffOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_ignored_param_keys(keys: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        let mut out = Self::default();
+        for key in keys {
+            out.ignored_param_keys_lower
+                .insert(key.as_ref().to_ascii_lowercase());
+        }
+        out
+    }
+
+    fn ignores_key(&self, key: &str) -> bool {
+        self.ignored_param_keys_lower
+            .contains(&key.to_ascii_lowercase())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffIssue {
     EntryMissingInA {
@@ -305,6 +330,14 @@ impl EntryKind {
 }
 
 pub fn diff_cfb_files_semantic(path_a: &Path, path_b: &Path) -> Result<CfbSemanticDiffReport> {
+    diff_cfb_files_semantic_with_options(path_a, path_b, &CfbSemanticDiffOptions::default())
+}
+
+pub fn diff_cfb_files_semantic_with_options(
+    path_a: &Path,
+    path_b: &Path,
+    options: &CfbSemanticDiffOptions,
+) -> Result<CfbSemanticDiffReport> {
     let mut cfb_a = open_cfb(path_a)?;
     let mut cfb_b = open_cfb(path_b)?;
 
@@ -340,7 +373,7 @@ pub fn diff_cfb_files_semantic(path_a: &Path, path_b: &Path) -> Result<CfbSemant
 
                 let stream_a = read_stream(&mut cfb_a, &path)?;
                 let stream_b = read_stream(&mut cfb_b, &path)?;
-                compare_stream(&path, &stream_a, &stream_b, &mut issues);
+                compare_stream(&path, &stream_a, &stream_b, options, &mut issues);
             }
             (None, None) => {}
         }
@@ -354,7 +387,15 @@ pub fn diff_cfb_files_semantic(path_a: &Path, path_b: &Path) -> Result<CfbSemant
 }
 
 pub fn assert_cfb_files_semantic_eq(path_a: &Path, path_b: &Path) {
-    match diff_cfb_files_semantic(path_a, path_b) {
+    assert_cfb_files_semantic_eq_with_options(path_a, path_b, &CfbSemanticDiffOptions::default());
+}
+
+pub fn assert_cfb_files_semantic_eq_with_options(
+    path_a: &Path,
+    path_b: &Path,
+    options: &CfbSemanticDiffOptions,
+) {
+    match diff_cfb_files_semantic_with_options(path_a, path_b, options) {
         Ok(report) => {
             assert!(report.is_identical(), "{}", report.render());
         }
@@ -366,10 +407,16 @@ pub fn assert_cfb_files_semantic_eq(path_a: &Path, path_b: &Path) {
     }
 }
 
-fn compare_stream(path: &str, stream_a: &[u8], stream_b: &[u8], issues: &mut Vec<DiffIssue>) {
+fn compare_stream(
+    path: &str,
+    stream_a: &[u8],
+    stream_b: &[u8],
+    options: &CfbSemanticDiffOptions,
+    issues: &mut Vec<DiffIssue>,
+) {
     match (parse_blocks(stream_a), parse_blocks(stream_b)) {
         (Ok(blocks_a), Ok(blocks_b)) => {
-            compare_blocks(path, &blocks_a, &blocks_b, issues);
+            compare_blocks(path, &blocks_a, &blocks_b, options, issues);
             return;
         }
         (Err(err_a), Ok(_)) => issues.push(DiffIssue::BlockParseError {
@@ -415,7 +462,13 @@ fn compare_stream(path: &str, stream_a: &[u8], stream_b: &[u8], issues: &mut Vec
     });
 }
 
-fn compare_blocks(path: &str, blocks_a: &[Block], blocks_b: &[Block], issues: &mut Vec<DiffIssue>) {
+fn compare_blocks(
+    path: &str,
+    blocks_a: &[Block],
+    blocks_b: &[Block],
+    options: &CfbSemanticDiffOptions,
+    issues: &mut Vec<DiffIssue>,
+) {
     if blocks_a.len() != blocks_b.len() {
         issues.push(DiffIssue::BlockCountMismatch {
             path: path.to_owned(),
@@ -441,7 +494,7 @@ fn compare_blocks(path: &str, blocks_a: &[Block], blocks_b: &[Block], issues: &m
 
         match block_a.format {
             BlockFormat::Text => {
-                compare_text_block(path, idx, &block_a.data, &block_b.data, issues)
+                compare_text_block(path, idx, &block_a.data, &block_b.data, options, issues)
             }
             BlockFormat::Binary => {
                 compare_binary_block(path, idx, &block_a.data, &block_b.data, issues)
@@ -455,6 +508,7 @@ fn compare_text_block(
     block_index: usize,
     data_a: &[u8],
     data_b: &[u8],
+    options: &CfbSemanticDiffOptions,
     issues: &mut Vec<DiffIssue>,
 ) {
     let params_a = match parse_param_pairs(data_a) {
@@ -482,8 +536,8 @@ fn compare_text_block(
         }
     };
 
-    let pair_counts_a = pair_counts(&params_a);
-    let pair_counts_b = pair_counts(&params_b);
+    let pair_counts_a = pair_counts(&params_a, options);
+    let pair_counts_b = pair_counts(&params_b, options);
 
     let pairs_a: BTreeSet<(String, String)> = pair_counts_a.keys().cloned().collect();
     let pairs_b: BTreeSet<(String, String)> = pair_counts_b.keys().cloned().collect();
@@ -565,16 +619,6 @@ fn compare_binary_block(
     data_b: &[u8],
     issues: &mut Vec<DiffIssue>,
 ) {
-    if data_a.len() != data_b.len() {
-        issues.push(DiffIssue::BlockLengthMismatch {
-            path: path.to_owned(),
-            block_index,
-            len_a: data_a.len(),
-            len_b: data_b.len(),
-            kind: "binary",
-        });
-    }
-
     match (parse_embedded_object(data_a), parse_embedded_object(data_b)) {
         (Ok(obj_a), Ok(obj_b)) => {
             if obj_a.id != obj_b.id {
@@ -601,8 +645,27 @@ fn compare_binary_block(
             }
             return;
         }
-        (Err(_), Err(_)) => {}
+        (Err(_), Err(_)) => {
+            if data_a.len() != data_b.len() {
+                issues.push(DiffIssue::BlockLengthMismatch {
+                    path: path.to_owned(),
+                    block_index,
+                    len_a: data_a.len(),
+                    len_b: data_b.len(),
+                    kind: "binary",
+                });
+            }
+        }
         (Err(_), Ok(_)) | (Ok(_), Err(_)) => {
+            if data_a.len() != data_b.len() {
+                issues.push(DiffIssue::BlockLengthMismatch {
+                    path: path.to_owned(),
+                    block_index,
+                    len_a: data_a.len(),
+                    len_b: data_b.len(),
+                    kind: "binary",
+                });
+            }
             let (offset, byte_a, byte_b) = first_byte_diff(data_a, data_b);
             issues.push(DiffIssue::BinaryBlockMismatch {
                 path: path.to_owned(),
@@ -634,9 +697,15 @@ fn block_label(format: BlockFormat) -> &'static str {
     }
 }
 
-fn pair_counts(params: &[(String, String)]) -> BTreeMap<(String, String), usize> {
+fn pair_counts(
+    params: &[(String, String)],
+    options: &CfbSemanticDiffOptions,
+) -> BTreeMap<(String, String), usize> {
     let mut out = BTreeMap::new();
     for (k, v) in params {
+        if options.ignores_key(k) {
+            continue;
+        }
         *out.entry((k.clone(), v.clone())).or_insert(0) += 1;
     }
     out
@@ -984,6 +1053,38 @@ mod tests {
                 .issues
                 .iter()
                 .any(|i| matches!(i, DiffIssue::DuplicateParamPairCountMismatch { .. })),
+            "{}",
+            report.render()
+        );
+    }
+
+    #[test]
+    fn ignored_param_key_allows_equivalence() {
+        let a = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|UniqueID=AAAA|\0"))]);
+        let b = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|UniqueID=BBBB|\0"))]);
+
+        let report = diff_cfb_files_semantic_with_options(
+            a.path(),
+            b.path(),
+            &CfbSemanticDiffOptions::with_ignored_param_keys(["uniqueid"]),
+        )
+        .expect("semantic diff");
+        assert!(report.is_identical(), "{}", report.render());
+    }
+
+    #[test]
+    fn non_ignored_param_key_still_reports_difference() {
+        let a = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|UniqueID=AAAA|\0"))]);
+        let b = make_cfb(&[("/FileHeader", write_text_block(b"|A=1|UniqueID=BBBB|\0"))]);
+
+        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
+        assert!(
+            report.issues.iter().any(|i| match i {
+                DiffIssue::MissingParamPair { key, .. }
+                | DiffIssue::UpdatedParamValues { key, .. }
+                | DiffIssue::DuplicateParamPairCountMismatch { key, .. } => key == "UniqueID",
+                _ => false,
+            }),
             "{}",
             report.render()
         );

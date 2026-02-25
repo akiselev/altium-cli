@@ -304,10 +304,14 @@ impl ParameterCollection {
         frac_key: &str,
     ) -> Result<Option<Coord>> {
         let integer: Option<i32> = self.remove_optional(key)?;
-        let frac: i32 = self.remove_optional::<i32>(frac_key)?.unwrap_or(0);
-        match integer {
-            Some(int_val) => Ok(Some(Coord::from_dxp_frac(int_val, frac))),
-            None => Ok(None),
+        let frac: Option<i32> = self.remove_optional::<i32>(frac_key)?;
+        match (integer, frac) {
+            (Some(int_val), frac_val) => {
+                Ok(Some(Coord::from_dxp_frac(int_val, frac_val.unwrap_or(0))))
+            }
+            // Some SchDoc fields may be serialized with only *_FRAC present; preserve them as 0+frac.
+            (None, Some(frac_val)) => Ok(Some(Coord::from_dxp_frac(0, frac_val))),
+            (None, None) => Ok(None),
         }
     }
 

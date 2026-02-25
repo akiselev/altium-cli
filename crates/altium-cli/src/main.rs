@@ -4,8 +4,13 @@ use std::process::ExitCode;
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_ops::{
     AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps,
-    apply_ops_source_schdoc, apply_ops_source_schlib,
+    apply_ops_source_pcbdoc, apply_ops_source_pcblib, apply_ops_source_schdoc,
+    apply_ops_source_schlib,
 };
+use altium_format_render_png::{
+    DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
+};
+use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_schlib_component};
 use clap::{Parser, Subcommand};
 
 mod cfb;
@@ -50,6 +55,23 @@ enum Commands {
     Ops {
         #[command(subcommand)]
         sub: OpsSubcommand,
+    },
+    /// Render an Altium document to SVG or PNG
+    Render {
+        /// Path to the input file (.SchLib, .SchDoc, or .PcbLib)
+        path: PathBuf,
+        /// Output directory (default: current directory)
+        #[arg(long, short = 'o', default_value = ".")]
+        output_dir: PathBuf,
+        /// Render only this component/sheet/footprint name (default: all)
+        #[arg(long)]
+        name: Option<String>,
+        /// Output format: svg or png
+        #[arg(long, default_value = "svg")]
+        format: String,
+        /// Scale factor for PNG output (pixels per mil, default 4.0)
+        #[arg(long, default_value_t = DEFAULT_SCALE)]
+        scale: f32,
     },
 }
 
@@ -134,6 +156,18 @@ fn main() -> ExitCode {
         }
         Commands::Ops { sub } => {
             if let Err(e) = run_ops(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Render {
+            path,
+            output_dir,
+            name,
+            format,
+            scale,
+        } => {
+            if let Err(e) = run_render(&path, &output_dir, name.as_deref(), &format, scale) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -225,8 +259,28 @@ fn apply_ops(
             }
             print_apply_report(&report, dry_run, &out_path, report_json)?;
         }
+        "pcbdoc" => {
+            let mut doc = PcbDoc::open(path)?;
+            let report = apply_ops_source_pcbdoc(&mut doc, &spec_data)?;
+            if !dry_run {
+                anyhow::bail!(
+                    "ops apply save is not yet supported for .pcbdoc files; use --dry-run"
+                );
+            }
+            print_apply_report(&report, dry_run, &out_path, report_json)?;
+        }
+        "pcblib" => {
+            let mut lib = PcbLib::open(path)?;
+            let report = apply_ops_source_pcblib(&mut lib, &spec_data)?;
+            if !dry_run {
+                anyhow::bail!(
+                    "ops apply save is not yet supported for .pcblib files; use --dry-run"
+                );
+            }
+            print_apply_report(&report, dry_run, &out_path, report_json)?;
+        }
         _ => anyhow::bail!(
-            "ops apply not yet supported for .{doc_ext} files (supported: .schdoc, .schlib)"
+            "ops apply not yet supported for .{doc_ext} files (supported: .schdoc, .schlib, .pcbdoc, .pcblib)"
         ),
     }
 
@@ -334,6 +388,101 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn run_render(
+    path: &PathBuf,
+    output_dir: &PathBuf,
+    name: Option<&str>,
+    format: &str,
+    scale: f32,
+) -> anyhow::Result<()> {
+    if format != "svg" && format != "png" {
+        anyhow::bail!("unsupported format '{}' (supported: svg, png)", format);
+    }
+    std::fs::create_dir_all(output_dir)?;
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| anyhow::anyhow!("cannot determine file type: {}", path.display()))?;
+
+    match ext.as_str() {
+        "schlib" => {
+            let lib = SchLib::open(path)?;
+            let names = lib.component_names();
+            let to_render: Vec<&str> = if let Some(n) = name {
+                vec![n]
+            } else {
+                names.iter().map(|s| s.as_str()).collect()
+            };
+            for comp_name in to_render {
+                let safe = safe_filename(comp_name);
+                let out_path = output_dir.join(format!("{safe}.{format}"));
+                if format == "svg" {
+                    std::fs::write(&out_path, render_schlib_component(&lib, comp_name)?)?;
+                } else {
+                    std::fs::write(
+                        &out_path,
+                        render_schlib_component_png(&lib, comp_name, scale)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?,
+                    )?;
+                }
+                println!("  {comp_name} -> {}", out_path.display());
+            }
+        }
+        "schdoc" => {
+            let doc = SchDoc::open(path)?;
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("sheet");
+            let out_path = output_dir.join(format!("{stem}.{format}"));
+            if format == "svg" {
+                std::fs::write(&out_path, render_schdoc(&doc)?)?;
+            } else {
+                std::fs::write(
+                    &out_path,
+                    render_schdoc_png(&doc, scale).map_err(|e| anyhow::anyhow!("{e}"))?,
+                )?;
+            }
+            println!("  {stem} -> {}", out_path.display());
+        }
+        "pcblib" => {
+            let lib = PcbLib::open(path)?;
+            let names: Vec<String> = lib
+                .footprint_names()
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let to_render: Vec<&str> = if let Some(n) = name {
+                vec![n]
+            } else {
+                names.iter().map(|s| s.as_str()).collect()
+            };
+            for fp_name in to_render {
+                let safe = safe_filename(fp_name);
+                let out_path = output_dir.join(format!("{safe}.{format}"));
+                if format == "svg" {
+                    std::fs::write(&out_path, render_pcblib_footprint(&lib, fp_name)?)?;
+                } else {
+                    std::fs::write(
+                        &out_path,
+                        render_pcblib_footprint_png(&lib, fp_name, scale)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?,
+                    )?;
+                }
+                println!("  {fp_name} -> {}", out_path.display());
+            }
+        }
+        _ => {
+            anyhow::bail!("render not supported for .{ext} (supported: .schlib, .schdoc, .pcblib)")
+        }
+    }
+
+    Ok(())
+}
+
+fn safe_filename(name: &str) -> String {
+    name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+}
+
 fn validate(path: &PathBuf) -> anyhow::Result<()> {
     let ext = path
         .extension()
@@ -370,4 +519,46 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
 
     println!("Validation passed: {}", path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::io::Write;
+
+    fn write_minimal_ops_file(dir: &std::path::Path) -> PathBuf {
+        let path = dir.join("input.ops");
+        let mut file = std::fs::File::create(&path).expect("create input.ops");
+        writeln!(
+            file,
+            "ops:\n  - op: query\n    selector: component[designator=R1]"
+        )
+        .expect("write input.ops");
+        path
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 32, .. ProptestConfig::default() })]
+
+        #[test]
+        fn ops_apply_reports_explicit_unsupported_extensions(
+            ext in prop::sample::select(vec![
+                "intlib".to_owned(),
+                "prjpcb".to_owned(),
+                "txt".to_owned(),
+            ])
+        ) {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let spec = write_minimal_ops_file(tmp.path());
+            let target = tmp.path().join(format!("dummy.{ext}"));
+
+            let err = apply_ops(&target, &spec, None, true, false).expect_err("unsupported ext must fail");
+            let msg = err.to_string();
+            prop_assert!(
+                msg.contains("ops apply not yet supported"),
+                "unexpected error for .{ext}: {msg}"
+            );
+        }
+    }
 }

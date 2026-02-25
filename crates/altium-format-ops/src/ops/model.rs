@@ -31,6 +31,8 @@ pub enum HighOp {
     AddLabel(AddLabelHighOp),
     AddTextFrame(AddTextFrameHighOp),
     AddImage(AddImageHighOp),
+    AddTrack(AddTrackHighOp),
+    AddFootprint(AddFootprintHighOp),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
@@ -540,6 +542,33 @@ pub struct AddImageHighOp {
     pub owner_part_display_mode: Option<i32>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AddTrackHighOp {
+    #[serde(default)]
+    pub opid: Option<String>,
+    #[serde(default)]
+    pub footprint_ref: Option<sch_ops_core::RefExpr>,
+    pub start: (i32, i32),
+    pub end: (i32, i32),
+    #[serde(default)]
+    pub width_mils: Option<i32>,
+    #[serde(default)]
+    pub layer: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AddFootprintHighOp {
+    #[serde(default)]
+    pub opid: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
 #[ops(op = "footprint", domain = "sch")]
 pub struct FootprintOp {
@@ -606,6 +635,8 @@ pub enum ComposedOp {
     AddLabel(AddLabelNode),
     AddTextFrame(AddTextFrameNode),
     AddImage(AddImageNode),
+    AddTrack(AddTrackNode),
+    AddFootprint(AddFootprintNode),
 }
 
 #[derive(Debug, Clone)]
@@ -756,6 +787,10 @@ pub struct AddLabelNode(pub sch_ops_core::AddLabelOp);
 pub struct AddTextFrameNode(pub sch_ops_core::AddTextFrameOp);
 #[derive(Debug, Clone)]
 pub struct AddImageNode(pub sch_ops_core::AddImageOp);
+#[derive(Debug, Clone)]
+pub struct AddTrackNode(pub altium_format::pcb_ops_core::AddTrackOp);
+#[derive(Debug, Clone)]
+pub struct AddFootprintNode(pub altium_format::pcb_ops_core::AddFootprintOp);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplyReport {

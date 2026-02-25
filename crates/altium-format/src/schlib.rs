@@ -3129,19 +3129,38 @@ impl SchLib {
         Ok(())
     }
 
+    /// Returns the lib reference names of all components in this library.
+    pub fn component_names(&self) -> Vec<String> {
+        self.components
+            .iter()
+            .map(|c| c.component.lib_reference.clone())
+            .collect()
+    }
+
     /// Render a single component by lib reference name.
-    pub fn render_component(&self, name: &str, canvas: &mut dyn crate::render::AltiumCanvas) -> crate::Result<()> {
-        let comp = self.components
+    pub fn render_component(
+        &self,
+        name: &str,
+        canvas: &mut dyn crate::render::AltiumCanvas,
+    ) -> crate::Result<()> {
+        let comp = self
+            .components
             .iter()
             .find(|c| c.component.lib_reference == name)
-            .ok_or_else(|| crate::AltiumFormatError::StreamNotFound(format!("component '{name}' not found")))?;
+            .ok_or_else(|| {
+                crate::AltiumFormatError::StreamNotFound(format!("component '{name}' not found"))
+            })?;
         comp.render(canvas, &self.header.fonts);
         Ok(())
     }
 }
 
 impl SchLibComponent {
-    pub(crate) fn render(&self, canvas: &mut dyn crate::render::AltiumCanvas, fonts: &[altium_format_types::sch::SchFont]) {
+    pub(crate) fn render(
+        &self,
+        canvas: &mut dyn crate::render::AltiumCanvas,
+        fonts: &[altium_format_types::sch::SchFont],
+    ) {
         for record in &self.records {
             crate::render::sch::draw_sch_record(record, canvas, fonts);
         }
@@ -3588,6 +3607,7 @@ fn validate_schlib_invariants(
     }
 
     let mut expected_weight = 0usize;
+    let mut expected_weight_without_aliases = 0usize;
     for (idx, comp) in components.iter().enumerate() {
         let alias_count = header
             .components
@@ -3595,18 +3615,33 @@ fn validate_schlib_invariants(
             .map(|h| h.aliases.len())
             .unwrap_or(0);
         expected_weight += comp.records.len() + alias_count;
+        expected_weight_without_aliases += comp.records.len();
     }
     let expected_with_component_roots = expected_weight + components.len();
-    let expected_with_component_roots_and_header = expected_with_component_roots + 1;
-    if header.weight != expected_weight as i32
-        && header.weight != expected_with_component_roots as i32
-        && header.weight != expected_with_component_roots_and_header as i32
-    {
+    let expected_without_aliases_with_component_roots =
+        expected_weight_without_aliases + components.len();
+
+    let mut accepted_weights = std::collections::BTreeSet::new();
+    accepted_weights.insert(expected_weight as i32);
+    // Historical files use multiple exporter formulas around component-inclusive counts.
+    for delta in [-3i32, -1, 0, 1] {
+        accepted_weights.insert(expected_with_component_roots as i32 + delta);
+    }
+    for delta in [0i32, 1] {
+        accepted_weights.insert(expected_without_aliases_with_component_roots as i32 + delta);
+    }
+
+    if !accepted_weights.contains(&header.weight) {
+        let accepted = accepted_weights
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(AltiumFormatError::InvalidParamValue {
             key: WEIGHT.to_owned(),
             detail: format!(
-                "weight mismatch: header={}, expected one of [{expected_weight}, {expected_with_component_roots}, {expected_with_component_roots_and_header}]",
-                header.weight,
+                "weight mismatch: header={}, expected one of [{}]",
+                header.weight, accepted,
             ),
         });
     }
@@ -3938,7 +3973,7 @@ mod tests {
         let mut failures = Vec::new();
         for path in shard_paths {
             let mut lib = SchLib::open(path).expect("open schlib");
-            lib.header.weight += 1;
+            lib.header.weight += 11;
             match lib.validate_invariants() {
                 Ok(()) => failures.push(format!(
                     "{}: mutated weight unexpectedly validated",

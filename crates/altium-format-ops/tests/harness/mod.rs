@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use altium_format::{SchDoc, SchLib};
+use altium_format::{PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_ops::ApplyReport;
 
 #[allow(dead_code)]
@@ -14,6 +14,20 @@ pub fn schdoc_fixture_path(name: &str) -> PathBuf {
 pub fn schlib_fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../data/schlib")
+        .join(name)
+}
+
+#[allow(dead_code)]
+pub fn pcbdoc_fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data/pcbdoc")
+        .join(name)
+}
+
+#[allow(dead_code)]
+pub fn pcblib_fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data/pcblib")
         .join(name)
 }
 
@@ -58,6 +72,16 @@ pub fn save_bytes_schlib(lib: &SchLib) -> Vec<u8> {
     let tmp = tempfile::NamedTempFile::new().expect("create temp file");
     lib.save(tmp.path()).expect("save schlib output");
     std::fs::read(tmp.path()).expect("read saved schlib")
+}
+
+#[allow(dead_code)]
+pub fn validate_pcbdoc(doc: &PcbDoc) {
+    doc.validate_invariants().expect("pcbdoc validates");
+}
+
+#[allow(dead_code)]
+pub fn validate_pcblib(lib: &PcbLib) {
+    lib.validate_invariants().expect("pcblib validates");
 }
 
 #[allow(dead_code)]
