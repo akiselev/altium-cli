@@ -144,27 +144,67 @@ container using the `cfb` crate — no `altium-format` imports.
 | `altium cfb dump <file> <stream>`   | Hex+ASCII dump (`--blocks` annotates block boundaries and decodes text)        |
 | `altium cfb blocks <file> <stream>` | Block-level summary (`--block N` for full detail on one block)                 |
 | `altium cfb diff <file1> <file2>`   | Stream-by-stream comparison (`--blocks` for block-level, `--stream` to filter) |
+| `altium cfb diff --semantic <f1> <f2>` | Semantic diff: order-agnostic params, embedded object decompression         |
 | `altium cfb cat <file> <stream>`    | Raw bytes to stdout for piping (`\| xxd`, `\| wc -c`)                          |
 
 Example workflow for debugging a roundtrip failure:
 ```bash
-# 1. Diff original vs roundtripped
+# 1. Semantic diff original vs roundtripped (recommended first step)
+altium cfb diff --semantic original.PcbLib roundtripped.PcbLib
+
+# 2. Verbose semantic diff (flat numbered list, no grouping)
+altium cfb diff --semantic --verbose original.PcbLib roundtripped.PcbLib
+
+# 3. Raw byte-level diff with block annotations
 altium cfb diff original.SchLib roundtripped.SchLib --blocks
 
-# 2. Inspect the differing stream
+# 4. Inspect the differing stream
 altium cfb blocks original.SchLib /Component_1/Data
 altium cfb blocks original.SchLib /Component_1/Data --block 0
 
-# 3. Hex dump with block annotations
+# 5. Hex dump with block annotations
 altium cfb dump original.SchLib /FileHeader --blocks
 
-# 4. Pipe raw bytes for external tools
+# 6. Pipe raw bytes for external tools
 altium cfb cat original.SchLib /FileHeader | xxd
 ```
 
+### Semantic Diff (`--semantic`)
+
+The semantic diff compares CFB files at a higher level than raw bytes:
+- **Text blocks**: Compared as order-agnostic `|KEY=VALUE|` parameter pairs (handles
+  reordering, duplicate pairs, UTF-8/Windows-1252 encoding differences)
+- **Binary blocks**: Compared byte-for-byte
+- **Embedded objects** (`0xD0` envelopes): Compared after zlib decompression (ignores
+  compression-level differences)
+- **Raw binary streams** (PCB Data/Header): Compared byte-for-byte when block parsing
+  fails on both sides identically
+- **Non-param text blocks** (e.g. LayerKindMapping version strings): Falls back to byte
+  comparison when param parsing fails on both sides
+
+The default output is a **categorized report** grouped by stream path with issue counts.
+Use `--verbose` for a flat numbered list. Exit code is 0 if identical, 1 if differences found.
+
+Issue categories in the report:
+- `EntryMissingInA`/`EntryMissingInB`: Stream/storage exists in one file but not the other
+- `MissingParamPair`: A `KEY=VALUE` pair exists in one side but not the other
+- `UpdatedParamValues`: Same key has different values (e.g. numeric formatting `0mil` vs `0.0000mil`)
+- `BinaryBlockMismatch`: Binary block bytes differ
+- `BlockParseError`: Block header parsing failed (common for PCB raw binary Data streams)
+- `StreamLengthMismatch`/`RawByteMismatch`: Raw stream byte-level differences
+- `EmbeddedObjectDataMismatch`: Decompressed embedded object payloads differ
+
+**Workflow for fixing roundtrip issues**: Save a file with `altium save-as`, run
+`altium cfb diff --semantic original saved`, then fix issues by category priority:
+1. `EntryMissingInB` — sidecar streams not being written back (WideStrings, UniqueIDs, etc.)
+2. `MissingParamPair` — parameters being dropped during save
+3. `UpdatedParamValues` — numeric formatting differences (e.g. `0mil` vs `0.0000mil`)
+4. `BinaryBlockMismatch` — binary record serialization differences
+5. `BlockParseError` + `RawByteMismatch` — raw binary stream differences (recompression, etc.)
+
 # Test Utilities (Semantic CFB Diff)
 
-`altium-format` now has a test-only semantic CFB diff helper in:
+`altium-format` exposes a semantic CFB diff module (also used by `altium cfb diff --semantic`):
 
 - `crates/altium-format/src/test_utils.rs`
 
@@ -172,6 +212,10 @@ Primary API:
 
 - `diff_cfb_files_semantic(path_a, path_b) -> Result<CfbSemanticDiffReport>`
 - `assert_cfb_files_semantic_eq(path_a, path_b)` (panic with detailed report)
+- `CfbSemanticDiffReport::render()` — flat numbered list of all issues
+- `CfbSemanticDiffReport::render_categorized()` — grouped by stream with category counts
+- `DiffIssue::category_name()` — issue type label for grouping
+- `DiffIssue::stream_path()` — stream/entry path the issue pertains to
 
 What it compares:
 
