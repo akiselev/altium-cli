@@ -1,4 +1,4 @@
-name: Proptest SchDoc
+name: Fixtures SchDoc
 
 on:
   push:
@@ -14,10 +14,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  proptest-schdoc:
-    name: SchDoc proptests
+  fixture-schdoc:
+    name: SchDoc fixture tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +34,8 @@ jobs:
           rm -rf data/schdoc
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-schdoc data/schdoc
 
-      - name: Run altium-format SchDoc proptests
-        run: cargo test -p altium-format --lib prop_schdoc --features proptest --verbose
+      - name: Run altium-format SchDoc fixture tests
+        run: cargo test -p altium-format --lib schdoc --features test-fixtures --verbose
 
-      - name: Run altium-format-ops SchDoc proptests
-        run: cargo test -p altium-format-ops --test executor_schdoc_proptest --features proptest --verbose
+      - name: Run SchDoc e2e ops tests
+        run: cargo test -p altium-format-ops --test ops_e2e_schdoc --features test-fixtures --verbose

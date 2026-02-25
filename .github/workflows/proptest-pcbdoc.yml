@@ -15,7 +15,7 @@ env:
 
 jobs:
   proptest-pcbdoc:
-    name: PcbDoc fixture-backed proptests
+    name: PcbDoc proptests
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -34,5 +34,14 @@ jobs:
           rm -rf data/pcbdoc
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcbdoc data/pcbdoc
 
+      - name: Fetch PcbLib fixtures
+        run: |
+          set -euo pipefail
+          rm -rf data/pcblib
+          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcblib data/pcblib
+
       - name: Run altium-format PcbDoc proptests
-        run: cargo test -p altium-format --lib prop_pcbdoc --verbose
+        run: cargo test -p altium-format --lib prop_pcbdoc --features proptest --verbose
+
+      - name: Run altium-format-ops PCB proptests
+        run: cargo test -p altium-format-ops --test executor_pcb_proptest --features proptest --verbose

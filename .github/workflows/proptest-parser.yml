@@ -1,10 +1,12 @@
-name: CI
+name: Proptest Parser
 
 on:
   push:
     branches:
       - main
       - master
+    tags:
+      - "v*"
   pull_request:
   workflow_dispatch:
 
@@ -12,10 +14,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  unit-tests:
-    name: Unit Tests
+  proptest-parser:
+    name: Parser & CLI proptests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +27,8 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Build workspace
-        run: cargo build --workspace --verbose
+      - name: Run parser proptests
+        run: cargo test -p altium-format-ops --lib prop_ --features proptest --verbose
 
-      - name: Run unit tests (no fixtures, no proptests)
-        run: cargo test --workspace --all-targets --verbose
+      - name: Run CLI proptests
+        run: cargo test -p altium-cli --lib --features proptest --verbose

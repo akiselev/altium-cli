@@ -25,7 +25,7 @@ jobs:
       - name: Build
         run: cargo build --workspace --verbose
 
-      - name: Run tests
+      - name: Run unit tests (no fixtures, no proptests)
         run: cargo test --workspace --all-targets --verbose
 
   build:
