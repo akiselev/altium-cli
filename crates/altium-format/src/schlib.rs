@@ -3655,8 +3655,8 @@ fn validate_schlib_invariants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
+    #[cfg(feature = "test-fixtures")]
     fn data_path(filename: &str) -> std::path::PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         std::path::Path::new(manifest_dir)
@@ -3664,6 +3664,7 @@ mod tests {
             .join(filename)
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn parse_file_header_blank_schlib() {
         let path = data_path("BlankSchlibComponent.SchLib");
@@ -3678,6 +3679,7 @@ mod tests {
         assert!(!header.unique_id.is_empty(), "UniqueID must not be empty");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schlib_validate_invariants_ok_on_fixture() {
         let path = data_path("schlib/Resistors_Caps.SchLib");
@@ -3686,6 +3688,7 @@ mod tests {
             .expect("fixture must satisfy schlib invariants");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schlib_validate_invariants_detects_broken_weight() {
         let path = data_path("schlib/Resistors_Caps.SchLib");
@@ -3697,6 +3700,7 @@ mod tests {
         assert!(err.to_string().contains("weight mismatch"));
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     #[should_panic(expected = "broken invariant must fail")]
     fn schlib_broken_invariant_causes_test_failure_path() {
@@ -3709,6 +3713,7 @@ mod tests {
             .expect("broken invariant must fail");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     #[ignore = "mutation-test demo: should fail when run explicitly"]
     fn schlib_broken_invariant_demo_unchecked_should_fail() {
@@ -3719,6 +3724,7 @@ mod tests {
             .expect("this assertion is intentionally wrong; invariant checker must fail");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn parse_file_header_lime_micro_schlib() {
         let path = data_path("LimeMicroAltiumLib_schLib.SchLib");
@@ -3735,6 +3741,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn parse_section_keys_missing_returns_empty() {
         let path = data_path("BlankSchlibComponent.SchLib");
@@ -3784,6 +3791,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn parse_component_data_blank_schlib() {
         let path = data_path("BlankSchlibComponent.SchLib");
@@ -3811,12 +3819,14 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schlib_open_blank_validates() {
         let path = data_path("BlankSchlibComponent.SchLib");
         SchLib::open(&path).expect("SchLib::open must succeed for BlankSchlibComponent");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schlib_open_lime_micro_validates() {
         let path = data_path("LimeMicroAltiumLib_schLib.SchLib");
@@ -3826,6 +3836,7 @@ mod tests {
         SchLib::open(&path).expect("SchLib::open must succeed for LimeMicroAltiumLib");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn schlib_open_synthiam_validates() {
         let path = data_path("Synthiam.SchLib");
@@ -3841,6 +3852,7 @@ mod tests {
 
     // ── Roundtrip serialization tests ─────────────────────────────────────
 
+    #[cfg(feature = "test-fixtures")]
     fn roundtrip_stream_compare(filename: &str) {
         use crate::test_utils::assert_cfb_files_semantic_eq;
 
@@ -3858,16 +3870,19 @@ mod tests {
         assert_cfb_files_semantic_eq(&path, tmp.path());
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn roundtrip_blank_schlib() {
         roundtrip_stream_compare("BlankSchlibComponent.SchLib");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn roundtrip_lime_micro_schlib() {
         roundtrip_stream_compare("LimeMicroAltiumLib_schLib.SchLib");
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn roundtrip_synthiam_schlib() {
         roundtrip_stream_compare("Synthiam.SchLib");
@@ -3887,12 +3902,13 @@ mod tests {
             .expect("reopened blank schlib should validate");
     }
 
+    #[cfg(feature = "test-fixtures")]
     fn schlib_fixture_paths() -> Vec<std::path::PathBuf> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schlib");
         let mut out = Vec::new();
         let mut stack = vec![root];
         while let Some(dir) = stack.pop() {
-            let entries = match fs::read_dir(&dir) {
+            let entries = match std::fs::read_dir(&dir) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -3925,8 +3941,10 @@ mod tests {
         out
     }
 
+    #[cfg(feature = "test-fixtures")]
     const SCHLIB_PROP_SHARDS: usize = 8;
 
+    #[cfg(feature = "test-fixtures")]
     fn fixture_paths_for_shard(
         fixtures: &[std::path::PathBuf],
         shard: usize,
@@ -3939,6 +3957,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "test-fixtures")]
     fn run_invariants_hold_for_fixtures_shard(shard: usize, shards: usize) {
         let fixtures = schlib_fixture_paths();
         assert!(!fixtures.is_empty(), "no schlib fixtures found");
@@ -3963,6 +3982,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     fn run_invariants_reject_mutated_weight_shard(shard: usize, shards: usize) {
         let fixtures = schlib_fixture_paths();
         assert!(!fixtures.is_empty(), "no schlib fixtures found");
@@ -3999,81 +4019,97 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_0() {
         run_invariants_hold_for_fixtures_shard(0, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_1() {
         run_invariants_hold_for_fixtures_shard(1, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_2() {
         run_invariants_hold_for_fixtures_shard(2, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_3() {
         run_invariants_hold_for_fixtures_shard(3, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_4() {
         run_invariants_hold_for_fixtures_shard(4, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_5() {
         run_invariants_hold_for_fixtures_shard(5, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_6() {
         run_invariants_hold_for_fixtures_shard(6, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_hold_for_fixtures_shard_7() {
         run_invariants_hold_for_fixtures_shard(7, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_0() {
         run_invariants_reject_mutated_weight_shard(0, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_1() {
         run_invariants_reject_mutated_weight_shard(1, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_2() {
         run_invariants_reject_mutated_weight_shard(2, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_3() {
         run_invariants_reject_mutated_weight_shard(3, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_4() {
         run_invariants_reject_mutated_weight_shard(4, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_5() {
         run_invariants_reject_mutated_weight_shard(5, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_6() {
         run_invariants_reject_mutated_weight_shard(6, SCHLIB_PROP_SHARDS);
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_7() {
         run_invariants_reject_mutated_weight_shard(7, SCHLIB_PROP_SHARDS);
