@@ -41,7 +41,7 @@ use altium_format_types::{
         },
         harness::{HARNESS_TYPE, OBJECT_DEFINITION_ID},
         locking::{
-            GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE,
+            GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE, LOCKED,
             NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE, SELECTION,
         },
         model::{
@@ -450,7 +450,10 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
             let font_mode_custom = (cong & 0x10) != 0;
 
             let custom_position_margin = if position_mode_custom {
-                params.remove_optional::<Coord>(NAME_CUSTOM_POSITION_MARGIN)?
+                params.remove_coord_optional(
+                    NAME_CUSTOM_POSITION_MARGIN,
+                    &format!("{NAME_CUSTOM_POSITION_MARGIN}_Frac"),
+                )?
             } else {
                 None
             };
@@ -488,7 +491,10 @@ pub(crate) fn parse_text_pin(params: &mut ParameterCollection) -> Result<SchPin>
             let font_mode_custom = (cong & 0x10) != 0;
 
             let custom_position_margin = if position_mode_custom {
-                params.remove_optional::<Coord>(DESIGNATOR_CUSTOM_POSITION_MARGIN)?
+                params.remove_coord_optional(
+                    DESIGNATOR_CUSTOM_POSITION_MARGIN,
+                    &format!("{DESIGNATOR_CUSTOM_POSITION_MARGIN}_Frac"),
+                )?
             } else {
                 None
             };
@@ -1707,8 +1713,14 @@ pub(crate) struct SchJunction {
     pub base: SchPrimitiveBase,
     #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
     pub location: CoordPoint,
+    #[param(key = SIZE, default = 0i32)]
+    pub size: i32,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
+    #[param(key = LOCKED, default = true)]
+    pub locked: bool,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
 }
 
 /// Sheet symbol record (RECORD=15).
@@ -1741,38 +1753,111 @@ pub(crate) struct SchSheetSymbol {
 }
 
 /// Sheet entry record (RECORD=16).
-#[derive(FromParams, ToParams, Debug)]
+///
+/// Manual parsing required because `distance_from_top` uses a non-standard
+/// fractional encoding (1_000_000 divisor with `_Frac`/`_Frac1` variants)
+/// that the derive macro's `#[param(coord)]` cannot handle.
+#[derive(Debug)]
 pub(crate) struct SchSheetEntry {
-    #[param(flatten)]
     pub base: SchPrimitiveBase,
-    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
     pub location: CoordPoint,
-    #[param(key = SIDE, default = LeftRightSide::Left)]
     pub side: LeftRightSide,
-    #[param(key = DISTANCE_FROM_TOP, default = Coord::from_internal(0))]
     pub distance_from_top: Coord,
-    #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
-    #[param(key = AREA_COLOR, default = Color::BLACK)]
     pub area_color: Color,
-    #[param(key = TEXT_COLOR, default = Color::BLACK)]
     pub text_color: Color,
-    #[param(key = TEXT_FONT_ID, default = 1i32)]
     pub text_font_id: i32,
-    #[param(key = TEXT_STYLE, default = String::new())]
     pub text_style: String,
-    #[param(key = NAME, default = String::new())]
     pub name: String,
-    #[param(key = HARNESS_TYPE, default = String::new())]
     pub harness_type: String,
-    #[param(key = IO_TYPE, default = PortIoType::Unspecified)]
     pub io_type: PortIoType,
-    #[param(key = STYLE, default = PortArrowStyle::None)]
     pub style: PortArrowStyle,
-    #[param(key = ARROW_KIND, default = String::new())]
     pub arrow_kind: String,
-    #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
+}
+
+impl SchSheetEntry {
+    pub(crate) fn from_params(params: &mut ParameterCollection) -> Result<Self> {
+        let base = SchPrimitiveBase::from_params(params)?;
+        let loc_x = params.remove_coord(LOCATION_X, LOCATION_X_FRAC)?;
+        let loc_y = params.remove_coord(LOCATION_Y, LOCATION_Y_FRAC)?;
+        let location = CoordPoint::new(loc_x, loc_y);
+        let side: LeftRightSide = params.remove_with_default(SIDE, LeftRightSide::Left)?;
+        let distance_from_top = params.remove_distance_from_top(DISTANCE_FROM_TOP)?;
+        let color: Color = params.remove_with_default(COLOR, Color::BLACK)?;
+        let area_color: Color = params.remove_with_default(AREA_COLOR, Color::BLACK)?;
+        let text_color: Color = params.remove_with_default(TEXT_COLOR, Color::BLACK)?;
+        let text_font_id: i32 = params.remove_with_default(TEXT_FONT_ID, 1i32)?;
+        let text_style: String = params.remove_with_default(TEXT_STYLE, String::new())?;
+        let name: String = params.remove_with_default(NAME, String::new())?;
+        let harness_type: String = params.remove_with_default(HARNESS_TYPE, String::new())?;
+        let io_type: PortIoType = params.remove_with_default(IO_TYPE, PortIoType::Unspecified)?;
+        let style: PortArrowStyle = params.remove_with_default(STYLE, PortArrowStyle::None)?;
+        let arrow_kind: String = params.remove_with_default(ARROW_KIND, String::new())?;
+        let unique_id: String = params.remove_with_default(UNIQUE_ID, String::new())?;
+
+        Ok(Self {
+            base,
+            location,
+            side,
+            distance_from_top,
+            color,
+            area_color,
+            text_color,
+            text_font_id,
+            text_style,
+            name,
+            harness_type,
+            io_type,
+            style,
+            arrow_kind,
+            unique_id,
+        })
+    }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        self.base.to_params(params);
+        params.insert_coord_point(
+            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, self.location,
+        );
+        if self.side != LeftRightSide::Left {
+            params.insert(SIDE, self.side.to_param_value());
+        }
+        params.insert_distance_from_top(DISTANCE_FROM_TOP, self.distance_from_top);
+        if self.color != Color::BLACK {
+            params.insert(COLOR, self.color.to_param_value());
+        }
+        if self.area_color != Color::BLACK {
+            params.insert(AREA_COLOR, self.area_color.to_param_value());
+        }
+        if self.text_color != Color::BLACK {
+            params.insert(TEXT_COLOR, self.text_color.to_param_value());
+        }
+        if self.text_font_id != 1 {
+            params.insert(TEXT_FONT_ID, self.text_font_id.to_param_value());
+        }
+        if !self.text_style.is_empty() {
+            params.insert(TEXT_STYLE, self.text_style.to_param_value());
+        }
+        if !self.name.is_empty() {
+            params.insert(NAME, self.name.to_param_value());
+        }
+        if !self.harness_type.is_empty() {
+            params.insert(HARNESS_TYPE, self.harness_type.to_param_value());
+        }
+        if self.io_type != PortIoType::Unspecified {
+            params.insert(IO_TYPE, self.io_type.to_param_value());
+        }
+        if self.style != PortArrowStyle::None {
+            params.insert(STYLE, self.style.to_param_value());
+        }
+        if !self.arrow_kind.is_empty() {
+            params.insert(ARROW_KIND, self.arrow_kind.to_param_value());
+        }
+        if !self.unique_id.is_empty() {
+            params.insert(UNIQUE_ID, self.unique_id.to_param_value());
+        }
+    }
 }
 
 /// Bus entry record (RECORD=37).

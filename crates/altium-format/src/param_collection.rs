@@ -57,6 +57,41 @@ impl ParameterCollection {
         }
     }
 
+    // Parses DistanceFromTop which uses a non-standard fractional encoding.
+    // Divisor is 1_000_000 (10x standard DXP), with legacy "_Frac" and new "_Frac1" variants.
+    // See C# SchDataSerializer.ImportDistanceFromTop / ExportDistanceFromTop.
+    pub(crate) fn remove_distance_from_top(&mut self, key: &str) -> Result<Coord> {
+        let whole: i16 = self.remove_with_default(key, 0i16)?;
+        let frac_key = format!("{key}_Frac");
+        let frac1_key = format!("{key}_Frac1");
+        let frac: i32 = self.remove_with_default(&frac_key, 0i32)?;
+        let frac1: i32 = self.remove_with_default(&frac1_key, 0i32)?;
+
+        let coord = if frac != 0 {
+            // Legacy format: (whole * 100_000 + frac) * 10
+            ((whole as i32) * 100_000 + frac) * 10
+        } else if frac1 != 0 {
+            // New format: whole * 1_000_000 + frac1
+            (whole as i32) * 1_000_000 + frac1
+        } else {
+            // No frac: whole * 1_000_000
+            (whole as i32) * 1_000_000
+        };
+        Ok(Coord::from_internal(coord))
+    }
+
+    // Serializes DistanceFromTop using new _Frac1 format (matching C# ExportDistanceFromTop).
+    pub(crate) fn insert_distance_from_top(&mut self, key: &str, coord: Coord) {
+        let val = coord.to_internal();
+        let whole = val / 1_000_000;
+        let frac1 = val - whole * 1_000_000;
+        self.insert(key, (whole as i16).to_param_value());
+        if frac1 != 0 {
+            let frac1_key = format!("{key}_Frac1");
+            self.insert(&frac1_key, frac1.to_param_value());
+        }
+    }
+
     // Inserts a coordinate point (x + y, each with optional frac).
     pub(crate) fn insert_coord_point(
         &mut self,

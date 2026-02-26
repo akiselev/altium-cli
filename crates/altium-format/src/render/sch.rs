@@ -407,7 +407,10 @@ mod tests {
         let j = SchJunction {
             base: make_base(),
             location: CoordPoint::new(Coord::from_mils(0), Coord::from_mils(0)),
+            size: 0,
             color: Color::BLACK,
+            locked: true,
+            unique_id: String::new(),
         };
         let mut canvas = RecordingCanvas::new();
         draw_sch_record(&SchRecord::Junction(j), &mut canvas, &[]);
