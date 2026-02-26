@@ -249,6 +249,11 @@ decoding for parameter strings. The embedded object ID is NOT parsed through
    - `parse_embedded_object()`: Change `String::from_utf8()` to `WINDOWS_1252.decode()`
    - `serialize_embedded_object()`: Change `id.as_bytes()` to `WINDOWS_1252.encode()`
 
+## Status: FIXED
+
+The embedded object ID encoding fix has been applied. Both `parse_embedded_object()`
+and `serialize_embedded_object()` now use `encoding_rs::WINDOWS_1252` as described above.
+
 ## Verification
 
 After fixing, all 9 previously-failing SchDoc files should parse successfully.
@@ -260,3 +265,63 @@ And validate all SchDoc fixtures:
 ```bash
 for f in data/schdoc/*.SchDoc; do cargo run -p altium-cli -- validate "$f"; done
 ```
+
+## Related: Legacy Codepage Mismatch in SchLib Component Names
+
+### Problem
+
+SchLib files created on non-Western Windows systems (e.g., Russian Windows with
+codepage 1251) store parameter strings in the system's ACP. When we decode these
+as Windows-1252, component names become mojibake (e.g., `Êëåììíèê` instead of
+`Клеммник`). Since we use the parameter-decoded name for CFB storage lookup, this
+causes `No such storage` errors.
+
+CFB entry names are always correct Unicode (stored as UTF-16LE in the CFB
+directory), so the lookup fails because the mojibake string doesn't match.
+
+Test files: `data/schlib/encoding/CeleronLib.SchLib`, `CeleronLib-Connect.SchLib`
+
+### How Altium Handles This
+
+**Modern files (with `%UTF8%` dual-write):**
+Altium writes two versions of each non-ASCII parameter:
+`|%UTF8%KEY=utf8_value||KEY=acp_value|`. On read, the `%UTF8%` version is
+authoritative and system-independent. Our `ParameterCollection` already handles
+this correctly.
+
+**Legacy files (no `%UTF8%`):**
+The C# `SchDataImporterLibraryV5.ReadBaseWarehouse()` does NOT look up CFB
+storages by parameter-decoded name. Instead it **enumerates** storages
+sequentially:
+
+```csharp
+// SchDataImporterLibraryV5.cs:128-191
+base.Serializer.FindFirstStream("Data")   // enumerate first storage with "Data"
+// ... parse component ...
+while (base.Serializer.FindNextStream()); // iterate to next
+```
+
+`FindFirstStream` (in `SchDataSerializerParam.cs:91-116`) calls
+`RootStorage.VisitEntries()` to enumerate all top-level CFB storages, then
+iterates through them checking for a "Data" sub-stream. Storage names come
+directly from the CFB (UTF-16LE → correct Unicode), bypassing parameter decoding
+entirely.
+
+For pin sidecars and Additional streams, Altium does use name-based lookup via
+`componentSectionKeyList.GetKey(component.GetLibReference())`, but checks
+`StreamExists()` first and silently skips if not found. On a codepage-mismatched
+system, pin sidecar data for non-ASCII-named components is silently lost.
+
+**No codepage metadata**: The file format stores no codepage indicator. The ACP
+at save time determines the byte encoding. `USEMBCS=T` and `ISBOC=T` in the
+FileHeader are NOT encoding flags — they are always `T` in V5 format
+(`USEMBCS` controls 0x8E escape sequence handling, `ISBOC` is deprecated).
+
+### Decision: Not Worth Fixing
+
+These are pre-`%UTF8%` legacy files. Any modern Altium installation re-saves
+them with `%UTF8%` dual-write on first edit, making them cross-locale portable.
+Even Altium itself silently loses pin sidecar data for these files when opened
+on a different-locale system. Implementing codepage detection (e.g., by
+cross-referencing CFB entry names against parameter bytes across candidate
+codepages) would be significant effort for a shrinking set of legacy files.
