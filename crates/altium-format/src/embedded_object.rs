@@ -36,11 +36,9 @@ pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject> {
     }
     let id_len = reader.read_u8()? as usize;
     let id_bytes = reader.read_bytes(id_len)?;
-    let id = String::from_utf8(id_bytes.to_vec()).map_err(|e| {
-        AltiumFormatError::InvalidEmbeddedObject(format!(
-            "embedded object id contains invalid UTF-8: {e}"
-        ))
-    })?;
+    let (id_cow, _encoding_used, _had_replacements) =
+        encoding_rs::WINDOWS_1252.decode(id_bytes);
+    let id = id_cow.into_owned();
     let compressed_size = (reader.read_i32_le()? & BLOCK_SIZE_MASK as i32) as usize;
     let compressed_bytes = reader.read_bytes(compressed_size)?;
     let inner_data = zlib_decompress(compressed_bytes)?;
@@ -114,8 +112,10 @@ pub(crate) fn serialize_embedded_object(id: &str, inner_data: &[u8]) -> Result<V
     let compressed = zlib_compress(inner_data)?;
     let mut w = BinaryWriter::new();
     w.write_u8(INSTRUCTION_BINARY);
-    w.write_u8(id.len() as u8);
-    w.write_bytes(id.as_bytes());
+    let (id_bytes, _encoding_used, _had_unmappable) =
+        encoding_rs::WINDOWS_1252.encode(id);
+    w.write_u8(id_bytes.len() as u8);
+    w.write_bytes(&id_bytes);
     w.write_i32_le(compressed.len() as i32);
     w.write_bytes(&compressed);
     Ok(w.finish())
@@ -153,10 +153,11 @@ mod tests {
 
     fn make_envelope(id: &str, inner_data: &[u8]) -> Vec<u8> {
         let compressed = zlib_compress(inner_data).unwrap();
+        let (id_bytes, _, _) = encoding_rs::WINDOWS_1252.encode(id);
         let mut w = BinaryWriter::new();
         w.write_u8(INSTRUCTION_BINARY);
-        w.write_u8(id.len() as u8);
-        w.write_bytes(id.as_bytes());
+        w.write_u8(id_bytes.len() as u8);
+        w.write_bytes(&id_bytes);
         w.write_i32_le(compressed.len() as i32);
         w.write_bytes(&compressed);
         w.finish()
@@ -253,6 +254,27 @@ mod tests {
     fn empty_blocks_returns_error() {
         let err = parse_embedded_object_stream(&[]).unwrap_err();
         assert!(matches!(err, AltiumFormatError::InvalidEmbeddedObject(_)));
+    }
+
+    #[test]
+    fn parse_windows_1252_id() {
+        // Build an envelope with a Windows-1252 encoded ID containing
+        // bytes that are invalid UTF-8: e-acute (0xE9), euro sign (0x80).
+        let id_w1252: &[u8] = &[0x63, 0x61, 0x66, 0xE9, 0x80]; // "caf\xE9\x80"
+        let inner = b"data";
+        let compressed = zlib_compress(inner).unwrap();
+        let mut w = BinaryWriter::new();
+        w.write_u8(INSTRUCTION_BINARY);
+        w.write_u8(id_w1252.len() as u8);
+        w.write_bytes(id_w1252);
+        w.write_i32_le(compressed.len() as i32);
+        w.write_bytes(&compressed);
+        let data = w.finish();
+
+        let obj = parse_embedded_object(&data).unwrap();
+        // Windows-1252 0xE9 = e-acute (U+00E9), 0x80 = euro sign (U+20AC)
+        assert_eq!(obj.id, "caf\u{00E9}\u{20AC}");
+        assert_eq!(obj.inner_data, inner);
     }
 
     // ── Serialization roundtrip tests ──────────────────────────────────
