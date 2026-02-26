@@ -23,8 +23,9 @@ use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape,
     LineStyle, ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
-    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle,
-    SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor,
+    TextJustification, TextVertAnchor,
     constants::{
         component::{
             ALIAS_LIST, ALL_PIN_COUNT, COMPONENT_DESCRIPTION, COMPONENT_KIND,
@@ -35,9 +36,10 @@ use altium_format_types::{
         },
         electrical::{
             CONNECTION_PAIRS_TO_SUPPRESS, ELECTRICAL, ERROR_KIND_SET_TO_SUPPRESS, FORMAL_TYPE,
-            IO_TYPE, IS_CROSS_SHEET_CONNECTOR, SHOW_NET_NAME, SIDE, SUPPRESS_ALL, SYMBOL_TYPE,
+            IO_TYPE, IS_CROSS_SHEET_CONNECTOR, PORT_NAME_IS_HIDDEN, SHOW_NET_NAME, SIDE,
+            SUPPRESS_ALL, SYMBOL_TYPE,
         },
-        harness::HARNESS_TYPE,
+        harness::{HARNESS_TYPE, OBJECT_DEFINITION_ID},
         locking::{
             GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE,
             NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE, SELECTION,
@@ -78,8 +80,8 @@ use altium_format_types::{
             VISIBLE_GRID_ON, VISIBLE_GRID_SIZE, VISIBLE_GRID_SIZE_FRAC, WORKSPACE_ORIENTATION,
         },
         text::{
-            ALIGNMENT, BOLD, CLIP_TO_RECT, DESCRIPTION, ITALIC, JUSTIFICATION, NAME, SHOW_NAME,
-            STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_FONT_ID, TEXT_HORZ_ANCHOR, TEXT_MARGIN,
+            ALIGNMENT, AUTO_SIZE, BOLD, CLIP_TO_RECT, DESCRIPTION, ITALIC, JUSTIFICATION, NAME,
+            SHOW_NAME, STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_FONT_ID, TEXT_HORZ_ANCHOR, TEXT_MARGIN,
             TEXT_MARGIN_FRAC, TEXT_STYLE, TEXT_VERT_ANCHOR, UNDERLINE, WORD_WRAP,
         },
         vault::{
@@ -89,14 +91,14 @@ use altium_format_types::{
             SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
         },
         visual::{
-            ARROW_KIND, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS, CORNER_X_RADIUS_FRAC,
-            CORNER_Y, CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC, EMBED_IMAGE, END_ANGLE,
-            END_LINE_SHAPE, FILE_NAME, FONT_ID, FONT_ID_COUNT, FONT_NAME, HEIGHT, IS_SOLID,
-            KEEP_ASPECT, LINE_SHAPE_SIZE, LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH, LOCATION_COUNT,
-            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR, ORIENTATION,
-            OVERIDE_COLORS, RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR, SCALE_FACTOR_FRAC,
-            SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE, START_LINE_SHAPE, STYLE,
-            STYLE_ID, TRANSPARENT, WIDTH, X_SIZE, Y_SIZE,
+            ARROW_KIND, BORDER_WIDTH, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS,
+            CORNER_X_RADIUS_FRAC, CORNER_Y, CORNER_Y_FRAC, CORNER_Y_RADIUS, CORNER_Y_RADIUS_FRAC,
+            EMBED_IMAGE, END_ANGLE, END_LINE_SHAPE, FILE_NAME, FONT_ID, FONT_ID_COUNT, FONT_NAME,
+            HEIGHT, IS_SOLID, KEEP_ASPECT, LINE_SHAPE_SIZE, LINE_STYLE, LINE_STYLE_EXT, LINE_WIDTH,
+            LOCATION_COUNT, LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, MIRROR,
+            ORIENTATION, OVERIDE_COLORS, RADIUS, RADIUS_FRAC, ROTATION, SCALE_FACTOR,
+            SCALE_FACTOR_FRAC, SECONDARY_RADIUS, SECONDARY_RADIUS_FRAC, SIZE, START_ANGLE,
+            START_LINE_SHAPE, STYLE, STYLE_ID, TRANSPARENT, WIDTH, X_SIZE, Y_SIZE,
         },
     },
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle, SchFont},
@@ -1579,10 +1581,10 @@ pub(crate) struct SchPort {
     pub area_color: Color,
     #[param(key = NAME, default = String::new())]
     pub name: String,
-    #[param(key = IO_TYPE, default = 0i32)]
-    pub io_type: i32,
-    #[param(key = STYLE, default = 0i32)]
-    pub style: i32,
+    #[param(key = IO_TYPE, default = PortIoType::Unspecified)]
+    pub io_type: PortIoType,
+    #[param(key = STYLE, default = PortArrowStyle::None)]
+    pub style: PortArrowStyle,
     #[param(coord, key = WIDTH, frac_key = "Width_Frac")]
     pub width: Coord,
     #[param(coord, key = HEIGHT, frac_key = "Height_Frac")]
@@ -1591,10 +1593,20 @@ pub(crate) struct SchPort {
     pub text_color: Color,
     #[param(key = FONT_ID, default = 1i32)]
     pub font_id: i32,
-    #[param(key = ALIGNMENT, default = TextJustification::BottomLeft)]
-    pub alignment: TextJustification,
+    #[param(key = ALIGNMENT, default = HorizontalAlign::Center)]
+    pub alignment: HorizontalAlign,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
+    #[param(key = HARNESS_TYPE, default = String::new())]
+    pub harness_type: String,
+    #[param(key = BORDER_WIDTH, default = PenWidth::Zero)]
+    pub border_width: PenWidth,
+    #[param(key = AUTO_SIZE, default = false)]
+    pub auto_size: bool,
+    #[param(key = PORT_NAME_IS_HIDDEN, default = false)]
+    pub port_name_is_hidden: bool,
+    #[param(key = OBJECT_DEFINITION_ID, default = String::new())]
+    pub object_definition_id: String,
 }
 
 /// No-connect marker record (RECORD=22).
