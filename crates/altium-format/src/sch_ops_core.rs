@@ -2264,6 +2264,14 @@ fn record_owner_ref(rec: &SchRecord) -> (i32, bool) {
         SchRecord::ImplementationMap(v) => (v.base.owner_index, false),
         SchRecord::MapDefiner(v) => (v.base.owner_index, false),
         SchRecord::ParameterList(v) => (v.base.owner_index, false),
+        SchRecord::HarnessConnector(v) => (v.base.owner_index, false),
+        SchRecord::HarnessEntry(v) => (v.base.owner_index, false),
+        SchRecord::HarnessConnectorType(v) => (v.base.owner_index, false),
+        SchRecord::SignalHarness(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeSymbol(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeEntry(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeFileName(v) => (v.base.owner_index, false),
     }
 }
 
@@ -2315,6 +2323,14 @@ fn set_record_owner_ref(rec: &mut SchRecord, owner_index: i32, owner_is_addition
         SchRecord::ImplementationMap(v) => v.base.owner_index = owner_index,
         SchRecord::MapDefiner(v) => v.base.owner_index = owner_index,
         SchRecord::ParameterList(v) => v.base.owner_index = owner_index,
+        SchRecord::HarnessConnector(v) => v.base.owner_index = owner_index,
+        SchRecord::HarnessEntry(v) => v.base.owner_index = owner_index,
+        SchRecord::HarnessConnectorType(v) => v.base.owner_index = owner_index,
+        SchRecord::SignalHarness(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeSymbol(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeEntry(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeName(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeFileName(v) => v.base.owner_index = owner_index,
     }
 }
 
@@ -2441,6 +2457,14 @@ fn record_type_num(rec: &SchRecord) -> i32 {
         SchRecord::ImplementationMap(_) => altium_format_types::SchRecordType::ImplementationMap,
         SchRecord::MapDefiner(_) => altium_format_types::SchRecordType::MapDefiner,
         SchRecord::ParameterList(_) => altium_format_types::SchRecordType::ParameterList,
+        SchRecord::HarnessConnector(_) => altium_format_types::SchRecordType::HarnessConnector,
+        SchRecord::HarnessEntry(_) => altium_format_types::SchRecordType::HarnessEntry,
+        SchRecord::HarnessConnectorType(_) => altium_format_types::SchRecordType::HarnessConnectorType,
+        SchRecord::SignalHarness(_) => altium_format_types::SchRecordType::SignalHarness,
+        SchRecord::HighLevelCodeSymbol(_) => altium_format_types::SchRecordType::HighLevelCodeSymbol,
+        SchRecord::HighLevelCodeEntry(_) => altium_format_types::SchRecordType::HighLevelCodeEntry,
+        SchRecord::HighLevelCodeName(_) => altium_format_types::SchRecordType::HighLevelCodeName,
+        SchRecord::HighLevelCodeFileName(_) => altium_format_types::SchRecordType::HighLevelCodeFileName,
     };
     ty as i32
 }

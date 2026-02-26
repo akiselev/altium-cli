@@ -3255,6 +3255,14 @@ fn record_owner_index(rec: &SchRecord) -> i32 {
         SchRecord::ImplementationMap(v) => v.base.owner_index,
         SchRecord::MapDefiner(v) => v.base.owner_index,
         SchRecord::ParameterList(v) => v.base.owner_index,
+        SchRecord::HarnessConnector(v) => v.base.owner_index,
+        SchRecord::HarnessEntry(v) => v.base.owner_index,
+        SchRecord::HarnessConnectorType(v) => v.base.owner_index,
+        SchRecord::SignalHarness(v) => v.base.owner_index,
+        SchRecord::HighLevelCodeSymbol(v) => v.base.owner_index,
+        SchRecord::HighLevelCodeEntry(v) => v.base.owner_index,
+        SchRecord::HighLevelCodeName(v) => v.base.owner_index,
+        SchRecord::HighLevelCodeFileName(v) => v.base.owner_index,
     }
 }
 
@@ -3303,6 +3311,14 @@ fn set_record_owner_index(rec: &mut SchRecord, owner_index: i32) {
         SchRecord::ImplementationMap(v) => v.base.owner_index = owner_index,
         SchRecord::MapDefiner(v) => v.base.owner_index = owner_index,
         SchRecord::ParameterList(v) => v.base.owner_index = owner_index,
+        SchRecord::HarnessConnector(v) => v.base.owner_index = owner_index,
+        SchRecord::HarnessEntry(v) => v.base.owner_index = owner_index,
+        SchRecord::HarnessConnectorType(v) => v.base.owner_index = owner_index,
+        SchRecord::SignalHarness(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeSymbol(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeEntry(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeName(v) => v.base.owner_index = owner_index,
+        SchRecord::HighLevelCodeFileName(v) => v.base.owner_index = owner_index,
     }
 }
 
@@ -3429,6 +3445,14 @@ fn record_type_num(rec: &SchRecord) -> i32 {
         SchRecord::ImplementationMap(_) => SchRecordType::ImplementationMap,
         SchRecord::MapDefiner(_) => SchRecordType::MapDefiner,
         SchRecord::ParameterList(_) => SchRecordType::ParameterList,
+        SchRecord::HarnessConnector(_) => SchRecordType::HarnessConnector,
+        SchRecord::HarnessEntry(_) => SchRecordType::HarnessEntry,
+        SchRecord::HarnessConnectorType(_) => SchRecordType::HarnessConnectorType,
+        SchRecord::SignalHarness(_) => SchRecordType::SignalHarness,
+        SchRecord::HighLevelCodeSymbol(_) => SchRecordType::HighLevelCodeSymbol,
+        SchRecord::HighLevelCodeEntry(_) => SchRecordType::HighLevelCodeEntry,
+        SchRecord::HighLevelCodeName(_) => SchRecordType::HighLevelCodeName,
+        SchRecord::HighLevelCodeFileName(_) => SchRecordType::HighLevelCodeFileName,
     };
     ty as i32
 }

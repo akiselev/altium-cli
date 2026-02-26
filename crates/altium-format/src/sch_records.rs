@@ -39,7 +39,7 @@ use altium_format_types::{
             IO_TYPE, IS_CROSS_SHEET_CONNECTOR, PORT_NAME_IS_HIDDEN, SHOW_NET_NAME, SIDE,
             SUPPRESS_ALL, SYMBOL_TYPE,
         },
-        harness::{HARNESS_TYPE, OBJECT_DEFINITION_ID},
+        harness::{HARNESS_CONNECTOR_SIDE, HARNESS_TYPE, OBJECT_DEFINITION_ID, PRIMARY_CONNECTION_POSITION},
         locking::{
             GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE, LOCKED,
             NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE, SELECTION,
@@ -65,9 +65,9 @@ use altium_format_types::{
             SYMBOL_INNER, SYMBOL_INNER_EDGE, SYMBOL_LINE_WIDTH, SYMBOL_OUTER, SYMBOL_OUTER_EDGE,
         },
         record_structure::{
-            COLLAPSED, DISTANCE_FROM_TOP, INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX,
-            OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX,
-            UNIQUE_ID, URL,
+            ASSIGNED_INTERFACE, ASSIGNED_INTERFACE_SIGNAL, COLLAPSED, DISTANCE_FROM_TOP,
+            INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE,
+            OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
         },
         sheet::{
             AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
@@ -82,13 +82,13 @@ use altium_format_types::{
         text::{
             ALIGNMENT, AUTO_SIZE, BOLD, CLIP_TO_RECT, DESCRIPTION, ITALIC, JUSTIFICATION, NAME,
             SHOW_NAME, STRIKE_OUT, TEXT, TEXT_COLOR, TEXT_FONT_ID, TEXT_HORZ_ANCHOR, TEXT_MARGIN,
-            TEXT_MARGIN_FRAC, TEXT_STYLE, TEXT_VERT_ANCHOR, UNDERLINE, WORD_WRAP,
+            TEXT_MARGIN_FRAC, TEXT_STYLE, TEXT_VERT_ANCHOR, UNDERLINE, UNDERLINE_COLOR, WORD_WRAP,
         },
         vault::{
             DATABASE_TABLE_NAME, DESIGN_ITEM_ID, GENERIC_COMPONENT_TEMPLATE_GUID, ITEM_GUID,
             LIBRARY_PATH, NOT_ALLOW_DATABASE_SYNCHRONIZE, NOT_ALLOW_LIBRARY_SYNCHRONIZE,
-            NOT_USE_DB_TABLE_NAME, REVISION_GUID, SOURCE_LIBRARY_NAME, SYMBOL_ITEM_GUID,
-            SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
+            NOT_USE_DB_TABLE_NAME, REVISION_GUID, REVISION_NAME, SOURCE_LIBRARY_NAME,
+            SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
         },
         visual::{
             ARROW_KIND, BORDER_WIDTH, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS,
@@ -1520,6 +1520,12 @@ pub(crate) struct SchBus {
     pub vertices: Vec<CoordPoint>,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
+    #[param(key = UNDERLINE_COLOR, default = Color::BLACK)]
+    pub underline_color: Color,
+    #[param(key = ASSIGNED_INTERFACE, default = String::new())]
+    pub assigned_interface: String,
+    #[param(key = ASSIGNED_INTERFACE_SIGNAL, default = String::new())]
+    pub assigned_interface_signal: String,
 }
 
 /// Net label record (RECORD=25).
@@ -1750,6 +1756,20 @@ pub(crate) struct SchSheetSymbol {
     pub sheet_name: String,
     #[param(key = FILE_NAME, default = String::new())]
     pub file_name: String,
+    #[param(key = SHOW_HIDDEN_FIELDS, default = false)]
+    pub show_hidden_fields: bool,
+    #[param(key = DESIGN_ITEM_ID, default = String::new())]
+    pub design_item_id: String,
+    #[param(key = SOURCE_LIBRARY_NAME, default = String::new())]
+    pub source_library_name: String,
+    #[param(key = VAULT_GUID, default = String::new())]
+    pub vault_guid: String,
+    #[param(key = ITEM_GUID, default = String::new())]
+    pub item_guid: String,
+    #[param(key = REVISION_GUID, default = String::new())]
+    pub revision_guid: String,
+    #[param(key = REVISION_NAME, default = String::new())]
+    pub revision_name: String,
 }
 
 /// Sheet entry record (RECORD=16).
@@ -1977,6 +1997,31 @@ pub(crate) struct SchCompileMask {
     pub line_width: PenWidth,
 }
 
+/// Harness connector record (RECORD=215).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct SchHarnessConnector {
+    #[param(flatten)]
+    pub base: SchPrimitiveBase,
+    #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
+    pub location: CoordPoint,
+    #[param(coord, key = X_SIZE, frac_key = "XSize_FRAC")]
+    pub x_size: Coord,
+    #[param(coord, key = Y_SIZE, frac_key = "YSize_FRAC")]
+    pub y_size: Coord,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
+    #[param(key = COLOR, default = Color::BLACK)]
+    pub color: Color,
+    #[param(key = AREA_COLOR, default = Color::BLACK)]
+    pub area_color: Color,
+    #[param(key = PRIMARY_CONNECTION_POSITION, default = 1_000_000i32)]
+    pub primary_connection_position: i32,
+    #[param(key = HARNESS_CONNECTOR_SIDE, default = LeftRightSide::Left)]
+    pub harness_connector_side: LeftRightSide,
+    #[param(key = UNIQUE_ID, default = String::new())]
+    pub unique_id: String,
+}
+
 /// Blanket/dashed rectangle record (RECORD=225).
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchBlanket {
@@ -1998,6 +2043,8 @@ pub(crate) struct SchBlanket {
     pub line_width: PenWidth,
     #[param(indexed_coords, count_key = LOCATION_COUNT, x_prefix = "X", y_prefix = "Y")]
     pub vertices: Vec<CoordPoint>,
+    #[param(key = COLLAPSED, default = false)]
+    pub collapsed: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
@@ -2052,6 +2099,14 @@ pub(crate) enum SchRecord {
     ImplementationMap(SchImplementationMap),
     MapDefiner(SchMapDefiner),
     ParameterList(SchParameterList),
+    HarnessConnector(SchHarnessConnector),
+    HarnessEntry(SchSheetEntry),
+    HarnessConnectorType(SchSheetName),
+    SignalHarness(SchBus),
+    HighLevelCodeSymbol(SchSheetSymbol),
+    HighLevelCodeEntry(SchSheetEntry),
+    HighLevelCodeName(SchSheetName),
+    HighLevelCodeFileName(SchSheetFileName),
 }
 
 // ── SchLibComponent ───────────────────────────────────────────────────────────
@@ -2440,6 +2495,14 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
         SchRecord::ImplementationMap(_) => SchRecordType::ImplementationMap,
         SchRecord::MapDefiner(_) => SchRecordType::MapDefiner,
         SchRecord::ParameterList(_) => SchRecordType::ParameterList,
+        SchRecord::HarnessConnector(_) => SchRecordType::HarnessConnector,
+        SchRecord::HarnessEntry(_) => SchRecordType::HarnessEntry,
+        SchRecord::HarnessConnectorType(_) => SchRecordType::HarnessConnectorType,
+        SchRecord::SignalHarness(_) => SchRecordType::SignalHarness,
+        SchRecord::HighLevelCodeSymbol(_) => SchRecordType::HighLevelCodeSymbol,
+        SchRecord::HighLevelCodeEntry(_) => SchRecordType::HighLevelCodeEntry,
+        SchRecord::HighLevelCodeName(_) => SchRecordType::HighLevelCodeName,
+        SchRecord::HighLevelCodeFileName(_) => SchRecordType::HighLevelCodeFileName,
     }
 }
 
@@ -2490,6 +2553,14 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
         SchRecord::Implementation(v) => v.to_params(params),
         SchRecord::ImplementationMap(v) => v.to_params(params),
         SchRecord::ParameterList(v) => v.to_params(params),
+        SchRecord::HarnessConnector(v) => v.to_params(params),
+        SchRecord::HarnessEntry(v) => v.to_params(params),
+        SchRecord::HarnessConnectorType(v) => v.to_params(params),
+        SchRecord::SignalHarness(v) => v.to_params(params),
+        SchRecord::HighLevelCodeSymbol(v) => v.to_params(params),
+        SchRecord::HighLevelCodeEntry(v) => v.to_params(params),
+        SchRecord::HighLevelCodeName(v) => v.to_params(params),
+        SchRecord::HighLevelCodeFileName(v) => v.to_params(params),
         SchRecord::Pin(_) => unreachable!("Pin handled in serialize_record"),
     }
 }

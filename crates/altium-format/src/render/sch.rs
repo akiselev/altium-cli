@@ -344,7 +344,15 @@ pub(crate) fn draw_sch_record(
         | SchRecord::Probe(_)
         | SchRecord::CompileMask(_)
         | SchRecord::Blanket(_)
-        | SchRecord::ParameterSet(_) => {}
+        | SchRecord::ParameterSet(_)
+        | SchRecord::HarnessConnector(_)
+        | SchRecord::HarnessEntry(_)
+        | SchRecord::HarnessConnectorType(_)
+        | SchRecord::SignalHarness(_)
+        | SchRecord::HighLevelCodeSymbol(_)
+        | SchRecord::HighLevelCodeEntry(_)
+        | SchRecord::HighLevelCodeName(_)
+        | SchRecord::HighLevelCodeFileName(_) => {}
     }
 }
 

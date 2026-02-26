@@ -201,6 +201,14 @@ fn record_type_of(record: &SchRecord) -> SchRecordType {
         SchRecord::ImplementationMap(_) => SchRecordType::ImplementationMap,
         SchRecord::MapDefiner(_) => SchRecordType::MapDefiner,
         SchRecord::ParameterList(_) => SchRecordType::ParameterList,
+        SchRecord::HarnessConnector(_) => SchRecordType::HarnessConnector,
+        SchRecord::HarnessEntry(_) => SchRecordType::HarnessEntry,
+        SchRecord::HarnessConnectorType(_) => SchRecordType::HarnessConnectorType,
+        SchRecord::SignalHarness(_) => SchRecordType::SignalHarness,
+        SchRecord::HighLevelCodeSymbol(_) => SchRecordType::HighLevelCodeSymbol,
+        SchRecord::HighLevelCodeEntry(_) => SchRecordType::HighLevelCodeEntry,
+        SchRecord::HighLevelCodeName(_) => SchRecordType::HighLevelCodeName,
+        SchRecord::HighLevelCodeFileName(_) => SchRecordType::HighLevelCodeFileName,
     }
 }
 

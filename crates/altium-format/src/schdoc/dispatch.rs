@@ -3,12 +3,12 @@ use altium_format_types::SchRecordType;
 use crate::param_collection::ParameterCollection;
 use crate::sch_records::{
     SchArc, SchBezier, SchBlanket, SchBus, SchBusEntry, SchCompileMask, SchDesignator, SchEllipse,
-    SchEllipticalArc, SchImage, SchImplementation, SchImplementationList, SchImplementationMap,
-    SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel, SchNoConnect, SchNote,
-    SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon, SchPolyline, SchPort,
-    SchPowerObject, SchProbe, SchRecord, SchRectangle, SchRoundRectangle, SchSheet, SchSheetEntry,
-    SchSheetFileName, SchSheetName, SchSheetSymbol, SchSymbol, SchTemplate, SchTextFrame, SchWire,
-    parse_component_record, parse_text_pin,
+    SchEllipticalArc, SchHarnessConnector, SchImage, SchImplementation, SchImplementationList,
+    SchImplementationMap, SchJunction, SchLabel, SchLine, SchMapDefiner, SchNetLabel, SchNoConnect,
+    SchNote, SchParameter, SchParameterList, SchParameterSet, SchPie, SchPolygon, SchPolyline,
+    SchPort, SchPowerObject, SchProbe, SchRecord, SchRectangle, SchRoundRectangle, SchSheet,
+    SchSheetEntry, SchSheetFileName, SchSheetName, SchSheetSymbol, SchSymbol, SchTemplate,
+    SchTextFrame, SchWire, parse_component_record, parse_text_pin,
 };
 use crate::{AltiumFormatError, Result, ResultExt};
 
@@ -94,6 +94,26 @@ pub(crate) fn dispatch_record_type(
             Ok(SchRecord::MapDefiner(map))
         }
         SchRecordType::ParameterList => dispatch!(SchParameterList => SchRecord::ParameterList),
+        SchRecordType::HarnessConnector => {
+            dispatch!(SchHarnessConnector => SchRecord::HarnessConnector)
+        }
+        SchRecordType::HarnessEntry => dispatch!(SchSheetEntry => SchRecord::HarnessEntry),
+        SchRecordType::HarnessConnectorType => {
+            dispatch!(SchSheetName => SchRecord::HarnessConnectorType)
+        }
+        SchRecordType::SignalHarness => dispatch!(SchBus => SchRecord::SignalHarness),
+        SchRecordType::HighLevelCodeSymbol => {
+            dispatch!(SchSheetSymbol => SchRecord::HighLevelCodeSymbol)
+        }
+        SchRecordType::HighLevelCodeEntry => {
+            dispatch!(SchSheetEntry => SchRecord::HighLevelCodeEntry)
+        }
+        SchRecordType::HighLevelCodeName => {
+            dispatch!(SchSheetName => SchRecord::HighLevelCodeName)
+        }
+        SchRecordType::HighLevelCodeFileName => {
+            dispatch!(SchSheetFileName => SchRecord::HighLevelCodeFileName)
+        }
         _ => Err(AltiumFormatError::UnknownRecordType(record_type_val)),
     }
 }

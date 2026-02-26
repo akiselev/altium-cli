@@ -890,6 +890,14 @@ fn owner_ref(record: &SchRecord) -> (i32, bool) {
         SchRecord::ImplementationMap(v) => (v.base.owner_index, false),
         SchRecord::MapDefiner(v) => (v.base.owner_index, false),
         SchRecord::ParameterList(v) => (v.base.owner_index, false),
+        SchRecord::HarnessConnector(v) => (v.base.owner_index, false),
+        SchRecord::HarnessEntry(v) => (v.base.owner_index, false),
+        SchRecord::HarnessConnectorType(v) => (v.base.owner_index, false),
+        SchRecord::SignalHarness(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeSymbol(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeEntry(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, false),
+        SchRecord::HighLevelCodeFileName(v) => (v.base.owner_index, false),
     }
 }
 
