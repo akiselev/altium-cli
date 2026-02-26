@@ -67,7 +67,8 @@ use altium_format_types::{
         record_structure::{
             ASSIGNED_INTERFACE, ASSIGNED_INTERFACE_SIGNAL, COLLAPSED, DISTANCE_FROM_TOP,
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE,
-            OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, UNION_INDEX, UNIQUE_ID, URL,
+            OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, SELECTION_MEMORY, UNION_INDEX,
+            UNIQUE_ID, URL,
         },
         sheet::{
             AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
@@ -86,9 +87,12 @@ use altium_format_types::{
         },
         vault::{
             DATABASE_TABLE_NAME, DESIGN_ITEM_ID, GENERIC_COMPONENT_TEMPLATE_GUID, ITEM_GUID,
-            LIBRARY_PATH, NOT_ALLOW_DATABASE_SYNCHRONIZE, NOT_ALLOW_LIBRARY_SYNCHRONIZE,
-            NOT_USE_DB_TABLE_NAME, REVISION_GUID, REVISION_NAME, SOURCE_LIBRARY_NAME,
-            SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID, VAULT_GUID,
+            ITEM_REVISION_GUID, LIBRARY_PATH, NOT_ALLOW_DATABASE_SYNCHRONIZE,
+            NOT_ALLOW_LIBRARY_SYNCHRONIZE, NOT_USE_DB_TABLE_NAME, PROPS_REVISION_GUID,
+            PROPS_VAULT_GUID, RELEASE_ITEM_GUID, RELEASE_VAULT_GUID, REVISION_GUID,
+            REVISION_NAME, SOURCE_LIBRARY_NAME, SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID,
+            SYMBOL_VAULT_GUID, TEMPLATE_ITEM_GUID, TEMPLATE_REVISION_GUID,
+            TEMPLATE_REVISION_HRID, TEMPLATE_VAULT_GUID, TEMPLATE_VAULT_HRID, VAULT_GUID,
         },
         visual::{
             ARROW_KIND, BORDER_WIDTH, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS,
@@ -126,6 +130,8 @@ pub(crate) struct SchPrimitiveBase {
     pub owner_part_id: i32,
     #[param(key = OWNER_PART_DISPLAY_MODE, default = 0i32)]
     pub owner_part_display_mode: i32,
+    #[param(key = SELECTION_MEMORY, default = 0u8)]
+    pub selection_memory: u8,
     #[param(key = GRAPHICALLY_LOCKED, default = false)]
     pub graphically_locked: bool,
     #[param(key = UNION_INDEX, default = 0i32)]
@@ -1170,6 +1176,20 @@ pub(crate) struct SchDesignator {
     pub override_not_auto_position: bool,
     #[param(key = IS_MIRRORED, default = false)]
     pub is_mirrored: bool,
+    #[param(key = NOT_ALLOW_LIBRARY_SYNCHRONIZE, default = false)]
+    pub not_allow_library_synchronize: bool,
+    #[param(key = NOT_ALLOW_DATABASE_SYNCHRONIZE, default = false)]
+    pub not_allow_database_synchronize: bool,
+    #[param(key = DESCRIPTION, default = String::new())]
+    pub description: String,
+    #[param(key = PARAM_TYPE, default = ParameterType::String)]
+    pub param_type: ParameterType,
+    #[param(key = TEXT_HORZ_ANCHOR, default = TextHorzAnchor::None)]
+    pub text_horz_anchor: TextHorzAnchor,
+    #[param(key = TEXT_VERT_ANCHOR, default = TextVertAnchor::None)]
+    pub text_vert_anchor: TextVertAnchor,
+    #[param(key = IS_IMAGE_PARAMETER, default = false)]
+    pub is_image_parameter: bool,
 }
 
 /// A parameter annotation (RECORD=41).
@@ -1279,54 +1299,103 @@ pub(crate) struct SchImplementationList {
     pub base: SchPrimitiveBase,
 }
 
+/// A single datafile link within a SchImplementation.
+#[derive(Debug, Clone)]
+pub(crate) struct ModelDatafileLink {
+    pub location: String,
+    pub entity_name: String,
+    pub file_kind: String,
+}
+
 /// A single footprint/model assignment (RECORD=45).
 ///
 /// Field order matches Altium's `ExportImplementation` (FileFormatV5.cs:2510-2540):
 /// ExportDataObject, Description, UseComponentLibrary, ModelName, ModelType,
 /// DatafileCount, ModelVaultGUID, ModelItemGUID, ModelRevisionGUID,
-/// ModelDatafile0, ModelDatafileEntity0, ModelDatafileKind0,
+/// ModelDatafile{i}, ModelDatafileEntity{i}, ModelDatafileKind{i},
 /// IsCurrent, DatalinksLocked, DatabaseDatalinksLocked, IntegratedModel,
 /// DatabaseModel, UniqueID
-#[derive(FromParams, ToParams, Debug)]
+#[derive(Debug)]
 pub(crate) struct SchImplementation {
-    #[param(flatten)]
     pub base: SchPrimitiveBase,
-    #[param(key = DESCRIPTION, default = String::new())]
     pub description: String,
-    #[param(key = USE_COMPONENT_LIBRARY, default = false)]
     pub use_component_library: bool,
-    #[param(key = MODEL_NAME, default = String::new())]
     pub model_name: String,
-    #[param(key = MODEL_TYPE, default = String::new())]
     pub model_type: String,
-    #[param(key = DATAFILE_COUNT, default = 0i32)]
-    pub datafile_count: i32,
-    #[param(key = MODEL_VAULT_GUID, default = String::new())]
     pub model_vault_guid: String,
-    #[param(key = MODEL_ITEM_GUID, default = String::new())]
     pub model_item_guid: String,
-    #[param(key = MODEL_REVISION_GUID, default = String::new())]
     pub model_revision_guid: String,
-    #[param(key = "ModelDatafile0", default = String::new())]
-    pub model_datafile0: String,
-    #[param(key = "ModelDatafileEntity0", default = String::new())]
-    pub model_datafile_entity0: String,
-    #[param(key = "ModelDatafileKind0", default = String::new())]
-    pub model_datafile_kind0: String,
-    #[param(key = IS_CURRENT, default = false)]
+    pub datafile_links: Vec<ModelDatafileLink>,
     pub is_current: bool,
-    #[param(key = DATALINKS_LOCKED, default = false)]
     pub datalinks_locked: bool,
-    #[param(key = DATABASE_DATALINKS_LOCKED, default = false)]
     pub database_datalinks_locked: bool,
-    #[param(key = INTEGRATED_MODEL, default = false)]
     pub integrated_model: bool,
-    #[param(key = DATABASE_MODEL, default = false)]
     pub database_model: bool,
-    #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
-    #[param(key = MODEL_LOCATION, default = String::new())]
     pub model_location: String,
+}
+
+impl SchImplementation {
+    pub fn from_params(params: &mut ParameterCollection) -> crate::Result<Self> {
+        let base = SchPrimitiveBase::from_params(params)?;
+        let description: String = params.remove_with_default(DESCRIPTION, String::new())?;
+        let use_component_library: bool = params.remove_with_default(USE_COMPONENT_LIBRARY, false)?;
+        let model_name: String = params.remove_with_default(MODEL_NAME, String::new())?;
+        let model_type: String = params.remove_with_default(MODEL_TYPE, String::new())?;
+        let datafile_count: i32 = params.remove_with_default(DATAFILE_COUNT, 0i32)?;
+        let model_vault_guid: String = params.remove_with_default(MODEL_VAULT_GUID, String::new())?;
+        let model_item_guid: String = params.remove_with_default(MODEL_ITEM_GUID, String::new())?;
+        let model_revision_guid: String = params.remove_with_default(MODEL_REVISION_GUID, String::new())?;
+
+        let mut datafile_links = Vec::with_capacity(datafile_count.max(0) as usize);
+        for i in 0..datafile_count.max(0) {
+            let location: String = params.remove_with_default(&format!("ModelDatafile{i}"), String::new())?;
+            let entity_name: String = params.remove_with_default(&format!("ModelDatafileEntity{i}"), String::new())?;
+            let file_kind: String = params.remove_with_default(&format!("ModelDatafileKind{i}"), String::new())?;
+            datafile_links.push(ModelDatafileLink { location, entity_name, file_kind });
+        }
+        // Consume any extra entries beyond datafile_count (older files may have them).
+        let mut extra_i = datafile_count.max(0) as usize;
+        loop {
+            let key = format!("ModelDatafile{extra_i}");
+            match params.remove_optional::<String>(&key)? {
+                Some(location) => {
+                    let entity_name: String = params.remove_with_default(&format!("ModelDatafileEntity{extra_i}"), String::new())?;
+                    let file_kind: String = params.remove_with_default(&format!("ModelDatafileKind{extra_i}"), String::new())?;
+                    datafile_links.push(ModelDatafileLink { location, entity_name, file_kind });
+                }
+                None => break,
+            }
+            extra_i += 1;
+        }
+
+        let is_current: bool = params.remove_with_default(IS_CURRENT, false)?;
+        let datalinks_locked: bool = params.remove_with_default(DATALINKS_LOCKED, false)?;
+        let database_datalinks_locked: bool = params.remove_with_default(DATABASE_DATALINKS_LOCKED, false)?;
+        let integrated_model: bool = params.remove_with_default(INTEGRATED_MODEL, false)?;
+        let database_model: bool = params.remove_with_default(DATABASE_MODEL, false)?;
+        let unique_id: String = params.remove_with_default(UNIQUE_ID, String::new())?;
+        let model_location: String = params.remove_with_default(MODEL_LOCATION, String::new())?;
+
+        Ok(SchImplementation {
+            base,
+            description,
+            use_component_library,
+            model_name,
+            model_type,
+            model_vault_guid,
+            model_item_guid,
+            model_revision_guid,
+            datafile_links,
+            is_current,
+            datalinks_locked,
+            database_datalinks_locked,
+            integrated_model,
+            database_model,
+            unique_id,
+            model_location,
+        })
+    }
 }
 
 /// Container for pin-to-pad mapping entries (RECORD=46).
@@ -1395,6 +1464,16 @@ pub(crate) struct SchSheet {
     pub base: SchPrimitiveBase,
     pub fonts: Vec<SchFont>,
     pub display_settings: SchDisplaySettings,
+    pub template_vault_guid: String,
+    pub template_item_guid: String,
+    pub template_revision_guid: String,
+    pub template_vault_hrid: String,
+    pub template_revision_hrid: String,
+    pub release_vault_guid: String,
+    pub release_item_guid: String,
+    pub item_revision_guid: String,
+    pub props_vault_guid: String,
+    pub props_revision_guid: String,
 }
 
 impl SchSheet {
@@ -1473,10 +1552,31 @@ impl SchSheet {
             file_version_info: params.remove_optional(FILE_VERSION_INFO)?,
         };
 
+        let template_vault_guid = params.remove_with_default(TEMPLATE_VAULT_GUID, String::new())?;
+        let template_item_guid = params.remove_with_default(TEMPLATE_ITEM_GUID, String::new())?;
+        let template_revision_guid = params.remove_with_default(TEMPLATE_REVISION_GUID, String::new())?;
+        let template_vault_hrid = params.remove_with_default(TEMPLATE_VAULT_HRID, String::new())?;
+        let template_revision_hrid = params.remove_with_default(TEMPLATE_REVISION_HRID, String::new())?;
+        let release_vault_guid = params.remove_with_default(RELEASE_VAULT_GUID, String::new())?;
+        let release_item_guid = params.remove_with_default(RELEASE_ITEM_GUID, String::new())?;
+        let item_revision_guid = params.remove_with_default(ITEM_REVISION_GUID, String::new())?;
+        let props_vault_guid = params.remove_with_default(PROPS_VAULT_GUID, String::new())?;
+        let props_revision_guid = params.remove_with_default(PROPS_REVISION_GUID, String::new())?;
+
         Ok(Self {
             base,
             fonts,
             display_settings,
+            template_vault_guid,
+            template_item_guid,
+            template_revision_guid,
+            template_vault_hrid,
+            template_revision_hrid,
+            release_vault_guid,
+            release_item_guid,
+            item_revision_guid,
+            props_vault_guid,
+            props_revision_guid,
         })
     }
 }
@@ -1505,6 +1605,12 @@ pub(crate) struct SchWire {
     pub vertices: Vec<CoordPoint>,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
+    #[param(key = UNDERLINE_COLOR, default = Color::BLACK)]
+    pub underline_color: Color,
+    #[param(key = ASSIGNED_INTERFACE, default = String::new())]
+    pub assigned_interface: String,
+    #[param(key = ASSIGNED_INTERFACE_SIGNAL, default = String::new())]
+    pub assigned_interface_signal: String,
 }
 
 /// Bus record (RECORD=26).
@@ -2423,6 +2529,68 @@ pub(crate) fn serialize_map_definer(md: &SchMapDefiner, params: &mut ParameterCo
     }
 }
 
+/// Serializes a SchImplementation's fields into the given ParameterCollection.
+/// Caller is responsible for inserting the RECORD key before calling this.
+pub(crate) fn serialize_implementation(imp: &SchImplementation, params: &mut ParameterCollection) {
+    imp.base.to_params(params);
+    if !imp.description.is_empty() {
+        params.insert(DESCRIPTION, imp.description.to_param_value());
+    }
+    if imp.use_component_library {
+        params.insert(USE_COMPONENT_LIBRARY, imp.use_component_library.to_param_value());
+    }
+    if !imp.model_name.is_empty() {
+        params.insert(MODEL_NAME, imp.model_name.to_param_value());
+    }
+    if !imp.model_type.is_empty() {
+        params.insert(MODEL_TYPE, imp.model_type.to_param_value());
+    }
+    if !imp.datafile_links.is_empty() {
+        params.insert(DATAFILE_COUNT, (imp.datafile_links.len() as i32).to_param_value());
+        for (i, link) in imp.datafile_links.iter().enumerate() {
+            if !link.location.is_empty() {
+                params.insert(&format!("ModelDatafile{i}"), link.location.to_param_value());
+            }
+            if !link.entity_name.is_empty() {
+                params.insert(&format!("ModelDatafileEntity{i}"), link.entity_name.to_param_value());
+            }
+            if !link.file_kind.is_empty() {
+                params.insert(&format!("ModelDatafileKind{i}"), link.file_kind.to_param_value());
+            }
+        }
+    }
+    if !imp.model_vault_guid.is_empty() {
+        params.insert(MODEL_VAULT_GUID, imp.model_vault_guid.to_param_value());
+    }
+    if !imp.model_item_guid.is_empty() {
+        params.insert(MODEL_ITEM_GUID, imp.model_item_guid.to_param_value());
+    }
+    if !imp.model_revision_guid.is_empty() {
+        params.insert(MODEL_REVISION_GUID, imp.model_revision_guid.to_param_value());
+    }
+    if imp.is_current {
+        params.insert(IS_CURRENT, imp.is_current.to_param_value());
+    }
+    if imp.datalinks_locked {
+        params.insert(DATALINKS_LOCKED, imp.datalinks_locked.to_param_value());
+    }
+    if imp.database_datalinks_locked {
+        params.insert(DATABASE_DATALINKS_LOCKED, imp.database_datalinks_locked.to_param_value());
+    }
+    if imp.integrated_model {
+        params.insert(INTEGRATED_MODEL, imp.integrated_model.to_param_value());
+    }
+    if imp.database_model {
+        params.insert(DATABASE_MODEL, imp.database_model.to_param_value());
+    }
+    if !imp.unique_id.is_empty() {
+        params.insert(UNIQUE_ID, imp.unique_id.to_param_value());
+    }
+    if !imp.model_location.is_empty() {
+        params.insert(MODEL_LOCATION, imp.model_location.to_param_value());
+    }
+}
+
 // Inserts RECORD (and RECORDEX for values >= 256) into a ParameterCollection.
 fn insert_record_key(params: &mut ParameterCollection, record_type: SchRecordType) {
     let record_val = record_type as i32;
@@ -2550,7 +2718,7 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
         SchRecord::Designator(v) => v.to_params(params),
         SchRecord::Parameter(v) => v.to_params(params),
         SchRecord::ImplementationList(v) => v.to_params(params),
-        SchRecord::Implementation(v) => v.to_params(params),
+        SchRecord::Implementation(v) => serialize_implementation(v, params),
         SchRecord::ImplementationMap(v) => v.to_params(params),
         SchRecord::ParameterList(v) => v.to_params(params),
         SchRecord::HarnessConnector(v) => v.to_params(params),
@@ -3204,10 +3372,10 @@ mod tests {
         assert!(!imp.datalinks_locked);
         assert!(!imp.integrated_model);
         assert_eq!(imp.unique_id, "ABC123");
-        assert_eq!(imp.datafile_count, 1);
-        assert_eq!(imp.model_datafile0, "Lib.PcbLib");
-        assert_eq!(imp.model_datafile_entity0, "SOIC127P600X175-8N");
-        assert_eq!(imp.model_datafile_kind0, "PCBLIB");
+        assert_eq!(imp.datafile_links.len(), 1);
+        assert_eq!(imp.datafile_links[0].location, "Lib.PcbLib");
+        assert_eq!(imp.datafile_links[0].entity_name, "SOIC127P600X175-8N");
+        assert_eq!(imp.datafile_links[0].file_kind, "PCBLIB");
     }
 
     #[test]
@@ -3219,7 +3387,7 @@ mod tests {
         assert!(!imp.is_current);
         assert!(!imp.integrated_model);
         assert!(!imp.database_model);
-        assert_eq!(imp.datafile_count, 0);
+        assert!(imp.datafile_links.is_empty());
     }
 
     #[test]
@@ -3377,7 +3545,7 @@ mod tests {
         params.assert_exhausted().unwrap();
 
         let mut out = ParameterCollection::new();
-        imp.to_params(&mut out);
+        serialize_implementation(&imp, &mut out);
         let bytes = out.to_bytes();
 
         let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
@@ -3388,8 +3556,36 @@ mod tests {
         assert_eq!(imp2.model_type, "PCBLIB");
         assert_eq!(imp2.description, "SOP-8");
         assert!(imp2.is_current);
-        assert_eq!(imp2.datafile_count, 1);
-        assert_eq!(imp2.model_datafile0, "Lib.PcbLib");
+        assert_eq!(imp2.datafile_links.len(), 1);
+        assert_eq!(imp2.datafile_links[0].location, "Lib.PcbLib");
+    }
+
+    #[test]
+    fn implementation_multi_datafile() {
+        let mut params = pc(
+            "|ModelName=DUAL|ModelType=PCBLIB|DatafileCount=2|ModelDatafile0=A.PcbLib|ModelDatafileEntity0=FP_A|ModelDatafileKind0=PCBLIB|ModelDatafile1=B.PcbLib|ModelDatafileEntity1=FP_B|ModelDatafileKind1=PCBLIB|",
+        );
+        let imp = SchImplementation::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+
+        assert_eq!(imp.datafile_links.len(), 2);
+        assert_eq!(imp.datafile_links[0].location, "A.PcbLib");
+        assert_eq!(imp.datafile_links[0].entity_name, "FP_A");
+        assert_eq!(imp.datafile_links[1].location, "B.PcbLib");
+        assert_eq!(imp.datafile_links[1].entity_name, "FP_B");
+
+        // Roundtrip
+        let mut out = ParameterCollection::new();
+        serialize_implementation(&imp, &mut out);
+        let bytes = out.to_bytes();
+
+        let mut rt = ParameterCollection::from_bytes(&bytes).unwrap();
+        let imp2 = SchImplementation::from_params(&mut rt).unwrap();
+        rt.assert_exhausted().unwrap();
+
+        assert_eq!(imp2.datafile_links.len(), 2);
+        assert_eq!(imp2.datafile_links[0].location, "A.PcbLib");
+        assert_eq!(imp2.datafile_links[1].location, "B.PcbLib");
     }
 
     // ── serialize_binary_pin roundtrip tests ──────────────────────────

@@ -384,6 +384,7 @@ mod tests {
             index_in_sheet: 0,
             owner_part_id: 0,
             owner_part_display_mode: 0,
+            selection_memory: 0,
             graphically_locked: false,
             union_index: 0,
             style_id: 0,
@@ -402,6 +403,9 @@ mod tests {
                 CoordPoint::new(Coord::from_mils(100), Coord::from_mils(0)),
             ],
             unique_id: String::new(),
+            underline_color: Color::BLACK,
+            assigned_interface: String::new(),
+            assigned_interface_signal: String::new(),
         };
         let mut canvas = RecordingCanvas::new();
         draw_sch_record(&SchRecord::Wire(wire), &mut canvas, &[]);

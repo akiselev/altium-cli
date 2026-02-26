@@ -39,6 +39,11 @@ use altium_format_types::constants::streams::{
 use altium_format_types::constants::text::{
     BOLD, DESCRIPTION, ITALIC, NAME, STRIKE_OUT, UNDERLINE,
 };
+use altium_format_types::constants::vault::{
+    ITEM_REVISION_GUID, PROPS_REVISION_GUID, PROPS_VAULT_GUID, RELEASE_ITEM_GUID,
+    RELEASE_VAULT_GUID, TEMPLATE_ITEM_GUID, TEMPLATE_REVISION_GUID, TEMPLATE_REVISION_HRID,
+    TEMPLATE_VAULT_GUID, TEMPLATE_VAULT_HRID,
+};
 use altium_format_types::constants::visual::{
     COLOR, FONT_ID_COUNT, FONT_NAME, LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC,
     ROTATION, SIZE,
@@ -101,6 +106,7 @@ impl SchDoc {
                 index_in_sheet: 0,
                 owner_part_id: 0,
                 owner_part_display_mode: 0,
+                selection_memory: 0,
                 graphically_locked: false,
                 union_index: 0,
                 style_id: 0,
@@ -139,6 +145,16 @@ impl SchDoc {
                 area_color: Some(Color::new(16_317_695)),
                 ..SchDisplaySettings::default()
             },
+            template_vault_guid: String::new(),
+            template_item_guid: String::new(),
+            template_revision_guid: String::new(),
+            template_vault_hrid: String::new(),
+            template_revision_hrid: String::new(),
+            release_vault_guid: String::new(),
+            release_item_guid: String::new(),
+            item_revision_guid: String::new(),
+            props_vault_guid: String::new(),
+            props_revision_guid: String::new(),
         };
 
         Self {
@@ -489,6 +505,37 @@ fn serialize_sheet_record(sheet: &SchSheet) -> Vec<u8> {
     }
     if let Some(v) = ds.file_version_info.as_ref() {
         params.insert(FILE_VERSION_INFO, v.clone());
+    }
+
+    if !sheet.template_vault_guid.is_empty() {
+        params.insert(TEMPLATE_VAULT_GUID, sheet.template_vault_guid.clone());
+    }
+    if !sheet.template_item_guid.is_empty() {
+        params.insert(TEMPLATE_ITEM_GUID, sheet.template_item_guid.clone());
+    }
+    if !sheet.template_revision_guid.is_empty() {
+        params.insert(TEMPLATE_REVISION_GUID, sheet.template_revision_guid.clone());
+    }
+    if !sheet.template_vault_hrid.is_empty() {
+        params.insert(TEMPLATE_VAULT_HRID, sheet.template_vault_hrid.clone());
+    }
+    if !sheet.template_revision_hrid.is_empty() {
+        params.insert(TEMPLATE_REVISION_HRID, sheet.template_revision_hrid.clone());
+    }
+    if !sheet.release_vault_guid.is_empty() {
+        params.insert(RELEASE_VAULT_GUID, sheet.release_vault_guid.clone());
+    }
+    if !sheet.release_item_guid.is_empty() {
+        params.insert(RELEASE_ITEM_GUID, sheet.release_item_guid.clone());
+    }
+    if !sheet.item_revision_guid.is_empty() {
+        params.insert(ITEM_REVISION_GUID, sheet.item_revision_guid.clone());
+    }
+    if !sheet.props_vault_guid.is_empty() {
+        params.insert(PROPS_VAULT_GUID, sheet.props_vault_guid.clone());
+    }
+    if !sheet.props_revision_guid.is_empty() {
+        params.insert(PROPS_REVISION_GUID, sheet.props_revision_guid.clone());
     }
 
     write_text_block(&params.to_bytes())
