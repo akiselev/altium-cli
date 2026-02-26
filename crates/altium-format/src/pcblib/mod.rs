@@ -1034,20 +1034,21 @@ fn serialize_library_data(library: &PcbLibraryData, component_names: &[String]) 
 
 fn serialize_component_toc_data(entries: &[PcbLibComponentTocEntry]) -> Vec<u8> {
     let mut text = String::new();
-    for (i, e) in entries.iter().enumerate() {
-        if i != 0 {
-            text.push_str("\r\n");
-        }
-        // TOC Height uses bare `0` for zero (no unit suffix), otherwise mil format.
+    for e in entries.iter() {
+        // TOC Height uses bare numbers without "mil" suffix.
         let height_str = if e.height == Coord::ZERO {
             "0".to_owned()
         } else {
-            format_mil(e.height)
+            let mils = e.height.to_mils();
+            let formatted = format!("{:.4}", mils);
+            formatted.trim_end_matches('0').trim_end_matches('.').to_owned()
         };
         text.push_str(&format!(
             "Name={}|Pad Count={}|Height={}|Description={}",
             e.name, e.pad_count, height_str, e.description
         ));
+        // Each record is terminated with \r\n (including the last one).
+        text.push_str("\r\n");
     }
     let mut bytes = text.into_bytes();
     bytes.push(0);
@@ -1064,9 +1065,14 @@ fn serialize_model_entries_data(entries: &[PcbLibModelEntry]) -> Vec<u8> {
         params.insert("ROTY", format!("{:.3}", entry.rotation_y));
         params.insert("ROTZ", format!("{:.3}", entry.rotation_z));
         params.insert("DZ", entry.standoff.to_string());
-        params.insert("MODELSOURCE", entry.model_source.clone());
+        if !entry.model_source.is_empty() {
+            params.insert("MODELSOURCE", entry.model_source.clone());
+        }
         params.insert("CHECKSUM", entry.checksum.clone());
         params.insert("NAME", entry.name.clone());
+        if !entry.title.is_empty() {
+            params.insert("TITLE", entry.title.clone());
+        }
         out.extend_from_slice(&write_text_block(&params.to_bytes()));
     }
     out
@@ -1314,7 +1320,9 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     w0.write_coord(p.snap_point_x.unwrap_or(Coord::ZERO));
     w0.write_coord(p.snap_point_y.unwrap_or(Coord::ZERO));
     let (s1, _, _) = encoding_rs::WINDOWS_1252.encode(&p.text);
-    vec![w0.finish(), s1.to_vec()]
+    let mut text_bytes = s1.to_vec();
+    text_bytes.push(0); // NUL terminator
+    vec![w0.finish(), text_bytes]
 }
 
 fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
@@ -1436,6 +1444,18 @@ fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
         sub5.write_bytes(&stack.alt_shape);
         sub5.write_bytes(&stack.corner_radius_pct);
         sub5.write_bytes(&stack.per_layer_overrides);
+        if !stack.extended_cr.is_empty() {
+            sub5.write_u32_le(stack.extended_cr.len() as u32);
+            sub5.write_u32_le(15); // entry_size is always 15
+            for entry in &stack.extended_cr {
+                sub5.write_u32_le(entry.layer_id);
+                sub5.write_u8(entry.alt_shape);
+                sub5.write_coord(entry.cr_pct_ex);
+                sub5.write_coord(entry.cr_size);
+                sub5.write_u8(entry.cr_pct);
+                sub5.write_u8(entry.use_percent as u8);
+            }
+        }
     }
 
     Ok(vec![sub0.finish(), sub1.finish(), sub2.finish(), sub3.finish(), sub4.finish(), sub5.finish()])

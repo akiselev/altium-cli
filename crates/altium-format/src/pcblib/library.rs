@@ -28,6 +28,7 @@ pub(crate) struct PcbLibComponentTocEntry {
 pub(crate) struct PcbLibModelEntry {
     pub(crate) id: String,
     pub(crate) name: String,
+    pub(crate) title: String,
     pub(crate) embed: bool,
     pub(crate) rotation_x: f64,
     pub(crate) rotation_y: f64,
@@ -227,7 +228,7 @@ fn parse_toc_record(record: &str) -> Result<PcbLibComponentTocEntry> {
                 detail: "TOC record segment has no '=' separator".to_owned(),
             })?;
         let key = segment[..eq_pos].trim();
-        let value = segment[eq_pos + 1..].trim();
+        let value = &segment[eq_pos + 1..];
         match key {
             "Name" => name = value.to_owned(),
             "Pad Count" => {
@@ -309,12 +310,14 @@ pub(crate) fn parse_model_metadata(header: &[u8], data: &[u8]) -> Result<Vec<Pcb
         let model_source = params
             .remove_optional::<String>("MODELSOURCE")?
             .unwrap_or_default();
-        // TITLE is present but not used in our data model; consume it.
-        let _ = params.remove_optional::<String>("TITLE")?;
+        let title = params
+            .remove_optional::<String>("TITLE")?
+            .unwrap_or_default();
         params.assert_exhausted()?;
         entries.push(PcbLibModelEntry {
             id,
             name,
+            title,
             embed,
             rotation_x,
             rotation_y,
