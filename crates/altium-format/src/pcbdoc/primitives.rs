@@ -5,8 +5,11 @@ use altium_format_types::{
 };
 
 use crate::binary_io::BinaryReader;
+use crate::pcblib::primitives::component_body::parse_component_body;
 use crate::pcblib::primitives::pad::parse_pad;
-use crate::pcblib::PcbPad;
+use crate::pcblib::primitives::region::parse_region;
+use crate::pcblib::primitives::via::parse_via;
+use crate::pcblib::{PcbComponentBody, PcbPad, PcbRegion, PcbVia};
 use crate::{AltiumFormatError, Result};
 
 use super::records::PrimitiveSectionKind;
@@ -96,7 +99,6 @@ pub(crate) struct PcbText {
     pub(crate) barcode_kind: BarcodeKind,
     pub(crate) barcode_render_mode: BarcodeRenderMode,
     pub(crate) barcode_inverted: bool,
-    pub(crate) barcode_font_type: u8,
     pub(crate) barcode_font_name: String,
     pub(crate) barcode_min_pixel_size: i32,
     pub(crate) barcode_show_text: bool,
@@ -123,6 +125,9 @@ pub(crate) enum PcbPrimitive {
     Track(PcbTrack),
     Fill(PcbFill),
     Pad(PcbPad),
+    Via(PcbVia),
+    Region(PcbRegion),
+    ComponentBody(PcbComponentBody),
     Text(PcbText),
 }
 
@@ -200,24 +205,16 @@ fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8]) -> Result<Pcb
             detail: "Pad parsing requires 6-subrecord framing; reached single-payload path"
                 .to_owned(),
         }),
-        PcbObjectId::Via => Err(AltiumFormatError::InvalidParamValue {
-            key: "Vias6/Data".to_owned(),
-            detail: "Via parsing is not implemented without raw payload passthrough".to_owned(),
-        }),
+        PcbObjectId::Via => parse_via(payload).map(PcbPrimitive::Via),
         PcbObjectId::Text => Err(AltiumFormatError::InvalidParamValue {
             key: "Texts/Data".to_owned(),
             detail: "Text parsing requires 2-subrecord framing; reached single-payload path"
                 .to_owned(),
         }),
-        PcbObjectId::Region => Err(AltiumFormatError::InvalidParamValue {
-            key: "Regions6/Data".to_owned(),
-            detail: "Region parsing is not implemented without raw payload passthrough".to_owned(),
-        }),
-        PcbObjectId::ComponentBody => Err(AltiumFormatError::InvalidParamValue {
-            key: "ComponentBodies6/Data".to_owned(),
-            detail: "ComponentBody parsing is not implemented without raw payload passthrough"
-                .to_owned(),
-        }),
+        PcbObjectId::Region => parse_region(payload).map(PcbPrimitive::Region),
+        PcbObjectId::ComponentBody => {
+            parse_component_body(payload).map(PcbPrimitive::ComponentBody)
+        }
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
     }
 }
@@ -418,7 +415,6 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
     let mut barcode_kind = BarcodeKind::default();
     let mut barcode_render_mode = BarcodeRenderMode::default();
     let mut barcode_inverted = false;
-    let mut barcode_font_type = 0;
     let mut barcode_font_name = String::new();
     let mut barcode_min_pixel_size = 0;
     let mut barcode_show_text = false;
@@ -457,7 +453,7 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         text_offset_width = reader.read_i32_le()?;
     }
 
-    if reader.remaining() >= 103 {
+    if reader.remaining() >= 92 {
         unk_vec_x = reader.read_i32_le()?;
         unk_vec_y = reader.read_i32_le()?;
         barcode_margin_x = reader.read_i32_le()?;
@@ -466,7 +462,6 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         barcode_kind = BarcodeKind::try_from(reader.read_u8()?)?;
         barcode_render_mode = BarcodeRenderMode::try_from(reader.read_u8()?)?;
         barcode_inverted = reader.read_bool()?;
-        barcode_font_type = reader.read_u8()?;
         barcode_font_name = reader.read_wide_string_fixed(32)?;
         barcode_min_pixel_size = reader.read_i32_le()?;
         barcode_show_text = reader.read_bool()?;
@@ -537,7 +532,6 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
         barcode_kind,
         barcode_render_mode,
         barcode_inverted,
-        barcode_font_type,
         barcode_font_name,
         barcode_min_pixel_size,
         barcode_show_text,

@@ -123,6 +123,7 @@ pub(crate) struct PcbTrack {
     pub(crate) unique_id: Option<String>,
 }
 
+#[derive(Debug)]
 pub(crate) struct PcbVia {
     pub(crate) common: PcbPrimitiveCommon,
     pub(crate) location: CoordPoint,
@@ -194,6 +195,7 @@ pub(crate) struct PcbVia {
     pub(crate) unique_id: Option<String>,
 }
 
+#[derive(Debug)]
 pub(crate) struct PcbViaSection2Entry {
     pub(crate) layer: u8,
     pub(crate) diameter: Coord,
@@ -262,6 +264,7 @@ pub(crate) struct PcbText {
     pub(crate) unique_id: Option<String>,
 }
 
+#[derive(Debug)]
 pub(crate) struct PcbRegion {
     pub(crate) common: PcbPrimitiveCommon,
     pub(crate) kind: RegionKind,
@@ -279,6 +282,11 @@ pub(crate) struct PcbRegion {
     pub(crate) keepout: bool,
     pub(crate) is_board_cutout: bool,
     pub(crate) pad_index: i32,
+    // BoardRegion-specific parameters (present when OBJECTKIND=BoardRegion)
+    pub(crate) object_kind: String,
+    pub(crate) bending_line_count: i32,
+    pub(crate) locked_3d: bool,
+    pub(crate) layer_stack_id: String,
     // Geometry: main outline + hole contours (all f64 vertex pairs)
     pub(crate) outline: Vec<CoordPoint>,
     pub(crate) holes: Vec<Vec<CoordPoint>>,
@@ -432,6 +440,7 @@ pub(crate) struct PcbPadThermalReliefEntry {
     pub(crate) use_custom_relief: bool,
 }
 
+#[derive(Debug)]
 pub(crate) struct PcbComponentBody {
     pub(crate) common: PcbPrimitiveCommon,
     // Region-inherited parameters
@@ -481,6 +490,8 @@ pub(crate) struct PcbComponentBody {
     pub(crate) model_cylinder_radius: Coord,
     /// Cylinder model height (MODEL.CYLINDER.HEIGHT), only for cylinder model types.
     pub(crate) model_cylinder_height: Coord,
+    /// Sphere model radius (MODEL.SPHERE.RADIUS), only for sphere model types.
+    pub(crate) model_sphere_radius: Coord,
     pub(crate) outline: Vec<CoordPoint>,
     pub(crate) unique_id: Option<String>,
 }
@@ -1413,6 +1424,18 @@ fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     params.insert("KEEPOUT", if p.keepout { "TRUE".to_owned() } else { "FALSE".to_owned() });
     params.insert("ISBOARDCUTOUT", if p.is_board_cutout { "TRUE".to_owned() } else { "FALSE".to_owned() });
     params.insert("PADINDEX", p.pad_index.to_string());
+    if !p.object_kind.is_empty() {
+        params.insert("OBJECTKIND", p.object_kind.clone());
+    }
+    if p.bending_line_count != 0 || !p.object_kind.is_empty() {
+        params.insert("BENDINGLINECOUNT", p.bending_line_count.to_string());
+    }
+    if p.locked_3d || !p.object_kind.is_empty() {
+        params.insert("LOCKED3D", if p.locked_3d { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    }
+    if !p.layer_stack_id.is_empty() {
+        params.insert("LAYERSTACKID", p.layer_stack_id.clone());
+    }
     let pbytes = params.to_bytes();
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
@@ -1492,6 +1515,9 @@ fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     if p.model_cylinder_radius != Coord::ZERO || p.model_cylinder_height != Coord::ZERO {
         params.insert("MODEL.CYLINDER.RADIUS", format_mil(p.model_cylinder_radius));
         params.insert("MODEL.CYLINDER.HEIGHT", format_mil(p.model_cylinder_height));
+    }
+    if p.model_sphere_radius != Coord::ZERO {
+        params.insert("MODEL.SPHERE.RADIUS", format_mil(p.model_sphere_radius));
     }
     let pbytes = params.to_bytes();
     w.write_u32_le(pbytes.len() as u32);

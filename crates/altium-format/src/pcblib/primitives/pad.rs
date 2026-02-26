@@ -123,25 +123,47 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
         ([0u8; 16], [0u8; 16])
     };
 
-    // Tolerances + unknown_170 (offsets 158-170, 13 bytes)
-    let (pin_package_length, hole_positive_tolerance, hole_negative_tolerance, reserved_170) =
-        if reader.remaining() >= 13 {
+    // Tolerances (offsets 158-169, 12 bytes)
+    // In older format variants (170-byte sub4), these are the last fields —
+    // reserved_170 and has_sub4_extension don't exist.
+    let (pin_package_length, hole_positive_tolerance, hole_negative_tolerance) =
+        if reader.remaining() >= 12 {
             let ppl = reader.read_coord()?;
             let hpt = reader.read_i32_le()?;
             let hnt = reader.read_i32_le()?;
-            let reserved = reader.read_u8()?;
-            if reserved != 0 {
-                return Err(AltiumFormatError::InvalidParamValue {
-                    key: "reserved byte 170".to_owned(),
-                    detail: format!("expected 0, got {reserved:#04X}"),
-                });
-            }
-            (ppl, hpt, hnt, reserved)
+            (ppl, hpt, hnt)
         } else {
-            (Coord::from_internal(0), 0x7FFFFFFF, 0x7FFFFFFF, 0u8)
+            (Coord::from_internal(0), 0x7FFFFFFF, 0x7FFFFFFF)
         };
 
+    // reserved_170 (offset 170, 1 byte)
+    // Present in 171+ byte sub4 variants. Absent in 170-byte variant.
+    let reserved_170 = if reader.remaining() >= 2 {
+        // At least 2 bytes remain: reserved_170 + has_sub4_extension (or more).
+        let reserved = reader.read_u8()?;
+        if reserved != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "reserved byte 170".to_owned(),
+                detail: format!("expected 0, got {reserved:#04X}"),
+            });
+        }
+        reserved
+    } else if reader.remaining() == 1 {
+        // Exactly 1 byte: reserved_170 only (171-byte variant, no sub4 extension).
+        let reserved = reader.read_u8()?;
+        if reserved != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "reserved byte 170".to_owned(),
+                detail: format!("expected 0, got {reserved:#04X}"),
+            });
+        }
+        reserved
+    } else {
+        0u8
+    };
+
     // has_sub4_extension (offset 171, 1 byte)
+    // Present in 172+ byte sub4 variants.
     let has_sub4_extension = if reader.remaining() >= 1 {
         reader.read_u8()? != 0
     } else {
@@ -305,10 +327,24 @@ fn parse_sub4_extension(
             });
         }
         let entry_size = reader.read_u32_le()? as usize;
-        if entry_size != 30 {
+        // Thermal entry sizes vary by format version:
+        //   23 bytes: oldest (through expansion, no conductor_by_pad_edge or later fields)
+        //   29 bytes: intermediate (missing use_custom_relief)
+        //   30 bytes: current AD26 format (all fields present)
+        if entry_size < 23 {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "Pad subrecord 4 extension thermal entries".to_owned(),
-                detail: format!("unsupported thermal entry size {entry_size}, expected 30"),
+                detail: format!(
+                    "thermal entry size {entry_size} too small (minimum 23)"
+                ),
+            });
+        }
+        if entry_size > 30 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Pad subrecord 4 extension thermal entries".to_owned(),
+                detail: format!(
+                    "thermal entry size {entry_size} too large (maximum 30)"
+                ),
             });
         }
 
@@ -329,32 +365,9 @@ fn parse_sub4_extension(
         }
 
         for _ in 0..thermal_relief_count {
-            let layer = V7Layer::new(reader.read_u32_le()?);
-            let defined_type = reader.read_u8()?;
-            let connect_style = PlaneConnectionStyle::try_from(reader.read_u8()?)?;
-            let air_gap_width = reader.read_coord()?;
-            let conductor_width = reader.read_coord()?;
-            let rotation = PolygonReliefAngle::try_from(reader.read_u8()?)?;
-            let entries = reader.read_u32_le()?;
-            let expansion = reader.read_coord()?;
-            let conductor_by_pad_edge = reader.read_u8()? != 0;
-            let min_distance = reader.read_coord()?;
-            let enable_min_distance = reader.read_u8()? != 0;
-            let use_custom_relief = reader.read_u8()? != 0;
-            thermal_reliefs.push(crate::pcblib::PcbPadThermalReliefEntry {
-                layer,
-                defined_type,
-                connect_style,
-                air_gap_width,
-                conductor_width,
-                rotation,
-                entries,
-                expansion,
-                conductor_by_pad_edge,
-                min_distance,
-                enable_min_distance,
-                use_custom_relief,
-            });
+            let entry_data = reader.read_bytes(entry_size)?;
+            let entry = parse_thermal_relief_entry(entry_data, entry_size)?;
+            thermal_reliefs.push(entry);
         }
     }
 
@@ -378,6 +391,71 @@ fn parse_sub4_extension(
         }),
         thermal_reliefs,
     ))
+}
+
+/// Parses a single thermal relief entry from its fixed-size byte slice.
+///
+/// The 30-byte (current) layout is:
+///   TV7_Layer (4) + TPadViaThermalReliefData (26):
+///     DefinedType(1) + ConnectStyle(1) + AirGapWidth(4) + ConductorWidth(4) +
+///     Rotation(1) + Entries(4) + Expansion(4) = 23 bytes (always present)
+///     ConductorByPadEdge(1)                   = byte 24 (added later)
+///     MinDistance(4) + EnableMinDistance(1)     = bytes 24-29 (added later)
+///     UseCustomRelief(1)                       = byte 30 (added last)
+fn parse_thermal_relief_entry(
+    data: &[u8],
+    entry_size: usize,
+) -> Result<crate::pcblib::PcbPadThermalReliefEntry> {
+    let mut r = BinaryReader::new(data);
+
+    // Always present (23 bytes minimum)
+    let layer = V7Layer::new(r.read_u32_le()?);
+    let defined_type = r.read_u8()?;
+    let connect_style = PlaneConnectionStyle::try_from(r.read_u8()?)?;
+    let air_gap_width = r.read_coord()?;
+    let conductor_width = r.read_coord()?;
+    let rotation = PolygonReliefAngle::try_from(r.read_u8()?)?;
+    let entries = r.read_u32_le()?;
+    let expansion = r.read_coord()?;
+
+    // Fields added in later versions, conditional on entry_size
+    let conductor_by_pad_edge = if entry_size >= 24 {
+        r.read_u8()? != 0
+    } else {
+        false
+    };
+    let min_distance = if entry_size >= 28 {
+        r.read_coord()?
+    } else {
+        Coord::from_internal(0)
+    };
+    let enable_min_distance = if entry_size >= 29 {
+        r.read_u8()? != 0
+    } else {
+        false
+    };
+    let use_custom_relief = if entry_size >= 30 {
+        r.read_u8()? != 0
+    } else {
+        false
+    };
+
+    r.assert_exhausted()?;
+
+    Ok(crate::pcblib::PcbPadThermalReliefEntry {
+        layer,
+        defined_type,
+        connect_style,
+        air_gap_width,
+        conductor_width,
+        rotation,
+        entries,
+        expansion,
+        conductor_by_pad_edge,
+        min_distance,
+        enable_min_distance,
+        use_custom_relief,
+    })
 }
 
 /// Parses a string subrecord (subrecords 0-3): u8 length prefix + Windows-1252 bytes.

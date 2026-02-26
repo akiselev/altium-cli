@@ -250,6 +250,7 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     // Cylinder model parameters (only present for cylinder model types)
     let model_cylinder_radius = parse_mil_param(&mut params, "MODEL.CYLINDER.RADIUS")?;
     let model_cylinder_height = parse_mil_param(&mut params, "MODEL.CYLINDER.HEIGHT")?;
+    let model_sphere_radius = parse_mil_param(&mut params, "MODEL.SPHERE.RADIUS")?;
 
     // Shape-based regions include indexed edge geometry in the param string.
     // ComponentBody inherits from Region so it can also have these.
@@ -344,6 +345,7 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
         model_extruded_max_z,
         model_cylinder_radius,
         model_cylinder_height,
+        model_sphere_radius,
         outline,
         unique_id: None,
     })

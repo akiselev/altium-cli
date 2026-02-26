@@ -124,6 +124,21 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
         .unwrap_or(false);
     let pad_index = params.remove_optional::<i32>("PADINDEX")?.unwrap_or(-1);
 
+    // BoardRegion-specific parameters (present when OBJECTKIND=BoardRegion in PcbDoc)
+    let object_kind = params
+        .remove_optional::<String>("OBJECTKIND")?
+        .unwrap_or_default();
+    let bending_line_count = params
+        .remove_optional::<i32>("BENDINGLINECOUNT")?
+        .unwrap_or(0);
+    let locked_3d = params
+        .remove_optional::<String>("LOCKED3D")?
+        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .unwrap_or(false);
+    let layer_stack_id = params
+        .remove_optional::<String>("LAYERSTACKID")?
+        .unwrap_or_default();
+
     // Shape-based regions include indexed edge geometry in the param string
     // (MAINCONTOURVERTEXCOUNT, KIND0, VX0, VY0, CX0, CY0, SA0, EA0, R0, ...).
     // We consume these to pass assert_exhausted but don't store them separately —
@@ -191,6 +206,10 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
         keepout,
         is_board_cutout,
         pad_index,
+        object_kind,
+        bending_line_count,
+        locked_3d,
+        layer_stack_id,
         outline,
         holes,
         unique_id: None,

@@ -9,6 +9,7 @@ pub trait PcbLibOps {
 
 impl PcbLibOps for altium_format::PcbLib {
     fn validate(&self) -> crate::Result<()> {
+        self.validate_invariants()?;
         Ok(())
     }
 

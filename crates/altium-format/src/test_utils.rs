@@ -3,8 +3,13 @@ use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use altium_format_types::constants::parsing::{C_SCH_BROKEN_BAR, C_SCH_UTF8_PREFIX};
+use altium_format_types::constants::parsing::{
+    BLOCK_SIZE_MASK, C_SCH_BROKEN_BAR, C_SCH_UTF8_PREFIX, DEFAULT_SUBRECORD_COUNT,
+    PAD_SUBRECORD_COUNT, TEXT_SUBRECORD_COUNT,
+};
+use altium_format_types::PcbObjectId;
 
+use crate::binary_io::BinaryReader;
 use crate::block_stream::{Block, BlockFormat, parse_blocks};
 use crate::embedded_object::parse_embedded_object;
 use crate::{AltiumFormatError, Result};
@@ -230,6 +235,44 @@ pub enum DiffIssue {
         byte_a: Option<u8>,
         byte_b: Option<u8>,
     },
+    /// PcbLib Data stream: pattern names differ.
+    PcbLibPatternNameMismatch {
+        path: String,
+        name_a: String,
+        name_b: String,
+    },
+    /// PcbLib Data stream: record counts differ.
+    PcbLibRecordCountMismatch {
+        path: String,
+        count_a: usize,
+        count_b: usize,
+    },
+    /// PcbLib Data stream: record type differs at given index.
+    PcbLibRecordTypeMismatch {
+        path: String,
+        record_index: usize,
+        type_a: String,
+        type_b: String,
+    },
+    /// PcbLib Data stream: subrecord length differs within a record.
+    PcbLibSubrecordLengthMismatch {
+        path: String,
+        record_index: usize,
+        record_type: String,
+        subrecord_index: usize,
+        len_a: usize,
+        len_b: usize,
+    },
+    /// PcbLib Data stream: subrecord bytes differ within a record.
+    PcbLibSubrecordMismatch {
+        path: String,
+        record_index: usize,
+        record_type: String,
+        subrecord_index: usize,
+        offset: usize,
+        byte_a: Option<u8>,
+        byte_b: Option<u8>,
+    },
 }
 
 impl DiffIssue {
@@ -252,6 +295,11 @@ impl DiffIssue {
             Self::BinaryBlockMismatch { .. } => "BinaryBlockMismatch",
             Self::EmbeddedObjectIdMismatch { .. } => "EmbeddedObjectIdMismatch",
             Self::EmbeddedObjectDataMismatch { .. } => "EmbeddedObjectDataMismatch",
+            Self::PcbLibPatternNameMismatch { .. } => "PcbLibPatternNameMismatch",
+            Self::PcbLibRecordCountMismatch { .. } => "PcbLibRecordCountMismatch",
+            Self::PcbLibRecordTypeMismatch { .. } => "PcbLibRecordTypeMismatch",
+            Self::PcbLibSubrecordLengthMismatch { .. } => "PcbLibSubrecordLengthMismatch",
+            Self::PcbLibSubrecordMismatch { .. } => "PcbLibSubrecordMismatch",
         }
     }
 
@@ -273,7 +321,12 @@ impl DiffIssue {
             | Self::UpdatedParamValues { path, .. }
             | Self::BinaryBlockMismatch { path, .. }
             | Self::EmbeddedObjectIdMismatch { path, .. }
-            | Self::EmbeddedObjectDataMismatch { path, .. } => path,
+            | Self::EmbeddedObjectDataMismatch { path, .. }
+            | Self::PcbLibPatternNameMismatch { path, .. }
+            | Self::PcbLibRecordCountMismatch { path, .. }
+            | Self::PcbLibRecordTypeMismatch { path, .. }
+            | Self::PcbLibSubrecordLengthMismatch { path, .. }
+            | Self::PcbLibSubrecordMismatch { path, .. } => path,
         }
     }
 
@@ -412,6 +465,57 @@ impl DiffIssue {
                     fmt_opt_byte(*byte_b)
                 )
             }
+            Self::PcbLibPatternNameMismatch {
+                path,
+                name_a,
+                name_b,
+            } => {
+                format!("pcblib pattern name mismatch at {path}: A={name_a:?}, B={name_b:?}")
+            }
+            Self::PcbLibRecordCountMismatch {
+                path,
+                count_a,
+                count_b,
+            } => {
+                format!("pcblib record count mismatch at {path}: A={count_a}, B={count_b}")
+            }
+            Self::PcbLibRecordTypeMismatch {
+                path,
+                record_index,
+                type_a,
+                type_b,
+            } => {
+                format!(
+                    "pcblib record type mismatch at {path} record #{record_index}: A={type_a}, B={type_b}"
+                )
+            }
+            Self::PcbLibSubrecordLengthMismatch {
+                path,
+                record_index,
+                record_type,
+                subrecord_index,
+                len_a,
+                len_b,
+            } => {
+                format!(
+                    "pcblib subrecord length mismatch at {path} record #{record_index} ({record_type}) sub #{subrecord_index}: A={len_a}, B={len_b}"
+                )
+            }
+            Self::PcbLibSubrecordMismatch {
+                path,
+                record_index,
+                record_type,
+                subrecord_index,
+                offset,
+                byte_a,
+                byte_b,
+            } => {
+                format!(
+                    "pcblib subrecord mismatch at {path} record #{record_index} ({record_type}) sub #{subrecord_index} offset {offset}: A={}, B={}",
+                    fmt_opt_byte(*byte_a),
+                    fmt_opt_byte(*byte_b)
+                )
+            }
         }
     }
 }
@@ -538,25 +642,24 @@ fn compare_stream(
             side: "B",
             error: err_b.to_string(),
         }),
-        (Err(err_a), Err(err_b)) => {
-            // Both sides failed to parse as block-encoded streams. This is
-            // normal for PCB binary streams (footprint Data, Header, etc.)
-            // that use raw binary format instead of block encoding. Only
-            // report parse errors if the raw bytes actually differ — if they
-            // match, there is no difference to report.
+        (Err(_), Err(_)) => {
+            // Both sides failed to parse as block-encoded streams. Try
+            // PcbLib binary record format before falling back to raw bytes.
             if stream_a == stream_b {
                 return;
             }
-            issues.push(DiffIssue::BlockParseError {
-                path: path.to_owned(),
-                side: "A",
-                error: err_a.to_string(),
-            });
-            issues.push(DiffIssue::BlockParseError {
-                path: path.to_owned(),
-                side: "B",
-                error: err_b.to_string(),
-            });
+            match (
+                try_parse_pcblib_data(stream_a),
+                try_parse_pcblib_data(stream_b),
+            ) {
+                (Some(parsed_a), Some(parsed_b)) => {
+                    compare_pcblib_data(path, &parsed_a, &parsed_b, issues);
+                    return;
+                }
+                _ => {
+                    // Not PcbLib format — fall through to raw byte comparison.
+                }
+            }
         }
     }
 
@@ -577,6 +680,156 @@ fn compare_stream(
         byte_a,
         byte_b,
     });
+}
+
+// ---------------------------------------------------------------------------
+// PcbLib binary record format parsing and comparison
+// ---------------------------------------------------------------------------
+
+/// Lightweight parsed representation of a PcbLib Data stream for diffing.
+/// Does not fully parse primitives — just extracts record framing.
+struct PcbLibDataParsed {
+    pattern_name: String,
+    records: Vec<PcbLibDataRecord>,
+}
+
+struct PcbLibDataRecord {
+    object_id: PcbObjectId,
+    subrecords: Vec<Vec<u8>>,
+}
+
+/// Returns the number of subrecords for a given PcbLib primitive type.
+fn pcblib_subrecord_count(object_id: PcbObjectId) -> usize {
+    match object_id {
+        PcbObjectId::Pad => PAD_SUBRECORD_COUNT,
+        PcbObjectId::Text => TEXT_SUBRECORD_COUNT,
+        _ => DEFAULT_SUBRECORD_COUNT,
+    }
+}
+
+/// Try to parse raw bytes as a PcbLib binary Data stream.
+/// Returns `None` if the data doesn't look like valid PcbLib format.
+fn try_parse_pcblib_data(data: &[u8]) -> Option<PcbLibDataParsed> {
+    let mut reader = BinaryReader::new(data);
+
+    // Pattern name block: u32 length + u8 string_length + bytes
+    let block_len = reader.read_u32_le().ok()? as usize;
+    if block_len == 0 || block_len > reader.remaining() {
+        return None;
+    }
+    let mut name_block = reader.sub_reader(block_len).ok()?;
+    let str_len = name_block.read_u8().ok()? as usize;
+    if str_len > name_block.remaining() {
+        return None;
+    }
+    let name_bytes = name_block.read_bytes(str_len).ok()?;
+    // Pattern names should be printable (no control chars)
+    if name_bytes.iter().any(|&b| b < 0x20) {
+        return None;
+    }
+    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(name_bytes);
+    let pattern_name = decoded.into_owned();
+
+    let mut records = Vec::new();
+    while reader.remaining() > 0 {
+        let type_byte = reader.read_u8().ok()?;
+        let object_id = PcbObjectId::try_from(type_byte).ok()?;
+        let n_subrecords = pcblib_subrecord_count(object_id);
+
+        let mut subrecords = Vec::with_capacity(n_subrecords);
+        for _ in 0..n_subrecords {
+            let encoded_len = reader.read_u32_le().ok()?;
+            let payload_len = (encoded_len & BLOCK_SIZE_MASK) as usize;
+            if payload_len > reader.remaining() {
+                return None;
+            }
+            let payload = reader.read_bytes(payload_len).ok()?;
+            subrecords.push(payload.to_vec());
+        }
+        records.push(PcbLibDataRecord {
+            object_id,
+            subrecords,
+        });
+    }
+
+    Some(PcbLibDataParsed {
+        pattern_name,
+        records,
+    })
+}
+
+fn pcblib_type_label(id: PcbObjectId) -> String {
+    format!("{id:?}")
+}
+
+fn compare_pcblib_data(
+    path: &str,
+    parsed_a: &PcbLibDataParsed,
+    parsed_b: &PcbLibDataParsed,
+    issues: &mut Vec<DiffIssue>,
+) {
+    if parsed_a.pattern_name != parsed_b.pattern_name {
+        issues.push(DiffIssue::PcbLibPatternNameMismatch {
+            path: path.to_owned(),
+            name_a: parsed_a.pattern_name.clone(),
+            name_b: parsed_b.pattern_name.clone(),
+        });
+    }
+
+    if parsed_a.records.len() != parsed_b.records.len() {
+        issues.push(DiffIssue::PcbLibRecordCountMismatch {
+            path: path.to_owned(),
+            count_a: parsed_a.records.len(),
+            count_b: parsed_b.records.len(),
+        });
+    }
+
+    let count = parsed_a.records.len().min(parsed_b.records.len());
+    for idx in 0..count {
+        let rec_a = &parsed_a.records[idx];
+        let rec_b = &parsed_b.records[idx];
+
+        if rec_a.object_id != rec_b.object_id {
+            issues.push(DiffIssue::PcbLibRecordTypeMismatch {
+                path: path.to_owned(),
+                record_index: idx,
+                type_a: pcblib_type_label(rec_a.object_id),
+                type_b: pcblib_type_label(rec_b.object_id),
+            });
+            continue;
+        }
+
+        let record_type = pcblib_type_label(rec_a.object_id);
+        let sub_count = rec_a.subrecords.len().min(rec_b.subrecords.len());
+        for sub_idx in 0..sub_count {
+            let sub_a = &rec_a.subrecords[sub_idx];
+            let sub_b = &rec_b.subrecords[sub_idx];
+
+            if sub_a.len() != sub_b.len() {
+                issues.push(DiffIssue::PcbLibSubrecordLengthMismatch {
+                    path: path.to_owned(),
+                    record_index: idx,
+                    record_type: record_type.clone(),
+                    subrecord_index: sub_idx,
+                    len_a: sub_a.len(),
+                    len_b: sub_b.len(),
+                });
+            }
+
+            if sub_a != sub_b {
+                let (offset, byte_a, byte_b) = first_byte_diff(sub_a, sub_b);
+                issues.push(DiffIssue::PcbLibSubrecordMismatch {
+                    path: path.to_owned(),
+                    record_index: idx,
+                    record_type: record_type.clone(),
+                    subrecord_index: sub_idx,
+                    offset,
+                    byte_a,
+                    byte_b,
+                });
+            }
+        }
+    }
 }
 
 fn compare_blocks(
