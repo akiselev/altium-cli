@@ -1,7 +1,6 @@
 use altium_format_types::constants::parsing::{BLOCK_SIZE_MASK, PAD_SUBRECORD_COUNT};
 use altium_format_types::{
-    BarcodeKind, BarcodeRenderMode, Coord, CoordPoint, PcbFlags, PcbObjectId, TextKind, V6Layer,
-    V7Layer,
+    BarcodeKind, BarcodeRenderMode, Coord, CoordPoint, PcbObjectId, TextKind, V6Layer, V7Layer,
 };
 
 use crate::binary_io::BinaryReader;
@@ -10,20 +9,10 @@ use crate::pcblib::primitives::pad::parse_pad;
 use crate::pcblib::primitives::region::parse_region;
 use crate::pcblib::primitives::via::parse_via;
 use crate::pcblib::{PcbComponentBody, PcbPad, PcbRegion, PcbVia};
+pub(crate) use crate::pcblib::PcbPrimitiveCommon;
 use crate::{AltiumFormatError, Result};
 
 use super::records::PrimitiveSectionKind;
-
-#[derive(Debug)]
-pub(crate) struct PcbPrimitiveCommon {
-    pub(crate) layer: V6Layer,
-    pub(crate) flags: PcbFlags,
-    pub(crate) net_index: i16,
-    pub(crate) unknown_1: i16,
-    pub(crate) component_index: i16,
-    pub(crate) polygon_index: i16,
-    pub(crate) unknown_2: i16,
-}
 
 #[derive(Debug)]
 pub(crate) struct PcbArc {
@@ -220,22 +209,23 @@ fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8]) -> Result<Pcb
 }
 
 fn parse_common_header(reader: &mut BinaryReader) -> Result<PcbPrimitiveCommon> {
+    use altium_format_types::PcbFlags;
     let layer = V6Layer::try_from(reader.read_u8()?)?;
     let flags = PcbFlags::new(reader.read_u16_le()?);
-    let net_index = reader.read_i16_le()?;
-    let unknown_1 = reader.read_i16_le()?;
-    let component_index = reader.read_i16_le()?;
-    let polygon_index = reader.read_i16_le()?;
-    let unknown_2 = reader.read_i16_le()?;
+    let net_index = reader.read_u16_le()?;
+    let polygon_index = reader.read_u16_le()?;
+    let component_index = reader.read_u16_le()?;
+    let coordinate_index = reader.read_u16_le()?;
+    let dimension_index = reader.read_u16_le()?;
 
     Ok(PcbPrimitiveCommon {
         layer,
         flags,
         net_index,
-        unknown_1,
-        component_index,
         polygon_index,
-        unknown_2,
+        component_index,
+        coordinate_index,
+        dimension_index,
     })
 }
 

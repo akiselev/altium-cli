@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
-use altium_format_types::pcb::{PolygonReliefAngle, TentingMode};
+use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::{
-    Color, Coord, CoordPoint, DaisyChainStyle, MaskExpansionMode, PadShape, PadStackMode,
+    Color, Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode,
     PcbFlags, PcbObjectId, PlaneConnectionStyle, RegionKind, TCacheState, TextAutoposition,
     TextKind, V6Layer, V7Layer, ViaStructureType,
 };
@@ -69,17 +69,18 @@ pub(crate) struct PcbFootprint {
     pub(crate) custom_shapes: Vec<CustomShapeEntry>,
     pub(crate) custom_mask_shapes: Vec<CustomMaskShapeEntry>,
     pub(crate) corner_radius_chamfer: Vec<CornerRadiusChamferEntry>,
+    pub(crate) shared_unions: Vec<crate::shared_union::SharedUnionEntry>,
 }
 
 #[derive(Debug)]
 pub(crate) struct PcbPrimitiveCommon {
     pub(crate) layer: V6Layer,
-    pub(crate) pad_byte: u8,
     pub(crate) flags: PcbFlags,
-    pub(crate) net_index: i32,
+    pub(crate) net_index: u16,
     pub(crate) polygon_index: u16,
     pub(crate) component_index: u16,
-    pub(crate) unknown: u8,
+    pub(crate) coordinate_index: u16,
+    pub(crate) dimension_index: u16,
 }
 
 pub(crate) enum PcbPrimitive {
@@ -148,14 +149,18 @@ pub(crate) struct PcbVia {
     pub(crate) relief_air_gap_valid: TCacheState,
     pub(crate) power_plane_relief_expansion_valid: TCacheState,
     pub(crate) paste_mask_expansion_valid: TCacheState,
-    pub(crate) solder_mask_expansion_manual: bool,
     pub(crate) solder_mask_expansion_valid: TCacheState,
     pub(crate) power_plane_clearance_valid: TCacheState,
     pub(crate) planes_valid: TCacheState,
     pub(crate) plane_connection_style: PlaneConnectionStyle,
-    pub(crate) solder_mask_expansion_mode: MaskExpansionMode,
-    pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
-    pub(crate) tenting_mode: TentingMode,
+    /// Packed 4×2-bit cache/mode flags for solder mask (bits [1:0], [3:2], [5:4], [7:6]).
+    pub(crate) solder_mask_cache_flags: u8,
+    /// Solder mask expansion mode/count (observed: 0-7).
+    pub(crate) solder_mask_expansion_mode: u8,
+    /// Packed 4×2-bit cache/mode flags for paste mask (same encoding as solder_mask).
+    pub(crate) paste_mask_cache_flags: u8,
+    /// Paste mask expansion mode/count (observed: 0 in most files, up to 7 in some).
+    pub(crate) paste_mask_expansion_mode: u8,
     pub(crate) via_mode: u8,
     pub(crate) diameters_per_layer: [Coord; 32],
     // Additional extended (offset 203+)
@@ -180,16 +185,13 @@ pub(crate) struct PcbVia {
     pub(crate) hole_positive_tolerance: Option<Coord>,
     pub(crate) hole_negative_tolerance: Option<Coord>,
     pub(crate) template_link_flags: Option<u8>,
-    // IPC-4761 via structure block (21 bytes, ~2022+).
-    // Binary layout: i32 + i32 + i32 + f64 + TViaStructureType(u8) = 21 bytes.
-    // Related C# interfaces: IHoleSizeInfo, IPCB_ViaStructureSupport.
-    // The f64 is confirmed as counter_hole_angle (IHoleSizeInfo.GetCounterHoleAngle() -> double).
-    // One i32 is likely counter_hole_depth (IHoleSizeInfo.GetCounterHoleDepth() -> int).
-    // Exact i32 field ordering unknown — Delphi save/load code not yet decompiled.
-    pub(crate) ipc4761_field_0: Option<i32>,
-    pub(crate) ipc4761_field_1: Option<i32>,
-    pub(crate) ipc4761_field_2: Option<i32>,
-    pub(crate) ipc4761_counter_hole_angle: Option<f64>,
+    // Section 4: Per-layer pad stack entries (stride varies: 23, 29, 30).
+    // Present in files with local/external via stacks. count=0 is common for simple vias.
+    pub(crate) pad_layer_entries: Vec<PcbViaPadLayerEntry>,
+    pub(crate) pad_layer_stride: u32,
+    // Section 5: IPC-4761 via structure (9 bytes payload, ~2022+).
+    // Related C# interfaces: IHoleSizeInfo, IPCB_ViaStructureSupport, IPCB_CounterHoleParams.
+    pub(crate) counter_hole_angle: Option<f64>,
     pub(crate) via_structure_type: Option<ViaStructureType>,
     pub(crate) layer_diameter_overrides: Vec<PcbViaSection2Entry>,
     pub(crate) unique_id: Option<String>,
@@ -202,6 +204,34 @@ pub(crate) struct PcbViaSection2Entry {
     pub(crate) rule_index: u16,
     pub(crate) flags: u8,
     pub(crate) mode: u8,
+}
+
+/// Per-layer pad stack entry for via Section 4.
+/// Stride 30 (confirmed layout): layer_id + shape + mode + solder_mask_exp + paste_mask_exp
+///   + plane_conn_style + relief_entries + reserved + conductor_width + reserved + air_gap + reserved.
+/// Strides 23/24/29 are older versions with fewer fields.
+#[derive(Debug)]
+pub(crate) struct PcbViaPadLayerEntry {
+    /// TV7_Layer identifier (u32, e.g. 1=Top, 32=Bottom).
+    pub(crate) layer_id: u32,
+    /// Pad shape on this layer (typically 1=Round).
+    pub(crate) shape: u8,
+    /// Mode byte (typically 1).
+    pub(crate) mode: u8,
+    /// Solder mask expansion for this layer (Coord).
+    pub(crate) solder_mask_expansion: Coord,
+    /// Paste mask expansion (stride >= 30 only).
+    pub(crate) paste_mask_expansion: Option<Coord>,
+    /// Plane connection style on this layer (TPlaneConnectionStyle).
+    pub(crate) plane_connection_style: u8,
+    /// Number of thermal relief conductors (i16 in stride 30, i32 in stride 23/24).
+    pub(crate) relief_entries: i32,
+    /// Thermal relief conductor width (stride >= 29 only).
+    pub(crate) relief_conductor_width: Option<Coord>,
+    /// Thermal relief air gap (stride >= 29 only).
+    pub(crate) relief_air_gap: Option<Coord>,
+    /// Trailing bytes for stride 23/24 (packed as u32, lowest byte first).
+    pub(crate) trailing_flags: u32,
 }
 
 pub(crate) struct PcbFill {
@@ -908,6 +938,12 @@ impl PcbLib {
                 let data = crate::pcblib::custom_shapes::serialize_corner_radius_chamfer(&fp.corner_radius_chamfer);
                 cfb.write_stream(&format!("{storage}/CornerRadiusChamfer"), &data)?;
             }
+
+            // SharedUnion: union data for merged primitives.
+            if !fp.shared_unions.is_empty() {
+                let data = crate::shared_union::serialize_shared_union_stream(&fp.shared_unions);
+                cfb.write_stream(&format!("{storage}/SharedUnion"), &data)?;
+            }
         }
 
         if !self.section_keys.is_empty() {
@@ -1166,12 +1202,12 @@ fn serialize_primitive(prim: &PcbPrimitive) -> Result<(PcbObjectId, Vec<Vec<u8>>
 
 fn write_primitive_common(w: &mut BinaryWriter, c: &PcbPrimitiveCommon) {
     w.write_u8(c.layer as u8);
-    w.write_u8(c.pad_byte);
     w.write_u16_le(c.flags.raw());
-    w.write_i32_le(c.net_index);
+    w.write_u16_le(c.net_index);
     w.write_u16_le(c.polygon_index);
     w.write_u16_le(c.component_index);
-    w.write_u8(c.unknown);
+    w.write_u16_le(c.coordinate_index);
+    w.write_u16_le(c.dimension_index);
 }
 
 fn serialize_arc(p: &PcbArc) -> Vec<u8> {
@@ -1531,6 +1567,177 @@ fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
 }
 
 
+/// Check that a Coord used as a non-negative dimension is in `[0, MAX_REASONABLE]`.
+fn check_dimension(
+    value: Coord,
+    primitive: &str,
+    index: usize,
+    field: &str,
+    footprint: &str,
+) -> Result<()> {
+    if value.to_internal() < 0 || value > Coord::MAX_REASONABLE_DIMENSION {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("{primitive}[{index}].{field}"),
+            detail: format!(
+                "footprint {:?}: dimension {} out of range [0, {}]",
+                footprint,
+                value,
+                Coord::MAX_REASONABLE_DIMENSION,
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Check that a Coord used as an expansion (can be negative) has `|value| <= MAX_REASONABLE`.
+fn check_expansion(
+    value: Coord,
+    primitive: &str,
+    index: usize,
+    field: &str,
+    footprint: &str,
+) -> Result<()> {
+    if value.abs() > Coord::MAX_REASONABLE_DIMENSION {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("{primitive}[{index}].{field}"),
+            detail: format!(
+                "footprint {:?}: expansion {} out of range [-{}, {}]",
+                footprint,
+                value,
+                Coord::MAX_REASONABLE_DIMENSION,
+                Coord::MAX_REASONABLE_DIMENSION,
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_via_coords(via: &PcbVia, index: usize, footprint: &str) -> Result<()> {
+    check_dimension(via.diameter, "Via", index, "diameter", footprint)?;
+    check_dimension(via.hole_size, "Via", index, "hole_size", footprint)?;
+    check_expansion(via.thermal_relief_air_gap, "Via", index, "thermal_relief_air_gap", footprint)?;
+    check_expansion(via.thermal_relief_conductor_width, "Via", index, "thermal_relief_conductor_width", footprint)?;
+    check_expansion(via.power_plane_relief_expansion, "Via", index, "power_plane_relief_expansion", footprint)?;
+    check_expansion(via.power_plane_clearance, "Via", index, "power_plane_clearance", footprint)?;
+    check_expansion(via.paste_mask_expansion, "Via", index, "paste_mask_expansion", footprint)?;
+    check_expansion(via.solder_mask_expansion_front, "Via", index, "solder_mask_expansion_front", footprint)?;
+    check_expansion(via.solder_mask_expansion_back, "Via", index, "solder_mask_expansion_back", footprint)?;
+    for (i, d) in via.diameters_per_layer.iter().enumerate() {
+        check_dimension(*d, "Via", index, &format!("diameters_per_layer[{i}]"), footprint)?;
+    }
+    check_expansion(via.extension_coord_209, "Via", index, "extension_coord_209", footprint)?;
+    check_expansion(via.extension_coord_213, "Via", index, "extension_coord_213", footprint)?;
+    check_expansion(via.extension_coord_217, "Via", index, "extension_coord_217", footprint)?;
+    check_expansion(via.extension_coord_221, "Via", index, "extension_coord_221", footprint)?;
+    check_expansion(via.extension_coord_225, "Via", index, "extension_coord_225", footprint)?;
+    check_expansion(via.extension_coord_229, "Via", index, "extension_coord_229", footprint)?;
+    check_expansion(via.extension_coord_233, "Via", index, "extension_coord_233", footprint)?;
+    check_expansion(via.extension_coord_237, "Via", index, "extension_coord_237", footprint)?;
+    if let Some(tol) = via.hole_positive_tolerance {
+        check_expansion(tol, "Via", index, "hole_positive_tolerance", footprint)?;
+    }
+    if let Some(tol) = via.hole_negative_tolerance {
+        check_expansion(tol, "Via", index, "hole_negative_tolerance", footprint)?;
+    }
+    // Semantic: diameter >= hole_size when both > 0
+    if via.diameter > Coord::ZERO && via.hole_size > Coord::ZERO && via.diameter < via.hole_size {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("Via[{index}].diameter"),
+            detail: format!(
+                "footprint {:?}: diameter ({}) < hole_size ({})",
+                footprint, via.diameter, via.hole_size,
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_pad_coords(pad: &PcbPad, index: usize, footprint: &str) -> Result<()> {
+    check_dimension(pad.size_top.x, "Pad", index, "size_top.x", footprint)?;
+    check_dimension(pad.size_top.y, "Pad", index, "size_top.y", footprint)?;
+    check_dimension(pad.size_mid.x, "Pad", index, "size_mid.x", footprint)?;
+    check_dimension(pad.size_mid.y, "Pad", index, "size_mid.y", footprint)?;
+    check_dimension(pad.size_bot.x, "Pad", index, "size_bot.x", footprint)?;
+    check_dimension(pad.size_bot.y, "Pad", index, "size_bot.y", footprint)?;
+    check_dimension(pad.hole_size, "Pad", index, "hole_size", footprint)?;
+    check_expansion(pad.cache.relief_conductor_width, "Pad", index, "cache.relief_conductor_width", footprint)?;
+    check_expansion(pad.cache.relief_air_gap, "Pad", index, "cache.relief_air_gap", footprint)?;
+    check_expansion(pad.cache.power_plane_relief_expansion, "Pad", index, "cache.power_plane_relief_expansion", footprint)?;
+    check_expansion(pad.cache.power_plane_clearance, "Pad", index, "cache.power_plane_clearance", footprint)?;
+    check_expansion(pad.cache.paste_mask_expansion, "Pad", index, "cache.paste_mask_expansion", footprint)?;
+    check_expansion(pad.cache.solder_mask_expansion, "Pad", index, "cache.solder_mask_expansion", footprint)?;
+    check_dimension(pad.pin_package_length, "Pad", index, "pin_package_length", footprint)?;
+    Ok(())
+}
+
+fn validate_arc_coords(arc: &PcbArc, index: usize, footprint: &str) -> Result<()> {
+    check_dimension(arc.radius, "Arc", index, "radius", footprint)?;
+    check_dimension(arc.width, "Arc", index, "width", footprint)?;
+    if !arc.start_angle.is_finite() || arc.start_angle < 0.0 || arc.start_angle > 360.0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("Arc[{index}].start_angle"),
+            detail: format!(
+                "footprint {:?}: start_angle {} not in [0, 360]",
+                footprint, arc.start_angle,
+            ),
+        });
+    }
+    if !arc.end_angle.is_finite() || arc.end_angle < 0.0 || arc.end_angle > 360.0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("Arc[{index}].end_angle"),
+            detail: format!(
+                "footprint {:?}: end_angle {} not in [0, 360]",
+                footprint, arc.end_angle,
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_track_coords(track: &PcbTrack, index: usize, footprint: &str) -> Result<()> {
+    check_dimension(track.width, "Track", index, "width", footprint)?;
+    Ok(())
+}
+
+fn validate_text_coords(text: &PcbText, index: usize, footprint: &str) -> Result<()> {
+    check_dimension(text.height, "Text", index, "height", footprint)?;
+    check_dimension(text.stroke_width, "Text", index, "stroke_width", footprint)?;
+    Ok(())
+}
+
+fn validate_region_coords(region: &PcbRegion, index: usize, footprint: &str) -> Result<()> {
+    check_dimension(region.arc_resolution, "Region", index, "arc_resolution", footprint)?;
+    check_expansion(region.cavity_height, "Region", index, "cavity_height", footprint)?;
+    Ok(())
+}
+
+fn validate_component_body_coords(body: &PcbComponentBody, index: usize, footprint: &str) -> Result<()> {
+    check_expansion(body.standoff_height, "ComponentBody", index, "standoff_height", footprint)?;
+    check_expansion(body.overall_height, "ComponentBody", index, "overall_height", footprint)?;
+    check_dimension(body.arc_resolution, "ComponentBody", index, "arc_resolution", footprint)?;
+    check_expansion(body.cavity_height, "ComponentBody", index, "cavity_height", footprint)?;
+    Ok(())
+}
+
+fn validate_pcblib_primitive_coords(lib: &PcbLib) -> Result<()> {
+    for fp in &lib.footprints {
+        let name = &fp.display_name;
+        for (idx, prim) in fp.primitives.iter().enumerate() {
+            match prim {
+                PcbPrimitive::Via(v) => validate_via_coords(v, idx, name)?,
+                PcbPrimitive::Pad(p) => validate_pad_coords(p, idx, name)?,
+                PcbPrimitive::Arc(a) => validate_arc_coords(a, idx, name)?,
+                PcbPrimitive::Track(t) => validate_track_coords(t, idx, name)?,
+                PcbPrimitive::Text(t) => validate_text_coords(t, idx, name)?,
+                PcbPrimitive::Region(r) => validate_region_coords(r, idx, name)?,
+                PcbPrimitive::ComponentBody(b) => validate_component_body_coords(b, idx, name)?,
+                PcbPrimitive::Fill(_) => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
     if lib.header.version_string != PCB_LIBRARY_BINARY_HEADER_V6 {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -1603,6 +1810,8 @@ fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
     // Some real-world libraries include stale TOC entries; tolerate those as
     // long as all loaded footprints are internally consistent.
     let _ = footprint_names;
+
+    validate_pcblib_primitive_coords(lib)?;
 
     Ok(())
 }

@@ -359,12 +359,12 @@ mod tests {
 
     fn write_common_header(w: &mut BinaryWriter) {
         w.write_u8(57); // layer = Mechanical1
-        w.write_u8(0x0C); // pad_byte
-        w.write_u16_le(0xFF00); // flags
-        w.write_i32_le(-1); // net_index
-        w.write_u16_le(0xFFFF); // polygon_index
-        w.write_u16_le(0xFFFF); // component_index
-        w.write_u8(0xFF); // unknown
+        w.write_u16_le(0x000C); // flags
+        w.write_u16_le(0xFFFF); // net_index = none
+        w.write_u16_le(0xFFFF); // polygon_index = none
+        w.write_u16_le(0xFFFF); // component_index = none
+        w.write_u16_le(0xFFFF); // coordinate_index = none
+        w.write_u16_le(0xFFFF); // dimension_index = none
     }
 
     fn make_param_string(model_id: &str, standoff_mil: &str) -> Vec<u8> {

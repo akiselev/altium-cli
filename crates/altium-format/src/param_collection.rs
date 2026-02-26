@@ -13,6 +13,7 @@ use indexmap::IndexMap;
 use crate::param_value::{FromParamValue, ToParamValue};
 use crate::{AltiumFormatError, Result};
 
+#[derive(Clone)]
 pub(crate) struct ParameterCollection {
     // Keys stored in original case for round-trip fidelity; lookups are case-insensitive.
     // IndexMap preserves insertion order for deterministic serialization.

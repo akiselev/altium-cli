@@ -4,6 +4,7 @@ pub(crate) mod records;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use altium_format_types::Coord;
 use altium_format_types::constants::file_headers::{
     PCB_DOC_BINARY_HEADER_V6,
 };
@@ -68,11 +69,21 @@ pub(crate) struct LayerKindMappingSectionData {
     pub(crate) mapping: PcbLayerKindMapping,
 }
 
+pub(crate) struct SharedUnionsSectionData {
+    pub(crate) entries: Vec<crate::shared_union::SharedUnionEntry>,
+}
+
+pub(crate) struct UnionRelationsSectionData {
+    pub(crate) records: Vec<records::UnionRelationRecord>,
+}
+
 pub(crate) enum PcbDocSection {
     Primitive(PrimitiveSectionData),
     Parameter(ParamSectionData),
     Binary(BinarySectionData),
     UnionNames(UnionNamesSectionData),
+    SharedUnions(SharedUnionsSectionData),
+    UnionRelations(UnionRelationsSectionData),
     PrefixedParameter(PrefixedParamSectionData),
     WideStrings(WideStringsSectionData),
     Models(ModelsSectionData),
@@ -229,6 +240,32 @@ impl PcbDoc {
                 continue;
             }
 
+            if storage_name == "SharedUnions" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let _header_count = parse_pcb_section_header(&header_data)?;
+                let entries = crate::shared_union::parse_shared_union_stream(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::SharedUnions(SharedUnionsSectionData {
+                    entries,
+                }));
+                continue;
+            }
+
+            if storage_name == "UnionRelations" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let _header_count = parse_pcb_section_header(&header_data)?;
+                let records = records::parse_union_relation_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::UnionRelations(UnionRelationsSectionData {
+                    records,
+                }));
+                continue;
+            }
+
             if let Some(kind) = records::BinaryLenSectionKind::from_storage_name(&storage_name) {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
@@ -326,6 +363,158 @@ impl PcbDoc {
     }
 }
 
+/// Check that a Coord used as a non-negative dimension is in `[0, MAX_REASONABLE]`.
+fn check_dimension(
+    value: Coord,
+    primitive: &str,
+    index: usize,
+    field: &str,
+    section: &str,
+) -> Result<()> {
+    if value.to_internal() < 0 || value > Coord::MAX_REASONABLE_DIMENSION {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("{primitive}[{index}].{field}"),
+            detail: format!(
+                "section {:?}: dimension {} out of range [0, {}]",
+                section,
+                value,
+                Coord::MAX_REASONABLE_DIMENSION,
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Check that a Coord used as an expansion (can be negative) has `|value| <= MAX_REASONABLE`.
+fn check_expansion(
+    value: Coord,
+    primitive: &str,
+    index: usize,
+    field: &str,
+    section: &str,
+) -> Result<()> {
+    if value.abs() > Coord::MAX_REASONABLE_DIMENSION {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("{primitive}[{index}].{field}"),
+            detail: format!(
+                "section {:?}: expansion {} out of range [-{}, {}]",
+                section,
+                value,
+                Coord::MAX_REASONABLE_DIMENSION,
+                Coord::MAX_REASONABLE_DIMENSION,
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
+    for section in &doc.sections {
+        if let PcbDocSection::Primitive(prim_section) = section {
+            let section_name = format!("{:?}", prim_section.kind);
+            for (idx, rec) in prim_section.records.iter().enumerate() {
+                match &rec.primitive {
+                    primitives::PcbPrimitive::Via(v) => {
+                        check_dimension(v.diameter, "Via", idx, "diameter", &section_name)?;
+                        check_dimension(v.hole_size, "Via", idx, "hole_size", &section_name)?;
+                        check_expansion(v.thermal_relief_air_gap, "Via", idx, "thermal_relief_air_gap", &section_name)?;
+                        check_expansion(v.thermal_relief_conductor_width, "Via", idx, "thermal_relief_conductor_width", &section_name)?;
+                        check_expansion(v.power_plane_relief_expansion, "Via", idx, "power_plane_relief_expansion", &section_name)?;
+                        check_expansion(v.power_plane_clearance, "Via", idx, "power_plane_clearance", &section_name)?;
+                        check_expansion(v.paste_mask_expansion, "Via", idx, "paste_mask_expansion", &section_name)?;
+                        check_expansion(v.solder_mask_expansion_front, "Via", idx, "solder_mask_expansion_front", &section_name)?;
+                        check_expansion(v.solder_mask_expansion_back, "Via", idx, "solder_mask_expansion_back", &section_name)?;
+                        for (i, d) in v.diameters_per_layer.iter().enumerate() {
+                            check_dimension(*d, "Via", idx, &format!("diameters_per_layer[{i}]"), &section_name)?;
+                        }
+                        check_expansion(v.extension_coord_209, "Via", idx, "extension_coord_209", &section_name)?;
+                        check_expansion(v.extension_coord_213, "Via", idx, "extension_coord_213", &section_name)?;
+                        check_expansion(v.extension_coord_217, "Via", idx, "extension_coord_217", &section_name)?;
+                        check_expansion(v.extension_coord_221, "Via", idx, "extension_coord_221", &section_name)?;
+                        check_expansion(v.extension_coord_225, "Via", idx, "extension_coord_225", &section_name)?;
+                        check_expansion(v.extension_coord_229, "Via", idx, "extension_coord_229", &section_name)?;
+                        check_expansion(v.extension_coord_233, "Via", idx, "extension_coord_233", &section_name)?;
+                        check_expansion(v.extension_coord_237, "Via", idx, "extension_coord_237", &section_name)?;
+                        if let Some(tol) = v.hole_positive_tolerance {
+                            check_expansion(tol, "Via", idx, "hole_positive_tolerance", &section_name)?;
+                        }
+                        if let Some(tol) = v.hole_negative_tolerance {
+                            check_expansion(tol, "Via", idx, "hole_negative_tolerance", &section_name)?;
+                        }
+                        // Semantic: diameter >= hole_size when both > 0
+                        if v.diameter > Coord::ZERO && v.hole_size > Coord::ZERO && v.diameter < v.hole_size {
+                            return Err(AltiumFormatError::InvalidParamValue {
+                                key: format!("Via[{idx}].diameter"),
+                                detail: format!(
+                                    "section {:?}: diameter ({}) < hole_size ({})",
+                                    section_name, v.diameter, v.hole_size,
+                                ),
+                            });
+                        }
+                    }
+                    primitives::PcbPrimitive::Pad(p) => {
+                        check_dimension(p.size_top.x, "Pad", idx, "size_top.x", &section_name)?;
+                        check_dimension(p.size_top.y, "Pad", idx, "size_top.y", &section_name)?;
+                        check_dimension(p.size_mid.x, "Pad", idx, "size_mid.x", &section_name)?;
+                        check_dimension(p.size_mid.y, "Pad", idx, "size_mid.y", &section_name)?;
+                        check_dimension(p.size_bot.x, "Pad", idx, "size_bot.x", &section_name)?;
+                        check_dimension(p.size_bot.y, "Pad", idx, "size_bot.y", &section_name)?;
+                        check_dimension(p.hole_size, "Pad", idx, "hole_size", &section_name)?;
+                        check_expansion(p.cache.relief_conductor_width, "Pad", idx, "cache.relief_conductor_width", &section_name)?;
+                        check_expansion(p.cache.relief_air_gap, "Pad", idx, "cache.relief_air_gap", &section_name)?;
+                        check_expansion(p.cache.power_plane_relief_expansion, "Pad", idx, "cache.power_plane_relief_expansion", &section_name)?;
+                        check_expansion(p.cache.power_plane_clearance, "Pad", idx, "cache.power_plane_clearance", &section_name)?;
+                        check_expansion(p.cache.paste_mask_expansion, "Pad", idx, "cache.paste_mask_expansion", &section_name)?;
+                        check_expansion(p.cache.solder_mask_expansion, "Pad", idx, "cache.solder_mask_expansion", &section_name)?;
+                        check_dimension(p.pin_package_length, "Pad", idx, "pin_package_length", &section_name)?;
+                    }
+                    primitives::PcbPrimitive::Arc(a) => {
+                        check_dimension(a.radius, "Arc", idx, "radius", &section_name)?;
+                        check_dimension(a.width, "Arc", idx, "width", &section_name)?;
+                        if !a.start_angle.is_finite() || a.start_angle < 0.0 || a.start_angle > 360.0 {
+                            return Err(AltiumFormatError::InvalidParamValue {
+                                key: format!("Arc[{idx}].start_angle"),
+                                detail: format!(
+                                    "section {:?}: start_angle {} not in [0, 360]",
+                                    section_name, a.start_angle,
+                                ),
+                            });
+                        }
+                        if !a.end_angle.is_finite() || a.end_angle < 0.0 || a.end_angle > 360.0 {
+                            return Err(AltiumFormatError::InvalidParamValue {
+                                key: format!("Arc[{idx}].end_angle"),
+                                detail: format!(
+                                    "section {:?}: end_angle {} not in [0, 360]",
+                                    section_name, a.end_angle,
+                                ),
+                            });
+                        }
+                    }
+                    primitives::PcbPrimitive::Track(t) => {
+                        check_dimension(t.width, "Track", idx, "width", &section_name)?;
+                    }
+                    primitives::PcbPrimitive::Text(t) => {
+                        check_dimension(t.height, "Text", idx, "height", &section_name)?;
+                        check_dimension(t.stroke_width, "Text", idx, "stroke_width", &section_name)?;
+                    }
+                    primitives::PcbPrimitive::Region(r) => {
+                        check_dimension(r.arc_resolution, "Region", idx, "arc_resolution", &section_name)?;
+                        check_expansion(r.cavity_height, "Region", idx, "cavity_height", &section_name)?;
+                    }
+                    primitives::PcbPrimitive::ComponentBody(b) => {
+                        check_expansion(b.standoff_height, "ComponentBody", idx, "standoff_height", &section_name)?;
+                        check_expansion(b.overall_height, "ComponentBody", idx, "overall_height", &section_name)?;
+                        check_dimension(b.arc_resolution, "ComponentBody", idx, "arc_resolution", &section_name)?;
+                        check_expansion(b.cavity_height, "ComponentBody", idx, "cavity_height", &section_name)?;
+                    }
+                    primitives::PcbPrimitive::Fill(_) => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_pcbdoc_invariants(doc: &PcbDoc) -> Result<()> {
     if doc.legacy_header.trim().is_empty() {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -381,6 +570,8 @@ fn validate_pcbdoc_invariants(doc: &PcbDoc) -> Result<()> {
         }
     }
 
+    validate_pcbdoc_primitive_coords(doc)?;
+
     Ok(())
 }
 
@@ -390,6 +581,8 @@ fn section_identity(section: &PcbDocSection) -> String {
         PcbDocSection::Parameter(v) => format!("Parameter::{:?}", v.kind),
         PcbDocSection::Binary(v) => format!("Binary::{:?}", v.kind),
         PcbDocSection::UnionNames(_) => "UnionNames".to_owned(),
+        PcbDocSection::SharedUnions(_) => "SharedUnions".to_owned(),
+        PcbDocSection::UnionRelations(_) => "UnionRelations".to_owned(),
         PcbDocSection::PrefixedParameter(v) => format!("Prefixed::{:?}", v.kind),
         PcbDocSection::WideStrings(_) => "WideStrings6".to_owned(),
         PcbDocSection::Models(_) => "Models".to_owned(),
@@ -425,11 +618,11 @@ fn write_primitive_section(
 fn serialize_common_header(w: &mut BinaryWriter, common: &primitives::PcbPrimitiveCommon) {
     w.write_u8(common.layer as u8);
     w.write_u16_le(common.flags.raw());
-    w.write_i16_le(common.net_index);
-    w.write_i16_le(common.unknown_1);
-    w.write_i16_le(common.component_index);
-    w.write_i16_le(common.polygon_index);
-    w.write_i16_le(common.unknown_2);
+    w.write_u16_le(common.net_index);
+    w.write_u16_le(common.polygon_index);
+    w.write_u16_le(common.component_index);
+    w.write_u16_le(common.coordinate_index);
+    w.write_u16_le(common.dimension_index);
 }
 
 fn serialize_primitive_payload(record: &primitives::ParsedPrimitiveRecord) -> Result<Vec<u8>> {

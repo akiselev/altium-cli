@@ -1,15 +1,12 @@
 use std::collections::HashMap;
 
-use altium_format_types::pcb::TentingMode;
 use altium_format_types::{
-    Coord, CoordPoint, MaskExpansionMode, PcbFlags, PcbObjectId, PlaneConnectionStyle,
-    TCacheState, V6Layer, V7Layer,
+    Coord, CoordPoint, PcbFlags, PcbObjectId, PlaneConnectionStyle, TCacheState, V6Layer, V7Layer,
 };
 use indexmap::IndexMap;
 
 use crate::pcbdoc::primitives::{
-    ParsedPrimitiveRecord, PcbPrimitive as PcbDocPrimitive, PcbPrimitiveCommon as PcbDocCommon,
-    PcbTrack as PcbDocTrack,
+    ParsedPrimitiveRecord, PcbPrimitive as PcbDocPrimitive, PcbTrack as PcbDocTrack,
 };
 use crate::pcbdoc::records::PrimitiveSectionKind;
 use crate::pcbdoc::{PcbDoc, PcbDocSection, PrimitiveSectionData};
@@ -399,14 +396,14 @@ fn ensure_primitive_section(doc: &mut PcbDoc, kind: PrimitiveSectionKind) -> &mu
 fn pcbdoc_add_track(doc: &mut PcbDoc, op: &AddTrackOp) -> Result<OpResult> {
     let layer = parse_layer_name(op.layer.as_deref())?;
     let track = PcbDocTrack {
-        common: PcbDocCommon {
+        common: PcbPrimitiveCommon {
             layer,
             flags: PcbFlags::new(0),
-            net_index: -1,
-            unknown_1: 0,
-            component_index: -1,
-            polygon_index: -1,
-            unknown_2: 0,
+            net_index: 0xFFFF,
+            polygon_index: 0xFFFF,
+            component_index: 0xFFFF,
+            coordinate_index: 0xFFFF,
+            dimension_index: 0xFFFF,
         },
         start: op.start,
         end: op.end,
@@ -480,6 +477,7 @@ fn pcblib_add_footprint(lib: &mut PcbLib, op: &AddFootprintOp) -> Result<OpResul
         custom_shapes: Vec::new(),
         custom_mask_shapes: Vec::new(),
         corner_radius_chamfer: Vec::new(),
+        shared_unions: Vec::new(),
     });
     lib.component_toc.push(PcbLibComponentTocEntry {
         name: op.name.clone(),
@@ -606,12 +604,12 @@ fn pcblib_add_track(lib: &mut PcbLib, op: &AddTrackOp, ctx: &PcbLibExecCtx) -> R
     let prim = PcbPrimitive::Track(PcbTrack {
         common: PcbPrimitiveCommon {
             layer,
-            pad_byte: 0,
             flags: PcbFlags::new(0),
-            net_index: -1,
-            polygon_index: 0,
-            component_index: 0,
-            unknown: 0,
+            net_index: 0xFFFF,
+            polygon_index: 0xFFFF,
+            component_index: 0xFFFF,
+            coordinate_index: 0xFFFF,
+            dimension_index: 0xFFFF,
         },
         start: op.start,
         end: op.end,
@@ -644,12 +642,12 @@ fn pcblib_add_via(lib: &mut PcbLib, op: &AddViaOp, ctx: &PcbLibExecCtx) -> Resul
     let prim = PcbPrimitive::Via(PcbVia {
         common: PcbPrimitiveCommon {
             layer: from_layer,
-            pad_byte: 0,
             flags: PcbFlags::new(0),
-            net_index: -1,
-            polygon_index: 0,
-            component_index: 0,
-            unknown: 0,
+            net_index: 0xFFFF,
+            polygon_index: 0xFFFF,
+            component_index: 0xFFFF,
+            coordinate_index: 0xFFFF,
+            dimension_index: 0xFFFF,
         },
         location: op.at,
         diameter,
@@ -672,14 +670,14 @@ fn pcblib_add_via(lib: &mut PcbLib, op: &AddViaOp, ctx: &PcbLibExecCtx) -> Resul
         relief_air_gap_valid: TCacheState::Invalid,
         power_plane_relief_expansion_valid: TCacheState::Invalid,
         paste_mask_expansion_valid: TCacheState::Invalid,
-        solder_mask_expansion_manual: false,
         solder_mask_expansion_valid: TCacheState::Invalid,
         power_plane_clearance_valid: TCacheState::Invalid,
         planes_valid: TCacheState::Invalid,
         plane_connection_style: PlaneConnectionStyle::NoConnect,
-        solder_mask_expansion_mode: MaskExpansionMode::NoMask,
-        paste_mask_expansion_mode: MaskExpansionMode::NoMask,
-        tenting_mode: TentingMode::None,
+        solder_mask_cache_flags: 0,
+        solder_mask_expansion_mode: 0,
+        paste_mask_cache_flags: 0,
+        paste_mask_expansion_mode: 0,
         via_mode: 0,
         diameters_per_layer: [Coord::ZERO; 32],
         layer_enum_index: 0,
@@ -701,10 +699,9 @@ fn pcblib_add_via(lib: &mut PcbLib, op: &AddViaOp, ctx: &PcbLibExecCtx) -> Resul
         hole_positive_tolerance: None,
         hole_negative_tolerance: None,
         template_link_flags: None,
-        ipc4761_field_0: None,
-        ipc4761_field_1: None,
-        ipc4761_field_2: None,
-        ipc4761_counter_hole_angle: None,
+        pad_layer_entries: Vec::new(),
+        pad_layer_stride: 0,
+        counter_hole_angle: None,
         via_structure_type: None,
         layer_diameter_overrides: Vec::new(),
         unique_id: None,

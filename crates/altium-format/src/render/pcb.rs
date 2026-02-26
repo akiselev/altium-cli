@@ -148,12 +148,12 @@ mod tests {
     fn make_common() -> PcbPrimitiveCommon {
         PcbPrimitiveCommon {
             layer: V6Layer::TopLayer,
-            pad_byte: 0,
             flags: PcbFlags::new(0),
-            net_index: -1,
-            polygon_index: 0,
-            component_index: 0,
-            unknown: 0,
+            net_index: 0xFFFF,
+            polygon_index: 0xFFFF,
+            component_index: 0xFFFF,
+            coordinate_index: 0xFFFF,
+            dimension_index: 0xFFFF,
         }
     }
 

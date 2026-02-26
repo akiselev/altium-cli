@@ -75,13 +75,13 @@ mod tests {
     use altium_format_types::{Coord, CoordPoint};
 
     fn write_common_header(w: &mut BinaryWriter) {
-        w.write_u8(1);
-        w.write_u8(0);
-        w.write_u16_le(0);
-        w.write_i32_le(-1);
-        w.write_u16_le(0xFFFF);
-        w.write_u16_le(0);
-        w.write_u8(0);
+        w.write_u8(1); // layer = TopLayer
+        w.write_u16_le(0x000C); // flags
+        w.write_u16_le(0xFFFF); // net_index = none
+        w.write_u16_le(0xFFFF); // polygon_index = none
+        w.write_u16_le(0xFFFF); // component_index = none
+        w.write_u16_le(0xFFFF); // coordinate_index = none
+        w.write_u16_le(0xFFFF); // dimension_index = none
     }
 
     fn make_track_core(w: &mut BinaryWriter) {

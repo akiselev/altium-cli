@@ -60,8 +60,6 @@ pub(crate) enum ParamSectionKind {
     PinPairsSection,
     SignalClasses,
     SmartUnions,
-    UnionNames,
-    UnionRelations,
     WaivedViolations,
     AdvancedPlacerOptions6,
     AdvancedRouterOptions6,
@@ -94,8 +92,6 @@ impl ParamSectionKind {
             "PinPairsSection" => Some(Self::PinPairsSection),
             "SignalClasses" => Some(Self::SignalClasses),
             "SmartUnions" => Some(Self::SmartUnions),
-            "UnionNames" => Some(Self::UnionNames),
-            "UnionRelations" => Some(Self::UnionRelations),
             "WaivedViolations" => Some(Self::WaivedViolations),
             "Advanced Placer Options6" => Some(Self::AdvancedPlacerOptions6),
             "Advanced Router Options6" => Some(Self::AdvancedRouterOptions6),
@@ -403,6 +399,27 @@ pub(crate) fn parse_union_name_records(data: &[u8]) -> Result<Vec<UnionNameRecor
         });
     }
 
+    reader.assert_exhausted()?;
+    Ok(out)
+}
+
+pub(crate) struct UnionRelationRecord {
+    pub(crate) parent_id: i32,
+    pub(crate) child_id: i32,
+}
+
+/// Parses UnionRelations Data stream: binary i32 pairs (parent_id, child_id) until exhausted.
+pub(crate) fn parse_union_relation_records(data: &[u8]) -> Result<Vec<UnionRelationRecord>> {
+    let mut reader = BinaryReader::new(data);
+    let mut out = Vec::new();
+    while reader.remaining() > 0 {
+        let parent_id = reader.read_i32_le()?;
+        let child_id = reader.read_i32_le()?;
+        out.push(UnionRelationRecord {
+            parent_id,
+            child_id,
+        });
+    }
     reader.assert_exhausted()?;
     Ok(out)
 }

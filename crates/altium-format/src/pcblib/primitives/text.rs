@@ -257,12 +257,12 @@ mod tests {
 
     fn write_common_header(w: &mut BinaryWriter) {
         w.write_u8(33); // layer = TopOverlay
-        w.write_u8(0x0c); // pad_byte
-        w.write_u16_le(0); // flags
-        w.write_i32_le(-1); // net_index
-        w.write_u16_le(0xFFFF); // polygon_index
-        w.write_u16_le(0xFFFF); // component_index
-        w.write_u8(0); // unknown
+        w.write_u16_le(0x000C); // flags
+        w.write_u16_le(0xFFFF); // net_index = none
+        w.write_u16_le(0xFFFF); // polygon_index = none
+        w.write_u16_le(0xFFFF); // component_index = none
+        w.write_u16_le(0xFFFF); // coordinate_index = none
+        w.write_u16_le(0xFFFF); // dimension_index = none
     }
 
     /// Writes the 225-byte base format of Text subrecord 0.

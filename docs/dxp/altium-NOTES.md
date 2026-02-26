@@ -1421,8 +1421,8 @@ Every binary record starts with this header (from Ghidra decompilation of FUN_01
 | 3 | 2 | u16 | **Net ID** (0xFFFF = none) |
 | 5 | 2 | u16 | **Polygon Index** (0xFFFF = none) |
 | 7 | 2 | u16 | **Component Index** (0xFFFF = none) |
-| 9 | 2 | u16 | **Unknown Ref 4** (0xFFFF = none) |
-| 11 | 2 | u16 | **Unknown Ref 5** (0xFFFF = none) |
+| 9 | 2 | u16 | **Coordinate Index** (0xFFFF = none) |
+| 11 | 2 | u16 | **Dimension Index** (0xFFFF = none) |
 
 **Flags bit field** (offset 1-2, u16):
 | Bit | Mask | Meaning |
@@ -1464,8 +1464,8 @@ Offset  Size  Type   Field
   3     u16   net            # Net index (0xFFFF = none)
   5     u16   polygon        # Parent polygon index (0xFFFF = none)
   7     u16   component      # Component index (0xFFFF = none)
-  9     u16   ref4           # Unknown reference (0xFFFF = none, KiCad skips)
- 11     u16   ref5           # Unknown reference (0xFFFF = none, KiCad skips)
+  9     u16   coordinate_index  # Coordinate index (0xFFFF = none)
+ 11     u16   dimension_index   # Dimension index (0xFFFF = none)
 ```
 
 Note: Via header is slightly different — byte 0 is layer (KiCad skips it), flags1/flags2 at bytes 1-2.

@@ -5,23 +5,21 @@ use crate::binary_io::BinaryReader;
 use crate::pcblib::PcbPrimitiveCommon;
 
 pub(crate) fn parse_common_header(reader: &mut BinaryReader) -> Result<PcbPrimitiveCommon> {
-    let layer_byte = reader.read_u8()?;
-    let layer = V6Layer::try_from(layer_byte)?;
-    let pad_byte = reader.read_u8()?;
-    let flags_raw = reader.read_u16_le()?;
-    let flags = PcbFlags::new(flags_raw);
-    let net_index = reader.read_i32_le()?;
+    let layer = V6Layer::try_from(reader.read_u8()?)?;
+    let flags = PcbFlags::new(reader.read_u16_le()?);
+    let net_index = reader.read_u16_le()?;
     let polygon_index = reader.read_u16_le()?;
     let component_index = reader.read_u16_le()?;
-    let unknown = reader.read_u8()?;
+    let coordinate_index = reader.read_u16_le()?;
+    let dimension_index = reader.read_u16_le()?;
     Ok(PcbPrimitiveCommon {
         layer,
-        pad_byte,
         flags,
         net_index,
         polygon_index,
         component_index,
-        unknown,
+        coordinate_index,
+        dimension_index,
     })
 }
 
@@ -33,21 +31,21 @@ mod tests {
     #[test]
     fn parse_common_header_known_bytes() {
         let mut w = BinaryWriter::new();
-        w.write_u8(1); // layer = TopCopper (V6Layer::TopLayer)
-        w.write_u8(0); // pad_byte
+        w.write_u8(1); // layer = TopLayer
         w.write_u16_le(0x0000); // flags
-        w.write_i32_le(-1); // net_index = -1 (no net)
-        w.write_u16_le(0xFFFF); // polygon_index
-        w.write_u16_le(0x0000); // component_index
-        w.write_u8(0); // unknown
+        w.write_u16_le(0xFFFF); // net_index = none
+        w.write_u16_le(0xFFFF); // polygon_index = none
+        w.write_u16_le(0xFFFF); // component_index = none
+        w.write_u16_le(0xFFFF); // coordinate_index = none
+        w.write_u16_le(0xFFFF); // dimension_index = none
         let data = w.finish();
         let mut reader = BinaryReader::new(&data);
         let common = parse_common_header(&mut reader).unwrap();
         reader.assert_exhausted().unwrap();
-        assert_eq!(common.pad_byte, 0);
-        assert_eq!(common.net_index, -1);
+        assert_eq!(common.net_index, 0xFFFF);
         assert_eq!(common.polygon_index, 0xFFFF);
-        assert_eq!(common.component_index, 0x0000);
-        assert_eq!(common.unknown, 0);
+        assert_eq!(common.component_index, 0xFFFF);
+        assert_eq!(common.coordinate_index, 0xFFFF);
+        assert_eq!(common.dimension_index, 0xFFFF);
     }
 }

@@ -20,6 +20,8 @@ mod pcb_binary_stream;
 mod pcb_file_header;
 #[allow(dead_code)]
 mod prefixed_param_stream;
+#[allow(dead_code)]
+mod shared_union;
 pub mod sch_ops_core;
 pub mod pcb_ops_core;
 #[allow(dead_code)]

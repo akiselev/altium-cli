@@ -1,10 +1,103 @@
-use altium_format_types::pcb::TentingMode;
-use altium_format_types::{Coord, MaskExpansionMode, PlaneConnectionStyle, TCacheState, V6Layer, ViaStructureType};
+use altium_format_types::{Coord, PlaneConnectionStyle, TCacheState, V6Layer, ViaStructureType};
 
 use crate::Result;
 use crate::binary_io::BinaryReader;
 use crate::pcblib::primitives::common::parse_common_header;
-use crate::pcblib::{PcbVia, PcbViaSection2Entry};
+use crate::pcblib::{PcbVia, PcbViaPadLayerEntry, PcbViaSection2Entry};
+
+/// Parses a single per-layer pad stack entry from Section 4.
+///
+/// Stride 30 layout (confirmed from binary analysis across 67K+ entries):
+///   layer(4) + shape(1) + mode(1) + solder_mask_exp(4) + paste_mask_exp(4) +
+///   plane_conn_style(1) + relief_entries(2) + reserved(2) + conductor_width(4) +
+///   reserved(1) + air_gap(4) + reserved(2) = 30 bytes
+///
+/// Strides 23/24/29 are older format versions with fewer fields.
+fn parse_pad_layer_entry(reader: &mut BinaryReader, stride: u32) -> Result<PcbViaPadLayerEntry> {
+    let layer_id = reader.read_u32_le()?;
+    let shape = reader.read_u8()?;
+    let mode = reader.read_u8()?;
+    let solder_mask_expansion = reader.read_coord()?;
+
+    match stride {
+        30 => {
+            let paste_mask_expansion = reader.read_coord()?;
+            let plane_connection_style = reader.read_u8()?;
+            let relief_entries = reader.read_i16_le()?;
+            let _reserved_17 = reader.read_u16_le()?;
+            let relief_conductor_width = reader.read_coord()?;
+            let _reserved_23 = reader.read_u8()?;
+            let relief_air_gap = reader.read_coord()?;
+            let _reserved_28 = reader.read_u16_le()?;
+            Ok(PcbViaPadLayerEntry {
+                layer_id,
+                shape,
+                mode,
+                solder_mask_expansion,
+                paste_mask_expansion: Some(paste_mask_expansion),
+                plane_connection_style,
+                relief_entries: i32::from(relief_entries),
+                relief_conductor_width: Some(relief_conductor_width),
+                relief_air_gap: Some(relief_air_gap),
+                trailing_flags: 0,
+            })
+        }
+        29 => {
+            let relief_conductor_width = reader.read_coord()?;
+            let plane_connection_style = reader.read_u8()?;
+            let relief_entries = reader.read_i16_le()?;
+            let _reserved_17 = reader.read_u16_le()?;
+            let reserved_i32 = reader.read_i32_le()?;
+            let _reserved_23 = reader.read_u8()?;
+            let relief_air_gap = reader.read_coord()?;
+            let _reserved_28 = reader.read_u8()?;
+            if reserved_i32 != 0 {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via Section 4 entry (stride 29)".to_owned(),
+                    detail: format!("expected reserved i32 = 0, got {reserved_i32}"),
+                });
+            }
+            Ok(PcbViaPadLayerEntry {
+                layer_id,
+                shape,
+                mode,
+                solder_mask_expansion,
+                paste_mask_expansion: None,
+                plane_connection_style,
+                relief_entries: i32::from(relief_entries),
+                relief_conductor_width: Some(relief_conductor_width),
+                relief_air_gap: Some(relief_air_gap),
+                trailing_flags: 0,
+            })
+        }
+        23 | 24 => {
+            let relief_conductor_width = reader.read_coord()?;
+            let plane_connection_style = reader.read_u8()?;
+            let relief_entries = reader.read_i32_le()?;
+            let trailing_bytes = reader.read_bytes((stride - 19) as usize)?;
+            let mut trailing_flags = 0u32;
+            for (i, &b) in trailing_bytes.iter().enumerate() {
+                trailing_flags |= u32::from(b) << (i * 8);
+            }
+            Ok(PcbViaPadLayerEntry {
+                layer_id,
+                shape,
+                mode,
+                solder_mask_expansion,
+                paste_mask_expansion: None,
+                plane_connection_style,
+                relief_entries,
+                relief_conductor_width: Some(relief_conductor_width),
+                relief_air_gap: None,
+                trailing_flags,
+            })
+        }
+        _ => Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "Via Section 4 entry".to_owned(),
+            detail: format!("unsupported stride {stride}"),
+        }),
+    }
+}
 
 /// Parses a Via primitive from its single PcbLib subrecord.
 ///
@@ -38,14 +131,14 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut power_plane_relief_expansion_valid = TCacheState::Invalid;
     let mut paste_mask_expansion_valid = TCacheState::Invalid;
 
-    let mut solder_mask_expansion_manual = false;
     let mut solder_mask_expansion_valid = TCacheState::Invalid;
     let mut power_plane_clearance_valid = TCacheState::Invalid;
     let mut planes_valid = TCacheState::Invalid;
     let mut plane_connection_style = PlaneConnectionStyle::NoConnect;
-    let mut solder_mask_expansion_mode = MaskExpansionMode::NoMask;
-    let mut paste_mask_expansion_mode = MaskExpansionMode::NoMask;
-    let mut tenting_mode = TentingMode::None;
+    let mut solder_mask_cache_flags: u8 = 0;
+    let mut solder_mask_expansion_mode: u8 = 0;
+    let mut paste_mask_cache_flags: u8 = 0;
+    let mut paste_mask_expansion_mode: u8 = 0;
 
     let mut via_mode: u8 = 0;
     let mut diameters_per_layer = [Coord::ZERO; 32];
@@ -72,10 +165,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut hole_positive_tolerance: Option<Coord> = None;
     let mut hole_negative_tolerance: Option<Coord> = None;
     let mut template_link_flags: Option<u8> = None;
-    let mut ipc4761_field_0: Option<i32> = None;
-    let mut ipc4761_field_1: Option<i32> = None;
-    let mut ipc4761_field_2: Option<i32> = None;
-    let mut ipc4761_counter_hole_angle: Option<f64> = None;
+    let mut pad_layer_entries: Vec<PcbViaPadLayerEntry> = Vec::new();
+    let mut pad_layer_stride: u32 = 0;
+    let mut counter_hole_angle: Option<f64> = None;
     let mut via_structure_type: Option<ViaStructureType> = None;
 
     if reader.remaining() > 0 {
@@ -98,16 +190,20 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         power_plane_relief_expansion_valid = TCacheState::try_from(reader.read_u8()?)?;
         paste_mask_expansion_valid = TCacheState::try_from(reader.read_u8()?)?;
 
-        let manual_byte = reader.read_u8()?;
-        solder_mask_expansion_manual = (manual_byte & 0x02) != 0;
-
         solder_mask_expansion_valid = TCacheState::try_from(reader.read_u8()?)?;
         power_plane_clearance_valid = TCacheState::try_from(reader.read_u8()?)?;
         planes_valid = TCacheState::try_from(reader.read_u8()?)?;
         plane_connection_style = PlaneConnectionStyle::try_from(reader.read_u8()?)?;
-        solder_mask_expansion_mode = MaskExpansionMode::try_from(reader.read_u8()?)?;
-        paste_mask_expansion_mode = MaskExpansionMode::try_from(reader.read_u8()?)?;
-        tenting_mode = TentingMode::try_from(reader.read_u8()?)?;
+
+        // Offsets 70-73: packed cache/mode flags.
+        // Byte 70: solder mask cache flags (packed 4×2-bit fields).
+        // Byte 71: solder mask expansion mode/count (observed: 0-7).
+        // Byte 72: paste mask cache flags (packed 4×2-bit fields).
+        // Byte 73: paste mask expansion mode/count (observed: 0 in all test files).
+        solder_mask_cache_flags = reader.read_u8()?;
+        solder_mask_expansion_mode = reader.read_u8()?;
+        paste_mask_cache_flags = reader.read_u8()?;
+        paste_mask_expansion_mode = reader.read_u8()?;
 
         via_mode = reader.read_u8()?;
         for d in &mut diameters_per_layer {
@@ -152,11 +248,12 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         }
 
         // Via template link block: size-prefixed (4-byte size + payload).
-        // Payload format (42 bytes): version(1) + LibraryID GUID(16) + TemplateID GUID(16)
-        //   + HolePositiveTolerance(4, i32) + HoleNegativeTolerance(4, i32) + flags(1).
-        if reader.remaining() >= 46 {
+        // Core payload (41 bytes): version(1) + LibraryID GUID(16) + TemplateID GUID(16)
+        //   + HolePositiveTolerance(4, i32) + HoleNegativeTolerance(4, i32).
+        // ext_size=42: adds flags(1). ext_size=45: adds flags(1) + 3 unknown bytes.
+        if reader.remaining() >= 45 {
             let ext_size = reader.read_u32_le()? as usize;
-            if ext_size < 42 || reader.remaining() < ext_size {
+            if ext_size < 41 || reader.remaining() < ext_size {
                 return Err(crate::AltiumFormatError::InvalidParamValue {
                     key: "Via template link block".to_owned(),
                     detail: format!("declared size {ext_size} but only {} bytes remain", reader.remaining()),
@@ -172,23 +269,81 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             template_link_template_id = Some(guid2);
             hole_positive_tolerance = Some(Coord::from_internal(ext.read_i32_le()?));
             hole_negative_tolerance = Some(Coord::from_internal(ext.read_i32_le()?));
-            template_link_flags = Some(ext.read_u8()?);
+            if ext.remaining() >= 1 {
+                template_link_flags = Some(ext.read_u8()?);
+            }
+            // ext_size=45 has 3 additional bytes (purpose unknown, skip them).
             if ext.remaining() > 0 {
-                return Err(crate::AltiumFormatError::InvalidParamValue {
-                    key: "Via template link block".to_owned(),
-                    detail: format!("unexpected {} bytes remain after parsing", ext.remaining()),
-                });
+                let _extra = ext.read_bytes(ext.remaining())?;
             }
         }
 
-        // IPC-4761 via structure block (21 bytes): present in newer files (~2022+).
-        // Format: i32(field0) + i32(field1) + i32(field2) + f64(angle) + TViaStructureType(1).
-        if reader.remaining() >= 21 {
-            ipc4761_field_0 = Some(reader.read_i32_le()?);
-            ipc4761_field_1 = Some(reader.read_i32_le()?);
-            ipc4761_field_2 = Some(reader.read_i32_le()?);
-            ipc4761_counter_hole_angle = Some(reader.read_f64_le()?);
-            via_structure_type = Some(ViaStructureType::try_from(reader.read_u8()?)?);
+        // Section 4: Per-layer pad stack entries (stride varies: 23, 29, 30).
+        // Framed as u32 count + u32 stride, followed by count × stride entry bytes.
+        if reader.remaining() >= 8 {
+            let section4_count = reader.read_u32_le()? as usize;
+            pad_layer_stride = reader.read_u32_le()?;
+
+            // Validate stride: known values are 23, 24, 29, 30 (or 0 when count=0).
+            if section4_count > 0
+                && !matches!(pad_layer_stride, 23 | 24 | 29 | 30)
+            {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "via.section4.stride".to_owned(),
+                    detail: format!(
+                        "unexpected Section 4 stride {pad_layer_stride} with count {section4_count}"
+                    ),
+                });
+            }
+
+            for _ in 0..section4_count {
+                pad_layer_entries.push(
+                    parse_pad_layer_entry(&mut reader, pad_layer_stride)?
+                );
+            }
+        }
+
+        // Section 5: IPC-4761 / via structure.
+        // Framed as u32 size + payload. Payload is 9 bytes (f64 angle + u8 via_structure_type)
+        // or 4 bytes in older files (all zeros, no structure type defined).
+        if reader.remaining() >= 4 {
+            let section5_size = reader.read_u32_le()? as usize;
+            if reader.remaining() < section5_size {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via Section 5".to_owned(),
+                    detail: format!(
+                        "declared size {section5_size} but only {} bytes remain",
+                        reader.remaining()
+                    ),
+                });
+            }
+            match section5_size {
+                9 => {
+                    counter_hole_angle = Some(reader.read_f64_le()?);
+                    via_structure_type =
+                        Some(ViaStructureType::try_from(reader.read_u8()?)?);
+                }
+                4 => {
+                    // Older format: 4 bytes, observed as all zeros.
+                    let placeholder = reader.read_u32_le()?;
+                    if placeholder != 0 {
+                        return Err(crate::AltiumFormatError::InvalidParamValue {
+                            key: "Via Section 5 (4-byte)".to_owned(),
+                            detail: format!(
+                                "expected 4 zero bytes, got 0x{placeholder:08x}"
+                            ),
+                        });
+                    }
+                }
+                other => {
+                    return Err(crate::AltiumFormatError::InvalidParamValue {
+                        key: "Via Section 5".to_owned(),
+                        detail: format!(
+                            "unexpected Section 5 payload size {other}, expected 4 or 9"
+                        ),
+                    });
+                }
+            }
         }
 
         if reader.remaining() > 0 {
@@ -225,14 +380,14 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         relief_air_gap_valid,
         power_plane_relief_expansion_valid,
         paste_mask_expansion_valid,
-        solder_mask_expansion_manual,
         solder_mask_expansion_valid,
         power_plane_clearance_valid,
         planes_valid,
         plane_connection_style,
+        solder_mask_cache_flags,
         solder_mask_expansion_mode,
+        paste_mask_cache_flags,
         paste_mask_expansion_mode,
-        tenting_mode,
         via_mode,
         diameters_per_layer,
         layer_enum_index,
@@ -254,10 +409,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         hole_positive_tolerance,
         hole_negative_tolerance,
         template_link_flags,
-        ipc4761_field_0,
-        ipc4761_field_1,
-        ipc4761_field_2,
-        ipc4761_counter_hole_angle,
+        pad_layer_entries,
+        pad_layer_stride,
+        counter_hole_angle,
         via_structure_type,
         layer_diameter_overrides,
         unique_id: None,
@@ -272,13 +426,13 @@ mod tests {
     use altium_format_types::CoordPoint;
 
     fn write_common_header(w: &mut BinaryWriter) {
-        w.write_u8(1);
-        w.write_u8(0);
-        w.write_u16_le(0);
-        w.write_i32_le(-1);
-        w.write_u16_le(0xFFFF);
-        w.write_u16_le(0);
-        w.write_u8(0);
+        w.write_u8(1); // layer = TopLayer
+        w.write_u16_le(0x000C); // flags
+        w.write_u16_le(0xFFFF); // net_index = none
+        w.write_u16_le(0xFFFF); // polygon_index = none
+        w.write_u16_le(0xFFFF); // component_index = none
+        w.write_u16_le(0xFFFF); // coordinate_index = none
+        w.write_u16_le(0xFFFF); // dimension_index = none
     }
 
     #[test]
@@ -358,7 +512,7 @@ mod tests {
         assert_eq!(via.power_plane_clearance.to_internal(), 400);
         assert_eq!(via.paste_mask_expansion.to_internal(), 500);
         assert_eq!(via.solder_mask_expansion_front.to_internal(), 1_000);
-        assert!(via.solder_mask_expansion_manual);
+        assert_eq!(via.solder_mask_expansion_valid, TCacheState::Manual);
         assert!(via.solder_mask_expansion_linked);
         assert_eq!(via.solder_mask_expansion_back.to_internal(), 2_000);
         assert_eq!(via.layer_enum_index, 123);
@@ -468,10 +622,10 @@ mod tests {
 
         let data = w.finish();
         let err = parse_via(&data);
-        assert!(matches!(
-            err,
-            Err(AltiumFormatError::InvalidParamValue { .. })
-        ));
+        assert!(
+            err.is_err(),
+            "expected parse error for via with unmapped sections, but got Ok"
+        );
     }
 
     #[test]

@@ -74,6 +74,7 @@ pub(crate) fn load_footprint(
         custom_shapes: Vec::new(),
         custom_mask_shapes: Vec::new(),
         corner_radius_chamfer: Vec::new(),
+        shared_unions: Vec::new(),
     };
 
     load_sidecars(doc, cfb_key, &mut footprint)
@@ -285,19 +286,13 @@ fn load_sidecars(
         &footprint.corner_radius_chamfer,
     )?;
 
-    // Unsupported sidecars must fail hard until fully implemented.
-    for stream_name in ["SharedUnion"] {
-        let path = format!("/{cfb_key}/{stream_name}");
-        if let Some(data) = doc.read_stream_optional(&path)? {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: stream_name.to_owned(),
-                detail: format!(
-                    "{stream_name} stream exists at {path} ({} bytes); parser not implemented",
-                    data.len()
-                ),
-            });
-        }
-    }
+    // SharedUnion: optional single stream.
+    footprint.shared_unions =
+        match doc.read_stream_optional(&format!("/{cfb_key}/SharedUnion"))? {
+            Some(data) => crate::shared_union::parse_shared_union_stream(&data)
+                .with_context(|| format!("parsing /{cfb_key}/SharedUnion"))?,
+            None => Vec::new(),
+        };
 
     merge_sidecars(&mut footprint.primitives, wide_strings, unique_ids)?;
 
