@@ -18,6 +18,16 @@ impl Coord {
     /// Altium uses 393701.
     pub const ONE_MM: Self = Self(393_701);
 
+    /// Maximum reasonable dimension for a single PCB feature (100 inches = 2,540 mm).
+    ///
+    /// Altium's maximum board size is ~100" x 100". No single feature dimension
+    /// (via diameter, track width, mask expansion) should approach this. Meanwhile,
+    /// binary parsing misalignment produces values near `i32::MAX` (~2.1 billion).
+    /// This threshold catches all garbage while leaving a 2x margin before overflow.
+    ///
+    /// Used by invariant checks to detect binary parsing misalignment.
+    pub const MAX_REASONABLE_DIMENSION: Self = Self(1_000_000_000);
+
     /// Units per mil (the fundamental resolution).
     pub const UNITS_PER_MIL: i32 = 10_000;
     /// DXP base unit for schematic parameter encoding.
