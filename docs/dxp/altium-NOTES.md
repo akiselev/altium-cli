@@ -1514,75 +1514,234 @@ From Ghidra decompilation (FUN_01857610 + FUN_0185dda0):
 
 Total: 60 bytes (0x3c).
 
-### Via Binary Record (330 bytes in AD26, minimum ~30)
+### Via Binary Record (321 bytes typical in AD26, minimum 31)
 
-Header differs from Track/Arc/Fill — byte 0 is skipped (layer), flags at bytes 1-2.
-Uses single subrecord framing: `u8 type(3) + u32 len + data`.
+Uses single subrecord framing: `u8 type(3) + u32 len + payload`.
+Payload is multi-section: Core(246) + Section2 + Section3 + Section4 + Section5.
 
-**Subrecord 1 fields** (from KiCad AVIA6 + Ghidra):
-```
-Offset  Size  Type   Field                  KiCad Name
-  0     1     u8    (skip/layer)            -
-  1     1     u8    flags1                  is_test_fab_top(0x80), is_tent_bottom(0x40),
-                                             is_tent_top(0x20), is_locked(0x04 inverted)
-  2     1     u8    flags2                  is_test_fab_bottom(0x01)
-  3     2     u16   net                     net
-  5     8     -     (skip)                  -
- 13     4     i32   position_x              position.x
- 17     4     i32   position_y              position.y
- 21     4     i32   diameter                diameter
- 25     4     i32   hole_size               holesize
- 29     1     u8    layer_start             layer_start
- 30     1     u8    layer_end               layer_end
-```
+#### Common Header (13 bytes, offset 0-12)
 
-**Extended fields** (if subrecord1 > 74 bytes, from KiCad AVIA6):
-| Offset | Size | Type | KiCad Name |
-|--------|------|------|------------|
-| 31 | 1 | u8 | Unknown |
-| 32 | 4 | i32 | `thermal_relief_airgap` |
-| 36 | 1 | u8 | `thermal_relief_conductorcount` |
-| 37 | 1 | - | Skip |
-| 38 | 4 | i32 | `thermal_relief_conductorwidth` |
-| 42 | 4 | i32 | Unknown (20mil?) |
-| 46 | 4 | i32 | Unknown (20mil?) |
-| 50 | 4 | - | Skip |
-| 54 | 4 | i32 | `soldermask_expansion_front` |
-| 58 | 8 | - | Skip |
-| 66 | 1 | u8 | `soldermask_expansion_manual` (bit 0x02) |
-| 67 | 7 | - | Skip |
-| 74 | 1 | u8 | `viamode` (0=simple, 1=pad-stack) |
-| 75 | 128 | 32×i32 | `diameter_by_layer[32]` |
+Same 13-byte header as all PCB primitives. Tenting state is stored in the flags,
+NOT in separate fields within the extended data.
 
-**Additional extended fields** (if subrecord1 ≥ 246 bytes):
-| Offset | Size | Type | KiCad Name |
-|--------|------|------|------------|
-| 203 | 38 | - | Skip |
-| 241 | 1 | u8 | `soldermask_expansion_linked` (bit 0x01) |
-| 242 | 4 | i32 | `soldermask_expansion_back` |
+| Offset | Size | Type | Field | Notes |
+|--------|------|------|-------|-------|
+| 0 | 1 | u8 | layer | V6Layer (74=MultiLayer for vias) |
+| 1 | 2 | u16 | flags | See flags table below |
+| 3 | 2 | u16 | net_index | 0xFFFF = no net |
+| 5 | 2 | u16 | polygon_index | 0xFFFF = none |
+| 7 | 2 | u16 | component_index | 0xFFFF = none |
+| 9 | 2 | u16 | coordinate_index | 0xFFFF = none |
+| 11 | 2 | u16 | dimension_index | 0xFFFF = none |
 
-**Premium extended fields** (if subrecord1 ≥ 307 bytes, AD26):
-| Offset | Size | Type | KiCad Name |
-|--------|------|------|------------|
-| 246 | 45 | - | Skip |
-| 291 | 4 | i32 | `pos_tolerance` |
-| 295 | 4 | i32 | `neg_tolerance` |
+**Flags byte 1** (offset 1):
+- bit 2 (0x04): is_locked (inverted: 0=locked, 1=unlocked)
+- bit 5 (0x20): is_tent_top
+- bit 6 (0x40): is_tent_bottom
+- bit 7 (0x80): is_test_fab_top
 
-**Via writer architecture** (from Ghidra FUN_0187fa70):
-The Via binary data in the stream consists of multiple sections:
-1. **Core via data**: 0xF6 (246) bytes — serialized by FUN_0185b5a0
-   - Includes common header, position, diameter, hole, layers, per-layer diameters
-   - At offset 0xCB (203): layer enum index
-   - At offset 0xCF (207): start layer
-   - At offset 0xD0 (208): end layer
-   - Per-layer diameters written via large switch (60+ layers)
-2. **Extended entries**: N × 9 bytes (with u32 count + u32 stride=9 headers)
-3. **Additional section**: 0x2A (42) bytes — serialized by FUN_0185d0a0
-4. **Pad layer entries**: M × 0x1E (30) bytes (with u32 count + u32 stride=30 headers)
-5. **Trailing data**: 9 bytes — serialized by FUN_0185d900
+**Flags byte 2** (offset 2):
+- bit 0 (0x01): is_test_fab_bottom
 
-Total length formula: `300 + N*9 + M*30 + 21` (where N=extended entries, M=pad layers)
-For a standard via with no extras: 246 + 0 + 42 + 0 + 9 = 297 bytes (+ length headers)
+#### Core Fields (offset 13-30, legacy 31-byte format)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 13 | 4 | i32 | position_x (Coord) |
+| 17 | 4 | i32 | position_y (Coord) |
+| 21 | 4 | i32 | diameter (Coord) |
+| 25 | 4 | i32 | hole_size (Coord) |
+| 29 | 1 | u8 | from_layer (V6Layer, 1=TopLayer) |
+| 30 | 1 | u8 | to_layer (V6Layer, 32=BottomLayer) |
+
+#### Extended Cache Fields (offset 31-74, present when payload > 31)
+
+These fields correspond to TV6_PadCache values but in a different order (version
+byte, thermal fields, then values, then planes, then 9 cache states, then mode bytes).
+
+| Offset | Size | Type | Field | C# TV6_PadCache equiv |
+|--------|------|------|-------|-----------------------|
+| 31 | 1 | u8 | via_properties_version | (not in cache) |
+| 32 | 4 | i32 | thermal_relief_air_gap (Coord) | ReliefAirGap |
+| 36 | 1 | u8 | thermal_relief_conductor_count | (ReliefEntries is i16 in cache) |
+| 37 | 1 | u8 | thermal_relief_rotation_code | (not in cache) |
+| 38 | 4 | i32 | thermal_relief_conductor_width (Coord) | ReliefConductorWidth |
+| 42 | 4 | i32 | power_plane_relief_expansion (Coord) | PowerPlaneReliefExpansion |
+| 46 | 4 | i32 | power_plane_clearance (Coord) | PowerPlaneClearance |
+| 50 | 4 | i32 | paste_mask_expansion (Coord) | PasteMaskExpansion |
+| 54 | 4 | i32 | solder_mask_expansion_front (Coord) | SolderMaskExpansion |
+| 58 | 2 | u16 | planes | Planes |
+
+**9 Cache States** (offset 60-68, each TCacheState: 0=Invalid, 1=Valid, 2=Manual):
+
+| Offset | Size | Type | Field | TV6_PadCache order |
+|--------|------|------|-------|--------------------|
+| 60 | 1 | u8 | plane_connection_style_valid | PlaneConnectionStyleValid |
+| 61 | 1 | u8 | relief_conductor_width_valid | ReliefConductorWidthValid |
+| 62 | 1 | u8 | relief_entries_valid | ReliefEntriesValid |
+| 63 | 1 | u8 | relief_air_gap_valid | ReliefAirGapValid |
+| 64 | 1 | u8 | power_plane_relief_expansion_valid | PowerPlaneReliefExpansionValid |
+| 65 | 1 | u8 | paste_mask_expansion_valid | PasteMaskExpansionValid |
+| 66 | 1 | u8 | solder_mask_expansion_valid | SolderMaskExpansionValid |
+| 67 | 1 | u8 | power_plane_clearance_valid | PowerPlaneClearanceValid |
+| 68 | 1 | u8 | planes_valid | PlanesValid |
+
+Note: KiCad reads offset 66 as `soldermask_expansion_manual` (bit 0x02) because
+TCacheState::Manual = 2, and `(2 & 0x02) != 0`. This is correct but conflates the
+cache state (0=Invalid, 1=Valid, 2=Manual) with a simple boolean.
+
+**Mode / Flags (offset 69-74)**:
+
+| Offset | Size | Type | Field | Values |
+|--------|------|------|-------|--------|
+| 69 | 1 | u8 | plane_connection_style | TPlaneConnectionStyle (0=NoConnect, 1=Relief, 2=Direct) |
+| 70 | 1 | u8 | solder_mask_cache_flags | Packed 4×2-bit fields (see below) |
+| 71 | 1 | u8 | solder_mask_expansion_mode | Mode/count (observed: 0-7) |
+| 72 | 1 | u8 | paste_mask_cache_flags | Packed 4×2-bit fields (see below) |
+| 73 | 1 | u8 | paste_mask_expansion_mode | Mode/count (observed: 0-7) |
+| 74 | 1 | u8 | via_mode | TPadMode (0=Simple, 1=LocalStack, 2=ExternalStack) |
+
+**Packed 2-bit fields at offset 70** (`solder_mask_tenting_packed`):
+Each byte packs 4 × 2-bit TCacheState/TMaskExpansionMode values:
+- bits [1:0]: field 0 — values seen: 0 (Invalid/NoMask), 2 (Manual)
+- bits [3:2]: field 1 — values seen: 0 (Invalid), 1 (Valid), 2 (Manual)
+- bits [5:4]: field 2 — values seen: 0 (Invalid), 1 (Valid)
+- bits [7:6]: field 3 — always 0 (unused)
+
+Observed values: 0x00=(0,0,0,0), 0x04=(0,1,0,0), 0x0A=(2,2,0,0), 0x10=(0,0,1,0).
+Exact field semantics TBD — likely SolderMaskExpansionMode, a bottom variant, and
+tenting validity from IPCB_StackObjectCache (IsTentingTopValid/IsTentingBottomValid).
+
+**Packed 2-bit fields at offset 72** (`paste_mask_tenting_packed`):
+Same packing as offset 70. Only field 2 (bits [5:4]) has non-zero values (0 or 1).
+Observed values: 0x00=(0,0,0,0), 0x10=(0,0,1,0).
+
+**Empirical correlations** (across artiq-hvsup-isol.PcbDoc 624 vias + cobra.PcbDoc 42 vias):
+- When tenting flags OFF (flags & 0x60 == 0): offsets 70-73 are always 0x00.
+- [70]=0x0A appears only in version=2 vias with positive solder mask expansion.
+- [70]=0x10 appears in version=0 and version=2 vias with positive solder mask expansion.
+- [72]=0x10 always accompanies non-zero [70] values.
+- [70]=0x04 appears only in cobra.PcbDoc (version=0 file).
+
+#### Per-Layer Diameters (offset 75-202)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 75 | 128 | 32×i32 | diameter_by_layer[32] (Coord) |
+
+#### Additional Extended Fields (offset 203-245)
+
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 203 | 4 | i32 | layer_enum_index |
+| 207 | 1 | u8 | stack_start_layer |
+| 208 | 1 | u8 | stack_end_layer |
+| 209 | 4 | i32 | extension_coord_209 (Coord, likely SolderMaskBottomExpansion per TV7_PadCache) |
+| 213 | 4 | i32 | extension_coord_213 (Coord, likely ViaHeight per TV7_PadCache) |
+| 217 | 4 | i32 | extension_coord_217 (Coord) |
+| 221 | 4 | i32 | extension_coord_221 (Coord) |
+| 225 | 4 | i32 | extension_coord_225 (Coord) |
+| 229 | 4 | i32 | extension_coord_229 (Coord) |
+| 233 | 4 | i32 | extension_coord_233 (Coord) |
+| 237 | 4 | i32 | extension_coord_237 (Coord) |
+| 241 | 1 | u8 | solder_mask_expansion_linked (bit 0x01) |
+| 242 | 4 | i32 | solder_mask_expansion_back (Coord) |
+
+Total core payload: 246 bytes.
+
+#### Multi-Section Architecture (after core 246 bytes)
+
+From Ghidra decompilation (FUN_0187fa70), the via payload consists of 5 sections:
+
+**Section 1: Core** (246 bytes) — described above, serialized by FUN_0185b5a0.
+
+**Section 2: Layer-Diameter Overrides** — framed as `u32 count + u32 stride(=9)`:
+Each entry is 9 bytes: `u8 layer + i32 diameter + u16 rule_index + u8 flags + u8 mode`.
+
+**Section 3: Template Link** — framed as `u32 size + payload`:
+Payload size varies: 41 (older, no flags), 42 (standard), 45 (extended, 3 extra bytes).
+Serialized by FUN_0185d0a0:
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0 | 1 | u8 | version |
+| 1 | 16 | GUID | library_id |
+| 17 | 16 | GUID | template_id |
+| 33 | 4 | i32 | hole_positive_tolerance (Coord) |
+| 37 | 4 | i32 | hole_negative_tolerance (Coord) |
+| 41 | 1 | u8 | flags (optional, absent in size=41) |
+| 42 | 3 | ? | unknown (only in size=45) |
+
+**Section 4: Pad Layer Entries** — framed as `u32 count + u32 stride`:
+M entries, stride varies: 23, 24, 29, or 30 bytes. Non-zero counts found in
+files with per-layer pad stack overrides (thermal relief, mask expansions).
+
+Stride 30 layout (confirmed via Ghidra analysis across 67K+ entries):
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0 | 4 | u32 | layer_id (TV7_Layer) |
+| 4 | 1 | u8 | shape |
+| 5 | 1 | u8 | mode |
+| 6 | 4 | i32 | solder_mask_expansion (Coord) |
+| 10 | 4 | i32 | paste_mask_expansion (Coord) |
+| 14 | 1 | u8 | plane_connection_style |
+| 15 | 2 | i16 | relief_entries |
+| 17 | 2 | u16 | reserved |
+| 19 | 4 | i32 | relief_conductor_width (Coord) |
+| 23 | 1 | u8 | reserved |
+| 24 | 4 | i32 | relief_air_gap (Coord) |
+| 28 | 2 | u16 | reserved |
+
+Stride 29: Same as 30 but without paste_mask_expansion field.
+Strides 23/24: Older formats with fewer fields (no air_gap, compact trailing).
+
+**Section 5: IPC-4761 / Via Structure** — framed as `u32 size + payload`:
+Size is 9 (newer) or 4 (older, 4 zero bytes placeholder).
+Payload for size=9, serialized by FUN_0185d900:
+| Offset | Size | Type | Field |
+|--------|------|------|-------|
+| 0 | 8 | f64 | counter_hole_angle (degrees, from IPCB_CounterHoleParams) |
+| 8 | 1 | u8 | via_structure_type (TViaStructureType, 0-12) |
+
+Note: The C# IHoleSizeInfo interface also has counter_hole_depth (i32) and other
+fields, but these are classification/drill-table fields computed from IPCB_CounterHoleParams,
+not stored in this binary section.
+
+**Total length formula** (standard, ext_size=42, S5 size=9):
+`246 + (8 + N×9) + (4 + 42) + (8 + M×stride) + (4 + 9)`
+= `321 + N×9 + M×stride` (where N=layer overrides, M=pad layer entries).
+Standard via with no extras: 321 bytes.
+Older vias may omit Section 4/5 entirely (ext_size=41 consumes all remaining bytes).
+Older files missing sections 4+5: 300 bytes.
+
+#### C# Type References
+
+- **TV6_PadCache** (`Pack=1`, 38 bytes): In-file binary cache struct with
+  PlaneConnectionStyle + 7 Coord values + u16 Planes + 9 TCacheState validity flags.
+  Matches via offsets 31-68 (reordered with extra fields).
+
+- **TV7_PadCache** (`Pack=8`, larger): Extended cache adding SolderMaskBottomExpansion,
+  UseSeparateExpansions, ViaHeight, ViaHeightValid, IsTentingTop/Bottom (VARIANT_BOOL),
+  IsTentingTopValid/BottomValid (TCacheState), PasteMaskEnabled, InternalPlanes,
+  BottomPasteMaskEnabled. Pack=8 means COM marshaling layout ≠ binary file layout.
+
+- **IPCB_StackObjectCache**: Runtime interface for TV7_PadCache cache fields
+  (IsTentingTop/Bottom, IsTentingTopValid/BottomValid, PasteMaskEnabled, InternalPlanes,
+  BottomPasteMaskEnabled).
+
+- **IPCB_Primitive2**: Provides GetState_SolderMaskExpansionMode() and
+  GetState_PasteMaskExpansionMode() — stored independently in binary record, not in cache.
+
+- **TMaskExpansionMode**: byte enum (0=NoMask, 1=Rule, 2=Manual).
+
+- **TPadMode**: byte enum (0=Simple, 1=LocalStack, 2=ExternalStack) — used for via_mode.
+
+- **TViaStructureType**: byte enum (0=None, 1-12 = IPC-4761 structure types).
+
+- **IPCB_CounterHoleParams**: Depth(i32), Diameter(i32), Angle(f64),
+  Direction(TCounterHoleDirection: 0=TopToBottom, 1=BottomToTop),
+  Material(TCounterHoleMaterial: 0=NoMaterial, 1=CopperPlated, 2=SurfaceFinish),
+  CounterHoleType(TCounterHoleType: 0=CounterBore, 1=CounterSink).
+  Serialized via string param format, stored in Section 5 as binary.
 
 ### Fill Binary Record (50 bytes in AD26, minimum 37)
 
