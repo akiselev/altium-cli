@@ -7,6 +7,8 @@
 use altium_format_types::constants::parsing::{
     C_BASE_UNIT, C_SCH_BROKEN_BAR, C_SCH_SPECIAL_DELIMITER, C_SCH_UTF8_PREFIX,
 };
+use altium_format_types::constants::record_structure::{EX, EY};
+use altium_format_types::constants::visual::EXTRA_LOCATION_COUNT;
 use altium_format_types::{Coord, CoordPoint};
 use indexmap::IndexMap;
 
@@ -68,7 +70,9 @@ impl ParameterCollection {
         self.insert_coord(y_key, y_frac, point.y);
     }
 
-    // Inserts indexed coordinates: count_key=N, then {x_prefix}1..N and {y_prefix}1..N.
+    // Inserts indexed coordinates with Altium's 50-vertex split.
+    // First 50 vertices: count_key=min(N,50), {x_prefix}1..50, {y_prefix}1..50.
+    // Overflow (>50): EXTRALOCATIONCOUNT=N-50, EX51..EX{N}, EY51..EY{N}.
     // Uses T1 logic: each individual X/Y is skipped if the coordinate is zero.
     pub(crate) fn insert_indexed_coords(
         &mut self,
@@ -77,8 +81,13 @@ impl ParameterCollection {
         y_prefix: &str,
         points: &[CoordPoint],
     ) {
-        self.insert(count_key, points.len().to_param_value());
-        for (i, point) in points.iter().enumerate() {
+        let base_count = points.len().min(50);
+        let extra_count = points.len().saturating_sub(50);
+
+        self.insert(count_key, base_count.to_param_value());
+
+        // Base vertices: {x_prefix}1..{base_count}, {y_prefix}1..{base_count}
+        for (i, point) in points[..base_count].iter().enumerate() {
             let idx = i + 1; // 1-based
             if point.x.to_internal() != 0 {
                 let x_key = format!("{x_prefix}{idx}");
@@ -89,6 +98,24 @@ impl ParameterCollection {
                 let y_key = format!("{y_prefix}{idx}");
                 let y_frac_key = format!("{y_prefix}{idx}_Frac");
                 self.insert_coord(&y_key, &y_frac_key, point.y);
+            }
+        }
+
+        // Extra vertices (>50): EX51..EX{N}, EY51..EY{N}
+        if extra_count > 0 {
+            self.insert(EXTRA_LOCATION_COUNT, extra_count.to_param_value());
+            for (i, point) in points[base_count..].iter().enumerate() {
+                let idx = base_count + i + 1; // continues from 51
+                if point.x.to_internal() != 0 {
+                    let x_key = format!("{EX}{idx}");
+                    let x_frac_key = format!("{EX}{idx}_Frac");
+                    self.insert_coord(&x_key, &x_frac_key, point.x);
+                }
+                if point.y.to_internal() != 0 {
+                    let y_key = format!("{EY}{idx}");
+                    let y_frac_key = format!("{EY}{idx}_Frac");
+                    self.insert_coord(&y_key, &y_frac_key, point.y);
+                }
             }
         }
     }
@@ -318,15 +345,23 @@ impl ParameterCollection {
 
     // Reads count from `count_key`, then removes `{x_prefix}N`/`{y_prefix}N` pairs as Coords.
     // Indices are 1-based to match Altium's on-disk format (X1, Y1, X2, Y2, ...).
+    // When vertex count > 50, Altium splits storage: first 50 use X/Y prefix,
+    // overflow uses EXTRALOCATIONCOUNT + EX/EY prefix with indices continuing from 51.
     pub(crate) fn remove_indexed_coords(
         &mut self,
         count_key: &str,
         x_prefix: &str,
         y_prefix: &str,
     ) -> Result<Vec<CoordPoint>> {
-        let count: usize = self.remove_required(count_key)?;
-        let mut points = Vec::with_capacity(count);
-        for i in 1..=count {
+        let base_count: usize = self.remove_required(count_key)?;
+        let extra_count: usize = self
+            .remove_optional::<usize>(EXTRA_LOCATION_COUNT)?
+            .unwrap_or(0);
+        let total = base_count + extra_count;
+        let mut points = Vec::with_capacity(total);
+
+        // Base vertices: {x_prefix}1..{base_count}, {y_prefix}1..{base_count}
+        for i in 1..=base_count {
             let x_key = format!("{x_prefix}{i}");
             let y_key = format!("{y_prefix}{i}");
             let x_frac_key = format!("{x_prefix}{i}_Frac");
@@ -335,6 +370,19 @@ impl ParameterCollection {
             let y = self.remove_coord(&y_key, &y_frac_key)?;
             points.push(CoordPoint::new(x, y));
         }
+
+        // Extra vertices: EX{base_count+1}..EX{total}, EY{base_count+1}..EY{total}
+        // Always uses hardcoded EX/EY prefix per C# SchDataVertices.ExportToFile.
+        for i in (base_count + 1)..=(base_count + extra_count) {
+            let x_key = format!("{EX}{i}");
+            let y_key = format!("{EY}{i}");
+            let x_frac_key = format!("{EX}{i}_Frac");
+            let y_frac_key = format!("{EY}{i}_Frac");
+            let x = self.remove_coord(&x_key, &x_frac_key)?;
+            let y = self.remove_coord(&y_key, &y_frac_key)?;
+            points.push(CoordPoint::new(x, y));
+        }
+
         Ok(points)
     }
 
@@ -912,6 +960,106 @@ mod tests {
         assert_eq!(parsed_points[1].x.to_internal(), 300_000);
         assert_eq!(parsed_points[1].y.to_internal(), 400_000);
         pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn indexed_coords_overflow_roundtrip() {
+        // 53 vertices: first 50 go under LocationCount+X/Y, last 3 under EXTRALOCATIONCOUNT+EX/EY.
+        let points: Vec<CoordPoint> = (1..=53)
+            .map(|i| {
+                CoordPoint::new(
+                    Coord::from_internal(i * 100_000),
+                    Coord::from_internal(i * 200_000),
+                )
+            })
+            .collect();
+
+        let mut pc = ParameterCollection::new();
+        pc.insert_indexed_coords("LocationCount", "X", "Y", &points);
+        let bytes = pc.to_bytes();
+        let raw = std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap();
+
+        // Verify serialization split
+        assert!(raw.contains("LocationCount=50"), "base count should be 50");
+        assert!(
+            raw.contains("EXTRALOCATIONCOUNT=3"),
+            "extra count should be 3"
+        );
+        assert!(raw.contains("EX51="), "should have EX51");
+        assert!(raw.contains("EY53="), "should have EY53");
+        assert!(
+            !raw.contains("|X51="),
+            "should NOT have X51 (overflow uses EX prefix)"
+        );
+
+        // Roundtrip parse
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let parsed = pc2
+            .remove_indexed_coords("LocationCount", "X", "Y")
+            .unwrap();
+        assert_eq!(parsed.len(), 53);
+        for (i, pt) in parsed.iter().enumerate() {
+            let n = (i + 1) as i32;
+            assert_eq!(pt.x.to_internal(), n * 100_000, "x mismatch at vertex {n}");
+            assert_eq!(pt.y.to_internal(), n * 200_000, "y mismatch at vertex {n}");
+        }
+        pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn indexed_coords_exactly_50_no_overflow() {
+        // Exactly 50 vertices: no EXTRALOCATIONCOUNT should be emitted.
+        let points: Vec<CoordPoint> = (1..=50)
+            .map(|i| {
+                CoordPoint::new(
+                    Coord::from_internal(i * 100_000),
+                    Coord::from_internal(i * 200_000),
+                )
+            })
+            .collect();
+
+        let mut pc = ParameterCollection::new();
+        pc.insert_indexed_coords("LocationCount", "X", "Y", &points);
+        let bytes = pc.to_bytes();
+        let raw = std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap();
+
+        assert!(raw.contains("LocationCount=50"));
+        assert!(
+            !raw.contains("EXTRALOCATIONCOUNT"),
+            "should not have overflow for exactly 50"
+        );
+
+        let mut pc2 = ParameterCollection::from_bytes(&bytes).unwrap();
+        let parsed = pc2
+            .remove_indexed_coords("LocationCount", "X", "Y")
+            .unwrap();
+        assert_eq!(parsed.len(), 50);
+        pc2.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn remove_indexed_coords_with_extra_location_count() {
+        // Simulate what Altium writes for 52 vertices: manual parameter construction.
+        let mut params = String::from("|LocationCount=50");
+        for i in 1..=50 {
+            params.push_str(&format!("|X{i}={i}|Y{i}={}", i * 2));
+        }
+        params.push_str("|EXTRALOCATIONCOUNT=2");
+        params.push_str("|EX51=51|EY51=102|EX52=52|EY52=104");
+        params.push_str("|\0");
+
+        let mut pc = ParameterCollection::from_bytes(params.as_bytes()).unwrap();
+        let points = pc
+            .remove_indexed_coords("LocationCount", "X", "Y")
+            .unwrap();
+        assert_eq!(points.len(), 52);
+        // Check vertex 51 (first overflow)
+        assert_eq!(points[50].x.to_internal(), 51 * 100_000);
+        assert_eq!(points[50].y.to_internal(), 102 * 100_000);
+        // Check vertex 52 (second overflow)
+        assert_eq!(points[51].x.to_internal(), 52 * 100_000);
+        assert_eq!(points[51].y.to_internal(), 104 * 100_000);
+        pc.assert_exhausted().unwrap();
     }
 
     #[test]
