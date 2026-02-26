@@ -21,8 +21,8 @@
 
 use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
-    ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
+    Color, ComponentKind, Coord, CoordPoint, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape,
+    LineStyle, ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
     SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle,
     SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
     constants::{
@@ -1246,8 +1246,8 @@ pub(crate) struct SchTextFrame {
     pub is_solid: bool,
     #[param(key = SHOW_BORDER, default = false)]
     pub show_border: bool,
-    #[param(key = ALIGNMENT, default = TextJustification::BottomLeft)]
-    pub alignment: TextJustification,
+    #[param(key = ALIGNMENT, default = HorizontalAlign::Left)]
+    pub alignment: HorizontalAlign,
     #[param(key = WORD_WRAP, default = false)]
     pub word_wrap: bool,
     #[param(key = CLIP_TO_RECT, default = false)]
@@ -1800,6 +1800,8 @@ pub(crate) struct SchParameterSet {
 }
 
 /// Note record (RECORD=209).
+///
+/// Field order matches Altium's `ExportNote` (FileFormatV5.cs:2372-2397).
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct SchNote {
     #[param(flatten)]
@@ -1808,28 +1810,34 @@ pub(crate) struct SchNote {
     pub location: CoordPoint,
     #[param(coord_point, x_key = CORNER_X, x_frac = CORNER_X_FRAC, y_key = CORNER_Y, y_frac = CORNER_Y_FRAC)]
     pub corner: CoordPoint,
+    #[param(key = LINE_WIDTH, default = PenWidth::Zero)]
+    pub line_width: PenWidth,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
     #[param(key = AREA_COLOR, default = Color::BLACK)]
     pub area_color: Color,
-    #[param(key = TEXT, default = String::new())]
-    pub text: String,
-    #[param(key = AUTHOR, default = String::new())]
-    pub author: String,
-    #[param(key = FONT_ID, default = 1i32)]
-    pub font_id: i32,
     #[param(key = TEXT_COLOR, default = Color::BLACK)]
     pub text_color: Color,
+    #[param(key = FONT_ID, default = 1i32)]
+    pub font_id: i32,
     #[param(key = IS_SOLID, default = true)]
     pub is_solid: bool,
     #[param(key = SHOW_BORDER, default = true)]
     pub show_border: bool,
+    #[param(key = ALIGNMENT, default = HorizontalAlign::Left)]
+    pub alignment: HorizontalAlign,
     #[param(key = WORD_WRAP, default = true)]
     pub word_wrap: bool,
     #[param(key = CLIP_TO_RECT, default = true)]
     pub clip_to_rect: bool,
+    #[param(key = TEXT, default = String::new())]
+    pub text: String,
     #[param(coord, key = TEXT_MARGIN, frac_key = TEXT_MARGIN_FRAC)]
     pub text_margin: Coord,
+    #[param(key = COLLAPSED, default = false)]
+    pub collapsed: bool,
+    #[param(key = AUTHOR, default = String::new())]
+    pub author: String,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }
@@ -1938,6 +1946,7 @@ pub(crate) enum SchRecord {
     Bezier(SchBezier),
     Image(SchImage),
     Label(SchLabel),
+    Hyperlink(SchLabel),
     Designator(SchDesignator),
     Parameter(SchParameter),
     TextFrame(SchTextFrame),
@@ -1985,9 +1994,20 @@ fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
     byte
 }
 
+/// Writes a DynamicString field truncated to at most 254 Windows-1252 bytes.
+/// Matches Altium's `SchDataSerializerParam.Export_DynamicString` which truncates
+/// DynamicString fields to 254 chars in binary mode. The full text is preserved
+/// in PinDesc and PinWideText sidecar streams.
+fn write_dynamic_string(w: &mut BinaryWriter, s: &str) {
+    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(s);
+    let truncated = if encoded.len() > 254 { &encoded[..254] } else { &encoded };
+    w.write_u8(truncated.len() as u8);
+    w.write_bytes(truncated);
+}
+
 /// Serializes a SchPin back to the binary pin format (inverse of `parse_binary_pin`).
 /// Returns the raw binary payload (not wrapped in a block).
-pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
+pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Result<Vec<u8>> {
     let mut w = BinaryWriter::new();
 
     w.write_u8(PIN_BINARY_CODE);
@@ -2000,7 +2020,7 @@ pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
     w.write_u8(pin.symbol_inside as u8);
     w.write_u8(pin.symbol_outside as u8);
 
-    w.write_pascal_string(&pin.description);
+    write_dynamic_string(&mut w, &pin.description);
 
     w.write_u8(pin.formal_type as u8);
     w.write_u8(pin.electrical as u8);
@@ -2012,13 +2032,13 @@ pub(crate) fn serialize_binary_pin(pin: &SchPin) -> Vec<u8> {
 
     w.write_i32_le(pin.color.raw());
 
-    w.write_pascal_string(&pin.name);
-    w.write_pascal_string(&pin.designator);
-    w.write_pascal_string(&pin.swap_id_pin);
-    w.write_pascal_string(&pin.swap_id_part);
-    w.write_pascal_string(&pin.default_value);
+    write_dynamic_string(&mut w, &pin.name);
+    write_dynamic_string(&mut w, &pin.designator);
+    w.write_pascal_string(&pin.swap_id_pin)?;
+    w.write_pascal_string(&pin.swap_id_part)?;
+    w.write_pascal_string(&pin.default_value)?;
 
-    w.finish()
+    Ok(w.finish())
 }
 
 /// Serializes a SchComponent's fields into the given ParameterCollection.
@@ -2265,14 +2285,14 @@ fn insert_record_key(params: &mut ParameterCollection, record_type: SchRecordTyp
 /// Serializes any SchRecord into the appropriate block bytes (text or binary).
 /// For text records: `|RECORD=N|field1=val1|...|field_n=val_n|\0` as a text block.
 /// For binary records (Pin): binary payload as a binary block.
-pub(crate) fn serialize_record(record: &SchRecord) -> Vec<u8> {
+pub(crate) fn serialize_record(record: &SchRecord) -> Result<Vec<u8>> {
     match record {
-        SchRecord::Pin(pin) => write_binary_block(&serialize_binary_pin(pin)),
+        SchRecord::Pin(pin) => Ok(write_binary_block(&serialize_binary_pin(pin)?)),
         _ => {
             let mut params = ParameterCollection::new();
             insert_record_key(&mut params, record_type_for(record));
             fill_record_fields(record, &mut params);
-            write_text_block(&params.to_bytes())
+            Ok(write_text_block(&params.to_bytes()))
         }
     }
 }
@@ -2303,6 +2323,7 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
         SchRecord::Pin(_) => SchRecordType::Pin,
         SchRecord::Symbol(_) => SchRecordType::Symbol,
         SchRecord::Label(_) => SchRecordType::Label,
+        SchRecord::Hyperlink(_) => SchRecordType::Hyperlink,
         SchRecord::Bezier(_) => SchRecordType::Bezier,
         SchRecord::Polyline(_) => SchRecordType::Polyline,
         SchRecord::Polygon(_) => SchRecordType::Polygon,
@@ -2353,6 +2374,7 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
         SchRecord::MapDefiner(v) => serialize_map_definer(v, params),
         SchRecord::Symbol(v) => v.to_params(params),
         SchRecord::Label(v) => v.to_params(params),
+        SchRecord::Hyperlink(v) => v.to_params(params),
         SchRecord::Bezier(v) => v.to_params(params),
         SchRecord::Polyline(v) => v.to_params(params),
         SchRecord::Polygon(v) => v.to_params(params),
@@ -2969,7 +2991,7 @@ mod tests {
         assert_eq!(tf.corner.x.to_internal(), 200 * 100_000);
         assert_eq!(tf.text, "Hello World");
         assert_eq!(tf.font_id, 2);
-        assert_eq!(tf.alignment, TextJustification::BottomCenter);
+        assert_eq!(tf.alignment, HorizontalAlign::Left);
         assert!(tf.word_wrap);
         assert!(!tf.is_solid);
         assert_eq!(tf.line_width, PenWidth::Small);
@@ -2985,7 +3007,7 @@ mod tests {
         let tf = SchTextFrame::from_params(&mut params).unwrap();
         assert!(tf.text.is_empty());
         assert_eq!(tf.font_id, 1);
-        assert_eq!(tf.alignment, TextJustification::BottomLeft);
+        assert_eq!(tf.alignment, HorizontalAlign::Left);
         assert!(!tf.word_wrap); // parse default: false (absent = false)
         assert_eq!(tf.line_width, PenWidth::Zero); // C# default: eZeroSize
         assert!(!tf.show_border); // C# default: false
@@ -3257,7 +3279,7 @@ mod tests {
     #[test]
     fn serialize_binary_pin_roundtrip_minimal() {
         let pin = make_test_pin();
-        let data = serialize_binary_pin(&pin);
+        let data = serialize_binary_pin(&pin).unwrap();
         let pin2 = parse_binary_pin(&data).unwrap();
         assert_eq!(pin2.owner_index, pin.owner_index);
         assert_eq!(pin2.owner_part_id, pin.owner_part_id);
@@ -3299,7 +3321,7 @@ mod tests {
         pin.swap_id_part = "swapP".to_owned();
         pin.default_value = "HIGH".to_owned();
 
-        let data = serialize_binary_pin(&pin);
+        let data = serialize_binary_pin(&pin).unwrap();
         let pin2 = parse_binary_pin(&data).unwrap();
         assert_eq!(pin2.owner_index, 5);
         assert_eq!(pin2.owner_part_id, 2);
@@ -3337,7 +3359,7 @@ mod tests {
         params.assert_exhausted().unwrap();
 
         let record = SchRecord::Line(line);
-        let bytes = serialize_record(&record);
+        let bytes = serialize_record(&record).unwrap();
         let blocks = parse_blocks(&bytes).unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].format, BlockFormat::Text);
@@ -3371,7 +3393,7 @@ mod tests {
         pin.designator = "4".to_owned();
 
         let record = SchRecord::Pin(pin);
-        let bytes = serialize_record(&record);
+        let bytes = serialize_record(&record).unwrap();
         let blocks = parse_blocks(&bytes).unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].format, BlockFormat::Binary);

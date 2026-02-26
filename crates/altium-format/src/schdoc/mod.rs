@@ -361,7 +361,7 @@ fn serialize_schdoc_record(record: &SchRecord) -> Result<Vec<u8>> {
     match record {
         SchRecord::Sheet(sheet) => Ok(serialize_sheet_record(sheet)),
         SchRecord::Pin(pin) => Ok(serialize_text_pin_record(pin)),
-        _ => Ok(serialize_record(record)),
+        _ => serialize_record(record),
     }
 }
 
@@ -881,6 +881,7 @@ fn owner_ref(record: &SchRecord) -> (i32, bool) {
         SchRecord::Bezier(v) => (v.base.owner_index, false),
         SchRecord::Image(v) => (v.base.owner_index, false),
         SchRecord::Label(v) => (v.base.owner_index, false),
+        SchRecord::Hyperlink(v) => (v.base.owner_index, false),
         SchRecord::Designator(v) => (v.base.owner_index, false),
         SchRecord::Parameter(v) => (v.base.owner_index, false),
         SchRecord::TextFrame(v) => (v.base.owner_index, false),

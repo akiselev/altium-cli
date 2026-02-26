@@ -431,16 +431,21 @@ impl BinaryWriter {
 
     /// Writes a u8 byte count followed by Windows-1252-encoded string bytes.
     ///
-    /// Panics if the encoded string exceeds 255 bytes.
-    pub(crate) fn write_pascal_string(&mut self, s: &str) {
+    /// Returns an error if the encoded string exceeds 255 bytes.
+    pub(crate) fn write_pascal_string(&mut self, s: &str) -> crate::Result<()> {
         let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(s);
-        assert!(
-            encoded.len() <= 255,
-            "Pascal string too long: {} bytes (max 255)",
-            encoded.len()
-        );
+        if encoded.len() > 255 {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "pascal_string".to_owned(),
+                detail: format!(
+                    "string too long: {} bytes (max 255)",
+                    encoded.len()
+                ),
+            });
+        }
         self.write_u8(encoded.len() as u8);
         self.buf.extend_from_slice(&encoded);
+        Ok(())
     }
 
     /// Writes a string as a fixed-size UTF-16LE buffer (`char_count` WideChars = `char_count * 2` bytes).
@@ -576,7 +581,7 @@ mod tests {
     #[test]
     fn read_pascal_string() {
         let mut w = BinaryWriter::new();
-        w.write_pascal_string("AB");
+        w.write_pascal_string("AB").unwrap();
         let data = w.finish();
         let mut r = BinaryReader::new(&data);
         assert_eq!(r.read_pascal_string().unwrap(), "AB");
@@ -700,7 +705,7 @@ mod tests {
     #[test]
     fn read_pascal_prefix_splits_buffer() {
         let mut w = BinaryWriter::new();
-        w.write_pascal_string("MyFootprint");
+        w.write_pascal_string("MyFootprint").unwrap();
         w.write_bytes(&[0xDE, 0xAD, 0xBE, 0xEF]); // remaining data
         let data = w.finish();
         let (name, remaining) = read_pascal_prefix(&data).unwrap();

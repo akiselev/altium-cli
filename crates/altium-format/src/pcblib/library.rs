@@ -134,15 +134,15 @@ fn parse_library_data_suffix(data: &[u8]) -> Result<Vec<String>> {
 ///
 /// Format: u32_le(count) then count entries of u32_le(1 + name.len()) +
 /// u8(name.len()) + name bytes (pascal string).
-pub(crate) fn serialize_library_data_suffix(names: &[String]) -> Vec<u8> {
+pub(crate) fn serialize_library_data_suffix(names: &[String]) -> crate::Result<Vec<u8>> {
     let mut w = BinaryWriter::new();
     w.write_u32_le(names.len() as u32);
     for name in names {
         // entry_size = 1 (pascal length byte) + name bytes
         w.write_u32_le((1 + name.len()) as u32);
-        w.write_pascal_string(name);
+        w.write_pascal_string(name)?;
     }
-    w.finish()
+    Ok(w.finish())
 }
 
 /// Parse Library/ComponentParamsTOC/{Header,Data} streams.

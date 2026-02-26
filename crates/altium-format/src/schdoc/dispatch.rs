@@ -66,6 +66,7 @@ pub(crate) fn dispatch_record_type(
         }
         SchRecordType::Symbol => dispatch!(SchSymbol => SchRecord::Symbol),
         SchRecordType::Label => dispatch!(SchLabel => SchRecord::Label),
+        SchRecordType::Hyperlink => dispatch!(SchLabel => SchRecord::Hyperlink),
         SchRecordType::Bezier => dispatch!(SchBezier => SchRecord::Bezier),
         SchRecordType::Polyline => dispatch!(SchPolyline => SchRecord::Polyline),
         SchRecordType::Polygon => dispatch!(SchPolygon => SchRecord::Polygon),

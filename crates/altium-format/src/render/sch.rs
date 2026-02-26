@@ -178,7 +178,7 @@ pub(crate) fn draw_sch_record(
             let pen = Pen::new(b.color, pen_width_to_mils(b.line_width));
             canvas.draw_bezier(&pts, &pen);
         }
-        SchRecord::Label(l) => {
+        SchRecord::Label(l) | SchRecord::Hyperlink(l) => {
             let pen = Pen::new(l.color, 0.0);
             let font = lookup_font(fonts, l.font_id);
             canvas.draw_text(

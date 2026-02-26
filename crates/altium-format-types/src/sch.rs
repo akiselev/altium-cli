@@ -728,6 +728,37 @@ impl TryFrom<u8> for LineShape {
     }
 }
 
+/// Horizontal text alignment (0-2).
+/// Maps to C# `THorizontalAlign` (Altium.SDK.Interfaces/SCH/THorizontalAlign.cs).
+///
+/// Used by TextFrame and Note records (ALIGNMENT parameter).
+/// NOT the same as `TextJustification` (9 values, 0-8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum HorizontalAlign {
+    Center = 0,
+    #[default]
+    Left = 1,
+    Right = 2,
+}
+
+impl TryFrom<u8> for HorizontalAlign {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Center),
+            1 => Ok(Self::Left),
+            2 => Ok(Self::Right),
+            _ => Err(InvalidEnumValue {
+                type_name: "HorizontalAlign",
+                value: value as i64,
+            }),
+        }
+    }
+}
+
 /// Text justification (0-8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

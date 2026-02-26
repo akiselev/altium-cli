@@ -16,9 +16,9 @@ use altium_format_types::constants::pin::PIN_LENGTH;
 use altium_format_types::constants::record_structure::OWNER_INDEX;
 use altium_format_types::constants::text::NAME;
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, LineShape, LineStyle, ParameterReadOnlyState,
-    ParameterType, PenWidth, PinElectricalType, RotationBy90, TextHorzAnchor, TextJustification,
-    TextVertAnchor,
+    Color, ComponentKind, Coord, CoordPoint, HorizontalAlign, LineShape, LineStyle,
+    ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
+    TextHorzAnchor, TextJustification, TextVertAnchor,
 };
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -1751,7 +1751,7 @@ fn schdoc_append_text_frame(
         font_id: op.font_id.unwrap_or(1),
         is_solid: op.is_solid.unwrap_or(true),
         show_border: op.show_border.unwrap_or(true),
-        alignment: TextJustification::try_from(op.alignment.unwrap_or(0) as u8)?,
+        alignment: HorizontalAlign::try_from(op.alignment.unwrap_or(1) as u8)?,
         word_wrap: op.word_wrap.unwrap_or(false),
         clip_to_rect: op.clip_to_rect.unwrap_or(false),
         text: op.text.clone(),
@@ -2255,6 +2255,7 @@ fn record_owner_ref(rec: &SchRecord) -> (i32, bool) {
         SchRecord::Bezier(v) => (v.base.owner_index, false),
         SchRecord::Image(v) => (v.base.owner_index, false),
         SchRecord::Label(v) => (v.base.owner_index, false),
+        SchRecord::Hyperlink(v) => (v.base.owner_index, false),
         SchRecord::Designator(v) => (v.base.owner_index, false),
         SchRecord::Parameter(v) => (v.base.owner_index, false),
         SchRecord::TextFrame(v) => (v.base.owner_index, false),
@@ -2305,6 +2306,7 @@ fn set_record_owner_ref(rec: &mut SchRecord, owner_index: i32, owner_is_addition
         SchRecord::Bezier(v) => v.base.owner_index = owner_index,
         SchRecord::Image(v) => v.base.owner_index = owner_index,
         SchRecord::Label(v) => v.base.owner_index = owner_index,
+        SchRecord::Hyperlink(v) => v.base.owner_index = owner_index,
         SchRecord::Designator(v) => v.base.owner_index = owner_index,
         SchRecord::Parameter(v) => v.base.owner_index = owner_index,
         SchRecord::TextFrame(v) => v.base.owner_index = owner_index,
@@ -2430,6 +2432,7 @@ fn record_type_num(rec: &SchRecord) -> i32 {
         SchRecord::Bezier(_) => altium_format_types::SchRecordType::Bezier,
         SchRecord::Image(_) => altium_format_types::SchRecordType::Image,
         SchRecord::Label(_) => altium_format_types::SchRecordType::Label,
+        SchRecord::Hyperlink(_) => altium_format_types::SchRecordType::Hyperlink,
         SchRecord::Designator(_) => altium_format_types::SchRecordType::Designator,
         SchRecord::Parameter(_) => altium_format_types::SchRecordType::Parameter,
         SchRecord::TextFrame(_) => altium_format_types::SchRecordType::TextFrame,

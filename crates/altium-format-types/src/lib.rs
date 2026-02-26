@@ -44,10 +44,10 @@ pub use pcb::{
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,
     HarnessConnectionPointStyle, HarnessLengthUnit, HarnessShieldStyle, HarnessSpliceStyle,
-    HarnessWireLengthType, IeeeSymbol, LeftRightSide, LineShape, LineStyle, NoErcSymbol,
-    ParameterReadOnlyState, ParameterSetStyle, ParameterType, PenWidth, PinElectricalType,
-    SchDisplaySettings, SchDisplayStyle, SchRecordType, SheetBorderStyle, SheetOrientation,
-    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor,
-    TextJustification, TextVertAnchor, VisibleGridStyle,
+    HarnessWireLengthType, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
+    NoErcSymbol, ParameterReadOnlyState, ParameterSetStyle, ParameterType, PenWidth,
+    PinElectricalType, SchDisplaySettings, SchDisplayStyle, SchRecordType, SheetBorderStyle,
+    SheetOrientation, SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState,
+    TextHorzAnchor, TextJustification, TextVertAnchor, VisibleGridStyle,
 };
 pub use unique_id::{UniqueId, UniqueIdError};

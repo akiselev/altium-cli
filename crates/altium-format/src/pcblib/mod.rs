@@ -783,12 +783,12 @@ impl PcbLib {
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let mut cfb = CfbDocument::create()?;
 
-        cfb.write_stream(&format!("/{FILE_HEADER}"), &serialize_pcblib_file_header(&self.header))?;
+        cfb.write_stream(&format!("/{FILE_HEADER}"), &serialize_pcblib_file_header(&self.header)?)?;
 
         cfb.create_storage("/Library")?;
         cfb.write_stream("/Library/Header", &serialize_u32_header(1))?;
         let component_names: Vec<String> = self.component_toc.iter().map(|e| e.name.clone()).collect();
-        cfb.write_stream("/Library/Data", &serialize_library_data(&self.library, &component_names))?;
+        cfb.write_stream("/Library/Data", &serialize_library_data(&self.library, &component_names)?)?;
 
         cfb.create_storage("/Library/ComponentParamsTOC")?;
         cfb.write_stream(
@@ -947,7 +947,7 @@ impl PcbLib {
         }
 
         if !self.section_keys.is_empty() {
-            cfb.write_stream(&format!("/{SECTION_KEYS}"), &serialize_section_keys(&self.section_keys))?;
+            cfb.write_stream(&format!("/{SECTION_KEYS}"), &serialize_section_keys(&self.section_keys)?)?;
         }
 
         if let Some(fvi) = &self.file_version_info {
@@ -1006,20 +1006,20 @@ fn serialize_u32_header(count: u32) -> Vec<u8> {
     w.finish()
 }
 
-fn serialize_pcblib_file_header(header: &PcbFileHeader) -> Vec<u8> {
+fn serialize_pcblib_file_header(header: &PcbFileHeader) -> Result<Vec<u8>> {
     let mut w = BinaryWriter::new();
     let ver = header.version_string.as_bytes();
     w.write_u32_le(ver.len() as u32);
-    w.write_pascal_string(&header.version_string);
+    w.write_pascal_string(&header.version_string)?;
     w.write_f64_le(header.version);
     if let Some(uid) = &header.unique_id {
         w.write_u32_le(uid.len() as u32);
-        w.write_pascal_string(uid);
+        w.write_pascal_string(uid)?;
     }
-    w.finish()
+    Ok(w.finish())
 }
 
-fn serialize_library_data(library: &PcbLibraryData, component_names: &[String]) -> Vec<u8> {
+fn serialize_library_data(library: &PcbLibraryData, component_names: &[String]) -> Result<Vec<u8>> {
     let mut params = crate::param_collection::ParameterCollection::new();
     params.insert("FILENAME", library.filename.clone());
     params.insert("KIND", library.kind.clone());
@@ -1028,8 +1028,8 @@ fn serialize_library_data(library: &PcbLibraryData, component_names: &[String]) 
     params.insert("TIME", library.time.clone());
     serialize_board_config(&library.board_config, &mut params);
     let mut out = write_text_block(&params.to_bytes());
-    out.extend_from_slice(&serialize_library_data_suffix(component_names));
-    out
+    out.extend_from_slice(&serialize_library_data_suffix(component_names)?);
+    Ok(out)
 }
 
 fn serialize_component_toc_data(entries: &[PcbLibComponentTocEntry]) -> Vec<u8> {
@@ -1133,18 +1133,18 @@ fn serialize_texture_entries_data(entries: &[PcbTextureEntry]) -> Vec<u8> {
     out
 }
 
-fn serialize_section_keys(keys: &HashMap<String, String>) -> Vec<u8> {
+fn serialize_section_keys(keys: &HashMap<String, String>) -> Result<Vec<u8>> {
     let mut w = BinaryWriter::new();
     w.write_u32_le(keys.len() as u32);
     let mut pairs: Vec<_> = keys.iter().collect();
     pairs.sort_by(|a, b| a.0.cmp(b.0));
     for (display_name, cfb_key) in pairs {
         w.write_u32_le((display_name.len() + 1) as u32);
-        w.write_pascal_string(display_name);
+        w.write_pascal_string(display_name)?;
         w.write_u32_le((cfb_key.len() + 1) as u32);
-        w.write_pascal_string(cfb_key);
+        w.write_pascal_string(cfb_key)?;
     }
-    w.finish()
+    Ok(w.finish())
 }
 
 fn serialize_footprint_parameters(fp: &PcbFootprint) -> Vec<u8> {
@@ -1194,7 +1194,7 @@ fn serialize_primitive(prim: &PcbPrimitive) -> Result<(PcbObjectId, Vec<Vec<u8>>
         PcbPrimitive::Arc(p) => Ok((PcbObjectId::Arc, vec![serialize_arc(p)])),
         PcbPrimitive::Fill(p) => Ok((PcbObjectId::Fill, vec![serialize_fill(p)])),
         PcbPrimitive::Text(p) => Ok((PcbObjectId::Text, serialize_text(p))),
-        PcbPrimitive::Pad(p) => Ok((PcbObjectId::Pad, serialize_pad(p))),
+        PcbPrimitive::Pad(p) => Ok((PcbObjectId::Pad, serialize_pad(p)?)),
         PcbPrimitive::Region(p) => Ok((PcbObjectId::Region, vec![serialize_region(p)])),
         PcbPrimitive::ComponentBody(p) => Ok((PcbObjectId::ComponentBody, vec![serialize_component_body(p)])),
     }
@@ -1317,15 +1317,15 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     vec![w0.finish(), s1.to_vec()]
 }
 
-fn serialize_pad(p: &PcbPad) -> Vec<Vec<u8>> {
+fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
     let mut sub0 = BinaryWriter::new();
-    sub0.write_pascal_string(&p.pad_name);
+    sub0.write_pascal_string(&p.pad_name)?;
     let mut sub1 = BinaryWriter::new();
-    sub1.write_pascal_string(&p.unknown_sub1);
+    sub1.write_pascal_string(&p.unknown_sub1)?;
     let mut sub2 = BinaryWriter::new();
-    sub2.write_pascal_string(&p.unknown_sub2);
+    sub2.write_pascal_string(&p.unknown_sub2)?;
     let mut sub3 = BinaryWriter::new();
-    sub3.write_pascal_string(&p.unknown_sub3);
+    sub3.write_pascal_string(&p.unknown_sub3)?;
 
     let mut sub4 = BinaryWriter::new();
     write_primitive_common(&mut sub4, &p.common);
@@ -1438,7 +1438,7 @@ fn serialize_pad(p: &PcbPad) -> Vec<Vec<u8>> {
         sub5.write_bytes(&stack.per_layer_overrides);
     }
 
-    vec![sub0.finish(), sub1.finish(), sub2.finish(), sub3.finish(), sub4.finish(), sub5.finish()]
+    Ok(vec![sub0.finish(), sub1.finish(), sub2.finish(), sub3.finish(), sub4.finish(), sub5.finish()])
 }
 
 fn serialize_region(p: &PcbRegion) -> Vec<u8> {

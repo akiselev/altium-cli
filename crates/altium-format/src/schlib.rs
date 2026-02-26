@@ -44,9 +44,9 @@ use altium_format_types::constants::text::{BOLD, DESC, DESIG, ITALIC, STRIKE_OUT
 use altium_format_types::constants::visual::{FONT_ID_COUNT, FONT_NAME, ROTATION, SIZE};
 use altium_format_types::sch::{SchDisplayStyle, SchFont};
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, LineStyle, PenWidth, RotationBy90, SchDisplaySettings,
-    SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle, SheetStyle,
-    TextJustification,
+    Color, ComponentKind, Coord, CoordPoint, HorizontalAlign, LineStyle, PenWidth, RotationBy90,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
+    SheetReferenceZoneStyle, SheetStyle, TextJustification,
 };
 
 // Sidecar parameter keys: Delphi convention (all-uppercase, no separators) for
@@ -1641,7 +1641,7 @@ fn serialize_section_keys(section_keys: &HashMap<String, String>) -> Option<Vec<
 }
 
 // Serializes a component's Data stream (component record + child records).
-fn serialize_component_data(comp: &SchLibComponent) -> Vec<u8> {
+fn serialize_component_data(comp: &SchLibComponent) -> Result<Vec<u8>> {
     // Build the component (RECORD=1) block directly to avoid needing Clone on SchComponent.
     let mut params = ParameterCollection::new();
     params.insert(RECORD, (SchRecordType::Component as i32).to_param_value());
@@ -1661,9 +1661,9 @@ fn serialize_component_data(comp: &SchLibComponent) -> Vec<u8> {
     }
     let mut stream = write_text_block(&params.to_bytes());
     for record in &comp.records {
-        stream.extend_from_slice(&serialize_record(record));
+        stream.extend_from_slice(&serialize_record(record)?);
     }
-    stream
+    Ok(stream)
 }
 
 // Serializes a Redirection stream for an alias.
@@ -1691,16 +1691,16 @@ fn serialize_lib_additional_header(components: &[SchLibComponent]) -> Option<Vec
 }
 
 // Serializes a component's Additional stream (additional records + end marker).
-fn serialize_additional_data(records: &[SchRecord]) -> Vec<u8> {
+fn serialize_additional_data(records: &[SchRecord]) -> Result<Vec<u8>> {
     let mut stream = Vec::new();
     for record in records {
-        stream.extend_from_slice(&serialize_record(record));
+        stream.extend_from_slice(&serialize_record(record)?);
     }
     // End marker: RECORD=0
     let mut end_params = ParameterCollection::new();
     end_params.insert(RECORD, 0i32.to_param_value());
     stream.extend_from_slice(&write_text_block(&end_params.to_bytes()));
-    stream
+    Ok(stream)
 }
 
 // Builds the reverse section_keys mapping from SchLibHeader and tests key generation.
@@ -2708,7 +2708,7 @@ impl SchLib {
             font_id: op.font_id.unwrap_or(1),
             is_solid: op.is_solid.unwrap_or(true),
             show_border: op.show_border.unwrap_or(true),
-            alignment: TextJustification::try_from(op.alignment.unwrap_or(0) as u8)?,
+            alignment: HorizontalAlign::try_from(op.alignment.unwrap_or(1) as u8)?,
             word_wrap: op.word_wrap.unwrap_or(false),
             clip_to_rect: op.clip_to_rect.unwrap_or(false),
             text: op.text.clone(),
@@ -3092,7 +3092,7 @@ impl SchLib {
             cfb.create_storage(&format!("/{key}"))?;
 
             // Data stream
-            let data = serialize_component_data(comp);
+            let data = serialize_component_data(comp)?;
             cfb.write_stream(&format!("/{key}/Data"), &data)?;
 
             // Pin sidecars
@@ -3111,7 +3111,7 @@ impl SchLib {
                 if !comp.additional_records.is_empty() {
                     let key =
                         resolve_component_key(&self.header.components[i].lib_ref, &section_keys);
-                    let additional_data = serialize_additional_data(&comp.additional_records);
+                    let additional_data = serialize_additional_data(&comp.additional_records)?;
                     cfb.write_stream(&format!("/{key}/{ADDITIONAL}"), &additional_data)?;
                 }
             }
@@ -3246,6 +3246,7 @@ fn record_owner_index(rec: &SchRecord) -> i32 {
         SchRecord::Bezier(v) => v.base.owner_index,
         SchRecord::Image(v) => v.base.owner_index,
         SchRecord::Label(v) => v.base.owner_index,
+        SchRecord::Hyperlink(v) => v.base.owner_index,
         SchRecord::Designator(v) => v.base.owner_index,
         SchRecord::Parameter(v) => v.base.owner_index,
         SchRecord::TextFrame(v) => v.base.owner_index,
@@ -3293,6 +3294,7 @@ fn set_record_owner_index(rec: &mut SchRecord, owner_index: i32) {
         SchRecord::Bezier(v) => v.base.owner_index = owner_index,
         SchRecord::Image(v) => v.base.owner_index = owner_index,
         SchRecord::Label(v) => v.base.owner_index = owner_index,
+        SchRecord::Hyperlink(v) => v.base.owner_index = owner_index,
         SchRecord::Designator(v) => v.base.owner_index = owner_index,
         SchRecord::Parameter(v) => v.base.owner_index = owner_index,
         SchRecord::TextFrame(v) => v.base.owner_index = owner_index,
@@ -3418,6 +3420,7 @@ fn record_type_num(rec: &SchRecord) -> i32 {
         SchRecord::Bezier(_) => SchRecordType::Bezier,
         SchRecord::Image(_) => SchRecordType::Image,
         SchRecord::Label(_) => SchRecordType::Label,
+        SchRecord::Hyperlink(_) => SchRecordType::Hyperlink,
         SchRecord::Designator(_) => SchRecordType::Designator,
         SchRecord::Parameter(_) => SchRecordType::Parameter,
         SchRecord::TextFrame(_) => SchRecordType::TextFrame,

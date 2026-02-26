@@ -3,7 +3,7 @@
 //! `ToParamValue`: serialize `T` back to the Altium string representation.
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
 use altium_format_types::{
-    Color, ComponentKind, Coord, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
+    Color, ComponentKind, Coord, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
     ParameterReadOnlyState, ParameterType, PenWidth, RotationBy90, SheetSymbolType, TextHorzAnchor,
     TextJustification, TextVertAnchor, UniqueId,
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle},
@@ -163,6 +163,7 @@ impl_enum_param_value!(
     PenWidth,
     LineStyle,
     LineShape,
+    HorizontalAlign,
     TextJustification,
     RotationBy90,
     ComponentKind,

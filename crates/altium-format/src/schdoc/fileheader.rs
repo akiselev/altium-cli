@@ -192,6 +192,7 @@ fn record_type_of(record: &SchRecord) -> SchRecordType {
         SchRecord::Bezier(_) => SchRecordType::Bezier,
         SchRecord::Image(_) => SchRecordType::Image,
         SchRecord::Label(_) => SchRecordType::Label,
+        SchRecord::Hyperlink(_) => SchRecordType::Hyperlink,
         SchRecord::Designator(_) => SchRecordType::Designator,
         SchRecord::Parameter(_) => SchRecordType::Parameter,
         SchRecord::TextFrame(_) => SchRecordType::TextFrame,

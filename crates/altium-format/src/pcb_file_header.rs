@@ -128,10 +128,10 @@ mod tests {
         // Format: u32(str_len) + pascal_string + f64 + u32(str_len) + pascal_string
         let mut w = BinaryWriter::new();
         w.write_u32_le(version_str.len() as u32);
-        w.write_pascal_string(version_str);
+        w.write_pascal_string(version_str).unwrap();
         w.write_f64_le(version_f64);
         w.write_u32_le(unique_id.len() as u32);
-        w.write_pascal_string(unique_id);
+        w.write_pascal_string(unique_id).unwrap();
         let data = w.finish();
 
         let header = parse_pcb_file_header(&data).unwrap();
@@ -173,7 +173,7 @@ mod tests {
 
         let mut w = BinaryWriter::new();
         w.write_u32_le(version_str.len() as u32);
-        w.write_pascal_string(version_str);
+        w.write_pascal_string(version_str).unwrap();
         w.write_f64_le(version_f64);
         let data = w.finish();
 
@@ -190,10 +190,10 @@ mod tests {
 
         let mut w = BinaryWriter::new();
         w.write_u32_le(version_str.len() as u32);
-        w.write_pascal_string(version_str);
+        w.write_pascal_string(version_str).unwrap();
         w.write_f64_le(5.01);
         w.write_u32_le(unique_id.len() as u32);
-        w.write_pascal_string(unique_id);
+        w.write_pascal_string(unique_id).unwrap();
         w.write_u8(0xFF); // trailing junk
         let data = w.finish();
 
