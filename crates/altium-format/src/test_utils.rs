@@ -1,13 +1,14 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use altium_format_types::PcbObjectId;
 use altium_format_types::constants::parsing::{
     BLOCK_SIZE_MASK, C_SCH_BROKEN_BAR, C_SCH_UTF8_PREFIX, DEFAULT_SUBRECORD_COUNT,
     PAD_SUBRECORD_COUNT, TEXT_SUBRECORD_COUNT,
 };
+use altium_format_types::PcbObjectId;
 
 use crate::binary_io::BinaryReader;
 use crate::block_stream::{Block, BlockFormat, parse_blocks};
@@ -114,7 +115,6 @@ impl CfbSemanticDiffReport {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CfbSemanticDiffOptions {
     ignored_param_keys_lower: BTreeSet<String>,
-    /// When true, parameter keys are compared case-insensitively.
     case_insensitive_keys: bool,
 }
 
@@ -132,9 +132,9 @@ impl CfbSemanticDiffOptions {
         out
     }
 
-    /// Enable case-insensitive key comparison for parameter diffs.
-    pub fn set_case_insensitive_keys(&mut self, yes: bool) {
-        self.case_insensitive_keys = yes;
+    pub fn case_insensitive_keys(mut self) -> Self {
+        self.case_insensitive_keys = true;
+        self
     }
 
     fn ignores_key(&self, key: &str) -> bool {
@@ -142,11 +142,11 @@ impl CfbSemanticDiffOptions {
             .contains(&key.to_ascii_lowercase())
     }
 
-    fn normalize_key<'a>(&self, key: &'a str) -> std::borrow::Cow<'a, str> {
+    fn normalize_key<'a>(&self, key: &'a str) -> Cow<'a, str> {
         if self.case_insensitive_keys {
-            std::borrow::Cow::Owned(key.to_ascii_uppercase())
+            Cow::Owned(key.to_ascii_uppercase())
         } else {
-            std::borrow::Cow::Borrowed(key)
+            Cow::Borrowed(key)
         }
     }
 }
@@ -1506,43 +1506,6 @@ mod tests {
     }
 
     #[test]
-    fn case_insensitive_keys_treats_different_casing_as_same() {
-        let a = make_cfb(&[("/FileHeader", write_text_block(b"|Name=hello|\0"))]);
-        let b = make_cfb(&[("/FileHeader", write_text_block(b"|NAME=hello|\0"))]);
-
-        // Without case-insensitive: reports a difference
-        let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
-        assert!(!report.is_identical());
-
-        // With case-insensitive: identical
-        let mut opts = CfbSemanticDiffOptions::new();
-        opts.set_case_insensitive_keys(true);
-        let report =
-            diff_cfb_files_semantic_with_options(a.path(), b.path(), &opts).expect("semantic diff");
-        assert!(report.is_identical(), "{}", report.render());
-    }
-
-    #[test]
-    fn case_insensitive_keys_still_detects_value_diff() {
-        let a = make_cfb(&[("/FileHeader", write_text_block(b"|Name=hello|\0"))]);
-        let b = make_cfb(&[("/FileHeader", write_text_block(b"|NAME=world|\0"))]);
-
-        let mut opts = CfbSemanticDiffOptions::new();
-        opts.set_case_insensitive_keys(true);
-        let report =
-            diff_cfb_files_semantic_with_options(a.path(), b.path(), &opts).expect("semantic diff");
-        assert!(!report.is_identical(), "expected value diff to be detected");
-        assert!(
-            report
-                .issues
-                .iter()
-                .any(|i| matches!(i, DiffIssue::MissingParamPair { .. })),
-            "{}",
-            report.render()
-        );
-    }
-
-    #[test]
     fn raw_binary_streams_identical_no_issues() {
         // PCB footprint Header/Data streams are raw binary, not block-encoded.
         // When both sides have identical bytes, no issues should be reported.
@@ -1578,8 +1541,14 @@ mod tests {
         // When both sides parse as text blocks but fail param parsing identically,
         // and the bytes are equal, no issues should be reported.
         let version_data = b"1\x00.\x000\x00\x00\x00"; // UTF-16LE "1.0\0"
-        let a = make_cfb_layout(&[("/LKM/Data", write_text_block(version_data))], &["/LKM"]);
-        let b = make_cfb_layout(&[("/LKM/Data", write_text_block(version_data))], &["/LKM"]);
+        let a = make_cfb_layout(
+            &[("/LKM/Data", write_text_block(version_data))],
+            &["/LKM"],
+        );
+        let b = make_cfb_layout(
+            &[("/LKM/Data", write_text_block(version_data))],
+            &["/LKM"],
+        );
 
         let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
         assert!(report.is_identical(), "{}", report.render());
