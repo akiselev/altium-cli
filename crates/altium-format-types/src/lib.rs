@@ -37,7 +37,8 @@ pub use pcb::{
     BoardSide, ComponentPlacementType, CornerStyle, DaisyChainStyle, DielectricType,
     DimensionKind, HoleType, LayerStackStyle, MaskExpansionMode, PadShape, PadShapeSubKind,
     PadStackMode, PcbFileFormatVersion, PcbFlags, PcbObjectId, PlaneConnectionStyle, RegionKind,
-    RuleKind, TCacheState, TextAutoposition, ViewableObjectId, ViaStructureType, TextKind,
+    BarcodeKind, BarcodeRenderMode, RuleKind, TCacheState, TextAutoposition, ViewableObjectId,
+    ViaStructureType, TextKind,
     V6Layer, V7Layer,
 };
 pub use sch::{

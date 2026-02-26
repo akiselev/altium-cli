@@ -71,6 +71,7 @@ pub(crate) struct PcbFootprint {
     pub(crate) corner_radius_chamfer: Vec<CornerRadiusChamferEntry>,
 }
 
+#[derive(Debug)]
 pub(crate) struct PcbPrimitiveCommon {
     pub(crate) layer: V6Layer,
     pub(crate) pad_byte: u8,
@@ -348,6 +349,7 @@ pub(crate) struct PcbPadExtendedCrEntry {
     pub(crate) use_percent: bool,
 }
 
+#[derive(Debug)]
 pub(crate) struct PcbPad {
     pub(crate) common: PcbPrimitiveCommon,
     // Subrecords 0-3: pad name and string data

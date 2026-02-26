@@ -1314,7 +1314,9 @@ pub(crate) fn serialize_board_config(
     params.insert("MGSNAPENABLED", bool_str(sn.mg_snap_enabled));
     params.insert("POINTGUIDEENABLED", bool_str(sn.point_guide_enabled));
     params.insert("GRIDSNAPENABLED", bool_str(sn.grid_snap_enabled));
-    params.insert("SNAPPINGENTITYSET", sn.snapping_entity_set.clone());
+    if !sn.snapping_entity_set.is_empty() {
+        params.insert("SNAPPINGENTITYSET", sn.snapping_entity_set.clone());
+    }
 
     // 17. Near/far objects
     let nf = &config.near_far_objects;
@@ -1360,7 +1362,9 @@ pub(crate) fn serialize_board_config(
     params.insert("CFG2D.LAYERSINSINGLELAYERMODE.SET", c2.layers_in_single_layer_mode_set.clone());
     params.insert("CFG2D.MECHLAYERLINKEDTOSHEET", c2.mech_layer_linked_to_sheet.clone());
     params.insert("CFG2D.MECHLAYERLINKEDTOSHEET.SET", c2.mech_layer_linked_to_sheet_set.clone());
-    params.insert("CFG2D.MECHCOVERLAYERUPDATED", bool_str(c2.mech_coverlay_updated));
+    if c2.mech_coverlay_updated {
+        params.insert("CFG2D.MECHCOVERLAYERUPDATED", bool_str(c2.mech_coverlay_updated));
+    }
 
     // CFG2D indexed families
     for (key, val) in &c2.layer_opacity {
@@ -1396,10 +1400,18 @@ pub(crate) fn serialize_board_config(
     params.insert("LIFECYCLEDEFINITIONGUID", config.lifecycle_definition_guid.clone());
     params.insert("REVISIONNAMINGSCHEMEGUID", config.revision_naming_scheme_guid.clone());
     params.insert("LIBGRIDSNGUIDE", config.lib_grid_sn_guide.clone());
-    params.insert("UNICODE", config.unicode.clone());
-    params.insert("UNICODE__FILENAME", config.unicode_filename.clone());
-    params.insert("UNICODE__NAME", config.unicode_name.clone());
-    params.insert("UNICODE__TIME", config.unicode_time.clone());
+    if !config.unicode.is_empty() {
+        params.insert("UNICODE", config.unicode.clone());
+    }
+    if !config.unicode_filename.is_empty() {
+        params.insert("UNICODE__FILENAME", config.unicode_filename.clone());
+    }
+    if !config.unicode_name.is_empty() {
+        params.insert("UNICODE__NAME", config.unicode_name.clone());
+    }
+    if !config.unicode_time.is_empty() {
+        params.insert("UNICODE__TIME", config.unicode_time.clone());
+    }
 
     // 22. Plane pullbacks (1-based)
     for (idx, pp) in config.plane_pullbacks.iter().enumerate() {
