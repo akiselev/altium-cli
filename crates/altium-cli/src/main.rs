@@ -5,7 +5,11 @@ use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_ops::{
     AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps,
     apply_ops_source_pcbdoc, apply_ops_source_pcblib, apply_ops_source_schdoc,
-    apply_ops_source_schlib,
+    apply_ops_source_schlib, apply_pcblib, apply_schlib,
+};
+use altium_format_ops::spec::{
+    SpecDomain, compile_spec, dump_pcblib, dump_schlib, reconcile_pcblib, reconcile_pcblib_empty,
+    reconcile_schlib, reconcile_schlib_empty, resolve_imports, eco_to_high_ops,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -72,6 +76,39 @@ enum Commands {
         /// Scale factor for PNG output (pixels per mil, default 4.0)
         #[arg(long, default_value_t = DEFAULT_SCALE)]
         scale: f32,
+    },
+    /// Show ECO (engineering change order) without mutating the document
+    Plan {
+        /// Path to the spec file (.schlib-spec or .pcblib-spec)
+        spec_file: PathBuf,
+        /// Existing document to reconcile against (optional)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Output ECO as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Apply a spec file to create or update an Altium document
+    Apply {
+        /// Path to the spec file (.schlib-spec or .pcblib-spec)
+        spec_file: PathBuf,
+        /// Existing document to update (optional)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Output file path (overrides default)
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Print apply report as JSON
+        #[arg(long, default_value_t = false)]
+        report_json: bool,
+    },
+    /// Reverse-generate a spec file from an existing Altium document
+    Dump {
+        /// Path to the document (.SchLib or .PcbLib)
+        document: PathBuf,
+        /// Output spec file path (overrides default)
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -168,6 +205,31 @@ fn main() -> ExitCode {
             scale,
         } => {
             if let Err(e) = run_render(&path, &output_dir, name.as_deref(), &format, scale) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Plan { spec_file, target, json } => {
+            match run_plan(&spec_file, target.as_ref(), json) {
+                Ok(has_changes) => {
+                    if has_changes {
+                        return ExitCode::from(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        Commands::Apply { spec_file, target, output, report_json } => {
+            if let Err(e) = run_apply(&spec_file, target.as_ref(), output.as_ref(), report_json) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Dump { document, output } => {
+            if let Err(e) = run_dump(&document, output.as_ref()) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -515,6 +577,233 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
 
     println!("Validation passed: {}", path.display());
     Ok(())
+}
+
+// ── Spec domain detection ─────────────────────────────────────────────────────
+
+fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("schlib-spec") => Ok(SpecDomain::SchLib),
+        Some("pcblib-spec") => Ok(SpecDomain::PcbLib),
+        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .pcblib-spec)"),
+        None => anyhow::bail!("spec file has no extension: {}", path.display()),
+    }
+}
+
+fn detect_document_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "schlib" => Ok(SpecDomain::SchLib),
+        "pcblib" => Ok(SpecDomain::PcbLib),
+        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .pcblib)"),
+    }
+}
+
+fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf {
+    let stem = spec_file.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let ext = match domain {
+        SpecDomain::SchLib => "SchLib",
+        SpecDomain::PcbLib => "PcbLib",
+    };
+    spec_file.with_file_name(format!("{stem}.{ext}"))
+}
+
+fn default_spec_for_document(doc: &PathBuf, domain: &SpecDomain) -> PathBuf {
+    let stem = doc.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let ext = match domain {
+        SpecDomain::SchLib => "schlib-spec",
+        SpecDomain::PcbLib => "pcblib-spec",
+    };
+    doc.with_file_name(format!("{stem}.{ext}"))
+}
+
+// ── plan ──────────────────────────────────────────────────────────────────────
+
+/// Run `altium plan`. Returns Ok(true) if changes exist, Ok(false) if no changes.
+fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow::Result<bool> {
+    let domain = detect_spec_domain(spec_file)?;
+    let source = std::fs::read_to_string(spec_file)
+        .map_err(|e| anyhow::anyhow!("failed to read spec file {}: {e}", spec_file.display()))?;
+
+    let spec_model = compile_and_resolve(&source, spec_file, &domain)?;
+    let library_path = default_output_for_spec(spec_file, &domain);
+    let spec_path = spec_file.clone();
+
+    let eco = match spec_model {
+        altium_format_ops::spec::model::SpecModel::SchLib(ref spec_lib) => {
+            // Try to load target document if it exists
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            if resolved_target.exists() {
+                let mut doc = SchLib::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                reconcile_schlib(spec_lib, &mut doc, library_path, spec_path)
+                    .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
+            } else {
+                reconcile_schlib_empty(spec_lib, library_path, spec_path)
+            }
+        }
+        altium_format_ops::spec::model::SpecModel::PcbLib(ref spec_lib) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            if resolved_target.exists() {
+                reconcile_pcblib(spec_lib, library_path, spec_path)
+            } else {
+                reconcile_pcblib_empty(spec_lib, library_path, spec_path)
+            }
+        }
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&eco)?);
+    } else {
+        println!("{}", eco.render_text());
+    }
+
+    let has_changes = eco.summary.by_kind.values()
+        .any(|k| k.adds > 0 || k.updates > 0);
+    Ok(has_changes)
+}
+
+// ── apply ─────────────────────────────────────────────────────────────────────
+
+fn run_apply(
+    spec_file: &PathBuf,
+    target: Option<&PathBuf>,
+    output: Option<&PathBuf>,
+    report_json: bool,
+) -> anyhow::Result<()> {
+    let domain = detect_spec_domain(spec_file)?;
+    let source = std::fs::read_to_string(spec_file)
+        .map_err(|e| anyhow::anyhow!("failed to read spec file {}: {e}", spec_file.display()))?;
+
+    let spec_model = compile_and_resolve(&source, spec_file, &domain)?;
+    let library_path = default_output_for_spec(spec_file, &domain);
+    let spec_path = spec_file.clone();
+
+    match spec_model {
+        altium_format_ops::spec::model::SpecModel::SchLib(ref spec_lib) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            let mut doc = if resolved_target.exists() {
+                SchLib::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+            } else {
+                SchLib::new_blank_ad26()
+            };
+
+            let eco = reconcile_schlib(spec_lib, &mut doc, library_path.clone(), spec_path)
+                .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?;
+
+            let high_ops = eco_to_high_ops(&eco);
+            let out_path = output.cloned().unwrap_or(library_path);
+
+            if report_json {
+                println!("{}", serde_json::to_string_pretty(&eco)?);
+            } else {
+                println!("{}", eco.render_text());
+            }
+
+            // Apply ops to document
+            apply_schlib(&mut doc, &high_ops)
+                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            doc.save_as(&out_path)?;
+            if !report_json {
+                println!("Saved: {}", out_path.display());
+            }
+        }
+        altium_format_ops::spec::model::SpecModel::PcbLib(ref spec_lib) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            let mut lib = if resolved_target.exists() {
+                PcbLib::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+            } else {
+                anyhow::bail!(
+                    "no existing PcbLib found at {} and PcbLib::new_blank_ad26 is not yet implemented; \
+                     provide an existing library via --target",
+                    resolved_target.display()
+                )
+            };
+
+            let eco = reconcile_pcblib(spec_lib, library_path.clone(), spec_path);
+            let high_ops = eco_to_high_ops(&eco);
+            let out_path = output.cloned().unwrap_or(library_path);
+
+            if report_json {
+                println!("{}", serde_json::to_string_pretty(&eco)?);
+            } else {
+                println!("{}", eco.render_text());
+            }
+
+            apply_pcblib(&mut lib, &high_ops)
+                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            lib.save_as(&out_path)?;
+            if !report_json {
+                println!("Saved: {}", out_path.display());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ── dump ──────────────────────────────────────────────────────────────────────
+
+fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
+    let domain = detect_document_domain(document)?;
+    let out_path = output.cloned().unwrap_or_else(|| default_spec_for_document(document, &domain));
+
+    match domain {
+        SpecDomain::SchLib => {
+            let lib = SchLib::open(document)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+            let spec_source = dump_schlib(&lib);
+            std::fs::write(&out_path, &spec_source)
+                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+            println!("Dumped: {} -> {}", document.display(), out_path.display());
+        }
+        SpecDomain::PcbLib => {
+            let lib = PcbLib::open(document)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+            let spec_source = dump_pcblib(&lib);
+            std::fs::write(&out_path, &spec_source)
+                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+            println!("Dumped: {} -> {}", document.display(), out_path.display());
+        }
+    }
+
+    Ok(())
+}
+
+// ── compile helper ────────────────────────────────────────────────────────────
+
+fn compile_and_resolve(
+    source: &str,
+    spec_file: &PathBuf,
+    domain: &SpecDomain,
+) -> anyhow::Result<altium_format_ops::spec::model::SpecModel> {
+    use altium_format_ops::spec::parser::parse_spec;
+
+    let file = parse_spec(source)
+        .map_err(|e| anyhow::anyhow!("parse error in {}: {e}", spec_file.display()))?;
+
+    // Resolve imports from the directory containing the spec file.
+    let spec_dir = spec_file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let spec_path_canonical = spec_file.canonicalize().unwrap_or_else(|_| spec_file.clone());
+    let resolved = resolve_imports(&spec_path_canonical, file)
+        .map_err(|e| anyhow::anyhow!("import error in {}: {e}", spec_file.display()))?;
+
+    // Merge bare imports into root: collect all items from bare imports + root.
+    let mut merged_items = Vec::new();
+    for (_path, bare_file) in resolved.bare_imports {
+        merged_items.extend(bare_file.items);
+    }
+    merged_items.extend(resolved.root.items);
+
+    let merged_file = altium_format_ops::spec::ast::SpecFile { items: merged_items };
+
+    let _ = spec_dir; // used implicitly via spec_path_canonical
+    compile_spec(&merged_file, *domain)
+        .map_err(|e| anyhow::anyhow!("compile error in {}: {e}", spec_file.display()))
 }
 
 #[cfg(test)]

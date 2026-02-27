@@ -51,10 +51,13 @@ pub mod schlib;
 pub use document::Document;
 pub use intlib::IntLib;
 pub use pcbdoc::PcbDoc;
-pub use pcblib::PcbLib;
+pub use pcblib::{PcbLib, PcbLibFootprintDumpView, PcbLibGraphicDumpView, PcbLibPadDumpView};
 pub use project::AltiumProject;
 pub use schdoc::SchDoc;
-pub use schlib::SchLib;
+pub use schlib::{
+    SchLib, SchLibComponentDumpView, SchLibFootprintDumpView, SchLibGraphicDumpView,
+    SchLibParameterDumpView, SchLibPinDumpView, SchLibPinPadMapDumpView,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AltiumFormatError {

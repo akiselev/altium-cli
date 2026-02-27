@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use altium_format_types::{
-    Coord, CoordPoint, PcbFlags, PcbObjectId, PlaneConnectionStyle, TCacheState, V6Layer, V7Layer,
+    Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode, PcbFlags, PcbObjectId,
+    PlaneConnectionStyle, TCacheState, V6Layer, V7Layer,
 };
 use indexmap::IndexMap;
 
@@ -12,7 +13,9 @@ use crate::pcbdoc::records::PrimitiveSectionKind;
 use crate::pcbdoc::{PcbDoc, PcbDocSection, PrimitiveSectionData};
 use crate::pcblib::library::PcbLibComponentTocEntry;
 use crate::pcblib::section_keys::resolve_footprint_key;
-use crate::pcblib::{PcbFootprint, PcbLib, PcbPrimitive, PcbPrimitiveCommon, PcbTrack, PcbVia};
+use crate::pcblib::{
+    PcbFootprint, PcbLib, PcbPad, PcbPadCache, PcbPrimitive, PcbPrimitiveCommon, PcbTrack, PcbVia,
+};
 use crate::sch_ops_core::{EntityRef, EntityType, OpResult, RefExpr, RefRoot, RefStep, Value};
 use crate::{AltiumFormatError, Result};
 
@@ -53,6 +56,21 @@ pub struct AddFootprintOp {
 }
 
 #[derive(Debug, Clone)]
+pub struct AddPadOp {
+    pub opid: String,
+    pub footprint_ref: Option<RefExpr>,
+    pub pad_name: String,
+    pub at: CoordPoint,
+    pub shape: Option<PadShape>,
+    pub x_size: Option<Coord>,
+    pub y_size: Option<Coord>,
+    pub hole_size: Option<Coord>,
+    pub is_plated: Option<bool>,
+    pub layer: Option<String>,
+    pub rotation: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
 pub enum PcbDocLowOp {
     Query(QueryOp),
     AddTrack(AddTrackOp),
@@ -65,6 +83,7 @@ pub enum PcbLibLowOp {
     AddFootprint(AddFootprintOp),
     AddTrack(AddTrackOp),
     AddVia(AddViaOp),
+    AddPad(AddPadOp),
 }
 
 pub fn apply_pcbdoc_low_ops(doc: &mut PcbDoc, ops: &[PcbDocLowOp]) -> Result<Vec<OpResult>> {
@@ -89,6 +108,7 @@ pub fn apply_pcblib_low_ops(lib: &mut PcbLib, ops: &[PcbLibLowOp]) -> Result<Vec
             PcbLibLowOp::AddFootprint(v) => pcblib_add_footprint(lib, v)?,
             PcbLibLowOp::AddTrack(v) => pcblib_add_track(lib, v, &ctx)?,
             PcbLibLowOp::AddVia(v) => pcblib_add_via(lib, v, &ctx)?,
+            PcbLibLowOp::AddPad(v) => pcblib_add_pad(lib, v, &ctx)?,
         };
         ctx.last_opid = Some(result.opid.clone());
         ctx.results.insert(result.opid.clone(), result.clone());
@@ -631,6 +651,105 @@ fn pcblib_add_track(lib: &mut PcbLib, op: &AddTrackOp, ctx: &PcbLibExecCtx) -> R
         display_path: format!("{}.track[{pidx}]", fp.display_name),
     };
     Ok(op_result("add_track", &op.opid, Some(r), vec![]))
+}
+
+fn pcblib_add_pad(lib: &mut PcbLib, op: &AddPadOp, ctx: &PcbLibExecCtx) -> Result<OpResult> {
+    let idx = resolve_pcblib_footprint_index(lib, &op.footprint_ref, ctx)?;
+    let layer = parse_layer_name(op.layer.as_deref())?;
+    let shape = op.shape.unwrap_or(PadShape::Round);
+    let x_size = op.x_size.unwrap_or_else(|| Coord::from_mils(60));
+    let y_size = op.y_size.unwrap_or(x_size);
+    let hole_size = op.hole_size.unwrap_or(Coord::ZERO);
+    let is_plated = op.is_plated.unwrap_or(hole_size.raw() > 0);
+    let rotation = op.rotation.unwrap_or(0.0);
+
+    let default_cache = PcbPadCache {
+        plane_connection_style: PlaneConnectionStyle::NoConnect,
+        relief_conductor_width: Coord::ZERO,
+        relief_entries: 4,
+        relief_air_gap: Coord::ZERO,
+        power_plane_relief_expansion: Coord::ZERO,
+        power_plane_clearance: Coord::ZERO,
+        paste_mask_expansion: Coord::ZERO,
+        solder_mask_expansion: Coord::ZERO,
+        planes: 0,
+        plane_connection_style_valid: TCacheState::Invalid,
+        relief_conductor_width_valid: TCacheState::Invalid,
+        relief_entries_valid: TCacheState::Invalid,
+        relief_air_gap_valid: TCacheState::Invalid,
+        power_plane_relief_expansion_valid: TCacheState::Invalid,
+        paste_mask_expansion_valid: TCacheState::Invalid,
+        solder_mask_expansion_valid: TCacheState::Invalid,
+        power_plane_clearance_valid: TCacheState::Invalid,
+        planes_valid: TCacheState::Invalid,
+    };
+
+    let pad = PcbPad {
+        common: PcbPrimitiveCommon {
+            layer,
+            flags: PcbFlags::new(0),
+            net_index: 0xFFFF,
+            polygon_index: 0xFFFF,
+            component_index: 0xFFFF,
+            coordinate_index: 0xFFFF,
+            dimension_index: 0xFFFF,
+        },
+        pad_name: op.pad_name.clone(),
+        unknown_sub1: String::new(),
+        unknown_sub2: String::new(),
+        unknown_sub3: String::new(),
+        location: op.at,
+        size_top: CoordPoint::new(x_size, y_size),
+        size_mid: CoordPoint::new(x_size, y_size),
+        size_bot: CoordPoint::new(x_size, y_size),
+        hole_size,
+        shape_top: shape,
+        shape_mid: shape,
+        shape_bot: shape,
+        rotation,
+        is_plated,
+        daisy_chain_style: DaisyChainStyle::Load,
+        pad_mode: PadStackMode::Simple,
+        unknown_63: 0,
+        cache: default_cache,
+        selection_memory_flags: 0,
+        union_index: 0,
+        jumper_id: 0,
+        v7_layer_override: 0,
+        is_assy_testpoint_top: false,
+        is_assy_testpoint_bottom: false,
+        use_separate_expansions: false,
+        solder_mask_bottom_expansion: 0,
+        solder_mask_expansion_from_hole_edge: false,
+        template_link_library_id: [0u8; 16],
+        template_link_template_id: [0u8; 16],
+        pin_package_length: Coord::ZERO,
+        hole_positive_tolerance: 0x7FFFFFFF,
+        hole_negative_tolerance: 0x7FFFFFFF,
+        reserved_170: 0,
+        has_sub4_extension: false,
+        sub4_extension: None,
+        thermal_reliefs: Vec::new(),
+        stack_data: None,
+        unique_id: None,
+    };
+
+    let fp = &mut lib.footprints[idx];
+    fp.primitives.push(PcbPrimitive::Pad(pad));
+    let pidx = fp.primitives.len() - 1;
+
+    // Update pad count in component TOC.
+    if let Some(toc) = lib.component_toc.iter_mut().find(|t| t.name == fp.display_name) {
+        toc.pad_count += 1;
+    }
+
+    let r = EntityRef {
+        domain: "PcbLib".to_owned(),
+        entity_type: EntityType::Pad,
+        id: format!("pcblib:pad:{idx}:{pidx}"),
+        display_path: format!("{}.pad[{pidx}]", fp.display_name),
+    };
+    Ok(op_result("add_pad", &op.opid, Some(r), vec![]))
 }
 
 fn pcblib_add_via(lib: &mut PcbLib, op: &AddViaOp, ctx: &PcbLibExecCtx) -> Result<OpResult> {

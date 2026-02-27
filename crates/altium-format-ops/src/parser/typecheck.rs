@@ -2679,6 +2679,7 @@ mod tests {
             HighOp::AddTrack(_) => "add_track",
             HighOp::AddVia(_) => "add_via",
             HighOp::AddFootprint(_) => "add_footprint",
+            HighOp::AddPad(_) => "add_pad",
         }
     }
 
