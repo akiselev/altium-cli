@@ -392,7 +392,11 @@ fn ensure_track_section(doc: &mut PcbDoc) -> &mut PrimitiveSectionData {
     }
 }
 
-fn ensure_primitive_section(doc: &mut PcbDoc, kind: PrimitiveSectionKind) -> &mut PrimitiveSectionData {
+#[allow(dead_code)]
+fn ensure_primitive_section(
+    doc: &mut PcbDoc,
+    kind: PrimitiveSectionKind,
+) -> &mut PrimitiveSectionData {
     let existing = doc.sections.iter().position(|section| {
         if let PcbDocSection::Primitive(p) = section {
             p.kind == kind
@@ -404,7 +408,10 @@ fn ensure_primitive_section(doc: &mut PcbDoc, kind: PrimitiveSectionKind) -> &mu
         idx
     } else {
         doc.sections
-            .push(PcbDocSection::Primitive(PrimitiveSectionData { kind, records: Vec::new() }));
+            .push(PcbDocSection::Primitive(PrimitiveSectionData {
+                kind,
+                records: Vec::new(),
+            }));
         doc.sections.len() - 1
     };
     match &mut doc.sections[idx] {
@@ -462,8 +469,9 @@ fn pcbdoc_add_via(doc: &mut PcbDoc, op: &AddViaOp) -> Result<OpResult> {
     let _ = (doc, op);
     Err(AltiumFormatError::InvalidParamValue {
         key: "pcbdoc.add_via".to_owned(),
-        detail: "PcbDoc via low-op is disabled until typed Via parsing/serialization is implemented"
-            .to_owned(),
+        detail:
+            "PcbDoc via low-op is disabled until typed Via parsing/serialization is implemented"
+                .to_owned(),
     })
 }
 
@@ -523,17 +531,22 @@ fn resolve_pcblib_footprint_index(
     if let Some(r) = r {
         let eref = resolve_ref_expr(r, ctx)?;
         if let Some(idx_str) = eref.id.strip_prefix("pcblib:footprint:") {
-            let idx: usize = idx_str.parse().map_err(|_| AltiumFormatError::InvalidParamValue {
-                key: "footprint_ref".to_owned(),
-                detail: format!("invalid footprint ref id '{}'", eref.id),
-            })?;
+            let idx: usize = idx_str
+                .parse()
+                .map_err(|_| AltiumFormatError::InvalidParamValue {
+                    key: "footprint_ref".to_owned(),
+                    detail: format!("invalid footprint ref id '{}'", eref.id),
+                })?;
             if idx < lib.footprints.len() {
                 return Ok(idx);
             }
         }
         return Err(AltiumFormatError::InvalidParamValue {
             key: "footprint_ref".to_owned(),
-            detail: format!("reference does not resolve to a pcblib footprint: {}", eref.id),
+            detail: format!(
+                "reference does not resolve to a pcblib footprint: {}",
+                eref.id
+            ),
         });
     }
 
@@ -549,10 +562,13 @@ fn resolve_pcblib_footprint_index(
 fn resolve_ref_expr(r: &RefExpr, ctx: &PcbLibExecCtx) -> Result<EntityRef> {
     let mut cur = match &r.root {
         RefRoot::OpId(opid) => {
-            let res = ctx.results.get(opid).ok_or_else(|| AltiumFormatError::InvalidParamValue {
-                key: "ref".to_owned(),
-                detail: format!("unknown opid '{opid}'"),
-            })?;
+            let res =
+                ctx.results
+                    .get(opid)
+                    .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                        key: "ref".to_owned(),
+                        detail: format!("unknown opid '{opid}'"),
+                    })?;
             Value::Map(res.fields.clone())
         }
         RefRoot::Last => {
@@ -562,47 +578,54 @@ fn resolve_ref_expr(r: &RefExpr, ctx: &PcbLibExecCtx) -> Result<EntityRef> {
                     detail: "no previous op result for $last".to_owned(),
                 });
             };
-            let res = ctx.results.get(opid).ok_or_else(|| AltiumFormatError::InvalidParamValue {
-                key: "ref".to_owned(),
-                detail: format!("unknown opid '{opid}'"),
-            })?;
+            let res =
+                ctx.results
+                    .get(opid)
+                    .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                        key: "ref".to_owned(),
+                        detail: format!("unknown opid '{opid}'"),
+                    })?;
             Value::Map(res.fields.clone())
         }
         RefRoot::Self_ | RefRoot::Sheet => {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "ref".to_owned(),
                 detail: "Self_/Sheet roots are not supported in pcb ops yet".to_owned(),
-            })
+            });
         }
     };
 
     for step in &r.steps {
         cur = match (step, cur) {
-            (RefStep::Member(name), Value::Map(map)) => map.get(name).cloned().ok_or_else(|| {
-                AltiumFormatError::InvalidParamValue {
-                    key: "ref".to_owned(),
-                    detail: format!("missing member '{name}' in ref path"),
-                }
-            })?,
+            (RefStep::Member(name), Value::Map(map)) => {
+                map.get(name)
+                    .cloned()
+                    .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                        key: "ref".to_owned(),
+                        detail: format!("missing member '{name}' in ref path"),
+                    })?
+            }
             (RefStep::Index(idx), Value::List(list)) => {
-                list.get(*idx).cloned().ok_or_else(|| AltiumFormatError::InvalidParamValue {
-                    key: "ref".to_owned(),
-                    detail: format!("list index {idx} out of range in ref path"),
+                list.get(*idx)
+                    .cloned()
+                    .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                        key: "ref".to_owned(),
+                        detail: format!("list index {idx} out of range in ref path"),
+                    })?
+            }
+            (RefStep::Index(idx), Value::Refs(list)) => {
+                list.get(*idx).cloned().map(Value::Ref).ok_or_else(|| {
+                    AltiumFormatError::InvalidParamValue {
+                        key: "ref".to_owned(),
+                        detail: format!("refs index {idx} out of range in ref path"),
+                    }
                 })?
             }
-            (RefStep::Index(idx), Value::Refs(list)) => list
-                .get(*idx)
-                .cloned()
-                .map(Value::Ref)
-                .ok_or_else(|| AltiumFormatError::InvalidParamValue {
-                    key: "ref".to_owned(),
-                    detail: format!("refs index {idx} out of range in ref path"),
-                })?,
             _ => {
                 return Err(AltiumFormatError::InvalidParamValue {
                     key: "ref".to_owned(),
                     detail: "invalid ref step for current value".to_owned(),
-                })
+                });
             }
         }
     }
@@ -739,7 +762,11 @@ fn pcblib_add_pad(lib: &mut PcbLib, op: &AddPadOp, ctx: &PcbLibExecCtx) -> Resul
     let pidx = fp.primitives.len() - 1;
 
     // Update pad count in component TOC.
-    if let Some(toc) = lib.component_toc.iter_mut().find(|t| t.name == fp.display_name) {
+    if let Some(toc) = lib
+        .component_toc
+        .iter_mut()
+        .find(|t| t.name == fp.display_name)
+    {
         toc.pad_count += 1;
     }
 
@@ -754,7 +781,8 @@ fn pcblib_add_pad(lib: &mut PcbLib, op: &AddPadOp, ctx: &PcbLibExecCtx) -> Resul
 
 fn pcblib_add_via(lib: &mut PcbLib, op: &AddViaOp, ctx: &PcbLibExecCtx) -> Result<OpResult> {
     let idx = resolve_pcblib_footprint_index(lib, &op.footprint_ref, ctx)?;
-    let (from_layer, to_layer) = parse_layer_pair(op.from_layer.as_deref(), op.to_layer.as_deref())?;
+    let (from_layer, to_layer) =
+        parse_layer_pair(op.from_layer.as_deref(), op.to_layer.as_deref())?;
     let fp = &mut lib.footprints[idx];
     let diameter = op.diameter.unwrap_or_else(|| Coord::from_mils(20));
     let hole_size = op.hole_size.unwrap_or_else(|| Coord::from_mils(8));
