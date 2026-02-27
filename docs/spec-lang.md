@@ -1,38 +1,17 @@
 # Altium Spec Language Specification
 
-Version: 0.2 (draft)
+Version: 0.3
 File extensions: `.schlib-spec`, `.pcblib-spec`
 
 ## 1. Overview
 
 The Altium Spec Language is a declarative DSL for describing the **desired state** of Altium
-Designer library files (SchLib, PcbLib). It is the complement to the imperative Ops Language
-(`docs/ops-lang-spec.md`): where ops says "add this, edit that", specs say "the document
-should look like this."
+Designer library files (SchLib, PcbLib). Instead of issuing mutation commands, a spec says
+"the document should look like this."
 
 The CLI reads the spec, diffs it against the current document, produces a plan of minimal
 changes (an engineering change order), and applies them idempotently. Running the same spec
 file twice is a no-op.
-
-### Relationship to the Ops Language
-
-The spec language **reuses the ops lexer, expression language, and type system** (§5–§9 of
-`ops-lang-spec.md`). The differences are:
-
-| | Ops Language | Spec Language |
-|---|---|---|
-| Paradigm | Imperative (do X, then Y) | Declarative (look like this) |
-| Idempotent | No (add twice = two copies) | Yes (apply twice = no-op) |
-| Verbs | `add_*`, `edit`, `remove`, `query` | None — entities declared, not commanded |
-| Identity | Implicit (by execution order) | Explicit (by natural key: lib_ref, designator, name) |
-| Placement | `place $pin { on: $rect.top }` | Same anchor syntax inside entity blocks |
-| Output | `ApplyReport` (what happened) | ECO (engineering change order) + `ApplyReport` |
-
-### Relationship to other docs
-
-- `docs/ops-lang-spec.md` — imperative ops language (shared expression/type system)
-- `docs/ops-design.md` — lowering pipeline, field mapping tables
-- `docs/query-lang.md` — AQL reference (not used in spec lang directly)
 
 
 ## 2. Design Goals
@@ -41,14 +20,14 @@ The spec language **reuses the ops lexer, expression language, and type system**
 2. **Idempotent.** Applying the same spec to the same document is always a no-op.
 3. **Additive by default.** Entities in the document but NOT in the spec are untouched.
    The spec is a subset assertion, not a complete truth.
-4. **Token-minimal.** Reuses the ops expression language. Natural keys are positional
-   (the identifier/string after the entity keyword). Quotes optional for simple names.
+4. **Token-minimal.** Natural keys are positional (the identifier/string after the
+   entity keyword). Quotes optional for simple names. Every value position is an expression.
 5. **Placement-aware.** Anchor-based relative placement for both SchLib pins and PcbLib
    pads. Row/column/grid layout primitives for footprint pad patterns.
 6. **ECO-grade output.** The plan command generates a full engineering change order,
    suitable for real-world hardware development review processes.
-7. **Agent-friendly.** Same expression language, same error reporting, same schema
-   introspection as the ops language.
+7. **Agent-friendly.** Expression language with structured error messages, source spans,
+   and schema introspection.
 8. **Composable.** Import other spec files to link footprints and components, and to
    split large libraries across files.
 
@@ -178,7 +157,8 @@ component R_0603 {
 |-------|------|---------|-------------|
 | `designator` | String | required | Designator pattern (e.g., "R?", "U?") |
 | `description` | String | `""` | Human-readable description |
-| `component_kind` | Enum | `standard` | `standard` / `mechanical` / `graphical_std` / `graphical_mech` |
+| `component_kind` | Enum | `standard` | `standard`, `mechanical`, `graphical`, `net_tie_bom`, `net_tie_no_bom`, `standard_no_bom`, `jumper` |
+| `part_count` | Int | (inferred) | Override inferred part count from highest `part N` block number |
 | `show_hidden_pins` | Bool | `false` | Display hidden (power) pins |
 
 ### 4.3 Multi-Part Components and the `part` Block
@@ -199,14 +179,14 @@ component LM358 {
     part 1 {
         body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
         pin 1 { name: "OUT",  on: $body.right, at: center, electrical: output }
-        pin 2 { name: "IN-",  on: $body.left, at: start, gap: 30mil, electrical: input }
-        pin 3 { name: "IN+",  on: $body.left, after: $pin2, gap: 60mil, electrical: input }
+        p2 = pin 2 { name: "IN-",  on: $body.left, at: start, gap: 30mil, electrical: input }
+        pin 3 { name: "IN+",  on: $body.left, after: $p2, gap: 60mil, electrical: input }
     }
 
     part 2 {
         body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
-        pin 5 { name: "IN+",  on: $body.left, at: start, gap: 30mil, electrical: input }
-        pin 6 { name: "IN-",  on: $body.left, after: $pin5, gap: 60mil, electrical: input }
+        p5 = pin 5 { name: "IN+",  on: $body.left, at: start, gap: 30mil, electrical: input }
+        pin 6 { name: "IN-",  on: $body.left, after: $p5, gap: 60mil, electrical: input }
         pin 7 { name: "OUT",  on: $body.right, at: center, electrical: output }
     }
 
@@ -255,9 +235,9 @@ pin 1 { on: $body.left, at: center, side: outside, electrical: passive, length: 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `at` | Coord | — | Absolute position (mutually exclusive with `on`) |
+| `at` | Coord \| Enum | — | **Absolute mode** (no `on:`): Coord position. **Anchor mode** (with `on:`): `start`, `center`, `end` position along edge. |
 | `orientation` | Enum/Int | `auto` | `0`/`90`/`180`/`270` or `auto` (inferred from anchor) |
-| `electrical` | Enum | `passive` | `passive`, `input`, `output`, `io`, `open_collector`, `open_emitter`, `power`, `hi_z`, `tristate` |
+| `electrical` | Enum | `passive` | `input`, `input_output` (alias: `io`), `output`, `open_collector`, `open_emitter`, `passive`, `hi_z`, `power` |
 | `length` | Dim | `25mil` | Pin stub length |
 | `name` | String | `""` | Pin function name |
 | `is_hidden` | Bool | `false` | Hidden pin |
@@ -267,13 +247,38 @@ pin 1 { on: $body.left, at: center, side: outside, electrical: passive, length: 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `on` | Anchor ref | Edge/point to place on (`$body.left`, `$body.top`, etc.) |
-| `at` | Enum | Position along edge: `start`, `center`, `end` |
+| `on` | Anchor ref | Edge to place on (`$body.left`, `$body.top`, etc.) |
 | `after` | Entity ref | Place after another entity on the same edge |
 | `before` | Entity ref | Place before another entity |
 | `gap` | Dim | Spacing (default: `100mil`) |
 | `offset` | Coord | Post-placement translation |
 | `side` | Enum | `inside`, `outside`, `center` |
+
+**Placement mode constraints:**
+
+Placement modes are mutually exclusive:
+- **Absolute**: `at: (x, y)` — position and `orientation` are explicit.
+- **Anchor-based**: `on:` + `at: start|center|end` — position and orientation
+  are computed from the anchor.
+
+If `on:` is present and `at:` is a Coord, this is an error.
+
+The fields `at` (enum), `after`, and `before` are mutually exclusive in anchor
+mode. Specifying more than one is an error.
+
+The entity referenced by `after:` or `before:` must be on the **same anchor
+edge** as the current entity's `on:`. If the referenced entity is on a
+different edge or uses absolute placement, this is an error:
+
+```
+error[E_CROSS_EDGE_REFERENCE]: pin '$p2' (on $body.right) is not on
+  the same edge as pin '3' (on $body.left)
+```
+
+```
+error[E_RELATIVE_TO_ABSOLUTE]: cannot use 'after' with
+  absolutely-placed pin '$p1' (pin '1' uses 'at: (-30mil, 0)')
+```
 
 ### 4.5 Other SchLib Child Declarations
 
@@ -282,6 +287,12 @@ pin 1 { on: $body.left, at: center, side: outside, electrical: passive, length: 
 parameter NAME { properties }
 ```
 Identity key: `name`. Fields: `text` (String), `is_hidden` (Bool).
+
+The `text` property is a plain string value. Altium uses `{PARAM_NAME}` syntax
+within parameter text for dynamic substitution at schematic placement time.
+This is a literal string in the spec — no spec-level interpolation occurs.
+For spec-level interpolation, use a template string:
+`` text: `prefix {$some_expr}` ``.
 
 **Alias:**
 ```
@@ -293,7 +304,7 @@ Identity key: the alias name. No body.
 ```
 footprint NAME { map_entries }
 ```
-Identity key: `model_name`. Can also reference an imported footprint (§8).
+Identity key: `model_name`. Can also reference an imported footprint (§6).
 
 ```
 footprint "0603" {
@@ -304,8 +315,7 @@ footprint "0603" {
 
 ### 4.6 Anchor-Based Placement
 
-Adopted from the ops language `place` op (ops-lang-spec.md §4.1.1). Avoids hardcoded
-coordinates by specifying position relative to named anchor entities.
+Avoids hardcoded coordinates by specifying position relative to named anchor entities.
 
 **Anchor references** use member access on bound graphics:
 
@@ -333,7 +343,14 @@ $body.center
 | Vertex-list | polyline, polygon, bezier | vertex[N], centroid |
 | Point | pin, label, via, pad | location |
 
-**Orientation `auto`** infers from anchor edge:
+Corner anchors (`$body.top_left`, `$body.top_right`, `$body.bottom_left`,
+`$body.bottom_right`) are valid as coordinate references in expressions (e.g.,
+`from: $body.top_left`) but **cannot be used with `on:` for pin or pad
+placement**. Corners are points, not edges — `at: start|center|end` and
+`after:`/`before:` sequencing are undefined on a point. Using a corner anchor
+with `on:` is an error.
+
+**Orientation `auto`** infers from anchor edge (edge anchors only):
 - `$body.left` → `0` (pin points right, connects left)
 - `$body.right` → `180`
 - `$body.top` → `270`
@@ -342,7 +359,9 @@ $body.center
 ### 4.7 Graphics Declarations (SchLib)
 
 Graphics are declared with an optional **binding name** that becomes the entity's
-`unique_id` for reconciliation and enables anchor references.
+`unique_id` for reconciliation and enables anchor references. The optional
+binding name (before `=`) makes the entity available as `$name` within its
+scope for anchor references and `after:`/`before:` placement.
 
 ```
 body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil), is_solid: true }
@@ -427,7 +446,7 @@ pad 1 { on: $body.left, at: start, offset: (0, -0.5mm), shape: rectangular, x_si
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `at` | Coord | — | Absolute position (mutually exclusive with `on`) |
+| `at` | Coord \| Enum | — | **Absolute mode** (no `on:`): Coord position. **Anchor mode** (with `on:`): `start`, `center`, `end` position along edge. |
 | `shape` | Enum | `round` | `round`, `rectangular`, `octagonal` |
 | `x_size` | Dim | `60mil` | Pad width |
 | `y_size` | Dim | `60mil` | Pad height |
@@ -443,7 +462,8 @@ pad 1 { on: $body.left, at: start, offset: (0, -0.5mm), shape: rectangular, x_si
 | `relief_entries` | Int | — | Number of thermal spokes |
 | `relief_air_gap` | Dim | — | Thermal relief gap |
 
-Anchor placement fields are the same as for SchLib pins (§4.4).
+Anchor placement fields and placement mode constraints (mutual exclusivity,
+cross-edge errors) are the same as for SchLib pins (§4.4).
 
 ### 5.2 Pad Layout: Rows, Columns, and Grids
 
@@ -496,16 +516,30 @@ footprint QFP32 {
 | Field | Type | Description |
 |-------|------|-------------|
 | `on` | Anchor ref | Edge to place along |
-| `at` | Enum | `start`, `center`, `end` — where first pad goes |
+| `at` | Coord \| Enum | **With `on:`**: `start`, `center`, `end` — where the row starts along the anchor edge. **Without `on:`**: Coord — absolute start position of the first pad. |
 | `pitch` | Dim | Center-to-center spacing |
 | `count` | Int | Number of pads |
-| `start` | Int/String | First pad name (auto-increments) |
-| `direction` | Enum | `forward` (default) or `reverse` |
+| `start` | Int | First pad name (auto-increments: `start`, `start+1`, ...) |
+| `direction` | Enum | Pad ordering direction: `forward` (default), `reverse`, `up`, `down`, `left`, `right` |
 | `side` | Enum | `inside`, `outside`, `center` |
 | `pad` | Object | Template properties applied to each pad |
-| `skip` | Array | Pad indices to skip (for irregular packages) |
+| `skip` | Array | Pad names to skip (for irregular packages) |
 
-**Column** — alias for `row` with vertical default. Identical semantics.
+**Per-edge `forward` direction:**
+
+| Anchor edge | `forward` direction | `reverse` direction |
+|-------------|---------------------|---------------------|
+| `$body.left` | Top-to-bottom (decreasing Y) | Bottom-to-top |
+| `$body.right` | Bottom-to-top (increasing Y) | Top-to-bottom |
+| `$body.top` | Left-to-right (increasing X) | Right-to-left |
+| `$body.bottom` | Right-to-left (decreasing X) | Left-to-right |
+
+`up`, `down`, `left`, `right` are only valid for absolute-positioned rows
+(using `at: Coord` without `on:`). Using `up`/`down`/`left`/`right` with
+anchor-based `on:` is an error.
+
+**Column** — syntactically identical to `row` with the same semantics. No
+separate example is provided.
 
 **Grid** — 2D array of pads (for BGA, LGA, QFN exposed pads):
 
@@ -571,10 +605,36 @@ footprint DIP8 {
 }
 ```
 
+**Override semantics**: When a `row`, `column`, or `grid` generates a pad with
+name N, and an explicit `pad N { ... }` also exists in the same footprint, the
+explicit declaration is a **field-level override**:
+
+- Fields specified in the explicit `pad N` take precedence over the row/grid
+  template for that pad.
+- Fields NOT specified in the explicit `pad N` inherit from the row/grid
+  template.
+- The position computed by the layout algorithm is overridable via explicit
+  `at:` (though this breaks the geometric pattern).
+- This is NOT a duplicate identity key error.
+- Evaluation order is irrelevant — the merge is declarative, not sequential.
+
+**Skip semantics**: `skip` values are matched against generated pad names as
+strings. Unquoted identifiers and integers are treated as their string
+equivalents: `skip: [1, 2]` is equivalent to `skip: ["1", "2"]`.
+
+For rows: `skip` references pad names after `start` numbering, not positional
+indices. In a row with `start: 5`, `skip: [6, 8]` skips the pads named "6"
+and "8".
+
+Skip entries that don't match any generated pad name are a warning (not an
+error).
+
 ### 5.3 PCB Graphics
 
 Same binding-name-as-identity pattern as SchLib. Identity stored in the
-`UniqueIDPrimitiveInformation` sidecar stream.
+`UniqueIDPrimitiveInformation` sidecar stream. The optional binding name
+(before `=`) makes the entity available as `$name` within its scope for
+anchor references and `after:`/`before:` placement.
 
 | Keyword | Key fields |
 |---------|-----------|
@@ -583,6 +643,17 @@ Same binding-name-as-identity pattern as SchLib. Identity stored in the
 | `fill` | `corner1`, `corner2`, `rotation`, `layer` |
 | `region` | `outline`, `holes`, `kind`, `layer` |
 | `text` | `at`, `text`, `height`, `rotation`, `layer`, `font` |
+| `via` | `at`, `diameter`, `hole_size`, `start_layer`, `end_layer` |
+| `component_body` | `model_name`, `standoff_height`, `overall_height`, `body_opacity` |
+| `line` | `from`, `to`, `width`, `layer` |
+| `polyline` | `points`, `width`, `layer`, `closed` *(lowers to tracks or region)* |
+
+Notes:
+- `via` — a via primitive placed in the footprint (via-in-pad, test points)
+- `component_body` — 3D body definition for DRC height checks
+- `line` — single line segment (same semantics as `track` but using SchLib naming)
+- `polyline` — spec-level sugar that lowers to multiple `track` primitives or a
+  `region` (not a native PCB primitive type)
 
 
 ## 6. Import System
@@ -648,12 +719,47 @@ altium apply all-parts.schlib-spec    # creates/updates all-parts.SchLib
 ### 6.3 Import Semantics
 
 - Imports are resolved relative to the importing file's directory
-- Circular imports are an error
+- Circular imports are an error (see below)
 - Let bindings from imported files are NOT merged into the importing scope
   (only entity declarations are merged). Use named import for templates.
-- `.schlib-spec` files can import other `.schlib-spec` files (merge) or
-  `.pcblib-spec` files (namespace, for footprint references)
-- `.pcblib-spec` files can import other `.pcblib-spec` files (merge)
+
+**Cross-domain import rules:**
+- `.schlib-spec` can import `.schlib-spec` (bare or named)
+- `.schlib-spec` can import `.pcblib-spec` (named only — for footprint refs)
+- `.pcblib-spec` can import `.pcblib-spec` (bare or named)
+- `.pcblib-spec` **cannot** import `.schlib-spec` (error)
+
+**Bare import collision**: If two bare imports define entities with the same
+identity key, this is a **hard error at plan/typecheck time** (not at parse
+time, since identity keys are only known after all imports are resolved):
+
+```
+error[E_DUPLICATE_ENTITY]: component 'R' defined in both
+  'passives.schlib-spec' (line 12) and 'connectors.schlib-spec' (line 8)
+```
+
+There is no last-wins or first-wins behavior. Resolve by renaming the
+conflicting entity or using named imports instead of bare imports.
+
+**Named import alias uniqueness**: Import aliases must be unique within a file.
+Two imports with the same alias is a parse-time error:
+
+```
+error[E_DUPLICATE_IMPORT_ALIAS]: import alias 'fp' already defined
+  --> my-parts.schlib-spec:2:1
+  |
+  1 | import "footprints-a.pcblib-spec" as fp
+  2 | import "footprints-b.pcblib-spec" as fp
+  |                                        ^^ duplicate alias
+```
+
+**Import cycle detection**: Imports are resolved using topological sort. A
+cycle is detected during import resolution:
+
+```
+error[E_CIRCULAR_IMPORT]: circular import detected
+  a.schlib-spec → b.schlib-spec → a.schlib-spec
+```
 
 ### 6.4 Footprint Linking via Import
 
@@ -681,30 +787,333 @@ component R {
 }
 ```
 
+**Footprint validation**: When a component references a footprint from an
+imported pcblib-spec (`footprint $fp.DIP8 { ... }`), validation is against the
+spec definition — the referenced `.pcblib-spec` file must be importable and
+must define the named footprint. The referenced PcbLib file does NOT need to
+exist on disk (validation is spec-to-spec, not spec-to-binary).
+
 When applying, the tool validates that:
 1. The referenced footprint exists in the pcblib-spec
 2. All mapped pads exist in the footprint definition
 3. All mapped pins exist in the component
+4. No pad is mapped more than once (error: `E_DUPLICATE_MAP`)
+5. Unmapped pads in the footprint are allowed (thermal pads, mounting holes,
+   fiducials) — an informational note is emitted
 
 
-## 7. Expression Language & Type System
+## 7. Expression Language
 
-**Identical to the Ops Language** (ops-lang-spec.md §5, §7). All expression features are
-shared:
+**Every value position is an expression.** There is no special prefix or delimiter to mark
+expressions — the Pratt parser runs on every value.
 
-- Value literals: strings, numbers, dims, colors, booleans, null
-- Operators: `+`, `-`, `*`, `/`, `.`, `[expr]`
-- Coords: `(x, y)` tuples
-- Arrays: `[expr, ...]`
-- Objects: `{ key: value, ... }` with spread (`...expr`) and block-scoped bindings
-- Template strings: `` `text {expr}` ``
-- Path expressions: `$ref.field`, `$ref[index]`
-- Dimensional scalars: `10mil`, `5mm`, `0.5in`, `100dxp`, `50raw`
-- Enum resolution: case-insensitive, underscore-insensitive bare identifiers
+Literals (strings, numbers, booleans) are trivial expressions. References, arithmetic, and
+dimensional values compose into compound expressions.
 
-### 7.1 Intra-Spec References
+### 7.1 Value Literals
 
-Bound entities can be referenced within their scope:
+| Syntax | Type | Examples |
+|--------|------|---------|
+| `"..."` | String | `"R1"`, `"10K"`, `"0805"` |
+| `` `...` `` | Template string | `` `expected {$body.width}` `` |
+| `42`, `-5` | Integer | Bare digits, optional sign |
+| `3.14`, `-0.5` | Float | Has decimal point |
+| `20mm`, `100mil` | Dim (scalar with units) | Number immediately followed by unit suffix |
+| `true` / `false` | Bool | |
+| `null` | Null | |
+| `#FF0000` | Color | `#` + exactly 6 hex digits |
+
+**Strings** are always quoted. Escape sequences: `\"`, `\\`, `\n`, `\t`, `\r`.
+`{` and `}` have no special meaning inside regular `"..."` strings.
+
+**Template strings** use backticks (`` ` ``). They support `{expr}` interpolation
+where `{expr}` is replaced by the evaluated expression value at runtime. Literal
+`{` and `}` inside template strings are escaped as `{{` and `}}`. Escape sequences:
+`` \` ``, `\\`, `\n`, `\t`, `\r`, `\{`, `\}`. Template strings evaluate to `String`
+at runtime. Template strings are forbidden as entity names (entity names must be static).
+
+**Integers and floats** are plain numbers without unit suffixes. In a field that
+expects a dimensional value, a bare number defaults to mils. The type checker
+handles this, not the parser.
+
+**Dimensional scalars** ("dims") are numbers with a unit suffix. The suffix is lexed
+as part of the token — `20mm` is one token, not `20` followed by identifier `mm`.
+
+**Colors** start with `#` followed by exactly 6 hex digits. Named colors (`red`,
+`blue`, etc.) are bare identifiers resolved by the enum registry when the field
+type is `Color`.
+
+### 7.2 Operators & Precedence
+
+The Pratt parser handles expression parsing with these binding powers:
+
+| Precedence | Operators | Associativity | Description |
+|------------|-----------|---------------|-------------|
+| 90 | `.` `[expr]` | left | Field access, index |
+| 70 | unary `-` | prefix | Negation |
+| 60 | `*` `/` | left | Multiply, divide |
+| 50 | `+` `-` | left | Add, subtract |
+
+**Type rules for arithmetic:**
+
+| Left | Op | Right | Result |
+|------|----|-------|--------|
+| dim | `+` `-` | dim | dim |
+| dim | `*` | number | dim |
+| dim | `/` | number | dim |
+| number | `*` | dim | dim |
+| number | `+` `-` `*` `/` | number | number |
+
+Dim + dim works even with mixed units: `100mil + 2.54mm` evaluates correctly
+because both convert to internal units before arithmetic.
+
+Coord (point) arithmetic is NOT supported at the expression level. Coords are
+constructed via tuple syntax `(x_expr, y_expr)` where each component is a scalar
+expression.
+
+### 7.3 Path Expressions (References)
+
+Path expressions navigate bindings, entity declarations, and imported namespaces:
+
+```
+// Binding references ($ prefix)
+$body                       // bound graphic entity
+$body.left                  // edge anchor
+$body.top_left              // corner anchor (coordinate only, not for on:)
+$p2                         // bound pin entity
+$fp.DIP8                    // import namespace access
+$fp["SOT-23"]               // bracket access for special chars
+
+// Let bindings (no $ prefix)
+spacing                     // file-level let value
+passive_pin                 // let-bound object (for spread)
+
+// Anchor access on bound graphics
+$body.left                  // left edge of rectangle
+$body.right                 // right edge
+$body.top                   // top edge
+$body.bottom                // bottom edge
+$body.center                // center point
+```
+
+**Path syntax:**
+
+```
+path       = root { step }
+root       = '$' IDENT          // bound entity or import alias
+           | IDENT              // let binding or enum
+step       = '.' IDENT          // field access
+           | '[' key ']'        // index access
+key        = INTEGER            // numeric index
+           | IDENT              // named index
+           | STRING             // quoted index
+```
+
+**Resolution order** (when evaluating a bare identifier):
+
+1. Built-in keywords: `true`, `false`, `null`
+2. Bindings: innermost scope first, then outer scopes
+3. Enum registry: if field expects an enum, check for match
+
+`$`-prefixed identifiers resolve against bound entity declarations (within the
+enclosing component/footprint/part scope) and import namespaces.
+
+### 7.4 Coords (Tuples)
+
+Coords are 2D points constructed with tuple syntax:
+
+```
+(x_expr, y_expr)
+```
+
+Each component is a scalar expression (dim, number, or reference to a dim).
+
+```
+at: (1000, 800)                                    // literal (mils)
+at: (20mm, 0mm)                                    // with units
+from: (-20mil, -10mil)                             // explicit mil
+to: ($body.top_left.x + 100mil, $body.top_left.y)  // expressions
+offset: (0, -0.5mm)                                // mixed units OK
+```
+
+**Single-element tuples:** `(expr)` is parenthesized grouping, not a 1-tuple.
+Coords always have exactly 2 elements.
+
+Mixed units in coord tuples are valid: `(1mm, 100mil)` evaluates each dimension
+independently.
+
+### 7.5 Arrays
+
+Arrays use bracket syntax:
+
+```
+[expr, expr, ...]
+```
+
+```
+points: [(-1.5mm, -1.6mm), (1.5mm, -1.6mm), (1.5mm, 1.6mm), (-1.5mm, 1.6mm)]
+skip: [H8, H9, J8, J9]
+```
+
+Elements can be any expression. Element types should be homogeneous (enforced
+by the type checker, not the parser).
+
+### 7.6 Objects and Spread
+
+Objects use brace syntax with optional bindings and spread:
+
+```
+{ [bindings...] [spread...] key: expr, key: expr, ... }
+```
+
+Objects appear as entity bodies, array elements, and template values for let bindings.
+
+#### Basic objects
+
+```
+// Entity body
+pad 1 { at: (-0.95mm, -1mm), shape: rectangular, x_size: 0.6mm, y_size: 0.7mm }
+
+// Let-bound template
+let passive_pin = { electrical: passive, length: 25, side: outside }
+```
+
+#### Spread operator (`...`)
+
+The spread operator `...expr` expands an object expression's fields into the
+enclosing object. The expression must evaluate to an object.
+
+```
+let smd = { layer: "TopLayer", pad_mode: simple, is_plated: false, hole_size: 0 }
+
+pad 1 { ...smd, at: (-0.95mm, -1mm), shape: rectangular, x_size: 0.6mm, y_size: 0.7mm }
+```
+
+**Last-wins rule:** Explicit fields override spread fields. Later spreads override
+earlier spreads:
+
+```
+let defaults = { shape: round, x_size: 60mil, y_size: 60mil }
+
+pad 1 { ...defaults, shape: rectangular }  // rectangular overrides round
+```
+
+**Multiple spreads:**
+
+```
+let physical = { layer: "TopLayer", hole_size: 0 }
+let sizing = { x_size: 0.6mm, y_size: 0.7mm }
+
+pad 1 { ...physical, ...sizing, at: (-0.95mm, -1mm), shape: rectangular }
+```
+
+**Spread sources:** The expression after `...` can be:
+- A let-bound object: `...passive_pin`
+- Any expression that evaluates to an object
+
+**Spread does NOT work in arrays.** `[...arr1, ...arr2]` is not supported.
+
+## 8. Type System
+
+### 8.1 Scalar Types
+
+| AST type | Syntax | Maps to (Rust) |
+|----------|--------|----------------|
+| String | `"..."` | `String` |
+| TemplateString | `` `...{expr}...` `` | `String` (after interpolation) |
+| Integer | `42` | `i32` |
+| Float | `3.14` | `f64` |
+| Dim | `20mm` | `Coord` (single-axis) |
+| Bool | `true` | `bool` |
+| Null | `null` | `Option::None` |
+| Color | `#FF0000` | `Color` |
+| Ident | `passive` | Resolved by type checker |
+
+### 8.2 Coord Type
+
+| AST type | Syntax | Maps to (Rust) |
+|----------|--------|----------------|
+| Coord | `(x, y)` | `CoordPoint` |
+
+Coords are always 2-element tuples. Each element is a scalar expression that
+resolves to a dimensional value.
+
+### 8.3 Unit Suffixes
+
+Dimensional scalars carry a unit suffix that determines conversion to internal units:
+
+| Suffix | Meaning | Internal units per 1 |
+|--------|---------|---------------------|
+| *(none)* | Mils (default) | 10,000 |
+| `mil` | Mils (explicit) | 10,000 |
+| `mm` | Millimeters | 393,701 |
+| `in` | Inches | 10,000,000 |
+| `dxp` | DXP units (10 mils) | 100,000 |
+| `raw` | Raw internal units | 1 |
+
+Bare numbers in dimensional fields default to mils. This is resolved at type-check
+time, not parse time.
+
+### 8.4 Enum Resolution
+
+Bare identifiers in typed fields are resolved against the field's expected enum type.
+Resolution is **case-insensitive** and **underscore-insensitive**.
+
+```
+electrical: passive          // PinElectricalType::Passive
+electrical: open_collector   // PinElectricalType::OpenCollector
+shape: round                 // PadShape::Round
+shape: rectangular           // PadShape::Rectangular
+layer: Top                   // V6Layer::TopLayer
+color: red                   // Color::from_name("red")
+component_kind: standard     // ComponentKind::Standard
+```
+
+If the field does not expect an enum, a bare identifier is resolved as a
+binding first. If it's neither, the type checker reports an error.
+
+### 8.5 Type Coercion Rules
+
+The type checker applies these coercions at field boundaries:
+
+| Field expects | Expression produces | Coercion |
+|---------------|-------------------|----------|
+| Dim | Integer | Apply default unit (mils) |
+| Dim | Float | Apply default unit (mils) |
+| Coord | 2-tuple of dims | Construct CoordPoint |
+| String | *(no coercion)* | Must be quoted string |
+| Enum | Ident | Look up in enum registry |
+| Color | `#RRGGBB` | Parse hex |
+| Color | Ident | Named color lookup |
+
+
+## 9. Scoping & References
+
+### 9.1 Intra-Spec References
+
+All entity declarations (component, footprint, part, pin, pad, parameter,
+graphics) support an optional binding prefix: `name = entity ...` or
+`let name = entity ...`. The `let` keyword is optional and has no semantic
+effect — it exists for readability.
+
+Bindings are visible within their enclosing scope (component, footprint, or
+part block). Bindings in a `part` block are NOT visible in other `part` blocks
+or at component level.
+
+Within a component, footprint, or part block, all bindings (including entity
+declarations with binding names) are visible throughout the block **regardless
+of source order**. Forward references are valid:
+
+```
+component R {
+    pin 1 { on: $body.left, at: center }      // $body used before declaration
+    body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
+}
+```
+
+This works because binding resolution is lazy — the expression AST is stored at
+definition and evaluated at each use site. At evaluation time, all bindings in
+the enclosing scope are available.
 
 ```
 component R_0603 {
@@ -714,9 +1123,18 @@ component R_0603 {
 // $body is NOT visible outside the component block
 ```
 
-### 7.2 Cross-Entity References
+**Part-to-part scope isolation:**
+- Each `part` block has its own scope, isolated from other `part` blocks.
+- Bindings declared at component level (outside any `part` block) are visible
+  inside all `part` blocks via lexical scoping (read-only).
+- Bindings inside `part 1 { ... }` are NOT visible inside `part 2 { ... }`.
+- Two `part` blocks MAY declare bindings with the same name (e.g., both can
+  have `body = rectangle { ... }`). These are distinct entities.
 
-Within a component, bound pins can be referenced by later pins (for `after`/`before`):
+### 9.2 Cross-Entity References
+
+Within a component, bound pins can be referenced by later pins (for `after`/`before`).
+Pins without a binding prefix cannot be referenced by `after:`/`before:`:
 
 ```
 component LM358 {
@@ -728,28 +1146,93 @@ component LM358 {
 }
 ```
 
+### 9.3 Circular Reference Detection
 
-## 8. Identity Key Strategy
+During expression evaluation, if a binding references itself directly or
+transitively through spread or field access, this is an error:
+
+```
+error[E_CIRCULAR_BINDING]: binding 'a' has circular reference
+  through 'b' → 'a'
+  --> my-parts.schlib-spec:3:1
+  |
+  3 | let a = { ...b, x: 1 }
+  |     ^ cycle starts here
+  4 | let b = { ...a, y: 2 }
+  |              ^ back-reference to 'a'
+```
+
+Cycle detection occurs at evaluation time (not parse time) since bindings
+are lazy. The full cycle path is reported.
+
+
+## 10. Identity Key Strategy
 
 | Entity | Document | Identity Key | Source |
 |--------|----------|-------------|--------|
 | Component | SchLib | `lib_reference` | Name after `component` |
-| Pin | SchLib | `designator` (scoped) | Name after `pin` |
+| Pin (single-part) | SchLib | `designator` (scoped to component) | Name after `pin` |
+| Pin (multi-part) | SchLib | `(owner_part_id, designator)` | Part block number + name after `pin` |
 | Parameter | SchLib | `name` (scoped) | Name after `parameter` |
 | Alias | SchLib | `alias_name` (scoped) | Name after `alias` |
-| Graphic | SchLib | `unique_id` on record | Binding name → `spec:{component}:{name}` |
+| Graphic | SchLib | `unique_id` on record | Binding name → see unique_id table below |
 | Footprint | PcbLib | `display_name` | Name after `footprint` |
 | Pad | PcbLib | `pad_name` (scoped) | Name after `pad` |
-| PCB graphic | PcbLib | unique_id via sidecar | Binding name → `spec:{footprint}:{name}` |
+| PCB graphic | PcbLib | unique_id via sidecar | Binding name → see unique_id table below |
 
-**Unnamed graphics** get auto-generated IDs: `spec:R_0603:rectangle_0`, etc.
+In a multi-part component, each `part N { ... }` block defines a separate
+scope. Pins in different parts MAY have the same designator — they are
+distinct entities with different `owner_part_id` values. Pins declared at
+component level (outside any `part` block) have `owner_part_id = 0` (shared
+across all parts).
+
+**unique_id scheme:**
+
+| Context | unique_id format |
+|---------|-----------------|
+| Component-level graphic | `spec:{component}:{name}` |
+| Part-scoped graphic | `spec:{component}:part{N}:{name}` |
+| Footprint graphic | `spec:{footprint}:{name}` |
+| Unnamed graphic | `spec:{context}:{type}_{counter}` (not stable across edits) |
+
+**Warning**: Unnamed graphics have no stable identity. The reconciler will
+delete-and-re-add them on any spec change. Use binding names for all graphics
+that need stable identity across edits.
 
 **Uniqueness constraints** (enforced at parse time):
 - No duplicate identity keys within their scope
 - No duplicate binding names within a scope
 
+### 10.1 Equality and Normalization Rules
 
-## 9. Merge Semantics: Ensure (Additive)
+Defines what "different" means for the reconciler when comparing spec values
+to document values:
+
+**(a) Dimensions** — All dimensional values normalize to i32 internal units
+(10,000 per mil) before comparison. Conversion: `1mm = 393,701 internal units`
+(rounded to nearest). `1in = 10,000,000 internal units`. `1dxp = 1 internal
+unit`. `1raw = 1 internal unit`.
+
+**(b) Coordinates** — Exact equality after normalization to internal units.
+Tolerance: ±1 internal unit to absorb float-to-integer rounding. This means
+`(0.5mm, 1mm)` and `(196,850raw, 393,701raw)` compare as equal (within ±1).
+
+**(c) Colors** — Compare as normalized Win32 COLORREF `0x00BBGGRR` u32 values.
+Case-insensitive hex input (`#ff0000` = `#FF0000`).
+
+**(d) Strings** — Exact byte equality (case-sensitive). The following Altium
+fields are case-insensitive at the format level and must be compared
+case-insensitively: `lib_reference`, `designator` (pin), `pad_name`,
+`display_name` (footprint). All other string fields: case-sensitive.
+
+**(e) Enums** — Compare by canonical value after case-insensitive,
+underscore-insensitive normalization. `open_collector` = `OpenCollector` =
+`OPENCOLLECTOR`.
+
+**(f) Booleans** — `true`/`false` only. Compare by value.
+
+
+## 11. Merge Semantics: Ensure (Additive)
 
 - Entities **in the spec** are added (if missing) or updated (if different)
 - Entities **in the document but not in the spec** are **left untouched**
@@ -758,12 +1241,24 @@ component LM358 {
 
 This means hand-crafted components can coexist with spec-managed components.
 
+Empty components and footprints are valid (graphical symbols, mechanical parts).
 
-## 10. Engineering Change Order (ECO)
+### 11.1 Additive Semantics Limitations
+
+- Entities removed from the spec are NOT removed from the document. The spec
+  is a subset assertion.
+- To remove entities, manually edit the document.
+- Identity key changes (renames) are NOT renames — they result in the old entity
+  persisting and a new entity being added. To rename, first remove the old
+  entity manually.
+- Future: `purge` modifier for full convergence semantics.
+
+
+## 12. Engineering Change Order (ECO)
 
 The `altium plan` command generates a full ECO suitable for hardware development review.
 
-### 10.1 ECO Text Format
+### 12.1 ECO Text Format
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
@@ -802,24 +1297,29 @@ CHANGES
 END OF ECO
 ```
 
-### 10.2 ECO JSON Format
+### 12.2 ECO JSON Format
 
 With `--json`, the plan is output as structured JSON for machine consumption.
 Includes all fields for each change, before/after values, and summary statistics.
 
-### 10.3 ECO Data Structure
+### 12.3 ECO Data Structure
 
 ```rust
 struct EngineeringChangeOrder {
     library_path: PathBuf,
     spec_path: PathBuf,
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime<Utc>,  // or std::time::SystemTime (implementation choice)
     summary: EcoSummary,
     changes: Vec<EntityChange>,
 }
 
+enum EntityKind {
+    Component, Pin, Parameter, Alias, Graphic,
+    Footprint, Pad, Track, Via, Arc, Text, Fill, Region,
+}
+
 struct EcoSummary {
-    by_kind: IndexMap<String, KindSummary>,  // "component", "pin", etc.
+    by_kind: IndexMap<EntityKind, KindSummary>,
 }
 
 struct KindSummary {
@@ -829,9 +1329,9 @@ struct KindSummary {
 }
 
 enum EntityChange {
-    Add { kind: String, identity: String, details: String, children: Vec<EntityChange> },
-    Update { kind: String, identity: String, prop_changes: Vec<PropChange>, children: Vec<EntityChange> },
-    Unchanged { kind: String, identity: String },
+    Add { kind: EntityKind, identity: String, props: Vec<PropChange>, children: Vec<EntityChange> },
+    Update { kind: EntityKind, identity: String, prop_changes: Vec<PropChange>, children: Vec<EntityChange> },
+    Unchanged { kind: EntityKind, identity: String },
 }
 
 struct PropChange {
@@ -842,7 +1342,7 @@ struct PropChange {
 ```
 
 
-## 11. Spec Dump (Reverse Generation)
+## 13. Spec Dump (Reverse Generation)
 
 `altium dump` reads an existing library file and generates a spec file, enabling:
 - Bootstrapping spec-based management of existing libraries
@@ -864,43 +1364,166 @@ The dump output is a valid spec file that, when applied to an empty document,
 recreates the original library (modulo serialization ordering).
 
 
-## 12. Edit Operations Required for Reconciliation
+## 14. Reconciliation Architecture
 
-The reconciler needs to UPDATE existing entities, not just add new ones. This requires
-new low-level edit operations beyond what the ops DSL currently supports.
+The spec reconciler operates **directly on `altium-format` low-level document ops**.
 
-### 12.1 Missing Operations (Implementation Required)
+### 14.1 Execution Path
 
-**SchLib:**
+```
+Spec file (.schlib-spec / .pcblib-spec)
+    ↓ parse_spec() + spec_model
+SpecModel (semantic representation)
+    ↓ spec_reconciler (diff against document)
+EngineeringChangeOrder (EntityChange list)
+    ↓ spec executor
+altium-format low-level document ops (sch_ops_core / pcb_ops_core)
+    ↓
+Mutated document
+```
 
-| Operation | Description |
-|-----------|-------------|
-| `EditPin` | Change position, orientation, length, electrical type, name, hidden state |
-| `EditGraphic` | Change position, dimensions, colors, line width for any graphic type |
-| `EditAlias` | Rename an alias |
-| `EditFootprintMap` | Update pin-to-pad mapping |
+The spec executor converts `EntityChange` entries directly into `altium-format`
+low-level ops (`SchLibLowOp`, `PcbLibLowOp`).
 
-**PcbLib:**
+### 14.2 Low-Level Ops Required for Reconciliation
 
-| Operation | Description |
-|-----------|-------------|
-| `AddPad` | Create new pad with full properties |
-| `EditPad` | Change position, shape, size, hole, rotation, masks, thermal relief |
-| `EditTrack` | Change start, end, width, layer |
-| `EditVia` | Change position, diameter, hole size, layers |
-| `EditFootprint` | Change description, height, pattern |
-| `DeletePad` | Remove a pad |
-| `DeleteTrack` | Remove a track |
-| `DeleteVia` | Remove a via |
+The reconciler needs add, edit, and (future) delete operations. These are implemented
+as low-level ops in `altium-format`'s `sch_ops_core` / `pcb_ops_core` modules.
 
-### 12.2 Reconciler Strategy
+**SchLib ops:**
 
-For entities where a targeted edit op exists, the reconciler emits an edit.
-For entities where only add/delete exists, the reconciler uses **delete + re-add**
+| LowOp | Status | Description |
+|--------|--------|-------------|
+| `AddComponent` | Exists | Create component with properties |
+| `AddPin` | Exists | Create pin with full properties |
+| `AddParameter` | Exists | Create parameter |
+| `AddAlias` | Exists | Create alias |
+| `AddGraphic` | Exists | Create graphic primitive |
+| `EditPin` | Needed | Change position, orientation, length, electrical type, name |
+| `EditParameter` | Needed | Change text, visibility |
+| `EditGraphic` | Needed | Change position, dimensions, colors, line width |
+| `EditComponent` | Needed | Change component-level properties (description, etc.) |
+
+**PcbLib ops:**
+
+| LowOp | Status | Description |
+|--------|--------|-------------|
+| `AddFootprint` | Exists | Create footprint with properties |
+| `AddPad` | Exists | Create pad with full properties |
+| `AddTrack` | Exists | Create track primitive |
+| `EditPad` | Needed | Change position, shape, size, hole, rotation, masks |
+| `EditTrack` | Needed | Change start, end, width, layer |
+| `EditFootprint` | Needed | Change description, height, pattern |
+
+### 14.3 Reconciler Strategy
+
+For entities where a targeted edit low-op exists, the reconciler emits an edit.
+For entities where only add exists, the reconciler uses **delete + re-add**
 as a fallback (preserving the identity key).
 
+The low-level ops are the single source of truth for document mutation.
 
-## 13. Formal Grammar
+
+## 15. Lexical Rules
+
+### 15.1 Tokens
+
+| Token | Pattern | Examples |
+|-------|---------|---------|
+| `IDENT` | `[a-zA-Z_][a-zA-Z0-9_]*` | `component`, `passive`, `R1` |
+| `STRING` | `"` (escape \| [^"\\])* `"` | `"R1"`, `"10K"` |
+| `TEMPLATE` | `` ` `` { char \| `{` expr `}` } `` ` `` | `` `got {$body.width}` `` |
+| `INTEGER` | `-`? `[0-9]+` | `42`, `-5`, `0` |
+| `FLOAT` | `-`? `[0-9]+` `.` `[0-9]+` | `3.14`, `-0.5` |
+| `DIM` | (`INTEGER` \| `FLOAT`) `UNIT` | `20mm`, `2.54mm`, `100mil` |
+| `COLOR` | `#` `[0-9a-fA-F]{6}` | `#FF0000`, `#00ff00` |
+| `DOLLAR_IDENT` | `$` `IDENT` | `$body`, `$fp`, `$p2` |
+| `UNIT` | `mm` \| `mil` \| `in` \| `dxp` \| `raw` | |
+| `DOTDOTDOT` | `...` | Spread operator |
+| Punctuation | `: , . + - * / ( ) [ ] { }` | |
+| Keywords | `true` `false` `null` `import` `as` `component` `footprint` `pin` `pad` `part` `parameter` `alias` `map` `row` `column` `grid` | |
+| Noise | `let` `;` | Optional, ignored (§15.5) |
+| Line comment | `//` ... newline | |
+| Block comment | `/*` ... `*/` | Nesting allowed |
+
+**Lexer disambiguation:**
+
+- `#` followed by 6 hex digits → `COLOR`. `#` is only used for colors.
+- Number immediately followed by a unit suffix (no whitespace) → `DIM`.
+  `20 mm` is `INTEGER` `IDENT`, not `DIM`.
+- `$` followed by identifier → `DOLLAR_IDENT`. Always.
+- `-` is unary negation in prefix position, subtraction in infix position.
+- `...` (three dots) is always the spread operator.
+
+### 15.2 Separators
+
+Values, fields, and array elements are separated by:
+
+- **Comma** (`,`) — on the same line or across lines
+- **Newline** — implicit separator when not inside `()`/`[]`
+
+Commas are required between values on the same line. Newlines are sufficient
+across lines. Trailing commas are always allowed.
+
+```
+// All valid:
+{ a: 1, b: 2, c: 3 }         // inline, commas
+{                              // block, newlines
+    a: 1
+    b: 2
+    c: 3
+}
+{ a: 1, b: 2                  // mixed
+  c: 3 }
+{ a: 1, b: 2, c: 3, }        // trailing comma
+```
+
+**Newline suppression:** Newlines inside `()`, `[]`, and `{}` do NOT act as
+separators for the *enclosing* context.
+
+### 15.3 Comments
+
+Line comments start with `//` and extend to end of line.
+Block comments use `/* ... */` and may span multiple lines. Block comments nest.
+
+```
+// Line comment
+component R {    // inline comment
+    designator: "R?"
+    /* This field is temporarily disabled:
+    description: "Resistor"
+    */
+}
+```
+
+### 15.4 Whitespace
+
+Spaces and tabs are insignificant (not indentation-sensitive). Newlines are
+significant only as separators (§15.2).
+
+### 15.5 Optional Noise Tokens (LLM Tolerance)
+
+Since this language is primarily generated by LLMs, the parser accepts certain
+tokens that have no semantic meaning:
+
+| Token | Where accepted | Why LLMs emit it |
+|-------|---------------|-------------------|
+| `;` | After any statement or field | C/Rust/JS muscle memory |
+| `let` | Before a binding (`let x = ...`) | Rust/JS/Python habit |
+| Trailing `,` | After last element in `[]`, `{}` | Already valid, but worth noting |
+
+**All of the following are equivalent:**
+
+```
+// Minimal (canonical)
+passive_pin = { electrical: passive, length: 25 }
+
+// With noise tokens (also valid)
+let passive_pin = { electrical: passive, length: 25, };
+```
+
+
+## 16. Formal Grammar
 
 ```ebnf
 (* ================================================================ *)
@@ -924,10 +1547,17 @@ let_binding     = ["let"] IDENT "=" expr ;
 entity_name     = STRING | IDENT | INTEGER ;
 
 (* ================================================================ *)
+(* Binding prefix (uniform across all entity declarations)           *)
+(* The "let" keyword is optional and has no semantic effect.         *)
+(* ================================================================ *)
+
+binding_prefix  = ["let"] IDENT "=" ;
+
+(* ================================================================ *)
 (* SchLib declarations                                               *)
 (* ================================================================ *)
 
-component_decl  = "component" entity_name "{" { component_item [sep] } "}" ;
+component_decl  = [binding_prefix] "component" entity_name "{" { component_item [sep] } "}" ;
 
 component_item  = let_binding
                 | property
@@ -938,16 +1568,16 @@ component_item  = let_binding
                 | footprint_map_decl
                 | graphic_decl ;
 
-part_block      = "part" INTEGER "{" { part_item [sep] } "}" ;
+part_block      = [binding_prefix] "part" INTEGER "{" { part_item [sep] } "}" ;
 part_item       = let_binding | pin_decl | graphic_decl ;
 
-pin_decl        = "pin" entity_name object ;
-parameter_decl  = "parameter" entity_name object ;
+pin_decl        = [binding_prefix] "pin" entity_name object ;
+parameter_decl  = [binding_prefix] "parameter" entity_name object ;
 alias_decl      = "alias" entity_name ;
-footprint_map_decl = "footprint" ( entity_name | "$" path_expr ) "{" { map_entry [sep] } "}" ;
+footprint_map_decl = "footprint" ( entity_name | dollar_path ) "{" { map_entry [sep] } "}" ;
 map_entry       = "map" object ;
 
-graphic_decl    = [ IDENT "=" ] GRAPHIC_TYPE object ;
+graphic_decl    = [binding_prefix] GRAPHIC_TYPE object ;
 
 GRAPHIC_TYPE    = "line" | "rectangle" | "arc" | "elliptical_arc" | "ellipse"
                 | "polyline" | "polygon" | "bezier" | "pie"
@@ -957,7 +1587,7 @@ GRAPHIC_TYPE    = "line" | "rectangle" | "arc" | "elliptical_arc" | "ellipse"
 (* PcbLib declarations                                               *)
 (* ================================================================ *)
 
-footprint_decl  = "footprint" entity_name "{" { footprint_item [sep] } "}" ;
+footprint_decl  = [binding_prefix] "footprint" entity_name "{" { footprint_item [sep] } "}" ;
 
 footprint_item  = let_binding
                 | property
@@ -966,13 +1596,21 @@ footprint_item  = let_binding
                 | grid_decl
                 | pcb_graphic_decl ;
 
-pad_decl        = "pad" entity_name object ;
+pad_decl        = [binding_prefix] "pad" entity_name object ;
 
 row_decl        = ("row" | "column") object ;
 grid_decl       = "grid" object ;
 
-pcb_graphic_decl = [ IDENT "=" ] PCB_GRAPHIC_TYPE object ;
-PCB_GRAPHIC_TYPE = "track" | "arc" | "fill" | "region" | "text" ;
+pcb_graphic_decl = [binding_prefix] PCB_GRAPHIC_TYPE object ;
+PCB_GRAPHIC_TYPE = "track" | "arc" | "fill" | "region" | "text"
+                 | "via" | "component_body"
+                 | "line" | "polyline" ;
+
+(* ================================================================ *)
+(* Dollar paths (lexer produces DOLLAR_IDENT as a single token)      *)
+(* ================================================================ *)
+
+dollar_path     = DOLLAR_IDENT { "." IDENT | "[" expr "]" } ;
 
 (* ================================================================ *)
 (* Shared productions                                                *)
@@ -984,15 +1622,53 @@ object_body     = object_item { sep object_item } ;
 object_item     = let_binding | spread | property ;
 spread          = "..." expr ;
 
-(* Expression — reuses ops-lang-spec.md §10 expression grammar *)
-expr            = (* see ops-lang-spec.md §10 *) ;
-path_expr       = (* see ops-lang-spec.md §5.3 *) ;
+(* ================================================================ *)
+(* Expression (Pratt parser, every value position)                  *)
+(* ================================================================ *)
+
+expr            = pratt_expr ;
+
+(* Pratt with binding powers — see §7.2 for precedence table       *)
+pratt_expr      = prefix_expr { infix_op pratt_expr } ;
+
+prefix_expr     = STRING
+                | template                              (* `text {expr}` *)
+                | INTEGER
+                | FLOAT
+                | DIM
+                | COLOR
+                | BOOL
+                | "null"
+                | DOLLAR_IDENT path_tail            (* $ref.field *)
+                | IDENT path_tail                   (* binding or enum *)
+                | "-" pratt_expr                    (* unary negate *)
+                | "(" expr "," expr ")"             (* coord tuple *)
+                | "(" expr ")"                      (* grouping *)
+                | "[" [ expr_list ] "]"             (* array *)
+                | object ;                          (* nested object *)
+
+infix_op        = "+" | "-" | "*" | "/"             (* arithmetic *)
+                | "." IDENT                          (* field access *)
+                | "[" expr "]" ;                     (* index access *)
+
+path_tail       = { "." IDENT | "[" expr "]" } ;
+
+expr_list       = expr { sep expr } ;
+
+(* Template string — backtick-delimited with {expr} interpolation *)
+template        = '`' { char | '{' expr '}' | '{{' | '}}' } '`' ;
 
 sep             = "," | NEWLINE ;
 ```
 
+**Note**: The `object` production (`{ property | spread | let_binding }`) is
+a plain property map. Entity container bodies (`component_decl`, `footprint_decl`,
+`part_block`) use separate productions that additionally allow child entity
+declarations (pins, pads, graphics, etc.). Entity-specific declarations like
+`pin_decl` or `graphic_decl` are NOT valid inside a plain `object`.
 
-## 14. Complete Examples
+
+## 17. Complete Examples
 
 ### Example 1: Basic Passive Library
 
@@ -1042,7 +1718,7 @@ footprint QFP32 {
     description: "32-pin QFP, 0.8mm pitch, 7x7mm body"
     height: 1.2mm
 
-    let body = rectangle { from: (-3.5mm, -3.5mm), to: (3.5mm, 3.5mm) }
+    body = rectangle { from: (-3.5mm, -3.5mm), to: (3.5mm, 3.5mm) }
 
     row { on: $body.left, at: center, pitch: 0.8mm, count: 8, start: 1, side: outside, pad: { ...qfp_pad } }
     row { on: $body.bottom, at: center, pitch: 0.8mm, count: 8, start: 9, side: outside, pad: { ...qfp_pad, rotation: 90 } }
@@ -1096,17 +1772,18 @@ component LM358 {
     part 1 {
         body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
         pin 1 { name: "OUT",  ...output_pin, on: $body.right, at: center }
-        pin 2 { name: "IN-",  ...input_pin, on: $body.left, at: start, gap: 30mil }
-        pin 3 { name: "IN+",  ...input_pin, on: $body.left, after: $pin2, gap: 60mil }
+        p2 = pin 2 { name: "IN-",  ...input_pin, on: $body.left, at: start, gap: 30mil }
+        pin 3 { name: "IN+",  ...input_pin, on: $body.left, after: $p2, gap: 60mil }
     }
 
     part 2 {
         body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
-        pin 5 { name: "IN+",  ...input_pin, on: $body.left, at: start, gap: 30mil }
-        pin 6 { name: "IN-",  ...input_pin, on: $body.left, after: $pin5, gap: 60mil }
+        p5 = pin 5 { name: "IN+",  ...input_pin, on: $body.left, at: start, gap: 30mil }
+        pin 6 { name: "IN-",  ...input_pin, on: $body.left, after: $p5, gap: 60mil }
         pin 7 { name: "OUT",  ...output_pin, on: $body.right, at: center }
     }
 
+    // Shared pins — owner_part_id = 0
     pin 4 { ...power_pin, hidden_net_name: "GND" }
     pin 8 { ...power_pin, hidden_net_name: "VCC" }
 
@@ -1141,7 +1818,7 @@ altium apply my-library.schlib-spec  # creates/updates my-library.SchLib with al
 ```
 
 
-## 15. Scope Boundaries
+## 18. Scope Boundaries
 
 ### What We Build
 
@@ -1154,21 +1831,29 @@ altium apply my-library.schlib-spec  # creates/updates my-library.SchLib with al
 - ECO-grade plan output for hardware review
 - `altium dump` for reverse-generating specs from existing files
 - Identity-key-based reconciliation (additive/ensure semantics)
+- Expression language with dimensional scalars, coords, arithmetic, spread
+- Full type system with unit coercion and enum resolution
 
 ### What We Don't Build (Initially)
 
-- **No imperative verbs.** No `add_*`, `edit`, `remove`, `query`.
+- **No imperative verbs.** Specs declare, they don't command.
 - **No selectors.** Specs don't query — they declare.
 - **No SchDoc/PcbDoc support.** Placed instances have harder identity problems.
 - **No purge/delete semantics.** Additive only.
 - **No control flow.** No if/else, no loops.
+- **No functions.** No sin(), sqrt(), min(). Complex geometry pre-computed by agent.
 - **No anchor inference in dump.** Dump generates absolute coordinates.
+- **No Coord arithmetic.** No `point + point`. Compose via `(x_expr, y_expr)`.
+- **No array spread.** `[...a, ...b]` is not supported.
 
-### Open Questions
+### Resolved Questions
 
-1. **SchPie missing `unique_id`**: Needs verification, may need field added.
-2. **PcbLib sidecar write**: Confirm arbitrary `unique_id` writes to UniqueIDPrimitiveInformation.
-3. **Coordinate tolerance**: Reconciler may need ±1 internal unit tolerance for float rounding.
-4. **Row/grid pad override**: When a `row` generates pad "1" and an explicit `pad 1 { ... }`
-   also exists, the explicit declaration should win (override specific properties).
-5. **Import cycle detection**: Need topological sort for import resolution.
+1. **SchPie `unique_id`**: SchPie records support `UNIQUEID` parameter via
+   `SchPrimitiveBase`. Verified in codebase — no field addition needed.
+2. **PcbLib sidecar write**: Confirmed: `serialize_unique_id_primitive_information()`
+   writes arbitrary string unique_ids to `UniqueIDPrimitiveInformation` sidecar.
+3. **Coordinate tolerance**: Resolved: ±1 internal unit tolerance. See §10.1(b).
+4. **Row/grid pad override**: Resolved in §5.2. See field-level override
+   semantics.
+5. **Import cycle detection**: Resolved. Topological sort with cycle
+   detection error. See §6.3.
