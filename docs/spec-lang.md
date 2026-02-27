@@ -1366,45 +1366,73 @@ recreates the original library (modulo serialization ordering).
 
 ## 14. Reconciliation Architecture
 
-The spec reconciler operates **directly on `altium-format` low-level document ops**.
+The spec system targets **`altium-format` LowOps directly** — it does NOT go through
+the HighOp or ComposedOp layers used by the imperative ops pipeline. The imperative
+pipeline (HighOp → ComposedOp → LowOp) exists for its own use case; the spec system
+has its own entry point to the shared LowOp execution layer.
 
 ### 14.1 Execution Path
 
 ```
 Spec file (.schlib-spec / .pcblib-spec)
-    ↓ parse_spec() + spec_model
+    ↓ parse_spec()
 SpecModel (semantic representation)
-    ↓ spec_reconciler (diff against document)
+    ↓ reconcile(doc, spec_model)
 EngineeringChangeOrder (EntityChange list)
-    ↓ spec executor
-altium-format low-level document ops (sch_ops_core / pcb_ops_core)
-    ↓
-Mutated document
+    ↓ spec_to_low_ops(eco)                    ← direct mapping, no HighOp/ComposedOp
+Vec<SchLibLowOp> or Vec<PcbLibLowOp>
+    ↓ apply_schlib_low_ops(doc, ops)          ← existing executor
+Mutated document + Vec<OpResult>
 ```
 
-The spec executor converts `EntityChange` entries directly into `altium-format`
-low-level ops (`SchLibLowOp`, `PcbLibLowOp`).
+**Why LowOps directly (not HighOps)?**
+
+The imperative ops pipeline decomposes coarse-grained user commands: a single
+`AddComponent` HighOp expands into 5–11 ComposedOps (component root, designator,
+comment, pins, implementation list, map definers, etc.). The spec reconciler has
+already done this decomposition — it knows exactly which entities to add and which
+fields to edit. Going through HighOps would reconstruct complexity the reconciler
+already resolved.
+
+The spec executor is also simpler than the imperative executor: it does not need
+the `SchDocExecCtx` reference-resolution machinery (opid tracking, "last" component,
+chain state). Each ECO `EntityChange` carries its own identity key from the
+reconciler — the mapping to LowOps is self-contained:
+
+| ECO entry | LowOp(s) |
+|-----------|----------|
+| `Add { kind: Component, ... }` | `CreateComponentRoot` + child `AddPin`/`AddParameter`/etc. |
+| `Add { kind: Pin, ... }` | `AddPin` |
+| `Update { kind: Component, prop_changes }` | `EditComponent` |
+| `Update { kind: Pin, prop_changes }` | `EditPin` |
+| `Unchanged { ... }` | *(no-op)* |
+
+LowOps are the **public inter-crate contract** between `altium-format` and
+`altium-format-ops` — the existing `composed_to_schlib_low.rs` files already
+construct LowOp structs directly. The spec executor follows the same pattern.
 
 ### 14.2 Low-Level Ops Required for Reconciliation
 
-The reconciler needs add, edit, and (future) delete operations. These are implemented
-as low-level ops in `altium-format`'s `sch_ops_core` / `pcb_ops_core` modules.
+The reconciler needs add and edit operations. These are implemented as LowOps in
+`altium-format`'s `sch_ops_core` / `pcb_ops_core` modules. Each Edit LowOp follows
+the `EditComponentOp` pattern: take a reference + optional fields, apply only
+non-None fields.
 
-**SchLib ops:**
+**SchLib LowOps:**
 
 | LowOp | Status | Description |
 |--------|--------|-------------|
-| `AddComponent` | Exists | Create component with properties |
+| `CreateComponentRoot` | Exists | Create component with properties |
 | `AddPin` | Exists | Create pin with full properties |
 | `AddParameter` | Exists | Create parameter |
 | `AddAlias` | Exists | Create alias |
-| `AddGraphic` | Exists | Create graphic primitive |
+| `AddGraphic` | Exists | Create graphic primitive (all 13 types) |
+| `EditComponent` | Exists | Change component-level properties (description, etc.) |
 | `EditPin` | Needed | Change position, orientation, length, electrical type, name |
 | `EditParameter` | Needed | Change text, visibility |
 | `EditGraphic` | Needed | Change position, dimensions, colors, line width |
-| `EditComponent` | Needed | Change component-level properties (description, etc.) |
 
-**PcbLib ops:**
+**PcbLib LowOps:**
 
 | LowOp | Status | Description |
 |--------|--------|-------------|
@@ -1415,13 +1443,17 @@ as low-level ops in `altium-format`'s `sch_ops_core` / `pcb_ops_core` modules.
 | `EditTrack` | Needed | Change start, end, width, layer |
 | `EditFootprint` | Needed | Change description, height, pattern |
 
+Edit LowOps are dedicated types (not overloaded via `EditRecord`/`RecordPatch`)
+to maintain type safety and match the project's domain-type discipline.
+
 ### 14.3 Reconciler Strategy
 
-For entities where a targeted edit low-op exists, the reconciler emits an edit.
+For entities where a targeted edit LowOp exists, the reconciler emits an edit.
 For entities where only add exists, the reconciler uses **delete + re-add**
 as a fallback (preserving the identity key).
 
-The low-level ops are the single source of truth for document mutation.
+The LowOp layer is the single source of truth for document mutation — shared by
+both the imperative ops pipeline and the spec reconciliation system.
 
 
 ## 15. Lexical Rules
