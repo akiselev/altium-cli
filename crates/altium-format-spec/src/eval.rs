@@ -13,8 +13,8 @@ use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
 
-use crate::parser::{BinOp, Span, Spanned, Unit};
-use crate::spec::ast::{Expr, Object, ObjectItem, TemplatePart};
+use crate::diagnostic::{BinOp, Span, Spanned, Unit};
+use crate::ast::{Expr, Object, ObjectItem, TemplatePart};
 
 // ── Error types ──────────────────────────────────────────────────────────────
 
@@ -380,8 +380,8 @@ fn eval_template(parts: &[TemplatePart], scope: &ScopeStack, span: Span) -> Eval
 
 /// Parse a token slice (from a template interpolation) into a `Spanned<Expr>`.
 /// This requires re-running the spec parser on the sub-token list.
-fn parse_template_expr(tokens: &[crate::spec::lexer::Token], _outer_span: Span) -> EvalResult<Spanned<Expr>> {
-    use crate::spec::parser::parse_spec;
+fn parse_template_expr(tokens: &[crate::lexer::Token], _outer_span: Span) -> EvalResult<Spanned<Expr>> {
+    use crate::parser::parse_spec;
 
     // Build a minimal source string for error reporting.
     // The actual parsing is done by feeding the tokens back through the expression parser.
@@ -397,7 +397,7 @@ fn parse_template_expr(tokens: &[crate::spec::lexer::Token], _outer_span: Span) 
     ))?;
 
     // Extract the let binding value from the dummy component.
-    use crate::spec::ast::{SpecItem, ComponentItem};
+    use crate::ast::{SpecItem, ComponentItem};
     let comp = ast.items.into_iter()
         .find_map(|item| match item.node {
             SpecItem::Component(c) => Some(c),
@@ -416,8 +416,8 @@ fn parse_template_expr(tokens: &[crate::spec::lexer::Token], _outer_span: Span) 
 }
 
 /// Serialize a token slice back to a minimal source representation for re-parsing.
-fn tokens_to_source(tokens: &[crate::spec::lexer::Token]) -> String {
-    use crate::spec::lexer::TokenKind;
+fn tokens_to_source(tokens: &[crate::lexer::Token]) -> String {
+    use crate::lexer::TokenKind;
     let mut out = String::new();
     for tok in tokens {
         if !out.is_empty() {
@@ -693,7 +693,7 @@ fn eval_index_access(base: Value, idx: Value, span: Option<Span>) -> EvalResult<
 ///
 /// Circular dependencies are detected via the "currently evaluating" sentinel.
 pub fn eval_let_bindings(
-    bindings: &[(&str, &Spanned<crate::spec::ast::Expr>)],
+    bindings: &[(&str, &Spanned<crate::ast::Expr>)],
     scope: &mut ScopeStack,
 ) -> EvalResult<()> {
     // Evaluate each binding in order. Since bindings within a scope can
@@ -712,8 +712,8 @@ pub fn eval_let_bindings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{BinOp, Span, Spanned, Unit};
-    use crate::spec::ast::Expr;
+    use crate::diagnostic::{BinOp, Span, Spanned, Unit};
+    use crate::ast::Expr;
 
     fn span() -> Span {
         Span::new(0, 0)
@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn spread_evaluation() {
-        use crate::spec::ast::{Object, ObjectItem, Property};
+        use crate::ast::{Object, ObjectItem, Property};
 
         // let defaults = { shape: "round", x_size: 60mil }
         // { ...defaults, shape: "rectangular" }
@@ -1038,7 +1038,7 @@ mod tests {
     #[test]
     fn bare_ident_in_object_becomes_string() {
         // { electrical: passive, side: outside } — both bare idents → strings.
-        use crate::spec::ast::{Object, ObjectItem, Property};
+        use crate::ast::{Object, ObjectItem, Property};
 
         let scope = make_scope();
         let obj = Object {

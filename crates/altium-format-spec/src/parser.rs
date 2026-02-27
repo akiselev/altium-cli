@@ -1,4 +1,4 @@
-use crate::parser::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
+use crate::diagnostic::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
 
 use super::ast::{
     AliasDecl, ComponentDecl, ComponentItem, EntityName, Expr, FootprintDecl, FootprintItem,
@@ -1214,8 +1214,8 @@ enum InfixOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Unit;
-    use crate::spec::ast::*;
+    use crate::diagnostic::Unit;
+    use crate::ast::*;
 
     fn parse(src: &str) -> SpecFile {
         parse_spec(src).unwrap_or_else(|e| panic!("parse error: {}", e))

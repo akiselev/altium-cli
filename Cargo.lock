@@ -31,6 +31,7 @@ dependencies = [
  "altium-format-ops",
  "altium-format-render-png",
  "altium-format-render-svg",
+ "altium-format-spec",
  "altium-format-types",
  "anyhow",
  "cfb",
@@ -117,6 +118,20 @@ dependencies = [
  "altium-format",
  "altium-format-types",
  "svg",
+]
+
+[[package]]
+name = "altium-format-spec"
+version = "0.2.0"
+dependencies = [
+ "altium-format",
+ "altium-format-types",
+ "indexmap",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ use altium_format_ops::{
     apply_ops_source_pcbdoc, apply_ops_source_pcblib, apply_ops_source_schdoc,
     apply_ops_source_schlib,
 };
-use altium_format_ops::spec::{
+use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcblib, dump_schlib, reconcile_pcblib, reconcile_pcblib_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports, apply_spec_schlib, apply_spec_pcblib,
 };
@@ -630,7 +630,7 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
     let spec_path = spec_file.clone();
 
     let eco = match spec_model {
-        altium_format_ops::spec::model::SpecModel::SchLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::SchLib(ref spec_lib) => {
             // Try to load target document if it exists
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
@@ -642,7 +642,7 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
                 reconcile_schlib_empty(spec_lib, library_path, spec_path)
             }
         }
-        altium_format_ops::spec::model::SpecModel::PcbLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::PcbLib(ref spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 reconcile_pcblib(spec_lib, library_path, spec_path)
@@ -679,7 +679,7 @@ fn run_apply(
     let library_path = default_output_for_spec(spec_file, &domain);
 
     match spec_model {
-        altium_format_ops::spec::model::SpecModel::SchLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::SchLib(ref spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
                 SchLib::open(&resolved_target)
@@ -706,7 +706,7 @@ fn run_apply(
                 println!("Saved: {}", out_path.display());
             }
         }
-        altium_format_ops::spec::model::SpecModel::PcbLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::PcbLib(ref spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut lib = if resolved_target.exists() {
                 PcbLib::open(&resolved_target)
@@ -776,8 +776,8 @@ fn compile_and_resolve(
     source: &str,
     spec_file: &PathBuf,
     domain: &SpecDomain,
-) -> anyhow::Result<altium_format_ops::spec::model::SpecModel> {
-    use altium_format_ops::spec::parser::parse_spec;
+) -> anyhow::Result<altium_format_spec::model::SpecModel> {
+    use altium_format_spec::parser::parse_spec;
 
     let file = parse_spec(source)
         .map_err(|e| anyhow::anyhow!("parse error in {}: {e}", spec_file.display()))?;
@@ -795,7 +795,7 @@ fn compile_and_resolve(
     }
     merged_items.extend(resolved.root.items);
 
-    let merged_file = altium_format_ops::spec::ast::SpecFile { items: merged_items };
+    let merged_file = altium_format_spec::ast::SpecFile { items: merged_items };
 
     let _ = spec_dir; // used implicitly via spec_path_canonical
     compile_spec(&merged_file, *domain)

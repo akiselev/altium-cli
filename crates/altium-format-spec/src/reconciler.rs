@@ -14,11 +14,11 @@ use altium_format::SchLib;
 use altium_format_types::SchRecordType;
 use indexmap::IndexMap;
 
-use crate::spec::eco::{
+use crate::eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, PropChange, PropValue, compute_summary,
 };
-use crate::spec::eval::SpecError;
-use crate::spec::model::{
+use crate::eval::SpecError;
+use crate::model::{
     ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, PadSpec, ParameterSpec, PinSpec,
     SchLibSpec, PcbLibSpec,
 };
@@ -206,7 +206,7 @@ pub(crate) fn query_doc_view(doc: &mut SchLib) -> Result<DocView, SpecError> {
     });
     let results = apply_schlib_low_ops(doc, &[qc_op]).map_err(|e| {
         SpecError::no_span(
-            crate::spec::eval::SpecErrorCode::TypeMismatch,
+            crate::eval::SpecErrorCode::TypeMismatch,
             format!("failed to query components: {e}"),
         )
     })?;
@@ -252,7 +252,7 @@ pub(crate) fn query_doc_view(doc: &mut SchLib) -> Result<DocView, SpecError> {
 
         let sub_results = apply_schlib_low_ops(doc, &[qc2_op, qp_op2, qr_op2]).map_err(|e| {
             SpecError::no_span(
-                crate::spec::eval::SpecErrorCode::TypeMismatch,
+                crate::eval::SpecErrorCode::TypeMismatch,
                 format!("failed to query component '{}': {e}", lib_ref),
             )
         })?;
@@ -749,7 +749,7 @@ fn strings_equal_ci(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::model::{
+    use crate::model::{
         ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SchLibSpec,
     };
     use altium_format_types::{CoordPoint, Coord, RotationBy90};
@@ -1066,8 +1066,8 @@ mod tests {
         }
     }
 
-    fn make_footprint(name: &str, pads: Vec<PadSpec>) -> crate::spec::model::FootprintSpec {
-        crate::spec::model::FootprintSpec {
+    fn make_footprint(name: &str, pads: Vec<PadSpec>) -> crate::model::FootprintSpec {
+        crate::model::FootprintSpec {
             display_name: name.to_string(),
             description: Some("Test footprint".to_string()),
             height: None,
@@ -1077,7 +1077,7 @@ mod tests {
         }
     }
 
-    fn make_pcblib_spec(footprints: Vec<crate::spec::model::FootprintSpec>) -> PcbLibSpec {
+    fn make_pcblib_spec(footprints: Vec<crate::model::FootprintSpec>) -> PcbLibSpec {
         PcbLibSpec { footprints }
     }
 

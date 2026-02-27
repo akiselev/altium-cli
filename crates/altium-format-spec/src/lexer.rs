@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::parser::{ParseError, ParseErrorCode, Span, Unit};
+use crate::diagnostic::{ParseError, ParseErrorCode, Span, Unit};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
@@ -649,7 +649,7 @@ fn parse_unit(unit: &str) -> Option<Unit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Unit;
+    use crate::diagnostic::Unit;
 
     fn lex_kinds(input: &str) -> Vec<TokenKind> {
         lex(input)

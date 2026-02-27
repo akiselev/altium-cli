@@ -1,4 +1,4 @@
-pub use crate::parser::{BinOp, Span, Spanned, Unit};
+pub use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 pub use super::lexer::TemplatePart;
 
 /// A parsed spec file.

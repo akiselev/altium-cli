@@ -1,7 +1,6 @@
 pub use altium_format::AltiumFormatError;
 
 pub mod intlib_ops;
-pub mod spec;
 pub mod ops;
 pub mod parser;
 pub mod pcbdoc_ops;

@@ -21,18 +21,18 @@ use altium_format_types::{
     PlaneConnectionStyle, RotationBy90, V6Layer,
 };
 
-use crate::spec::ast::{
+use crate::ast::{
     AliasDecl, ComponentDecl, ComponentItem, FootprintDecl, FootprintItem, FootprintMapDecl,
     FootprintRef, GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock,
     PartItem, PinDecl, SpecFile, SpecItem,
 };
-use crate::spec::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
-use crate::spec::model::{
+use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
+use crate::model::{
     ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec, GraphicType,
     PadSpec, ParameterSpec, PartSpec, PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType,
     PinPadMap, PinSpec, SchLibSpec, SpecDomain, SpecModel,
 };
-use crate::parser::Spanned;
+use crate::diagnostic::Spanned;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ impl SpecCompiler {
                     }
                 }
                 self.scope.pop();
-                Ok(SpecModel::PcbLib(crate::spec::model::PcbLibSpec { footprints }))
+                Ok(SpecModel::PcbLib(crate::model::PcbLibSpec { footprints }))
             }
         }
     }
@@ -610,7 +610,7 @@ impl SpecCompiler {
 /// Evaluate a slice of `(name, expr)` let bindings in forward-visible order.
 /// Pushes names as cycle sentinels before evaluating each.
 fn eval_let_bindings_slice(
-    bindings: &[(&str, &Spanned<crate::spec::ast::Expr>)],
+    bindings: &[(&str, &Spanned<crate::ast::Expr>)],
     scope: &mut ScopeStack,
 ) -> Result<(), SpecError> {
     for (name, expr) in bindings {
@@ -684,10 +684,10 @@ fn eval_object_to_map_skip_anchor_keys(
     Ok(result)
 }
 
-/// Collect properties from an iterator of [`crate::spec::ast::Property`] items
+/// Collect properties from an iterator of [`crate::ast::Property`] items
 /// by evaluating each value in the given scope.
 fn collect_object_properties_from_items<'a>(
-    props: impl Iterator<Item = &'a crate::spec::ast::Property>,
+    props: impl Iterator<Item = &'a crate::ast::Property>,
     scope: &ScopeStack,
 ) -> EvalResult<IndexMap<String, Value>> {
     let mut result = IndexMap::new();
@@ -775,7 +775,7 @@ where
 fn get_string_value_key(
     props: &IndexMap<String, Value>,
     key: &str,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<String, SpecError> {
     match props.get(key) {
         Some(Value::String(s)) => Ok(s.clone()),
@@ -795,13 +795,13 @@ fn get_string_value_key(
 
 // ── Coordinate conversion helpers ─────────────────────────────────────────────
 
-fn value_to_coord(v: &Value, span: Option<crate::parser::Span>) -> Result<Coord, SpecError> {
+fn value_to_coord(v: &Value, span: Option<crate::diagnostic::Span>) -> Result<Coord, SpecError> {
     Ok(Coord::new(v.to_dim(span)?))
 }
 
 fn value_to_coord_point(
     v: &Value,
-    span: Option<crate::parser::Span>,
+    span: Option<crate::diagnostic::Span>,
 ) -> Result<CoordPoint, SpecError> {
     match v {
         Value::CoordPoint(x, y) => Ok(CoordPoint::new(Coord::new(*x), Coord::new(*y))),
@@ -813,7 +813,7 @@ fn value_to_coord_point(
     }
 }
 
-fn value_to_color(v: &Value, span: Option<crate::parser::Span>) -> Result<Color, SpecError> {
+fn value_to_color(v: &Value, span: Option<crate::diagnostic::Span>) -> Result<Color, SpecError> {
     match v {
         Value::Color(r, g, b) => Ok(Color::from_rgb(*r, *g, *b)),
         other => Err(SpecError::new(
@@ -826,7 +826,7 @@ fn value_to_color(v: &Value, span: Option<crate::parser::Span>) -> Result<Color,
 
 fn value_to_points(
     v: &Value,
-    span: Option<crate::parser::Span>,
+    span: Option<crate::diagnostic::Span>,
 ) -> Result<Vec<CoordPoint>, SpecError> {
     match v {
         Value::Array(arr) => {
@@ -958,7 +958,7 @@ fn parse_pcb_graphic_type(s: &str) -> Option<PcbGraphicType> {
 
 fn compile_graphic_properties(
     props: &IndexMap<String, Value>,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<GraphicProperties, SpecError> {
     let from = props.get("from")
         .map(|v| value_to_coord_point(v, Some(span)))
@@ -1039,7 +1039,7 @@ fn compile_graphic_properties(
 
 fn compile_pcb_graphic_properties(
     props: &IndexMap<String, Value>,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<PcbGraphicProperties, SpecError> {
     let layer = get_enum_opt(props, "layer", parse_v6_layer)?;
     let width = props.get("width").map(|v| value_to_coord(v, Some(span))).transpose()?;
@@ -1308,7 +1308,7 @@ pub type GraphicBindingMap = HashMap<String, BoxGeometry>;
 
 /// Build a GraphicBindingMap by scanning bound box-type graphics in the current scope.
 fn build_graphic_binding_map<'a>(
-    graphic_decls: impl Iterator<Item = &'a crate::spec::ast::GraphicDecl>,
+    graphic_decls: impl Iterator<Item = &'a crate::ast::GraphicDecl>,
     scope: &ScopeStack,
 ) -> Result<GraphicBindingMap, SpecError> {
     let mut map = GraphicBindingMap::new();
@@ -1348,9 +1348,9 @@ fn build_graphic_binding_map<'a>(
 
 /// Parse a raw object's `on:` property as a `(binding_name, edge_field)` pair.
 /// Returns `None` if `on:` is absent.
-fn extract_on_ref(obj: &crate::spec::ast::Object) -> Option<(String, String)> {
+fn extract_on_ref(obj: &crate::ast::Object) -> Option<(String, String)> {
     for item in &obj.items {
-        if let crate::spec::ast::ObjectItem::Property(p) = &item.node {
+        if let crate::ast::ObjectItem::Property(p) = &item.node {
             if p.key.node == "on" {
                 return extract_dollar_path_two_part(&p.value.node);
             }
@@ -1361,9 +1361,9 @@ fn extract_on_ref(obj: &crate::spec::ast::Object) -> Option<(String, String)> {
 
 /// Extract `(root, field)` from an expression like `$body.left`.
 /// Returns `None` if the expression is not a `DollarIdent.field` path.
-fn extract_dollar_path_two_part(expr: &crate::spec::ast::Expr) -> Option<(String, String)> {
-    if let crate::spec::ast::Expr::Path(base, field) = expr {
-        if let crate::spec::ast::Expr::DollarIdent(root) = &base.node {
+fn extract_dollar_path_two_part(expr: &crate::ast::Expr) -> Option<(String, String)> {
+    if let crate::ast::Expr::Path(base, field) = expr {
+        if let crate::ast::Expr::DollarIdent(root) = &base.node {
             return Some((root.clone(), field.node.clone()));
         }
     }
@@ -1371,11 +1371,11 @@ fn extract_dollar_path_two_part(expr: &crate::spec::ast::Expr) -> Option<(String
 }
 
 /// Parse a raw object's `after:` or `before:` property as a binding name.
-fn extract_sequence_ref(obj: &crate::spec::ast::Object, key: &str) -> Option<String> {
+fn extract_sequence_ref(obj: &crate::ast::Object, key: &str) -> Option<String> {
     for item in &obj.items {
-        if let crate::spec::ast::ObjectItem::Property(p) = &item.node {
+        if let crate::ast::ObjectItem::Property(p) = &item.node {
             if p.key.node == key {
-                if let crate::spec::ast::Expr::DollarIdent(name) = &p.value.node {
+                if let crate::ast::Expr::DollarIdent(name) = &p.value.node {
                     return Some(name.clone());
                 }
             }
@@ -1385,9 +1385,9 @@ fn extract_sequence_ref(obj: &crate::spec::ast::Object, key: &str) -> Option<Str
 }
 
 /// Parse an `at:` string enum from the raw object (for anchor mode: "start", "center", "end").
-fn extract_at_position(obj: &crate::spec::ast::Object, scope: &ScopeStack) -> Result<Option<AnchorPosition>, SpecError> {
+fn extract_at_position(obj: &crate::ast::Object, scope: &ScopeStack) -> Result<Option<AnchorPosition>, SpecError> {
     for item in &obj.items {
-        if let crate::spec::ast::ObjectItem::Property(p) = &item.node {
+        if let crate::ast::ObjectItem::Property(p) = &item.node {
             if p.key.node == "at" {
                 let val = eval_expr(&p.value, scope)?;
                 match &val {
@@ -1925,7 +1925,7 @@ pub fn resolve_anchor_placement(
 fn get_coord_point_opt(
     props: &IndexMap<String, Value>,
     key: &str,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<Option<CoordPoint>, SpecError> {
     match props.get(key) {
         None => Ok(None),
@@ -1957,7 +1957,7 @@ fn parse_abs_direction(s: &str) -> Option<AbsDirection> {
 /// Extract the `pad:` sub-object from a row/grid body map.
 fn extract_pad_template(
     props: &IndexMap<String, Value>,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<IndexMap<String, Value>, SpecError> {
     match props.get("pad") {
         Some(Value::Object(m)) => Ok(m.clone()),
@@ -1987,7 +1987,7 @@ fn pad_from_template(
     pad_name: String,
     at: CoordPoint,
     template: &IndexMap<String, Value>,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<PadSpec, SpecError> {
     let shape = get_enum_opt(template, "shape", parse_pad_shape)?;
     let x_size = get_coord_opt(template, "x_size")?;
@@ -2029,7 +2029,7 @@ fn pad_from_template(
 fn merge_pad_override_from_props(
     pad: &mut PadSpec,
     explicit: &IndexMap<String, Value>,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<(), SpecError> {
     if let Some(v) = explicit.get("at") {
         pad.at = value_to_coord_point(v, Some(span))?;
@@ -2080,7 +2080,7 @@ fn merge_pad_override_from_props(
 }
 
 /// Expand a `row` or `column` declaration into individual PadSpecs.
-fn expand_row(decl: &crate::spec::ast::RowDecl, scope: &ScopeStack) -> Result<Vec<PadSpec>, SpecError> {
+fn expand_row(decl: &crate::ast::RowDecl, scope: &ScopeStack) -> Result<Vec<PadSpec>, SpecError> {
     let span = decl.body.span;
     let props = eval_object_to_map_skip_row_keys(&decl.body.node, scope)?;
 
@@ -2202,7 +2202,7 @@ fn generate_pad_name(start: i32, counter: &mut i32, skip: &[String]) -> String {
 fn resolve_binding_geometry_from_scope(
     binding: &str,
     scope: &ScopeStack,
-    span: crate::parser::Span,
+    span: crate::diagnostic::Span,
 ) -> Result<BoxGeometry, SpecError> {
     let val = scope.lookup_dollar(binding)
         .ok_or_else(|| SpecError::at(
@@ -2240,9 +2240,9 @@ fn resolve_binding_geometry_from_scope(
 }
 
 /// Extract `on: $binding.field` from a row body object.
-fn extract_row_on_ref(obj: &crate::spec::ast::Object) -> Option<(String, String)> {
+fn extract_row_on_ref(obj: &crate::ast::Object) -> Option<(String, String)> {
     for item in &obj.items {
-        if let crate::spec::ast::ObjectItem::Property(p) = &item.node {
+        if let crate::ast::ObjectItem::Property(p) = &item.node {
             if p.key.node == "on" {
                 return extract_dollar_path_two_part(&p.value.node);
             }
@@ -2254,7 +2254,7 @@ fn extract_row_on_ref(obj: &crate::spec::ast::Object) -> Option<(String, String)
 /// Evaluate row/grid body skipping anchor keys (`on`, `after`, `before`, `pad`).
 /// The `pad:` sub-object is handled separately.
 fn eval_object_to_map_skip_row_keys(
-    obj: &crate::spec::ast::Object,
+    obj: &crate::ast::Object,
     scope: &ScopeStack,
 ) -> EvalResult<IndexMap<String, Value>> {
     const SKIP: &[&str] = &["on", "after", "before", "pad"];
@@ -2283,7 +2283,7 @@ fn eval_object_to_map_skip_row_keys(
     for item in &obj.items {
         if let ObjectItem::Property(prop) = &item.node {
             if prop.key.node == "pad" {
-                if let crate::spec::ast::Expr::Object(inner_obj) = &prop.value.node {
+                if let crate::ast::Expr::Object(inner_obj) = &prop.value.node {
                     let map = eval_object_to_map(inner_obj, scope)?;
                     result.insert("pad".to_string(), Value::Object(map));
                 } else {
@@ -2342,7 +2342,7 @@ fn parse_grid_naming(s: &str) -> Option<GridNaming> {
 }
 
 /// Expand a `grid` declaration into individual PadSpecs.
-fn expand_grid(decl: &crate::spec::ast::GridDecl, scope: &ScopeStack) -> Result<Vec<PadSpec>, SpecError> {
+fn expand_grid(decl: &crate::ast::GridDecl, scope: &ScopeStack) -> Result<Vec<PadSpec>, SpecError> {
     let span = decl.body.span;
     let props = eval_object_to_map_skip_row_keys(&decl.body.node, scope)?;
 
@@ -2415,7 +2415,7 @@ fn expand_grid(decl: &crate::spec::ast::GridDecl, scope: &ScopeStack) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::parser::parse_spec;
+    use crate::parser::parse_spec;
 
     fn compile_schlib(src: &str) -> Result<SchLibSpec, SpecError> {
         let file = parse_spec(src).expect("parse failed");
@@ -2425,7 +2425,7 @@ mod tests {
         }
     }
 
-    fn compile_pcblib(src: &str) -> Result<crate::spec::model::PcbLibSpec, SpecError> {
+    fn compile_pcblib(src: &str) -> Result<crate::model::PcbLibSpec, SpecError> {
         let file = parse_spec(src).expect("parse failed");
         match compile_spec(&file, SpecDomain::PcbLib)? {
             SpecModel::PcbLib(p) => Ok(p),

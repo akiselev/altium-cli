@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
-use crate::parser::Span;
-use crate::spec::ast::{SpecFile, SpecItem};
-use crate::spec::eval::{SpecError, SpecErrorCode};
-use crate::spec::parser::parse_spec;
+use crate::diagnostic::Span;
+use crate::ast::{SpecFile, SpecItem};
+use crate::eval::{SpecError, SpecErrorCode};
+use crate::parser::parse_spec;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -382,8 +382,8 @@ fn validate_cross_domain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{Span, Spanned};
-    use crate::spec::ast::{ImportDecl, SpecFile, SpecItem};
+    use crate::diagnostic::{Span, Spanned};
+    use crate::ast::{ImportDecl, SpecFile, SpecItem};
 
     fn zero_span() -> Span {
         Span { start: 0, end: 1 }
