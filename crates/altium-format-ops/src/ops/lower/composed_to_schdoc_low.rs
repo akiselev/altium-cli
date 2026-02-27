@@ -152,8 +152,7 @@ pub fn lower_composed_to_schdoc_low(composed_ops: &[ComposedOp]) -> Vec<SchDocLo
             ComposedOp::AddImage(v) => SchDocLowOp::AddImage(v.0.clone()),
             ComposedOp::AddTrack(_)
             | ComposedOp::AddVia(_)
-            | ComposedOp::AddFootprint(_)
-            | ComposedOp::AddPad(_) => {
+            | ComposedOp::AddFootprint(_) => {
                 unreachable!("pcb-only composed op lowered into schdoc")
             }
         })

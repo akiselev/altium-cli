@@ -13,6 +13,7 @@ pub mod reconciler;
 pub use compiler::compile_spec;
 pub use dump::{dump_pcblib, dump_schlib};
 pub use executor::eco_to_high_ops;
+pub use executor::{apply_spec_schlib, apply_spec_pcblib};
 pub use import::{ResolvedSpec, resolve_imports};
 pub use reconciler::{reconcile_pcblib, reconcile_pcblib_empty, reconcile_schlib, reconcile_schlib_empty};
 pub use eval::{

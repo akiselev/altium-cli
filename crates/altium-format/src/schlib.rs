@@ -67,7 +67,8 @@ use crate::param_value::{SchAngle, ToParamValue};
 use crate::sch_ops_core::{
     AddArcOp, AddBezierOp, AddEllipseOp, AddEllipticalArcOp, AddImageOp, AddLabelOp, AddLineOp,
     AddPieOp, AddPolygonOp, AddPolylineOp, AddRectangleOp, AddRoundRectangleOp, AddTextFrameOp,
-    ComponentRootOp, EditComponentOp, ParameterOp, PinOp, RecordPatch, RecordSelector,
+    ComponentRootOp, EditComponentOp, EditParameterOp, EditPinOp, ParameterOp, PinOp,
+    RecordPatch, RecordSelector,
     generate_unique_id, parse_electrical_type,
 };
 use crate::sch_records::{
@@ -2954,6 +2955,92 @@ impl SchLib {
         }
         if let Some(v) = op.show_hidden_pins {
             comp.component.show_hidden_pins = v;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ops_edit_pin(
+        &mut self,
+        component_index: usize,
+        op: &EditPinOp,
+    ) -> Result<()> {
+        let comp = self.components.get_mut(component_index).ok_or_else(|| {
+            AltiumFormatError::InvalidParamValue {
+                key: "component_ref".to_owned(),
+                detail: format!("component index out of range: {component_index}"),
+            }
+        })?;
+        let mut found = false;
+        for rec in &mut comp.records {
+            if let SchRecord::Pin(pin) = rec {
+                if pin.designator != op.designator {
+                    continue;
+                }
+                if let Some(part_id) = op.owner_part_id {
+                    if pin.owner_part_id != part_id {
+                        continue;
+                    }
+                }
+                if let Some(ref name) = op.name {
+                    pin.name = name.clone();
+                }
+                if let Some(ref elec) = op.electrical {
+                    pin.electrical = parse_electrical_type(elec)?;
+                }
+                if let Some(is_hidden) = op.is_hidden {
+                    pin.is_hidden = is_hidden;
+                }
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "designator".to_owned(),
+                detail: format!(
+                    "pin '{}' not found in component at index {component_index}",
+                    op.designator
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ops_edit_parameter(
+        &mut self,
+        component_index: usize,
+        op: &EditParameterOp,
+    ) -> Result<()> {
+        let comp = self.components.get_mut(component_index).ok_or_else(|| {
+            AltiumFormatError::InvalidParamValue {
+                key: "component_ref".to_owned(),
+                detail: format!("component index out of range: {component_index}"),
+            }
+        })?;
+        let mut found = false;
+        for rec in &mut comp.records {
+            if let SchRecord::Parameter(param) = rec {
+                if !param.name.eq_ignore_ascii_case(&op.name) {
+                    continue;
+                }
+                if let Some(ref text) = op.text {
+                    param.text = text.clone();
+                }
+                if let Some(is_hidden) = op.is_hidden {
+                    param.is_hidden = is_hidden;
+                }
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "name".to_owned(),
+                detail: format!(
+                    "parameter '{}' not found in component at index {component_index}",
+                    op.name
+                ),
+            });
         }
         Ok(())
     }

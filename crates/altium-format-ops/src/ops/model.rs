@@ -34,7 +34,6 @@ pub enum HighOp {
     AddTrack(AddTrackHighOp),
     AddVia(AddViaHighOp),
     AddFootprint(AddFootprintHighOp),
-    AddPad(AddPadHighOp),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
@@ -588,30 +587,6 @@ pub struct AddFootprintHighOp {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AddPadHighOp {
-    #[serde(default)]
-    pub opid: Option<String>,
-    #[serde(default)]
-    pub footprint_ref: Option<sch_ops_core::RefExpr>,
-    pub pad_name: String,
-    pub at: (i32, i32),
-    #[serde(default)]
-    pub shape: Option<String>,
-    #[serde(default)]
-    pub x_size_mils: Option<i32>,
-    #[serde(default)]
-    pub y_size_mils: Option<i32>,
-    #[serde(default)]
-    pub hole_size_mils: Option<i32>,
-    #[serde(default)]
-    pub is_plated: Option<bool>,
-    #[serde(default)]
-    pub layer: Option<String>,
-    #[serde(default)]
-    pub rotation: Option<f64>,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, OpsSchema)]
 #[ops(op = "footprint", domain = "sch")]
 pub struct FootprintOp {
@@ -681,7 +656,6 @@ pub enum ComposedOp {
     AddTrack(AddTrackNode),
     AddVia(AddViaNode),
     AddFootprint(AddFootprintNode),
-    AddPad(AddPadNode),
 }
 
 #[derive(Debug, Clone)]
@@ -838,8 +812,6 @@ pub struct AddTrackNode(pub altium_format::pcb_ops_core::AddTrackOp);
 pub struct AddViaNode(pub altium_format::pcb_ops_core::AddViaOp);
 #[derive(Debug, Clone)]
 pub struct AddFootprintNode(pub altium_format::pcb_ops_core::AddFootprintOp);
-#[derive(Debug, Clone)]
-pub struct AddPadNode(pub altium_format::pcb_ops_core::AddPadOp);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplyReport {

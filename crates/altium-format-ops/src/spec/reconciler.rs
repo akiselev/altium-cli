@@ -164,41 +164,41 @@ fn pad_spec_to_add(spec: &PadSpec) -> EntityChange {
 // ── Document view (queried via low ops) ──────────────────────────────────────
 
 /// A lightweight view of the current SchLib state, built by querying with low ops.
-struct DocView {
+pub(crate) struct DocView {
     /// Map from lowercase lib_reference → component view.
-    components: IndexMap<String, DocComponent>,
+    pub(crate) components: IndexMap<String, DocComponent>,
 }
 
-struct DocComponent {
-    lib_reference: String,
-    description: String,
-    part_count: i32,
-    aliases: Vec<String>,
+pub(crate) struct DocComponent {
+    pub(crate) lib_reference: String,
+    pub(crate) description: String,
+    pub(crate) part_count: i32,
+    pub(crate) aliases: Vec<String>,
     /// Map from (owner_part_id, lowercase designator) → pin view.
-    pins: IndexMap<(i32, String), DocPin>,
+    pub(crate) pins: IndexMap<(i32, String), DocPin>,
     /// Map from lowercase name → parameter view.
-    parameters: IndexMap<String, DocParameter>,
+    pub(crate) parameters: IndexMap<String, DocParameter>,
 }
 
-struct DocPin {
-    designator: String,
-    name: String,
-    electrical: String,
-    owner_part_id: i32,
-    is_hidden: bool,
-    x_mils: i64,
-    y_mils: i64,
-    length_mils: i64,
-    orientation: i64,
+pub(crate) struct DocPin {
+    pub(crate) designator: String,
+    pub(crate) name: String,
+    pub(crate) electrical: String,
+    pub(crate) owner_part_id: i32,
+    pub(crate) is_hidden: bool,
+    pub(crate) x_mils: i64,
+    pub(crate) y_mils: i64,
+    pub(crate) length_mils: i64,
+    pub(crate) orientation: i64,
 }
 
-struct DocParameter {
-    name: String,
-    text: String,
-    is_hidden: bool,
+pub(crate) struct DocParameter {
+    pub(crate) name: String,
+    pub(crate) text: String,
+    pub(crate) is_hidden: bool,
 }
 
-fn query_doc_view(doc: &mut SchLib) -> Result<DocView, SpecError> {
+pub(crate) fn query_doc_view(doc: &mut SchLib) -> Result<DocView, SpecError> {
     // Step 1: Query all components
     let qc_op = SchLibLowOp::QueryComponents(QueryComponentsOp {
         opid: "qc".to_string(),

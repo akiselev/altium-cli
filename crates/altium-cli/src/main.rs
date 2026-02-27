@@ -5,11 +5,11 @@ use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_ops::{
     AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps,
     apply_ops_source_pcbdoc, apply_ops_source_pcblib, apply_ops_source_schdoc,
-    apply_ops_source_schlib, apply_pcblib, apply_schlib,
+    apply_ops_source_schlib,
 };
 use altium_format_ops::spec::{
     SpecDomain, compile_spec, dump_pcblib, dump_schlib, reconcile_pcblib, reconcile_pcblib_empty,
-    reconcile_schlib, reconcile_schlib_empty, resolve_imports, eco_to_high_ops,
+    reconcile_schlib, reconcile_schlib_empty, resolve_imports, apply_spec_schlib, apply_spec_pcblib,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -677,7 +677,6 @@ fn run_apply(
 
     let spec_model = compile_and_resolve(&source, spec_file, &domain)?;
     let library_path = default_output_for_spec(spec_file, &domain);
-    let spec_path = spec_file.clone();
 
     match spec_model {
         altium_format_ops::spec::model::SpecModel::SchLib(ref spec_lib) => {
@@ -689,21 +688,18 @@ fn run_apply(
                 SchLib::new_blank_ad26()
             };
 
-            let eco = reconcile_schlib(spec_lib, &mut doc, library_path.clone(), spec_path)
-                .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?;
-
-            let high_ops = eco_to_high_ops(&eco);
             let out_path = output.cloned().unwrap_or(library_path);
 
-            if report_json {
-                println!("{}", serde_json::to_string_pretty(&eco)?);
-            } else {
-                println!("{}", eco.render_text());
-            }
-
-            // Apply ops to document
-            apply_schlib(&mut doc, &high_ops)
+            let results = apply_spec_schlib(spec_lib, &mut doc)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            if report_json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                for r in &results {
+                    println!("{}: {}", r.opid, r.kind);
+                }
+            }
 
             doc.save_as(&out_path)?;
             if !report_json {
@@ -723,18 +719,18 @@ fn run_apply(
                 )
             };
 
-            let eco = reconcile_pcblib(spec_lib, library_path.clone(), spec_path);
-            let high_ops = eco_to_high_ops(&eco);
             let out_path = output.cloned().unwrap_or(library_path);
 
-            if report_json {
-                println!("{}", serde_json::to_string_pretty(&eco)?);
-            } else {
-                println!("{}", eco.render_text());
-            }
-
-            apply_pcblib(&mut lib, &high_ops)
+            let results = apply_spec_pcblib(spec_lib, &mut lib)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            if report_json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                for r in &results {
+                    println!("{}: {}", r.opid, r.kind);
+                }
+            }
 
             lib.save_as(&out_path)?;
             if !report_json {

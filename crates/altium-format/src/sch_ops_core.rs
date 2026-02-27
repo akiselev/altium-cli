@@ -206,6 +206,26 @@ pub struct RemoveAliasOp {
 }
 
 #[derive(Debug, Clone)]
+pub struct EditPinOp {
+    pub opid: OpId,
+    pub component_ref: RefExpr,
+    pub designator: String,
+    pub owner_part_id: Option<i32>,
+    pub name: Option<String>,
+    pub electrical: Option<String>,
+    pub is_hidden: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EditParameterOp {
+    pub opid: OpId,
+    pub component_ref: RefExpr,
+    pub name: String,
+    pub text: Option<String>,
+    pub is_hidden: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RemoveComponentOp {
     pub opid: OpId,
     pub component_ref: RefExpr,
@@ -484,6 +504,8 @@ pub enum SchDocLowOp {
     RemoveComponent(RemoveComponentOp),
     EditComponent(EditComponentOp),
     EditRecord(EditRecordOp),
+    EditPin(EditPinOp),
+    EditParameter(EditParameterOp),
     RemoveRecords(RemoveRecordsOp),
     QueryComponents(QueryComponentsOp),
     QueryPins(QueryPinsOp),
@@ -521,6 +543,8 @@ pub enum SchLibLowOp {
     RemoveComponent(RemoveComponentOp),
     EditComponent(EditComponentOp),
     EditRecord(EditRecordOp),
+    EditPin(EditPinOp),
+    EditParameter(EditParameterOp),
     RemoveRecords(RemoveRecordsOp),
     QueryComponents(QueryComponentsOp),
     QueryPins(QueryPinsOp),
@@ -727,6 +751,16 @@ fn apply_schdoc_low_op(
             r.fields
                 .insert("changed".to_owned(), Value::I64(changed as i64));
             Ok(r)
+        }
+        SchDocLowOp::EditPin(v) => {
+            let idx = resolve_component_index_schdoc(Some(&v.component_ref), ctx)?;
+            schdoc_edit_pin(doc, idx, v)?;
+            Ok(op_result(&v.opid, "edit_pin", None, vec![]))
+        }
+        SchDocLowOp::EditParameter(v) => {
+            let idx = resolve_component_index_schdoc(Some(&v.component_ref), ctx)?;
+            schdoc_edit_parameter(doc, idx, v)?;
+            Ok(op_result(&v.opid, "edit_parameter", None, vec![]))
         }
         SchDocLowOp::RemoveRecords(v) => {
             let idx = resolve_component_index_schdoc(v.component_ref.as_ref(), ctx)?;
@@ -986,6 +1020,16 @@ fn apply_schlib_low_op(
             r.fields
                 .insert("changed".to_owned(), Value::I64(changed as i64));
             Ok(r)
+        }
+        SchLibLowOp::EditPin(v) => {
+            let idx = resolve_component_index_schlib(lib, Some(&v.component_ref), ctx)?;
+            lib.ops_edit_pin(idx, v)?;
+            Ok(op_result(&v.opid, "edit_pin", None, vec![]))
+        }
+        SchLibLowOp::EditParameter(v) => {
+            let idx = resolve_component_index_schlib(lib, Some(&v.component_ref), ctx)?;
+            lib.ops_edit_parameter(idx, v)?;
+            Ok(op_result(&v.opid, "edit_parameter", None, vec![]))
         }
         SchLibLowOp::RemoveRecords(v) => {
             let idx = resolve_component_index_schlib(lib, v.component_ref.as_ref(), ctx)?;
@@ -1845,6 +1889,82 @@ fn schdoc_edit_records(
         }
     }
     Ok(changed)
+}
+
+fn schdoc_edit_pin(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &EditPinOp,
+) -> Result<()> {
+    let scope = schdoc_component_scope_indices(doc, component_index)?;
+    let mut found = false;
+    for global_idx in scope {
+        if let SchRecord::Pin(pin) = &mut doc.records[global_idx] {
+            if pin.designator != op.designator {
+                continue;
+            }
+            if let Some(part_id) = op.owner_part_id {
+                if pin.owner_part_id != part_id {
+                    continue;
+                }
+            }
+            if let Some(ref name) = op.name {
+                pin.name = name.clone();
+            }
+            if let Some(ref elec) = op.electrical {
+                pin.electrical = parse_electrical_type(elec)?;
+            }
+            if let Some(is_hidden) = op.is_hidden {
+                pin.is_hidden = is_hidden;
+            }
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "designator".to_owned(),
+            detail: format!(
+                "pin '{}' not found in component at index {component_index}",
+                op.designator
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn schdoc_edit_parameter(
+    doc: &mut SchDoc,
+    component_index: usize,
+    op: &EditParameterOp,
+) -> Result<()> {
+    let scope = schdoc_component_scope_indices(doc, component_index)?;
+    let mut found = false;
+    for global_idx in scope {
+        if let SchRecord::Parameter(param) = &mut doc.records[global_idx] {
+            if !param.name.eq_ignore_ascii_case(&op.name) {
+                continue;
+            }
+            if let Some(ref text) = op.text {
+                param.text = text.clone();
+            }
+            if let Some(is_hidden) = op.is_hidden {
+                param.is_hidden = is_hidden;
+            }
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "name".to_owned(),
+            detail: format!(
+                "parameter '{}' not found in component at index {component_index}",
+                op.name
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn schdoc_remove_component(doc: &mut SchDoc, component_index: usize) -> Result<()> {

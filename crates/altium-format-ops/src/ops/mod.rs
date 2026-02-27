@@ -148,7 +148,6 @@ fn ensure_pcblib_domain_ops(high_ops: &[HighOp]) -> crate::Result<()> {
                 | HighOp::AddTrack(_)
                 | HighOp::AddVia(_)
                 | HighOp::AddFootprint(_)
-                | HighOp::AddPad(_)
         ) {
             return Err(crate::AltiumOperationError::Unimplemented(
                 "op is not supported for pcblib domain".to_owned(),
@@ -258,7 +257,6 @@ fn high_op_kind(op: &HighOp) -> &'static str {
         HighOp::AddTrack(_) => "add_track",
         HighOp::AddVia(_) => "add_via",
         HighOp::AddFootprint(_) => "add_footprint",
-        HighOp::AddPad(_) => "add_pad",
     }
 }
 
@@ -298,7 +296,6 @@ impl HighOpIdExt for HighOp {
             HighOp::AddTrack(v) => v.opid.as_deref(),
             HighOp::AddVia(v) => v.opid.as_deref(),
             HighOp::AddFootprint(v) => v.opid.as_deref(),
-            HighOp::AddPad(v) => v.opid.as_deref(),
         }
     }
 }

@@ -1,13 +1,13 @@
 use crate::ops::model::{
     AddArcNode, AddBezierNode, AddComponentOp, AddEllipseNode, AddEllipticalArcNode,
-    AddFootprintNode, AddImageNode, AddLabelNode, AddLineNode, AddPadNode, AddPieNode, AddPinOp,
+    AddFootprintNode, AddImageNode, AddLabelNode, AddLineNode, AddPieNode, AddPinOp,
     AddPolygonNode, AddPolylineNode, AddRectangleNode, AddRoundRectangleNode, AddTextFrameNode,
     AddTrackNode, AddViaNode, AliasNode, ComponentRefNode, ComponentRoot, ComponentText, ComposedOp,
     EditComponentNode, EditRecordNode, HighOp, ImplementationNode, MapDefinerNode, ParameterNode,
     PinNode, QueryComponentsNode, QueryNode, QueryPinsNode, QueryRecordsNode, RemoveComponentNode,
     RemoveRecordsNode,
 };
-use altium_format_types::{Coord, CoordPoint, PadShape};
+use altium_format_types::{Coord, CoordPoint};
 
 pub fn lower_high_ops(high_ops: &[HighOp]) -> Vec<ComposedOp> {
     let mut out = Vec::new();
@@ -305,33 +305,6 @@ fn lower_high_op(op: &HighOp, base_opid: &str, out: &mut Vec<ComposedOp>) {
                 description: v.description.clone(),
             },
         ))),
-        HighOp::AddPad(v) => out.push(ComposedOp::AddPad(AddPadNode(
-            altium_format::pcb_ops_core::AddPadOp {
-                opid: base_opid.to_owned(),
-                footprint_ref: v.footprint_ref.clone(),
-                pad_name: v.pad_name.clone(),
-                at: CoordPoint::new(Coord::from_mils(v.at.0), Coord::from_mils(v.at.1)),
-                shape: v.shape.as_deref().and_then(parse_pad_shape_name),
-                x_size: v.x_size_mils.map(Coord::from_mils),
-                y_size: v.y_size_mils.map(Coord::from_mils),
-                hole_size: v.hole_size_mils.map(Coord::from_mils),
-                is_plated: v.is_plated,
-                layer: v.layer.clone(),
-                rotation: v.rotation,
-            },
-        ))),
-    }
-}
-
-fn parse_pad_shape_name(name: &str) -> Option<PadShape> {
-    match name.to_lowercase().as_str() {
-        "round" | "circle" => Some(PadShape::Round),
-        "rectangular" | "rect" | "square" => Some(PadShape::Rectangular),
-        "octagonal" => Some(PadShape::Octagonal),
-        "roundrect" | "round_rect" => Some(PadShape::RoundRect),
-        "rotatedrect" | "rotated_rect" => Some(PadShape::RotatedRect),
-        "roundedrectangular" | "rounded_rectangular" => Some(PadShape::RoundedRectangular),
-        _ => None,
     }
 }
 
@@ -450,7 +423,6 @@ impl HighOpExt for HighOp {
             HighOp::AddTrack(v) => v.opid.as_deref(),
             HighOp::AddVia(v) => v.opid.as_deref(),
             HighOp::AddFootprint(v) => v.opid.as_deref(),
-            HighOp::AddPad(v) => v.opid.as_deref(),
         }
     }
 }
