@@ -56,7 +56,7 @@ use crate::cfb_document::CfbDocument;
 use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
 use crate::param_value::ToParamValue;
-use crate::sch_ops_core::generate_unique_id;
+use crate::util::generate_unique_id;
 use crate::sch_records::{SchPin, SchPrimitiveBase, SchRecord, SchSheet, serialize_record};
 use crate::schdoc::dispatch::dispatch_record_type;
 use crate::schdoc::fileheader::parse_fileheader_stream;

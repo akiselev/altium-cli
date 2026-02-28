@@ -19,7 +19,6 @@ workspace = true
 
 [dependencies]
 altium-format = { version = "0.2.0", path = "../altium-format" }
-altium-format-ops = { version = "0.2.0", path = "../altium-format-ops" }
 altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
 altium-format-render-svg = { version = "0.2.0", path = "../altium-format-render-svg" }
 altium-format-render-png = { version = "0.2.0", path = "../altium-format-render-png" }

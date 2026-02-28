@@ -22,8 +22,7 @@ mod pcb_file_header;
 mod prefixed_param_stream;
 #[allow(dead_code)]
 mod shared_union;
-pub mod sch_ops_core;
-pub mod pcb_ops_core;
+pub(crate) mod util;
 #[allow(dead_code)]
 mod sch_records;
 pub mod test_utils;
@@ -58,6 +57,17 @@ pub use schlib::{
     SchLib, SchLibComponentDumpView, SchLibFootprintDumpView, SchLibGraphicDumpView,
     SchLibParameterDumpView, SchLibPinDumpView, SchLibPinPadMapDumpView,
 };
+
+/// Version information extracted from an Altium document's file header.
+#[derive(Debug, serde::Serialize)]
+pub struct VersionInfo {
+    /// On-disk header string identifying the file format.
+    pub header: String,
+    /// Minor version number from the file header.
+    pub minor_version: i32,
+    /// Optional `FileVersionInfo` blob written by the saving application.
+    pub file_version_info: Option<String>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AltiumFormatError {

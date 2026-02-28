@@ -1,12 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
-use altium_format_ops::{
-    AltiumProjectOps, IntLibOps, PcbDocOps, PcbLibOps, SchDocOps, SchLibOps,
-    apply_ops_source_pcbdoc, apply_ops_source_pcblib, apply_ops_source_schdoc,
-    apply_ops_source_schlib,
-};
+use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcblib, dump_schlib, reconcile_pcblib, reconcile_pcblib_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports, apply_spec_schlib, apply_spec_pcblib,
@@ -54,11 +49,6 @@ enum Commands {
     Get {
         #[command(subcommand)]
         sub: GetSubcommand,
-    },
-    /// High-level operations
-    Ops {
-        #[command(subcommand)]
-        sub: OpsSubcommand,
     },
     /// Render an Altium document to SVG or PNG
     Render {
@@ -122,27 +112,6 @@ enum GetSubcommand {
 }
 
 #[derive(Subcommand)]
-enum OpsSubcommand {
-    /// Apply operations from an .ops source file
-    Apply {
-        /// Path to target .SchDoc or .SchLib file
-        path: PathBuf,
-        /// Path to .ops source file
-        #[arg(long)]
-        spec_file: PathBuf,
-        /// Optional output path (default: in-place)
-        #[arg(long)]
-        output: Option<PathBuf>,
-        /// Resolve and execute ops without saving output
-        #[arg(long, default_value_t = false)]
-        dry_run: bool,
-        /// Print full result table as JSON
-        #[arg(long, default_value_t = false)]
-        report_json: bool,
-    },
-}
-
-#[derive(Subcommand)]
 enum NewSubcommand {
     /// Create a new blank .SchDoc
     Schdoc {
@@ -191,12 +160,6 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Ops { sub } => {
-            if let Err(e) = run_ops(sub) {
-                eprintln!("Error: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
         Commands::Render {
             path,
             output_dir,
@@ -239,18 +202,6 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_ops(sub: OpsSubcommand) -> anyhow::Result<()> {
-    match sub {
-        OpsSubcommand::Apply {
-            path,
-            spec_file,
-            output,
-            dry_run,
-            report_json,
-        } => apply_ops(&path, &spec_file, output.as_ref(), dry_run, report_json),
-    }
-}
-
 fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
     match sub {
         NewSubcommand::Schdoc { output } => {
@@ -260,7 +211,7 @@ fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
                 }
             }
             let doc = SchDoc::new_blank_ad26();
-            doc.save_as(output.as_path())?;
+            doc.save(output.as_path())?;
             println!("Created {}", output.display());
         }
         NewSubcommand::Schlib { output } => {
@@ -270,112 +221,9 @@ fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
                 }
             }
             let lib = SchLib::new_blank_ad26();
-            lib.save_as(output.as_path())?;
+            lib.save(output.as_path())?;
             println!("Created {}", output.display());
         }
-    }
-    Ok(())
-}
-
-fn apply_ops(
-    path: &PathBuf,
-    spec_file: &PathBuf,
-    output: Option<&PathBuf>,
-    dry_run: bool,
-    report_json: bool,
-) -> anyhow::Result<()> {
-    let spec_data = std::fs::read_to_string(spec_file)?;
-    let spec_ext = spec_file
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .ok_or_else(|| {
-            anyhow::anyhow!("cannot determine spec file type: {}", spec_file.display())
-        })?;
-    if spec_ext.as_str() != "ops" {
-        anyhow::bail!("unsupported spec extension .{spec_ext} (supported: .ops)");
-    }
-
-    let doc_ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .ok_or_else(|| anyhow::anyhow!("cannot determine document type: {}", path.display()))?;
-
-    let out_path = output.cloned().unwrap_or_else(|| path.clone());
-
-    match doc_ext.as_str() {
-        "schdoc" => {
-            let mut doc = SchDoc::open(path)?;
-            let report = apply_ops_source_schdoc(&mut doc, &spec_data)?;
-            if !dry_run {
-                doc.save_as(out_path.as_path())?;
-            }
-            print_apply_report(&report, dry_run, &out_path, report_json)?;
-        }
-        "schlib" => {
-            let mut lib = SchLib::open(path)?;
-            let report = apply_ops_source_schlib(&mut lib, &spec_data)?;
-            if !dry_run {
-                lib.save_as(out_path.as_path())?;
-            }
-            print_apply_report(&report, dry_run, &out_path, report_json)?;
-        }
-        "pcbdoc" => {
-            let mut doc = PcbDoc::open(path)?;
-            let report = apply_ops_source_pcbdoc(&mut doc, &spec_data)?;
-            if !dry_run {
-                doc.save_as(out_path.as_path())?;
-            }
-            print_apply_report(&report, dry_run, &out_path, report_json)?;
-        }
-        "pcblib" => {
-            let mut lib = PcbLib::open(path)?;
-            let report = apply_ops_source_pcblib(&mut lib, &spec_data)?;
-            if !dry_run {
-                lib.save_as(out_path.as_path())?;
-            }
-            print_apply_report(&report, dry_run, &out_path, report_json)?;
-        }
-        _ => anyhow::bail!(
-            "ops apply not yet supported for .{doc_ext} files (supported: .schdoc, .schlib, .pcbdoc, .pcblib)"
-        ),
-    }
-
-    Ok(())
-}
-
-fn print_apply_report(
-    report: &altium_format_ops::ApplyReport,
-    dry_run: bool,
-    out_path: &PathBuf,
-    report_json: bool,
-) -> anyhow::Result<()> {
-    if report_json {
-        println!("{}", serde_json::to_string_pretty(report)?);
-        return Ok(());
-    }
-
-    let mode = if dry_run {
-        "Dry-run executed"
-    } else {
-        "Applied"
-    };
-    println!(
-        "{mode} {} high ops ({} composed, {} low) {} {}",
-        report.high_op_count,
-        report.composed_op_count,
-        report.low_op_count,
-        if dry_run { "for" } else { "to" },
-        out_path.display()
-    );
-    for (opid, result) in &report.results {
-        let ref_display = result
-            .ref_
-            .as_ref()
-            .map(|r| r.display_path.clone())
-            .unwrap_or_else(|| "-".to_owned());
-        println!("  {opid}: kind={} ref={}", result.kind, ref_display);
     }
     Ok(())
 }
@@ -392,26 +240,30 @@ fn get_version(path: &PathBuf) -> anyhow::Result<()> {
         .and_then(|e| e.to_str())
         .ok_or_else(|| anyhow::anyhow!("cannot determine file type: {}", path.display()))?;
 
-    match ext.to_ascii_lowercase().as_str() {
+    let info = match ext.to_ascii_lowercase().as_str() {
         "schlib" => {
             let doc = SchLib::open(path)?;
-            let info = doc.version()?;
-            println!("Header:        {}", info.header);
-            println!("Minor version: {}", info.minor_version);
-            if let Some(ref fvi) = info.file_version_info {
-                println!("FileVersionInfo: {fvi}");
+            VersionInfo {
+                header: doc.version_header().to_owned(),
+                minor_version: doc.minor_version(),
+                file_version_info: doc.file_version_info().map(|s| s.to_owned()),
             }
         }
         "pcblib" => {
             let doc = PcbLib::open(path)?;
-            let info = doc.version()?;
-            println!("Header:        {}", info.header);
-            println!("Minor version: {}", info.minor_version);
-            if let Some(ref fvi) = info.file_version_info {
-                println!("FileVersionInfo: {fvi}");
+            VersionInfo {
+                header: doc.version_header().to_owned(),
+                minor_version: doc.minor_version() as i32,
+                file_version_info: doc.file_version_info().map(|s| s.to_owned()),
             }
         }
         _ => anyhow::bail!("get version not yet supported for .{ext} files"),
+    };
+
+    println!("Header:        {}", info.header);
+    println!("Minor version: {}", info.minor_version);
+    if let Some(ref fvi) = info.file_version_info {
+        println!("FileVersionInfo: {fvi}");
     }
 
     Ok(())
@@ -427,15 +279,15 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
     match ext.as_str() {
         "schdoc" => {
             let doc = SchDoc::open(input)?;
-            doc.save_as(output.as_path())?;
+            doc.save(output.as_path())?;
         }
         "schlib" => {
             let doc = SchLib::open(input)?;
-            doc.save_as(output.as_path())?;
+            doc.save(output.as_path())?;
         }
         "pcblib" => {
             let doc = PcbLib::open(input)?;
-            doc.save_as(output.as_path())?;
+            doc.save(output.as_path())?;
         }
         _ => anyhow::bail!(
             "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib, .pcblib)"
@@ -550,27 +402,27 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
     match ext.to_ascii_lowercase().as_str() {
         "schdoc" => {
             let doc = SchDoc::open(path)?;
-            doc.validate()?;
+            doc.validate_invariants()?;
         }
         "schlib" => {
             let doc = SchLib::open(path)?;
-            doc.validate()?;
+            doc.validate_invariants()?;
         }
         "pcbdoc" => {
             let doc = PcbDoc::open(path)?;
-            doc.validate()?;
+            doc.validate_invariants()?;
         }
         "pcblib" => {
             let doc = PcbLib::open(path)?;
-            doc.validate()?;
+            doc.validate_invariants()?;
         }
         "intlib" => {
-            let doc = IntLib::open(path)?;
-            doc.validate()?;
+            let _doc = IntLib::open(path)?;
+            anyhow::bail!("IntLib validation is not implemented yet");
         }
         "prjpcb" => {
-            let doc = AltiumProject::open(path)?;
-            doc.validate()?;
+            let _doc = AltiumProject::open(path)?;
+            anyhow::bail!("AltiumProject validation is not implemented yet");
         }
         _ => anyhow::bail!("unsupported file extension: .{ext}"),
     }
@@ -669,7 +521,7 @@ fn run_apply(
     spec_file: &PathBuf,
     target: Option<&PathBuf>,
     output: Option<&PathBuf>,
-    report_json: bool,
+    _report_json: bool,
 ) -> anyhow::Result<()> {
     let domain = detect_spec_domain(spec_file)?;
     let source = std::fs::read_to_string(spec_file)
@@ -690,21 +542,11 @@ fn run_apply(
 
             let out_path = output.cloned().unwrap_or(library_path);
 
-            let results = apply_spec_schlib(spec_lib, &mut doc)
+            apply_spec_schlib(spec_lib, &mut doc)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
-            if report_json {
-                println!("{}", serde_json::to_string_pretty(&results)?);
-            } else {
-                for r in &results {
-                    println!("{}: {}", r.opid, r.kind);
-                }
-            }
-
-            doc.save_as(&out_path)?;
-            if !report_json {
-                println!("Saved: {}", out_path.display());
-            }
+            doc.save(&out_path)?;
+            println!("Saved: {}", out_path.display());
         }
         altium_format_spec::model::SpecModel::PcbLib(ref spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
@@ -721,21 +563,11 @@ fn run_apply(
 
             let out_path = output.cloned().unwrap_or(library_path);
 
-            let results = apply_spec_pcblib(spec_lib, &mut lib)
+            apply_spec_pcblib(spec_lib, &mut lib)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
-            if report_json {
-                println!("{}", serde_json::to_string_pretty(&results)?);
-            } else {
-                for r in &results {
-                    println!("{}: {}", r.opid, r.kind);
-                }
-            }
-
-            lib.save_as(&out_path)?;
-            if !report_json {
-                println!("Saved: {}", out_path.display());
-            }
+            lib.save(&out_path)?;
+            println!("Saved: {}", out_path.display());
         }
     }
 
@@ -800,51 +632,4 @@ fn compile_and_resolve(
     let _ = spec_dir; // used implicitly via spec_path_canonical
     compile_spec(&merged_file, *domain)
         .map_err(|e| anyhow::anyhow!("compile error in {}: {e}", spec_file.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    #[cfg(feature = "proptest")]
-    use super::*;
-    #[cfg(feature = "proptest")]
-    use proptest::prelude::*;
-    #[cfg(feature = "proptest")]
-    use std::io::Write;
-
-    #[cfg(feature = "proptest")]
-    fn write_minimal_ops_file(dir: &std::path::Path) -> PathBuf {
-        let path = dir.join("input.ops");
-        let mut file = std::fs::File::create(&path).expect("create input.ops");
-        writeln!(
-            file,
-            "ops:\n  - op: query\n    selector: component[designator=R1]"
-        )
-        .expect("write input.ops");
-        path
-    }
-
-    #[cfg(feature = "proptest")]
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 32, .. ProptestConfig::default() })]
-
-        #[test]
-        fn ops_apply_reports_explicit_unsupported_extensions(
-            ext in prop::sample::select(vec![
-                "intlib".to_owned(),
-                "prjpcb".to_owned(),
-                "txt".to_owned(),
-            ])
-        ) {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let spec = write_minimal_ops_file(tmp.path());
-            let target = tmp.path().join(format!("dummy.{ext}"));
-
-            let err = apply_ops(&target, &spec, None, true, false).expect_err("unsupported ext must fail");
-            let msg = err.to_string();
-            prop_assert!(
-                msg.contains("ops apply not yet supported"),
-                "unexpected error for .{ext}: {msg}"
-            );
-        }
-    }
 }
