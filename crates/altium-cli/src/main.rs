@@ -309,8 +309,12 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
             let doc = PcbLib::open(input)?;
             doc.save(output.as_path())?;
         }
+        "prjpcb" => {
+            let doc = AltiumProject::open(input)?;
+            doc.save(output.as_path())?;
+        }
         _ => anyhow::bail!(
-            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib, .pcblib)"
+            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib, .pcblib, .prjpcb)"
         ),
     }
 
@@ -441,8 +445,8 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
             anyhow::bail!("IntLib validation is not implemented yet");
         }
         "prjpcb" => {
-            let _doc = AltiumProject::open(path)?;
-            anyhow::bail!("AltiumProject validation is not implemented yet");
+            let doc = AltiumProject::open(path)?;
+            let _project = doc.project()?;
         }
         _ => anyhow::bail!("unsupported file extension: .{ext}"),
     }

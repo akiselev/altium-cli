@@ -8,6 +8,7 @@ pub mod common;
 pub mod constants;
 pub mod coord;
 pub mod pcb;
+pub mod project;
 pub mod sch;
 pub mod unique_id;
 
@@ -50,5 +51,10 @@ pub use sch::{
     SchRecordType, SheetBorderStyle,
     SheetOrientation, SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState,
     TextHorzAnchor, TextJustification, TextVertAnchor, VisibleGridStyle,
+};
+pub use project::{
+    ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
+    CrossRefSheetStyle, DifferenceCheckLevel, DocAnnotationScope, DocAutoNetClassScope,
+    ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
 };
 pub use unique_id::{UniqueId, UniqueIdError};

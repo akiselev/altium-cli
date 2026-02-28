@@ -39,7 +39,6 @@ pub mod intlib;
 pub mod pcbdoc;
 #[allow(dead_code)]
 pub mod pcblib;
-#[allow(dead_code)]
 pub mod project;
 pub mod api;
 pub mod render;

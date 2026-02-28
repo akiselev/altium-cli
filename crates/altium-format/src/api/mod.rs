@@ -21,6 +21,9 @@ mod schlib_types;
 pub(crate) mod schlib_read;
 pub(crate) mod schlib_write;
 mod pcblib_types;
+mod project_types;
+pub(crate) mod project_read;
+pub(crate) mod project_write;
 
 // ── SchLib types ─────────────────────────────────────────────────────────────
 
@@ -40,6 +43,17 @@ pub use pcblib_types::{
     Footprint, Pad, PcbGraphic,
     TrackGraphic, PcbArcGraphic, FillGraphic, RegionGraphic,
     TextGraphic, ViaGraphic, ComponentBodyGraphic,
+};
+
+// ── PrjPcb types ────────────────────────────────────────────────────────────
+
+pub use project_types::{
+    Project, DocumentRef, BuildConfiguration, OutputGroup, OutputJob,
+    AnnotationSettings, AnnotationMatchParameter, ClassGenSettings,
+    LibraryUpdateSettings, DatabaseUpdateSettings, ComparisonOption,
+    ErcConnectionMatrix, ErcLevel, ModificationLevel, DifferenceLevel,
+    ProjectVariant, ComponentVariation, ParameterVariation,
+    ProjectParameter, DiffPairSuffix, NetInfo,
 };
 
 // Re-export SchAngle so consumers can construct angle values
