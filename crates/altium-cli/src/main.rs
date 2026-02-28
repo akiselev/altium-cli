@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
-    SpecDomain, compile_spec, dump_pcblib, dump_prjpcb, dump_schlib,
+    SpecDomain, compile_spec, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
     reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports,
     apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb,
@@ -468,9 +468,10 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
 fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("schlib-spec") => Ok(SpecDomain::SchLib),
+        Some("schdoc-spec") => Ok(SpecDomain::SchDoc),
         Some("pcblib-spec") => Ok(SpecDomain::PcbLib),
         Some("prjpcb-spec") => Ok(SpecDomain::PrjPcb),
-        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .pcblib-spec, .prjpcb-spec)"),
+        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .schdoc-spec, .pcblib-spec, .prjpcb-spec)"),
         None => anyhow::bail!("spec file has no extension: {}", path.display()),
     }
 }
@@ -479,9 +480,10 @@ fn detect_document_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "schlib" => Ok(SpecDomain::SchLib),
+        "schdoc" => Ok(SpecDomain::SchDoc),
         "pcblib" => Ok(SpecDomain::PcbLib),
         "prjpcb" => Ok(SpecDomain::PrjPcb),
-        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .pcblib, .prjpcb)"),
+        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .schdoc, .pcblib, .prjpcb)"),
     }
 }
 
@@ -489,6 +491,7 @@ fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf 
     let stem = spec_file.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
     let ext = match domain {
         SpecDomain::SchLib => "SchLib",
+        SpecDomain::SchDoc => "SchDoc",
         SpecDomain::PcbLib => "PcbLib",
         SpecDomain::PrjPcb => "PrjPcb",
     };
@@ -499,6 +502,7 @@ fn default_spec_for_document(doc: &PathBuf, domain: &SpecDomain) -> PathBuf {
     let stem = doc.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
     let ext = match domain {
         SpecDomain::SchLib => "schlib-spec",
+        SpecDomain::SchDoc => "schdoc-spec",
         SpecDomain::PcbLib => "pcblib-spec",
         SpecDomain::PrjPcb => "prjpcb-spec",
     };
@@ -734,6 +738,15 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
             let lib = PcbLib::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_pcblib(&lib);
+            std::fs::write(&out_path, &spec_source)
+                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+            println!("Dumped: {} -> {}", document.display(), out_path.display());
+        }
+        SpecDomain::SchDoc => {
+            let doc = SchDoc::open(document)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+            let spec_source = dump_schdoc(&doc)
+                .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
             std::fs::write(&out_path, &spec_source)
                 .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
             println!("Dumped: {} -> {}", document.display(), out_path.display());

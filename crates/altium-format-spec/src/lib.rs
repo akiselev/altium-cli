@@ -13,7 +13,7 @@ pub mod reconciler;
 
 // Public API re-exports
 pub use compiler::compile_spec;
-pub use dump::{dump_pcblib, dump_prjpcb, dump_schlib};
+pub use dump::{dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib};
 pub use executor::{apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schlib};
 pub use import::{ResolvedSpec, resolve_imports};
 pub use reconciler::{reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty, reconcile_schlib, reconcile_schlib_empty};

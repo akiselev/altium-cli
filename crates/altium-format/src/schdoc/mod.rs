@@ -170,6 +170,31 @@ impl SchDoc {
         }
     }
 
+    /// Convert the internal flat record list into a structured `SchDocSheet`.
+    ///
+    /// This resolves the OWNERINDEX-linked flat list into a nested tree of
+    /// `SheetObject` variants, including components with their pins/parameters,
+    /// sheet symbols with entries, wires, buses, net labels, etc.
+    pub fn sheet(&self) -> Result<crate::api::SchDocSheet> {
+        crate::api::schdoc_read::sheet_from_internal(&self.records, &self.additional_records)
+    }
+
+    /// Replace the internal record list with records derived from a `SchDocSheet`.
+    ///
+    /// This flattens the nested tree back into OWNERINDEX-linked flat records.
+    /// When possible, format-internal fields (vault GUIDs, colors, etc.) are
+    /// preserved from the existing records by matching on `unique_id` or
+    /// `designator`.
+    pub fn update_sheet(&mut self, sheet: &crate::api::SchDocSheet) -> Result<()> {
+        let (records, additional_records) = crate::api::schdoc_write::sheet_to_internal(
+            sheet,
+            Some(&self.records),
+        )?;
+        self.records = records;
+        self.additional_records = additional_records;
+        Ok(())
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         preflight_check_schdoc_container(path.as_ref())
             .context("detecting SchDoc container format")?;
@@ -1092,6 +1117,74 @@ mod tests {
         }
         doc.validate_invariants()
             .expect("this assertion is intentionally wrong; invariant checker must fail");
+    }
+
+    #[test]
+    fn schdoc_blank_sheet_api() {
+        let doc = SchDoc::new_blank_ad26();
+        let sheet = doc.sheet().expect("blank doc sheet() must succeed");
+        assert!(!sheet.fonts.is_empty(), "blank doc should have at least one font");
+        assert!(sheet.objects.is_empty(), "blank doc should have no objects");
+        assert!(sheet.snap_grid_on, "snap grid should default to on");
+        assert!(sheet.visible_grid_on, "visible grid should default to on");
+    }
+
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn schdoc_sheet_api_components_exist() {
+        let fixture_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+        if !fixture_dir.exists() {
+            return;
+        }
+
+        let entries = match fs::read_dir(&fixture_dir) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        let mut tested = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|v| v.to_str()) != Some("SchDoc") {
+                continue;
+            }
+            let doc = match SchDoc::open(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let sheet = doc.sheet().expect("sheet() should work on parsed SchDoc");
+
+            // Query methods should work
+            let comps = sheet.components();
+            let wires = sheet.wires();
+
+            // The sheet should have at least some objects
+            if !sheet.objects.is_empty() {
+                tested += 1;
+            }
+
+            // If there are components, verify they have designators or lib_references
+            for comp in &comps {
+                assert!(
+                    !comp.lib_reference.is_empty(),
+                    "component at {:?} in {} should have a lib_reference",
+                    comp.location,
+                    path.display()
+                );
+            }
+
+            // Wires should have at least 2 vertices
+            for wire in &wires {
+                assert!(
+                    wire.vertices.len() >= 2,
+                    "wire in {} should have at least 2 vertices, got {}",
+                    path.display(),
+                    wire.vertices.len()
+                );
+            }
+        }
+        assert!(tested > 0, "should have tested at least one fixture");
     }
 
     #[cfg(feature = "proptest")]

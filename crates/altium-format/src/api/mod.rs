@@ -17,9 +17,13 @@
 //! }
 //! ```
 
+pub(crate) mod sch_common;
 mod schlib_types;
 pub(crate) mod schlib_read;
 pub(crate) mod schlib_write;
+mod schdoc_types;
+pub(crate) mod schdoc_read;
+pub(crate) mod schdoc_write;
 mod pcblib_types;
 pub(crate) mod pcblib_read;
 pub(crate) mod pcblib_write;
@@ -37,6 +41,17 @@ pub use schlib_types::{
     ArcGraphic, EllipticalArcGraphic, EllipseGraphic, PieGraphic,
     PolylineGraphic, PolygonGraphic, BezierGraphic,
     ImageGraphic, LabelGraphic, TextFrameGraphic,
+};
+
+// ── SchDoc types ────────────────────────────────────────────────────────────
+
+pub use schdoc_types::{
+    SchDocSheet, Font, Template, SheetObject,
+    SchDocComponent, ComponentChild,
+    Wire, Bus, NetLabel, PowerObject, Port, Junction, NoConnect, BusEntry,
+    SheetSymbol, SheetSymbolChild, SheetEntry,
+    ParameterSet, Note, Probe, CompileMask, Blanket,
+    HarnessConnector, HarnessChild, SignalHarness,
 };
 
 // ── PcbLib types ─────────────────────────────────────────────────────────────

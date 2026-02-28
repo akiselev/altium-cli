@@ -4,9 +4,10 @@
 //! Generated output uses absolute placement only (`at: (x, y)`, explicit
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
-use altium_format::{AltiumProject, PcbLib, SchLib};
+use altium_format::{AltiumProject, PcbLib, SchDoc, SchLib};
 use altium_format::api::{
     Component, Pin, Parameter, FootprintMap, Graphic,
+    SheetObject, ComponentChild, SheetSymbolChild,
 };
 use altium_format_types::coord::Coord;
 use altium_format_types::project::{
@@ -161,6 +162,200 @@ pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError
 
     out.push_str("}\n");
     Ok(out)
+}
+
+/// Generate `.schdoc-spec` source from a SchDoc document.
+pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatError> {
+    let sheet = doc.sheet()?;
+    let mut out = String::new();
+
+    out.push_str("sheet {\n");
+
+    // Font table
+    if !sheet.fonts.is_empty() {
+        out.push_str("    fonts {\n");
+        for f in &sheet.fonts {
+            let mut props = vec![format!("name: {}", quote_string(&f.name))];
+            props.push(format!("size: {}", f.size));
+            if f.bold { props.push("bold: true".to_owned()); }
+            if f.italic { props.push("italic: true".to_owned()); }
+            if f.underline { props.push("underline: true".to_owned()); }
+            if f.strikeout { props.push("strikeout: true".to_owned()); }
+            if f.rotation != 0 { props.push(format!("rotation: {}", f.rotation)); }
+            out.push_str(&format!("        font {} {{ {} }}\n", f.id, props.join(", ")));
+        }
+        out.push_str("    }\n\n");
+    }
+
+    // Sheet properties (non-default only)
+    if sheet.use_custom_sheet {
+        out.push_str(&format!("    custom_width: {}\n", sheet.custom_width));
+        out.push_str(&format!("    custom_height: {}\n", sheet.custom_height));
+    }
+    if !sheet.snap_grid_on { out.push_str("    snap_grid_on: false\n"); }
+    if !sheet.visible_grid_on { out.push_str("    visible_grid_on: false\n"); }
+    if !sheet.hot_spot_grid_on { out.push_str("    hot_spot_grid_on: false\n"); }
+    if sheet.show_hidden_pins { out.push_str("    show_hidden_pins: true\n"); }
+    if !sheet.border_on { out.push_str("    border_on: false\n"); }
+    if !sheet.title_block_on { out.push_str("    title_block_on: false\n"); }
+    out.push('\n');
+
+    // Objects
+    for obj in &sheet.objects {
+        dump_sheet_object(&mut out, obj, 4);
+    }
+
+    out.push_str("}\n");
+    Ok(out)
+}
+
+fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {
+    let pad = " ".repeat(indent);
+    match obj {
+        SheetObject::Component(comp) => dump_schdoc_component(out, comp, indent),
+        SheetObject::Wire(w) => {
+            let verts: Vec<String> = w.vertices.iter().map(|v| format!("{}", v)).collect();
+            out.push_str(&format!("{}wire {{ vertices: [{}] }}\n", pad, verts.join(", ")));
+        }
+        SheetObject::Bus(b) => {
+            let verts: Vec<String> = b.vertices.iter().map(|v| format!("{}", v)).collect();
+            out.push_str(&format!("{}bus {{ vertices: [{}] }}\n", pad, verts.join(", ")));
+        }
+        SheetObject::NetLabel(n) => {
+            out.push_str(&format!(
+                "{}net_label {} {{ at: {}, orientation: {} }}\n",
+                pad, quote_entity_name(&n.text), n.location, n.orientation
+            ));
+        }
+        SheetObject::PowerObject(p) => {
+            let mut props = vec![
+                format!("at: {}", p.location),
+                format!("orientation: {}", p.orientation),
+            ];
+            if p.show_net_name { props.push("show_net_name: true".to_owned()); }
+            out.push_str(&format!(
+                "{}power_object {} {{ {} }}\n",
+                pad, quote_entity_name(&p.text), props.join(", ")
+            ));
+        }
+        SheetObject::Port(p) => {
+            out.push_str(&format!(
+                "{}port {} {{ at: {} }}\n",
+                pad, quote_entity_name(&p.name), p.location
+            ));
+        }
+        SheetObject::Junction(j) => {
+            out.push_str(&format!("{}junction {{ at: {} }}\n", pad, j.location));
+        }
+        SheetObject::NoConnect(n) => {
+            out.push_str(&format!("{}no_connect {{ at: {} }}\n", pad, n.location));
+        }
+        SheetObject::BusEntry(b) => {
+            out.push_str(&format!(
+                "{}bus_entry {{ at: {}, corner: {} }}\n",
+                pad, b.location, b.corner
+            ));
+        }
+        SheetObject::SheetSymbol(ss) => dump_schdoc_sheet_symbol(out, ss, indent),
+        SheetObject::ParameterSet(ps) => {
+            out.push_str(&format!("{}parameter_set {} {{\n", pad, quote_entity_name(&ps.name)));
+            for param in &ps.parameters {
+                dump_parameter(out, param, indent + 4);
+            }
+            out.push_str(&format!("{}}}\n", pad));
+        }
+        SheetObject::Note(n) => {
+            out.push_str(&format!(
+                "{}note {{ at: {}, text: {} }}\n",
+                pad, n.location, quote_string(&n.text)
+            ));
+        }
+        SheetObject::Probe(p) => {
+            out.push_str(&format!(
+                "{}probe {} {{ at: {} }}\n",
+                pad, quote_entity_name(&p.name), p.location
+            ));
+        }
+        SheetObject::CompileMask(c) => {
+            out.push_str(&format!(
+                "{}compile_mask {{ at: {}, corner: {} }}\n",
+                pad, c.location, c.corner
+            ));
+        }
+        SheetObject::Blanket(b) => {
+            let verts: Vec<String> = b.vertices.iter().map(|v| format!("{}", v)).collect();
+            out.push_str(&format!(
+                "{}blanket {{ at: {}, corner: {}, vertices: [{}] }}\n",
+                pad, b.location, b.corner, verts.join(", ")
+            ));
+        }
+        SheetObject::Graphic(g) => dump_graphic(out, g, indent),
+        SheetObject::Parameter(p) => dump_parameter(out, p, indent),
+        SheetObject::HarnessConnector(hc) => {
+            out.push_str(&format!("{}harness_connector {{ at: {} }}\n", pad, hc.location));
+        }
+        SheetObject::SignalHarness(sh) => {
+            let verts: Vec<String> = sh.vertices.iter().map(|v| format!("{}", v)).collect();
+            out.push_str(&format!("{}signal_harness {{ vertices: [{}] }}\n", pad, verts.join(", ")));
+        }
+    }
+}
+
+fn dump_schdoc_component(out: &mut String, comp: &altium_format::api::SchDocComponent, indent: usize) {
+    let pad = " ".repeat(indent);
+    let name = if !comp.designator.is_empty() {
+        quote_entity_name(&comp.designator)
+    } else {
+        quote_entity_name(&comp.lib_reference)
+    };
+    out.push_str(&format!("{}component {} {{\n", pad, name));
+    out.push_str(&format!("{}    lib_reference: {}\n", pad, quote_string(&comp.lib_reference)));
+    out.push_str(&format!("{}    at: {}\n", pad, comp.location));
+    if comp.orientation != altium_format_types::RotationBy90::Rotate0 {
+        out.push_str(&format!("{}    orientation: {}\n", pad, comp.orientation));
+    }
+    if comp.is_mirrored {
+        out.push_str(&format!("{}    is_mirrored: true\n", pad));
+    }
+    if let Some(desc) = &comp.description {
+        if !desc.is_empty() {
+            out.push_str(&format!("{}    description: {}\n", pad, quote_string(desc)));
+        }
+    }
+
+    for child in &comp.children {
+        match child {
+            ComponentChild::Pin(pin) => dump_pin(out, pin, indent + 4),
+            ComponentChild::Parameter(param) => dump_parameter(out, param, indent + 4),
+            ComponentChild::Graphic(g) => dump_graphic(out, g, indent + 4),
+            ComponentChild::FootprintMap(fm) => dump_footprint_map(out, fm, indent + 4),
+        }
+    }
+
+    out.push_str(&format!("{}}}\n\n", pad));
+}
+
+fn dump_schdoc_sheet_symbol(out: &mut String, ss: &altium_format::api::SheetSymbol, indent: usize) {
+    let pad = " ".repeat(indent);
+    out.push_str(&format!("{}sheet_symbol {} {{\n", pad, quote_string(&ss.sheet_name)));
+    out.push_str(&format!("{}    file_name: {}\n", pad, quote_string(&ss.file_name)));
+    out.push_str(&format!("{}    at: {}\n", pad, ss.location));
+    out.push_str(&format!("{}    x_size: {}\n", pad, ss.x_size));
+    out.push_str(&format!("{}    y_size: {}\n", pad, ss.y_size));
+
+    for child in &ss.children {
+        match child {
+            SheetSymbolChild::Entry(e) => {
+                out.push_str(&format!(
+                    "{}    entry {} {{ side: {:?}, io_type: {:?} }}\n",
+                    pad, quote_entity_name(&e.name), e.side, e.io_type
+                ));
+            }
+            SheetSymbolChild::Parameter(p) => dump_parameter(out, p, indent + 4),
+        }
+    }
+
+    out.push_str(&format!("{}}}\n\n", pad));
 }
 
 // ── Project enum formatters ──────────────────────────────────────────────────

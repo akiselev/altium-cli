@@ -209,6 +209,7 @@ pub struct PcbGraphicProperties {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpecDomain {
     SchLib,
+    SchDoc,
     PcbLib,
     PrjPcb,
 }

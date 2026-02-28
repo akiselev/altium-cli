@@ -121,6 +121,14 @@ impl SpecCompiler {
                 self.scope.pop();
                 Ok(SpecModel::PrjPcb(PrjPcbSpec { projects }))
             }
+            SpecDomain::SchDoc => {
+                // SchDoc dump is read-only (no spec compilation for SchDoc yet)
+                self.scope.pop();
+                Err(SpecError::no_span(
+                    SpecErrorCode::AltiumFormat,
+                    "SchDoc spec compilation is not implemented yet; use `dump` instead".to_string(),
+                ))
+            }
         }
     }
 
