@@ -282,12 +282,58 @@ Future: optional autorouting via tool flag (`--route=auto`), same syntax.
 
 ### 3. UniqueID via Deterministic MD5 Hash
 
-Replicate Altium's `UniqueIdUtils.GenerateUniqueId(seed)` algorithm exactly:
-MD5 the seed string, fold 32 hex chars into 8 base-26 uppercase letters.
-Collision resolution via base-26 increment (`GetNextUniqueId`).
+Use Altium's own `UniqueIdUtils.GenerateUniqueId(seed)` algorithm to produce
+native-looking 8-char uppercase A-Z UniqueIds from deterministic seeds.
 
-Seed format: `spec:{file}:{entity_type}:{identity_key}` (e.g.,
-`spec:psu:inst:R1`, `spec:psu:stub:VCC:U1.8`).
+**Source**: `AD26-dotnet/Altium.Sch.Base/Altium.Sch.Base.Utils/UniqueIdUtils.cs`
+
+**Algorithm:**
+
+```
+Input:  seed string (ASCII)
+Step 1: MD5(seed_bytes) → 16 bytes → format as 32-char uppercase hex
+Step 2: Process in 8 chunks of 4 hex chars:
+        For each chunk [c0, c1, c2, c3]:
+            h = 19
+            h = h * 31 + hex_digit_value(c0)
+            h = h * 31 + hex_digit_value(c1)
+            h = h * 31 + hex_digit_value(c2)
+            h = h * 31 + hex_digit_value(c3)
+            output = ALPHABET[h % 26]     // ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+Result: 8 uppercase A-Z characters
+```
+
+Where `hex_digit_value`: `'0'-'9'` → 0-9, `'A'-'F'` → 10-15, else → 0.
+
+Note: Altium encodes the seed with Windows-1252 (`EncodingACP`) before MD5. For our
+ASCII-only seeds, this is identical to UTF-8 byte encoding.
+
+**Collision resolution**: `GetNextUniqueId()` increments in base-26
+(A=0 ... Z=25, with carry): `AAAAAAAZ` → `AAAAABA`.
+
+**Seed format**: `spec:{file_stem}:{entity_type}:{identity_key}`
+
+| Spec Entity | Seed Example |
+|------------|-------------|
+| Component instance | `spec:psu:inst:R1` |
+| Wire (net stub) | `spec:psu:wire:VCC:U1.8` |
+| Wire (explicit route) | `spec:psu:wire:clk_route` |
+| NetLabel | `spec:psu:netlabel:VCC:0` |
+| PowerObject | `spec:psu:power:GND:0` |
+| NoConnect | `spec:psu:nc:U1.3` |
+| Junction | `spec:psu:junc:SDA:0` |
+| Port | `spec:psu:port:DATA_BUS` |
+| SheetSymbol | `spec:psu:sheetsym:Regulators` |
+| SheetEntry | `spec:psu:sheetentry:Regulators:VIN` |
+| Graphic (named) | `spec:psu:gfx:border_rect` |
+| Graphic (unnamed) | `spec:psu:gfx:anon:line:3` |
+
+**Key property**: Spec-generated UniqueIds are deterministic — same seed → same ID
+across runs. Altium-created records have random IDs, so they never collide with spec IDs.
+The reconciler matches by UniqueId to find existing records and apply targeted updates
+instead of delete+recreate (solving the topological naming problem).
+
+See `docs/schdoc/plan.md` §10 for the full identity architecture.
 
 ### 4. PcbDoc Extension (Future)
 
