@@ -2154,6 +2154,140 @@ impl SchLib {
             .collect()
     }
 
+    // ── High-Level API ───────────────────────────────────────────────────────
+
+    /// Returns a single component by lib reference name.
+    pub fn component(&self, lib_ref: &str) -> Result<crate::api::Component> {
+        let (comp, idx) = self.find_component(lib_ref)?;
+        let hdr = &self.header.components[idx];
+        crate::api::schlib_read::component_from_internal(comp, hdr)
+            .with_context(|| format!("reading component '{lib_ref}'"))
+    }
+
+    /// Returns all components as public API types.
+    pub fn components(&self) -> Result<Vec<crate::api::Component>> {
+        self.components
+            .iter()
+            .zip(self.header.components.iter())
+            .map(|(comp, hdr)| {
+                crate::api::schlib_read::component_from_internal(comp, hdr)
+                    .with_context(|| format!("reading component '{}'", hdr.lib_ref))
+            })
+            .collect()
+    }
+
+    /// Adds a new component to the library.
+    ///
+    /// Returns an error if a component with the same `lib_reference` already exists.
+    pub fn add_component(&mut self, comp: crate::api::Component) -> Result<()> {
+        // Check for duplicate
+        if self.components.iter().any(|c| c.component.lib_reference == comp.lib_reference) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "lib_reference".to_owned(),
+                detail: format!("component '{}' already exists", comp.lib_reference),
+            });
+        }
+
+        let (sch_comp, records, additional_records, index_entry) =
+            crate::api::schlib_write::component_to_internal(&comp)?;
+
+        // Add aliases
+        for alias in &comp.aliases {
+            self.aliases.push(SchLibAlias {
+                alias_name: alias.clone(),
+                canonical_name: comp.lib_reference.clone(),
+            });
+        }
+
+        self.header.components.push(index_entry);
+        self.components.push(SchLibComponent {
+            component: sch_comp,
+            records,
+            additional_records,
+        });
+
+        // Update weight
+        self.header.weight = compute_weight(&self.header, &self.components);
+
+        self.validate_invariants()
+            .with_context(|| format!("after adding component '{}'", comp.lib_reference))
+    }
+
+    /// Replaces an existing component, matched by `lib_reference`.
+    ///
+    /// Returns an error if no component with the given `lib_reference` exists.
+    pub fn update_component(&mut self, comp: &crate::api::Component) -> Result<()> {
+        let idx = self.components
+            .iter()
+            .position(|c| c.component.lib_reference == comp.lib_reference)
+            .ok_or_else(|| AltiumFormatError::StreamNotFound(
+                format!("component '{}' not found", comp.lib_reference),
+            ))?;
+
+        let existing = &self.components[idx].component;
+        let (sch_comp, records, additional_records, index_entry) =
+            crate::api::schlib_write::update_component_internal(comp, existing)?;
+
+        // Update aliases: remove old ones for this component, add new ones
+        let old_lib_ref = &self.components[idx].component.lib_reference;
+        self.aliases.retain(|a| a.canonical_name != *old_lib_ref);
+        for alias in &comp.aliases {
+            self.aliases.push(SchLibAlias {
+                alias_name: alias.clone(),
+                canonical_name: comp.lib_reference.clone(),
+            });
+        }
+
+        self.header.components[idx] = index_entry;
+        self.components[idx] = SchLibComponent {
+            component: sch_comp,
+            records,
+            additional_records,
+        };
+
+        // Update weight
+        self.header.weight = compute_weight(&self.header, &self.components);
+
+        self.validate_invariants()
+            .with_context(|| format!("after updating component '{}'", comp.lib_reference))
+    }
+
+    /// Removes a component by lib reference name.
+    ///
+    /// Returns an error if no component with the given name exists.
+    pub fn remove_component(&mut self, lib_ref: &str) -> Result<()> {
+        let idx = self.components
+            .iter()
+            .position(|c| c.component.lib_reference == lib_ref)
+            .ok_or_else(|| AltiumFormatError::StreamNotFound(
+                format!("component '{lib_ref}' not found"),
+            ))?;
+
+        // Remove aliases for this component
+        self.aliases.retain(|a| a.canonical_name != lib_ref);
+
+        self.header.components.remove(idx);
+        self.components.remove(idx);
+
+        // Update weight
+        self.header.weight = compute_weight(&self.header, &self.components);
+
+        self.validate_invariants()
+            .with_context(|| format!("after removing component '{lib_ref}'"))
+    }
+
+    /// Find a component and its index by lib reference.
+    fn find_component(&self, lib_ref: &str) -> Result<(&SchLibComponent, usize)> {
+        self.components
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.component.lib_reference == lib_ref)
+            .map(|(idx, c)| (c, idx))
+            .ok_or_else(|| AltiumFormatError::StreamNotFound(
+                format!("component '{lib_ref}' not found"),
+            ))
+    }
+
     /// Returns a dump view of all components for reverse generation (dump).
     pub fn dump_components(&self) -> Vec<SchLibComponentDumpView> {
         self.components.iter().zip(self.header.components.iter()).map(|(comp, hdr)| {
@@ -2574,6 +2708,25 @@ fn record_owner_index(rec: &SchRecord) -> i32 {
 }
 
 
+
+/// Compute the weight value for the file header.
+///
+/// Weight = sum of (record count + alias count) for each component, plus the
+/// number of components (for the component root records).
+fn compute_weight(header: &SchLibHeader, components: &[SchLibComponent]) -> i32 {
+    let mut weight = 0usize;
+    for (idx, comp) in components.iter().enumerate() {
+        let alias_count = header
+            .components
+            .get(idx)
+            .map(|h| h.aliases.len())
+            .unwrap_or(0);
+        weight += comp.records.len() + alias_count;
+    }
+    // Add component root records
+    weight += components.len();
+    weight as i32
+}
 
 fn validate_schlib_invariants(
     header: &SchLibHeader,
@@ -3235,5 +3388,247 @@ mod tests {
     #[test]
     fn prop_schlib_invariants_reject_mutated_weight_shard_7() {
         run_invariants_reject_mutated_weight_shard(7, SCHLIB_PROP_SHARDS);
+    }
+
+    // ── High-Level API tests ─────────────────────────────────────────────
+
+    #[test]
+    fn api_new_blank_component_roundtrip() {
+        let lib = SchLib::new_blank_ad26();
+        let names = lib.component_names();
+        assert_eq!(names, vec!["Component_1"]);
+
+        let comp = lib.component("Component_1").expect("read component");
+        assert_eq!(comp.lib_reference, "Component_1");
+        assert_eq!(comp.designator, Some("U?".to_owned()));
+        assert_eq!(comp.part_count, 2);
+        assert!(comp.pins.is_empty());
+        // The "Comment" parameter should be in the parameters list
+        assert!(comp.parameters.iter().any(|p| p.name == "Comment"));
+    }
+
+    #[test]
+    fn api_components_returns_all() {
+        let lib = SchLib::new_blank_ad26();
+        let comps = lib.components().expect("read components");
+        assert_eq!(comps.len(), 1);
+        assert_eq!(comps[0].lib_reference, "Component_1");
+    }
+
+    #[test]
+    fn api_add_component() {
+        let mut lib = SchLib::new_blank_ad26();
+        let comp = crate::api::Component {
+            lib_reference: "MyResistor".to_owned(),
+            designator: Some("R?".to_owned()),
+            description: Some("Test resistor".to_owned()),
+            component_kind: None,
+            part_count: 1,
+            show_hidden_pins: false,
+            pins: vec![
+                crate::api::Pin {
+                    designator: "1".to_owned(),
+                    name: "A".to_owned(),
+                    electrical: altium_format_types::PinElectricalType::Passive,
+                    location: CoordPoint::zero(),
+                    length: Coord::from_mils(30),
+                    orientation: RotationBy90::Rotate0,
+                    is_hidden: false,
+                    hidden_net_name: String::new(),
+                    owner_part_id: 1,
+                    show_name: true,
+                    show_designator: true,
+                    symbol_inner_edge: altium_format_types::IeeeSymbol::NoSymbol,
+                    symbol_outer_edge: altium_format_types::IeeeSymbol::NoSymbol,
+                    symbol_inside: altium_format_types::IeeeSymbol::NoSymbol,
+                    symbol_outside: altium_format_types::IeeeSymbol::NoSymbol,
+                    swap_id_pin: String::new(),
+                    swap_id_part: String::new(),
+                    swap_id_pair: String::new(),
+                    default_value: String::new(),
+                    pin_package_length: String::new(),
+                    propagation_delay: String::new(),
+                    pin_symbol_line_width: None,
+                    name_text_data: None,
+                    designator_text_data: None,
+                    description: String::new(),
+                    formal_type: altium_format_types::StdLogicState::Uninitialized,
+                    spice_pin_name: String::new(),
+                    unique_id: String::new(),
+                    color: Color::BLACK,
+                    is_not_accessible: false,
+                    graphically_locked: false,
+                    owner_part_display_mode: 0,
+                },
+            ],
+            parameters: vec![
+                crate::api::Parameter {
+                    name: "Comment".to_owned(),
+                    text: "100k".to_owned(),
+                    is_hidden: true,
+                    read_only: altium_format_types::ParameterReadOnlyState::None,
+                    location: CoordPoint::zero(),
+                    orientation: RotationBy90::Rotate0,
+                    color: Color::BLACK,
+                    font_id: 1,
+                    justification: TextJustification::BottomLeft,
+                    is_mirrored: false,
+                    show_name: false,
+                    unique_id: String::new(),
+                    not_auto_position: false,
+                    param_type: altium_format_types::ParameterType::String,
+                    description: String::new(),
+                },
+            ],
+            footprints: vec![],
+            graphics: vec![],
+            aliases: vec![],
+        };
+
+        lib.add_component(comp).expect("add component");
+
+        assert_eq!(lib.component_names().len(), 2);
+        let read_back = lib.component("MyResistor").expect("read added component");
+        assert_eq!(read_back.designator, Some("R?".to_owned()));
+        assert_eq!(read_back.pins.len(), 1);
+        assert_eq!(read_back.pins[0].designator, "1");
+        assert_eq!(read_back.pins[0].name, "A");
+        assert_eq!(read_back.parameters.len(), 1);
+        assert_eq!(read_back.parameters[0].text, "100k");
+    }
+
+    #[test]
+    fn api_add_component_duplicate_fails() {
+        let mut lib = SchLib::new_blank_ad26();
+        let comp = crate::api::Component {
+            lib_reference: "Component_1".to_owned(),
+            designator: None,
+            description: None,
+            component_kind: None,
+            part_count: 1,
+            show_hidden_pins: false,
+            pins: vec![],
+            parameters: vec![],
+            footprints: vec![],
+            graphics: vec![],
+            aliases: vec![],
+        };
+        let result = lib.add_component(comp);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn api_update_component() {
+        let mut lib = SchLib::new_blank_ad26();
+        let mut comp = lib.component("Component_1").expect("read component");
+        comp.designator = Some("IC?".to_owned());
+        comp.description = Some("Updated".to_owned());
+        lib.update_component(&comp).expect("update component");
+
+        let updated = lib.component("Component_1").expect("read updated");
+        assert_eq!(updated.designator, Some("IC?".to_owned()));
+        assert_eq!(updated.description, Some("Updated".to_owned()));
+    }
+
+    #[test]
+    fn api_remove_component() {
+        let mut lib = SchLib::new_blank_ad26();
+        assert_eq!(lib.component_names().len(), 1);
+        lib.remove_component("Component_1").expect("remove component");
+        assert_eq!(lib.component_names().len(), 0);
+    }
+
+    #[test]
+    fn api_remove_component_not_found() {
+        let mut lib = SchLib::new_blank_ad26();
+        let result = lib.remove_component("DoesNotExist");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn api_add_save_reopen() {
+        let mut lib = SchLib::new_blank_ad26();
+        let comp = crate::api::Component {
+            lib_reference: "TestComp".to_owned(),
+            designator: Some("U?".to_owned()),
+            description: Some("Test component".to_owned()),
+            component_kind: None,
+            part_count: 1,
+            show_hidden_pins: false,
+            pins: vec![],
+            parameters: vec![
+                crate::api::Parameter {
+                    name: "Comment".to_owned(),
+                    text: "*".to_owned(),
+                    is_hidden: true,
+                    read_only: altium_format_types::ParameterReadOnlyState::None,
+                    location: CoordPoint::zero(),
+                    orientation: RotationBy90::Rotate0,
+                    color: Color::new(0x00000080),
+                    font_id: 1,
+                    justification: TextJustification::BottomLeft,
+                    is_mirrored: false,
+                    show_name: false,
+                    unique_id: String::new(),
+                    not_auto_position: false,
+                    param_type: altium_format_types::ParameterType::String,
+                    description: String::new(),
+                },
+            ],
+            footprints: vec![],
+            graphics: vec![],
+            aliases: vec![],
+        };
+        lib.add_component(comp).expect("add component");
+
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        lib.save(tmp.path()).expect("save");
+
+        let reopened = SchLib::open(tmp.path()).expect("reopen");
+        assert_eq!(reopened.component_names().len(), 2);
+        let read_back = reopened.component("TestComp").expect("read TestComp");
+        assert_eq!(read_back.designator, Some("U?".to_owned()));
+        assert_eq!(read_back.description, Some("Test component".to_owned()));
+    }
+
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn api_read_fixture_components() {
+        // Read a real fixture file and verify the API can read all components
+        let path = data_path("schlib/aiskylab-Ceramics.SchLib");
+        let lib = SchLib::open(&path).expect("open fixture SchLib");
+        let components = lib.components().expect("read all components");
+        assert!(!components.is_empty(), "fixture should have components");
+
+        // Verify all components have lib_reference set and pins are populated
+        for comp in &components {
+            assert!(!comp.lib_reference.is_empty());
+            // Components should have either pins or graphics (or both)
+            let has_content = !comp.pins.is_empty()
+                || !comp.graphics.is_empty()
+                || !comp.parameters.is_empty();
+            assert!(
+                has_content,
+                "component '{}' should have some content",
+                comp.lib_reference,
+            );
+        }
+    }
+
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn api_read_all_schlib_fixtures() {
+        // Verify the API can read ALL fixture SchLib files without errors
+        let schlib_dir = data_path("schlib");
+        for entry in std::fs::read_dir(&schlib_dir).expect("read schlib dir") {
+            let entry = entry.expect("read dir entry");
+            let path = entry.path();
+            if path.extension().map(|e| e == "SchLib").unwrap_or(false) {
+                let lib = SchLib::open(&path)
+                    .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+                let _components = lib.components()
+                    .unwrap_or_else(|e| panic!("read components from {}: {e}", path.display()));
+            }
+        }
     }
 }

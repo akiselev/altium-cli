@@ -41,6 +41,7 @@ pub mod pcbdoc;
 pub mod pcblib;
 #[allow(dead_code)]
 pub mod project;
+pub mod api;
 pub mod render;
 #[allow(dead_code)]
 pub mod schdoc;

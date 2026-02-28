@@ -181,7 +181,7 @@ impl_enum_param_value!(
 // Angle value that serializes with exactly 3 decimal places (matching Altium's N3 format).
 // C#: StrUtils.DoubleToString(value, "N3") always produces "180.000", "45.000", etc.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SchAngle(pub f64);
+pub struct SchAngle(pub f64);
 
 impl ToParamValue for SchAngle {
     fn to_param_value(&self) -> String {
