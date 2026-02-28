@@ -77,6 +77,8 @@ pub enum SpecErrorCode {
     CrossDomainViolation,
     // Anchor placement errors
     CrossEdgeReference,
+    // Wraps altium_format::AltiumFormatError via message string
+    AltiumFormat,
 }
 
 pub type EvalResult<T> = Result<T, SpecError>;

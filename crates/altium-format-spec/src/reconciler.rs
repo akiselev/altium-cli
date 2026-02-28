@@ -3,13 +3,15 @@
 //! Compares the desired state (SpecModel) against the current document state
 //! and emits Add, Update, or Unchanged entries for each entity.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use altium_format::api;
 use altium_format::SchLib;
 
 use crate::eco::{
-    EngineeringChangeOrder, EntityChange, EntityKind, PropValue, compute_summary,
+    EngineeringChangeOrder, EntityChange, EntityKind, PropChange, PropValue, compute_summary,
 };
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
@@ -21,18 +23,43 @@ use crate::model::{
 
 /// Reconcile a spec model against an existing SchLib document.
 ///
-/// Currently unimplemented — the LowOps-based document query pipeline has been
-/// removed. A high-level API on the document types will replace this.
+/// Compares each component in the spec against the document's existing
+/// components and produces an ECO describing what would change.
+/// This is a read-only operation: the document is not modified.
 pub fn reconcile_schlib(
-    _spec: &SchLibSpec,
-    _doc: &mut SchLib,
-    _library_path: PathBuf,
-    _spec_path: PathBuf,
+    spec: &SchLibSpec,
+    doc: &SchLib,
+    library_path: PathBuf,
+    spec_path: PathBuf,
 ) -> Result<EngineeringChangeOrder, SpecError> {
-    Err(SpecError::no_span(
-        SpecErrorCode::TypeMismatch,
-        "reconciler removed; high-level API pending",
-    ))
+    let existing_components = doc.components()
+        .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+
+    // Build lookup by lib_reference
+    let existing_map: HashMap<&str, &api::Component> = existing_components.iter()
+        .map(|c| (c.lib_reference.as_str(), c))
+        .collect();
+
+    let mut changes = Vec::new();
+    for comp_spec in &spec.components {
+        match existing_map.get(comp_spec.lib_reference.as_str()) {
+            Some(existing) => {
+                changes.push(diff_component(comp_spec, existing));
+            }
+            None => {
+                changes.push(component_to_add(comp_spec));
+            }
+        }
+    }
+
+    let summary = compute_summary(&changes);
+    Ok(EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    })
 }
 
 /// Reconcile against an empty document: every entity in the spec is an Add.
@@ -148,6 +175,279 @@ fn pad_spec_to_add(spec: &PadSpec) -> EntityChange {
     }
 }
 
+// ── Component-level diff ──────────────────────────────────────────────────────
+
+/// Diff a spec component against an existing API component.
+fn diff_component(spec: &ComponentSpec, existing: &api::Component) -> EntityChange {
+    let mut prop_changes = Vec::new();
+    let mut children = Vec::new();
+
+    // Top-level field diffs
+    diff_opt_field("designator", &spec.designator, &existing.designator, &mut prop_changes);
+    diff_opt_field("description", &spec.description, &existing.description, &mut prop_changes);
+    if let Some(pc) = spec.part_count {
+        if pc != existing.part_count {
+            prop_changes.push(PropChange {
+                field: "part_count".to_string(),
+                old_value: existing.part_count.to_string(),
+                new_value: pc.to_string(),
+            });
+        }
+    }
+    if let Some(shp) = spec.show_hidden_pins {
+        if shp != existing.show_hidden_pins {
+            prop_changes.push(PropChange {
+                field: "show_hidden_pins".to_string(),
+                old_value: existing.show_hidden_pins.to_string(),
+                new_value: shp.to_string(),
+            });
+        }
+    }
+
+    // Child diffs
+    diff_pins(&spec.all_pins(), &existing.pins, &mut children);
+    diff_params(&spec.parameters, &existing.parameters, &mut children);
+    diff_footprints(&spec.footprints, &existing.footprints, &mut children);
+    diff_graphics(&spec.all_graphics(), &existing.graphics, &mut children);
+    diff_aliases(&spec.aliases, &existing.aliases, &mut children);
+
+    if prop_changes.is_empty() && children.iter().all(|c| matches!(c, EntityChange::Unchanged { .. })) {
+        EntityChange::Unchanged {
+            kind: EntityKind::Component,
+            identity: spec.lib_reference.clone(),
+        }
+    } else {
+        EntityChange::Update {
+            kind: EntityKind::Component,
+            identity: spec.lib_reference.clone(),
+            prop_changes,
+            children,
+        }
+    }
+}
+
+// ── Child diff helpers ────────────────────────────────────────────────────────
+
+fn diff_pins(spec_pins: &[&PinSpec], existing: &[api::Pin], out: &mut Vec<EntityChange>) {
+    for spec_pin in spec_pins {
+        match existing.iter().find(|p| p.designator == spec_pin.designator) {
+            Some(existing_pin) => {
+                let mut prop_changes = Vec::new();
+                diff_opt_field_vs_str("name", &spec_pin.name, &existing_pin.name, &mut prop_changes);
+                if let Some(elec) = spec_pin.electrical {
+                    if elec != existing_pin.electrical {
+                        prop_changes.push(PropChange {
+                            field: "electrical".to_string(),
+                            old_value: format!("{:?}", existing_pin.electrical),
+                            new_value: format!("{elec:?}"),
+                        });
+                    }
+                }
+                if let Some(len) = spec_pin.length {
+                    if len != existing_pin.length {
+                        prop_changes.push(PropChange {
+                            field: "length".to_string(),
+                            old_value: format!("{}mil", existing_pin.length.to_mils()),
+                            new_value: format!("{}mil", len.to_mils()),
+                        });
+                    }
+                }
+                if let Some(hidden) = spec_pin.is_hidden {
+                    if hidden != existing_pin.is_hidden {
+                        prop_changes.push(PropChange {
+                            field: "is_hidden".to_string(),
+                            old_value: existing_pin.is_hidden.to_string(),
+                            new_value: hidden.to_string(),
+                        });
+                    }
+                }
+                if spec_pin.location != existing_pin.location {
+                    prop_changes.push(PropChange {
+                        field: "location".to_string(),
+                        old_value: format!("{},{}", existing_pin.location.x.to_mils(), existing_pin.location.y.to_mils()),
+                        new_value: format!("{},{}", spec_pin.location.x.to_mils(), spec_pin.location.y.to_mils()),
+                    });
+                }
+                if spec_pin.orientation != existing_pin.orientation {
+                    prop_changes.push(PropChange {
+                        field: "orientation".to_string(),
+                        old_value: format!("{:?}", existing_pin.orientation),
+                        new_value: format!("{:?}", spec_pin.orientation),
+                    });
+                }
+
+                if prop_changes.is_empty() {
+                    out.push(EntityChange::Unchanged {
+                        kind: EntityKind::Pin,
+                        identity: spec_pin.designator.clone(),
+                    });
+                } else {
+                    out.push(EntityChange::Update {
+                        kind: EntityKind::Pin,
+                        identity: spec_pin.designator.clone(),
+                        prop_changes,
+                        children: vec![],
+                    });
+                }
+            }
+            None => {
+                out.push(pin_to_add(spec_pin));
+            }
+        }
+    }
+}
+
+fn diff_params(spec_params: &[crate::model::ParameterSpec], existing: &[api::Parameter], out: &mut Vec<EntityChange>) {
+    for spec_param in spec_params {
+        match existing.iter().find(|p| p.name == spec_param.name) {
+            Some(existing_param) => {
+                let mut prop_changes = Vec::new();
+                if spec_param.text != existing_param.text {
+                    prop_changes.push(PropChange {
+                        field: "text".to_string(),
+                        old_value: existing_param.text.clone(),
+                        new_value: spec_param.text.clone(),
+                    });
+                }
+                if let Some(hidden) = spec_param.is_hidden {
+                    if hidden != existing_param.is_hidden {
+                        prop_changes.push(PropChange {
+                            field: "is_hidden".to_string(),
+                            old_value: existing_param.is_hidden.to_string(),
+                            new_value: hidden.to_string(),
+                        });
+                    }
+                }
+
+                if prop_changes.is_empty() {
+                    out.push(EntityChange::Unchanged {
+                        kind: EntityKind::Parameter,
+                        identity: spec_param.name.clone(),
+                    });
+                } else {
+                    out.push(EntityChange::Update {
+                        kind: EntityKind::Parameter,
+                        identity: spec_param.name.clone(),
+                        prop_changes,
+                        children: vec![],
+                    });
+                }
+            }
+            None => {
+                out.push(EntityChange::Add {
+                    kind: EntityKind::Parameter,
+                    identity: spec_param.name.clone(),
+                    props: vec![PropValue { field: "text".to_string(), value: spec_param.text.clone() }],
+                    children: vec![],
+                });
+            }
+        }
+    }
+}
+
+fn diff_footprints(spec_fps: &[FootprintMapSpec], existing: &[api::FootprintMap], out: &mut Vec<EntityChange>) {
+    for spec_fp in spec_fps {
+        match existing.iter().find(|f| f.model_name == spec_fp.model_name) {
+            Some(existing_fp) => {
+                // Compare pin-pad maps
+                let spec_maps: Vec<(&str, &str)> = spec_fp.maps.iter()
+                    .map(|m| (m.pin.as_str(), m.pad.as_str()))
+                    .collect();
+                let existing_maps: Vec<(&str, &str)> = existing_fp.pin_pad_maps.iter()
+                    .map(|m| (m.pin.as_str(), m.pad.as_str()))
+                    .collect();
+
+                if spec_maps == existing_maps {
+                    out.push(EntityChange::Unchanged {
+                        kind: EntityKind::Footprint,
+                        identity: spec_fp.model_name.clone(),
+                    });
+                } else {
+                    out.push(EntityChange::Update {
+                        kind: EntityKind::Footprint,
+                        identity: spec_fp.model_name.clone(),
+                        prop_changes: vec![PropChange {
+                            field: "pin_pad_maps".to_string(),
+                            old_value: format!("{} maps", existing_maps.len()),
+                            new_value: format!("{} maps", spec_maps.len()),
+                        }],
+                        children: vec![],
+                    });
+                }
+            }
+            None => {
+                out.push(footprint_to_add(spec_fp));
+            }
+        }
+    }
+}
+
+fn diff_graphics(spec_graphics: &[&GraphicSpec], existing: &[api::Graphic], out: &mut Vec<EntityChange>) {
+    for spec_graphic in spec_graphics {
+        let found = existing.iter().any(|g| {
+            g.unique_id().map_or(false, |uid| uid == spec_graphic.unique_id)
+        });
+        if found {
+            // Graphic exists — for now, report as unchanged
+            // (full field-by-field diff for 13 graphic types would be very verbose)
+            out.push(EntityChange::Unchanged {
+                kind: EntityKind::Graphic,
+                identity: spec_graphic.unique_id.clone(),
+            });
+        } else {
+            out.push(graphic_to_add(spec_graphic));
+        }
+    }
+}
+
+fn diff_aliases(spec_aliases: &[String], existing: &[String], out: &mut Vec<EntityChange>) {
+    for alias in spec_aliases {
+        if existing.contains(alias) {
+            out.push(EntityChange::Unchanged {
+                kind: EntityKind::Alias,
+                identity: alias.clone(),
+            });
+        } else {
+            out.push(EntityChange::Add {
+                kind: EntityKind::Alias,
+                identity: alias.clone(),
+                props: vec![],
+                children: vec![],
+            });
+        }
+    }
+}
+
+// ── Diff helpers ──────────────────────────────────────────────────────────────
+
+/// Diff an optional spec field against an optional existing field.
+/// Only produces a PropChange if the spec provides a value AND it differs.
+fn diff_opt_field(name: &str, spec_val: &Option<String>, existing: &Option<String>, out: &mut Vec<PropChange>) {
+    if let Some(sv) = spec_val {
+        let ev = existing.as_deref().unwrap_or("");
+        if sv != ev {
+            out.push(PropChange {
+                field: name.to_string(),
+                old_value: ev.to_string(),
+                new_value: sv.clone(),
+            });
+        }
+    }
+}
+
+/// Diff an optional spec string field against a concrete existing string.
+fn diff_opt_field_vs_str(name: &str, spec_val: &Option<String>, existing: &str, out: &mut Vec<PropChange>) {
+    if let Some(sv) = spec_val {
+        if sv != existing {
+            out.push(PropChange {
+                field: name.to_string(),
+                old_value: existing.to_string(),
+                new_value: sv.clone(),
+            });
+        }
+    }
+}
+
 // ── Build full Add entries ────────────────────────────────────────────────────
 
 pub fn component_to_add(spec: &ComponentSpec) -> EntityChange {
@@ -259,6 +559,28 @@ fn footprint_to_add(spec: &FootprintMapSpec) -> EntityChange {
     }
 }
 
+// ── ComponentSpec helpers ─────────────────────────────────────────────────────
+
+impl ComponentSpec {
+    /// Collect all pins (component-level + part-scoped) as references.
+    fn all_pins(&self) -> Vec<&PinSpec> {
+        let mut pins: Vec<&PinSpec> = self.pins.iter().collect();
+        for part in &self.parts {
+            pins.extend(part.pins.iter());
+        }
+        pins
+    }
+
+    /// Collect all graphics (component-level + part-scoped) as references.
+    fn all_graphics(&self) -> Vec<&GraphicSpec> {
+        let mut graphics: Vec<&GraphicSpec> = self.graphics.iter().collect();
+        for part in &self.parts {
+            graphics.extend(part.graphics.iter());
+        }
+        graphics
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -267,6 +589,7 @@ mod tests {
     use crate::model::{
         ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SchLibSpec,
     };
+    use crate::executor::apply_spec_schlib;
     use altium_format_types::{CoordPoint, Coord, RotationBy90};
 
     fn make_coord(x_mils: i32, y_mils: i32) -> CoordPoint {
@@ -309,6 +632,12 @@ mod tests {
 
     fn make_spec(components: Vec<ComponentSpec>) -> SchLibSpec {
         SchLibSpec { components }
+    }
+
+    fn blank_doc() -> SchLib {
+        let mut doc = SchLib::new_blank_ad26();
+        let _ = doc.remove_component("Component_1");
+        doc
     }
 
     // ── Test: reconcile_schlib_empty → all Add ─────────────────────────────
@@ -463,6 +792,191 @@ mod tests {
 
         let pin_summary = eco.summary.by_kind.get(&EntityKind::Pin).unwrap();
         assert_eq!(pin_summary.adds, 8); // 2 shared + 3 part1 + 3 part2
+    }
+
+    // ── Tests: reconcile_schlib (with existing doc) ─────────────────────────
+
+    #[test]
+    fn reconcile_existing_unchanged() {
+        // Apply a spec, then reconcile with the same spec → all Unchanged
+        let spec = make_spec(vec![
+            make_component("R_0603", vec![make_pin("1", 0), make_pin("2", 0)]),
+        ]);
+        let mut doc = blank_doc();
+        apply_spec_schlib(&spec, &mut doc).unwrap();
+
+        let eco = reconcile_schlib(
+            &spec,
+            &doc,
+            PathBuf::from("test.SchLib"),
+            PathBuf::from("test.schlib-spec"),
+        ).unwrap();
+
+        assert_eq!(eco.changes.len(), 1);
+        assert!(matches!(&eco.changes[0], EntityChange::Unchanged { kind: EntityKind::Component, identity } if identity == "R_0603"));
+    }
+
+    #[test]
+    fn reconcile_detects_new_component() {
+        let spec1 = make_spec(vec![
+            make_component("R_0603", vec![make_pin("1", 0)]),
+        ]);
+        let mut doc = blank_doc();
+        apply_spec_schlib(&spec1, &mut doc).unwrap();
+
+        // Reconcile with a spec that has an additional component
+        let spec2 = make_spec(vec![
+            make_component("R_0603", vec![make_pin("1", 0)]),
+            make_component("C_0805", vec![make_pin("1", 0), make_pin("2", 0)]),
+        ]);
+
+        let eco = reconcile_schlib(
+            &spec2,
+            &doc,
+            PathBuf::from("test.SchLib"),
+            PathBuf::from("test.schlib-spec"),
+        ).unwrap();
+
+        assert_eq!(eco.changes.len(), 2);
+        assert!(matches!(&eco.changes[0], EntityChange::Unchanged { .. }));
+        assert!(matches!(&eco.changes[1], EntityChange::Add { kind: EntityKind::Component, identity, .. } if identity == "C_0805"));
+    }
+
+    #[test]
+    fn reconcile_detects_description_change() {
+        let spec1 = make_spec(vec![
+            make_component("R_0603", vec![make_pin("1", 0)]),
+        ]);
+        let mut doc = blank_doc();
+        apply_spec_schlib(&spec1, &mut doc).unwrap();
+
+        let spec2 = make_spec(vec![ComponentSpec {
+            lib_reference: "R_0603".to_string(),
+            designator: Some("R?".to_string()),
+            description: Some("Updated description".to_string()),
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: vec![make_pin("1", 0)],
+            parameters: vec![],
+            aliases: vec![],
+            footprints: vec![],
+            graphics: vec![],
+            parts: vec![],
+        }]);
+
+        let eco = reconcile_schlib(
+            &spec2,
+            &doc,
+            PathBuf::from("test.SchLib"),
+            PathBuf::from("test.schlib-spec"),
+        ).unwrap();
+
+        assert_eq!(eco.changes.len(), 1);
+        if let EntityChange::Update { prop_changes, .. } = &eco.changes[0] {
+            let desc_change = prop_changes.iter().find(|pc| pc.field == "description").unwrap();
+            assert_eq!(desc_change.old_value, "A resistor");
+            assert_eq!(desc_change.new_value, "Updated description");
+        } else {
+            panic!("expected Update, got {:?}", eco.changes[0]);
+        }
+    }
+
+    #[test]
+    fn reconcile_detects_new_pin() {
+        let spec1 = make_spec(vec![
+            make_component("R_0603", vec![make_pin("1", 0)]),
+        ]);
+        let mut doc = blank_doc();
+        apply_spec_schlib(&spec1, &mut doc).unwrap();
+
+        // Spec with an additional pin
+        let spec2 = make_spec(vec![
+            make_component("R_0603", vec![make_pin("1", 0), make_pin("2", 0)]),
+        ]);
+
+        let eco = reconcile_schlib(
+            &spec2,
+            &doc,
+            PathBuf::from("test.SchLib"),
+            PathBuf::from("test.schlib-spec"),
+        ).unwrap();
+
+        assert_eq!(eco.changes.len(), 1);
+        if let EntityChange::Update { children, .. } = &eco.changes[0] {
+            let pin_unchanged = children.iter()
+                .filter(|c| matches!(c, EntityChange::Unchanged { kind: EntityKind::Pin, .. }))
+                .count();
+            let pin_adds = children.iter()
+                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Pin, .. }))
+                .count();
+            assert_eq!(pin_unchanged, 1); // pin "1"
+            assert_eq!(pin_adds, 1); // pin "2"
+        } else {
+            panic!("expected Update");
+        }
+    }
+
+    #[test]
+    fn reconcile_detects_new_parameter() {
+        let spec1 = make_spec(vec![ComponentSpec {
+            lib_reference: "R".to_string(),
+            designator: Some("R?".to_string()),
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: vec![],
+            parameters: vec![
+                ParameterSpec { name: "MFG".to_string(), text: "ACME".to_string(), is_hidden: None },
+            ],
+            aliases: vec![],
+            footprints: vec![],
+            graphics: vec![],
+            parts: vec![],
+        }]);
+        let mut doc = blank_doc();
+        apply_spec_schlib(&spec1, &mut doc).unwrap();
+
+        // Spec with an additional parameter
+        let spec2 = make_spec(vec![ComponentSpec {
+            lib_reference: "R".to_string(),
+            designator: Some("R?".to_string()),
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: vec![],
+            parameters: vec![
+                ParameterSpec { name: "MFG".to_string(), text: "ACME".to_string(), is_hidden: None },
+                ParameterSpec { name: "VALUE".to_string(), text: "10K".to_string(), is_hidden: None },
+            ],
+            aliases: vec![],
+            footprints: vec![],
+            graphics: vec![],
+            parts: vec![],
+        }]);
+
+        let eco = reconcile_schlib(
+            &spec2,
+            &doc,
+            PathBuf::from("test.SchLib"),
+            PathBuf::from("test.schlib-spec"),
+        ).unwrap();
+
+        assert_eq!(eco.changes.len(), 1);
+        if let EntityChange::Update { children, .. } = &eco.changes[0] {
+            let param_unchanged = children.iter()
+                .filter(|c| matches!(c, EntityChange::Unchanged { kind: EntityKind::Parameter, .. }))
+                .count();
+            let param_adds = children.iter()
+                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Parameter, .. }))
+                .count();
+            assert_eq!(param_unchanged, 1); // MFG
+            assert_eq!(param_adds, 1); // VALUE
+        } else {
+            panic!("expected Update");
+        }
     }
 
     // ── PcbLib tests ───────────────────────────────────────────────────────

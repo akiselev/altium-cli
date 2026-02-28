@@ -486,9 +486,9 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
             // Try to load target document if it exists
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
-                let mut doc = SchLib::open(&resolved_target)
+                let doc = SchLib::open(&resolved_target)
                     .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
-                reconcile_schlib(spec_lib, &mut doc, library_path, spec_path)
+                reconcile_schlib(spec_lib, &doc, library_path, spec_path)
                     .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
             } else {
                 reconcile_schlib_empty(spec_lib, library_path, spec_path)
