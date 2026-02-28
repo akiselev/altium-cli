@@ -330,7 +330,7 @@ pub struct SchLabel {
     pub font_id: i32,                     // FONTID
     pub text: String,                     // TEXT
     pub is_mirrored: bool,                // ISMIRRORED
-    pub is_hidden: bool,                  // ISHIDDEN
+    pub url: String,                      // URL
     pub unknown_params: UnknownFields,
 }
 ```

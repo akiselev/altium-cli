@@ -682,12 +682,17 @@ Strategy: when `update_component` is called, the write path finds the existing i
 
 ### 6.1 Output format
 
+The `sheet { ... }` block contains only RECORD=31 metadata (page size, grid, fonts).
+All design objects (components, wires, labels, etc.) are top-level items.
+
 ```
 sheet {
-    style: custom
-    width: 1500mil
-    height: 950mil
-    snap_grid: 10mil
+    fonts {
+        font 1 { name: "Arial", size: 10 }
+    }
+    custom_width: 1500mil
+    custom_height: 950mil
+    snap_grid_on: false
 }
 
 component "U1" {
@@ -731,21 +736,24 @@ sheet_symbol "Power" {
 
 ### 6.2 Implementation
 
-Extend `crates/altium-format-spec/src/dump.rs`:
+In `crates/altium-format-spec/src/dump.rs`:
 
 ```rust
 pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatError> {
     let sheet = doc.sheet()?;
     let mut out = String::new();
-    dump_sheet_properties(&mut out, &sheet);
+    // sheet { ... } block — RECORD=31 metadata only (fonts, grid, page size)
+    dump_sheet_metadata(&mut out, &sheet);
+    // Design objects at top level (indent=0)
     for obj in &sheet.objects {
-        dump_sheet_object(&mut out, obj);
+        dump_sheet_object(&mut out, obj, 0);
     }
     Ok(out)
 }
 ```
 
-The dump walks `sheet.objects` in order. Each `SheetObject` variant has a dump function.
+The dump emits a `sheet { ... }` block for RECORD=31 metadata, then walks
+`sheet.objects` at the top level. Each `SheetObject` variant has a dump function.
 Component children are dumped via the existing `dump_pin`, `dump_parameter`,
 `dump_graphic`, `dump_footprint_map` helpers from SchLib.
 
