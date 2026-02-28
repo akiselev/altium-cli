@@ -96,13 +96,15 @@ Source: `IPCB_StructuredStorage.CreateSection()`, `IPCB_StructuredStorage.Regist
     [N bytes] Win1252 NUL-terminated pipe-delimited string
     ```
 
-    **WideStrings6** (binary TLV format -- different from PcbLib WideStrings!):
+    **WideStrings6** (flat binary index+UTF-16LE -- different from PcbLib WideStrings!):
     ```
     Per entry:
-      [1 byte]  type tag (0x06=short ASCII, 0x0C=long ASCII, 0x12=UTF-16LE, 0x14=UTF-8)
-      [varies]  length field (u8 for tag 0x06, u32 LE for others)
-      [N bytes] string data (encoding per tag type)
+      [4 bytes] u32 LE: primitive index (sequential 0, 1, 2, ...)
+      [4 bytes] u32 LE: byte_length (UTF-16LE byte count, includes NUL terminator)
+      [byte_length bytes] UTF-16LE encoded string
     ```
+    Note: Some older format versions may use a variant with a `[u16=0]` sentinel
+    instead of the u32 index field. See `sidecar-streams.md` for full details.
 
     **Models section** (special):
     - `Models/Header`: u32 record count

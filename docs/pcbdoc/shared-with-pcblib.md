@@ -28,15 +28,16 @@ field may contain flags in both formats; mask with `BLOCK_SIZE_MASK`.
 
 The 13-byte common header at the start of every primitive is identical:
 - `u8 layer` (offset 0)
-- `u16 flags` (offset 1)
-- `i16 net_index` (offset 3)
-- `i16 unknown1` (offset 5)
-- `i16 component_index` (offset 7)
-- `i16 polygon_index` (offset 9)
-- `i16 unknown2` (offset 11)
+- `u16 flags` / `PcbFlags` (offset 1-2)
+- `u16 net_index` (offset 3-4, 0xFFFF = none)
+- `u16 polygon_index` (offset 5-6, 0xFFFF = none)
+- `u16 component_index` (offset 7-8, 0xFFFF = none)
+- `u16 coordinate_index` (offset 9-10, 0xFFFF = none)
+- `u16 dimension_index` (offset 11-12, 0xFFFF = none)
 
-In PcbLib context, `net_index` is always 0/-1 and `component_index` is implicit (all
-primitives belong to the enclosing footprint storage).
+In PcbLib context, `net_index` is always 0xFFFF and `component_index` is implicit (all
+primitives belong to the enclosing footprint storage). Both `coordinate_index` and
+`dimension_index` are always 0xFFFF in observed data.
 
 ### Coordinate system
 

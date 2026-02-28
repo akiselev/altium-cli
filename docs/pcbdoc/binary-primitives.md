@@ -27,26 +27,31 @@ name.
 
 ## Common header
 
-All PCB primitives share a 13-byte common header at the start of their payload:
+All PCB primitives share a 13-byte common header at the start of their payload.
+This layout is identical between PcbDoc and PcbLib — both use the same
+`PcbPrimitiveCommon` struct in the codebase.
 
 ```
 Offset  Size  Type    Field
 0       1     u8      layer               // PCB layer (V6 layer number)
-1       2     u16     flags               // Primitive flags bitmask (LE)
-3       2     i16     net_index           // Net index (-1 = no net)
-5       2     i16     unknown1            // Always -1 in observed data
-7       2     i16     component_index     // Component index (-1 = none)
-9       2     i16     polygon_index       // Polygon pour index (-1 = none)
-11      2     i16     unknown2            // Always -1 in observed data
+1       2     u16     flags               // Primitive flags bitmask (PcbFlags, LE)
+3       2     u16     net_index           // Net index (0xFFFF = no net)
+5       2     u16     polygon_index       // Polygon pour index (0xFFFF = none)
+7       2     u16     component_index     // Component index (0xFFFF = none)
+9       2     u16     coordinate_index    // Coordinate annotation index (0xFFFF = none)
+11      2     u16     dimension_index     // Dimension annotation index (0xFFFF = none)
 ```
 
-**Note on field sizes**: In PcbDoc, `net_index`, `component_index`, and
-`polygon_index` are `i16` (2 bytes each), not `i32` as in some older format versions.
-The value `-1` (`0xFFFF`) indicates "not associated."
+**Sources**: Ghidra decompilation of `FUN_01849fd0` (Delphi loader), C# `IPCB_Primitive`
+interface (`GetState_Coordinate`, `GetState_Dimension`), and empirical verification
+on PcbDoc track/arc/pad records.
 
-**Note on `unknown1` and `unknown2`**: These 2-byte fields at offsets 5 and 11 are
-always `0xFFFF` (i16 = -1) across all observed primitive types. Their purpose is not
-yet determined. They may be reserved for coordinate or dimension association indices.
+**Field order**: net → polygon → component → coordinate → dimension. All fields are
+unsigned `u16`, not signed `i16`. The value `0xFFFF` indicates "not associated."
+
+The `coordinate_index` and `dimension_index` fields are always `0xFFFF` in observed
+data — they are used only when a primitive is part of a coordinate or dimension
+annotation group.
 
 ### Flags bitmask
 
@@ -440,9 +445,9 @@ key differences:
    `/Tracks6/Data`, etc.). PcbLib stores all primitive types together per-component in
    `/<component>/Data` streams.
 
-2. **Common header field sizes**: In PcbDoc, `net_index`, `component_index`, and
-   `polygon_index` are `i16` (2 bytes). In PcbLib, these fields may use different widths.
-   Additionally, PcbDoc has 2 unknown `i16` fields at offsets 5 and 11 that are always -1.
+2. **Common header**: PcbDoc and PcbLib share the same 13-byte common header layout
+   (layer, flags, net_index, polygon_index, component_index, coordinate_index,
+   dimension_index — all u16 fields). The binary format is identical.
 
 3. **Association semantics**: In PcbDoc, `net_index`, `component_index`, and
    `polygon_index` carry real associations (tracks belong to nets, primitives belong to

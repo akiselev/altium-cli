@@ -116,22 +116,41 @@ Root Storage
  |    +-- Header / Data
 ```
 
-Additional sections that appear in the .NET codebase but were not present in our test files:
+Additional sections observed in the 132-file test fixture corpus but not in the LimeSDR files:
 
 ```
  +-- SplitPlaneRegions6/                 (storage: split plane region primitives)
  |    +-- Header / Data
- +-- UnionRelations/                     (storage: union relation mappings)
+ +-- UnionRelations/                     (storage: union relation mappings, i32 pairs)
  |    +-- Header / Data
- +-- ConstraintManager/                  (storage: constraint manager data)
+ +-- ConstraintManager/                  (storage: constraint data, UTF-16LE base64/zlib)
  |    +-- Header / Data
- +-- Advanced Router Options6/           (storage: auto-router settings)
+ +-- Advanced Router Options6/           (storage: auto-router settings, param blocks)
  |    +-- Header / Data
- +-- NewRules6/                          (storage: extended design rules)
+ +-- NewRules6/                          (storage: extended design rules, prefixed params)
  |    +-- Header / Data
- +-- PrimitiveGuids/                     (storage: primitive GUID assignments)
+ +-- PrimitiveGuids/                     (storage: packed 24-byte TPrimitiveGUID records)
+ |    +-- Header / Data
+ +-- UnionFeatures/                      (storage: union feature flags, param blocks)
+ |    +-- Header / Data
+ +-- SharedUnion/                        (storage: union reference definitions, param blocks)
+ |    +-- Header / Data
+ +-- CustomShapes/                       (storage: custom pad shape definitions, param blocks)
+ |    +-- Header / Data
+ +-- DrillManager/                       (storage: drill configuration, 8-byte prefix + params)
+ |    +-- Header / Data
+ +-- TClearanceViolation/                (storage: DRC clearance violations, param blocks)
+ |    +-- Header / Data
+ +-- TShortCircuitViolation/             (storage: DRC short circuit violations, param blocks)
+ |    +-- Header / Data
+ +-- TSilkToSilkClearanceViolation/      (storage: DRC silk violations, param blocks)
  |    +-- Header / Data
 ```
+
+**Note on `SharedUnion` vs `SharedUnions`**: These are different storages. `SharedUnions`
+(with trailing 's') contains union definitions in a binary format parsed by
+`parse_shared_union_stream()`. `SharedUnion` (no trailing 's') contains param-block
+records with `|PRIMITIVEINDEX=N|OBJECTID=Pad|PRIMITIVECOUNT=N|...` fields.
 
 
 ## Stream inventory from real files

@@ -52,9 +52,9 @@ Each section storage contains a `Header` stream (u32 record count) and a `Data` 
 (records in the format appropriate for that section type).
 
 The ownership model uses **cross-reference indices** stored in each primitive's common
-header: `net_index`, `component_index`, `polygon_index` (all i16) pointing into the
-corresponding parameter sections. This is fundamentally different from SchDoc's OWNERINDEX
-tree model.
+header: `net_index`, `polygon_index`, `component_index`, `coordinate_index`,
+`dimension_index` (all u16, 0xFFFF = none) pointing into the corresponding parameter
+sections. This is fundamentally different from SchDoc's OWNERINDEX tree model.
 
 ## Key differences from PcbLib
 
