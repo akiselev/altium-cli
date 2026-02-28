@@ -152,6 +152,14 @@ pub struct ViaGraphic {
     pub hole_size: Coord,
     pub from_layer: V6Layer,
     pub to_layer: V6Layer,
+    pub is_testpoint_top: bool,
+    pub is_testpoint_bottom: bool,
+    pub is_assy_testpoint_top: bool,
+    pub is_assy_testpoint_bottom: bool,
+    pub solder_mask_override: bool,
+    pub use_separate_solder_mask_expansion: bool,
+    pub solder_mask_expansion_from_hole_edge: bool,
+    pub paste_mask_override: bool,
 }
 
 #[derive(Debug, Clone)]

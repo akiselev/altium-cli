@@ -146,7 +146,14 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut layer_enum_index = 0i32;
     let mut stack_start_layer = 0u8;
     let mut stack_end_layer = 0u8;
-    let mut removed_pads_per_layer = [false; 32];
+    let mut is_testpoint_top = false;
+    let mut is_testpoint_bottom = false;
+    let mut is_assy_testpoint_top = false;
+    let mut is_assy_testpoint_bottom = false;
+    let mut solder_mask_override = false;
+    let mut use_separate_solder_mask_expansion = false;
+    let mut solder_mask_expansion_from_hole_edge = false;
+    let mut paste_mask_override = false;
 
     let mut solder_mask_expansion_linked = false;
     let mut solder_mask_expansion_back = Coord::ZERO;
@@ -207,9 +214,44 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             layer_enum_index = reader.read_i32_le()?;
             stack_start_layer = reader.read_u8()?;
             stack_end_layer = reader.read_u8()?;
-            for flag in &mut removed_pads_per_layer {
-                *flag = reader.read_u8()? != 0;
+            // 32-byte extension region (offsets 209-240): individual boolean flags.
+            // Confirmed via empirical analysis of 41K+ Via records and C#/Delphi source.
+            let reserved_209 = reader.read_u8()?;
+            if reserved_209 != 0 {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via extension byte 209".to_owned(),
+                    detail: format!("expected reserved byte = 0, got {reserved_209}"),
+                });
             }
+            is_testpoint_top = reader.read_u8()? != 0;           // offset 210
+            is_testpoint_bottom = reader.read_u8()? != 0;        // offset 211
+            is_assy_testpoint_top = reader.read_u8()? != 0;      // offset 212
+            is_assy_testpoint_bottom = reader.read_u8()? != 0;   // offset 213
+            solder_mask_override = reader.read_u8()? != 0;       // offset 214
+            use_separate_solder_mask_expansion = reader.read_u8()? != 0; // offset 215
+            let reserved_216 = reader.read_u8()?;
+            if reserved_216 != 0 {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via extension byte 216".to_owned(),
+                    detail: format!("expected reserved byte = 0, got {reserved_216}"),
+                });
+            }
+            solder_mask_expansion_from_hole_edge = reader.read_u8()? != 0; // offset 217
+            let reserved_218_239 = reader.read_bytes(22)?;       // offsets 218-239
+            if reserved_218_239.iter().any(|&b| b != 0) {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Via extension bytes 218-239".to_owned(),
+                    detail: format!(
+                        "expected 22 reserved zero bytes, got non-zero at offset(s): {}",
+                        reserved_218_239.iter().enumerate()
+                            .filter(|(_, b)| **b != 0)
+                            .map(|(i, b)| format!("{}=0x{:02x}", 218 + i, b))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                });
+            }
+            paste_mask_override = reader.read_u8()? != 0;        // offset 240
             let linked_byte = reader.read_u8()?;
             solder_mask_expansion_linked = (linked_byte & 0x01) != 0;
             solder_mask_expansion_back = reader.read_coord()?;
@@ -381,7 +423,14 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         layer_enum_index,
         stack_start_layer,
         stack_end_layer,
-        removed_pads_per_layer,
+        is_testpoint_top,
+        is_testpoint_bottom,
+        is_assy_testpoint_top,
+        is_assy_testpoint_bottom,
+        solder_mask_override,
+        use_separate_solder_mask_expansion,
+        solder_mask_expansion_from_hole_edge,
+        paste_mask_override,
         solder_mask_expansion_linked,
         solder_mask_expansion_back,
         template_link_version,
@@ -478,11 +527,29 @@ mod tests {
         w.write_i32_le(123);
         w.write_u8(1);
         w.write_u8(32);
-        // 32 removed_pads_per_layer booleans (one per V6 layer 1-32).
-        // Set layers 2, 5 as removed to test non-zero values.
-        for i in 0..32u8 {
-            w.write_u8(if i == 1 || i == 4 { 1 } else { 0 });
-        }
+        // 32-byte extension region: individual boolean flags at specific offsets.
+        // Byte 0 (offset 209): reserved (must be 0)
+        w.write_u8(0);
+        // Byte 1 (offset 210): is_testpoint_top = true
+        w.write_u8(1);
+        // Byte 2 (offset 211): is_testpoint_bottom = false
+        w.write_u8(0);
+        // Byte 3 (offset 212): is_assy_testpoint_top = false
+        w.write_u8(0);
+        // Byte 4 (offset 213): is_assy_testpoint_bottom = true
+        w.write_u8(1);
+        // Byte 5 (offset 214): solder_mask_override = false
+        w.write_u8(0);
+        // Byte 6 (offset 215): use_separate_solder_mask_expansion = false
+        w.write_u8(0);
+        // Byte 7 (offset 216): reserved (must be 0)
+        w.write_u8(0);
+        // Byte 8 (offset 217): solder_mask_expansion_from_hole_edge = false
+        w.write_u8(0);
+        // Bytes 9-30 (offsets 218-239): reserved (must be 0)
+        w.write_bytes(&[0u8; 22]);
+        // Byte 31 (offset 240): paste_mask_override = false
+        w.write_u8(0);
         w.write_u8(0x01);
         w.write_coord(Coord::from_internal(2_000));
 
@@ -499,13 +566,15 @@ mod tests {
         assert!(via.solder_mask_expansion_linked);
         assert_eq!(via.solder_mask_expansion_back.to_internal(), 2_000);
         assert_eq!(via.layer_enum_index, 123);
-        // Verify removed_pads_per_layer
-        assert!(!via.removed_pads_per_layer[0]);
-        assert!(via.removed_pads_per_layer[1]);
-        assert!(!via.removed_pads_per_layer[2]);
-        assert!(!via.removed_pads_per_layer[3]);
-        assert!(via.removed_pads_per_layer[4]);
-        assert!(!via.removed_pads_per_layer[31]);
+        // Verify extension boolean flags
+        assert!(via.is_testpoint_top);
+        assert!(!via.is_testpoint_bottom);
+        assert!(!via.is_assy_testpoint_top);
+        assert!(via.is_assy_testpoint_bottom);
+        assert!(!via.solder_mask_override);
+        assert!(!via.use_separate_solder_mask_expansion);
+        assert!(!via.solder_mask_expansion_from_hole_edge);
+        assert!(!via.paste_mask_override);
     }
 
     #[test]
@@ -541,7 +610,7 @@ mod tests {
         w.write_i32_le(0);
         w.write_u8(1);
         w.write_u8(32);
-        w.write_bytes(&[0u8; 32]); // removed_pads_per_layer (all false)
+        w.write_bytes(&[0u8; 32]); // 32-byte extension region (all flags false, reserved bytes zero)
         w.write_u8(0); // solder_mask_expansion_linked
         w.write_i32_le(0); // solder_mask_expansion_back
 
@@ -624,5 +693,141 @@ mod tests {
             result,
             Err(AltiumFormatError::BinaryReadPastEnd { .. })
         ));
+    }
+
+    /// Helper: writes the full 246-byte extended via with all extension flags set to zero.
+    /// Returns the BinaryWriter positioned just before the 32-byte extension region
+    /// (i.e., after stack_start_layer and stack_end_layer).
+    fn write_extended_via_up_to_extension_region() -> BinaryWriter {
+        let mut w = BinaryWriter::new();
+        write_common_header(&mut w);
+        w.write_coord_point(CoordPoint::new(Coord::ZERO, Coord::ZERO));
+        w.write_coord(Coord::from_internal(20_000));
+        w.write_coord(Coord::from_internal(10_000));
+        w.write_u8(1);  // from_layer
+        w.write_u8(32); // to_layer
+        // Extended fields up to offset 203
+        w.write_u8(0);  // via_properties_version
+        w.write_coord(Coord::ZERO); // thermal_relief_air_gap
+        w.write_u8(0);  // thermal_relief_conductor_count
+        w.write_u8(0);  // thermal_relief_rotation_code
+        w.write_coord(Coord::ZERO); // thermal_relief_conductor_width
+        w.write_coord(Coord::ZERO); // power_plane_relief_expansion
+        w.write_coord(Coord::ZERO); // power_plane_clearance
+        w.write_coord(Coord::ZERO); // paste_mask_expansion
+        w.write_coord(Coord::ZERO); // solder_mask_expansion_front
+        w.write_u16_le(0); // planes
+        for _ in 0..6 { w.write_u8(0); } // cache validity fields
+        w.write_u8(0);  // solder_mask_expansion_valid
+        w.write_u8(0);  // power_plane_clearance_valid
+        w.write_u8(0);  // planes_valid
+        w.write_u8(0);  // plane_connection_style
+        w.write_u8(0);  // solder_mask_cache_flags
+        w.write_u8(0);  // solder_mask_expansion_mode
+        w.write_u8(0);  // paste_mask_cache_flags
+        w.write_u8(0);  // paste_mask_expansion_mode
+        w.write_u8(0);  // via_mode
+        for _ in 0..32 { w.write_coord(Coord::ZERO); } // diameters_per_layer
+        w.write_i32_le(0); // layer_enum_index
+        w.write_u8(1);    // stack_start_layer
+        w.write_u8(32);   // stack_end_layer
+        w
+    }
+
+    #[test]
+    fn parse_via_reserved_byte_209_must_be_zero() {
+        let mut w = write_extended_via_up_to_extension_region();
+        // Write 32 extension bytes: byte 0 (offset 209) = nonzero
+        w.write_u8(0xFF); // reserved_209 = nonzero (should fail)
+        for _ in 0..31 { w.write_u8(0); }
+        w.write_u8(0); // solder_mask_expansion_linked
+        w.write_coord(Coord::ZERO); // solder_mask_expansion_back
+
+        let data = w.finish();
+        let err = parse_via(&data).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("209"), "error should mention byte 209: {msg}");
+    }
+
+    #[test]
+    fn parse_via_reserved_byte_216_must_be_zero() {
+        let mut w = write_extended_via_up_to_extension_region();
+        // Bytes 0-6 of extension region
+        w.write_u8(0); // reserved_209
+        w.write_u8(0); // is_testpoint_top
+        w.write_u8(0); // is_testpoint_bottom
+        w.write_u8(0); // is_assy_testpoint_top
+        w.write_u8(0); // is_assy_testpoint_bottom
+        w.write_u8(0); // solder_mask_override
+        w.write_u8(0); // use_separate_solder_mask_expansion
+        // Byte 7 (offset 216) = nonzero
+        w.write_u8(0xFF); // reserved_216 = nonzero (should fail)
+        for _ in 0..24 { w.write_u8(0); } // remaining bytes
+        w.write_u8(0); // solder_mask_expansion_linked
+        w.write_coord(Coord::ZERO); // solder_mask_expansion_back
+
+        let data = w.finish();
+        let err = parse_via(&data).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("216"), "error should mention byte 216: {msg}");
+    }
+
+    #[test]
+    fn parse_via_reserved_bytes_218_239_must_be_zero() {
+        let mut w = write_extended_via_up_to_extension_region();
+        // Bytes 0-8 (offsets 209-217): valid
+        w.write_u8(0); // reserved_209
+        w.write_u8(0); // is_testpoint_top
+        w.write_u8(0); // is_testpoint_bottom
+        w.write_u8(0); // is_assy_testpoint_top
+        w.write_u8(0); // is_assy_testpoint_bottom
+        w.write_u8(0); // solder_mask_override
+        w.write_u8(0); // use_separate_solder_mask_expansion
+        w.write_u8(0); // reserved_216
+        w.write_u8(0); // solder_mask_expansion_from_hole_edge
+        // Bytes 9-30 (offsets 218-239): put nonzero at offset 220
+        w.write_u8(0);    // 218
+        w.write_u8(0);    // 219
+        w.write_u8(0xAB); // 220 = nonzero (should fail)
+        for _ in 0..19 { w.write_u8(0); } // 221-239
+        w.write_u8(0); // paste_mask_override (offset 240)
+        w.write_u8(0); // solder_mask_expansion_linked
+        w.write_coord(Coord::ZERO); // solder_mask_expansion_back
+
+        let data = w.finish();
+        let err = parse_via(&data).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("218-239"), "error should mention bytes 218-239: {msg}");
+        assert!(msg.contains("220"), "error should mention offset 220: {msg}");
+    }
+
+    #[test]
+    fn parse_via_extension_flags_roundtrip() {
+        let mut w = write_extended_via_up_to_extension_region();
+        // Set various flags to test roundtrip
+        w.write_u8(0); // reserved_209
+        w.write_u8(1); // is_testpoint_top = true
+        w.write_u8(0); // is_testpoint_bottom = false
+        w.write_u8(1); // is_assy_testpoint_top = true
+        w.write_u8(0); // is_assy_testpoint_bottom = false
+        w.write_u8(1); // solder_mask_override = true
+        w.write_u8(1); // use_separate_solder_mask_expansion = true
+        w.write_u8(0); // reserved_216
+        w.write_u8(1); // solder_mask_expansion_from_hole_edge = true
+        w.write_bytes(&[0u8; 22]); // reserved 218-239
+        w.write_u8(1); // paste_mask_override = true
+        w.write_u8(0); // solder_mask_expansion_linked
+        w.write_coord(Coord::ZERO); // solder_mask_expansion_back
+
+        let data = w.finish();
+        let via = parse_via(&data).unwrap();
+        assert!(via.is_testpoint_top);
+        assert!(!via.is_testpoint_bottom);
+        assert!(via.is_assy_testpoint_top);
+        assert!(!via.is_assy_testpoint_bottom);
+        assert!(via.solder_mask_override);
+        assert!(via.use_separate_solder_mask_expansion);
+        assert!(via.solder_mask_expansion_from_hole_edge);
+        assert!(via.paste_mask_override);
     }
 }

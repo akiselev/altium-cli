@@ -427,7 +427,9 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                         for (i, d) in v.diameters_per_layer.iter().enumerate() {
                             check_dimension(*d, "Via", idx, &format!("diameters_per_layer[{i}]"), &section_name)?;
                         }
-                        // removed_pads_per_layer: boolean flags, no range check needed
+                        // Extension boolean flags (is_testpoint_top/bottom, is_assy_testpoint_top/bottom,
+                        // solder_mask_override, use_separate_solder_mask_expansion,
+                        // solder_mask_expansion_from_hole_edge, paste_mask_override): no range check needed
                         if let Some(tol) = v.hole_positive_tolerance {
                             check_expansion(tol, "Via", idx, "hole_positive_tolerance", &section_name)?;
                         }

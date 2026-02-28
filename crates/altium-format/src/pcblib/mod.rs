@@ -167,13 +167,26 @@ pub(crate) struct PcbVia {
     pub(crate) layer_enum_index: i32,
     pub(crate) stack_start_layer: u8,
     pub(crate) stack_end_layer: u8,
-    /// Per-layer "removed pad" flags, one bool per V6 layer (indices 0-31 map to
-    /// V6 layers 1-32: TopLayer, MidLayer1..MidLayer30, BottomLayer).
-    /// When true, the pad on that layer has been removed by the "Remove Unused Pads"
-    /// feature (IPCB_Via2.GetProperty_RemovedPads / IPCB_SafeLayerToBoolean).
-    /// Index 0 (TopLayer) and index 31 (BottomLayer) are almost never set because
-    /// start/end layers are preserved.
-    pub(crate) removed_pads_per_layer: [bool; 32],
+    /// Testpoint flag for top layer (IPCB_Primitive.GetState_IsTestPoint_Top).
+    pub(crate) is_testpoint_top: bool,
+    /// Testpoint flag for bottom layer (IPCB_Primitive.GetState_IsTestPoint_Bottom).
+    pub(crate) is_testpoint_bottom: bool,
+    /// Assembly testpoint flag for top layer (IPCB_Primitive.GetState_IsAssyTestPoint_Top).
+    /// Analogous to Pad extension offset 118.
+    pub(crate) is_assy_testpoint_top: bool,
+    /// Assembly testpoint flag for bottom layer (IPCB_Primitive.GetState_IsAssyTestPoint_Bottom).
+    /// Analogous to Pad extension offset 119.
+    pub(crate) is_assy_testpoint_bottom: bool,
+    /// Solder mask override flag (Delphi ePrimitiveAttribute order).
+    pub(crate) solder_mask_override: bool,
+    /// Use separate solder mask expansion values for front/back
+    /// (TV7_PadCache.UseSeparateExpansions). Analogous to Pad extension offset 120.
+    pub(crate) use_separate_solder_mask_expansion: bool,
+    /// Solder mask expansion measured from hole edge rather than pad edge
+    /// (IPCB_StackObject). Analogous to Pad extension offset 125.
+    pub(crate) solder_mask_expansion_from_hole_edge: bool,
+    /// Paste mask override flag (Delphi ePrimitiveAttribute order). Rare — 86/41K records.
+    pub(crate) paste_mask_override: bool,
     pub(crate) solder_mask_expansion_linked: bool,
     pub(crate) solder_mask_expansion_back: Coord,
     // Via template link extended block (after section2, 46-byte trailing data).
@@ -2031,7 +2044,9 @@ fn validate_via_coords(via: &PcbVia, index: usize, footprint: &str) -> Result<()
     for (i, d) in via.diameters_per_layer.iter().enumerate() {
         check_dimension(*d, "Via", index, &format!("diameters_per_layer[{i}]"), footprint)?;
     }
-    // removed_pads_per_layer: boolean flags per V6 layer, no range check needed
+    // Extension boolean flags (is_testpoint_top/bottom, is_assy_testpoint_top/bottom,
+    // solder_mask_override, use_separate_solder_mask_expansion,
+    // solder_mask_expansion_from_hole_edge, paste_mask_override): no range check needed
     if let Some(tol) = via.hole_positive_tolerance {
         check_expansion(tol, "Via", index, "hole_positive_tolerance", footprint)?;
     }

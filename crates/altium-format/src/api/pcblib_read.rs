@@ -145,6 +145,14 @@ fn via_from_internal(v: &PcbVia) -> ViaGraphic {
         hole_size: v.hole_size,
         from_layer: v.from_layer,
         to_layer: v.to_layer,
+        is_testpoint_top: v.is_testpoint_top,
+        is_testpoint_bottom: v.is_testpoint_bottom,
+        is_assy_testpoint_top: v.is_assy_testpoint_top,
+        is_assy_testpoint_bottom: v.is_assy_testpoint_bottom,
+        solder_mask_override: v.solder_mask_override,
+        use_separate_solder_mask_expansion: v.use_separate_solder_mask_expansion,
+        solder_mask_expansion_from_hole_edge: v.solder_mask_expansion_from_hole_edge,
+        paste_mask_override: v.paste_mask_override,
     }
 }
 
