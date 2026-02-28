@@ -138,14 +138,14 @@ The `altium cfb` subcommand group provides low-level CFB container inspection to
 for debugging serialization roundtrip failures. These operate directly on the CFB
 container using the `cfb` crate — no `altium-format` imports.
 
-| Command                             | Purpose                                                                        |
-| ----------------------------------- | ------------------------------------------------------------------------------ |
-| `altium cfb ls <file>`              | List streams/storages (tree view, or `--flat` for grep-friendly)               |
-| `altium cfb dump <file> <stream>`   | Hex+ASCII dump (`--blocks` annotates block boundaries and decodes text)        |
-| `altium cfb blocks <file> <stream>` | Block-level summary (`--block N` for full detail on one block)                 |
-| `altium cfb diff <file1> <file2>`   | Stream-by-stream comparison (`--blocks` for block-level, `--stream` to filter) |
-| `altium cfb diff --semantic <f1> <f2>` | Semantic diff: order-agnostic params, embedded object decompression         |
-| `altium cfb cat <file> <stream>`    | Raw bytes to stdout for piping (`\| xxd`, `\| wc -c`)                          |
+| Command                                | Purpose                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------ |
+| `altium cfb ls <file>`                 | List streams/storages (tree view, or `--flat` for grep-friendly)               |
+| `altium cfb dump <file> <stream>`      | Hex+ASCII dump (`--blocks` annotates block boundaries and decodes text)        |
+| `altium cfb blocks <file> <stream>`    | Block-level summary (`--block N` for full detail on one block)                 |
+| `altium cfb diff <file1> <file2>`      | Stream-by-stream comparison (`--blocks` for block-level, `--stream` to filter) |
+| `altium cfb diff --semantic <f1> <f2>` | Semantic diff: order-agnostic params, embedded object decompression            |
+| `altium cfb cat <file> <stream>`       | Raw bytes to stdout for piping (`\| xxd`, `\| wc -c`)                          |
 
 Example workflow for debugging a roundtrip failure:
 ```bash
@@ -302,10 +302,10 @@ Test files for each document type can be found in data/<document type>/ but they
 Slow and fixture-dependent tests are gated behind cargo features so that
 `cargo test` runs fast by default:
 
-| Feature          | What it gates                                              | Implies        |
-| ---------------- | ---------------------------------------------------------- | -------------- |
-| `test-fixtures`  | Tests that read files from `data/` fixture directories     | —              |
-| `proptest`       | Property-based (proptest) tests (slow, randomised)         | `test-fixtures`|
+| Feature         | What it gates                                          | Implies         |
+| --------------- | ------------------------------------------------------ | --------------- |
+| `test-fixtures` | Tests that read files from `data/` fixture directories | —               |
+| `proptest`      | Property-based (proptest) tests (slow, randomised)     | `test-fixtures` |
 
 These features are defined in `altium-format` and `altium-cli`.
 
@@ -355,3 +355,9 @@ When adding new tests:
 # Older versions
 
 We want to support the last few legacy versions of file formats but like Altium we UPGRADE TO THE LATEST FORMAT! When diffing the CFB files, you need to take that into account.
+
+
+
+# TESTS
+
+DO NOT RUN text-fixture TESTS AND proptest TESTS UNLESS EXPLICITLY ASKED TO.
