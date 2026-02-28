@@ -91,12 +91,7 @@ impl TryFrom<u8> for RotationBy90 {
 
 impl fmt::Display for RotationBy90 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Rotate0 => write!(f, "0°"),
-            Self::Rotate90 => write!(f, "90°"),
-            Self::Rotate180 => write!(f, "180°"),
-            Self::Rotate270 => write!(f, "270°"),
-        }
+        write!(f, "{}", self.to_degrees())
     }
 }
 

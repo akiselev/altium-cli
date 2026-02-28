@@ -427,14 +427,7 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                         for (i, d) in v.diameters_per_layer.iter().enumerate() {
                             check_dimension(*d, "Via", idx, &format!("diameters_per_layer[{i}]"), &section_name)?;
                         }
-                        check_expansion(v.extension_coord_209, "Via", idx, "extension_coord_209", &section_name)?;
-                        check_expansion(v.extension_coord_213, "Via", idx, "extension_coord_213", &section_name)?;
-                        check_expansion(v.extension_coord_217, "Via", idx, "extension_coord_217", &section_name)?;
-                        check_expansion(v.extension_coord_221, "Via", idx, "extension_coord_221", &section_name)?;
-                        check_expansion(v.extension_coord_225, "Via", idx, "extension_coord_225", &section_name)?;
-                        check_expansion(v.extension_coord_229, "Via", idx, "extension_coord_229", &section_name)?;
-                        check_expansion(v.extension_coord_233, "Via", idx, "extension_coord_233", &section_name)?;
-                        check_expansion(v.extension_coord_237, "Via", idx, "extension_coord_237", &section_name)?;
+                        // removed_pads_per_layer: boolean flags, no range check needed
                         if let Some(tol) = v.hole_positive_tolerance {
                             check_expansion(tol, "Via", idx, "hole_positive_tolerance", &section_name)?;
                         }

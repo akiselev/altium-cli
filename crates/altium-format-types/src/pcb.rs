@@ -944,6 +944,12 @@ impl TryFrom<u8> for PadStackMode {
     }
 }
 
+impl std::fmt::Display for PadStackMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Hole type (0-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

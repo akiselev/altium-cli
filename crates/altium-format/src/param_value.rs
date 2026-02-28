@@ -201,6 +201,16 @@ impl FromParamValue for SchAngle {
     }
 }
 
+impl std::fmt::Display for SchAngle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Format with up to 4 decimal places, stripping trailing zeros.
+        let s = format!("{:.4}", self.0);
+        let s = s.trim_end_matches('0');
+        let s = s.trim_end_matches('.');
+        write!(f, "{}", s)
+    }
+}
+
 impl Default for SchAngle {
     fn default() -> Self {
         SchAngle(0.0)

@@ -724,7 +724,8 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
         SpecDomain::SchLib => {
             let lib = SchLib::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
-            let spec_source = dump_schlib(&lib);
+            let spec_source = dump_schlib(&lib)
+                .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
             std::fs::write(&out_path, &spec_source)
                 .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
             println!("Dumped: {} -> {}", document.display(), out_path.display());

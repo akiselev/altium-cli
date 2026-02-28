@@ -5,10 +5,15 @@
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
 use altium_format::{AltiumProject, PcbLib, SchLib};
+use altium_format::api::{
+    Component, Pin, Parameter, FootprintMap, Graphic,
+};
+use altium_format_types::coord::Coord;
 use altium_format_types::project::{
     ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle,
     ErrorLevel, FlattenMode,
 };
+use indexmap::IndexMap;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -23,13 +28,13 @@ pub fn dump_pcblib(lib: &PcbLib) -> String {
 }
 
 /// Generate `.schlib-spec` source from a SchLib document.
-pub fn dump_schlib(lib: &SchLib) -> String {
+pub fn dump_schlib(lib: &SchLib) -> Result<String, altium_format::AltiumFormatError> {
     let mut out = String::new();
-    for comp in &lib.dump_components() {
+    for comp in &lib.components()? {
         dump_component(&mut out, comp);
         out.push('\n');
     }
-    out
+    Ok(out)
 }
 
 /// Generate `.prjpcb-spec` source from a PrjPcb project.
@@ -258,7 +263,7 @@ fn variation_kind_to_spec(v: altium_format_types::project::VariationKind) -> Res
     }
 }
 
-// ── Footprint ─────────────────────────────────────────────────────────────────
+// ── Footprint (PcbLib — still uses DumpView) ─────────────────────────────────
 
 fn dump_footprint(out: &mut String, fp: &altium_format::PcbLibFootprintDumpView) {
     out.push_str(&format!("footprint {} {{\n", quote_entity_name(&fp.display_name)));
@@ -418,10 +423,16 @@ fn dump_pcb_graphic(out: &mut String, g: &altium_format::PcbLibGraphicDumpView, 
     }
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Component (SchLib — uses high-level API types) ───────────────────────────
 
-fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpView) {
+fn dump_component(out: &mut String, comp: &Component) {
     out.push_str(&format!("component {} {{\n", quote_entity_name(&comp.lib_reference)));
+
+    if let Some(desc) = &comp.description {
+        if !desc.is_empty() {
+            out.push_str(&format!("    description: {}\n", quote_string(desc)));
+        }
+    }
 
     // Group pins and graphics by owner_part_id > 0 into part blocks
     let part_ids: Vec<i32> = {
@@ -430,8 +441,8 @@ fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpVie
             .map(|p| p.owner_part_id)
             .chain(
                 comp.graphics.iter()
-                    .filter(|g| g.owner_part_id > 0)
-                    .map(|g| g.owner_part_id)
+                    .filter(|g| g.owner_part_id() > 0)
+                    .map(|g| g.owner_part_id())
             )
             .collect();
         ids.sort_unstable();
@@ -442,7 +453,7 @@ fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpVie
     if part_ids.is_empty() {
         // No multi-part: emit all pins and graphics at top level
         for graphic in &comp.graphics {
-            if graphic.owner_part_id <= 0 {
+            if graphic.owner_part_id() <= 0 {
                 dump_graphic(out, graphic, 4);
             }
         }
@@ -454,7 +465,7 @@ fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpVie
     } else {
         // Emit shared graphics/pins (owner_part_id <= 0) at top level
         for graphic in &comp.graphics {
-            if graphic.owner_part_id <= 0 {
+            if graphic.owner_part_id() <= 0 {
                 dump_graphic(out, graphic, 4);
             }
         }
@@ -467,7 +478,7 @@ fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpVie
         for part_id in &part_ids {
             out.push_str(&format!("    part {} {{\n", part_id));
             for graphic in &comp.graphics {
-                if graphic.owner_part_id == *part_id {
+                if graphic.owner_part_id() == *part_id {
                     dump_graphic(out, graphic, 8);
                 }
             }
@@ -480,7 +491,7 @@ fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpVie
         }
     }
 
-    // Parameters (skip Designator/Comment — already handled above)
+    // Parameters (skip Designator/Comment — already handled via Component fields)
     for param in &comp.parameters {
         dump_parameter(out, param, 4);
     }
@@ -500,18 +511,16 @@ fn dump_component(out: &mut String, comp: &altium_format::SchLibComponentDumpVie
 
 // ── Pin ───────────────────────────────────────────────────────────────────────
 
-fn dump_pin(out: &mut String, pin: &altium_format::SchLibPinDumpView, indent: usize) {
+fn dump_pin(out: &mut String, pin: &Pin, indent: usize) {
     let pad = " ".repeat(indent);
-    let x = format_coord_mils(pin.location_x_mils);
-    let y = format_coord_mils(pin.location_y_mils);
     let mut parts = vec![
-        format!("at: ({}, {})", x, y),
+        format!("at: {}", pin.location),
         format!("orientation: {}", pin.orientation),
         format!("electrical: {}", pin.electrical),
     ];
-    // Default pin length in Altium is 25 mils (Coord::from_mils(25) per dump.md spec).
-    if (pin.length_mils - 25.0).abs() > 0.001 {
-        parts.push(format!("length: {}", format_coord_mils(pin.length_mils)));
+    // Default pin length in Altium is 25 mils.
+    if pin.length != Coord::from_mils(25) {
+        parts.push(format!("length: {}", pin.length));
     }
     if !pin.name.is_empty() {
         parts.push(format!("name: {}", quote_string(&pin.name)));
@@ -532,29 +541,21 @@ fn dump_pin(out: &mut String, pin: &altium_format::SchLibPinDumpView, indent: us
 
 // ── Graphic ───────────────────────────────────────────────────────────────────
 
-fn dump_graphic(out: &mut String, g: &altium_format::SchLibGraphicDumpView, indent: usize) {
+fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
     let pad = " ".repeat(indent);
-    match g.record_type.as_str() {
-        "line" => {
-            let x1 = format_coord_mils(g.location_x_mils);
-            let y1 = format_coord_mils(g.location_y_mils);
-            let x2 = format_coord_mils(g.corner_x_mils.unwrap_or(0.0));
-            let y2 = format_coord_mils(g.corner_y_mils.unwrap_or(0.0));
+    match g {
+        Graphic::Line(l) => {
             out.push_str(&format!(
-                "{}line {{ from: ({}, {}), to: ({}, {}) }}\n",
-                pad, x1, y1, x2, y2
+                "{}line {{ from: {}, to: {} }}\n",
+                pad, l.location, l.corner
             ));
         }
-        "rectangle" => {
-            let x1 = format_coord_mils(g.location_x_mils);
-            let y1 = format_coord_mils(g.location_y_mils);
-            let x2 = format_coord_mils(g.corner_x_mils.unwrap_or(0.0));
-            let y2 = format_coord_mils(g.corner_y_mils.unwrap_or(0.0));
+        Graphic::Rectangle(r) => {
             let mut props = vec![
-                format!("location: ({}, {})", x1, y1),
-                format!("corner: ({}, {})", x2, y2),
+                format!("location: {}", r.location),
+                format!("corner: {}", r.corner),
             ];
-            if g.is_solid {
+            if r.is_solid {
                 props.push("is_solid: true".to_owned());
             }
             out.push_str(&format!(
@@ -563,74 +564,70 @@ fn dump_graphic(out: &mut String, g: &altium_format::SchLibGraphicDumpView, inde
                 props.join(", ")
             ));
         }
-        "arc" => {
-            let x = format_coord_mils(g.location_x_mils);
-            let y = format_coord_mils(g.location_y_mils);
-            let r = format_coord_mils(g.radius_mils.unwrap_or(0.0));
+        Graphic::RoundRectangle(r) => {
             let mut props = vec![
-                format!("center: ({}, {})", x, y),
-                format!("radius: {}", r),
+                format!("location: {}", r.location),
+                format!("corner: {}", r.corner),
+                format!("corner_x_radius: {}", r.corner_x_radius),
+                format!("corner_y_radius: {}", r.corner_y_radius),
             ];
-            if let Some(sa) = g.start_angle {
-                props.push(format!("start_angle: {}", format_float(sa)));
+            if r.is_solid {
+                props.push("is_solid: true".to_owned());
             }
-            if let Some(ea) = g.end_angle {
-                props.push(format!("end_angle: {}", format_float(ea)));
+            out.push_str(&format!(
+                "{}round_rectangle {{ {} }}\n",
+                pad,
+                props.join(", ")
+            ));
+        }
+        Graphic::Arc(a) => {
+            let mut props = vec![
+                format!("center: {}", a.location),
+                format!("radius: {}", a.radius),
+            ];
+            props.push(format!("start_angle: {}", a.start_angle));
+            if let Some(ea) = a.end_angle {
+                props.push(format!("end_angle: {}", ea));
             }
             out.push_str(&format!("{}arc {{ {} }}\n", pad, props.join(", ")));
         }
-        "elliptical_arc" => {
-            let x = format_coord_mils(g.location_x_mils);
-            let y = format_coord_mils(g.location_y_mils);
-            let r = format_coord_mils(g.radius_mils.unwrap_or(0.0));
-            let sr = format_coord_mils(g.secondary_radius_mils.unwrap_or(0.0));
+        Graphic::EllipticalArc(a) => {
             let mut props = vec![
-                format!("center: ({}, {})", x, y),
-                format!("radius: {}", r),
-                format!("secondary_radius: {}", sr),
+                format!("center: {}", a.location),
+                format!("radius: {}", a.radius),
+                format!("secondary_radius: {}", a.secondary_radius),
             ];
-            if let Some(sa) = g.start_angle {
-                props.push(format!("start_angle: {}", format_float(sa)));
-            }
-            if let Some(ea) = g.end_angle {
-                props.push(format!("end_angle: {}", format_float(ea)));
+            props.push(format!("start_angle: {}", a.start_angle));
+            if let Some(ea) = a.end_angle {
+                props.push(format!("end_angle: {}", ea));
             }
             out.push_str(&format!("{}elliptical_arc {{ {} }}\n", pad, props.join(", ")));
         }
-        "ellipse" => {
-            let x = format_coord_mils(g.location_x_mils);
-            let y = format_coord_mils(g.location_y_mils);
-            let r = format_coord_mils(g.radius_mils.unwrap_or(0.0));
-            let sr = format_coord_mils(g.secondary_radius_mils.unwrap_or(0.0));
+        Graphic::Ellipse(e) => {
             let mut props = vec![
-                format!("center: ({}, {})", x, y),
-                format!("radius: {}", r),
-                format!("secondary_radius: {}", sr),
+                format!("center: {}", e.location),
+                format!("radius: {}", e.radius),
+                format!("secondary_radius: {}", e.secondary_radius),
             ];
-            if g.is_solid {
+            if e.is_solid {
                 props.push("is_solid: true".to_owned());
             }
             out.push_str(&format!("{}ellipse {{ {} }}\n", pad, props.join(", ")));
         }
-        "pie" => {
-            let x = format_coord_mils(g.location_x_mils);
-            let y = format_coord_mils(g.location_y_mils);
-            let r = format_coord_mils(g.radius_mils.unwrap_or(0.0));
+        Graphic::Pie(p_) => {
             let mut props = vec![
-                format!("center: ({}, {})", x, y),
-                format!("radius: {}", r),
+                format!("center: {}", p_.location),
+                format!("radius: {}", p_.radius),
             ];
-            if let Some(sa) = g.start_angle {
-                props.push(format!("start_angle: {}", format_float(sa)));
-            }
-            if let Some(ea) = g.end_angle {
-                props.push(format!("end_angle: {}", format_float(ea)));
+            props.push(format!("start_angle: {}", p_.start_angle));
+            if let Some(ea) = p_.end_angle {
+                props.push(format!("end_angle: {}", ea));
             }
             out.push_str(&format!("{}pie {{ {} }}\n", pad, props.join(", ")));
         }
-        "polyline" => {
-            let verts: Vec<String> = g.vertices.iter()
-                .map(|(x, y)| format!("({}, {})", format_coord_mils(*x), format_coord_mils(*y)))
+        Graphic::Polyline(pl) => {
+            let verts: Vec<String> = pl.vertices.iter()
+                .map(|v| format!("{}", v))
                 .collect();
             out.push_str(&format!(
                 "{}polyline {{ vertices: [{}] }}\n",
@@ -638,19 +635,19 @@ fn dump_graphic(out: &mut String, g: &altium_format::SchLibGraphicDumpView, inde
                 verts.join(", ")
             ));
         }
-        "polygon" => {
-            let verts: Vec<String> = g.vertices.iter()
-                .map(|(x, y)| format!("({}, {})", format_coord_mils(*x), format_coord_mils(*y)))
+        Graphic::Polygon(pg) => {
+            let verts: Vec<String> = pg.vertices.iter()
+                .map(|v| format!("{}", v))
                 .collect();
             let mut props = vec![format!("vertices: [{}]", verts.join(", "))];
-            if g.is_solid {
+            if pg.is_solid {
                 props.push("is_solid: true".to_owned());
             }
             out.push_str(&format!("{}polygon {{ {} }}\n", pad, props.join(", ")));
         }
-        "bezier" => {
-            let verts: Vec<String> = g.vertices.iter()
-                .map(|(x, y)| format!("({}, {})", format_coord_mils(*x), format_coord_mils(*y)))
+        Graphic::Bezier(b) => {
+            let verts: Vec<String> = b.vertices.iter()
+                .map(|v| format!("{}", v))
                 .collect();
             out.push_str(&format!(
                 "{}bezier {{ vertices: [{}] }}\n",
@@ -658,47 +655,30 @@ fn dump_graphic(out: &mut String, g: &altium_format::SchLibGraphicDumpView, inde
                 verts.join(", ")
             ));
         }
-        "label" => {
-            let x = format_coord_mils(g.location_x_mils);
-            let y = format_coord_mils(g.location_y_mils);
-            let text = g.text.as_deref().unwrap_or("");
+        Graphic::Label(l) => {
             out.push_str(&format!(
-                "{}label {{ at: ({}, {}), text: {} }}\n",
-                pad, x, y, quote_string(text)
+                "{}label {{ at: {}, text: {} }}\n",
+                pad, l.location, quote_string(&l.text)
             ));
         }
-        "text_frame" => {
-            let x1 = format_coord_mils(g.location_x_mils);
-            let y1 = format_coord_mils(g.location_y_mils);
-            let x2 = format_coord_mils(g.corner_x_mils.unwrap_or(0.0));
-            let y2 = format_coord_mils(g.corner_y_mils.unwrap_or(0.0));
-            let text = g.text.as_deref().unwrap_or("");
+        Graphic::TextFrame(tf) => {
             out.push_str(&format!(
-                "{}text_frame {{ location: ({}, {}), corner: ({}, {}), text: {} }}\n",
-                pad, x1, y1, x2, y2, quote_string(text)
+                "{}text_frame {{ location: {}, corner: {}, text: {} }}\n",
+                pad, tf.location, tf.corner, quote_string(&tf.text)
             ));
         }
-        "image" => {
-            let x1 = format_coord_mils(g.location_x_mils);
-            let y1 = format_coord_mils(g.location_y_mils);
-            let x2 = format_coord_mils(g.corner_x_mils.unwrap_or(0.0));
-            let y2 = format_coord_mils(g.corner_y_mils.unwrap_or(0.0));
-            let file = g.file_name.as_deref().unwrap_or("");
+        Graphic::Image(img) => {
             out.push_str(&format!(
-                "{}image {{ location: ({}, {}), corner: ({}, {}), file: {} }}\n",
-                pad, x1, y1, x2, y2, quote_string(file)
+                "{}image {{ location: {}, corner: {}, file: {} }}\n",
+                pad, img.location, img.corner, quote_string(&img.file_name)
             ));
-        }
-        _ => {
-            // Unknown graphic type — emit as comment
-            out.push_str(&format!("{}// unknown graphic: {}\n", pad, g.record_type));
         }
     }
 }
 
 // ── Parameter ─────────────────────────────────────────────────────────────────
 
-fn dump_parameter(out: &mut String, param: &altium_format::SchLibParameterDumpView, indent: usize) {
+fn dump_parameter(out: &mut String, param: &Parameter, indent: usize) {
     let pad = " ".repeat(indent);
     if param.is_hidden {
         out.push_str(&format!(
@@ -719,28 +699,34 @@ fn dump_parameter(out: &mut String, param: &altium_format::SchLibParameterDumpVi
 
 // ── Footprint map ─────────────────────────────────────────────────────────────
 
-fn dump_footprint_map(out: &mut String, fp: &altium_format::SchLibFootprintDumpView, indent: usize) {
+fn dump_footprint_map(out: &mut String, fp: &FootprintMap, indent: usize) {
     let pad = " ".repeat(indent);
     out.push_str(&format!(
         "{}footprint {} {{\n",
         pad,
-        quote_entity_name(&fp.footprint_ref)
+        quote_entity_name(&fp.model_name)
     ));
     if !fp.description.is_empty() {
         out.push_str(&format!("{}    description: {}\n", pad, quote_string(&fp.description)));
     }
+    // Group API entries by pin to reproduce `map PIN -> PAD1, PAD2` syntax.
+    // The API uses Vec<PinPadMap> where each entry is 1:1 (pin, pad).
+    let mut pin_to_pads: IndexMap<&str, Vec<&str>> = IndexMap::new();
     for m in &fp.pin_pad_maps {
-        if m.pad_names.is_empty() {
+        pin_to_pads.entry(&m.pin).or_default().push(&m.pad);
+    }
+    for (pin, pads) in &pin_to_pads {
+        if pads.is_empty() {
             continue;
         }
-        let pads: Vec<String> = m.pad_names.iter()
+        let pad_strs: Vec<String> = pads.iter()
             .map(|p| quote_entity_name(p))
             .collect();
         out.push_str(&format!(
             "{}    map {} -> {}\n",
             pad,
-            quote_entity_name(&m.pin_name),
-            pads.join(", ")
+            quote_entity_name(pin),
+            pad_strs.join(", ")
         ));
     }
     out.push_str(&format!("{}}}\n", pad));
@@ -751,6 +737,7 @@ fn dump_footprint_map(out: &mut String, fp: &altium_format::SchLibFootprintDumpV
 /// Format a coordinate in mils as the most natural unit.
 /// Prefers mm if the value is "clean" (exact to 3 decimal places in mm).
 /// Falls back to mils otherwise.
+/// Used by PcbLib dump (which still works with raw f64 mils from DumpView).
 pub fn format_coord_mils(mils: f64) -> String {
     let mm = mils * 0.0254;
     if (mm * 1000.0).round() == mm * 1000.0 && mm.abs() >= 0.001 {
@@ -761,6 +748,7 @@ pub fn format_coord_mils(mils: f64) -> String {
 }
 
 /// Format a float, removing trailing zeros after the decimal point.
+/// Used by PcbLib dump for angles and coordinates.
 pub fn format_float(v: f64) -> String {
     let s = format!("{:.4}", v);
     let s = s.trim_end_matches('0');
@@ -802,6 +790,27 @@ fn is_valid_ident(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use altium_format_types::coord::Coord;
+
+    #[test]
+    fn test_coord_display_mm_clean() {
+        // 100 mils = 2.54 mm (clean value)
+        let c = Coord::from_mils(100);
+        assert_eq!(format!("{}", c), "2.54mm");
+    }
+
+    #[test]
+    fn test_coord_display_mils_fallback() {
+        // 1 mil = 0.0254 mm (not clean to 3 decimal places)
+        let c = Coord::from_mils(1);
+        assert_eq!(format!("{}", c), "1mil");
+    }
+
+    #[test]
+    fn test_coord_display_zero() {
+        let c = Coord::ZERO;
+        assert_eq!(format!("{}", c), "0mil");
+    }
 
     #[test]
     fn test_format_coord_mils_mm_clean() {
@@ -812,15 +821,12 @@ mod tests {
 
     #[test]
     fn test_format_coord_mils_mils_fallback() {
-        // 1 mil = 0.0254 mm (not clean to 3 decimal places ... 0.0254 * 1000 = 25.4, round=25, not clean)
-        // Actually 0.0254 * 1000.0 = 25.4, round() = 25, 25 != 25.4 → falls back to mils
         let s = format_coord_mils(1.0);
         assert_eq!(s, "1mil");
     }
 
     #[test]
     fn test_format_coord_mils_zero() {
-        // 0 mils: mm abs < 0.001 so falls back to mils
         let s = format_coord_mils(0.0);
         assert_eq!(s, "0mil");
     }

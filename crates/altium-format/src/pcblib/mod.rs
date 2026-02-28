@@ -167,14 +167,13 @@ pub(crate) struct PcbVia {
     pub(crate) layer_enum_index: i32,
     pub(crate) stack_start_layer: u8,
     pub(crate) stack_end_layer: u8,
-    pub(crate) extension_coord_209: Coord,
-    pub(crate) extension_coord_213: Coord,
-    pub(crate) extension_coord_217: Coord,
-    pub(crate) extension_coord_221: Coord,
-    pub(crate) extension_coord_225: Coord,
-    pub(crate) extension_coord_229: Coord,
-    pub(crate) extension_coord_233: Coord,
-    pub(crate) extension_coord_237: Coord,
+    /// Per-layer "removed pad" flags, one bool per V6 layer (indices 0-31 map to
+    /// V6 layers 1-32: TopLayer, MidLayer1..MidLayer30, BottomLayer).
+    /// When true, the pad on that layer has been removed by the "Remove Unused Pads"
+    /// feature (IPCB_Via2.GetProperty_RemovedPads / IPCB_SafeLayerToBoolean).
+    /// Index 0 (TopLayer) and index 31 (BottomLayer) are almost never set because
+    /// start/end layers are preserved.
+    pub(crate) removed_pads_per_layer: [bool; 32],
     pub(crate) solder_mask_expansion_linked: bool,
     pub(crate) solder_mask_expansion_back: Coord,
     // Via template link extended block (after section2, 46-byte trailing data).
@@ -2032,14 +2031,7 @@ fn validate_via_coords(via: &PcbVia, index: usize, footprint: &str) -> Result<()
     for (i, d) in via.diameters_per_layer.iter().enumerate() {
         check_dimension(*d, "Via", index, &format!("diameters_per_layer[{i}]"), footprint)?;
     }
-    check_expansion(via.extension_coord_209, "Via", index, "extension_coord_209", footprint)?;
-    check_expansion(via.extension_coord_213, "Via", index, "extension_coord_213", footprint)?;
-    check_expansion(via.extension_coord_217, "Via", index, "extension_coord_217", footprint)?;
-    check_expansion(via.extension_coord_221, "Via", index, "extension_coord_221", footprint)?;
-    check_expansion(via.extension_coord_225, "Via", index, "extension_coord_225", footprint)?;
-    check_expansion(via.extension_coord_229, "Via", index, "extension_coord_229", footprint)?;
-    check_expansion(via.extension_coord_233, "Via", index, "extension_coord_233", footprint)?;
-    check_expansion(via.extension_coord_237, "Via", index, "extension_coord_237", footprint)?;
+    // removed_pads_per_layer: boolean flags per V6 layer, no range check needed
     if let Some(tol) = via.hole_positive_tolerance {
         check_expansion(tol, "Via", index, "hole_positive_tolerance", footprint)?;
     }

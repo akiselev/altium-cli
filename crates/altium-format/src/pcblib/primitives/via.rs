@@ -146,14 +146,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut layer_enum_index = 0i32;
     let mut stack_start_layer = 0u8;
     let mut stack_end_layer = 0u8;
-    let mut extension_coord_209 = Coord::ZERO;
-    let mut extension_coord_213 = Coord::ZERO;
-    let mut extension_coord_217 = Coord::ZERO;
-    let mut extension_coord_221 = Coord::ZERO;
-    let mut extension_coord_225 = Coord::ZERO;
-    let mut extension_coord_229 = Coord::ZERO;
-    let mut extension_coord_233 = Coord::ZERO;
-    let mut extension_coord_237 = Coord::ZERO;
+    let mut removed_pads_per_layer = [false; 32];
 
     let mut solder_mask_expansion_linked = false;
     let mut solder_mask_expansion_back = Coord::ZERO;
@@ -214,14 +207,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             layer_enum_index = reader.read_i32_le()?;
             stack_start_layer = reader.read_u8()?;
             stack_end_layer = reader.read_u8()?;
-            extension_coord_209 = reader.read_coord()?;
-            extension_coord_213 = reader.read_coord()?;
-            extension_coord_217 = reader.read_coord()?;
-            extension_coord_221 = reader.read_coord()?;
-            extension_coord_225 = reader.read_coord()?;
-            extension_coord_229 = reader.read_coord()?;
-            extension_coord_233 = reader.read_coord()?;
-            extension_coord_237 = reader.read_coord()?;
+            for flag in &mut removed_pads_per_layer {
+                *flag = reader.read_u8()? != 0;
+            }
             let linked_byte = reader.read_u8()?;
             solder_mask_expansion_linked = (linked_byte & 0x01) != 0;
             solder_mask_expansion_back = reader.read_coord()?;
@@ -393,14 +381,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         layer_enum_index,
         stack_start_layer,
         stack_end_layer,
-        extension_coord_209,
-        extension_coord_213,
-        extension_coord_217,
-        extension_coord_221,
-        extension_coord_225,
-        extension_coord_229,
-        extension_coord_233,
-        extension_coord_237,
+        removed_pads_per_layer,
         solder_mask_expansion_linked,
         solder_mask_expansion_back,
         template_link_version,
@@ -497,8 +478,10 @@ mod tests {
         w.write_i32_le(123);
         w.write_u8(1);
         w.write_u8(32);
-        for _ in 0..8 {
-            w.write_i32_le(0);
+        // 32 removed_pads_per_layer booleans (one per V6 layer 1-32).
+        // Set layers 2, 5 as removed to test non-zero values.
+        for i in 0..32u8 {
+            w.write_u8(if i == 1 || i == 4 { 1 } else { 0 });
         }
         w.write_u8(0x01);
         w.write_coord(Coord::from_internal(2_000));
@@ -516,6 +499,13 @@ mod tests {
         assert!(via.solder_mask_expansion_linked);
         assert_eq!(via.solder_mask_expansion_back.to_internal(), 2_000);
         assert_eq!(via.layer_enum_index, 123);
+        // Verify removed_pads_per_layer
+        assert!(!via.removed_pads_per_layer[0]);
+        assert!(via.removed_pads_per_layer[1]);
+        assert!(!via.removed_pads_per_layer[2]);
+        assert!(!via.removed_pads_per_layer[3]);
+        assert!(via.removed_pads_per_layer[4]);
+        assert!(!via.removed_pads_per_layer[31]);
     }
 
     #[test]
@@ -551,11 +541,9 @@ mod tests {
         w.write_i32_le(0);
         w.write_u8(1);
         w.write_u8(32);
-        for _ in 0..8 {
-            w.write_i32_le(0);
-        }
-        w.write_u8(0);
-        w.write_i32_le(0);
+        w.write_bytes(&[0u8; 32]); // removed_pads_per_layer (all false)
+        w.write_u8(0); // solder_mask_expansion_linked
+        w.write_i32_le(0); // solder_mask_expansion_back
 
         w.write_u32_le(1);
         w.write_u32_le(9);

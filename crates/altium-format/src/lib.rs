@@ -53,10 +53,7 @@ pub use pcbdoc::PcbDoc;
 pub use pcblib::{PcbLib, PcbLibFootprintDumpView, PcbLibGraphicDumpView, PcbLibPadDumpView};
 pub use project::AltiumProject;
 pub use schdoc::SchDoc;
-pub use schlib::{
-    SchLib, SchLibComponentDumpView, SchLibFootprintDumpView, SchLibGraphicDumpView,
-    SchLibParameterDumpView, SchLibPinDumpView, SchLibPinPadMapDumpView,
-};
+pub use schlib::SchLib;
 
 /// Version information extracted from an Altium document's file header.
 #[derive(Debug, serde::Serialize)]

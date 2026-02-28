@@ -596,6 +596,12 @@ impl TryFrom<u8> for IeeeSymbol {
     }
 }
 
+impl std::fmt::Display for IeeeSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// VHDL formal type / std_logic state (0-8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -635,6 +641,12 @@ impl TryFrom<u8> for StdLogicState {
     }
 }
 
+impl std::fmt::Display for StdLogicState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Pen/border width (0-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -664,6 +676,12 @@ impl TryFrom<u8> for PenWidth {
     }
 }
 
+impl std::fmt::Display for PenWidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Line style (0-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -690,6 +708,12 @@ impl TryFrom<u8> for LineStyle {
                 value: value as i64,
             }),
         }
+    }
+}
+
+impl std::fmt::Display for LineStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -728,6 +752,12 @@ impl TryFrom<u8> for LineShape {
     }
 }
 
+impl std::fmt::Display for LineShape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Horizontal text alignment (0-2).
 /// Maps to C# `THorizontalAlign` (Altium.SDK.Interfaces/SCH/THorizontalAlign.cs).
 ///
@@ -756,6 +786,12 @@ impl TryFrom<u8> for HorizontalAlign {
                 value: value as i64,
             }),
         }
+    }
+}
+
+impl std::fmt::Display for HorizontalAlign {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -795,6 +831,12 @@ impl TryFrom<u8> for TextJustification {
                 value: value as i64,
             }),
         }
+    }
+}
+
+impl std::fmt::Display for TextJustification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -1110,6 +1152,12 @@ impl TryFrom<u8> for ParameterReadOnlyState {
     }
 }
 
+impl std::fmt::Display for ParameterReadOnlyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Parameter value type discriminator.
 ///
 /// **Wire type:** u8
@@ -1139,6 +1187,12 @@ impl TryFrom<u8> for ParameterType {
                 value: value as i64,
             }),
         }
+    }
+}
+
+impl std::fmt::Display for ParameterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 

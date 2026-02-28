@@ -151,9 +151,26 @@ impl SubAssign for Coord {
 }
 
 impl fmt::Display for Coord {
+    /// Format as the most natural unit for the spec language.
+    /// Prefers mm if the value is "clean" (exact to 3 decimal places in mm).
+    /// Falls back to mils otherwise.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:.4} mils", self.to_mils())
+        let mils = self.to_mils();
+        let mm = mils * 0.0254;
+        if (mm * 1000.0).round() == mm * 1000.0 && mm.abs() >= 0.001 {
+            write!(f, "{}mm", format_float_trimmed(mm))
+        } else {
+            write!(f, "{}mil", format_float_trimmed(mils))
+        }
     }
+}
+
+/// Format a float with up to 4 decimal places, stripping trailing zeros.
+fn format_float_trimmed(v: f64) -> String {
+    let s = format!("{:.4}", v);
+    let s = s.trim_end_matches('0');
+    let s = s.trim_end_matches('.');
+    s.to_string()
 }
 
 /// 2D point with X and Y coordinates.
