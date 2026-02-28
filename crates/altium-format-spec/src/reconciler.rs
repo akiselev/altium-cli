@@ -16,7 +16,7 @@ use crate::eco::{
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, PadSpec, PinSpec,
-    SchLibSpec, PcbLibSpec,
+    PrjPcbSpec, ProjectSpec, SchLibSpec, PcbLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -117,6 +117,315 @@ pub fn reconcile_pcblib_empty(
         timestamp: SystemTime::now(),
         summary,
         changes,
+    }
+}
+
+// ── PrjPcb reconcilers ──────────────────────────────────────────────────────
+
+/// Reconcile a spec model against an existing PrjPcb project.
+pub fn reconcile_prjpcb(
+    spec: &PrjPcbSpec,
+    doc: &altium_format::AltiumProject,
+    library_path: PathBuf,
+    spec_path: PathBuf,
+) -> Result<EngineeringChangeOrder, SpecError> {
+    let existing = doc.project()
+        .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+
+    let mut changes = Vec::new();
+    for proj_spec in &spec.projects {
+        changes.push(diff_project(proj_spec, &existing));
+    }
+
+    let summary = compute_summary(&changes);
+    Ok(EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    })
+}
+
+/// Reconcile against an empty project: every entity in the spec is an Add.
+pub fn reconcile_prjpcb_empty(
+    spec: &PrjPcbSpec,
+    library_path: PathBuf,
+    spec_path: PathBuf,
+) -> EngineeringChangeOrder {
+    let changes: Vec<EntityChange> = spec
+        .projects
+        .iter()
+        .map(project_to_add)
+        .collect();
+    let summary = compute_summary(&changes);
+    EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    }
+}
+
+fn diff_project(spec: &ProjectSpec, existing: &api::Project) -> EntityChange {
+    let mut prop_changes = Vec::new();
+
+    // Diff scalar string fields
+    diff_opt_field_vs_str("output_path", &spec.output_path, &existing.output_path, &mut prop_changes);
+    diff_opt_field_vs_str("channel_designator_format", &spec.channel_designator_format, &existing.channel_designator_format, &mut prop_changes);
+    diff_opt_field_vs_str("channel_room_level_separator", &spec.channel_room_level_separator, &existing.channel_room_level_separator, &mut prop_changes);
+
+    // Diff scalar bool fields
+    diff_opt_bool("allow_port_net_names", spec.allow_port_net_names, existing.allow_port_net_names, &mut prop_changes);
+    diff_opt_bool("allow_sheet_entry_net_names", spec.allow_sheet_entry_net_names, existing.allow_sheet_entry_net_names, &mut prop_changes);
+    diff_opt_bool("netlist_single_pin_nets", spec.netlist_single_pin_nets, existing.netlist_single_pin_nets, &mut prop_changes);
+    diff_opt_bool("append_sheet_number_to_local_nets", spec.append_sheet_number_to_local_nets, existing.append_sheet_number_to_local_nets, &mut prop_changes);
+    diff_opt_bool("name_nets_hierarchically", spec.name_nets_hierarchically, existing.name_nets_hierarchically, &mut prop_changes);
+    diff_opt_bool("power_port_names_take_priority", spec.power_port_names_take_priority, existing.power_port_names_take_priority, &mut prop_changes);
+    diff_opt_bool("pin_swap_by_netlabel", spec.pin_swap_by_netlabel, existing.pin_swap_by_netlabel, &mut prop_changes);
+    diff_opt_bool("pin_swap_by_pin", spec.pin_swap_by_pin, existing.pin_swap_by_pin, &mut prop_changes);
+    diff_opt_bool("cross_ref_cross_sheets", spec.cross_ref_cross_sheets, existing.cross_ref_cross_sheets, &mut prop_changes);
+    diff_opt_bool("cross_ref_sheet_entries", spec.cross_ref_sheet_entries, existing.cross_ref_sheet_entries, &mut prop_changes);
+
+    // Diff scalar enum fields
+    diff_opt_enum("hierarchy_mode", spec.hierarchy_mode, existing.hierarchy_mode, &mut prop_changes);
+    diff_opt_enum("channel_room_naming_style", spec.channel_room_naming_style, existing.channel_room_naming_style, &mut prop_changes);
+    diff_opt_enum("cross_ref_sheet_style", spec.cross_ref_sheet_style, existing.cross_ref_sheet_style, &mut prop_changes);
+    diff_opt_enum("cross_ref_location_style", spec.cross_ref_location_style, existing.cross_ref_location_style, &mut prop_changes);
+    diff_opt_enum("cross_ref_ports", spec.cross_ref_ports, existing.cross_ref_ports, &mut prop_changes);
+
+    // Diff children
+    let mut children = Vec::new();
+
+    // Documents
+    let existing_docs: HashMap<&str, &api::DocumentRef> = existing.documents.iter()
+        .map(|d| (d.path.as_str(), d))
+        .collect();
+    for doc_spec in &spec.documents {
+        match existing_docs.get(doc_spec.path.as_str()) {
+            Some(_existing_doc) => {
+                // Document exists — mark as unchanged for now
+                children.push(EntityChange::Unchanged {
+                    kind: EntityKind::Document,
+                    identity: doc_spec.path.clone(),
+                });
+            }
+            None => {
+                children.push(document_to_add(doc_spec));
+            }
+        }
+    }
+
+    // Output groups
+    let existing_groups: HashMap<&str, &api::OutputGroup> = existing.output_groups.iter()
+        .map(|g| (g.name.as_str(), g))
+        .collect();
+    for group_spec in &spec.output_groups {
+        match existing_groups.get(group_spec.name.as_str()) {
+            Some(_existing_group) => {
+                children.push(EntityChange::Unchanged {
+                    kind: EntityKind::OutputGroup,
+                    identity: group_spec.name.clone(),
+                });
+            }
+            None => {
+                children.push(output_group_to_add(group_spec));
+            }
+        }
+    }
+
+    // Variants
+    let existing_variants: HashMap<&str, &api::ProjectVariant> = existing.variants.iter()
+        .map(|v| (v.description.as_str(), v))
+        .collect();
+    for var_spec in &spec.variants {
+        match existing_variants.get(var_spec.name.as_str()) {
+            Some(_existing_var) => {
+                children.push(EntityChange::Unchanged {
+                    kind: EntityKind::Variant,
+                    identity: var_spec.name.clone(),
+                });
+            }
+            None => {
+                children.push(variant_to_add(var_spec));
+            }
+        }
+    }
+
+    // ERC matrix overrides
+    for erc in &spec.erc_matrix_overrides {
+        let identity = format!("({}, {})", erc.row, erc.col);
+        let existing_level = existing.erc_matrix.cells[erc.row as usize][erc.col as usize];
+        if existing_level != erc.level {
+            children.push(EntityChange::Update {
+                kind: EntityKind::ErcMatrixCell,
+                identity,
+                prop_changes: vec![PropChange {
+                    field: "level".to_string(),
+                    old_value: existing_level.to_string(),
+                    new_value: erc.level.to_string(),
+                }],
+                children: vec![],
+            });
+        } else {
+            children.push(EntityChange::Unchanged {
+                kind: EntityKind::ErcMatrixCell,
+                identity,
+            });
+        }
+    }
+
+    // ERC level overrides
+    for erc_level in &spec.erc_level_overrides {
+        let existing_el = existing.erc_levels.iter().find(|e| e.key == erc_level.name);
+        match existing_el {
+            Some(existing) => {
+                if existing.level != erc_level.level {
+                    children.push(EntityChange::Update {
+                        kind: EntityKind::ErcLevel,
+                        identity: erc_level.name.clone(),
+                        prop_changes: vec![PropChange {
+                            field: "level".to_string(),
+                            old_value: existing.level.to_string(),
+                            new_value: erc_level.level.to_string(),
+                        }],
+                        children: vec![],
+                    });
+                } else {
+                    children.push(EntityChange::Unchanged {
+                        kind: EntityKind::ErcLevel,
+                        identity: erc_level.name.clone(),
+                    });
+                }
+            }
+            None => {
+                children.push(EntityChange::Add {
+                    kind: EntityKind::ErcLevel,
+                    identity: erc_level.name.clone(),
+                    props: vec![PropValue {
+                        field: "level".to_string(),
+                        value: erc_level.level.to_string(),
+                    }],
+                    children: vec![],
+                });
+            }
+        }
+    }
+
+    if prop_changes.is_empty() && children.iter().all(|c| matches!(c, EntityChange::Unchanged { .. })) {
+        EntityChange::Unchanged {
+            kind: EntityKind::Project,
+            identity: spec.name.clone(),
+        }
+    } else {
+        EntityChange::Update {
+            kind: EntityKind::Project,
+            identity: spec.name.clone(),
+            prop_changes,
+            children,
+        }
+    }
+}
+
+fn project_to_add(spec: &ProjectSpec) -> EntityChange {
+    let mut props = Vec::new();
+    if let Some(ref v) = spec.hierarchy_mode { props.push(PropValue { field: "hierarchy_mode".into(), value: v.to_string() }); }
+    if let Some(ref v) = spec.output_path { props.push(PropValue { field: "output_path".into(), value: v.clone() }); }
+    if let Some(v) = spec.allow_port_net_names { props.push(PropValue { field: "allow_port_net_names".into(), value: v.to_string() }); }
+    if let Some(v) = spec.allow_sheet_entry_net_names { props.push(PropValue { field: "allow_sheet_entry_net_names".into(), value: v.to_string() }); }
+
+    let mut children = Vec::new();
+    for doc in &spec.documents { children.push(document_to_add(doc)); }
+    for group in &spec.output_groups { children.push(output_group_to_add(group)); }
+    for var in &spec.variants { children.push(variant_to_add(var)); }
+
+    EntityChange::Add {
+        kind: EntityKind::Project,
+        identity: spec.name.clone(),
+        props,
+        children,
+    }
+}
+
+fn document_to_add(spec: &crate::model::DocumentSpec) -> EntityChange {
+    let mut props = Vec::new();
+    if let Some(v) = spec.annotation_enabled { props.push(PropValue { field: "annotation_enabled".into(), value: v.to_string() }); }
+    if let Some(v) = spec.annotate_start_value { props.push(PropValue { field: "annotate_start_value".into(), value: v.to_string() }); }
+    EntityChange::Add {
+        kind: EntityKind::Document,
+        identity: spec.path.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn output_group_to_add(spec: &crate::model::OutputGroupSpec) -> EntityChange {
+    let mut props = Vec::new();
+    if let Some(ref v) = spec.description { props.push(PropValue { field: "description".into(), value: v.clone() }); }
+    let children: Vec<EntityChange> = spec.outputs.iter().map(|out| {
+        let mut out_props = Vec::new();
+        if let Some(ref v) = out.output_type { out_props.push(PropValue { field: "output_type".into(), value: v.clone() }); }
+        if let Some(ref v) = out.document_path { out_props.push(PropValue { field: "document_path".into(), value: v.clone() }); }
+        EntityChange::Add {
+            kind: EntityKind::OutputJob,
+            identity: out.name.clone(),
+            props: out_props,
+            children: vec![],
+        }
+    }).collect();
+    EntityChange::Add {
+        kind: EntityKind::OutputGroup,
+        identity: spec.name.clone(),
+        props,
+        children,
+    }
+}
+
+fn variant_to_add(spec: &crate::model::VariantSpec) -> EntityChange {
+    let mut props = Vec::new();
+    if let Some(ref v) = spec.description { props.push(PropValue { field: "description".into(), value: v.clone() }); }
+    let mut children = Vec::new();
+    for var in &spec.variations {
+        let mut var_props = Vec::new();
+        if let Some(ref k) = var.kind { var_props.push(PropValue { field: "kind".into(), value: k.to_string() }); }
+        if let Some(ref v) = var.alternate_part { var_props.push(PropValue { field: "alternate_part".into(), value: v.clone() }); }
+        children.push(EntityChange::Add {
+            kind: EntityKind::Variation,
+            identity: var.designator.clone(),
+            props: var_props,
+            children: vec![],
+        });
+    }
+    EntityChange::Add {
+        kind: EntityKind::Variant,
+        identity: spec.name.clone(),
+        props,
+        children,
+    }
+}
+
+fn diff_opt_bool(name: &str, spec_val: Option<bool>, existing: bool, out: &mut Vec<PropChange>) {
+    if let Some(sv) = spec_val {
+        if sv != existing {
+            out.push(PropChange {
+                field: name.to_string(),
+                old_value: existing.to_string(),
+                new_value: sv.to_string(),
+            });
+        }
+    }
+}
+
+fn diff_opt_enum<T: PartialEq + std::fmt::Display>(name: &str, spec_val: Option<T>, existing: T, out: &mut Vec<PropChange>) {
+    if let Some(sv) = spec_val {
+        if sv != existing {
+            out.push(PropChange {
+                field: name.to_string(),
+                old_value: existing.to_string(),
+                new_value: sv.to_string(),
+            });
+        }
     }
 }
 

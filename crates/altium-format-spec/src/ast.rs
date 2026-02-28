@@ -14,6 +14,7 @@ pub enum SpecItem {
     LetBinding(LetBinding),
     Component(ComponentDecl),
     Footprint(FootprintDecl),
+    Project(ProjectDecl),
 }
 
 /// import "path" [as alias]
@@ -142,6 +143,112 @@ pub struct RowDecl {
 /// grid { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct GridDecl {
+    pub body: Spanned<Object>,
+}
+
+// ── Project declarations ──────────────────────────────────────────────
+
+/// [binding =] project NAME { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectDecl {
+    pub binding: Option<Spanned<String>>,
+    pub name: Spanned<EntityName>,
+    pub body: Vec<Spanned<ProjectItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectItem {
+    Property(Property),
+    LetBinding(LetBinding),
+    Document(DocumentBlockDecl),
+    Annotation(AnnotationBlockDecl),
+    ErcMatrix(Vec<Spanned<ErcMatrixEntryDecl>>),
+    ErcLevels(Vec<Spanned<ErcLevelEntryDecl>>),
+    OutputGroup(OutputGroupBlockDecl),
+    Comparison(Vec<Spanned<ComparisonRuleDecl>>),
+    ClassGen(Vec<Spanned<Property>>),
+    LibraryUpdate(Vec<Spanned<Property>>),
+    Variant(VariantBlockDecl),
+}
+
+/// document "path/to/file.SchDoc" { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentBlockDecl {
+    pub path: Spanned<EntityName>,
+    pub body: Vec<Spanned<Property>>,
+}
+
+/// annotation { ... match_parameter N { ... } ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnnotationBlockDecl {
+    pub properties: Vec<Spanned<Property>>,
+    pub match_parameters: Vec<Spanned<MatchParameterDecl>>,
+}
+
+/// match_parameter N { key: value, ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchParameterDecl {
+    pub index: Spanned<i32>,
+    pub body: Spanned<Object>,
+}
+
+/// erc_matrix { (row, col): level, ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErcMatrixEntryDecl {
+    pub row: Spanned<String>,
+    pub col: Spanned<String>,
+    pub level: Spanned<String>,
+}
+
+/// erc_levels { name: level, ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErcLevelEntryDecl {
+    pub name: Spanned<String>,
+    pub level: Spanned<Expr>,
+}
+
+/// output_group "Name" { output "Name" { ... } ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputGroupBlockDecl {
+    pub name: Spanned<EntityName>,
+    pub properties: Vec<Spanned<Property>>,
+    pub outputs: Vec<Spanned<OutputBlockDecl>>,
+}
+
+/// output "Name" { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputBlockDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Vec<Spanned<Property>>,
+}
+
+/// comparison { rule "Kind" { ... } ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComparisonRuleDecl {
+    pub kind: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// variant "Name" { ... variation "Designator" { ... } ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantBlockDecl {
+    pub name: Spanned<EntityName>,
+    pub properties: Vec<Spanned<Property>>,
+    pub variations: Vec<Spanned<VariationDecl>>,
+    pub param_variations: Vec<Spanned<ParamVariationDecl>>,
+}
+
+/// variation "Designator" { kind: ..., alternate_part: ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariationDecl {
+    pub designator: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// param_variation "Designator" { parameter: ..., value: ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamVariationDecl {
+    pub designator: Spanned<EntityName>,
     pub body: Spanned<Object>,
 }
 

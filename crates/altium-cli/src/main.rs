@@ -4,8 +4,10 @@ use std::process::ExitCode;
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
-    SpecDomain, compile_spec, dump_pcblib, dump_schlib, reconcile_pcblib, reconcile_pcblib_empty,
-    reconcile_schlib, reconcile_schlib_empty, resolve_imports, apply_spec_schlib, apply_spec_pcblib,
+    SpecDomain, compile_spec, dump_pcblib, dump_prjpcb, dump_schlib,
+    reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
+    reconcile_schlib, reconcile_schlib_empty, resolve_imports,
+    apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -461,7 +463,8 @@ fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("schlib-spec") => Ok(SpecDomain::SchLib),
         Some("pcblib-spec") => Ok(SpecDomain::PcbLib),
-        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .pcblib-spec)"),
+        Some("prjpcb-spec") => Ok(SpecDomain::PrjPcb),
+        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .pcblib-spec, .prjpcb-spec)"),
         None => anyhow::bail!("spec file has no extension: {}", path.display()),
     }
 }
@@ -471,7 +474,8 @@ fn detect_document_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
     match ext.as_str() {
         "schlib" => Ok(SpecDomain::SchLib),
         "pcblib" => Ok(SpecDomain::PcbLib),
-        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .pcblib)"),
+        "prjpcb" => Ok(SpecDomain::PrjPcb),
+        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .pcblib, .prjpcb)"),
     }
 }
 
@@ -480,6 +484,7 @@ fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf 
     let ext = match domain {
         SpecDomain::SchLib => "SchLib",
         SpecDomain::PcbLib => "PcbLib",
+        SpecDomain::PrjPcb => "PrjPcb",
     };
     spec_file.with_file_name(format!("{stem}.{ext}"))
 }
@@ -489,6 +494,7 @@ fn default_spec_for_document(doc: &PathBuf, domain: &SpecDomain) -> PathBuf {
     let ext = match domain {
         SpecDomain::SchLib => "schlib-spec",
         SpecDomain::PcbLib => "pcblib-spec",
+        SpecDomain::PrjPcb => "prjpcb-spec",
     };
     doc.with_file_name(format!("{stem}.{ext}"))
 }
@@ -524,6 +530,17 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
                 reconcile_pcblib(spec_lib, library_path, spec_path)
             } else {
                 reconcile_pcblib_empty(spec_lib, library_path, spec_path)
+            }
+        }
+        altium_format_spec::model::SpecModel::PrjPcb(ref spec) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            if resolved_target.exists() {
+                let doc = AltiumProject::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                reconcile_prjpcb(spec, &doc, library_path, spec_path)
+                    .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
+            } else {
+                reconcile_prjpcb_empty(spec, library_path, spec_path)
             }
         }
     };
@@ -596,6 +613,26 @@ fn run_apply(
             lib.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
+        altium_format_spec::model::SpecModel::PrjPcb(ref spec) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            let mut doc = if resolved_target.exists() {
+                AltiumProject::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+            } else {
+                anyhow::bail!(
+                    "no existing PrjPcb found at {}; provide an existing project via --target",
+                    resolved_target.display()
+                )
+            };
+
+            let out_path = output.cloned().unwrap_or(library_path);
+
+            apply_spec_prjpcb(spec, &mut doc)
+                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            doc.save(&out_path)?;
+            println!("Saved: {}", out_path.display());
+        }
     }
 
     Ok(())
@@ -620,6 +657,15 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
             let lib = PcbLib::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_pcblib(&lib);
+            std::fs::write(&out_path, &spec_source)
+                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+            println!("Dumped: {} -> {}", document.display(), out_path.display());
+        }
+        SpecDomain::PrjPcb => {
+            let doc = AltiumProject::open(document)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+            let spec_source = dump_prjpcb(&doc)
+                .map_err(|e| anyhow::anyhow!("dump failed: {e}"))?;
             std::fs::write(&out_path, &spec_source)
                 .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
             println!("Dumped: {} -> {}", document.display(), out_path.display());

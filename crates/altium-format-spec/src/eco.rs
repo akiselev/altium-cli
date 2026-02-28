@@ -118,6 +118,16 @@ pub enum EntityKind {
     Text,
     Fill,
     Region,
+    // Project
+    Project,
+    Document,
+    OutputGroup,
+    OutputJob,
+    Variant,
+    Variation,
+    ComparisonRule,
+    ErcMatrixCell,
+    ErcLevel,
 }
 
 impl EntityKind {
@@ -136,6 +146,15 @@ impl EntityKind {
             Self::Text => "Texts",
             Self::Fill => "Fills",
             Self::Region => "Regions",
+            Self::Project => "Projects",
+            Self::Document => "Documents",
+            Self::OutputGroup => "Output Groups",
+            Self::OutputJob => "Output Jobs",
+            Self::Variant => "Variants",
+            Self::Variation => "Variations",
+            Self::ComparisonRule => "Comparison Rules",
+            Self::ErcMatrixCell => "ERC Matrix Cells",
+            Self::ErcLevel => "ERC Levels",
         }
     }
 }
@@ -421,6 +440,15 @@ fn kind_label(kind: EntityKind) -> &'static str {
         EntityKind::Text => "text",
         EntityKind::Fill => "fill",
         EntityKind::Region => "region",
+        EntityKind::Project => "project",
+        EntityKind::Document => "document",
+        EntityKind::OutputGroup => "output_group",
+        EntityKind::OutputJob => "output",
+        EntityKind::Variant => "variant",
+        EntityKind::Variation => "variation",
+        EntityKind::ComparisonRule => "comparison_rule",
+        EntityKind::ErcMatrixCell => "erc_matrix_cell",
+        EntityKind::ErcLevel => "erc_level",
     }
 }
 

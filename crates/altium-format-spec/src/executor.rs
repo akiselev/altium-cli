@@ -4,7 +4,7 @@
 //! documents, converting spec model types into API types.
 
 use altium_format::api;
-use altium_format::{PcbLib, SchLib};
+use altium_format::{AltiumProject, PcbLib, SchLib};
 
 use altium_format_types::color::Color;
 use altium_format_types::coord::{Coord, CoordPoint};
@@ -17,7 +17,7 @@ use altium_format_types::sch::{
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     ComponentSpec, FootprintMapSpec, GraphicSpec, GraphicType,
-    ParameterSpec, PcbLibSpec, PinSpec, SchLibSpec,
+    ParameterSpec, PcbLibSpec, PinSpec, PrjPcbSpec, SchLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -59,6 +59,110 @@ pub fn apply_spec_pcblib(
         SpecErrorCode::AltiumFormat,
         "PcbLib executor not yet implemented (no PcbLib high-level write API)",
     ))
+}
+
+/// Apply a PrjPcb spec to a project document.
+///
+/// Merges spec fields into the project's `[Design]` section:
+/// `Some` overrides the existing value, `None` preserves it.
+/// ERC matrix and ERC level overrides are applied sparsely.
+pub fn apply_spec_prjpcb(
+    spec: &PrjPcbSpec,
+    doc: &mut AltiumProject,
+) -> Result<(), SpecError> {
+    use altium_format_types::project::ConnectionCode;
+
+    for proj_spec in &spec.projects {
+        // Merge scalar [Design] fields.
+        let design = doc.design_mut();
+
+        if let Some(v) = proj_spec.hierarchy_mode {
+            design.insert("HierarchyMode".into(), (v as i32).to_string());
+        }
+        if let Some(v) = proj_spec.channel_room_naming_style {
+            design.insert("ChannelRoomNamingStyle".into(), (v as i32).to_string());
+        }
+        if let Some(ref v) = proj_spec.channel_designator_format {
+            design.insert("ChannelDesignatorFormatString".into(), v.clone());
+        }
+        if let Some(ref v) = proj_spec.channel_room_level_separator {
+            design.insert("ChannelRoomLevelSeperator".into(), v.clone());
+        }
+        if let Some(v) = proj_spec.allow_port_net_names {
+            design.insert("AllowPortNetNames".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.allow_sheet_entry_net_names {
+            design.insert("AllowSheetEntryNetNames".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.netlist_single_pin_nets {
+            design.insert("NetlistSinglePinNets".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.append_sheet_number_to_local_nets {
+            design.insert("AppendSheetNumberToLocalNets".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.name_nets_hierarchically {
+            design.insert("NameNetsHierarchically".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.power_port_names_take_priority {
+            design.insert("PowerPortNamesTakePriority".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.pin_swap_by_netlabel {
+            design.insert("PinSwapBy_Netlabel".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.pin_swap_by_pin {
+            design.insert("PinSwapBy_Pin".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.cross_ref_sheet_style {
+            design.insert("CrossRefSheetStyle".into(), (v as i32).to_string());
+        }
+        if let Some(v) = proj_spec.cross_ref_location_style {
+            design.insert("CrossRefLocationStyle".into(), (v as i32).to_string());
+        }
+        if let Some(v) = proj_spec.cross_ref_ports {
+            design.insert("CrossRefPorts".into(), (v as i32).to_string());
+        }
+        if let Some(v) = proj_spec.cross_ref_cross_sheets {
+            design.insert("CrossRefCrossSheets".into(), bool_to_ini(v));
+        }
+        if let Some(v) = proj_spec.cross_ref_sheet_entries {
+            design.insert("CrossRefSheetEntries".into(), bool_to_ini(v));
+        }
+        if let Some(ref v) = proj_spec.output_path {
+            design.insert("OutputPath".into(), v.clone());
+        }
+
+        // Apply ERC matrix overrides (sparse: only override specified cells).
+        for erc in &proj_spec.erc_matrix_overrides {
+            let row_idx = erc.row as i32;
+            let col_idx = erc.col as i32;
+            let key = format!("L{}", row_idx + 1);
+
+            let erc_matrix = doc.erc_matrix_mut();
+            let row_str = erc_matrix.entry(key.clone()).or_insert_with(|| {
+                // Build default row with all NoReport
+                (0..ConnectionCode::Unconnected as i32 + 1)
+                    .map(|_| 'N')
+                    .collect::<String>()
+            });
+            // Replace the character at col_idx
+            let mut chars: Vec<char> = row_str.chars().collect();
+            if (col_idx as usize) < chars.len() {
+                chars[col_idx as usize] = erc.level.to_matrix_char();
+            }
+            *row_str = chars.into_iter().collect();
+        }
+
+        // Apply ERC level overrides.
+        for erc_level in &proj_spec.erc_level_overrides {
+            let erc_levels = doc.erc_levels_mut();
+            erc_levels.insert(erc_level.name.clone(), (erc_level.level as i32).to_string());
+        }
+    }
+    Ok(())
+}
+
+fn bool_to_ini(v: bool) -> String {
+    if v { "1".into() } else { "0".into() }
 }
 
 // ── Component from spec (new components) ──────────────────────────────────────

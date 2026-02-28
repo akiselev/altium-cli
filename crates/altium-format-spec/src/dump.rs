@@ -4,7 +4,11 @@
 //! Generated output uses absolute placement only (`at: (x, y)`, explicit
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
-use altium_format::{PcbLib, SchLib};
+use altium_format::{AltiumProject, PcbLib, SchLib};
+use altium_format_types::project::{
+    ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle,
+    ErrorLevel, FlattenMode,
+};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -26,6 +30,232 @@ pub fn dump_schlib(lib: &SchLib) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Generate `.prjpcb-spec` source from a PrjPcb project.
+///
+/// Returns `Err` if the project cannot be parsed into its typed representation.
+pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError> {
+    let project = doc.project()
+        .map_err(|e| crate::eval::SpecError::no_span(
+            crate::eval::SpecErrorCode::AltiumFormat,
+            e.to_string(),
+        ))?;
+
+    let mut out = String::new();
+    out.push_str(&format!("project {} {{\n", quote_entity_name(&project.name)));
+
+    // [Design] scalar properties — only emit non-default values
+    if project.hierarchy_mode != FlattenMode::Smart {
+        out.push_str(&format!("    hierarchy_mode: {}\n", flatten_mode_to_spec(project.hierarchy_mode)?));
+    }
+    if project.channel_room_naming_style != ChannelRoomNamingStyle::FlatNumericWithNames {
+        out.push_str(&format!("    channel_room_naming_style: {}\n", channel_room_naming_to_spec(project.channel_room_naming_style)?));
+    }
+    if !project.channel_designator_format.is_empty() {
+        out.push_str(&format!("    channel_designator_format: {}\n", quote_string(&project.channel_designator_format)));
+    }
+    if !project.channel_room_level_separator.is_empty() {
+        out.push_str(&format!("    channel_room_level_separator: {}\n", quote_string(&project.channel_room_level_separator)));
+    }
+    if project.allow_port_net_names { out.push_str("    allow_port_net_names: true\n"); }
+    if project.allow_sheet_entry_net_names { out.push_str("    allow_sheet_entry_net_names: true\n"); }
+    if project.netlist_single_pin_nets { out.push_str("    netlist_single_pin_nets: true\n"); }
+    if project.append_sheet_number_to_local_nets { out.push_str("    append_sheet_number_to_local_nets: true\n"); }
+    if project.name_nets_hierarchically { out.push_str("    name_nets_hierarchically: true\n"); }
+    if project.power_port_names_take_priority { out.push_str("    power_port_names_take_priority: true\n"); }
+    if project.pin_swap_by_netlabel { out.push_str("    pin_swap_by_netlabel: true\n"); }
+    if project.pin_swap_by_pin { out.push_str("    pin_swap_by_pin: true\n"); }
+    if project.cross_ref_sheet_style != CrossRefSheetStyle::None {
+        out.push_str(&format!("    cross_ref_sheet_style: {}\n", cross_ref_sheet_to_spec(project.cross_ref_sheet_style)?));
+    }
+    if project.cross_ref_location_style != CrossRefLocationStyle::None {
+        out.push_str(&format!("    cross_ref_location_style: {}\n", cross_ref_location_to_spec(project.cross_ref_location_style)?));
+    }
+    if project.cross_ref_ports != CrossRefPorts::Disabled {
+        out.push_str(&format!("    cross_ref_ports: {}\n", cross_ref_ports_to_spec(project.cross_ref_ports)?));
+    }
+    if project.cross_ref_cross_sheets { out.push_str("    cross_ref_cross_sheets: true\n"); }
+    if project.cross_ref_sheet_entries { out.push_str("    cross_ref_sheet_entries: true\n"); }
+    if !project.output_path.is_empty() {
+        out.push_str(&format!("    output_path: {}\n", quote_string(&project.output_path)));
+    }
+
+    out.push('\n');
+
+    // Documents
+    for doc_ref in &project.documents {
+        out.push_str(&format!("    document {} {{\n", quote_string(&doc_ref.path)));
+        if doc_ref.annotation_enabled { out.push_str("        annotation_enabled: true\n"); }
+        if doc_ref.annotate_start_value != 0 {
+            out.push_str(&format!("        annotate_start_value: {}\n", doc_ref.annotate_start_value));
+        }
+        if doc_ref.do_library_update { out.push_str("        do_library_update: true\n"); }
+        if doc_ref.do_database_update { out.push_str("        do_database_update: true\n"); }
+        out.push_str("    }\n\n");
+    }
+
+    // ERC matrix (only non-default cells)
+    let mut erc_overrides = Vec::new();
+    for (row_idx, row) in project.erc_matrix.cells.iter().enumerate() {
+        for (col_idx, &level) in row.iter().enumerate() {
+            if level != ErrorLevel::NoReport {
+                erc_overrides.push((row_idx, col_idx, level));
+            }
+        }
+    }
+    if !erc_overrides.is_empty() {
+        out.push_str("    erc_matrix {\n");
+        for (row_idx, col_idx, level) in &erc_overrides {
+            let row_code = connection_code_to_spec(*row_idx)?;
+            let col_code = connection_code_to_spec(*col_idx)?;
+            let level_str = error_level_to_spec(*level)?;
+            out.push_str(&format!("        ({row_code}, {col_code}): {level_str}\n"));
+        }
+        out.push_str("    }\n\n");
+    }
+
+    // Output groups
+    for group in &project.output_groups {
+        out.push_str(&format!("    output_group {} {{\n", quote_string(&group.name)));
+        if !group.description.is_empty() {
+            out.push_str(&format!("        description: {}\n", quote_string(&group.description)));
+        }
+        for output in &group.outputs {
+            out.push_str(&format!("        output {} {{\n", quote_string(&output.name)));
+            if !output.output_type.is_empty() {
+                out.push_str(&format!("            output_type: {}\n", quote_string(&output.output_type)));
+            }
+            if !output.document_path.is_empty() {
+                out.push_str(&format!("            document_path: {}\n", quote_string(&output.document_path)));
+            }
+            out.push_str("        }\n");
+        }
+        out.push_str("    }\n\n");
+    }
+
+    // Variants
+    for var in &project.variants {
+        out.push_str(&format!("    variant {} {{\n", quote_string(&var.description)));
+        for v in &var.variations {
+            out.push_str(&format!("        variation {} {{\n", quote_entity_name(&v.designator)));
+            out.push_str(&format!("            kind: {}\n", variation_kind_to_spec(v.kind)?));
+            if !v.alternate_part.is_empty() {
+                out.push_str(&format!("            alternate_part: {}\n", quote_string(&v.alternate_part)));
+            }
+            out.push_str("        }\n");
+        }
+        for pv in &var.param_variations {
+            out.push_str(&format!("        param_variation {} {{\n", quote_entity_name(&pv.designator)));
+            out.push_str(&format!("            parameter: {}\n", quote_string(&pv.parameter_name)));
+            out.push_str(&format!("            value: {}\n", quote_string(&pv.variant_value)));
+            out.push_str("        }\n");
+        }
+        out.push_str("    }\n\n");
+    }
+
+    out.push_str("}\n");
+    Ok(out)
+}
+
+// ── Project enum formatters ──────────────────────────────────────────────────
+
+use crate::eval::{SpecError, SpecErrorCode};
+
+fn spec_err(msg: String) -> SpecError {
+    SpecError::no_span(SpecErrorCode::AltiumFormat, msg)
+}
+
+fn flatten_mode_to_spec(v: FlattenMode) -> Result<&'static str, SpecError> {
+    match v {
+        FlattenMode::Smart => Ok("smart"),
+        FlattenMode::Flat => Ok("flat"),
+        FlattenMode::HierarchicalGlobalPorts => Ok("hierarchical_global_ports"),
+        FlattenMode::Global => Ok("global"),
+        FlattenMode::HierarchicalStrict => Ok("hierarchical_strict"),
+        _ => Err(spec_err(format!("unknown FlattenMode variant: {:?}", v))),
+    }
+}
+
+fn channel_room_naming_to_spec(v: ChannelRoomNamingStyle) -> Result<&'static str, SpecError> {
+    match v {
+        ChannelRoomNamingStyle::FlatNumericWithNames => Ok("flat_numeric_with_names"),
+        ChannelRoomNamingStyle::FlatNumeric => Ok("flat_numeric"),
+        ChannelRoomNamingStyle::FullyQualified => Ok("fully_qualified"),
+        ChannelRoomNamingStyle::FullyQualifiedShort => Ok("fully_qualified_short"),
+        ChannelRoomNamingStyle::MixedNamePath => Ok("mixed_name_path"),
+        _ => Err(spec_err(format!("unknown ChannelRoomNamingStyle variant: {:?}", v))),
+    }
+}
+
+fn cross_ref_sheet_to_spec(v: CrossRefSheetStyle) -> Result<&'static str, SpecError> {
+    match v {
+        CrossRefSheetStyle::None => Ok("none"),
+        CrossRefSheetStyle::Name => Ok("name"),
+        CrossRefSheetStyle::Number => Ok("number"),
+        _ => Err(spec_err(format!("unknown CrossRefSheetStyle variant: {:?}", v))),
+    }
+}
+
+fn cross_ref_location_to_spec(v: CrossRefLocationStyle) -> Result<&'static str, SpecError> {
+    match v {
+        CrossRefLocationStyle::None => Ok("none"),
+        CrossRefLocationStyle::Zone => Ok("zone"),
+        CrossRefLocationStyle::XY => Ok("xy"),
+        _ => Err(spec_err(format!("unknown CrossRefLocationStyle variant: {:?}", v))),
+    }
+}
+
+fn cross_ref_ports_to_spec(v: CrossRefPorts) -> Result<&'static str, SpecError> {
+    match v {
+        CrossRefPorts::Disabled => Ok("disabled"),
+        CrossRefPorts::SheetEntry => Ok("sheet_entry"),
+        CrossRefPorts::Ports => Ok("ports"),
+        CrossRefPorts::SheetEntryAndPorts => Ok("sheet_entry_and_ports"),
+        _ => Err(spec_err(format!("unknown CrossRefPorts variant: {:?}", v))),
+    }
+}
+
+fn error_level_to_spec(v: ErrorLevel) -> Result<&'static str, SpecError> {
+    match v {
+        ErrorLevel::NoReport => Ok("no_report"),
+        ErrorLevel::Warning => Ok("warning"),
+        ErrorLevel::Error => Ok("error"),
+        ErrorLevel::Fatal => Ok("fatal"),
+        _ => Err(spec_err(format!("unknown ErrorLevel variant: {:?}", v))),
+    }
+}
+
+fn connection_code_to_spec(idx: usize) -> Result<&'static str, SpecError> {
+    match idx {
+        0 => Ok("pin_input"),
+        1 => Ok("pin_bidirectional"),
+        2 => Ok("pin_output"),
+        3 => Ok("pin_open_collector"),
+        4 => Ok("pin_passive"),
+        5 => Ok("pin_hi_z"),
+        6 => Ok("pin_open_emitter"),
+        7 => Ok("pin_power"),
+        8 => Ok("sheet_entry_input"),
+        9 => Ok("sheet_entry_bidirectional"),
+        10 => Ok("sheet_entry_output"),
+        11 => Ok("port_unspecified"),
+        12 => Ok("pin_unspecified"),
+        13 => Ok("sheet_entry_unspecified"),
+        14 => Ok("port_input"),
+        15 => Ok("port_output"),
+        16 => Ok("unconnected"),
+        _ => Err(spec_err(format!("unknown ERC connection code index: {}", idx))),
+    }
+}
+
+fn variation_kind_to_spec(v: altium_format_types::project::VariationKind) -> Result<&'static str, SpecError> {
+    match v {
+        altium_format_types::project::VariationKind::None => Ok("none"),
+        altium_format_types::project::VariationKind::NotFitted => Ok("not_fitted"),
+        altium_format_types::project::VariationKind::Alternate => Ok("alternate"),
+        _ => Err(spec_err(format!("unknown VariationKind variant: {:?}", v))),
+    }
 }
 
 // ── Footprint ─────────────────────────────────────────────────────────────────

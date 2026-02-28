@@ -24,13 +24,21 @@ use altium_format_types::{
 use crate::ast::{
     AliasDecl, ComponentDecl, ComponentItem, FootprintDecl, FootprintItem, FootprintMapDecl,
     FootprintRef, GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock,
-    PartItem, PinDecl, SpecFile, SpecItem,
+    PartItem, PinDecl, ProjectDecl, ProjectItem, SpecFile, SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
-    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec, GraphicType,
-    PadSpec, ParameterSpec, PartSpec, PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType,
-    PinPadMap, PinSpec, SchLibSpec, SpecDomain, SpecModel,
+    AnnotationMatchParamSpec, AnnotationSpec, ClassGenSpec, ComparisonRuleSpec, ComponentSpec,
+    DocumentSpec, ErcLevelOverride, ErcMatrixOverride, FootprintMapSpec, FootprintSpec,
+    GraphicProperties, GraphicSpec, GraphicType, LibraryUpdateSpec, OutputGroupSpec, OutputSpec,
+    PadSpec, ParamVariationSpec, ParameterSpec, PartSpec, PcbGraphicProperties, PcbGraphicSpec,
+    PcbGraphicType, PinPadMap, PinSpec, PrjPcbSpec, ProjectSpec, SchLibSpec, SpecDomain,
+    SpecModel, VariantSpec, VariationSpec,
+};
+
+use altium_format_types::project::{
+    ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
+    CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
 };
 use crate::diagnostic::Spanned;
 
@@ -102,6 +110,16 @@ impl SpecCompiler {
                 }
                 self.scope.pop();
                 Ok(SpecModel::PcbLib(crate::model::PcbLibSpec { footprints }))
+            }
+            SpecDomain::PrjPcb => {
+                let mut projects = Vec::new();
+                for item in &file.items {
+                    if let SpecItem::Project(decl) = &item.node {
+                        projects.push(self.compile_project(decl)?);
+                    }
+                }
+                self.scope.pop();
+                Ok(SpecModel::PrjPcb(PrjPcbSpec { projects }))
             }
         }
     }
@@ -606,6 +624,442 @@ impl SpecCompiler {
             *n += 1;
             id
         }
+    }
+
+    // ── Project compilation (PrjPcb) ──────────────────────────────────────
+
+    fn compile_project(&mut self, decl: &ProjectDecl) -> Result<ProjectSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        self.context_name = name.clone();
+        self.unnamed_counters.clear();
+
+        // Push project scope.
+        self.scope.push();
+
+        // Collect and evaluate project-level let bindings.
+        let proj_lets: Vec<_> = decl.body.iter().filter_map(|item| {
+            match &item.node {
+                ProjectItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
+                _ => None,
+            }
+        }).collect();
+        eval_let_bindings_slice(&proj_lets, &mut self.scope)?;
+
+        // Collect project-level properties from Property items.
+        let props = collect_object_properties_from_items(
+            decl.body.iter().filter_map(|item| {
+                match &item.node {
+                    ProjectItem::Property(p) => Some(p),
+                    _ => None,
+                }
+            }),
+            &self.scope,
+        )?;
+
+        // Extract scalar fields.
+        let hierarchy_mode = get_enum_opt(&props, "hierarchy_mode", parse_flatten_mode)?;
+        let channel_room_naming_style = get_enum_opt(&props, "channel_room_naming_style", parse_channel_room_naming_style)?;
+        let channel_designator_format = get_string_opt(&props, "channel_designator_format");
+        let channel_room_level_separator = get_string_opt(&props, "channel_room_level_separator");
+        let allow_port_net_names = get_bool_opt(&props, "allow_port_net_names");
+        let allow_sheet_entry_net_names = get_bool_opt(&props, "allow_sheet_entry_net_names");
+        let netlist_single_pin_nets = get_bool_opt(&props, "netlist_single_pin_nets");
+        let append_sheet_number_to_local_nets = get_bool_opt(&props, "append_sheet_number_to_local_nets");
+        let name_nets_hierarchically = get_bool_opt(&props, "name_nets_hierarchically");
+        let power_port_names_take_priority = get_bool_opt(&props, "power_port_names_take_priority");
+        let pin_swap_by_netlabel = get_bool_opt(&props, "pin_swap_by_netlabel");
+        let pin_swap_by_pin = get_bool_opt(&props, "pin_swap_by_pin");
+        let cross_ref_sheet_style = get_enum_opt(&props, "cross_ref_sheet_style", parse_cross_ref_sheet_style)?;
+        let cross_ref_location_style = get_enum_opt(&props, "cross_ref_location_style", parse_cross_ref_location_style)?;
+        let cross_ref_ports = get_enum_opt(&props, "cross_ref_ports", parse_cross_ref_ports)?;
+        let cross_ref_cross_sheets = get_bool_opt(&props, "cross_ref_cross_sheets");
+        let cross_ref_sheet_entries = get_bool_opt(&props, "cross_ref_sheet_entries");
+        let output_path = get_string_opt(&props, "output_path");
+
+        // Compile child blocks.
+        let mut documents = Vec::new();
+        let mut annotation = None;
+        let mut erc_matrix_overrides = Vec::new();
+        let mut erc_level_overrides = Vec::new();
+        let mut output_groups = Vec::new();
+        let mut comparison_rules = Vec::new();
+        let mut class_gen = None;
+        let mut library_update = None;
+        let mut variants = Vec::new();
+
+        for item in &decl.body {
+            match &item.node {
+                ProjectItem::Property(_) | ProjectItem::LetBinding(_) => {
+                    // Already handled above.
+                }
+                ProjectItem::Document(doc) => {
+                    documents.push(self.compile_document(doc)?);
+                }
+                ProjectItem::Annotation(ann) => {
+                    annotation = Some(self.compile_annotation(ann)?);
+                }
+                ProjectItem::ErcMatrix(entries) => {
+                    for entry in entries {
+                        erc_matrix_overrides.push(self.compile_erc_matrix_entry(&entry.node)?);
+                    }
+                }
+                ProjectItem::ErcLevels(entries) => {
+                    for entry in entries {
+                        erc_level_overrides.push(self.compile_erc_level_entry(&entry.node)?);
+                    }
+                }
+                ProjectItem::OutputGroup(group) => {
+                    output_groups.push(self.compile_output_group(group)?);
+                }
+                ProjectItem::Comparison(rules) => {
+                    for rule in rules {
+                        comparison_rules.push(self.compile_comparison_rule(&rule.node)?);
+                    }
+                }
+                ProjectItem::ClassGen(props_list) => {
+                    let cg_props = collect_object_properties_from_items(
+                        props_list.iter().map(|p| &p.node),
+                        &self.scope,
+                    )?;
+                    class_gen = Some(ClassGenSpec {
+                        generate_component_classes: get_bool_opt(&cg_props, "generate_component_classes"),
+                        generate_net_classes: get_bool_opt(&cg_props, "generate_net_classes"),
+                    });
+                }
+                ProjectItem::LibraryUpdate(props_list) => {
+                    let lu_props = collect_object_properties_from_items(
+                        props_list.iter().map(|p| &p.node),
+                        &self.scope,
+                    )?;
+                    library_update = Some(LibraryUpdateSpec {
+                        update_components: get_bool_opt(&lu_props, "update_components"),
+                        update_models: get_bool_opt(&lu_props, "update_models"),
+                    });
+                }
+                ProjectItem::Variant(var) => {
+                    variants.push(self.compile_variant(var)?);
+                }
+            }
+        }
+
+        self.scope.pop();
+
+        Ok(ProjectSpec {
+            name,
+            hierarchy_mode,
+            channel_room_naming_style,
+            channel_designator_format,
+            channel_room_level_separator,
+            allow_port_net_names,
+            allow_sheet_entry_net_names,
+            netlist_single_pin_nets,
+            append_sheet_number_to_local_nets,
+            name_nets_hierarchically,
+            power_port_names_take_priority,
+            pin_swap_by_netlabel,
+            pin_swap_by_pin,
+            cross_ref_sheet_style,
+            cross_ref_location_style,
+            cross_ref_ports,
+            cross_ref_cross_sheets,
+            cross_ref_sheet_entries,
+            output_path,
+            documents,
+            annotation,
+            erc_matrix_overrides,
+            erc_level_overrides,
+            output_groups,
+            comparison_rules,
+            class_gen,
+            library_update,
+            variants,
+        })
+    }
+
+    fn compile_document(&mut self, doc: &crate::ast::DocumentBlockDecl) -> Result<DocumentSpec, SpecError> {
+        let path = doc.path.node.as_str();
+        let props = collect_object_properties_from_items(
+            doc.body.iter().map(|p| &p.node),
+            &self.scope,
+        )?;
+        Ok(DocumentSpec {
+            path,
+            annotation_enabled: get_bool_opt(&props, "annotation_enabled"),
+            annotate_start_value: get_integer_opt(&props, "annotate_start_value"),
+            do_library_update: get_bool_opt(&props, "do_library_update"),
+            do_database_update: get_bool_opt(&props, "do_database_update"),
+        })
+    }
+
+    fn compile_annotation(&mut self, ann: &crate::ast::AnnotationBlockDecl) -> Result<AnnotationSpec, SpecError> {
+        let props = collect_object_properties_from_items(
+            ann.properties.iter().map(|p| &p.node),
+            &self.scope,
+        )?;
+        let sort_order = get_enum_opt(&props, "sort_order", parse_sort_order)?;
+        let sort_location = get_enum_opt(&props, "sort_location", parse_sort_location)?;
+
+        let mut match_parameters = Vec::new();
+        for mp in &ann.match_parameters {
+            let obj_map = eval_object_to_map(&mp.node.body.node, &self.scope)?;
+            let mut str_props = IndexMap::new();
+            for (k, v) in &obj_map {
+                str_props.insert(k.clone(), v.display());
+            }
+            match_parameters.push(AnnotationMatchParamSpec {
+                index: mp.node.index.node,
+                properties: str_props,
+            });
+        }
+
+        Ok(AnnotationSpec {
+            sort_order,
+            sort_location,
+            match_parameters,
+        })
+    }
+
+    fn compile_erc_matrix_entry(&self, entry: &crate::ast::ErcMatrixEntryDecl) -> Result<ErcMatrixOverride, SpecError> {
+        let row = parse_connection_code(&entry.row.node).ok_or_else(|| {
+            SpecError::new(
+                SpecErrorCode::TypeMismatch,
+                format!("unknown ERC connection code: '{}'", entry.row.node),
+                Some(entry.row.span),
+            )
+        })?;
+        let col = parse_connection_code(&entry.col.node).ok_or_else(|| {
+            SpecError::new(
+                SpecErrorCode::TypeMismatch,
+                format!("unknown ERC connection code: '{}'", entry.col.node),
+                Some(entry.col.span),
+            )
+        })?;
+        let level = parse_error_level(&entry.level.node).ok_or_else(|| {
+            SpecError::new(
+                SpecErrorCode::TypeMismatch,
+                format!("unknown error level: '{}' (expected no_report, warning, error, fatal)", entry.level.node),
+                Some(entry.level.span),
+            )
+        })?;
+        Ok(ErcMatrixOverride { row, col, level })
+    }
+
+    fn compile_erc_level_entry(&self, entry: &crate::ast::ErcLevelEntryDecl) -> Result<ErcLevelOverride, SpecError> {
+        let level_val = eval_expr(&entry.level, &self.scope)?;
+        let level_str = match &level_val {
+            Value::String(s) => s.clone(),
+            Value::Integer(n) => {
+                return Ok(ErcLevelOverride {
+                    name: entry.name.node.clone(),
+                    level: ErrorLevel::try_from(*n).map_err(|_| {
+                        SpecError::new(
+                            SpecErrorCode::TypeMismatch,
+                            format!("invalid error level integer: {n}"),
+                            Some(entry.level.span),
+                        )
+                    })?,
+                });
+            }
+            other => {
+                return Err(SpecError::new(
+                    SpecErrorCode::TypeMismatch,
+                    format!("expected error level string or integer, got {}", other.kind_name()),
+                    Some(entry.level.span),
+                ));
+            }
+        };
+        let level = parse_error_level(&level_str).ok_or_else(|| {
+            SpecError::new(
+                SpecErrorCode::TypeMismatch,
+                format!("unknown error level: '{}' (expected no_report, warning, error, fatal)", level_str),
+                Some(entry.level.span),
+            )
+        })?;
+        Ok(ErcLevelOverride { name: entry.name.node.clone(), level })
+    }
+
+    fn compile_output_group(&mut self, group: &crate::ast::OutputGroupBlockDecl) -> Result<OutputGroupSpec, SpecError> {
+        let name = group.name.node.as_str();
+        let props = collect_object_properties_from_items(
+            group.properties.iter().map(|p| &p.node),
+            &self.scope,
+        )?;
+        let description = get_string_opt(&props, "description");
+
+        let mut outputs = Vec::new();
+        for out in &group.outputs {
+            let out_props = collect_object_properties_from_items(
+                out.node.body.iter().map(|p| &p.node),
+                &self.scope,
+            )?;
+            outputs.push(OutputSpec {
+                name: out.node.name.node.as_str(),
+                output_type: get_string_opt(&out_props, "output_type"),
+                document_path: get_string_opt(&out_props, "document_path"),
+                variant_name: get_string_opt(&out_props, "variant_name"),
+            });
+        }
+
+        Ok(OutputGroupSpec { name, description, outputs })
+    }
+
+    fn compile_comparison_rule(&self, rule: &crate::ast::ComparisonRuleDecl) -> Result<ComparisonRuleSpec, SpecError> {
+        let kind = rule.kind.node.as_str();
+        let obj_map = eval_object_to_map(&rule.body.node, &self.scope)?;
+        let mut properties = IndexMap::new();
+        for (k, v) in &obj_map {
+            properties.insert(k.clone(), v.display());
+        }
+        Ok(ComparisonRuleSpec { kind, properties })
+    }
+
+    fn compile_variant(&mut self, var: &crate::ast::VariantBlockDecl) -> Result<VariantSpec, SpecError> {
+        let name = var.name.node.as_str();
+        let props = collect_object_properties_from_items(
+            var.properties.iter().map(|p| &p.node),
+            &self.scope,
+        )?;
+        let description = get_string_opt(&props, "description");
+
+        let mut variations = Vec::new();
+        for v in &var.variations {
+            let v_map = eval_object_to_map(&v.node.body.node, &self.scope)?;
+            let kind = get_enum_opt(&v_map, "kind", parse_variation_kind)?;
+            let alternate_part = get_string_opt(&v_map, "alternate_part");
+            variations.push(VariationSpec {
+                designator: v.node.designator.node.as_str(),
+                kind,
+                alternate_part,
+            });
+        }
+
+        let mut param_variations = Vec::new();
+        for pv in &var.param_variations {
+            let pv_map = eval_object_to_map(&pv.node.body.node, &self.scope)?;
+            let parameter = get_string_opt(&pv_map, "parameter")
+                .unwrap_or_default();
+            let value = get_string_opt(&pv_map, "value")
+                .unwrap_or_default();
+            param_variations.push(ParamVariationSpec {
+                designator: pv.node.designator.node.as_str(),
+                parameter,
+                value,
+            });
+        }
+
+        Ok(VariantSpec { name, description, variations, param_variations })
+    }
+}
+
+// ── Project enum parsers ─────────────────────────────────────────────────────
+
+fn parse_flatten_mode(s: &str) -> Option<FlattenMode> {
+    match s {
+        "smart" => Some(FlattenMode::Smart),
+        "flat" => Some(FlattenMode::Flat),
+        "hierarchical_global_ports" => Some(FlattenMode::HierarchicalGlobalPorts),
+        "global" => Some(FlattenMode::Global),
+        "hierarchical_strict" => Some(FlattenMode::HierarchicalStrict),
+        _ => None,
+    }
+}
+
+fn parse_channel_room_naming_style(s: &str) -> Option<ChannelRoomNamingStyle> {
+    match s {
+        "flat_numeric_with_names" => Some(ChannelRoomNamingStyle::FlatNumericWithNames),
+        "flat_numeric" => Some(ChannelRoomNamingStyle::FlatNumeric),
+        "fully_qualified" => Some(ChannelRoomNamingStyle::FullyQualified),
+        "fully_qualified_short" => Some(ChannelRoomNamingStyle::FullyQualifiedShort),
+        "mixed_name_path" => Some(ChannelRoomNamingStyle::MixedNamePath),
+        _ => None,
+    }
+}
+
+fn parse_cross_ref_sheet_style(s: &str) -> Option<CrossRefSheetStyle> {
+    match s {
+        "none" => Some(CrossRefSheetStyle::None),
+        "name" => Some(CrossRefSheetStyle::Name),
+        "number" => Some(CrossRefSheetStyle::Number),
+        _ => None,
+    }
+}
+
+fn parse_cross_ref_location_style(s: &str) -> Option<CrossRefLocationStyle> {
+    match s {
+        "none" => Some(CrossRefLocationStyle::None),
+        "zone" => Some(CrossRefLocationStyle::Zone),
+        "xy" => Some(CrossRefLocationStyle::XY),
+        _ => None,
+    }
+}
+
+fn parse_cross_ref_ports(s: &str) -> Option<CrossRefPorts> {
+    match s {
+        "disabled" => Some(CrossRefPorts::Disabled),
+        "sheet_entry" => Some(CrossRefPorts::SheetEntry),
+        "ports" => Some(CrossRefPorts::Ports),
+        "sheet_entry_and_ports" => Some(CrossRefPorts::SheetEntryAndPorts),
+        _ => None,
+    }
+}
+
+fn parse_sort_order(s: &str) -> Option<SortOrder> {
+    match s {
+        "up_then_across" => Some(SortOrder::UpThenAcross),
+        "down_then_across" => Some(SortOrder::DownThenAcross),
+        "across_then_up" => Some(SortOrder::AcrossThenUp),
+        "across_then_down" => Some(SortOrder::AcrossThenDown),
+        _ => None,
+    }
+}
+
+fn parse_sort_location(s: &str) -> Option<SortLocation> {
+    match s {
+        "designator" => Some(SortLocation::Designator),
+        "part" => Some(SortLocation::Part),
+        _ => None,
+    }
+}
+
+fn parse_error_level(s: &str) -> Option<ErrorLevel> {
+    match s {
+        "no_report" => Some(ErrorLevel::NoReport),
+        "warning" => Some(ErrorLevel::Warning),
+        "error" => Some(ErrorLevel::Error),
+        "fatal" => Some(ErrorLevel::Fatal),
+        _ => None,
+    }
+}
+
+fn parse_connection_code(s: &str) -> Option<ConnectionCode> {
+    match s {
+        "pin_input" => Some(ConnectionCode::PinInput),
+        "pin_bidirectional" => Some(ConnectionCode::PinBidirectional),
+        "pin_output" => Some(ConnectionCode::PinOutput),
+        "pin_open_collector" => Some(ConnectionCode::PinOpenCollector),
+        "pin_passive" => Some(ConnectionCode::PinPassive),
+        "pin_hi_z" => Some(ConnectionCode::PinHiZ),
+        "pin_open_emitter" => Some(ConnectionCode::PinOpenEmitter),
+        "pin_power" => Some(ConnectionCode::PinPower),
+        "sheet_entry_input" => Some(ConnectionCode::SheetEntryInput),
+        "sheet_entry_bidirectional" => Some(ConnectionCode::SheetEntryBidirectional),
+        "sheet_entry_output" => Some(ConnectionCode::SheetEntryOutput),
+        "port_unspecified" => Some(ConnectionCode::PortUnspecified),
+        "pin_unspecified" => Some(ConnectionCode::PinUnspecified),
+        "sheet_entry_unspecified" => Some(ConnectionCode::SheetEntryUnspecified),
+        "port_input" => Some(ConnectionCode::PortInput),
+        "port_output" => Some(ConnectionCode::PortOutput),
+        "unconnected" => Some(ConnectionCode::Unconnected),
+        _ => None,
+    }
+}
+
+fn parse_variation_kind(s: &str) -> Option<VariationKind> {
+    match s {
+        "none" => Some(VariationKind::None),
+        "not_fitted" => Some(VariationKind::NotFitted),
+        "alternate" => Some(VariationKind::Alternate),
+        _ => None,
     }
 }
 
@@ -2415,7 +2869,7 @@ mod tests {
         let file = parse_spec(src).expect("parse failed");
         match compile_spec(&file, SpecDomain::SchLib)? {
             SpecModel::SchLib(s) => Ok(s),
-            SpecModel::PcbLib(_) => panic!("expected SchLib"),
+            other => panic!("expected SchLib, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
@@ -2423,7 +2877,7 @@ mod tests {
         let file = parse_spec(src).expect("parse failed");
         match compile_spec(&file, SpecDomain::PcbLib)? {
             SpecModel::PcbLib(p) => Ok(p),
-            SpecModel::SchLib(_) => panic!("expected PcbLib"),
+            other => panic!("expected PcbLib, got {:?}", std::mem::discriminant(&other)),
         }
     }
 

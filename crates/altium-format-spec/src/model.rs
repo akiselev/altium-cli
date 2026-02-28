@@ -4,6 +4,10 @@ use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, PadShape, PadStackMode, PinElectricalType,
     PlaneConnectionStyle, RotationBy90, V6Layer,
 };
+use altium_format_types::project::{
+    ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
+    CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
+};
 
 // ── SchLib ──────────────────────────────────────────────────────────────────
 
@@ -205,9 +209,129 @@ pub struct PcbGraphicProperties {
 pub enum SpecDomain {
     SchLib,
     PcbLib,
+    PrjPcb,
 }
 
 pub enum SpecModel {
     SchLib(SchLibSpec),
     PcbLib(PcbLibSpec),
+    PrjPcb(PrjPcbSpec),
+}
+
+// ── PrjPcb ──────────────────────────────────────────────────────────────────
+
+pub struct PrjPcbSpec {
+    pub projects: Vec<ProjectSpec>,
+}
+
+pub struct ProjectSpec {
+    pub name: String,
+
+    // [Design] scalar properties — all Option (None = don't override)
+    pub hierarchy_mode: Option<FlattenMode>,
+    pub channel_room_naming_style: Option<ChannelRoomNamingStyle>,
+    pub channel_designator_format: Option<String>,
+    pub channel_room_level_separator: Option<String>,
+    pub allow_port_net_names: Option<bool>,
+    pub allow_sheet_entry_net_names: Option<bool>,
+    pub netlist_single_pin_nets: Option<bool>,
+    pub append_sheet_number_to_local_nets: Option<bool>,
+    pub name_nets_hierarchically: Option<bool>,
+    pub power_port_names_take_priority: Option<bool>,
+    pub pin_swap_by_netlabel: Option<bool>,
+    pub pin_swap_by_pin: Option<bool>,
+    pub cross_ref_sheet_style: Option<CrossRefSheetStyle>,
+    pub cross_ref_location_style: Option<CrossRefLocationStyle>,
+    pub cross_ref_ports: Option<CrossRefPorts>,
+    pub cross_ref_cross_sheets: Option<bool>,
+    pub cross_ref_sheet_entries: Option<bool>,
+    pub output_path: Option<String>,
+
+    // Children
+    pub documents: Vec<DocumentSpec>,
+    pub annotation: Option<AnnotationSpec>,
+    pub erc_matrix_overrides: Vec<ErcMatrixOverride>,
+    pub erc_level_overrides: Vec<ErcLevelOverride>,
+    pub output_groups: Vec<OutputGroupSpec>,
+    pub comparison_rules: Vec<ComparisonRuleSpec>,
+    pub class_gen: Option<ClassGenSpec>,
+    pub library_update: Option<LibraryUpdateSpec>,
+    pub variants: Vec<VariantSpec>,
+}
+
+pub struct DocumentSpec {
+    pub path: String,
+    pub annotation_enabled: Option<bool>,
+    pub annotate_start_value: Option<i32>,
+    pub do_library_update: Option<bool>,
+    pub do_database_update: Option<bool>,
+}
+
+pub struct AnnotationSpec {
+    pub sort_order: Option<SortOrder>,
+    pub sort_location: Option<SortLocation>,
+    pub match_parameters: Vec<AnnotationMatchParamSpec>,
+}
+
+pub struct AnnotationMatchParamSpec {
+    pub index: i32,
+    pub properties: indexmap::IndexMap<String, String>,
+}
+
+pub struct ErcMatrixOverride {
+    pub row: ConnectionCode,
+    pub col: ConnectionCode,
+    pub level: ErrorLevel,
+}
+
+pub struct ErcLevelOverride {
+    pub name: String,
+    pub level: ErrorLevel,
+}
+
+pub struct OutputGroupSpec {
+    pub name: String,
+    pub description: Option<String>,
+    pub outputs: Vec<OutputSpec>,
+}
+
+pub struct OutputSpec {
+    pub name: String,
+    pub output_type: Option<String>,
+    pub document_path: Option<String>,
+    pub variant_name: Option<String>,
+}
+
+pub struct ComparisonRuleSpec {
+    pub kind: String,
+    pub properties: indexmap::IndexMap<String, String>,
+}
+
+pub struct ClassGenSpec {
+    pub generate_component_classes: Option<bool>,
+    pub generate_net_classes: Option<bool>,
+}
+
+pub struct LibraryUpdateSpec {
+    pub update_components: Option<bool>,
+    pub update_models: Option<bool>,
+}
+
+pub struct VariantSpec {
+    pub name: String,
+    pub description: Option<String>,
+    pub variations: Vec<VariationSpec>,
+    pub param_variations: Vec<ParamVariationSpec>,
+}
+
+pub struct VariationSpec {
+    pub designator: String,
+    pub kind: Option<VariationKind>,
+    pub alternate_part: Option<String>,
+}
+
+pub struct ParamVariationSpec {
+    pub designator: String,
+    pub parameter: String,
+    pub value: String,
 }

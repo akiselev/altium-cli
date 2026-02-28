@@ -447,6 +447,21 @@ impl AltiumProject {
         &self.unique_ids_mappings
     }
 
+    /// Mutable access to the `[Design]` section for writing back spec values.
+    pub fn design_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.design
+    }
+
+    /// Mutable access to the `[ERC Connection Matrix]` section.
+    pub fn erc_matrix_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.erc_matrix
+    }
+
+    /// Mutable access to the `[Electrical Rules Check]` section.
+    pub fn erc_levels_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.erc_levels
+    }
+
     /// Save the project to an INI file with UTF-8 BOM prefix.
     pub fn save(&self, path: impl AsRef<Path>) -> crate::Result<()> {
         let path = path.as_ref();

@@ -1,10 +1,13 @@
 use crate::diagnostic::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
 
 use super::ast::{
-    AliasDecl, ComponentDecl, ComponentItem, EntityName, Expr, FootprintDecl, FootprintItem,
-    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding, MapEntry,
-    Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem, PinDecl, Property, RowDecl,
-    SpecFile, SpecItem, is_graphic_type,
+    AliasDecl, AnnotationBlockDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem,
+    DocumentBlockDecl, EntityName, ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr, FootprintDecl,
+    FootprintItem, FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
+    MapEntry, MatchParameterDecl, Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl,
+    PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PinDecl, ProjectDecl,
+    ProjectItem, Property, RowDecl, SpecFile, SpecItem, VariantBlockDecl, VariationDecl,
+    is_graphic_type,
 };
 use super::lexer::{Token, TokenKind, lex};
 
@@ -210,6 +213,13 @@ impl<'a> SpecParser<'a> {
             return Ok(Spanned::new(SpecItem::Footprint(decl), start.merge(end)));
         }
 
+        // Handle: project ...
+        if self.at(&TokenKind::Project) {
+            let decl = self.parse_project(None)?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::Project(decl), start.merge(end)));
+        }
+
         // Skip optional `let`
         let had_let = self.eat(&TokenKind::Let);
 
@@ -239,6 +249,12 @@ impl<'a> SpecParser<'a> {
                         let end = self.prev_span();
                         return Ok(Spanned::new(SpecItem::Footprint(decl), start.merge(end)));
                     }
+                    TokenKind::Project => {
+                        let binding = Some(Spanned::new(name, name_span));
+                        let decl = self.parse_project(binding)?;
+                        let end = self.prev_span();
+                        return Ok(Spanned::new(SpecItem::Project(decl), start.merge(end)));
+                    }
                     _ => {
                         // It's a let binding
                         let value = self.parse_expr()?;
@@ -260,7 +276,7 @@ impl<'a> SpecParser<'a> {
             return Err(self.err("expected identifier after 'let'"));
         }
 
-        Err(self.err("expected import, component, footprint, or let binding"))
+        Err(self.err("expected import, component, footprint, project, or let binding"))
     }
 
     // ── Import ─────────────────────────────────────────────────────────────
@@ -724,6 +740,436 @@ impl<'a> SpecParser<'a> {
         ))
     }
 
+    // ── Project ─────────────────────────────────────────────────────────
+
+    fn parse_project(
+        &mut self,
+        binding: Option<Spanned<String>>,
+    ) -> Result<ProjectDecl, ParseError> {
+        self.expect(&TokenKind::Project, "expected 'project'")?;
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after project name")?;
+        let body = self.parse_project_body()?;
+        self.expect(&TokenKind::RBrace, "expected '}' to close project body")?;
+        Ok(ProjectDecl { binding, name, body })
+    }
+
+    fn parse_project_body(&mut self) -> Result<Vec<Spanned<ProjectItem>>, ParseError> {
+        let mut items = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let item = self.parse_project_item()?;
+            items.push(item);
+            self.skip_separators();
+        }
+        Ok(items)
+    }
+
+    fn parse_project_item(&mut self) -> Result<Spanned<ProjectItem>, ParseError> {
+        let start = self.current_span();
+
+        // let binding at project scope
+        if self.at(&TokenKind::Let) {
+            let binding = self.parse_let_binding()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(
+                ProjectItem::LetBinding(binding),
+                start.merge(end),
+            ));
+        }
+
+        // IDENT-led items: keyword blocks or property
+        if let TokenKind::Ident(name) = self.current_kind().clone() {
+            let name_span = self.current_span();
+
+            // property: key: value
+            if self.peek_ahead(1).same_variant(&TokenKind::Colon) {
+                let prop = self.parse_property()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(
+                    ProjectItem::Property(prop),
+                    start.merge(end),
+                ));
+            }
+
+            // let binding without `let` keyword: IDENT = expr
+            if self.peek_ahead(1).same_variant(&TokenKind::Eq) {
+                self.bump(); // consume IDENT
+                self.bump(); // consume =
+                let value = self.parse_expr()?;
+                let end = self.prev_span();
+                let binding = LetBinding {
+                    name: Spanned::new(name.clone(), name_span),
+                    value,
+                };
+                return Ok(Spanned::new(
+                    ProjectItem::LetBinding(binding),
+                    start.merge(end),
+                ));
+            }
+
+            // Dispatch on block keyword
+            match name.as_str() {
+                "document" => {
+                    self.bump();
+                    let decl = self.parse_document_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::Document(decl),
+                        start.merge(end),
+                    ));
+                }
+                "annotation" => {
+                    self.bump();
+                    let decl = self.parse_annotation_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::Annotation(decl),
+                        start.merge(end),
+                    ));
+                }
+                "erc_matrix" => {
+                    self.bump();
+                    let entries = self.parse_erc_matrix_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::ErcMatrix(entries),
+                        start.merge(end),
+                    ));
+                }
+                "erc_levels" => {
+                    self.bump();
+                    let entries = self.parse_erc_levels_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::ErcLevels(entries),
+                        start.merge(end),
+                    ));
+                }
+                "output_group" => {
+                    self.bump();
+                    let decl = self.parse_output_group_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::OutputGroup(decl),
+                        start.merge(end),
+                    ));
+                }
+                "comparison" => {
+                    self.bump();
+                    let rules = self.parse_comparison_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::Comparison(rules),
+                        start.merge(end),
+                    ));
+                }
+                "class_gen" => {
+                    self.bump();
+                    let props = self.parse_property_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::ClassGen(props),
+                        start.merge(end),
+                    ));
+                }
+                "library_update" => {
+                    self.bump();
+                    let props = self.parse_property_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::LibraryUpdate(props),
+                        start.merge(end),
+                    ));
+                }
+                "variant" => {
+                    self.bump();
+                    let decl = self.parse_variant_block()?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(
+                        ProjectItem::Variant(decl),
+                        start.merge(end),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        Err(self.err(
+            "expected project item (property, document, annotation, erc_matrix, erc_levels, \
+             output_group, comparison, class_gen, library_update, variant, or let binding)",
+        ))
+    }
+
+    /// document "path/to/file.SchDoc" { key: value, ... }
+    fn parse_document_block(&mut self) -> Result<DocumentBlockDecl, ParseError> {
+        let path = self.parse_entity_name()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after document path")?;
+        let mut body = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let prop_start = self.current_span();
+            let prop = self.parse_property()?;
+            let prop_end = self.prev_span();
+            body.push(Spanned::new(prop, prop_start.merge(prop_end)));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close document block")?;
+        Ok(DocumentBlockDecl { path, body })
+    }
+
+    /// annotation { key: value, ... match_parameter N { ... } ... }
+    fn parse_annotation_block(&mut self) -> Result<AnnotationBlockDecl, ParseError> {
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after annotation")?;
+        let mut properties = Vec::new();
+        let mut match_parameters = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+                if name == "match_parameter" {
+                    let mp_start = self.current_span();
+                    self.bump(); // consume "match_parameter"
+                    let index = self.expect_integer("expected index after 'match_parameter'")?;
+                    self.skip_newlines();
+                    let body = self.parse_object()?;
+                    let mp_end = self.prev_span();
+                    match_parameters.push(Spanned::new(
+                        MatchParameterDecl { index, body },
+                        mp_start.merge(mp_end),
+                    ));
+                    self.skip_separators();
+                    continue;
+                }
+            }
+            // Regular property
+            let prop_start = self.current_span();
+            let prop = self.parse_property()?;
+            let prop_end = self.prev_span();
+            properties.push(Spanned::new(prop, prop_start.merge(prop_end)));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close annotation block")?;
+        Ok(AnnotationBlockDecl {
+            properties,
+            match_parameters,
+        })
+    }
+
+    /// erc_matrix { (row, col): level, ... }
+    fn parse_erc_matrix_block(&mut self) -> Result<Vec<Spanned<ErcMatrixEntryDecl>>, ParseError> {
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after erc_matrix")?;
+        let mut entries = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let entry_start = self.current_span();
+            // Parse (row, col): level
+            self.expect(&TokenKind::LParen, "expected '(' for ERC matrix entry")?;
+            let row = self.expect_ident("expected ERC connection code for row")?;
+            self.expect(&TokenKind::Comma, "expected ',' between row and col")?;
+            self.skip_newlines();
+            let col = self.expect_ident("expected ERC connection code for col")?;
+            self.expect(&TokenKind::RParen, "expected ')' after col")?;
+            self.expect(&TokenKind::Colon, "expected ':' after (row, col)")?;
+            self.skip_newlines();
+            let level = self.expect_ident("expected error level (no_report, warning, error, fatal)")?;
+            let entry_end = self.prev_span();
+            entries.push(Spanned::new(
+                ErcMatrixEntryDecl { row, col, level },
+                entry_start.merge(entry_end),
+            ));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close erc_matrix block")?;
+        Ok(entries)
+    }
+
+    /// erc_levels { name: level, ... }
+    fn parse_erc_levels_block(&mut self) -> Result<Vec<Spanned<ErcLevelEntryDecl>>, ParseError> {
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after erc_levels")?;
+        let mut entries = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let entry_start = self.current_span();
+            let name = self.expect_ident("expected ERC level name")?;
+            self.expect(&TokenKind::Colon, "expected ':' after ERC level name")?;
+            self.skip_newlines();
+            let level = self.parse_expr()?;
+            let entry_end = self.prev_span();
+            entries.push(Spanned::new(
+                ErcLevelEntryDecl { name, level },
+                entry_start.merge(entry_end),
+            ));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close erc_levels block")?;
+        Ok(entries)
+    }
+
+    /// output_group "Name" { key: value, ... output "Name" { ... } ... }
+    fn parse_output_group_block(&mut self) -> Result<OutputGroupBlockDecl, ParseError> {
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after output_group name")?;
+        let mut properties = Vec::new();
+        let mut outputs = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            if let TokenKind::Ident(ref kw) = self.current_kind().clone() {
+                if kw == "output" {
+                    let out_start = self.current_span();
+                    self.bump(); // consume "output"
+                    let out_name = self.parse_entity_name()?;
+                    self.skip_newlines();
+                    self.expect(&TokenKind::LBrace, "expected '{' after output name")?;
+                    let mut out_body = Vec::new();
+                    self.skip_newlines();
+                    while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                        let prop_start = self.current_span();
+                        let prop = self.parse_property()?;
+                        let prop_end = self.prev_span();
+                        out_body.push(Spanned::new(prop, prop_start.merge(prop_end)));
+                        self.skip_separators();
+                    }
+                    self.expect(&TokenKind::RBrace, "expected '}' to close output block")?;
+                    let out_end = self.prev_span();
+                    outputs.push(Spanned::new(
+                        OutputBlockDecl {
+                            name: out_name,
+                            body: out_body,
+                        },
+                        out_start.merge(out_end),
+                    ));
+                    self.skip_separators();
+                    continue;
+                }
+            }
+            // Regular property
+            let prop_start = self.current_span();
+            let prop = self.parse_property()?;
+            let prop_end = self.prev_span();
+            properties.push(Spanned::new(prop, prop_start.merge(prop_end)));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close output_group block")?;
+        Ok(OutputGroupBlockDecl {
+            name,
+            properties,
+            outputs,
+        })
+    }
+
+    /// comparison { rule "Kind" { ... } ... }
+    fn parse_comparison_block(&mut self) -> Result<Vec<Spanned<ComparisonRuleDecl>>, ParseError> {
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after comparison")?;
+        let mut rules = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let rule_start = self.current_span();
+            // Expect "rule" keyword-like ident
+            let kw = self.expect_ident("expected 'rule' inside comparison block")?;
+            if kw.node != "rule" {
+                return Err(ParseError::new(
+                    ParseErrorCode::E1002,
+                    format!("expected 'rule', got '{}'", kw.node),
+                    kw.span,
+                ));
+            }
+            let kind = self.parse_entity_name()?;
+            self.skip_newlines();
+            let body = self.parse_object()?;
+            let rule_end = self.prev_span();
+            rules.push(Spanned::new(
+                ComparisonRuleDecl { kind, body },
+                rule_start.merge(rule_end),
+            ));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close comparison block")?;
+        Ok(rules)
+    }
+
+    /// A block of properties: { key: value, ... }
+    fn parse_property_block(&mut self) -> Result<Vec<Spanned<Property>>, ParseError> {
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{'")?;
+        let mut props = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let prop_start = self.current_span();
+            let prop = self.parse_property()?;
+            let prop_end = self.prev_span();
+            props.push(Spanned::new(prop, prop_start.merge(prop_end)));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}'")?;
+        Ok(props)
+    }
+
+    /// variant "Name" { key: value, ... variation "D" { ... } param_variation "D" { ... } }
+    fn parse_variant_block(&mut self) -> Result<VariantBlockDecl, ParseError> {
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after variant name")?;
+        let mut properties = Vec::new();
+        let mut variations = Vec::new();
+        let mut param_variations = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            if let TokenKind::Ident(ref kw) = self.current_kind().clone() {
+                match kw.as_str() {
+                    "variation" => {
+                        let v_start = self.current_span();
+                        self.bump();
+                        let designator = self.parse_entity_name()?;
+                        self.skip_newlines();
+                        let body = self.parse_object()?;
+                        let v_end = self.prev_span();
+                        variations.push(Spanned::new(
+                            VariationDecl { designator, body },
+                            v_start.merge(v_end),
+                        ));
+                        self.skip_separators();
+                        continue;
+                    }
+                    "param_variation" => {
+                        let v_start = self.current_span();
+                        self.bump();
+                        let designator = self.parse_entity_name()?;
+                        self.skip_newlines();
+                        let body = self.parse_object()?;
+                        let v_end = self.prev_span();
+                        param_variations.push(Spanned::new(
+                            ParamVariationDecl { designator, body },
+                            v_start.merge(v_end),
+                        ));
+                        self.skip_separators();
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            // Regular property
+            let prop_start = self.current_span();
+            let prop = self.parse_property()?;
+            let prop_end = self.prev_span();
+            properties.push(Spanned::new(prop, prop_start.merge(prop_end)));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close variant block")?;
+        Ok(VariantBlockDecl {
+            name,
+            properties,
+            variations,
+            param_variations,
+        })
+    }
+
     // ── Pad ────────────────────────────────────────────────────────────────
 
     fn parse_pad(&mut self, binding: Option<Spanned<String>>) -> Result<PadDecl, ParseError> {
@@ -878,6 +1324,7 @@ impl<'a> SpecParser<'a> {
             TokenKind::Row => "row".to_string(),
             TokenKind::Column => "column".to_string(),
             TokenKind::Grid => "grid".to_string(),
+            TokenKind::Project => "project".to_string(),
             TokenKind::Let => "let".to_string(),
             TokenKind::True => "true".to_string(),
             TokenKind::False => "false".to_string(),
