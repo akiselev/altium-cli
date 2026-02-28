@@ -155,9 +155,13 @@ impl SpecCompiler {
 
         // Pass 2: collect all anchor-pinned pin decls by edge for sequencing.
         // We need to resolve after:/before: chains before producing final PinSpecs.
+        // For single-part components (part_count absent or 1), all items belong to part 1.
+        // For multi-part components, component-level items are shared (part 0).
+        let default_owner_part_id = if part_count.unwrap_or(1) <= 1 { 1i32 } else { 0i32 };
+
         let all_pin_decls_at_level: Vec<(&PinDecl, i32)> = decl.body.iter()
             .filter_map(|item| {
-                if let ComponentItem::Pin(p) = &item.node { Some((p, 0i32)) } else { None }
+                if let ComponentItem::Pin(p) = &item.node { Some((p, default_owner_part_id)) } else { None }
             })
             .collect();
 

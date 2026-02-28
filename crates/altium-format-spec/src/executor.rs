@@ -71,11 +71,16 @@ fn component_from_spec(spec: &ComponentSpec) -> api::Component {
         pins.extend(part.pins.iter().map(pin_from_spec));
     }
 
+    // For single-part components, all records belong to part 1.
+    // For multi-part, component-level graphics are shared (part 0).
+    let part_count = spec.part_count.unwrap_or(1);
+    let default_owner_part_id = if part_count <= 1 { 1 } else { 0 };
+
     let mut graphics: Vec<api::Graphic> = spec.graphics.iter()
-        .filter_map(graphic_from_spec)
+        .filter_map(|g| graphic_from_spec(g, default_owner_part_id))
         .collect();
     for part in &spec.parts {
-        graphics.extend(part.graphics.iter().filter_map(graphic_from_spec));
+        graphics.extend(part.graphics.iter().filter_map(|g| graphic_from_spec(g, part.part_number)));
     }
 
     api::Component {
@@ -83,7 +88,7 @@ fn component_from_spec(spec: &ComponentSpec) -> api::Component {
         designator: spec.designator.clone(),
         description: spec.description.clone(),
         component_kind: spec.component_kind,
-        part_count: spec.part_count.unwrap_or(1),
+        part_count,
         show_hidden_pins: spec.show_hidden_pins.unwrap_or(false),
         pins,
         parameters: spec.parameters.iter().map(param_from_spec).collect(),
@@ -133,9 +138,10 @@ fn merge_spec_into_component(existing: &api::Component, spec: &ComponentSpec) ->
     merge_footprints(&mut result.footprints, &spec.footprints);
 
     // Merge graphics by unique_id
-    merge_graphics(&mut result.graphics, &spec.graphics);
+    let default_owner_part_id = if result.part_count <= 1 { 1 } else { 0 };
+    merge_graphics(&mut result.graphics, &spec.graphics, default_owner_part_id);
     for part in &spec.parts {
-        merge_graphics(&mut result.graphics, &part.graphics);
+        merge_graphics(&mut result.graphics, &part.graphics, part.part_number);
     }
 
     // Merge aliases (union)
@@ -209,16 +215,16 @@ fn merge_footprints(existing: &mut Vec<api::FootprintMap>, spec_fps: &[Footprint
     }
 }
 
-fn merge_graphics(existing: &mut Vec<api::Graphic>, spec_graphics: &[GraphicSpec]) {
+fn merge_graphics(existing: &mut Vec<api::Graphic>, spec_graphics: &[GraphicSpec], owner_part_id: i32) {
     for spec_graphic in spec_graphics {
         if let Some(pos) = existing.iter().position(|g| {
             g.unique_id().map_or(false, |uid| uid == spec_graphic.unique_id)
         }) {
             // Replace the existing graphic with the new one from spec
-            if let Some(new_graphic) = graphic_from_spec(spec_graphic) {
+            if let Some(new_graphic) = graphic_from_spec(spec_graphic, owner_part_id) {
                 existing[pos] = new_graphic;
             }
-        } else if let Some(new_graphic) = graphic_from_spec(spec_graphic) {
+        } else if let Some(new_graphic) = graphic_from_spec(spec_graphic, owner_part_id) {
             existing.push(new_graphic);
         }
     }
@@ -301,12 +307,12 @@ fn footprint_from_spec(spec: &FootprintMapSpec) -> api::FootprintMap {
 
 // ── Graphic conversion ────────────────────────────────────────────────────────
 
-fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
+fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Graphic> {
     let props = &spec.properties;
     match spec.graphic_type {
         GraphicType::Line => Some(api::Graphic::Line(api::LineGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             line_width: PenWidth::default(),
@@ -315,7 +321,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Rectangle => Some(api::Graphic::Rectangle(api::RectangleGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             line_width: PenWidth::default(),
@@ -327,7 +333,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::RoundRectangle => Some(api::Graphic::RoundRectangle(api::RoundRectangleGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             corner_x_radius: props.corner_x_radius.unwrap_or_default(),
@@ -339,7 +345,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Arc => Some(api::Graphic::Arc(api::ArcGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             start_angle: api::SchAngle(props.start_angle.unwrap_or(0.0)),
@@ -349,7 +355,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::EllipticalArc => Some(api::Graphic::EllipticalArc(api::EllipticalArcGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             secondary_radius: props.secondary_radius.unwrap_or_default(),
@@ -360,7 +366,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Ellipse => Some(api::Graphic::Ellipse(api::EllipseGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             secondary_radius: props.secondary_radius.unwrap_or_default(),
@@ -371,7 +377,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
             transparent: false,
         })),
         GraphicType::Pie => Some(api::Graphic::Pie(api::PieGraphic {
-            owner_part_id: 0,
+            owner_part_id,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             start_angle: api::SchAngle(props.start_angle.unwrap_or(0.0)),
@@ -383,7 +389,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Polyline => Some(api::Graphic::Polyline(api::PolylineGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             vertices: props.points.clone().unwrap_or_default(),
             line_width: PenWidth::default(),
             line_style: LineStyle::default(),
@@ -394,7 +400,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Polygon => Some(api::Graphic::Polygon(api::PolygonGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             vertices: props.points.clone().unwrap_or_default(),
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
@@ -404,14 +410,14 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Bezier => Some(api::Graphic::Bezier(api::BezierGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             vertices: props.points.clone().unwrap_or_default(),
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
         })),
         GraphicType::Label => Some(api::Graphic::Label(api::LabelGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.at.unwrap_or_default(),
             orientation: RotationBy90::Rotate0,
             justification: TextJustification::default(),
@@ -423,7 +429,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::TextFrame => Some(api::Graphic::TextFrame(api::TextFrameGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             line_width: PenWidth::default(),
@@ -442,7 +448,7 @@ fn graphic_from_spec(spec: &GraphicSpec) -> Option<api::Graphic> {
         })),
         GraphicType::Image => Some(api::Graphic::Image(api::ImageGraphic {
             unique_id: spec.unique_id.clone(),
-            owner_part_id: 0,
+            owner_part_id,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             orientation: RotationBy90::Rotate0,
