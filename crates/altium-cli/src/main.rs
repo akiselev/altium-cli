@@ -72,7 +72,7 @@ enum Commands {
     },
     /// Show ECO (engineering change order) without mutating the document
     Plan {
-        /// Path to the spec file (.schlib-spec or .pcblib-spec)
+        /// Path to the spec file (.schlib-spec, .pcblib-spec, or .prjpcb-spec)
         spec_file: PathBuf,
         /// Existing document to reconcile against (optional)
         #[arg(long)]
@@ -80,10 +80,13 @@ enum Commands {
         /// Output ECO as JSON
         #[arg(long, default_value_t = false)]
         json: bool,
+        /// Process this spec and all imported specs (PrjPcb only)
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
     /// Apply a spec file to create or update an Altium document
     Apply {
-        /// Path to the spec file (.schlib-spec or .pcblib-spec)
+        /// Path to the spec file (.schlib-spec, .pcblib-spec, or .prjpcb-spec)
         spec_file: PathBuf,
         /// Existing document to update (optional)
         #[arg(long)]
@@ -94,6 +97,9 @@ enum Commands {
         /// Print apply report as JSON
         #[arg(long, default_value_t = false)]
         report_json: bool,
+        /// Process this spec and all imported specs (PrjPcb only)
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
     /// Reverse-generate a spec file from an existing Altium document
     Dump {
@@ -188,8 +194,8 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Plan { spec_file, target, json } => {
-            match run_plan(&spec_file, target.as_ref(), json) {
+        Commands::Plan { spec_file, target, json, all } => {
+            match run_plan(&spec_file, target.as_ref(), json, all) {
                 Ok(has_changes) => {
                     if has_changes {
                         return ExitCode::from(1);
@@ -201,8 +207,8 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Apply { spec_file, target, output, report_json } => {
-            if let Err(e) = run_apply(&spec_file, target.as_ref(), output.as_ref(), report_json) {
+        Commands::Apply { spec_file, target, output, report_json, all } => {
+            if let Err(e) = run_apply(&spec_file, target.as_ref(), output.as_ref(), report_json, all) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -502,18 +508,69 @@ fn default_spec_for_document(doc: &PathBuf, domain: &SpecDomain) -> PathBuf {
 // ── plan ──────────────────────────────────────────────────────────────────────
 
 /// Run `altium plan`. Returns Ok(true) if changes exist, Ok(false) if no changes.
-fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow::Result<bool> {
+fn run_plan(
+    spec_file: &PathBuf,
+    target: Option<&PathBuf>,
+    json: bool,
+    all: bool,
+) -> anyhow::Result<bool> {
     let domain = detect_spec_domain(spec_file)?;
+    if all && domain != SpecDomain::PrjPcb {
+        anyhow::bail!("--all is only valid for .prjpcb-spec files");
+    }
+
     let source = std::fs::read_to_string(spec_file)
         .map_err(|e| anyhow::anyhow!("failed to read spec file {}: {e}", spec_file.display()))?;
 
-    let spec_model = compile_and_resolve(&source, spec_file, &domain)?;
-    let library_path = default_output_for_spec(spec_file, &domain);
+    let result = compile_and_resolve(&source, spec_file, &domain)?;
+
+    // Process root spec.
+    let eco = plan_for_model(&result.model, target, spec_file, &domain)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&eco)?);
+    } else {
+        println!("{}", eco.render_text());
+    }
+    let mut has_changes = eco.summary.by_kind.values()
+        .any(|k| k.adds > 0 || k.updates > 0);
+
+    // Process imports with --all.
+    if all {
+        for import_path in &result.import_paths {
+            let import_domain = detect_spec_domain(import_path)?;
+            let import_source = std::fs::read_to_string(import_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", import_path.display()))?;
+            let import_result = compile_and_resolve(&import_source, import_path, &import_domain)?;
+
+            if !json {
+                println!("\n--- {} ---", import_path.display());
+            }
+            let eco = plan_for_model(&import_result.model, None, import_path, &import_domain)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&eco)?);
+            } else {
+                println!("{}", eco.render_text());
+            }
+            has_changes |= eco.summary.by_kind.values()
+                .any(|k| k.adds > 0 || k.updates > 0);
+        }
+    }
+
+    Ok(has_changes)
+}
+
+/// Produce an ECO for a single compiled spec model.
+fn plan_for_model(
+    spec_model: &altium_format_spec::model::SpecModel,
+    target: Option<&PathBuf>,
+    spec_file: &PathBuf,
+    domain: &SpecDomain,
+) -> anyhow::Result<altium_format_spec::eco::EngineeringChangeOrder> {
+    let library_path = default_output_for_spec(spec_file, domain);
     let spec_path = spec_file.clone();
 
     let eco = match spec_model {
-        altium_format_spec::model::SpecModel::SchLib(ref spec_lib) => {
-            // Try to load target document if it exists
+        altium_format_spec::model::SpecModel::SchLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 let doc = SchLib::open(&resolved_target)
@@ -524,7 +581,7 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
                 reconcile_schlib_empty(spec_lib, library_path, spec_path)
             }
         }
-        altium_format_spec::model::SpecModel::PcbLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::PcbLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 reconcile_pcblib(spec_lib, resolved_target, spec_path)
@@ -532,7 +589,7 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
                 reconcile_pcblib_empty(spec_lib, library_path, spec_path)
             }
         }
-        altium_format_spec::model::SpecModel::PrjPcb(ref spec) => {
+        altium_format_spec::model::SpecModel::PrjPcb(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 let doc = AltiumProject::open(&resolved_target)
@@ -545,15 +602,7 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
         }
     };
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&eco)?);
-    } else {
-        println!("{}", eco.render_text());
-    }
-
-    let has_changes = eco.summary.by_kind.values()
-        .any(|k| k.adds > 0 || k.updates > 0);
-    Ok(has_changes)
+    Ok(eco)
 }
 
 // ── apply ─────────────────────────────────────────────────────────────────────
@@ -563,16 +612,47 @@ fn run_apply(
     target: Option<&PathBuf>,
     output: Option<&PathBuf>,
     _report_json: bool,
+    all: bool,
 ) -> anyhow::Result<()> {
     let domain = detect_spec_domain(spec_file)?;
+    if all && domain != SpecDomain::PrjPcb {
+        anyhow::bail!("--all is only valid for .prjpcb-spec files");
+    }
+
     let source = std::fs::read_to_string(spec_file)
         .map_err(|e| anyhow::anyhow!("failed to read spec file {}: {e}", spec_file.display()))?;
 
-    let spec_model = compile_and_resolve(&source, spec_file, &domain)?;
-    let library_path = default_output_for_spec(spec_file, &domain);
+    let result = compile_and_resolve(&source, spec_file, &domain)?;
+
+    // Apply root spec.
+    apply_for_model(&result.model, target, output, spec_file, &domain)?;
+
+    // Apply imports with --all.
+    if all {
+        for import_path in &result.import_paths {
+            let import_domain = detect_spec_domain(import_path)?;
+            let import_source = std::fs::read_to_string(import_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", import_path.display()))?;
+            let import_result = compile_and_resolve(&import_source, import_path, &import_domain)?;
+            apply_for_model(&import_result.model, None, None, import_path, &import_domain)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Apply a single compiled spec model to its target document.
+fn apply_for_model(
+    spec_model: &altium_format_spec::model::SpecModel,
+    target: Option<&PathBuf>,
+    output: Option<&PathBuf>,
+    spec_file: &PathBuf,
+    domain: &SpecDomain,
+) -> anyhow::Result<()> {
+    let library_path = default_output_for_spec(spec_file, domain);
 
     match spec_model {
-        altium_format_spec::model::SpecModel::SchLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::SchLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
                 SchLib::open(&resolved_target)
@@ -592,7 +672,7 @@ fn run_apply(
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
-        altium_format_spec::model::SpecModel::PcbLib(ref spec_lib) => {
+        altium_format_spec::model::SpecModel::PcbLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut lib = if resolved_target.exists() {
                 PcbLib::open(&resolved_target)
@@ -609,7 +689,7 @@ fn run_apply(
             lib.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
-        altium_format_spec::model::SpecModel::PrjPcb(ref spec) => {
+        altium_format_spec::model::SpecModel::PrjPcb(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
                 AltiumProject::open(&resolved_target)
@@ -673,34 +753,42 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
 
 // ── compile helper ────────────────────────────────────────────────────────────
 
+struct CompileResult {
+    model: altium_format_spec::model::SpecModel,
+    /// All import paths (bare + named) for --all processing.
+    import_paths: Vec<PathBuf>,
+}
+
 fn compile_and_resolve(
     source: &str,
     spec_file: &PathBuf,
     domain: &SpecDomain,
-) -> anyhow::Result<altium_format_spec::model::SpecModel> {
+) -> anyhow::Result<CompileResult> {
     use altium_format_spec::parser::parse_spec;
 
     let file = parse_spec(source)
         .map_err(|e| anyhow::anyhow!("parse error in {}: {e}", spec_file.display()))?;
 
-    // Resolve imports from the directory containing the spec file.
-    let spec_dir = spec_file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    // Resolve imports: validates cycles, cross-domain rules, alias uniqueness,
+    // and file existence. We do NOT merge bare imports into the root AST —
+    // each file is compiled independently (reference semantics).
     let spec_path_canonical = spec_file.canonicalize().unwrap_or_else(|_| spec_file.clone());
-    let resolved = resolve_imports(&spec_path_canonical, file)
+    let resolved = resolve_imports(&spec_path_canonical, file.clone())
         .map_err(|e| anyhow::anyhow!("import error in {}: {e}", spec_file.display()))?;
 
-    // Merge bare imports into root: collect all items from bare imports + root.
-    let mut merged_items = Vec::new();
-    for (_path, bare_file) in resolved.bare_imports {
-        merged_items.extend(bare_file.items);
-    }
-    merged_items.extend(resolved.root.items);
+    // Compile only the root file's own items.
+    let model = compile_spec(&file, *domain)
+        .map_err(|e| anyhow::anyhow!("compile error in {}: {e}", spec_file.display()))?;
 
-    let merged_file = altium_format_spec::ast::SpecFile { items: merged_items };
+    // Collect all import paths for --all processing.
+    let import_paths: Vec<PathBuf> = resolved
+        .bare_imports
+        .iter()
+        .map(|(p, _)| p.clone())
+        .chain(resolved.named_imports.values().map(|(p, _)| p.clone()))
+        .collect();
 
-    let _ = spec_dir; // used implicitly via spec_path_canonical
-    compile_spec(&merged_file, *domain)
-        .map_err(|e| anyhow::anyhow!("compile error in {}: {e}", spec_file.display()))
+    Ok(CompileResult { model, import_paths })
 }
 
 fn run_query(

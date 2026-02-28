@@ -101,37 +101,9 @@ pub fn resolve_imports(
         }
     }
 
-    // Validate bare-import collisions (same entity name from two different files).
-    let mut bare_entity_sources: HashMap<String, PathBuf> = HashMap::new();
-    for bare_path in &bare_import_paths {
-        let file = cache
-            .get(bare_path)
-            .cloned()
-            .unwrap_or_else(|| SpecFile { items: vec![] });
-        for item in &file.items {
-            let entity_name = match &item.node {
-                SpecItem::Component(c) => Some(c.name.node.as_str()),
-                SpecItem::Footprint(f) => Some(f.name.node.as_str()),
-                _ => None,
-            };
-            if let Some(name) = entity_name {
-                if let Some(prev_path) = bare_entity_sources.get(&name) {
-                    return Err(SpecError::no_span(
-                        SpecErrorCode::DuplicateEntity,
-                        format!(
-                            "duplicate entity '{}': defined in both '{}' and '{}'",
-                            name,
-                            prev_path.display(),
-                            bare_path.display()
-                        ),
-                    ));
-                }
-                bare_entity_sources.insert(name, bare_path.clone());
-            }
-        }
-    }
-
     // Build bare_imports in topological order (leaves first, skip root and named).
+    // Note: bare-import entity collisions are NOT checked because each import
+    // targets a different output file (reference semantics).
     let named_paths: std::collections::HashSet<PathBuf> =
         named_imports.values().map(|(p, _)| p.clone()).collect();
     let bare_imports: Vec<(PathBuf, SpecFile)> = topo_order
@@ -339,6 +311,8 @@ fn file_domain(path: &Path) -> FileDomain {
         FileDomain::SchLib
     } else if name.ends_with(".pcblib-spec") {
         FileDomain::PcbLib
+    } else if name.ends_with(".prjpcb-spec") {
+        FileDomain::PrjPcb
     } else {
         FileDomain::Unknown
     }
@@ -348,6 +322,7 @@ fn file_domain(path: &Path) -> FileDomain {
 enum FileDomain {
     SchLib,
     PcbLib,
+    PrjPcb,
     Unknown,
 }
 
@@ -359,21 +334,30 @@ fn validate_cross_domain(
     let from_domain = file_domain(from_path);
     let to_domain = file_domain(to_path);
 
-    if from_domain == FileDomain::PcbLib && to_domain == FileDomain::SchLib {
+    let forbidden = matches!(
+        (&from_domain, &to_domain),
+        (FileDomain::PcbLib, FileDomain::SchLib)
+            | (FileDomain::PrjPcb, FileDomain::PrjPcb)
+    );
+    if forbidden {
         return Err(SpecError::new(
             SpecErrorCode::CrossDomainViolation,
             format!(
-                "PcbLib spec '{}' cannot import SchLib spec '{}'",
+                "{:?} spec '{}' cannot import {:?} spec '{}'",
+                from_domain,
                 from_path.display(),
+                to_domain,
                 to_path.display()
             ),
             Some(span),
         ));
     }
-    // All other combinations are allowed:
-    // schlib -> schlib: bare or named ✓
-    // schlib -> pcblib: named only (bare validation is done at compile time) ✓
-    // pcblib -> pcblib: bare or named ✓
+    // Allowed combinations:
+    // SchLib -> SchLib: bare or named ✓
+    // SchLib -> PcbLib: named only (bare validation at compile time) ✓
+    // PcbLib -> PcbLib: bare or named ✓
+    // PrjPcb -> SchLib: reference import ✓
+    // PrjPcb -> PcbLib: reference import ✓
     Ok(())
 }
 
@@ -530,13 +514,14 @@ mod tests {
         assert_eq!(err.code, SpecErrorCode::CrossDomainViolation);
     }
 
-    // ── Test: bare import collision ───────────────────────────────────────────
+    // ── Test: bare import collision is now allowed (reference semantics) ─────
 
     #[test]
-    fn bare_import_collision_error() {
+    fn bare_import_collision_allowed() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        // Both files define component "R" → collision
+        // Both files define component "R" — no longer an error because each
+        // import targets a different output file.
         let f1_path = tmp.path().join("f1.schlib-spec");
         let f2_path = tmp.path().join("f2.schlib-spec");
         std::fs::write(&f1_path, "component R {}").unwrap();
@@ -550,9 +535,55 @@ mod tests {
             import_decl("f2.schlib-spec", None),
         ]);
 
+        let resolved = resolve_imports(&root_path, root_ast).unwrap();
+        assert_eq!(resolved.bare_imports.len(), 2);
+    }
+
+    // ── Test: PrjPcb cross-domain rules ───────────────────────────────────────
+
+    #[test]
+    fn prjpcb_can_import_schlib() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let sch_path = tmp.path().join("comps.schlib-spec");
+        std::fs::write(&sch_path, "").unwrap();
+
+        let root_path = tmp.path().join("root.prjpcb-spec");
+        std::fs::write(&root_path, "").unwrap();
+
+        let root_ast = spec_with_imports(vec![import_decl("comps.schlib-spec", None)]);
+        let resolved = resolve_imports(&root_path, root_ast).unwrap();
+        assert_eq!(resolved.bare_imports.len(), 1);
+    }
+
+    #[test]
+    fn prjpcb_can_import_pcblib() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let pcb_path = tmp.path().join("pads.pcblib-spec");
+        std::fs::write(&pcb_path, "").unwrap();
+
+        let root_path = tmp.path().join("root.prjpcb-spec");
+        std::fs::write(&root_path, "").unwrap();
+
+        let root_ast = spec_with_imports(vec![import_decl("pads.pcblib-spec", None)]);
+        let resolved = resolve_imports(&root_path, root_ast).unwrap();
+        assert_eq!(resolved.bare_imports.len(), 1);
+    }
+
+    #[test]
+    fn prjpcb_cannot_import_prjpcb() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let nested_path = tmp.path().join("other.prjpcb-spec");
+        std::fs::write(&nested_path, "").unwrap();
+
+        let root_path = tmp.path().join("root.prjpcb-spec");
+        std::fs::write(&root_path, "").unwrap();
+
+        let root_ast = spec_with_imports(vec![import_decl("other.prjpcb-spec", None)]);
         let err = resolve_imports(&root_path, root_ast).unwrap_err();
-        assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
-        assert!(err.message.contains('R'), "got: {}", err.message);
+        assert_eq!(err.code, SpecErrorCode::CrossDomainViolation);
     }
 
     // ── Test: file not found ──────────────────────────────────────────────────
