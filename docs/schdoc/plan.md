@@ -852,7 +852,207 @@ Component children are dumped via the existing `dump_pin`, `dump_parameter`,
 
 ---
 
-## 10. Open Questions
+## 10. UniqueId Identity Architecture
+
+### 10.1 The Problem (Topological Naming)
+
+The spec reconciler needs **stable identity** to associate spec entities with SchDoc records
+across runs. Without embedded identity, the reconciler must match by coordinates — which
+breaks whenever components move (the same problem as FreeCAD's topological naming problem).
+
+```
+Run 1: spec says `no_connect { on: $U1.pin3 }` → solver places at (400, 300) → UNIQUEID=XYZABCDE
+Run 2: U1 moved → pin3 is now at (600, 500)
+       Reconciler finds UNIQUEID=XYZABCDE → moves it to (600, 500)
+       (Without identity: deletes old no-connect, creates new one — loses Altium-side edits)
+```
+
+### 10.2 UniqueId Coverage
+
+Nearly every spec-relevant SchDoc record type has a `UNIQUEID` field (8-char uppercase A-Z):
+
+| Record Type | Has UniqueId | Spec-relevant |
+|-------------|:---:|:---:|
+| Component (1) | Yes | Yes |
+| Wire (27) | Yes | Yes |
+| Bus (26) | Yes | Yes |
+| NetLabel (25) | Yes | Yes |
+| PowerObject (17) | Yes | Yes |
+| Port (18) | Yes | Yes |
+| NoConnect (22) | Yes | Yes |
+| Junction (29) | Yes | Yes |
+| BusEntry (37) | Yes | Yes |
+| SheetSymbol (15) | Yes | Yes |
+| SheetEntry (16) | Yes | Yes |
+| ParameterSet (43) | Yes | Yes |
+| Blanket (225) | Yes | Yes |
+| Decorative graphics (3-12) | **No** | Rarely (component children, addressed via OWNERINDEX) |
+
+The only records WITHOUT UniqueId are pure decorative graphics (Bezier, Polyline, Polygon,
+Ellipse, Arc, etc.) which are component children addressed via OWNERINDEX, not independently
+referenced.
+
+### 10.3 Altium's Deterministic UniqueId Algorithm
+
+Altium has two UniqueId generation paths:
+
+1. **Random** (`SchDataUtils.GenerateNewUniqueId`): GUID-seeded `Random` → 8 random A-Z chars.
+   Used during normal UI operations.
+
+2. **Deterministic** (`UniqueIdUtils.GenerateUniqueId(seed)`): MD5-based hash → 8-char base-26.
+   Used for migration/remapping. **This is what we use.**
+
+Source: `AD26-dotnet/Altium.Sch.Base/Altium.Sch.Base.Utils/UniqueIdUtils.cs`
+
+**Algorithm (exact C# translation):**
+
+```
+Input:  seed string (e.g., "spec:psu:inst:R1")
+Step 1: Encode seed as Windows-1252 bytes (= ASCII for our seeds)
+Step 2: Compute MD5 digest → 16 bytes → format as 32-char uppercase hex string
+Step 3: Process hex string in 8 chunks of 4 characters each:
+        For each chunk [c0, c1, c2, c3]:
+            h = 19
+            h = h * 31 + hex_value(c0)    // hex_value: '0'-'9'→0-9, 'A'-'F'→10-15
+            h = h * 31 + hex_value(c1)
+            h = h * 31 + hex_value(c2)
+            h = h * 31 + hex_value(c3)
+            output_char = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[h % 26]
+Result: 8 uppercase ASCII letters (A-Z)
+```
+
+**Rust implementation:**
+
+```rust
+use md5;
+
+const ALPHABET: &[u8; 26] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/// Generate a deterministic UniqueId from a seed string.
+/// Replicates Altium's `UniqueIdUtils.GenerateUniqueId(seed)` exactly.
+pub fn unique_id_from_seed(seed: &str) -> UniqueId {
+    // Step 1-2: MD5 of ASCII/Windows-1252 bytes → uppercase hex
+    let digest = md5::compute(seed.as_bytes());
+    let hex = format!("{:X}", digest); // 32-char uppercase hex
+
+    // Step 3: fold 4-hex-char chunks into base-26 letters
+    let hex_bytes = hex.as_bytes();
+    let mut result = [0u8; 8];
+    for i in 0..8 {
+        let mut h: i64 = 19;
+        for j in 0..4 {
+            let c = hex_bytes[i * 4 + j];
+            let v = match c {
+                b'0'..=b'9' => (c - b'0') as i64,
+                b'A'..=b'F' => (c - b'A') as i64 + 10,
+                _ => 0,
+            };
+            h = h * 31 + v;
+        }
+        result[i] = ALPHABET[(h.rem_euclid(26)) as usize];
+    }
+    UniqueId::from_str(std::str::from_utf8(&result).unwrap()).unwrap()
+}
+
+/// Increment a UniqueId in base-26 (A=0, Z=25). Used for collision resolution.
+/// Replicates Altium's `UniqueIdUtils.GetNextUniqueId()`.
+pub fn next_unique_id(id: &UniqueId) -> UniqueId {
+    let bytes = id.as_str().as_bytes();
+    let mut result = [0u8; 8];
+    result.copy_from_slice(bytes);
+    let mut carry = true;
+    for i in (0..8).rev() {
+        if carry {
+            let val = result[i] - b'A';
+            if val == 25 { // Z → wrap to A, carry
+                result[i] = b'A';
+            } else {
+                result[i] = b'A' + val + 1;
+                carry = false;
+            }
+        }
+    }
+    UniqueId::from_str(std::str::from_utf8(&result).unwrap()).unwrap()
+}
+```
+
+### 10.4 Seed Format Convention
+
+Seeds follow a hierarchical path that uniquely identifies each spec entity:
+
+```
+spec:{spec_file_stem}:{entity_type}:{identity_key}
+```
+
+| Spec Entity | Seed Format | Example |
+|------------|------------|---------|
+| Component instance | `spec:{file}:inst:{designator}` | `spec:psu:inst:R1` |
+| Wire (net stub) | `spec:{file}:wire:{net}:{pin_ref}` | `spec:psu:wire:VCC:U1.8` |
+| Wire (explicit) | `spec:{file}:wire:{binding_name}` | `spec:psu:wire:clk_route` |
+| NetLabel | `spec:{file}:netlabel:{net}:{index}` | `spec:psu:netlabel:VCC:0` |
+| PowerObject | `spec:{file}:power:{net}:{index}` | `spec:psu:power:GND:0` |
+| NoConnect | `spec:{file}:nc:{comp}.{pin}` | `spec:psu:nc:U1.3` |
+| Junction | `spec:{file}:junc:{net}:{index}` | `spec:psu:junc:SDA:0` |
+| Port | `spec:{file}:port:{name}` | `spec:psu:port:DATA_BUS` |
+| SheetSymbol | `spec:{file}:sheetsym:{name}` | `spec:psu:sheetsym:Regulators` |
+| SheetEntry | `spec:{file}:sheetentry:{sym}:{name}` | `spec:psu:sheetentry:Regulators:VIN` |
+| Graphic (binding) | `spec:{file}:gfx:{binding_name}` | `spec:psu:gfx:border_rect` |
+| Graphic (unnamed) | `spec:{file}:gfx:anon:{type}:{index}` | `spec:psu:gfx:anon:line:3` |
+
+**Collision resolution**: After computing the hash, check against all existing UniqueIds in the
+document. If collision, call `next_unique_id()` repeatedly until unique. Store the actual used
+ID in the reconciler state so subsequent runs use the same value.
+
+### 10.5 Reconciler Identity Matching
+
+On each spec run, the reconciler:
+
+1. **Computes expected UniqueIds** from spec entity seeds (deterministic)
+2. **Scans existing SchDoc records** building a `UniqueId → record_index` map
+3. **Matches spec entities to records by UniqueId**:
+   - Found → compare fields, emit `Update` or `Unchanged`
+   - Not found → emit `Add` (with the deterministic UniqueId)
+4. **Records NOT matched by any spec entity** → left untouched (additive semantics)
+
+Records created manually in Altium will have random UniqueIds (no `spec:` prefix in the seed),
+so they never collide with spec-generated IDs and are always preserved.
+
+### 10.6 Semantic Placement via Spec References
+
+With UniqueId identity, the spec language can use **semantic references** instead of raw
+coordinates. The solver resolves references to absolute positions at apply time:
+
+```
+// Spec file — semantic, no coordinates
+no_connect { on: $U1.pin3 }
+wire { from: $U1.pin8, label: "VCC" }
+wire { from: $R1.pin2, to: $C1.pin1 }
+
+// Solver resolves at apply time:
+//   $U1.pin3 → looks up U1's position + orientation + pin3 offset → absolute coords
+//   UniqueId = unique_id_from_seed("spec:psu:nc:U1.3")
+```
+
+This means LLM agents never need to track coordinates — they declare intent ("no-connect on
+pin 3 of U1") and the solver does the spatial math.
+
+### 10.7 Metadata via UniqueId (No Custom Keys Needed)
+
+The deterministic UniqueId scheme makes custom metadata fields unnecessary for the reconciler's
+core needs. The seed itself encodes the semantic meaning:
+
+- `UNIQUEID=XYZABCDE` on a wire → reverse-hash isn't needed; the reconciler holds the mapping
+  `seed → UniqueId` in memory during the run
+- Between runs, the same seed produces the same UniqueId → stable matching
+- The spec file IS the metadata store (what entity, what rule, what constraint)
+
+If richer per-record metadata is ever needed (e.g., solver iteration state), the
+`ParameterSet` mechanism described in the README can overlay it. But for the core
+reconciliation loop, UniqueId alone is sufficient.
+
+---
+
+## 11. Open Questions
 
 1. **Shared child types**: Reuse `api::Pin`, `api::Parameter`, `api::Graphic`,
    `api::FootprintMap` from SchLib. Decision: **yes, reuse**. Same domain concepts.

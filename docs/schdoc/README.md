@@ -16,7 +16,7 @@ Reference documentation for the SchDoc (Schematic Document) format and implement
 
 | File | Contents |
 |------|----------|
-| [plan.md](plan.md) | **Implementation plan** for high-level API, dump command, spec integration |
+| [plan.md](plan.md) | **Implementation plan** for high-level API, dump command, spec integration, UniqueId identity architecture (§10) |
 | [cfb-structure.md](cfb-structure.md) | CFB (OLE Compound Binary) storage layout for SchDoc files |
 | [fileheader-stream.md](fileheader-stream.md) | `FileHeader` stream: document header, sheet record, font table, all content |
 | [additional-stream.md](additional-stream.md) | `Additional` stream: supplementary records (RECORD=225 dashed rectangles) |
