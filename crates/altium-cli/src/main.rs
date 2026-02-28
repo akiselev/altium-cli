@@ -537,7 +537,10 @@ fn run_apply(
                 SchLib::open(&resolved_target)
                     .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
             } else {
-                SchLib::new_blank_ad26()
+                let mut lib = SchLib::new_blank_ad26();
+                // Remove the default placeholder component from blank libraries
+                let _ = lib.remove_component("Component_1");
+                lib
             };
 
             let out_path = output.cloned().unwrap_or(library_path);

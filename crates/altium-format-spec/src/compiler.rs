@@ -1539,8 +1539,9 @@ fn resolve_anchor_pins(
     // Topological sort for after:/before: dependencies.
     let sorted_indices = topo_sort_pins(&pending, &binding_index)?;
 
-    // Build position cache: binding_name -> computed coord on edge
-    let mut position_cache: HashMap<String, Coord> = HashMap::new();
+    // Build position cache: binding_name -> pin location (both axes).
+    // The referencing pin extracts the correct along-edge axis at lookup time.
+    let mut position_cache: HashMap<String, CoordPoint> = HashMap::new();
     let mut result_specs: Vec<(usize, PinSpec)> = Vec::with_capacity(pending.len());
 
     for idx in sorted_indices {
@@ -1549,26 +1550,7 @@ fn resolve_anchor_pins(
 
         // Store position for after:/before: successors.
         if let Some(ref bn) = p.binding_name {
-            // Compute the along-edge coordinate for this pin's location.
-            let edge_coord = match &p.anchor_mode {
-                PinAnchorMode::Absolute => None,
-                PinAnchorMode::AtPosition { binding, field, .. }
-                | PinAnchorMode::After { binding, field, .. }
-                | PinAnchorMode::Before { binding, field, .. } => {
-                    if let Some(geom) = binding_map.get(binding) {
-                        let edge = geom_field_to_edge(geom, field);
-                        edge.map(|e| match e.axis() {
-                            Axis::X => pin_spec.location.y,
-                            Axis::Y => pin_spec.location.x,
-                        })
-                    } else {
-                        None
-                    }
-                }
-            };
-            if let Some(coord) = edge_coord {
-                position_cache.insert(bn.clone(), coord);
-            }
+            position_cache.insert(bn.clone(), pin_spec.location);
         }
 
         result_specs.push((idx, pin_spec));
@@ -1637,8 +1619,8 @@ fn topo_sort_pins(
                             ));
                         }
                     }
-                    // before: A means A depends on current pin (current placed before A)
-                    deps[dep_idx].push(i);
+                    // before: A means I depend on A (I need A's position to place before it)
+                    deps[i].push(dep_idx);
                 } else {
                     return Err(SpecError::no_span(
                         SpecErrorCode::UndefinedBinding,
@@ -1704,7 +1686,7 @@ fn compile_one_pin(
     p: &PendingPin,
     binding_map: &GraphicBindingMap,
     scope: &ScopeStack,
-    position_cache: &HashMap<String, Coord>,
+    position_cache: &HashMap<String, CoordPoint>,
 ) -> Result<PinSpec, SpecError> {
     let decl = p.decl;
     let props = eval_object_to_map_skip_anchor_keys(&decl.body.node, scope)?;
@@ -1773,12 +1755,16 @@ fn compile_one_pin(
                 format!("'{}' is not a valid edge name", field),
                 decl.body.span,
             ))?;
-            let prev_coord = position_cache.get(after_ref).copied().ok_or_else(|| {
+            let prev_pos = position_cache.get(after_ref).copied().ok_or_else(|| {
                 SpecError::no_span(
                     SpecErrorCode::UndefinedBinding,
                     format!("after: pin '${after_ref}' not yet resolved"),
                 )
             })?;
+            let prev_coord = match edge.axis() {
+                Axis::X => prev_pos.y,
+                Axis::Y => prev_pos.x,
+            };
             let dir = edge.side.forward_direction();
             let along = Coord::new(prev_coord.raw() + dir * gap);
             let at_pos = along_coord_to_anchor_position(&edge, along);
@@ -1817,12 +1803,16 @@ fn compile_one_pin(
                 format!("'{}' is not a valid edge name", field),
                 decl.body.span,
             ))?;
-            let next_coord = position_cache.get(before_ref).copied().ok_or_else(|| {
+            let next_pos = position_cache.get(before_ref).copied().ok_or_else(|| {
                 SpecError::no_span(
                     SpecErrorCode::UndefinedBinding,
                     format!("before: pin '${before_ref}' not yet resolved"),
                 )
             })?;
+            let next_coord = match edge.axis() {
+                Axis::X => next_pos.y,
+                Axis::Y => next_pos.x,
+            };
             let dir = edge.side.forward_direction();
             // Place BEFORE = reverse direction from the reference pin.
             let along = Coord::new(next_coord.raw() - dir * gap);
