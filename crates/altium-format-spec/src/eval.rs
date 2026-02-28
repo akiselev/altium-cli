@@ -41,6 +41,29 @@ impl SpecError {
     pub fn no_span(code: SpecErrorCode, message: impl Into<String>) -> Self {
         Self::new(code, message, None)
     }
+
+    /// Render this error with source location context (file:line:col + caret).
+    ///
+    /// Falls back to a plain `error[Code]: message` when no span is available.
+    pub fn render(&self, source_name: &str, source: &str) -> String {
+        use crate::diagnostic::{locate_line, caret_len};
+
+        let Some(span) = self.span else {
+            return format!("error[{:?}]: {}", self.code, self.message);
+        };
+        let (line_no, col_no, line_text) = locate_line(source, span.start as usize);
+        let mut out = String::new();
+        out.push_str(&format!("error[{:?}]: {}\n", self.code, self.message));
+        out.push_str(&format!(" --> {}:{}:{}\n", source_name, line_no, col_no));
+        out.push_str("  |\n");
+        out.push_str(&format!("{:>2} | {}\n", line_no, line_text));
+        out.push_str("  | ");
+        let caret_count = caret_len(span, source, line_no, col_no);
+        out.push_str(&" ".repeat(col_no.saturating_sub(1)));
+        out.push_str(&"^".repeat(caret_count));
+        out.push('\n');
+        out
+    }
 }
 
 impl fmt::Display for SpecError {

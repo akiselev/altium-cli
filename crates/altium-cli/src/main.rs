@@ -780,19 +780,20 @@ fn compile_and_resolve(
 ) -> anyhow::Result<CompileResult> {
     use altium_format_spec::parser::parse_spec;
 
+    let source_name = spec_file.display().to_string();
     let file = parse_spec(source)
-        .map_err(|e| anyhow::anyhow!("parse error in {}: {e}", spec_file.display()))?;
+        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
     // Resolve imports: validates cycles, cross-domain rules, alias uniqueness,
     // and file existence. We do NOT merge bare imports into the root AST —
     // each file is compiled independently (reference semantics).
     let spec_path_canonical = spec_file.canonicalize().unwrap_or_else(|_| spec_file.clone());
     let resolved = resolve_imports(&spec_path_canonical, file.clone())
-        .map_err(|e| anyhow::anyhow!("import error in {}: {e}", spec_file.display()))?;
+        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
     // Compile only the root file's own items.
     let model = compile_spec(&file, *domain)
-        .map_err(|e| anyhow::anyhow!("compile error in {}: {e}", spec_file.display()))?;
+        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
     // Collect all import paths for --all processing.
     let import_paths: Vec<PathBuf> = resolved

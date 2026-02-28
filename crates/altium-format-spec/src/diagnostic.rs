@@ -147,7 +147,7 @@ impl ParseError {
     }
 }
 
-fn locate_line(source: &str, pos: usize) -> (usize, usize, String) {
+pub(crate) fn locate_line(source: &str, pos: usize) -> (usize, usize, String) {
     let bounded = pos.min(source.len());
     let mut line_no = 1usize;
     let mut line_start = 0usize;
@@ -170,7 +170,7 @@ fn locate_line(source: &str, pos: usize) -> (usize, usize, String) {
     (line_no, col_no, line_text)
 }
 
-fn caret_len(span: Span, source: &str, line_no: usize, col_no: usize) -> usize {
+pub(crate) fn caret_len(span: Span, source: &str, line_no: usize, col_no: usize) -> usize {
     if span.end <= span.start {
         return 1;
     }
@@ -195,7 +195,7 @@ fn caret_len(span: Span, source: &str, line_no: usize, col_no: usize) -> usize {
     source[start_byte..end_byte].chars().count().max(1)
 }
 
-fn byte_at_column(source: &str, line_start: usize, column: usize) -> usize {
+pub(crate) fn byte_at_column(source: &str, line_start: usize, column: usize) -> usize {
     let mut col = 1usize;
     for (idx, _) in source[line_start..].char_indices() {
         if col == column {
