@@ -1,0 +1,22 @@
+[package]
+name = "altium-format-query"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Query language for selecting and filtering Altium Designer file entities."
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[dependencies]
+altium-format = { version = "0.2.0", path = "../altium-format" }
+altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+regex = "1"
+thiserror = "2"
+
+[features]
+test-fixtures = []
+
+[dev-dependencies]
+tempfile = "3"
