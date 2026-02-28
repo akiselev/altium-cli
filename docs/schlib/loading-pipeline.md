@@ -1,3 +1,6 @@
+> **Authoritative reference**: See [../../dxp/sch-files.md](../../dxp/sch-files.md)
+> for the canonical format specification. This document covers SchLib-specific details.
+
 # Loading Pipeline
 
 The SchLib loading pipeline runs in three sequential phases. This document describes the

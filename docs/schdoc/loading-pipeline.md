@@ -1,3 +1,6 @@
+> **Authoritative reference**: See [../../dxp/sch-files.md](../../dxp/sch-files.md)
+> for the canonical format specification. This document covers SchDoc-specific details.
+
 # Loading Pipeline
 
 Complete load and save pipeline for SchDoc files in exact execution order.

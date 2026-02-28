@@ -16,6 +16,19 @@ The `RECORD` parameter identifies the record type. The library reads this value,
 dispatches to the matching Rust struct, and calls `FromParams` to populate the
 fields.
 
+### RECORDEX — Extended record types (RECORD=254)
+
+When `RECORD=254`, the actual record type is stored in a second parameter `RECORDEX`:
+
+```
+|RECORD=254|RECORDEX=209|...|
+```
+
+This mechanism exists for record types with IDs ≥ 256 that do not fit in the legacy
+`RECORD` byte. The parser reads `RECORD` first; if the value is 254, it reads `RECORDEX`
+to obtain the true record type ID. Example: `SchTextFrameVariant` (type 209) may appear
+via this mechanism in newer file versions. See `schlib.rs` for the dispatch implementation.
+
 ## Record Type Table
 
 | RECORD | Rust Type | Purpose |
@@ -59,7 +72,7 @@ Unknown record IDs are captured as `SchRecord::Unknown { record_id, params }`.
 ## Dispatch Enum
 
 ```rust
-// crates/altium-format/src/records/sch/primitive.rs
+// crates/altium-format/src/sch_records.rs
 pub enum SchRecord {
     Component(SchComponent),
     Pin(SchPin),
@@ -80,7 +93,7 @@ inheritance. Two base structs are flattened into concrete types:
 Common to all schematic primitives:
 
 ```rust
-// crates/altium-format/src/records/sch/primitive.rs
+// crates/altium-format/src/sch_records.rs
 pub struct SchPrimitiveBase {
     pub owner_index: i32,                   // OWNERINDEX — parent record index (-1 = root)
     pub is_not_accessible: bool,            // ISNOTACCESIBLE
@@ -95,7 +108,7 @@ pub struct SchPrimitiveBase {
 Extends `SchPrimitiveBase` with position and color:
 
 ```rust
-// crates/altium-format/src/records/sch/primitive.rs
+// crates/altium-format/src/sch_records.rs
 pub struct SchGraphicalBase {
     pub base: SchPrimitiveBase,  // flattened — all base fields become top-level params
     pub location_x: i32,        // LOCATION.X + LOCATION.X_FRAC (DXP fractional)

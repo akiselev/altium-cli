@@ -1,3 +1,6 @@
+> **Authoritative reference**: See [../../dxp/pcb-records.md](../../dxp/pcb-records.md)
+> for the canonical format specification. This document covers PcbLib-specific details.
+
 # Binary Primitives
 
 All PCB primitives in PcbLib are stored as packed binary structs. This document covers the
@@ -12,17 +15,19 @@ All PCB primitives share a 13-byte common header at the start of their first sub
 
 ```
 Offset  Size  Type    Field
-0       1     u8      layer           // PCB layer (see enumerations.md)
-2       2     u16     flags           // Primitive flags bitmask
-4       4     i32     net_index       // Net index (-1 = no net)
-8       2     u16     polygon_index   // Polygon pour index (0 = none)
-10      2     u16     component_index // Component index (0 = none)
-12      1     u8      unknown         // Unknown byte
+0       1     u8      layer             // PCB layer (V6Layer enum)
+1       2     u16     flags             // PcbFlags bitmask (LE)
+3       2     u16     net_index         // Net index (0xFFFF = no net)
+5       2     u16     polygon_index     // Polygon pour index (0xFFFF = none)
+7       2     u16     component_index   // Component index (0xFFFF = none)
+9       2     u16     coordinate_index  // Coordinate index (0xFFFF = none)
+11      2     u16     dimension_index   // Dimension index (0xFFFF = none)
 ```
 
 **Note**: In PcbLib context, `net_index`, `polygon_index`, and `component_index` are
-typically 0 or -1 since footprint primitives are not yet placed on a board. These fields
-become meaningful in PcbDoc.
+typically `0xFFFF` since footprint primitives are not yet placed on a board. These fields
+become meaningful in PcbDoc. `coordinate_index` and `dimension_index` are also `0xFFFF`
+in observed data.
 
 ## Arc (TObjectId = 1)
 
@@ -259,15 +264,16 @@ The ComponentBody record is large and complex, containing:
 ## Version-dependent record sizes
 
 Many primitive types have version-dependent trailing fields. The record length field tells
-you exactly how many bytes to read for each subrecord, so unknown trailing bytes can be
-safely read and preserved even if not fully understood.
+you exactly how many bytes to read for each subrecord.
 
-The general strategy for handling version-dependent sizes:
-1. Read the known fields from the beginning of the record
-2. If the record is longer than expected, store the remaining bytes as `trailing_bytes`
-3. When writing, append the stored `trailing_bytes` after the known fields
+**Fail-fast policy**: Unknown trailing bytes MUST NOT be silently preserved as opaque
+`trailing_bytes` or `Vec<u8>` placeholders. If the parser encounters bytes beyond the
+known layout, it must either:
+1. Identify and implement the field (preferred — reverse-engineer from C#/Delphi source), or
+2. Return a hard error with full context (stream path, record index, offset)
 
-This ensures round-trip fidelity even for fields we don't yet parse.
+Silently carrying unknown bytes violates the CARDINAL RULE in CLAUDE.md and masks format
+bugs that could corrupt PCB fabrication output.
 
 ## Byte order
 

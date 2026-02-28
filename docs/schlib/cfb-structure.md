@@ -1,3 +1,6 @@
+> **Authoritative reference**: See [../../dxp/sch-files.md](../../dxp/sch-files.md)
+> for the canonical format specification. This document covers SchLib-specific details.
+
 # CFB Structure
 
 SchLib files use the OLE Compound Binary (CFB / Structured Storage) format. The storage

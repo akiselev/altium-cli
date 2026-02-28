@@ -23,44 +23,41 @@ See [Coordinate System](coordinates.md) for details.
 
 ## Object ID Table
 
-| ID | Rust Type | Purpose |
-|----|-----------|---------|
-| 1 | `PcbArc` | Circular arc on a layer |
-| 2 | `PcbPad` | Component connection pad (multi-layer, multi-shape) |
-| 3 | `PcbVia` | Plated through-hole connecting layers |
-| 4 | `PcbTrack` | Routed copper line segment |
-| 5 | `PcbText` | Text string (silkscreen, copper, etc.) |
-| 6 | `PcbFill` | Solid rectangular fill |
-| 10 | `PcbPolygon` | Copper pour polygon |
-| 11 | `PcbRegion` | Keepout/board outline region |
-| 12 | `PcbComponentBody` | 3D component body definition |
-| 13 | `PcbDimension` | Measurement annotation |
-| 14 | `PcbCoordinate` | Position marker |
+| ID | Rust Type | Purpose | Context |
+|----|-----------|---------|---------|
+| 1 | `PcbArc` | Circular arc on a layer | PcbLib + PcbDoc |
+| 2 | `PcbPad` | Component connection pad (multi-layer, multi-shape) | PcbLib + PcbDoc |
+| 3 | `PcbVia` | Plated through-hole connecting layers | PcbLib + PcbDoc |
+| 4 | `PcbTrack` | Routed copper line segment | PcbLib + PcbDoc |
+| 5 | `PcbText` | Text string (silkscreen, copper, etc.) | PcbLib + PcbDoc |
+| 6 | `PcbFill` | Solid rectangular fill | PcbLib + PcbDoc |
+| 10 | `PcbPolygon` | Copper pour polygon | PcbDoc only |
+| 11 | `PcbRegion` | Keepout/board outline region | PcbLib + PcbDoc |
+| 12 | `PcbComponentBody` | 3D component body definition | PcbLib + PcbDoc |
+| 13 | `PcbDimension` | Measurement annotation | PcbDoc only |
+| 14 | `PcbCoordinate` | Position marker | PcbDoc only |
 
-Unknown object IDs are captured as `PcbRecord::Unknown { object_id, raw_data }`.
+Unknown object IDs produce a hard parse error — there is no `Unknown` catch-all variant.
 
 ## Dispatch Enum
 
 ```rust
-// crates/altium-format/src/records/pcb/primitive.rs
-pub enum PcbRecord {
+// crates/altium-format/src/pcblib/mod.rs
+pub(crate) enum PcbPrimitive {
     Arc(PcbArc),
-    Pad(Box<PcbPad>),        // Boxed — PcbPad is large (per-layer arrays)
+    Pad(PcbPad),
     Via(PcbVia),
     Track(PcbTrack),
     Text(PcbText),
     Fill(PcbFill),
     Region(PcbRegion),
-    ComponentBody(Box<PcbComponentBody>),
-    Polygon(PcbPolygon),
-    Dimension(Box<PcbDimension>),
-    Coordinate(PcbCoordinate),
-    Unknown { object_id: PcbObjectId, raw_data: Vec<u8> },
+    ComponentBody(PcbComponentBody),
 }
 ```
 
-`PcbPad`, `PcbComponentBody`, and `PcbDimension` are boxed because they contain
-large fixed-size arrays or many fields.
+This enum covers the 8 primitive types present in PcbLib footprints. `Polygon`,
+`Dimension`, and `Coordinate` (IDs 10, 13, 14) are PcbDoc-only and not part of
+PcbLib footprints.
 
 ## Base Type
 
@@ -69,11 +66,15 @@ large fixed-size arrays or many fields.
 All PCB primitives share a common header:
 
 ```rust
-// crates/altium-format/src/records/pcb/primitive.rs
+// crates/altium-format/src/pcblib/mod.rs
 pub struct PcbPrimitiveCommon {
-    pub layer: Layer,              // PCB layer (u8)
-    pub flags: PcbFlags,           // Bitmask (u16)
-    pub unique_id: Option<String>, // Optional UUID
+    pub layer: V6Layer,           // PCB layer (u8)
+    pub flags: PcbFlags,          // Bitmask (u16 LE)
+    pub net_index: u16,           // Net index (0xFFFF = no net)
+    pub polygon_index: u16,       // Polygon pour index (0xFFFF = none)
+    pub component_index: u16,     // Component index (0xFFFF = none)
+    pub coordinate_index: u16,    // Coordinate index (0xFFFF = none)
+    pub dimension_index: u16,     // Dimension index (0xFFFF = none)
 }
 ```
 

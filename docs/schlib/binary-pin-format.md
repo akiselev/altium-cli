@@ -11,31 +11,39 @@ in some test files reflects the minimal case: empty description, short name, sho
 designator.
 
 ```
-Offset      Size  Type      Field                    Parameter equivalent
---------    ----  -----     -----                    --------------------
-0x00        1     u8        binary_code              Always 0x02
-0x01        1     u8        symbol_inner_edge        SYMBOL_INNEREDGE
-0x02        1     u8        symbol_outer_edge        SYMBOL_OUTEREDGE
-0x03        1     u8        symbol_inside            SYMBOL_INSIDE
-0x04        1     u8        symbol_outside           SYMBOL_OUTSIDE
-0x05        1     u8        description_length       Length of DESCRIPTION (0 if empty)
-0x06        N     bytes     description              DESCRIPTION (ASCII, 0-254 bytes)
-0x06+N      1     u8        formal_type              FORMALTYPE
-0x07+N      1     u8        electrical               ELECTRICAL (0-7, see enumerations.md)
-0x08+N      1     u8        pin_conglomerate         PINCONGLOMERATE (bitmask, see enumerations.md)
-0x09+N      2     i16 LE    pin_length               PINLENGTH
-0x0B+N      2     i16 LE    location_x               LOCATION.X
-0x0D+N      2     i16 LE    location_y               LOCATION.Y
-0x0F+N      4     i32 LE    color                    COLOR (COLORREF)
-0x13+N      1     u8        name_length              Length of NAME
-0x14+N      M     bytes     name                     NAME (ASCII)
-0x14+N+M    1     u8        designator_length        Length of DESIGNATOR
-0x15+N+M    P     bytes     designator               DESIGNATOR (ASCII)
+Offset          Size  Type      Field                    Parameter equivalent
+--------        ----  -----     -----                    --------------------
+0x00            1     u8        binary_code              Always 0x02
+0x01            4     i32 LE    owner_index              OWNERINDEX
+0x05            2     i16 LE    owner_part_id            OWNERPARTID
+0x07            1     u8        owner_part_display_mode  OWNERPARTDISPLAYMODE
+0x08            1     u8        symbol_inner_edge        SYMBOL_INNEREDGE
+0x09            1     u8        symbol_outer_edge        SYMBOL_OUTEREDGE
+0x0A            1     u8        symbol_inside            SYMBOL_INSIDE
+0x0B            1     u8        symbol_outside           SYMBOL_OUTSIDE
+0x0C            1     u8        description_length       Length of DESCRIPTION (0 if empty)
+0x0D            N     bytes     description              DESCRIPTION (ASCII, 0-254 bytes)
+0x0D+N          1     u8        formal_type              FORMALTYPE
+0x0E+N          1     u8        electrical               ELECTRICAL (0-7, see enumerations.md)
+0x0F+N          1     u8        pin_conglomerate         PINCONGLOMERATE (bitmask, see enumerations.md)
+0x10+N          2     i16 LE    pin_length               PINLENGTH
+0x12+N          2     i16 LE    location_x               LOCATION.X
+0x14+N          2     i16 LE    location_y               LOCATION.Y
+0x16+N          4     i32 LE    color                    COLOR (COLORREF)
+0x1A+N          1     u8        name_length              Length of NAME
+0x1B+N          M     bytes     name                     NAME (ASCII)
+0x1B+N+M        1     u8        designator_length        Length of DESIGNATOR
+0x1C+N+M        P     bytes     designator               DESIGNATOR (ASCII)
+0x1C+N+M+P      1     u8        swap_id_pin_length       Length of SWAPIDPIN
++Q              1     u8        swap_id_part_length      Length of SWAPIDPART (binary)
++R              1     u8        default_value_length     Length of DEFAULTVALUE
++S              —     —         (end)
 ```
 
-Where N = `description_length`, M = `name_length`, P = `designator_length`.
+Where N = `description_length`, M = `name_length`, P = `designator_length`,
+Q = `swap_id_pin_length`, R = `swap_id_part_length`, S = `default_value_length`.
 
-Total record size = 18 + N + M + P bytes.
+Total record size = 25 + N + M + P + Q + R + S bytes.
 
 ## Binary code 0x02
 

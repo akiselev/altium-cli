@@ -1,3 +1,6 @@
+> **Authoritative reference**: See [../../dxp/sidecar-streams-deep-dive.md](../../dxp/sidecar-streams-deep-dive.md)
+> for the canonical format specification. This document covers PcbLib-specific details.
+
 # Sidecar Streams
 
 Each footprint storage may contain optional sidecar streams that extend the primitive data

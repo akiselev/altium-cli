@@ -1,3 +1,7 @@
+> **Authoritative reference**: See [../../dxp/sch-files.md](../../dxp/sch-files.md)
+> for the canonical format specification. This document covers SchLib-specific details.
+> Shared enumerations are also documented in [../schdoc/enumerations.md](../schdoc/enumerations.md).
+
 # Enumerations
 
 All enumerations used by SchLib record types.
