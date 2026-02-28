@@ -198,14 +198,17 @@ pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatEr
     if sheet.show_hidden_pins { out.push_str("    show_hidden_pins: true\n"); }
     if !sheet.border_on { out.push_str("    border_on: false\n"); }
     if !sheet.title_block_on { out.push_str("    title_block_on: false\n"); }
-    out.push('\n');
-
-    // Objects
-    for obj in &sheet.objects {
-        dump_sheet_object(&mut out, obj, 4);
-    }
 
     out.push_str("}\n");
+
+    // Objects (top-level, outside the sheet metadata block)
+    if !sheet.objects.is_empty() {
+        out.push('\n');
+        for obj in &sheet.objects {
+            dump_sheet_object(&mut out, obj, 0);
+        }
+    }
+
     Ok(out)
 }
 

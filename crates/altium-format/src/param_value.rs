@@ -75,7 +75,28 @@ macro_rules! impl_int_param_value {
     };
 }
 
-impl_int_param_value!(i8, u8, i16, u16, i32, u32, f64);
+impl_int_param_value!(i8, u8, i16, u16, i32, u32);
+
+// f64 is handled separately because Altium parameter strings sometimes contain leading
+// whitespace in float values (e.g. "MODEL.3D.ROTX= 3.3E-0314"). Rust's f64::parse()
+// rejects whitespace, so we trim before parsing. Integer types are kept strict.
+impl FromParamValue for f64 {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        value
+            .trim()
+            .parse::<f64>()
+            .map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: e.to_string(),
+            })
+    }
+}
+
+impl ToParamValue for f64 {
+    fn to_param_value(&self) -> String {
+        self.to_string()
+    }
+}
 
 impl FromParamValue for Coord {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {

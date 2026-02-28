@@ -77,6 +77,18 @@ pub(crate) struct UnionRelationsSectionData {
     pub(crate) records: Vec<records::UnionRelationRecord>,
 }
 
+pub(crate) struct PrimitiveParametersSectionData {
+    pub(crate) groups: Vec<records::PrimitiveParameterGroup>,
+}
+
+pub(crate) struct UnionFeaturesSectionData {
+    pub(crate) records: Vec<records::IndexedParamRecord>,
+}
+
+pub(crate) struct SharedUnionParamSectionData {
+    pub(crate) groups: Vec<records::SharedUnionParamGroup>,
+}
+
 pub(crate) enum PcbDocSection {
     Primitive(PrimitiveSectionData),
     Parameter(ParamSectionData),
@@ -90,6 +102,9 @@ pub(crate) enum PcbDocSection {
     EmbeddedFonts(EmbeddedFontsSectionData),
     PadViaLibrary(PadViaLibrarySectionData),
     LayerKindMapping(LayerKindMappingSectionData),
+    PrimitiveParameters(PrimitiveParametersSectionData),
+    UnionFeatures(UnionFeaturesSectionData),
+    SharedUnionParam(SharedUnionParamSectionData),
 }
 
 pub struct PcbDoc {
@@ -243,9 +258,10 @@ impl PcbDoc {
             if storage_name == "SharedUnions" {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
-                let _header_count = parse_pcb_section_header(&header_data)?;
+                let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let entries = crate::shared_union::parse_shared_union_stream(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
+                validate_record_count(&storage_name, expected_count, entries.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::SharedUnions(SharedUnionsSectionData {
                     entries,
@@ -253,12 +269,55 @@ impl PcbDoc {
                 continue;
             }
 
+            if storage_name == "UnionFeatures" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let expected_count = parse_pcb_section_header(&header_data)? as usize;
+                let records = records::parse_indexed_param_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                validate_record_count(&storage_name, expected_count, records.len())?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::UnionFeatures(UnionFeaturesSectionData {
+                    records,
+                }));
+                continue;
+            }
+
+            if storage_name == "SharedUnion" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let expected_count = parse_pcb_section_header(&header_data)? as usize;
+                let groups = records::parse_shared_union_param_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                validate_record_count(&storage_name, expected_count, groups.len())?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::SharedUnionParam(
+                    SharedUnionParamSectionData { groups },
+                ));
+                continue;
+            }
+
+            if storage_name == "PrimitiveParameters" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let expected_count = parse_pcb_section_header(&header_data)? as usize;
+                let groups = records::parse_primitive_parameter_records(&data)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                validate_record_count(&storage_name, expected_count, groups.len())?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::PrimitiveParameters(
+                    PrimitiveParametersSectionData { groups },
+                ));
+                continue;
+            }
+
             if storage_name == "UnionRelations" {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
-                let _header_count = parse_pcb_section_header(&header_data)?;
+                let expected_count = parse_pcb_section_header(&header_data)? as usize;
                 let records = records::parse_union_relation_records(&data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
+                validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::UnionRelations(UnionRelationsSectionData {
                     records,
@@ -584,6 +643,9 @@ fn section_identity(section: &PcbDocSection) -> String {
         PcbDocSection::EmbeddedFonts(_) => "EmbeddedFonts6".to_owned(),
         PcbDocSection::PadViaLibrary(v) => format!("PadVia::{:?}", v.section_name),
         PcbDocSection::LayerKindMapping(_) => "LayerKindMapping".to_owned(),
+        PcbDocSection::PrimitiveParameters(_) => "PrimitiveParameters".to_owned(),
+        PcbDocSection::UnionFeatures(_) => "UnionFeatures".to_owned(),
+        PcbDocSection::SharedUnionParam(_) => "SharedUnion".to_owned(),
     }
 }
 

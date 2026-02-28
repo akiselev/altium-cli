@@ -607,7 +607,6 @@ fn net_label_from_internal(n: &crate::sch_records::SchNetLabel) -> NetLabel {
         font_id: n.font_id,
         color: n.color,
         is_mirrored: n.is_mirrored,
-        is_hidden: n.is_hidden,
     }
 }
 

@@ -602,7 +602,7 @@ fn merge_pin_misc_data(
         }
         let mut params = read_sidecar_utf16le_params(&entry.inner_data)?;
         if let Some(v) = params.remove_optional::<String>(PAIR_SWAP_ID)? {
-            pins[pin_idx].swap_id_pin = v;
+            pins[pin_idx].swap_id_pair = v;
         }
         params.assert_exhausted()?;
     }
@@ -940,14 +940,14 @@ fn write_pin_desc(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     Some(serialize_embedded_object_stream(PIN_DESC, &entries))
 }
 
-// Returns PinMiscData sidecar stream if any pin has a swap_id_pin that needs
+// Returns PinMiscData sidecar stream if any pin has a swap_id_pair that needs
 // sidecar storage (exceeds binary pin format limits per NeedToSaveParameter).
 fn write_pin_misc_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
-        if pin_field_needs_wide_text(&pin.swap_id_pin) {
+        if pin_field_needs_wide_text(&pin.swap_id_pair) {
             let mut params = ParameterCollection::new();
-            params.insert(PAIR_SWAP_ID, pin.swap_id_pin.clone());
+            params.insert(PAIR_SWAP_ID, pin.swap_id_pair.clone());
             entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));
         }
     }

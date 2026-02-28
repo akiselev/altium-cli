@@ -112,10 +112,19 @@ impl CfbSemanticDiffReport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CfbSemanticDiffOptions {
     ignored_param_keys_lower: BTreeSet<String>,
-    case_insensitive_keys: bool,
+    case_sensitive_keys: bool,
+}
+
+impl Default for CfbSemanticDiffOptions {
+    fn default() -> Self {
+        Self {
+            ignored_param_keys_lower: BTreeSet::new(),
+            case_sensitive_keys: false, // Altium keys are case-insensitive
+        }
+    }
 }
 
 impl CfbSemanticDiffOptions {
@@ -132,8 +141,8 @@ impl CfbSemanticDiffOptions {
         out
     }
 
-    pub fn case_insensitive_keys(mut self) -> Self {
-        self.case_insensitive_keys = true;
+    pub fn case_sensitive_keys(mut self) -> Self {
+        self.case_sensitive_keys = true;
         self
     }
 
@@ -143,10 +152,10 @@ impl CfbSemanticDiffOptions {
     }
 
     fn normalize_key<'a>(&self, key: &'a str) -> Cow<'a, str> {
-        if self.case_insensitive_keys {
-            Cow::Owned(key.to_ascii_uppercase())
-        } else {
+        if self.case_sensitive_keys {
             Cow::Borrowed(key)
+        } else {
+            Cow::Owned(key.to_ascii_uppercase())
         }
     }
 }

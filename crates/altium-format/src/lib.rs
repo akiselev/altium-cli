@@ -127,6 +127,10 @@ pub enum AltiumFormatError {
     #[error("Unexpected trailing data: {count} bytes remaining at offset {offset}")]
     UnexpectedTrailingData { offset: usize, count: usize },
 
+    // Feature not yet implemented
+    #[error("{0} support is not implemented yet")]
+    NotImplemented(String),
+
     // Context wrapper for chaining location info (e.g. "parsing component 'X': ...")
     #[error("{context}: {source}")]
     WithContext {

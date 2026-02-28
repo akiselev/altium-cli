@@ -603,7 +603,6 @@ fn net_label_to_internal(n: &NetLabel) -> SchRecord {
         font_id: n.font_id,
         text: n.text.clone(),
         is_mirrored: n.is_mirrored,
-        is_hidden: n.is_hidden,
         unique_id: n.unique_id.clone(),
     })
 }

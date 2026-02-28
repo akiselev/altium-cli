@@ -190,9 +190,6 @@ pub(crate) fn draw_sch_record(
             );
         }
         SchRecord::NetLabel(n) => {
-            if n.is_hidden {
-                return;
-            }
             let pen = Pen::new(n.color, 0.0);
             let font = lookup_font(fonts, n.font_id);
             canvas.draw_text(

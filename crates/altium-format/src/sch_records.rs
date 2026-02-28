@@ -1653,8 +1653,6 @@ pub(crate) struct SchNetLabel {
     pub text: String,
     #[param(key = IS_MIRRORED, default = false)]
     pub is_mirrored: bool,
-    #[param(key = IS_HIDDEN, default = false)]
-    pub is_hidden: bool,
     #[param(key = UNIQUE_ID, default = String::new())]
     pub unique_id: String,
 }

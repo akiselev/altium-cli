@@ -5,9 +5,7 @@ pub struct IntLib {
 }
 
 impl IntLib {
-    pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
-        let path = path.as_ref();
-        let _file = std::fs::File::open(path)?;
-        Ok(Self {})
+    pub fn open(_path: impl AsRef<Path>) -> crate::Result<Self> {
+        Err(crate::AltiumFormatError::NotImplemented("IntLib".into()))
     }
 }

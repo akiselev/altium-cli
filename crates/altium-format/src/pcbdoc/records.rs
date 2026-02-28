@@ -1,7 +1,7 @@
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
 use crate::prefixed_param_stream::parse_prefixed_param_blocks;
-use crate::{AltiumFormatError, Result};
+use crate::{AltiumFormatError, Result, ResultExt};
 use altium_format_types::{CoordPoint, V6Layer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +53,6 @@ pub(crate) enum ParamSectionKind {
     Embeddeds6,
     UniqueIdPrimitiveInformation,
     ExtendedPrimitiveInformation,
-    PrimitiveParameters,
     PadViaLibrary,
     PadViaLibraryCache,
     PadViaLibraryLinks,
@@ -69,6 +68,11 @@ pub(crate) enum ParamSectionKind {
     LayerKindMapping,
     ModelsNoEmbed,
     Textures,
+    CustomShapes,
+    TClearanceViolation,
+    TShortCircuitViolation,
+    TSilkToSilkClearanceViolation,
+    TRoutingViaStyleViolation,
 }
 
 impl ParamSectionKind {
@@ -85,7 +89,6 @@ impl ParamSectionKind {
             "Embeddeds6" => Some(Self::Embeddeds6),
             "UniqueIDPrimitiveInformation" => Some(Self::UniqueIdPrimitiveInformation),
             "ExtendedPrimitiveInformation" => Some(Self::ExtendedPrimitiveInformation),
-            "PrimitiveParameters" => Some(Self::PrimitiveParameters),
             "PadViaLibrary" => Some(Self::PadViaLibrary),
             "PadViaLibraryCache" => Some(Self::PadViaLibraryCache),
             "PadViaLibraryLinks" => Some(Self::PadViaLibraryLinks),
@@ -101,6 +104,11 @@ impl ParamSectionKind {
             "LayerKindMapping" => Some(Self::LayerKindMapping),
             "ModelsNoEmbed" => Some(Self::ModelsNoEmbed),
             "Textures" => Some(Self::Textures),
+            "CustomShapes" => Some(Self::CustomShapes),
+            "TClearanceViolation" => Some(Self::TClearanceViolation),
+            "TShortCircuitViolation" => Some(Self::TShortCircuitViolation),
+            "TSilkToSilkClearanceViolation" => Some(Self::TSilkToSilkClearanceViolation),
+            "TRoutingViaStyleViolation" => Some(Self::TRoutingViaStyleViolation),
             _ => None,
         }
     }
@@ -403,6 +411,28 @@ pub(crate) fn parse_union_name_records(data: &[u8]) -> Result<Vec<UnionNameRecor
     Ok(out)
 }
 
+/// An indexed parameter record for sections like UnionFeatures.
+/// Each record has a u32 index prefix before the standard u32 len + payload.
+pub(crate) struct IndexedParamRecord {
+    pub(crate) index: u32,
+    pub(crate) params: ParameterCollection,
+}
+
+/// A hierarchical group for SharedUnion: a header block with HIDDENPRIMITIVESCOUNT=N
+/// followed by N detail blocks describing the hidden primitives.
+pub(crate) struct SharedUnionParamGroup {
+    pub(crate) header: ParameterCollection,
+    pub(crate) hidden_primitives: Vec<ParameterCollection>,
+}
+
+/// A component group within the PrimitiveParameters section.
+/// Each group has a component header block (with PRIMITIVEID, COUNT, etc.)
+/// followed by COUNT parameter blocks (each with NAME, VALUE, ISIMPORTED).
+pub(crate) struct PrimitiveParameterGroup {
+    pub(crate) component_header: ParameterCollection,
+    pub(crate) parameters: Vec<ParameterCollection>,
+}
+
 pub(crate) struct UnionRelationRecord {
     pub(crate) parent_id: i32,
     pub(crate) child_id: i32,
@@ -422,4 +452,129 @@ pub(crate) fn parse_union_relation_records(data: &[u8]) -> Result<Vec<UnionRelat
     }
     reader.assert_exhausted()?;
     Ok(out)
+}
+
+/// Parses PrimitiveParameters Data stream with hierarchical grouping.
+///
+/// Format: repeating groups of [component header block] + [N parameter blocks].
+/// The component header has `COUNT=N` indicating how many parameter blocks follow.
+/// The Header u32 count is the number of component groups, NOT total blocks.
+pub(crate) fn parse_primitive_parameter_records(
+    data: &[u8],
+) -> Result<Vec<PrimitiveParameterGroup>> {
+    let mut reader = BinaryReader::new(data);
+    let mut groups = Vec::new();
+
+    while reader.remaining() > 0 {
+        let group_index = groups.len();
+
+        // Read component header block: [u32 len][NUL-terminated param string]
+        let header_size = reader.read_u32_le()? as usize;
+        let header_payload = reader.read_bytes(header_size)?;
+        let mut header_params = ParameterCollection::from_bytes(header_payload)
+            .with_context(|| {
+                format!("PrimitiveParameters group {group_index} component header")
+            })?;
+
+        // Extract COUNT to know how many parameter blocks follow
+        let count: usize = header_params.remove_required("COUNT").with_context(|| {
+            format!("PrimitiveParameters group {group_index} missing COUNT key")
+        })?;
+
+        // Read COUNT parameter blocks
+        let mut parameters = Vec::with_capacity(count);
+        for i in 0..count {
+            let param_size = reader.read_u32_le()? as usize;
+            let param_payload = reader.read_bytes(param_size)?;
+            let params = ParameterCollection::from_bytes(param_payload).with_context(|| {
+                format!("PrimitiveParameters group {group_index}, parameter block {i}")
+            })?;
+            parameters.push(params);
+        }
+
+        groups.push(PrimitiveParameterGroup {
+            component_header: header_params,
+            parameters,
+        });
+    }
+
+    reader.assert_exhausted()?;
+    Ok(groups)
+}
+
+/// Parses an indexed parameter section like UnionFeatures.
+/// Format: `[u32 index][u32 param_len][param_payload]` × N records.
+/// The index is a reference (e.g. union index) identifying what the record applies to.
+pub(crate) fn parse_indexed_param_records(data: &[u8]) -> Result<Vec<IndexedParamRecord>> {
+    let mut reader = BinaryReader::new(data);
+    let mut out = Vec::new();
+
+    while reader.remaining() > 0 {
+        let index = reader.read_u32_le()?;
+        let size = reader.read_u32_le()? as usize;
+        let payload = reader.read_bytes(size)?;
+        let params = ParameterCollection::from_bytes(payload).with_context(|| {
+            format!("indexed param record {} (index={index})", out.len())
+        })?;
+        out.push(IndexedParamRecord { index, params });
+    }
+
+    reader.assert_exhausted()?;
+    Ok(out)
+}
+
+/// Parses SharedUnion Data stream with hierarchical grouping.
+///
+/// Three observed variants:
+/// 1. Header has `HIDDENPRIMITIVESCOUNT=N`: N detail blocks follow the header
+/// 2. Header has `PRIMITIVESCOUNT=N` with inline `REFnINDEX`/`REFnOBJID`: no child blocks
+/// 3. Header has neither count key: no child blocks
+///
+/// Format: `[u32 len][header block]` optionally followed by
+/// `[u32 len][detail block]` × HIDDENPRIMITIVESCOUNT.
+pub(crate) fn parse_shared_union_param_records(
+    data: &[u8],
+) -> Result<Vec<SharedUnionParamGroup>> {
+    let mut reader = BinaryReader::new(data);
+    let mut groups = Vec::new();
+
+    while reader.remaining() > 0 {
+        let group_index = groups.len();
+
+        // Read header block
+        let header_size = reader.read_u32_le()? as usize;
+        let header_payload = reader.read_bytes(header_size)?;
+        let mut header_params =
+            ParameterCollection::from_bytes(header_payload).with_context(|| {
+                format!("SharedUnion group {group_index} header")
+            })?;
+
+        // HIDDENPRIMITIVESCOUNT indicates child detail blocks follow;
+        // PRIMITIVESCOUNT uses inline REFnINDEX/REFnOBJID references (no child blocks);
+        // absent means no child data at all.
+        let count: usize = header_params
+            .remove_optional::<usize>("HIDDENPRIMITIVESCOUNT")
+            .with_context(|| format!("SharedUnion group {group_index}"))?
+            .unwrap_or(0);
+
+        // Read detail blocks
+        let mut hidden_primitives = Vec::with_capacity(count);
+        for i in 0..count {
+            let detail_size = reader.read_u32_le()? as usize;
+            let detail_payload = reader.read_bytes(detail_size)?;
+            let params =
+                ParameterCollection::from_bytes(detail_payload).with_context(|| {
+                    format!("SharedUnion group {group_index}, detail block {i}")
+                })?;
+            hidden_primitives.push(params);
+        }
+
+        groups.push(SharedUnionParamGroup {
+            header: header_params,
+            hidden_primitives,
+        });
+    }
+
+    reader.assert_exhausted()?;
+    Ok(groups)
 }

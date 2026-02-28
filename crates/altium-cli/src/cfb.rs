@@ -77,9 +77,9 @@ pub struct DiffArgs {
     /// Use semantic diff (order-agnostic params, embedded object decompression)
     #[arg(long)]
     semantic: bool,
-    /// Case-insensitive key comparison (semantic mode only)
+    /// Case-sensitive key comparison (semantic mode only; default is case-insensitive)
     #[arg(long)]
-    case_insensitive_keys: bool,
+    case_sensitive_keys: bool,
 }
 
 #[derive(Args)]
@@ -587,8 +587,8 @@ fn cmd_diff(args: &DiffArgs) -> anyhow::Result<bool> {
 
 fn cmd_diff_semantic(args: &DiffArgs) -> anyhow::Result<bool> {
     let mut options = altium_format::test_utils::CfbSemanticDiffOptions::new();
-    if args.case_insensitive_keys {
-        options = options.case_insensitive_keys();
+    if args.case_sensitive_keys {
+        options = options.case_sensitive_keys();
     }
     let report = altium_format::test_utils::diff_cfb_files_semantic_with_options(
         &args.file1,

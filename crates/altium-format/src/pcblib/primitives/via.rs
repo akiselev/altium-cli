@@ -1,6 +1,7 @@
 use altium_format_types::{Coord, PlaneConnectionStyle, TCacheState, V6Layer, ViaStructureType};
 
 use crate::Result;
+use crate::ResultExt;
 use crate::binary_io::BinaryReader;
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::{PcbVia, PcbViaPadLayerEntry, PcbViaSection2Entry};
@@ -302,10 +303,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             if ext.remaining() >= 1 {
                 template_link_flags = Some(ext.read_u8()?);
             }
-            // ext_size=45 has 3 additional bytes (purpose unknown, skip them).
-            if ext.remaining() > 0 {
-                let _extra = ext.read_bytes(ext.remaining())?;
-            }
+            ext.assert_exhausted().context("Via template link block")?;
         }
 
         // Section 4: Per-layer pad stack entries (stride varies: 23, 29, 30).

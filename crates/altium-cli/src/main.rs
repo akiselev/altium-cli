@@ -450,7 +450,6 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
         }
         "intlib" => {
             let _doc = IntLib::open(path)?;
-            anyhow::bail!("IntLib validation is not implemented yet");
         }
         "prjpcb" => {
             let doc = AltiumProject::open(path)?;

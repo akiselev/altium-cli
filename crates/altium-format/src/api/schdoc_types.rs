@@ -384,7 +384,6 @@ pub struct NetLabel {
     pub font_id: i32,
     pub color: Color,
     pub is_mirrored: bool,
-    pub is_hidden: bool,
 }
 
 /// Power object (RECORD=17).
