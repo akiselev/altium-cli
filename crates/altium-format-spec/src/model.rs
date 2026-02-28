@@ -174,6 +174,7 @@ pub struct PcbGraphicSpec {
     pub properties: PcbGraphicProperties,
 }
 
+#[derive(Debug, Clone)]
 pub enum PcbGraphicType {
     Track,
     Arc,

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use altium_format::api;
-use altium_format::SchLib;
+use altium_format::{PcbLib, SchLib};
 
 use crate::eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, PropChange, PropValue, compute_summary,
@@ -87,16 +87,50 @@ pub fn reconcile_schlib_empty(
 
 /// Reconcile a spec model against an existing PcbLib document.
 ///
-/// Produces an ECO describing what changes are needed to bring the document
-/// into alignment with the spec. This is currently additive-only: footprints
-/// not present in the spec are left unchanged.
+/// Tries to open the PcbLib at `library_path`. If successful, compares each
+/// footprint in the spec against the document's existing footprints and produces
+/// an ECO describing what would change. Falls back to treating every footprint
+/// as an Add if the document cannot be opened.
+///
+/// This is a read-only operation: the document is not modified.
 pub fn reconcile_pcblib(
     spec: &PcbLibSpec,
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
-    // For now, treat every footprint as Add (no existing-doc query yet).
-    reconcile_pcblib_empty(spec, library_path, spec_path)
+    let lib = match PcbLib::open(&library_path) {
+        Ok(lib) => lib,
+        Err(_) => return reconcile_pcblib_empty(spec, library_path, spec_path),
+    };
+
+    let existing_footprints = lib.footprints();
+
+    // Build lookup by display_name
+    let existing_map: HashMap<&str, &api::Footprint> = existing_footprints
+        .iter()
+        .map(|f| (f.display_name.as_str(), f))
+        .collect();
+
+    let mut changes = Vec::new();
+    for fp_spec in &spec.footprints {
+        match existing_map.get(fp_spec.display_name.as_str()) {
+            Some(existing) => {
+                changes.push(diff_footprint(fp_spec, existing));
+            }
+            None => {
+                changes.push(footprint_spec_to_add(fp_spec));
+            }
+        }
+    }
+
+    let summary = compute_summary(&changes);
+    EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    }
 }
 
 /// Reconcile against an empty PcbLib document: every entity in the spec is an Add.
@@ -481,6 +515,176 @@ fn pad_spec_to_add(spec: &PadSpec) -> EntityChange {
         identity: spec.pad_name.clone(),
         props,
         children: vec![],
+    }
+}
+
+// ── Footprint-level diff ─────────────────────────────────────────────────────
+
+/// Diff a spec footprint against an existing API footprint.
+fn diff_footprint(spec: &FootprintSpec, existing: &api::Footprint) -> EntityChange {
+    let mut prop_changes = Vec::new();
+    let mut children = Vec::new();
+
+    // Top-level field diffs
+    diff_opt_field_vs_str("description", &spec.description, &existing.description, &mut prop_changes);
+    diff_opt_field_vs_str("pattern", &spec.pattern, &existing.pattern, &mut prop_changes);
+    if let Some(h) = spec.height {
+        if h != existing.height {
+            prop_changes.push(PropChange {
+                field: "height".to_string(),
+                old_value: format!("{}mil", existing.height.to_mils()),
+                new_value: format!("{}mil", h.to_mils()),
+            });
+        }
+    }
+
+    // Diff pads by pad_name
+    diff_pcb_pads(&spec.pads, &existing.pads, &mut children);
+
+    // Diff graphics by unique_id
+    diff_pcb_graphics(&spec.graphics, &existing.graphics, &mut children);
+
+    if prop_changes.is_empty() && children.iter().all(|c| matches!(c, EntityChange::Unchanged { .. })) {
+        EntityChange::Unchanged {
+            kind: EntityKind::Footprint,
+            identity: spec.display_name.clone(),
+        }
+    } else {
+        EntityChange::Update {
+            kind: EntityKind::Footprint,
+            identity: spec.display_name.clone(),
+            prop_changes,
+            children,
+        }
+    }
+}
+
+fn diff_pcb_pads(spec_pads: &[PadSpec], existing: &[api::Pad], out: &mut Vec<EntityChange>) {
+    for spec_pad in spec_pads {
+        match existing.iter().find(|p| p.pad_name == spec_pad.pad_name) {
+            Some(existing_pad) => {
+                let mut prop_changes = Vec::new();
+
+                // Compare location
+                if spec_pad.at != existing_pad.location {
+                    prop_changes.push(PropChange {
+                        field: "location".to_string(),
+                        old_value: format!("{},{}", existing_pad.location.x.to_mils(), existing_pad.location.y.to_mils()),
+                        new_value: format!("{},{}", spec_pad.at.x.to_mils(), spec_pad.at.y.to_mils()),
+                    });
+                }
+                if let Some(shape) = spec_pad.shape {
+                    if shape != existing_pad.shape {
+                        prop_changes.push(PropChange {
+                            field: "shape".to_string(),
+                            old_value: format!("{:?}", existing_pad.shape),
+                            new_value: format!("{shape:?}"),
+                        });
+                    }
+                }
+                if let Some(x_size) = spec_pad.x_size {
+                    if x_size != existing_pad.x_size {
+                        prop_changes.push(PropChange {
+                            field: "x_size".to_string(),
+                            old_value: format!("{}mil", existing_pad.x_size.to_mils()),
+                            new_value: format!("{}mil", x_size.to_mils()),
+                        });
+                    }
+                }
+                if let Some(y_size) = spec_pad.y_size {
+                    if y_size != existing_pad.y_size {
+                        prop_changes.push(PropChange {
+                            field: "y_size".to_string(),
+                            old_value: format!("{}mil", existing_pad.y_size.to_mils()),
+                            new_value: format!("{}mil", y_size.to_mils()),
+                        });
+                    }
+                }
+                if let Some(hole_size) = spec_pad.hole_size {
+                    if hole_size != existing_pad.hole_size {
+                        prop_changes.push(PropChange {
+                            field: "hole_size".to_string(),
+                            old_value: format!("{}mil", existing_pad.hole_size.to_mils()),
+                            new_value: format!("{}mil", hole_size.to_mils()),
+                        });
+                    }
+                }
+                if let Some(is_plated) = spec_pad.is_plated {
+                    if is_plated != existing_pad.is_plated {
+                        prop_changes.push(PropChange {
+                            field: "is_plated".to_string(),
+                            old_value: existing_pad.is_plated.to_string(),
+                            new_value: is_plated.to_string(),
+                        });
+                    }
+                }
+                if let Some(layer) = spec_pad.layer {
+                    if layer != existing_pad.layer {
+                        prop_changes.push(PropChange {
+                            field: "layer".to_string(),
+                            old_value: format!("{:?}", existing_pad.layer),
+                            new_value: format!("{layer:?}"),
+                        });
+                    }
+                }
+                if let Some(rotation) = spec_pad.rotation {
+                    if (rotation - existing_pad.rotation).abs() > f64::EPSILON {
+                        prop_changes.push(PropChange {
+                            field: "rotation".to_string(),
+                            old_value: existing_pad.rotation.to_string(),
+                            new_value: rotation.to_string(),
+                        });
+                    }
+                }
+
+                if prop_changes.is_empty() {
+                    out.push(EntityChange::Unchanged {
+                        kind: EntityKind::Pad,
+                        identity: spec_pad.pad_name.clone(),
+                    });
+                } else {
+                    out.push(EntityChange::Update {
+                        kind: EntityKind::Pad,
+                        identity: spec_pad.pad_name.clone(),
+                        prop_changes,
+                        children: vec![],
+                    });
+                }
+            }
+            None => {
+                out.push(pad_spec_to_add(spec_pad));
+            }
+        }
+    }
+}
+
+fn diff_pcb_graphics(
+    spec_graphics: &[crate::model::PcbGraphicSpec],
+    existing: &[api::PcbGraphic],
+    out: &mut Vec<EntityChange>,
+) {
+    for spec_graphic in spec_graphics {
+        let found = existing.iter().any(|g| {
+            g.unique_id().map_or(false, |uid| uid == spec_graphic.unique_id)
+        });
+        if found {
+            // Graphic exists — report as unchanged
+            // (full field-by-field diff for PCB graphic types would be very verbose)
+            out.push(EntityChange::Unchanged {
+                kind: EntityKind::Graphic,
+                identity: spec_graphic.unique_id.clone(),
+            });
+        } else {
+            out.push(EntityChange::Add {
+                kind: EntityKind::Graphic,
+                identity: spec_graphic.unique_id.clone(),
+                props: vec![PropValue {
+                    field: "type".to_string(),
+                    value: format!("{:?}", spec_graphic.graphic_type),
+                }],
+                children: vec![],
+            });
+        }
     }
 }
 
@@ -1422,6 +1626,135 @@ mod tests {
             }
         } else {
             panic!("expected Footprint Add");
+        }
+    }
+
+    // ── PcbLib reconciler with existing doc ────────────────────────────────
+
+    use crate::executor::apply_spec_pcblib;
+    use altium_format::PcbLib;
+
+    fn blank_pcblib() -> PcbLib {
+        PcbLib::new_blank_ad26()
+    }
+
+    #[test]
+    fn pcblib_reconcile_unchanged() {
+        let spec = make_pcblib_spec(vec![
+            make_footprint("SOT23", vec![make_pad("1", -50, 0), make_pad("2", 50, 0)]),
+        ]);
+        let mut lib = blank_pcblib();
+        apply_spec_pcblib(&spec, &mut lib).unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        lib.save(tmp.path()).unwrap();
+
+        let eco = reconcile_pcblib(
+            &spec,
+            tmp.path().to_path_buf(),
+            PathBuf::from("test.pcblib-spec"),
+        );
+
+        assert_eq!(eco.changes.len(), 1);
+        assert!(matches!(&eco.changes[0], EntityChange::Unchanged { kind: EntityKind::Footprint, identity } if identity == "SOT23"));
+    }
+
+    #[test]
+    fn pcblib_reconcile_detects_new_footprint() {
+        let spec1 = make_pcblib_spec(vec![
+            make_footprint("SOT23", vec![make_pad("1", 0, 0)]),
+        ]);
+        let mut lib = blank_pcblib();
+        apply_spec_pcblib(&spec1, &mut lib).unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        lib.save(tmp.path()).unwrap();
+
+        let spec2 = make_pcblib_spec(vec![
+            make_footprint("SOT23", vec![make_pad("1", 0, 0)]),
+            make_footprint("0603", vec![make_pad("1", -30, 0), make_pad("2", 30, 0)]),
+        ]);
+
+        let eco = reconcile_pcblib(
+            &spec2,
+            tmp.path().to_path_buf(),
+            PathBuf::from("test.pcblib-spec"),
+        );
+
+        assert_eq!(eco.changes.len(), 2);
+        assert!(matches!(&eco.changes[0], EntityChange::Unchanged { .. }));
+        assert!(matches!(&eco.changes[1], EntityChange::Add { kind: EntityKind::Footprint, identity, .. } if identity == "0603"));
+    }
+
+    #[test]
+    fn pcblib_reconcile_detects_description_change() {
+        let spec1 = make_pcblib_spec(vec![
+            make_footprint("0805", vec![make_pad("1", 0, 0)]),
+        ]);
+        let mut lib = blank_pcblib();
+        apply_spec_pcblib(&spec1, &mut lib).unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        lib.save(tmp.path()).unwrap();
+
+        let spec2 = make_pcblib_spec(vec![FootprintSpec {
+            display_name: "0805".to_string(),
+            description: Some("Updated 0805".to_string()),
+            height: None,
+            pattern: None,
+            pads: vec![make_pad("1", 0, 0)],
+            graphics: vec![],
+        }]);
+
+        let eco = reconcile_pcblib(
+            &spec2,
+            tmp.path().to_path_buf(),
+            PathBuf::from("test.pcblib-spec"),
+        );
+
+        assert_eq!(eco.changes.len(), 1);
+        if let EntityChange::Update { prop_changes, .. } = &eco.changes[0] {
+            let desc_change = prop_changes.iter().find(|pc| pc.field == "description").unwrap();
+            assert_eq!(desc_change.old_value, "Test footprint");
+            assert_eq!(desc_change.new_value, "Updated 0805");
+        } else {
+            panic!("expected Update, got {:?}", eco.changes[0]);
+        }
+    }
+
+    #[test]
+    fn pcblib_reconcile_detects_new_pad() {
+        let spec1 = make_pcblib_spec(vec![
+            make_footprint("QFP", vec![make_pad("1", 0, 0)]),
+        ]);
+        let mut lib = blank_pcblib();
+        apply_spec_pcblib(&spec1, &mut lib).unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        lib.save(tmp.path()).unwrap();
+
+        let spec2 = make_pcblib_spec(vec![
+            make_footprint("QFP", vec![make_pad("1", 0, 0), make_pad("2", 100, 0)]),
+        ]);
+
+        let eco = reconcile_pcblib(
+            &spec2,
+            tmp.path().to_path_buf(),
+            PathBuf::from("test.pcblib-spec"),
+        );
+
+        assert_eq!(eco.changes.len(), 1);
+        if let EntityChange::Update { children, .. } = &eco.changes[0] {
+            let pad_unchanged = children.iter()
+                .filter(|c| matches!(c, EntityChange::Unchanged { kind: EntityKind::Pad, .. }))
+                .count();
+            let pad_adds = children.iter()
+                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Pad, .. }))
+                .count();
+            assert_eq!(pad_unchanged, 1); // pad "1"
+            assert_eq!(pad_adds, 1); // pad "2"
+        } else {
+            panic!("expected Update");
         }
     }
 }

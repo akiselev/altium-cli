@@ -21,6 +21,8 @@ mod schlib_types;
 pub(crate) mod schlib_read;
 pub(crate) mod schlib_write;
 mod pcblib_types;
+pub(crate) mod pcblib_read;
+pub(crate) mod pcblib_write;
 mod project_types;
 pub(crate) mod project_read;
 pub(crate) mod project_write;
@@ -37,7 +39,7 @@ pub use schlib_types::{
     ImageGraphic, LabelGraphic, TextFrameGraphic,
 };
 
-// ── PcbLib types (types only, read/write deferred) ───────────────────────────
+// ── PcbLib types ─────────────────────────────────────────────────────────────
 
 pub use pcblib_types::{
     Footprint, Pad, PcbGraphic,

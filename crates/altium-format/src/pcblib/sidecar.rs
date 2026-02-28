@@ -79,7 +79,7 @@ pub(crate) fn parse_unique_id_primitive_information(
 }
 
 /// One entry from ExtendedPrimitiveInformation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ExtendedPrimitiveInfoEntry {
     pub(crate) primitive_index: usize,
     pub(crate) primitive_object_id: PcbObjectId,

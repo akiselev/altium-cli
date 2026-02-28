@@ -21,7 +21,7 @@ use crate::{AltiumFormatError, Result};
 // ---------------------------------------------------------------------------
 
 /// Corner enable flags for rounded/chamfered rectangle custom shapes.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CustomShapeCorners {
     pub(crate) bottom_left: bool,
     pub(crate) bottom_right: bool,
@@ -31,7 +31,7 @@ pub(crate) struct CustomShapeCorners {
 }
 
 /// One per-layer shape definition within a CustomShapes entry.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CustomShapeLayerDef {
     pub(crate) layer: String,
     pub(crate) x_size: Coord,
@@ -41,7 +41,7 @@ pub(crate) struct CustomShapeLayerDef {
 }
 
 /// One entry from the CustomShapes sidecar stream.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CustomShapeEntry {
     pub(crate) primitive_index: usize,
     pub(crate) layer_defs: Vec<CustomShapeLayerDef>,
@@ -130,7 +130,7 @@ pub(crate) fn parse_custom_shapes(data: &[u8]) -> Result<Vec<CustomShapeEntry>> 
 // ---------------------------------------------------------------------------
 
 /// One per-layer mask shape definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CustomMaskLayerDef {
     pub(crate) layer: String,
     pub(crate) shape: String,
@@ -140,7 +140,7 @@ pub(crate) struct CustomMaskLayerDef {
 }
 
 /// One entry from the CustomMaskShapes sidecar stream.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CustomMaskShapeEntry {
     pub(crate) primitive_index: usize,
     pub(crate) mask_defs: Vec<CustomMaskLayerDef>,
@@ -190,14 +190,14 @@ pub(crate) fn parse_custom_mask_shapes(data: &[u8]) -> Result<Vec<CustomMaskShap
 // ---------------------------------------------------------------------------
 
 /// One per-layer corner radius definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CornerRadiusLayerDef {
     pub(crate) layer: String,
     pub(crate) corner_radius_size: Coord,
 }
 
 /// One entry from the CornerRadiusChamfer sidecar stream.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct CornerRadiusChamferEntry {
     pub(crate) primitive_index: usize,
     pub(crate) layer_defs: Vec<CornerRadiusLayerDef>,

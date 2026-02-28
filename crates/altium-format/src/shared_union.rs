@@ -16,12 +16,14 @@ use crate::binary_io::{BinaryReader, BinaryWriter};
 use crate::param_collection::ParameterCollection;
 use crate::{AltiumFormatError, Result};
 
+#[derive(Clone)]
 pub(crate) struct SharedUnionEntry {
     pub(crate) primitive_index: i32,
     pub(crate) object_id: PcbObjectId,
     pub(crate) children: SharedUnionChildren,
 }
 
+#[derive(Clone)]
 pub(crate) enum SharedUnionChildren {
     /// Hidden inline primitives (HIDDENPRIMITIVESCOUNT > 0).
     /// Stored as ParameterCollection since these are full primitive descriptions.
@@ -32,6 +34,7 @@ pub(crate) enum SharedUnionChildren {
     None,
 }
 
+#[derive(Clone)]
 pub(crate) struct SharedUnionRef {
     pub(crate) index: i32,
     pub(crate) object_id: PcbObjectId,

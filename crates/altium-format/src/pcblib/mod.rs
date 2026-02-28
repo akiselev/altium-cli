@@ -72,7 +72,7 @@ pub(crate) struct PcbFootprint {
     pub(crate) shared_unions: Vec<crate::shared_union::SharedUnionEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbPrimitiveCommon {
     pub(crate) layer: V6Layer,
     pub(crate) flags: PcbFlags,
@@ -326,7 +326,7 @@ pub(crate) struct PcbRegion {
 /// TV6_PadCache — 38 bytes at pad main subrecord offsets 67-104.
 ///
 /// Confirmed by C# `TV6_PadCache` struct (Pack=1) + Ghidra setter functions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbPadCache {
     pub(crate) plane_connection_style: PlaneConnectionStyle,
     pub(crate) relief_conductor_width: Coord,
@@ -351,7 +351,7 @@ pub(crate) struct PcbPadCache {
 /// Per-layer stack data for pads (subrecord 5, 596+ bytes when present).
 ///
 /// Confirmed by Ghidra FUN_018a2840 (init) + FUN_0187c7d0 (per-layer loop).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbPadStackData {
     pub(crate) inner_size_x: [Coord; 29],
     pub(crate) inner_size_y: [Coord; 29],
@@ -377,7 +377,7 @@ pub(crate) struct PcbPadStackData {
 /// - CRPctEx (double in C#, stored as Coord in binary)
 /// - CRSize (int)
 /// - UseCRPct (bool)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbPadExtendedCrEntry {
     pub(crate) layer_id: u32,
     pub(crate) alt_shape: u8,
@@ -438,7 +438,7 @@ pub(crate) struct PcbPad {
     pub(crate) unique_id: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbPadSub4Extension {
     pub(crate) header_len: u32,
     pub(crate) thermal_relief_count: u32,
@@ -454,7 +454,7 @@ pub(crate) struct PcbPadSub4Extension {
     pub(crate) y_pad_offset_all_layers: Coord,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbPadThermalReliefEntry {
     pub(crate) layer: V7Layer,
     pub(crate) defined_type: u8,
@@ -470,7 +470,7 @@ pub(crate) struct PcbPadThermalReliefEntry {
     pub(crate) use_custom_relief: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbComponentBody {
     pub(crate) common: PcbPrimitiveCommon,
     // Region-inherited parameters
@@ -811,6 +811,179 @@ impl PcbLib {
         validate_pcblib_invariants(self)
     }
 
+    // ── High-Level API ───────────────────────────────────────────────────────
+
+    /// Returns a single footprint by display name.
+    pub fn footprint(&self, name: &str) -> Result<crate::api::Footprint> {
+        let fp = self.find_footprint(name)?;
+        Ok(crate::api::pcblib_read::footprint_from_internal(fp))
+    }
+
+    /// Returns all footprints as public API types.
+    pub fn footprints(&self) -> Vec<crate::api::Footprint> {
+        self.footprints
+            .iter()
+            .map(crate::api::pcblib_read::footprint_from_internal)
+            .collect()
+    }
+
+    /// Adds a new footprint to the library.
+    ///
+    /// Returns an error if a footprint with the same `display_name` already exists.
+    pub fn add_footprint(&mut self, fp: crate::api::Footprint) -> Result<()> {
+        // Check for duplicate display name
+        if self.footprints.iter().any(|f| f.display_name == fp.display_name) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "display_name".to_owned(),
+                detail: format!("footprint '{}' already exists", fp.display_name),
+            });
+        }
+
+        // Derive CFB key: sanitize name, truncate to 31 chars if needed
+        let sanitized = section_keys::sanitize_cfb_name(&fp.display_name);
+        let cfb_key = if sanitized.len() > 31 {
+            let truncated = sanitized[..31].to_owned();
+            // Check for CFB key collision
+            if self.footprints.iter().any(|f| f.cfb_key == truncated) {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "cfb_key".to_owned(),
+                    detail: format!(
+                        "truncated CFB key '{}' collides with existing footprint",
+                        truncated
+                    ),
+                });
+            }
+            self.section_keys.insert(fp.display_name.clone(), truncated.clone());
+            truncated
+        } else {
+            // Check for CFB key collision
+            if self.footprints.iter().any(|f| f.cfb_key == sanitized) {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "cfb_key".to_owned(),
+                    detail: format!(
+                        "CFB key '{}' collides with existing footprint",
+                        sanitized
+                    ),
+                });
+            }
+            sanitized
+        };
+
+        let pad_count = fp.pads.len() as u32;
+        let height = fp.height;
+        let description = fp.description.clone();
+        let name = fp.display_name.clone();
+
+        let internal = crate::api::pcblib_write::footprint_to_internal(&fp, &cfb_key);
+        self.footprints.push(internal);
+
+        self.component_toc.push(PcbLibComponentTocEntry {
+            name,
+            pad_count,
+            height,
+            description,
+        });
+
+        self.validate_invariants()
+            .with_context(|| format!("after adding footprint '{}'", fp.display_name))
+    }
+
+    /// Replaces an existing footprint, matched by `display_name`.
+    ///
+    /// Returns an error if no footprint with the given `display_name` exists.
+    pub fn update_footprint(&mut self, fp: &crate::api::Footprint) -> Result<()> {
+        let idx = self.footprints
+            .iter()
+            .position(|f| f.display_name == fp.display_name)
+            .ok_or_else(|| AltiumFormatError::StreamNotFound(
+                format!("footprint '{}' not found", fp.display_name),
+            ))?;
+
+        let existing = &self.footprints[idx];
+        let updated = crate::api::pcblib_write::update_footprint_internal(fp, existing);
+
+        // Update TOC entry
+        if let Some(toc) = self.component_toc.iter_mut().find(|t| t.name == fp.display_name) {
+            toc.pad_count = fp.pads.len() as u32;
+            toc.height = fp.height;
+            toc.description = fp.description.clone();
+        }
+
+        self.footprints[idx] = updated;
+
+        self.validate_invariants()
+            .with_context(|| format!("after updating footprint '{}'", fp.display_name))
+    }
+
+    /// Removes a footprint by display name.
+    ///
+    /// Returns an error if no footprint with the given name exists.
+    pub fn remove_footprint(&mut self, name: &str) -> Result<()> {
+        let idx = self.footprints
+            .iter()
+            .position(|f| f.display_name == name)
+            .ok_or_else(|| AltiumFormatError::StreamNotFound(
+                format!("footprint '{name}' not found"),
+            ))?;
+
+        self.footprints.remove(idx);
+        self.component_toc.retain(|t| t.name != name);
+        self.section_keys.remove(name);
+
+        self.validate_invariants()
+            .with_context(|| format!("after removing footprint '{name}'"))
+    }
+
+    /// Creates a minimal valid PcbLib for use in tests and as a starting point
+    /// for programmatic library construction.
+    pub fn new_blank_ad26() -> Self {
+        let board_config = crate::board_config::parse_board_config(
+            &mut crate::param_collection::ParameterCollection::new(),
+        )
+        .expect("empty ParameterCollection should produce valid board config defaults");
+
+        Self {
+            header: PcbFileHeader {
+                version_string: PCB_LIBRARY_BINARY_HEADER_V6.to_owned(),
+                version: 5.01,
+                unique_id: Some(crate::util::generate_unique_id()),
+            },
+            section_keys: HashMap::new(),
+            library: PcbLibraryData {
+                filename: String::new(),
+                kind: "Protel_Advanced_PCB_Library".to_owned(),
+                version: String::new(),
+                date: String::new(),
+                time: String::new(),
+                board_config,
+            },
+            component_toc: Vec::new(),
+            model_entries: Vec::new(),
+            model_no_embed_entries: Vec::new(),
+            layer_kind_mapping: PcbLayerKindMapping {
+                version: String::new(),
+                hash: 0,
+                entries: Vec::new(),
+            },
+            pad_via_library: None,
+            embedded_fonts: Vec::new(),
+            texture_entries: Vec::new(),
+            footprints: Vec::new(),
+            file_version_info: None,
+            source_path: None,
+        }
+    }
+
+    /// Find a footprint by display name.
+    fn find_footprint(&self, name: &str) -> Result<&PcbFootprint> {
+        self.footprints
+            .iter()
+            .find(|f| f.display_name == name)
+            .ok_or_else(|| AltiumFormatError::StreamNotFound(
+                format!("footprint '{name}' not found"),
+            ))
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let mut doc = TrackedCfbDocument::open(path)?;
@@ -1015,20 +1188,19 @@ impl PcbLib {
             &serialize_component_toc_data(&self.component_toc),
         )?;
 
-        if !self.model_entries.is_empty() {
-            cfb.create_storage("/Library/Models")?;
-            cfb.write_stream(
-                "/Library/Models/Header",
-                &serialize_u32_header(self.model_entries.len() as u32),
-            )?;
-            cfb.write_stream(
-                "/Library/Models/Data",
-                &serialize_model_entries_data(&self.model_entries),
-            )?;
-            for (i, entry) in self.model_entries.iter().enumerate() {
-                if let Some(blob) = &entry.blob {
-                    cfb.write_stream(&format!("/Library/Models/{i}"), blob)?;
-                }
+        // Models: Altium always writes this storage, even when empty.
+        cfb.create_storage("/Library/Models")?;
+        cfb.write_stream(
+            "/Library/Models/Header",
+            &serialize_u32_header(self.model_entries.len() as u32),
+        )?;
+        cfb.write_stream(
+            "/Library/Models/Data",
+            &serialize_model_entries_data(&self.model_entries),
+        )?;
+        for (i, entry) in self.model_entries.iter().enumerate() {
+            if let Some(blob) = &entry.blob {
+                cfb.write_stream(&format!("/Library/Models/{i}"), blob)?;
             }
         }
 
@@ -2251,6 +2423,184 @@ mod tests {
         let _ = PcbObjectId::Fill;
         let _ = PcbObjectId::Region;
         let _ = PcbObjectId::ComponentBody;
+    }
+
+    // ── High-Level API tests ─────────────────────────────────────────────
+
+    fn make_test_footprint(name: &str) -> crate::api::Footprint {
+        use crate::api::{Pad, TrackGraphic, PcbGraphic};
+        crate::api::Footprint {
+            display_name: name.to_owned(),
+            description: format!("Test footprint {name}"),
+            pattern: name.to_owned(),
+            height: Coord::from_mils(50),
+            pads: vec![
+                Pad {
+                    pad_name: "1".to_owned(),
+                    unique_id: None,
+                    location: CoordPoint::new(Coord::ZERO, Coord::ZERO),
+                    shape: PadShape::Round,
+                    x_size: Coord::from_mils(60),
+                    y_size: Coord::from_mils(60),
+                    rotation: 0.0,
+                    hole_size: Coord::from_mils(30),
+                    is_plated: true,
+                    layer: V6Layer::MultiLayer,
+                    pad_mode: PadStackMode::Simple,
+                    solder_mask_expansion: Coord::ZERO,
+                    paste_mask_expansion: Coord::ZERO,
+                    plane_connection: PlaneConnectionStyle::default(),
+                    relief_conductor_width: Coord::ZERO,
+                    relief_entries: 4,
+                    relief_air_gap: Coord::ZERO,
+                },
+            ],
+            graphics: vec![
+                PcbGraphic::Track(TrackGraphic {
+                    unique_id: None,
+                    layer: V6Layer::TopOverlay,
+                    flags: PcbFlags::default(),
+                    start: CoordPoint::new(Coord::from_mils(-50), Coord::from_mils(-50)),
+                    end: CoordPoint::new(Coord::from_mils(50), Coord::from_mils(-50)),
+                    width: Coord::from_mils(10),
+                }),
+            ],
+        }
+    }
+
+    #[test]
+    fn api_new_blank_ad26() {
+        let lib = PcbLib::new_blank_ad26();
+        assert_eq!(lib.footprint_count(), 0);
+        assert!(lib.footprint_names().is_empty());
+        lib.validate_invariants().unwrap();
+    }
+
+    #[test]
+    fn api_add_footprint() {
+        let mut lib = PcbLib::new_blank_ad26();
+        let fp = make_test_footprint("TestFP");
+        lib.add_footprint(fp).unwrap();
+
+        assert_eq!(lib.footprint_count(), 1);
+        assert_eq!(lib.footprint_names(), vec!["TestFP"]);
+
+        let read_back = lib.footprint("TestFP").unwrap();
+        assert_eq!(read_back.display_name, "TestFP");
+        assert_eq!(read_back.description, "Test footprint TestFP");
+        assert_eq!(read_back.pads.len(), 1);
+        assert_eq!(read_back.pads[0].pad_name, "1");
+        assert_eq!(read_back.graphics.len(), 1);
+    }
+
+    #[test]
+    fn api_add_footprint_duplicate_fails() {
+        let mut lib = PcbLib::new_blank_ad26();
+        lib.add_footprint(make_test_footprint("DupFP")).unwrap();
+        let err = lib.add_footprint(make_test_footprint("DupFP")).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "error: {err}");
+    }
+
+    #[test]
+    fn api_update_footprint() {
+        let mut lib = PcbLib::new_blank_ad26();
+        lib.add_footprint(make_test_footprint("UpdateMe")).unwrap();
+
+        let mut fp = lib.footprint("UpdateMe").unwrap();
+        assert_eq!(fp.pads.len(), 1);
+        // Add another pad
+        fp.pads.push(crate::api::Pad {
+            pad_name: "2".to_owned(),
+            unique_id: None,
+            location: CoordPoint::new(Coord::from_mils(100), Coord::ZERO),
+            shape: PadShape::Round,
+            x_size: Coord::from_mils(60),
+            y_size: Coord::from_mils(60),
+            rotation: 0.0,
+            hole_size: Coord::from_mils(30),
+            is_plated: true,
+            layer: V6Layer::MultiLayer,
+            pad_mode: PadStackMode::Simple,
+            solder_mask_expansion: Coord::ZERO,
+            paste_mask_expansion: Coord::ZERO,
+            plane_connection: PlaneConnectionStyle::default(),
+            relief_conductor_width: Coord::ZERO,
+            relief_entries: 4,
+            relief_air_gap: Coord::ZERO,
+        });
+        lib.update_footprint(&fp).unwrap();
+
+        let read_back = lib.footprint("UpdateMe").unwrap();
+        assert_eq!(read_back.pads.len(), 2);
+        assert_eq!(read_back.pads[1].pad_name, "2");
+    }
+
+    #[test]
+    fn api_remove_footprint() {
+        let mut lib = PcbLib::new_blank_ad26();
+        lib.add_footprint(make_test_footprint("RemoveMe")).unwrap();
+        assert_eq!(lib.footprint_count(), 1);
+
+        lib.remove_footprint("RemoveMe").unwrap();
+        assert_eq!(lib.footprint_count(), 0);
+    }
+
+    #[test]
+    fn api_remove_not_found() {
+        let mut lib = PcbLib::new_blank_ad26();
+        let err = lib.remove_footprint("DoesNotExist").unwrap_err();
+        assert!(err.to_string().contains("not found"), "error: {err}");
+    }
+
+    #[test]
+    fn api_add_save_reopen() {
+        let mut lib = PcbLib::new_blank_ad26();
+        lib.add_footprint(make_test_footprint("Roundtrip")).unwrap();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        lib.save(tmp.path()).unwrap();
+
+        let reopened = PcbLib::open(tmp.path()).unwrap();
+        assert_eq!(reopened.footprint_count(), 1);
+        let fp = reopened.footprint("Roundtrip").unwrap();
+        assert_eq!(fp.display_name, "Roundtrip");
+        assert_eq!(fp.pads.len(), 1);
+        assert_eq!(fp.pads[0].pad_name, "1");
+        assert_eq!(fp.graphics.len(), 1);
+    }
+
+    #[test]
+    fn api_footprints_returns_all() {
+        let mut lib = PcbLib::new_blank_ad26();
+        lib.add_footprint(make_test_footprint("A")).unwrap();
+        lib.add_footprint(make_test_footprint("B")).unwrap();
+        lib.add_footprint(make_test_footprint("C")).unwrap();
+
+        let all = lib.footprints();
+        assert_eq!(all.len(), 3);
+        let names: Vec<&str> = all.iter().map(|f| f.display_name.as_str()).collect();
+        assert!(names.contains(&"A"));
+        assert!(names.contains(&"B"));
+        assert!(names.contains(&"C"));
+    }
+
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn api_read_fixture_footprints() {
+        for path in fixture_paths() {
+            let lib = PcbLib::open(&path).unwrap();
+            let api_fps = lib.footprints();
+            assert_eq!(
+                api_fps.len(),
+                lib.footprint_count(),
+                "footprint count mismatch for {}",
+                path.display()
+            );
+            for fp in &api_fps {
+                assert!(!fp.display_name.is_empty());
+                assert!(!fp.pattern.is_empty());
+            }
+        }
     }
 
     #[cfg(feature = "test-fixtures")]

@@ -14,10 +14,13 @@ use altium_format_types::sch::{
     PinElectricalType, StdLogicState, TextJustification, LineShape, HorizontalAlign,
 };
 
+use altium_format_types::pcb::{PadShape, PcbFlags, RegionKind, V6Layer};
+
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
-    ComponentSpec, FootprintMapSpec, GraphicSpec, GraphicType,
-    ParameterSpec, PcbLibSpec, PinSpec, PrjPcbSpec, SchLibSpec,
+    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType,
+    PadSpec, ParameterSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec,
+    PinSpec, PrjPcbSpec, SchLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -51,14 +54,31 @@ pub fn apply_spec_schlib(
 }
 
 /// Apply a PcbLib spec directly to a document.
+///
+/// For each footprint in the spec:
+/// - If the footprint already exists (matched by `display_name`), merge the
+///   spec fields over the existing footprint (additive-only: `Option::Some`
+///   overrides, `None` preserves existing).
+/// - If the footprint doesn't exist, create it from the spec with defaults.
 pub fn apply_spec_pcblib(
-    _spec: &PcbLibSpec,
-    _lib: &mut PcbLib,
+    spec: &PcbLibSpec,
+    lib: &mut PcbLib,
 ) -> Result<(), SpecError> {
-    Err(SpecError::no_span(
-        SpecErrorCode::AltiumFormat,
-        "PcbLib executor not yet implemented (no PcbLib high-level write API)",
-    ))
+    for fp_spec in &spec.footprints {
+        match lib.footprint(&fp_spec.display_name) {
+            Ok(existing) => {
+                let merged = merge_spec_into_footprint(&existing, fp_spec);
+                lib.update_footprint(&merged)
+                    .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+            }
+            Err(_) => {
+                let fp = footprint_from_pcblib_spec(fp_spec);
+                lib.add_footprint(fp)
+                    .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Apply a PrjPcb spec to a project document.
@@ -566,6 +586,174 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
     }
 }
 
+// ── PCB: Footprint from spec (new footprints) ─────────────────────────────────
+
+/// Create a complete `api::Footprint` from a `FootprintSpec`, filling fields
+/// not specified in the spec with sensible defaults.
+fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
+    api::Footprint {
+        display_name: spec.display_name.clone(),
+        description: spec.description.clone().unwrap_or_default(),
+        pattern: spec.pattern.clone().unwrap_or_else(|| spec.display_name.clone()),
+        height: spec.height.unwrap_or(Coord::ZERO),
+        pads: spec.pads.iter().map(pad_from_pcblib_spec).collect(),
+        graphics: spec.graphics.iter().filter_map(pcb_graphic_from_spec).collect(),
+    }
+}
+
+fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
+    api::Pad {
+        pad_name: spec.pad_name.clone(),
+        unique_id: None,
+        location: spec.at,
+        shape: spec.shape.unwrap_or(PadShape::Round),
+        x_size: spec.x_size.unwrap_or_else(|| Coord::from_mils(60)),
+        y_size: spec.y_size.unwrap_or_else(|| Coord::from_mils(60)),
+        rotation: spec.rotation.unwrap_or(0.0),
+        hole_size: spec.hole_size.unwrap_or(Coord::ZERO),
+        is_plated: spec.is_plated.unwrap_or(true),
+        layer: spec.layer.unwrap_or(V6Layer::MultiLayer),
+        pad_mode: spec.pad_mode.unwrap_or_default(),
+        solder_mask_expansion: spec.solder_mask_expansion.unwrap_or(Coord::ZERO),
+        paste_mask_expansion: spec.paste_mask_expansion.unwrap_or(Coord::ZERO),
+        plane_connection: spec.plane_connection.unwrap_or_default(),
+        relief_conductor_width: spec.relief_conductor_width.unwrap_or(Coord::ZERO),
+        relief_entries: spec.relief_entries.unwrap_or(4),
+        relief_air_gap: spec.relief_air_gap.unwrap_or(Coord::ZERO),
+    }
+}
+
+fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
+    let props = &spec.properties;
+    let layer = props.layer.unwrap_or(V6Layer::TopOverlay);
+    let flags = PcbFlags::default();
+    let width = props.width.unwrap_or(Coord::ZERO);
+
+    match spec.graphic_type {
+        PcbGraphicType::Track => Some(api::PcbGraphic::Track(api::TrackGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer,
+            flags,
+            start: props.from.unwrap_or_default(),
+            end: props.to.unwrap_or_default(),
+            width,
+        })),
+        PcbGraphicType::Arc => Some(api::PcbGraphic::Arc(api::PcbArcGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer,
+            flags,
+            center: props.center.unwrap_or_default(),
+            radius: props.radius.unwrap_or(Coord::ZERO),
+            start_angle: props.start_angle.unwrap_or(0.0),
+            end_angle: props.end_angle.unwrap_or(360.0),
+            width,
+        })),
+        PcbGraphicType::Fill => Some(api::PcbGraphic::Fill(api::FillGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer,
+            flags,
+            corner1: props.from.unwrap_or_default(),
+            corner2: props.to.unwrap_or_default(),
+            rotation: props.rotation.unwrap_or(0.0),
+        })),
+        PcbGraphicType::Region => Some(api::PcbGraphic::Region(api::RegionGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer,
+            flags,
+            kind: RegionKind::default(),
+            outline: props.points.clone().unwrap_or_default(),
+            holes: Vec::new(),
+        })),
+        PcbGraphicType::Text => Some(api::PcbGraphic::Text(api::TextGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer,
+            flags,
+            location: props.at.unwrap_or_default(),
+            text: props.text.clone().unwrap_or_default(),
+            rotation: props.rotation.unwrap_or(0.0),
+            height: props.width.unwrap_or_else(|| Coord::from_mils(60)),
+            width: Coord::ZERO,
+            color: altium_format_types::color::Color::default(),
+            font_name: String::new(),
+            is_mirrored: false,
+        })),
+        PcbGraphicType::Via => Some(api::PcbGraphic::Via(api::ViaGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer: V6Layer::MultiLayer,
+            flags,
+            location: props.center.unwrap_or_default(),
+            diameter: props.diameter.unwrap_or_else(|| Coord::from_mils(50)),
+            hole_size: props.hole_size.unwrap_or_else(|| Coord::from_mils(28)),
+            from_layer: V6Layer::TopLayer,
+            to_layer: V6Layer::BottomLayer,
+        })),
+        PcbGraphicType::ComponentBody | PcbGraphicType::Polyline => None,
+    }
+}
+
+// ── PCB: Merge spec into existing footprint ────────────────────────────────────
+
+/// Merge `FootprintSpec` fields over an existing `api::Footprint`.
+///
+/// - Top-level `Option` fields: override if `Some`, preserve if `None`
+/// - Children (pads, graphics): match by natural key, update matched, add unmatched
+/// - Existing children not in spec: preserved (additive-only)
+fn merge_spec_into_footprint(existing: &api::Footprint, spec: &FootprintSpec) -> api::Footprint {
+    let mut result = existing.clone();
+
+    if let Some(ref d) = spec.description {
+        result.description = d.clone();
+    }
+    if let Some(ref p) = spec.pattern {
+        result.pattern = p.clone();
+    }
+    if let Some(h) = spec.height {
+        result.height = h;
+    }
+
+    // Merge pads by pad_name
+    for pad_spec in &spec.pads {
+        if let Some(pad) = result.pads.iter_mut().find(|p| p.pad_name == pad_spec.pad_name) {
+            apply_pad_spec(pad, pad_spec);
+        } else {
+            result.pads.push(pad_from_pcblib_spec(pad_spec));
+        }
+    }
+
+    // Merge graphics by unique_id
+    for graphic_spec in &spec.graphics {
+        if let Some(pos) = result.graphics.iter().position(|g| {
+            g.unique_id().map_or(false, |uid| uid == graphic_spec.unique_id)
+        }) {
+            if let Some(new_graphic) = pcb_graphic_from_spec(graphic_spec) {
+                result.graphics[pos] = new_graphic;
+            }
+        } else if let Some(new_graphic) = pcb_graphic_from_spec(graphic_spec) {
+            result.graphics.push(new_graphic);
+        }
+    }
+
+    result
+}
+
+fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
+    pad.location = spec.at;
+    if let Some(shape) = spec.shape { pad.shape = shape; }
+    if let Some(x) = spec.x_size { pad.x_size = x; }
+    if let Some(y) = spec.y_size { pad.y_size = y; }
+    if let Some(r) = spec.rotation { pad.rotation = r; }
+    if let Some(h) = spec.hole_size { pad.hole_size = h; }
+    if let Some(p) = spec.is_plated { pad.is_plated = p; }
+    if let Some(l) = spec.layer { pad.layer = l; }
+    if let Some(m) = spec.pad_mode { pad.pad_mode = m; }
+    if let Some(s) = spec.solder_mask_expansion { pad.solder_mask_expansion = s; }
+    if let Some(p) = spec.paste_mask_expansion { pad.paste_mask_expansion = p; }
+    if let Some(c) = spec.plane_connection { pad.plane_connection = c; }
+    if let Some(w) = spec.relief_conductor_width { pad.relief_conductor_width = w; }
+    if let Some(e) = spec.relief_entries { pad.relief_entries = e; }
+    if let Some(g) = spec.relief_air_gap { pad.relief_air_gap = g; }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -842,5 +1030,81 @@ mod tests {
         // Both old and new aliases should exist
         assert!(comp.aliases.contains(&"RES".to_string()));
         assert!(comp.aliases.contains(&"RESISTOR".to_string()));
+    }
+    // ── PcbLib executor tests ──────────────────────────────────────────────────
+
+    fn make_pad_spec(name: &str) -> PadSpec {
+        PadSpec {
+            pad_name: name.to_string(),
+            at: CoordPoint { x: Coord::from_mils(0), y: Coord::from_mils(0) },
+            shape: None,
+            x_size: None,
+            y_size: None,
+            rotation: None,
+            hole_size: None,
+            is_plated: None,
+            layer: None,
+            pad_mode: None,
+            solder_mask_expansion: None,
+            paste_mask_expansion: None,
+            plane_connection: None,
+            relief_conductor_width: None,
+            relief_entries: None,
+            relief_air_gap: None,
+        }
+    }
+
+    fn make_footprint_spec(name: &str, pads: Vec<PadSpec>) -> FootprintSpec {
+        FootprintSpec {
+            display_name: name.to_string(),
+            description: Some(format!("{name} footprint")),
+            height: None,
+            pattern: None,
+            pads,
+            graphics: vec![],
+        }
+    }
+
+    #[test]
+    fn executor_pcblib_add_to_blank() {
+        let spec = PcbLibSpec {
+            footprints: vec![
+                make_footprint_spec("R0603", vec![make_pad_spec("1"), make_pad_spec("2")]),
+            ],
+        };
+        let mut lib = PcbLib::new_blank_ad26();
+
+        apply_spec_pcblib(&spec, &mut lib).unwrap();
+
+        let fp = lib.footprint("R0603").unwrap();
+        assert_eq!(fp.display_name, "R0603");
+        assert_eq!(fp.pads.len(), 2);
+        assert_eq!(fp.description, "R0603 footprint");
+        assert_eq!(fp.pattern, "R0603");
+    }
+
+    #[test]
+    fn executor_pcblib_merge() {
+        let spec1 = PcbLibSpec {
+            footprints: vec![make_footprint_spec("C0805", vec![make_pad_spec("1")])],
+        };
+        let mut lib = PcbLib::new_blank_ad26();
+        apply_spec_pcblib(&spec1, &mut lib).unwrap();
+
+        let spec2 = PcbLibSpec {
+            footprints: vec![FootprintSpec {
+                display_name: "C0805".to_string(),
+                description: Some("Updated cap".to_string()),
+                height: None,
+                pattern: None,
+                pads: vec![make_pad_spec("1"), make_pad_spec("2")],
+                graphics: vec![],
+            }],
+        };
+        apply_spec_pcblib(&spec2, &mut lib).unwrap();
+
+        let fp = lib.footprint("C0805").unwrap();
+        assert_eq!(fp.pads.len(), 2);
+        assert_eq!(fp.description, "Updated cap");
     }
 }

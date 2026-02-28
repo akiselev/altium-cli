@@ -527,7 +527,7 @@ fn run_plan(spec_file: &PathBuf, target: Option<&PathBuf>, json: bool) -> anyhow
         altium_format_spec::model::SpecModel::PcbLib(ref spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
-                reconcile_pcblib(spec_lib, library_path, spec_path)
+                reconcile_pcblib(spec_lib, resolved_target, spec_path)
             } else {
                 reconcile_pcblib_empty(spec_lib, library_path, spec_path)
             }
@@ -598,11 +598,7 @@ fn run_apply(
                 PcbLib::open(&resolved_target)
                     .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
             } else {
-                anyhow::bail!(
-                    "no existing PcbLib found at {} and PcbLib::new_blank_ad26 is not yet implemented; \
-                     provide an existing library via --target",
-                    resolved_target.display()
-                )
+                PcbLib::new_blank_ad26()
             };
 
             let out_path = output.cloned().unwrap_or(library_path);

@@ -1,11 +1,12 @@
 //! Public API types for PcbLib documents.
 //!
-//! These types are defined for future use. The read/write paths for PcbLib
-//! are deferred to a follow-up plan — SchLib establishes the pattern first.
+//! These types provide a clean, domain-typed interface for querying and mutating
+//! PCB library footprints. The read/write paths in `pcblib_read.rs` and
+//! `pcblib_write.rs` handle conversion to/from internal `PcbFootprint` types.
 
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, V6Layer,
+    PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind, V6Layer,
 };
 use altium_format_types::color::Color;
 
@@ -33,6 +34,7 @@ pub struct Footprint {
 #[derive(Debug, Clone)]
 pub struct Pad {
     pub pad_name: String,
+    pub unique_id: Option<String>,
     pub location: CoordPoint,
     pub shape: PadShape,
     pub x_size: Coord,
@@ -66,8 +68,26 @@ pub enum PcbGraphic {
     ComponentBody(ComponentBodyGraphic),
 }
 
+impl PcbGraphic {
+    /// Returns the unique ID for this graphic, if set.
+    ///
+    /// This follows the same pattern as `Graphic::unique_id()` in the SchLib API.
+    pub fn unique_id(&self) -> Option<&str> {
+        match self {
+            PcbGraphic::Track(g) => g.unique_id.as_deref(),
+            PcbGraphic::Arc(g) => g.unique_id.as_deref(),
+            PcbGraphic::Fill(g) => g.unique_id.as_deref(),
+            PcbGraphic::Region(g) => g.unique_id.as_deref(),
+            PcbGraphic::Text(g) => g.unique_id.as_deref(),
+            PcbGraphic::Via(g) => g.unique_id.as_deref(),
+            PcbGraphic::ComponentBody(g) => g.unique_id.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TrackGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
     pub start: CoordPoint,
@@ -77,6 +97,7 @@ pub struct TrackGraphic {
 
 #[derive(Debug, Clone)]
 pub struct PcbArcGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
     pub center: CoordPoint,
@@ -88,6 +109,7 @@ pub struct PcbArcGraphic {
 
 #[derive(Debug, Clone)]
 pub struct FillGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
     pub corner1: CoordPoint,
@@ -97,13 +119,17 @@ pub struct FillGraphic {
 
 #[derive(Debug, Clone)]
 pub struct RegionGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
+    pub kind: RegionKind,
     pub outline: Vec<CoordPoint>,
+    pub holes: Vec<Vec<CoordPoint>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TextGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
     pub location: CoordPoint,
@@ -112,10 +138,13 @@ pub struct TextGraphic {
     pub height: Coord,
     pub width: Coord,
     pub color: Color,
+    pub font_name: String,
+    pub is_mirrored: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct ViaGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
     pub location: CoordPoint,
@@ -127,6 +156,13 @@ pub struct ViaGraphic {
 
 #[derive(Debug, Clone)]
 pub struct ComponentBodyGraphic {
+    pub unique_id: Option<String>,
     pub layer: V6Layer,
     pub flags: PcbFlags,
+    pub standoff_height: Coord,
+    pub overall_height: Coord,
+    pub body_color_3d: Color,
+    pub body_opacity_3d: f64,
+    pub model_name: String,
+    pub outline: Vec<CoordPoint>,
 }
