@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
+use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcblib, dump_schlib, reconcile_pcblib, reconcile_pcblib_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports, apply_spec_schlib, apply_spec_pcblib,
@@ -100,6 +101,19 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Query entities in an Altium document using AQL (Altium Query Language)
+    Query {
+        /// Path to the document (.SchLib)
+        path: PathBuf,
+        /// AQL query string (e.g., "component > pin:power")
+        query: String,
+        /// Output format: text, json, or count
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Maximum number of results to return
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -193,6 +207,12 @@ fn main() -> ExitCode {
         }
         Commands::Dump { document, output } => {
             if let Err(e) = run_dump(&document, output.as_ref()) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Query { path, query, format, limit } => {
+            if let Err(e) = run_query(&path, &query, &format, limit) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -635,4 +655,76 @@ fn compile_and_resolve(
     let _ = spec_dir; // used implicitly via spec_path_canonical
     compile_spec(&merged_file, *domain)
         .map_err(|e| anyhow::anyhow!("compile error in {}: {e}", spec_file.display()))
+}
+
+fn run_query(
+    path: &std::path::Path,
+    query_str: &str,
+    format: &str,
+    limit: Option<usize>,
+) -> anyhow::Result<()> {
+    // Parse the query
+    let query = parse_query(query_str).map_err(|e| {
+        anyhow::anyhow!("{}", e.render(query_str))
+    })?;
+
+    // Open the document based on file extension
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let results = match ext.as_str() {
+        "schlib" => {
+            let lib = SchLib::open(path)?;
+            eval_query(&query, &lib)
+                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+        }
+        // Future: PcbLib, SchDoc, PcbDoc support
+        _ => {
+            anyhow::bail!(
+                "unsupported file type '.{ext}' for query (supported: .SchLib)"
+            );
+        }
+    };
+
+    // Apply limit
+    let results: Vec<_> = match limit {
+        Some(n) => results.into_iter().take(n).collect(),
+        None => results,
+    };
+
+    // Format output
+    match format {
+        "count" => {
+            println!("{}", results.len());
+        }
+        "json" => {
+            let json_results: Vec<serde_json::Value> = results
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "type": format!("{:?}", m.node.type_selector()),
+                        "name": m.node.display_name(),
+                        "path": m.path,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json_results)?);
+        }
+        "text" | _ => {
+            if results.is_empty() {
+                println!("No matches.");
+            } else {
+                println!("{} match{}:", results.len(), if results.len() == 1 { "" } else { "es" });
+                for m in &results {
+                    let type_name = format!("{:?}", m.node.type_selector());
+                    println!("  [{type_name}] {}", m.node.display_name());
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
