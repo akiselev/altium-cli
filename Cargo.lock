@@ -28,7 +28,7 @@ name = "altium-cli"
 version = "0.2.0"
 dependencies = [
  "altium-format",
- "altium-format-ops",
+ "altium-format-query",
  "altium-format-render-png",
  "altium-format-render-svg",
  "altium-format-spec",
@@ -86,18 +86,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "altium-format-ops"
+name = "altium-format-query"
 version = "0.2.0"
 dependencies = [
  "altium-format",
- "altium-format-derive",
  "altium-format-types",
- "cfb",
- "indexmap",
- "proptest",
- "serde",
- "serde_json",
- "serde_yaml",
+ "regex",
  "tempfile",
  "thiserror",
 ]
@@ -1161,12 +1155,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryu"
-version = "1.0.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1248,19 +1236,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -1524,12 +1499,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "usvg"
