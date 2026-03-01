@@ -144,8 +144,7 @@ pub(crate) fn draw_sch_record(
                 (center.0 + r * end_rad.cos(), center.1 + r * end_rad.sin()),
                 &pen,
             );
-            if p.is_solid {
-                let fill_brush = fill.unwrap();
+            if let Some(fill_brush) = fill {
                 let steps = 32;
                 let da = (end - p.start_angle.0) / steps as f64;
                 let mut pts = vec![center];

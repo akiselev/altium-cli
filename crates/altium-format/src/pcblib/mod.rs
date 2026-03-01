@@ -13,9 +13,9 @@ use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
 use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::{
-    Color, Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode,
-    PcbFlags, PcbObjectId, PlaneConnectionStyle, PolySegmentKind, RegionKind, TCacheState,
-    TextAutoposition, TextKind, V6Layer, V7Layer, ViaStructureType,
+    BarcodeRenderMode, Color, Coord, CoordPoint, DaisyChainStyle, MaskExpansionMode, PadShape,
+    PadStackMode, PcbFlags, PcbObjectId, PlaneConnectionStyle, PolySegmentKind, RegionKind,
+    TCacheState, TextAutoposition, TextKind, V6Layer, V7Layer, ViaStructureType,
 };
 
 use crate::block_stream::iter_blocks;
@@ -176,12 +176,12 @@ pub(crate) struct PcbVia {
     /// Packed 4×2-bit cache/mode flags for solder mask (bits [1:0], [3:2], [5:4], [7:6]).
     pub(crate) solder_mask_cache_flags: u8,
     /// Solder mask expansion mode/count (observed: 0-7).
-    pub(crate) solder_mask_expansion_mode: u8,
+    pub(crate) solder_mask_expansion_mode: MaskExpansionMode,
     /// Packed 4×2-bit cache/mode flags for paste mask (same encoding as solder_mask).
     pub(crate) paste_mask_cache_flags: u8,
     /// Paste mask expansion mode/count (observed: 0 in most files, up to 7 in some).
-    pub(crate) paste_mask_expansion_mode: u8,
-    pub(crate) via_mode: u8,
+    pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
+    pub(crate) via_mode: PadStackMode,
     pub(crate) diameters_per_layer: [Coord; 32],
     // Additional extended (offset 203+)
     pub(crate) layer_enum_index: i32,
@@ -247,15 +247,15 @@ pub(crate) struct PcbViaPadLayerEntry {
     /// TV7_Layer identifier (u32, e.g. 1=Top, 32=Bottom).
     pub(crate) layer_id: u32,
     /// Pad shape on this layer (typically 1=Round).
-    pub(crate) shape: u8,
+    pub(crate) shape: PadShape,
     /// Mode byte (typically 1).
-    pub(crate) mode: u8,
+    pub(crate) mode: PadStackMode,
     /// Solder mask expansion for this layer (Coord).
     pub(crate) solder_mask_expansion: Coord,
     /// Paste mask expansion (stride >= 30 only).
     pub(crate) paste_mask_expansion: Option<Coord>,
     /// Plane connection style on this layer (TPlaneConnectionStyle).
-    pub(crate) plane_connection_style: u8,
+    pub(crate) plane_connection_style: PlaneConnectionStyle,
     /// Number of thermal relief conductors (i16 in stride 30, i32 in stride 23/24).
     pub(crate) relief_entries: i32,
     /// Thermal relief conductor width (stride >= 29 only).
@@ -305,7 +305,7 @@ pub(crate) struct PcbText {
     pub(crate) barcode_y_margin: Coord,
     pub(crate) barcode_min_width: Coord,
     pub(crate) barcode_show_text: bool,
-    pub(crate) barcode_render_mode: u8,
+    pub(crate) barcode_render_mode: BarcodeRenderMode,
     pub(crate) multiline: bool,
     pub(crate) barcode_font_name: String,
     // Extended text fields (offset 225+, version-dependent).
@@ -389,13 +389,13 @@ pub(crate) struct PcbPadStackData {
     pub(crate) inner_size_y: [Coord; 29],
     pub(crate) inner_shape: [PadShape; 29],
     pub(crate) padding_261: u8,
-    pub(crate) hole_shape: u8,
+    pub(crate) hole_shape: PadShape,
     pub(crate) slot_size: Coord,
     pub(crate) slot_rotation: f64,
     pub(crate) hole_offset_x: [Coord; 32],
     pub(crate) hole_offset_y: [Coord; 32],
     pub(crate) padding_531: u8,
-    pub(crate) alt_shape: [u8; 32],
+    pub(crate) alt_shape: [PadShape; 32],
     pub(crate) corner_radius_pct: [u8; 32],
     pub(crate) per_layer_overrides: [u8; 32],
     /// Extended per-layer corner radius entries (offset 628+).
@@ -412,7 +412,7 @@ pub(crate) struct PcbPadStackData {
 #[derive(Debug, Clone)]
 pub(crate) struct PcbPadExtendedCrEntry {
     pub(crate) layer_id: u32,
-    pub(crate) alt_shape: u8,
+    pub(crate) alt_shape: PadShape,
     pub(crate) cr_pct_ex: Coord,
     pub(crate) cr_size: Coord,
     pub(crate) cr_pct: u8,
@@ -1150,8 +1150,6 @@ impl PcbLib {
             doc.consume_storage("/FileVersionInfo");
             Some(parse_file_version_info(&fvi_header, &fvi_data)?)
         } else {
-            doc.read_stream_optional("/FileVersionInfo/Header")?;
-            doc.read_stream_optional("/FileVersionInfo/Data")?;
             None
         };
 
@@ -1740,7 +1738,7 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     w0.write_coord(p.barcode_min_width);
     w0.write_u8(0);
     w0.write_u8(p.barcode_show_text as u8);
-    w0.write_u8(p.barcode_render_mode);
+    w0.write_u8(p.barcode_render_mode as u8);
     w0.write_u8(p.multiline as u8);
     w0.write_wide_string_fixed(&p.barcode_font_name, 32);
     // AD26 tail fields (bytes 225-251). Always write full 252-byte format
@@ -1869,7 +1867,7 @@ fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
             sub5.write_u8(v as u8);
         }
         sub5.write_u8(stack.padding_261);
-        sub5.write_u8(stack.hole_shape);
+        sub5.write_u8(stack.hole_shape as u8);
         sub5.write_coord(stack.slot_size);
         sub5.write_f64_le(stack.slot_rotation);
         for v in stack.hole_offset_x {
@@ -1879,7 +1877,8 @@ fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
             sub5.write_coord(v);
         }
         sub5.write_u8(stack.padding_531);
-        sub5.write_bytes(&stack.alt_shape);
+        let alt_shape_bytes: [u8; 32] = std::array::from_fn(|i| stack.alt_shape[i] as u8);
+        sub5.write_bytes(&alt_shape_bytes);
         sub5.write_bytes(&stack.corner_radius_pct);
         sub5.write_bytes(&stack.per_layer_overrides);
         if !stack.extended_cr.is_empty() {
@@ -1887,7 +1886,7 @@ fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
             sub5.write_u32_le(15); // entry_size is always 15
             for entry in &stack.extended_cr {
                 sub5.write_u32_le(entry.layer_id);
-                sub5.write_u8(entry.alt_shape);
+                sub5.write_u8(entry.alt_shape as u8);
                 sub5.write_coord(entry.cr_pct_ex);
                 sub5.write_coord(entry.cr_size);
                 sub5.write_u8(entry.cr_pct);

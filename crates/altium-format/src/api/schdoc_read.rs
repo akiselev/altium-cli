@@ -314,10 +314,6 @@ fn convert_sheet_child(
             Ok(Some(SheetObject::HarnessConnector(conn)))
         }
         SchRecord::SignalHarness(sh) => Ok(Some(SheetObject::SignalHarness(signal_harness_from_internal(sh)))),
-        // Sheet-level graphics
-        rec if graphic_from_record(rec).is_some() => {
-            Ok(Some(SheetObject::Graphic(graphic_from_record(rec).unwrap())))
-        }
         // Sheet-level parameters
         SchRecord::Parameter(p) => {
             Ok(Some(SheetObject::Parameter(parameter_from_internal(p))))
@@ -357,14 +353,15 @@ fn convert_sheet_child(
             let sym = sheet_symbol_from_internal(records, additional_records, ss, &children, ownership_map)?;
             Ok(Some(SheetObject::SheetSymbol(sym)))
         }
-        other => {
-            Err(AltiumFormatError::InvalidParamValue {
+        other => match graphic_from_record(other) {
+            Some(graphic) => Ok(Some(SheetObject::Graphic(graphic))),
+            None => Err(AltiumFormatError::InvalidParamValue {
                 key: "RECORD".to_owned(),
                 detail: format!(
                     "unexpected record type {:?} as sheet child at index {}",
                     std::mem::discriminant(other), idx
                 ),
-            })
+            }),
         }
     }
 }
@@ -400,9 +397,6 @@ fn component_from_schdoc_internal(
             SchRecord::Parameter(p) => {
                 children.push(ComponentChild::Parameter(parameter_from_internal(p)));
             }
-            rec if graphic_from_record(rec).is_some() => {
-                children.push(ComponentChild::Graphic(graphic_from_record(rec).unwrap()));
-            }
             // Container records (ImplementationList, Implementation, etc.) — skip,
             // they're consumed via build_footprint_maps_schdoc
             SchRecord::ImplementationList(_)
@@ -411,8 +405,15 @@ fn component_from_schdoc_internal(
             | SchRecord::MapDefiner(_)
             | SchRecord::ParameterList(_)
             | SchRecord::Symbol(_) => {}
-            _ => {
-                // Unknown child type — skip silently for robustness
+            other => match graphic_from_record(other) {
+                Some(graphic) => {
+                    children.push(ComponentChild::Graphic(graphic));
+                }
+                None => {
+                    return Err(AltiumFormatError::NotImplemented(
+                        format!("record type {:?} as Component child", std::mem::discriminant(other))
+                    ));
+                }
             }
         }
     }
@@ -490,8 +491,10 @@ fn sheet_symbol_from_internal(
             | SchRecord::Implementation(_)
             | SchRecord::ImplementationMap(_)
             | SchRecord::MapDefiner(_) => {}
-            _ => {
-                // Unknown child — skip
+            other => {
+                return Err(AltiumFormatError::NotImplemented(
+                    format!("record type {:?} as SheetSymbol child", std::mem::discriminant(other))
+                ));
             }
         }
     }
@@ -560,7 +563,11 @@ fn harness_connector_from_internal(
             SchRecord::Parameter(p) => {
                 children.push(HarnessChild::Parameter(parameter_from_internal(p)));
             }
-            _ => {}
+            other => {
+                return Err(AltiumFormatError::NotImplemented(
+                    format!("record type {:?} as HarnessConnector child", std::mem::discriminant(other))
+                ));
+            }
         }
     }
 

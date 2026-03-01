@@ -554,7 +554,7 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     }
 
     let padding_261 = reader.read_u8()?;
-    let hole_shape = reader.read_u8()?;
+    let hole_shape = PadShape::try_from(reader.read_u8()?)?;
     let slot_size = reader.read_coord()?;
     let slot_rotation = reader.read_f64_le()?;
 
@@ -570,8 +570,11 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
 
     let padding_531 = reader.read_u8()?;
 
-    let mut alt_shape = [0u8; 32];
-    alt_shape.copy_from_slice(reader.read_bytes(32)?);
+    let alt_shape_bytes = reader.read_bytes(32)?;
+    let mut alt_shape = [PadShape::Round; 32];
+    for (i, &b) in alt_shape_bytes.iter().enumerate() {
+        alt_shape[i] = PadShape::try_from(b)?;
+    }
 
     let mut corner_radius_pct = [0u8; 32];
     corner_radius_pct.copy_from_slice(reader.read_bytes(32)?);
@@ -607,7 +610,7 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             let layer_id = reader.read_u32_le()?;
-            let alt_shape_val = reader.read_u8()?;
+            let alt_shape_val = PadShape::try_from(reader.read_u8()?)?;
             let cr_pct_ex = reader.read_coord()?;
             let cr_size = reader.read_coord()?;
             let cr_pct = reader.read_u8()?;

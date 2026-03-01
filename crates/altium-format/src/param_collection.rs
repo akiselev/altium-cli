@@ -1104,9 +1104,9 @@ mod tests {
         pc.insert("NAME", "test".to_owned());
         pc.insert("VALUE", "42".to_owned());
         let bytes = pc.to_bytes();
-        let s = String::from_utf8_lossy(&bytes[..bytes.len() - 1]);
+        let s = std::str::from_utf8(&bytes[..bytes.len() - 1]).expect("to_bytes should produce valid UTF-8");
         // Order must be: |RECORD=1|NAME=test|VALUE=42 (no trailing pipe)
-        assert_eq!(s.as_ref(), "|RECORD=1|NAME=test|VALUE=42", "got: {s}");
+        assert_eq!(s, "|RECORD=1|NAME=test|VALUE=42", "got: {s}");
     }
 
     #[test]

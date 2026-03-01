@@ -1,4 +1,7 @@
-use altium_format_types::{Coord, PlaneConnectionStyle, TCacheState, V6Layer, ViaStructureType};
+use altium_format_types::{
+    Coord, MaskExpansionMode, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState, V6Layer,
+    ViaStructureType,
+};
 
 use crate::Result;
 use crate::binary_io::BinaryReader;
@@ -15,14 +18,14 @@ use crate::pcblib::{PcbVia, PcbViaPadLayerEntry, PcbViaSection2Entry};
 /// Strides 23/24/29 are older format versions with fewer fields.
 fn parse_pad_layer_entry(reader: &mut BinaryReader, stride: u32) -> Result<PcbViaPadLayerEntry> {
     let layer_id = reader.read_u32_le()?;
-    let shape = reader.read_u8()?;
-    let mode = reader.read_u8()?;
+    let shape = PadShape::try_from(reader.read_u8()?)?;
+    let mode = PadStackMode::try_from(reader.read_u8()?)?;
     let solder_mask_expansion = reader.read_coord()?;
 
     match stride {
         30 => {
             let paste_mask_expansion = reader.read_coord()?;
-            let plane_connection_style = reader.read_u8()?;
+            let plane_connection_style = PlaneConnectionStyle::try_from(reader.read_u8()?)?;
             let relief_entries = reader.read_i16_le()?;
             let _reserved_17 = reader.read_u16_le()?;
             let relief_conductor_width = reader.read_coord()?;
@@ -44,7 +47,7 @@ fn parse_pad_layer_entry(reader: &mut BinaryReader, stride: u32) -> Result<PcbVi
         }
         29 => {
             let relief_conductor_width = reader.read_coord()?;
-            let plane_connection_style = reader.read_u8()?;
+            let plane_connection_style = PlaneConnectionStyle::try_from(reader.read_u8()?)?;
             let relief_entries = reader.read_i16_le()?;
             let _reserved_17 = reader.read_u16_le()?;
             let reserved_i32 = reader.read_i32_le()?;
@@ -72,7 +75,7 @@ fn parse_pad_layer_entry(reader: &mut BinaryReader, stride: u32) -> Result<PcbVi
         }
         23 | 24 => {
             let relief_conductor_width = reader.read_coord()?;
-            let plane_connection_style = reader.read_u8()?;
+            let plane_connection_style = PlaneConnectionStyle::try_from(reader.read_u8()?)?;
             let relief_entries = reader.read_i32_le()?;
             let trailing_bytes = reader.read_bytes((stride - 19) as usize)?;
             let mut trailing_flags = 0u32;
@@ -136,11 +139,11 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut planes_valid = TCacheState::Invalid;
     let mut plane_connection_style = PlaneConnectionStyle::NoConnect;
     let mut solder_mask_cache_flags: u8 = 0;
-    let mut solder_mask_expansion_mode: u8 = 0;
+    let mut solder_mask_expansion_mode = MaskExpansionMode::NoMask;
     let mut paste_mask_cache_flags: u8 = 0;
-    let mut paste_mask_expansion_mode: u8 = 0;
+    let mut paste_mask_expansion_mode = MaskExpansionMode::NoMask;
 
-    let mut via_mode: u8 = 0;
+    let mut via_mode = PadStackMode::Simple;
     let mut diameters_per_layer = [Coord::ZERO; 32];
 
     let mut layer_enum_index = 0i32;
@@ -201,11 +204,11 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         // Byte 72: paste mask cache flags (packed 4×2-bit fields).
         // Byte 73: paste mask expansion mode/count (observed: 0 in all test files).
         solder_mask_cache_flags = reader.read_u8()?;
-        solder_mask_expansion_mode = reader.read_u8()?;
+        solder_mask_expansion_mode = MaskExpansionMode::try_from(reader.read_u8()?)?;
         paste_mask_cache_flags = reader.read_u8()?;
-        paste_mask_expansion_mode = reader.read_u8()?;
+        paste_mask_expansion_mode = MaskExpansionMode::try_from(reader.read_u8()?)?;
 
-        via_mode = reader.read_u8()?;
+        via_mode = PadStackMode::try_from(reader.read_u8()?)?;
         for d in &mut diameters_per_layer {
             *d = reader.read_coord()?;
         }

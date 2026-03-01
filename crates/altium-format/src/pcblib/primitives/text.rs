@@ -1,4 +1,4 @@
-use altium_format_types::{TextAutoposition, TextKind};
+use altium_format_types::{BarcodeRenderMode, TextAutoposition, TextKind};
 use altium_format_types::constants::parsing::TEXT_SUBRECORD_COUNT;
 
 use crate::binary_io::BinaryReader;
@@ -126,7 +126,7 @@ pub(crate) fn parse_text(subrecords: &[&[u8]]) -> Result<PcbText> {
     let barcode_min_width = reader.read_coord()?;
     reader.read_reserved_zero(1)?; // reserved byte 157
     let barcode_show_text = reader.read_bool()?;
-    let barcode_render_mode = reader.read_u8()?;
+    let barcode_render_mode = BarcodeRenderMode::try_from(reader.read_u8()?)?;
     let multiline = reader.read_bool()?;
     let barcode_font_name = reader.read_wide_string_fixed(FONT_NAME_WCHAR_COUNT)?;
 
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(text.barcode_y_margin.to_internal(), 200_000);
         assert_eq!(text.barcode_min_width.to_internal(), 0);
         assert!(text.barcode_show_text);
-        assert_eq!(text.barcode_render_mode, 1);
+        assert_eq!(text.barcode_render_mode, BarcodeRenderMode::ByFullWidth);
         assert!(!text.multiline);
         assert_eq!(text.barcode_font_name, "Arial");
         assert_eq!(text.text, "R1");

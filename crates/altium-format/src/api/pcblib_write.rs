@@ -8,7 +8,8 @@ use crate::pcblib::{
 use crate::util::generate_unique_id;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    DaisyChainStyle, PcbFlags, PlaneConnectionStyle, TCacheState, TextKind, V6Layer, V7Layer,
+    BarcodeRenderMode, DaisyChainStyle, MaskExpansionMode, PadStackMode, PcbFlags,
+    PlaneConnectionStyle, TCacheState, TextKind, V6Layer, V7Layer,
 };
 
 /// Build a `PcbPrimitiveCommon` for a library context (no net/polygon/component links).
@@ -352,7 +353,7 @@ fn text_to_internal(g: &TextGraphic) -> PcbText {
         barcode_y_margin: Coord::ZERO,
         barcode_min_width: Coord::ZERO,
         barcode_show_text: false,
-        barcode_render_mode: 0,
+        barcode_render_mode: BarcodeRenderMode::ByMinWidth,
         multiline: false,
         barcode_font_name: String::new(),
         ttf_inverted_justify: None,
@@ -401,10 +402,10 @@ fn via_to_internal(g: &ViaGraphic) -> PcbVia {
         planes_valid: TCacheState::default(),
         plane_connection_style: PlaneConnectionStyle::default(),
         solder_mask_cache_flags: 0,
-        solder_mask_expansion_mode: 0,
+        solder_mask_expansion_mode: MaskExpansionMode::NoMask,
         paste_mask_cache_flags: 0,
-        paste_mask_expansion_mode: 0,
-        via_mode: 0,
+        paste_mask_expansion_mode: MaskExpansionMode::NoMask,
+        via_mode: PadStackMode::Simple,
         diameters_per_layer: [Coord::ZERO; 32],
         layer_enum_index: 0,
         stack_start_layer: 0,
