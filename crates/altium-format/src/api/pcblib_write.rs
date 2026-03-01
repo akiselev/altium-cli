@@ -2,7 +2,7 @@
 
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    PcbArc, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive, PcbPrimitiveCommon,
+    Contour, PcbArc, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive, PcbPrimitiveCommon,
     PcbRegion, PcbText, PcbTrack, PcbVia,
 };
 use crate::util::generate_unique_id;
@@ -319,8 +319,8 @@ fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
         bending_line_count: 0,
         locked_3d: false,
         layer_stack_id: String::new(),
-        outline: g.outline.clone(),
-        holes: g.holes.clone(),
+        outline: Contour::Legacy(g.outline.clone()),
+        holes: g.holes.iter().map(|h| Contour::Legacy(h.clone())).collect(),
         unique_id: g.unique_id.clone(),
     }
 }

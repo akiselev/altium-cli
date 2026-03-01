@@ -7,7 +7,7 @@ use crate::block_stream::{BlockFormat, iter_blocks};
 use crate::board_config::{PcbBoardConfig, parse_board_config};
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
-use crate::{AltiumFormatError, Result};
+use crate::{AltiumFormatError, Result, ResultExt};
 
 pub(crate) struct PcbLibraryData {
     pub(crate) filename: String,
@@ -347,11 +347,18 @@ pub(crate) struct PcbLayerKindMapping {
     pub(crate) entries: Vec<PcbLayerKindPair>,
 }
 
+/// A single template record from the PadViaLibrary Data stream.
+pub(crate) struct PcbPadViaTemplate {
+    pub(crate) index: u8,
+    pub(crate) params: crate::param_collection::ParameterCollection,
+}
+
 /// Parsed PadViaLibrary substorage parameters.
 pub(crate) struct PcbPadViaLibraryConfig {
     pub(crate) library_id: String,
     pub(crate) library_name: String,
     pub(crate) display_units: String,
+    pub(crate) templates: Vec<PcbPadViaTemplate>,
 }
 
 /// Embedded font entry from the EmbeddedFonts stream.
@@ -449,25 +456,32 @@ pub(crate) fn parse_layer_kind_mapping(header: &[u8], data: &[u8]) -> Result<Pcb
 
 /// Parse Library/PadViaLibrary/{Header,Data} streams.
 ///
-/// The header count may be 0 even when the Data stream has content. Parses
-/// whatever blocks are present and returns None if the data stream is empty.
+/// Format:
+///   Header stream: u32 template_count
+///   Data stream:
+///     [text block] config: |PADVIALIBRARY.LIBRARYID=...|LIBRARYNAME=...|DISPLAYUNITS=...|
+///     template_count × [u8 index][u32 param_len][param_len bytes of |KEY=VALUE| params]
+///
+/// Template indices start at 2 and increment by 1.
 pub(crate) fn parse_pad_via_library(
     header: &[u8],
     data: &[u8],
 ) -> Result<Option<PcbPadViaLibraryConfig>> {
-    let _count = parse_pcb_section_header(header)?;
+    let template_count = parse_pcb_section_header(header)? as usize;
     if data.is_empty() {
         return Ok(None);
     }
 
     let mut blocks_iter = iter_blocks(data);
-    let block = match blocks_iter.next() {
+    let config_block = match blocks_iter.next() {
         Some(Ok(b)) => b,
         Some(Err(e)) => return Err(e),
         None => return Ok(None),
     };
+    // Drop the iterator so we can slice the raw bytes for template parsing.
+    drop(blocks_iter);
 
-    let mut params = ParameterCollection::from_bytes(&block.data)?;
+    let mut params = ParameterCollection::from_bytes(&config_block.data)?;
     let library_id = params
         .remove_optional::<String>("PADVIALIBRARY.LIBRARYID")?
         .unwrap_or_default();
@@ -479,18 +493,53 @@ pub(crate) fn parse_pad_via_library(
         .unwrap_or_default();
     params.assert_exhausted()?;
 
-    if let Some(extra) = blocks_iter.next() {
-        let _ = extra?;
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: "Library/PadViaLibrary/Data".to_owned(),
-            detail: "expected at most 1 block but found additional blocks".to_owned(),
-        });
-    }
+    // Config block consumed: 4-byte header + payload.
+    let config_block_end = 4 + config_block.data.len();
+    let templates_bytes = &data[config_block_end..];
+
+    let templates = if template_count == 0 {
+        if !templates_bytes.is_empty() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Library/PadViaLibrary/Data".to_owned(),
+                detail: format!(
+                    "template_count=0 but {} bytes remain after config block",
+                    templates_bytes.len()
+                ),
+            });
+        }
+        Vec::new()
+    } else {
+        let mut reader = BinaryReader::new(templates_bytes);
+        let mut templates = Vec::with_capacity(template_count);
+        for i in 0..template_count {
+            let index = reader
+                .read_u8()
+                .with_context(|| format!("reading template index at template #{i}"))?;
+            let param_len = reader
+                .read_u32_le()
+                .with_context(|| format!("reading param_len at template #{i} (index={index})"))?
+                as usize;
+            let param_bytes = reader
+                .read_bytes(param_len)
+                .with_context(|| format!("reading param bytes at template #{i} (index={index})"))?;
+            let template_params = ParameterCollection::from_bytes(param_bytes)
+                .with_context(|| format!("parsing params at template #{i} (index={index})"))?;
+            templates.push(PcbPadViaTemplate {
+                index,
+                params: template_params,
+            });
+        }
+        reader
+            .assert_exhausted()
+            .context("after reading all PadViaLibrary template records")?;
+        templates
+    };
 
     Ok(Some(PcbPadViaLibraryConfig {
         library_id,
         library_name,
         display_units,
+        templates,
     }))
 }
 

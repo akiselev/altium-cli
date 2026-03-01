@@ -2,8 +2,8 @@
 
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion, PcbText,
-    PcbTrack, PcbVia,
+    Contour, PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion,
+    PcbText, PcbTrack, PcbVia,
 };
 use altium_format_types::color::Color;
 
@@ -108,14 +108,21 @@ fn fill_from_internal(f: &PcbFill) -> FillGraphic {
     }
 }
 
+fn contour_to_coord_points(contour: &Contour) -> Vec<altium_format_types::CoordPoint> {
+    match contour {
+        Contour::Legacy(pts) => pts.clone(),
+        Contour::ShapeBased(segs) => segs.iter().map(|s| s.vertex).collect(),
+    }
+}
+
 fn region_from_internal(r: &PcbRegion) -> RegionGraphic {
     RegionGraphic {
         unique_id: r.unique_id.clone(),
         layer: r.common.layer,
         flags: r.common.flags,
         kind: r.kind,
-        outline: r.outline.clone(),
-        holes: r.holes.clone(),
+        outline: contour_to_coord_points(&r.outline),
+        holes: r.holes.iter().map(contour_to_coord_points).collect(),
     }
 }
 
@@ -166,6 +173,6 @@ fn body_from_internal(b: &PcbComponentBody) -> ComponentBodyGraphic {
         body_color_3d: b.body_color_3d,
         body_opacity_3d: b.body_opacity_3d,
         model_name: b.model_name.clone(),
-        outline: b.outline.clone(),
+        outline: contour_to_coord_points(&b.outline),
     }
 }

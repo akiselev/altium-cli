@@ -159,6 +159,10 @@ pub(crate) fn parse_primitive_records(
     }
 
     let expected = expected_object_id(kind);
+    let is_shape_based = matches!(
+        kind,
+        PrimitiveSectionKind::ShapeBasedRegions6 | PrimitiveSectionKind::ShapeBasedComponentBodies6
+    );
     let mut reader = BinaryReader::new(data);
     let mut out = Vec::new();
 
@@ -173,7 +177,7 @@ pub(crate) fn parse_primitive_records(
         let raw_length = reader.read_u32_le()?;
         let length = (raw_length & BLOCK_SIZE_MASK) as usize;
         let payload = reader.read_bytes(length)?;
-        let primitive = parse_primitive_payload(object_id, payload)?;
+        let primitive = parse_primitive_payload(object_id, payload, is_shape_based)?;
         out.push(ParsedPrimitiveRecord {
             object_id,
             primitive,
@@ -184,7 +188,7 @@ pub(crate) fn parse_primitive_records(
     Ok(out)
 }
 
-fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8]) -> Result<PcbPrimitive> {
+fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8], is_shape_based: bool) -> Result<PcbPrimitive> {
     match object_id {
         PcbObjectId::Arc => parse_arc(payload).map(PcbPrimitive::Arc),
         PcbObjectId::Track => parse_track(payload).map(PcbPrimitive::Track),
@@ -200,9 +204,9 @@ fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8]) -> Result<Pcb
             detail: "Text parsing requires 2-subrecord framing; reached single-payload path"
                 .to_owned(),
         }),
-        PcbObjectId::Region => parse_region(payload).map(PcbPrimitive::Region),
+        PcbObjectId::Region => parse_region(payload, is_shape_based).map(PcbPrimitive::Region),
         PcbObjectId::ComponentBody => {
-            parse_component_body(payload).map(PcbPrimitive::ComponentBody)
+            parse_component_body(payload, is_shape_based).map(PcbPrimitive::ComponentBody)
         }
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
     }

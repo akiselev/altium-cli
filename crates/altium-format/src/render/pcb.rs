@@ -1,6 +1,6 @@
 //! PCB primitive draw dispatch for AltiumCanvas.
 
-use crate::pcblib::PcbPrimitive;
+use crate::pcblib::{Contour, PcbPrimitive};
 use crate::render::canvas::{
     AltiumCanvas, Brush, DrawPoint, FontSpec, Pen, RenderTransform, c_to_f, to_dp,
 };
@@ -98,7 +98,10 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
         PcbPrimitive::Region(r) => {
             let pen = Pen::new(altium_format_types::Color::BLACK, 0.0);
             let fill = Some(Brush::solid(altium_format_types::Color::BLACK));
-            let pts: Vec<_> = r.outline.iter().copied().map(to_dp).collect();
+            let pts: Vec<_> = match &r.outline {
+                Contour::Legacy(pts) => pts.iter().copied().map(to_dp).collect(),
+                Contour::ShapeBased(segs) => segs.iter().map(|s| to_dp(s.vertex)).collect(),
+            };
             canvas.draw_polygon(&pts, &pen, fill.as_ref());
         }
         PcbPrimitive::Text(t) => {
@@ -113,7 +116,10 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
         }
         PcbPrimitive::ComponentBody(b) => {
             let pen = Pen::new(altium_format_types::Color::BLACK, 0.0);
-            let pts: Vec<_> = b.outline.iter().copied().map(to_dp).collect();
+            let pts: Vec<_> = match &b.outline {
+                Contour::Legacy(pts) => pts.iter().copied().map(to_dp).collect(),
+                Contour::ShapeBased(segs) => segs.iter().map(|s| to_dp(s.vertex)).collect(),
+            };
             canvas.draw_polygon(&pts, &pen, None);
         }
     }

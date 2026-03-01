@@ -196,6 +196,51 @@ pub(crate) fn parse_extended_primitive_information(
 /// Size of a single PrimitiveGuids record: ObjectId (4) + IndexForSave (4) + GUID (16).
 const PRIMITIVE_GUID_RECORD_SIZE: usize = 24;
 
+/// PcbDoc PrimitiveGuids entry — stores full i32 ObjectId (upper bytes have metadata).
+#[derive(Debug, Clone)]
+pub(crate) struct PrimitiveGuidEntryPcbDoc {
+    pub(crate) object_id_raw: i32,
+    pub(crate) index_for_save: i32,
+    pub(crate) guid: [u8; 16],
+}
+
+/// Parses PrimitiveGuids/Header and Data streams for PcbDoc.
+///
+/// PcbDoc stores the full i32 ObjectId (upper bytes carry metadata), unlike
+/// PcbLib which truncates to a u8 ViewableObjectId. The Data stream contains
+/// `count` fixed-size 24-byte binary records.
+pub(crate) fn parse_primitive_guids_pcbdoc(
+    header_data: &[u8],
+    data: &[u8],
+) -> Result<Vec<PrimitiveGuidEntryPcbDoc>> {
+    let count = parse_pcb_section_header(header_data)? as usize;
+    let expected_bytes = count * PRIMITIVE_GUID_RECORD_SIZE;
+    if data.len() != expected_bytes {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "PrimitiveGuids/Data".to_owned(),
+            detail: format!(
+                "expected {} bytes ({} × {}), got {}",
+                expected_bytes, count, PRIMITIVE_GUID_RECORD_SIZE, data.len()
+            ),
+        });
+    }
+    let mut reader = BinaryReader::new(data);
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let object_id_raw = reader.read_i32_le()?;
+        let index_for_save = reader.read_i32_le()?;
+        let mut guid = [0u8; 16];
+        guid.copy_from_slice(reader.read_bytes(16)?);
+        entries.push(PrimitiveGuidEntryPcbDoc {
+            object_id_raw,
+            index_for_save,
+            guid,
+        });
+    }
+    reader.assert_exhausted()?;
+    Ok(entries)
+}
+
 /// Parses PrimitiveGuids/Header and Data streams.
 ///
 /// The Data stream contains `count` fixed-size 24-byte binary records

@@ -2130,6 +2130,36 @@ impl std::fmt::Display for PolygonReliefAngle {
     }
 }
 
+/// Edge kind in a TPolySegment record (ShapeBasedRegions6/ShapeBasedComponentBodies6).
+///
+/// C# enum: TPolySegmentType (byte).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PolySegmentKind {
+    Line = 0,
+    Arc = 1,
+}
+
+impl TryFrom<u8> for PolySegmentKind {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Line),
+            1 => Ok(Self::Arc),
+            _ => Err(InvalidEnumValue {
+                type_name: "PolySegmentKind",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for PolySegmentKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 /// PCB coordinate constants.
 pub mod constants {
     /// Internal units per mil (1 mil = 10,000 internal units).

@@ -1506,7 +1506,9 @@ mod tests {
             report.issues.iter().any(|i| match i {
                 DiffIssue::MissingParamPair { key, .. }
                 | DiffIssue::UpdatedParamValues { key, .. }
-                | DiffIssue::DuplicateParamPairCountMismatch { key, .. } => key == "UniqueID",
+                // Keys are normalized to uppercase by default (case-insensitive)
+                | DiffIssue::DuplicateParamPairCountMismatch { key, .. } =>
+                    key.eq_ignore_ascii_case("UniqueID"),
                 _ => false,
             }),
             "{}",

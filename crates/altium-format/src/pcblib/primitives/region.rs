@@ -1,8 +1,8 @@
-use altium_format_types::{Coord, CoordPoint, RegionKind};
+use altium_format_types::{Coord, CoordPoint, PolySegmentKind, RegionKind};
 
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
-use crate::pcblib::PcbRegion;
+use crate::pcblib::{Contour, PolySegment, PcbRegion};
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
@@ -59,6 +59,53 @@ fn read_f64_contour(reader: &mut BinaryReader, label: &str) -> Result<Vec<CoordP
     Ok(vertices)
 }
 
+/// Reads a shape-based contour: i32 edge_count + (edge_count + 1) × TPolySegment (37 bytes each).
+fn read_polysegment_contour(reader: &mut BinaryReader, label: &str) -> Result<Vec<PolySegment>> {
+    let edge_count_raw = reader.read_i32_le()?;
+    if edge_count_raw < 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("Region.{label}_edge_count"),
+            detail: format!("edge_count must be >= 0, got {edge_count_raw}"),
+        });
+    }
+    let edge_count = edge_count_raw as usize;
+    let vertex_count = edge_count + 1; // closing vertex
+    let bytes_needed = vertex_count * 37; // each TPolySegment = 37 bytes
+    if reader.remaining() < bytes_needed {
+        return Err(AltiumFormatError::BinaryReadPastEnd {
+            offset: reader.position(),
+            needed: bytes_needed,
+            available: reader.remaining(),
+        });
+    }
+    let mut segments = Vec::with_capacity(vertex_count);
+    for _ in 0..vertex_count {
+        let kind_raw = reader.read_u8()?;
+        let kind = PolySegmentKind::try_from(kind_raw).map_err(|e| {
+            AltiumFormatError::InvalidParamValue {
+                key: format!("Region.{label}_poly_segment_kind"),
+                detail: e.to_string(),
+            }
+        })?;
+        let vx = reader.read_i32_le()?;
+        let vy = reader.read_i32_le()?;
+        let cx = reader.read_i32_le()?;
+        let cy = reader.read_i32_le()?;
+        let radius = reader.read_i32_le()?;
+        let angle1 = reader.read_f64_le()?;
+        let angle2 = reader.read_f64_le()?;
+        segments.push(PolySegment {
+            kind,
+            vertex: CoordPoint::new(Coord::from_internal(vx), Coord::from_internal(vy)),
+            center: CoordPoint::new(Coord::from_internal(cx), Coord::from_internal(cy)),
+            radius: Coord::from_internal(radius),
+            angle1,
+            angle2,
+        });
+    }
+    Ok(segments)
+}
+
 /// Parses a Region primitive from its single PcbLib subrecord.
 ///
 /// Binary layout:
@@ -71,7 +118,7 @@ fn read_f64_contour(reader: &mut BinaryReader, label: &str) -> Result<Vec<CoordP
 ///   [4 + V*16] * H Hole contours (one per hole_count)
 ///
 /// This is the same base format as ComponentBody (which inherits from Region).
-pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
+pub(crate) fn parse_region(data: &[u8], is_shape_based_section: bool) -> Result<PcbRegion> {
     let mut reader = BinaryReader::new(data);
     let common = parse_common_header(&mut reader)?;
     let kind = RegionKind::try_from(reader.read_u8()?)?;
@@ -104,8 +151,7 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
     let union_index = params.remove_optional::<i32>("UNIONINDEX")?.unwrap_or(0);
     let arc_resolution = parse_mil_param(&mut params, "ARCRESOLUTION")?;
     let is_shape_based = params
-        .remove_optional::<String>("ISSHAPEBASED")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("ISSHAPEBASED")?
         .unwrap_or(false);
     let cavity_height = parse_mil_param(&mut params, "CAVITYHEIGHT")?;
     let keepout_restrictions = params
@@ -115,12 +161,10 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
         .remove_optional::<String>("LAYER")?
         .unwrap_or_default();
     let keepout = params
-        .remove_optional::<String>("KEEPOUT")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("KEEPOUT")?
         .unwrap_or(false);
     let is_board_cutout = params
-        .remove_optional::<String>("ISBOARDCUTOUT")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("ISBOARDCUTOUT")?
         .unwrap_or(false);
     let pad_index = params.remove_optional::<i32>("PADINDEX")?.unwrap_or(-1);
 
@@ -132,8 +176,7 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
         .remove_optional::<i32>("BENDINGLINECOUNT")?
         .unwrap_or(0);
     let locked_3d = params
-        .remove_optional::<String>("LOCKED3D")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("LOCKED3D")?
         .unwrap_or(false);
     let layer_stack_id = params
         .remove_optional::<String>("LAYERSTACKID")?
@@ -179,13 +222,19 @@ pub(crate) fn parse_region(data: &[u8]) -> Result<PcbRegion> {
 
     params.assert_exhausted()?;
 
-    // Main contour vertices.
-    let outline = read_f64_contour(&mut reader, "outline")?;
+    // In ShapeBasedRegions6, the OUTLINE uses TPolySegment binary format (37-byte
+    // records, N+1 vertices). Holes ALWAYS use legacy f64 format (16-byte pairs)
+    // even in ShapeBasedRegions6 — the section kind only affects the outline format.
+    let outline = if is_shape_based_section {
+        Contour::ShapeBased(read_polysegment_contour(&mut reader, "outline")?)
+    } else {
+        Contour::Legacy(read_f64_contour(&mut reader, "outline")?)
+    };
 
-    // Hole contour vertices.
+    // Hole contours: always legacy f64 vertex pairs.
     let mut holes = Vec::with_capacity(hole_count);
     for i in 0..hole_count {
-        holes.push(read_f64_contour(&mut reader, &format!("hole{}", i))?);
+        holes.push(Contour::Legacy(read_f64_contour(&mut reader, &format!("hole{}", i))?));
     }
 
     reader.assert_exhausted()?;
@@ -249,9 +298,9 @@ mod tests {
         w.write_bytes(&params);
         w.write_i32_le(0); // main contour vertex_count = 0
         let data = w.finish();
-        let region = parse_region(&data).unwrap();
+        let region = parse_region(&data, false).unwrap();
         assert_eq!(region.kind, RegionKind::Copper);
-        assert!(region.outline.is_empty());
+        assert!(matches!(&region.outline, Contour::Legacy(pts) if pts.is_empty()));
         assert!(region.holes.is_empty());
     }
 
@@ -275,12 +324,16 @@ mod tests {
         w.write_f64_le(10_000.0);
         w.write_f64_le(10_000.0);
         let data = w.finish();
-        let region = parse_region(&data).unwrap();
+        let region = parse_region(&data, false).unwrap();
         assert_eq!(region.kind, RegionKind::Cutout);
-        assert_eq!(region.outline.len(), 3);
-        assert_eq!(region.outline[0].x.to_internal(), 0);
-        assert_eq!(region.outline[1].x.to_internal(), 10_000);
-        assert_eq!(region.outline[2].y.to_internal(), 10_000);
+        let pts = match &region.outline {
+            Contour::Legacy(pts) => pts,
+            _ => panic!("expected Legacy contour"),
+        };
+        assert_eq!(pts.len(), 3);
+        assert_eq!(pts[0].x.to_internal(), 0);
+        assert_eq!(pts[1].x.to_internal(), 10_000);
+        assert_eq!(pts[2].y.to_internal(), 10_000);
         assert!(region.holes.is_empty());
         assert_eq!(region.v7_layer, "TOP");
         assert!(!region.is_shape_based);
@@ -317,11 +370,19 @@ mod tests {
             w.write_f64_le(y);
         }
         let data = w.finish();
-        let region = parse_region(&data).unwrap();
-        assert_eq!(region.outline.len(), 4);
+        let region = parse_region(&data, false).unwrap();
+        let outline_pts = match &region.outline {
+            Contour::Legacy(pts) => pts,
+            _ => panic!("expected Legacy contour"),
+        };
+        assert_eq!(outline_pts.len(), 4);
         assert_eq!(region.holes.len(), 1);
-        assert_eq!(region.holes[0].len(), 3);
-        assert_eq!(region.holes[0][0].x.to_internal(), 20_000);
+        let hole_pts = match &region.holes[0] {
+            Contour::Legacy(pts) => pts,
+            _ => panic!("expected Legacy hole contour"),
+        };
+        assert_eq!(hole_pts.len(), 3);
+        assert_eq!(hole_pts[0].x.to_internal(), 20_000);
     }
 
     #[test]
@@ -331,7 +392,7 @@ mod tests {
         w.write_u8(0);
         w.write_i32_le(-1); // negative hole_count
         let data = w.finish();
-        let result = parse_region(&data);
+        let result = parse_region(&data, false);
         assert!(matches!(
             result,
             Err(AltiumFormatError::InvalidParamValue { .. })
@@ -341,7 +402,7 @@ mod tests {
     #[test]
     fn truncated_region_returns_error() {
         let data = [0u8; 5];
-        let result = parse_region(&data);
+        let result = parse_region(&data, false);
         assert!(matches!(
             result,
             Err(AltiumFormatError::BinaryReadPastEnd { .. })

@@ -1,8 +1,8 @@
-use altium_format_types::{Color, Coord, CoordPoint, RegionKind};
+use altium_format_types::{Color, Coord, CoordPoint, PolySegmentKind, RegionKind};
 
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
-use crate::pcblib::PcbComponentBody;
+use crate::pcblib::{Contour, PolySegment, PcbComponentBody};
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
@@ -122,7 +122,70 @@ fn parse_mil_param(params: &mut ParameterCollection, key: &str) -> Result<Coord>
 /// The parameter string carries body properties (STANDOFFHEIGHT, OVERALLHEIGHT,
 /// BODYCOLOR3D, etc.) and the 3D model reference (MODELID, MODEL.NAME,
 /// MODEL.3D.ROTX/Y/Z, etc.).
-pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
+
+/// Reads a shape-based contour: i32 edge_count + (edge_count + 1) × TPolySegment (37 bytes each).
+fn read_polysegment_contour(reader: &mut BinaryReader, label: &str) -> Result<Vec<PolySegment>> {
+    let edge_count_raw = reader.read_i32_le()?;
+    if edge_count_raw < 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: format!("ComponentBody.{label}_edge_count"),
+            detail: format!("edge_count must be >= 0, got {edge_count_raw}"),
+        });
+    }
+    let edge_count = edge_count_raw as usize;
+    let vertex_count = edge_count + 1; // closing vertex
+    let bytes_needed = vertex_count * 37;
+    if reader.remaining() < bytes_needed {
+        return Err(AltiumFormatError::BinaryReadPastEnd {
+            offset: reader.position(),
+            needed: bytes_needed,
+            available: reader.remaining(),
+        });
+    }
+    let mut segments = Vec::with_capacity(vertex_count);
+    for _ in 0..vertex_count {
+        let kind_raw = reader.read_u8()?;
+        let kind = PolySegmentKind::try_from(kind_raw).map_err(|e| {
+            AltiumFormatError::InvalidParamValue {
+                key: format!("ComponentBody.{label}_poly_segment_kind"),
+                detail: e.to_string(),
+            }
+        })?;
+        let vx = reader.read_i32_le()?;
+        let vy = reader.read_i32_le()?;
+        let cx = reader.read_i32_le()?;
+        let cy = reader.read_i32_le()?;
+        let radius = reader.read_i32_le()?;
+        let angle1 = reader.read_f64_le()?;
+        let angle2 = reader.read_f64_le()?;
+        segments.push(PolySegment {
+            kind,
+            vertex: CoordPoint::new(Coord::from_internal(vx), Coord::from_internal(vy)),
+            center: CoordPoint::new(Coord::from_internal(cx), Coord::from_internal(cy)),
+            radius: Coord::from_internal(radius),
+            angle1,
+            angle2,
+        });
+    }
+    Ok(segments)
+}
+
+/// Parses a ComponentBody primitive from its single PcbLib subrecord.
+///
+/// Binary layout (inherits Region):
+///   [13 bytes]  Common header (layer, flags, net, polygon, component, coord, dim indices)
+///   [1 byte]    Region kind (always 0 = Copper for component bodies)
+///   [4 bytes]   Inner vertex count (always 0)
+///   [4 bytes]   Param string length
+///   [N bytes]   Win1252 parameter string (pipe-delimited |KEY=VALUE|)
+///   [4 bytes]   Outline vertex count (i32 LE)
+///   [V*16 bytes] Outline vertices as f64 (x, y) pairs (legacy)
+///     -or- [V*37 bytes] Outline vertices as TPolySegment (shape-based)
+///
+/// The parameter string carries body properties (STANDOFFHEIGHT, OVERALLHEIGHT,
+/// BODYCOLOR3D, etc.) and the 3D model reference (MODELID, MODEL.NAME,
+/// MODEL.3D.ROTX/Y/Z, etc.).
+pub(crate) fn parse_component_body(data: &[u8], is_shape_based_section: bool) -> Result<PcbComponentBody> {
     let mut reader = BinaryReader::new(data);
     let common = parse_common_header(&mut reader)?;
 
@@ -156,8 +219,7 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     let union_index = params.remove_optional::<i32>("UNIONINDEX")?.unwrap_or(0);
     let arc_resolution = parse_mil_param(&mut params, "ARCRESOLUTION")?;
     let is_shape_based = params
-        .remove_optional::<String>("ISSHAPEBASED")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("ISSHAPEBASED")?
         .unwrap_or(false);
     let cavity_height = parse_mil_param(&mut params, "CAVITYHEIGHT")?;
     // ComponentBody parameters
@@ -185,8 +247,7 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
     let texture_size_y = parse_mil_param(&mut params, "TEXTURESIZEY")?;
     let texture_rotation = parse_scientific_float(&mut params, "TEXTUREROTATION")?;
     let body_override_color = params
-        .remove_optional::<String>("BODYOVERRIDECOLOR")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("BODYOVERRIDECOLOR")?
         .unwrap_or(false);
     // 3D model parameters
     let model_guid = params
@@ -196,8 +257,7 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
         .remove_optional::<String>("MODEL.CHECKSUM")?
         .unwrap_or_default();
     let model_embed = params
-        .remove_optional::<String>("MODEL.EMBED")?
-        .map(|s| s.eq_ignore_ascii_case("TRUE"))
+        .remove_optional::<bool>("MODEL.EMBED")?
         .unwrap_or(false);
     let model_name = params
         .remove_optional::<String>("MODEL.NAME")?
@@ -273,34 +333,42 @@ pub(crate) fn parse_component_body(data: &[u8]) -> Result<PcbComponentBody> {
 
     params.assert_exhausted()?;
 
-    // Outline vertices: i32 count + f64 (x, y) pairs.
-    // These define the 2D body outline polygon. Coordinates are in internal units
-    // (10,000 = 1 mil) stored as f64; we convert to Coord by rounding.
-    let vertex_count_raw = reader.read_i32_le()?;
-    if vertex_count_raw < 0 {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: "ComponentBody.outline_vertex_count".to_owned(),
-            detail: format!("vertex_count must be >= 0, got {}", vertex_count_raw),
-        });
-    }
-    let vertex_count = vertex_count_raw as usize;
-    let bytes_needed = vertex_count * 16; // each (f64, f64) pair = 16 bytes
-    if reader.remaining() < bytes_needed {
-        return Err(AltiumFormatError::BinaryReadPastEnd {
-            offset: reader.position(),
-            needed: bytes_needed,
-            available: reader.remaining(),
-        });
-    }
-    let mut outline = Vec::with_capacity(vertex_count);
-    for _ in 0..vertex_count {
-        let x = reader.read_f64_le()?;
-        let y = reader.read_f64_le()?;
-        outline.push(CoordPoint::new(
-            Coord::from_internal(x.round() as i32),
-            Coord::from_internal(y.round() as i32),
-        ));
-    }
+    // The section kind determines the binary vertex format. ALL records in
+    // ShapeBasedComponentBodies6 use TPolySegment format.
+    let use_shape_based = is_shape_based_section;
+
+    // Outline vertices.
+    let outline = if use_shape_based {
+        Contour::ShapeBased(read_polysegment_contour(&mut reader, "outline")?)
+    } else {
+        // Legacy f64 vertex pairs.
+        let vertex_count_raw = reader.read_i32_le()?;
+        if vertex_count_raw < 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "ComponentBody.outline_vertex_count".to_owned(),
+                detail: format!("vertex_count must be >= 0, got {}", vertex_count_raw),
+            });
+        }
+        let vertex_count = vertex_count_raw as usize;
+        let bytes_needed = vertex_count * 16;
+        if reader.remaining() < bytes_needed {
+            return Err(AltiumFormatError::BinaryReadPastEnd {
+                offset: reader.position(),
+                needed: bytes_needed,
+                available: reader.remaining(),
+            });
+        }
+        let mut vertices = Vec::with_capacity(vertex_count);
+        for _ in 0..vertex_count {
+            let x = reader.read_f64_le()?;
+            let y = reader.read_f64_le()?;
+            vertices.push(CoordPoint::new(
+                Coord::from_internal(x.round() as i32),
+                Coord::from_internal(y.round() as i32),
+            ));
+        }
+        Contour::Legacy(vertices)
+    };
 
     reader.assert_exhausted()?;
 
@@ -418,25 +486,29 @@ mod tests {
             (-300_000.0, 250_000.0),
         ];
         let data = make_component_body_data(model_id, "10", &vertices);
-        let body = parse_component_body(&data).unwrap();
+        let body = parse_component_body(&data, false).unwrap();
         assert_eq!(body.model_guid, model_id);
         assert_eq!(body.standoff_height, Coord::from_mils_f64(10.0));
         assert_eq!(body.rotation_x, 0.0);
         assert_eq!(body.rotation_y, 0.0);
         assert_eq!(body.rotation_z, 90.0);
-        assert_eq!(body.outline.len(), 4);
-        assert_eq!(body.outline[0].x.to_internal(), -300_000);
-        assert_eq!(body.outline[0].y.to_internal(), -250_000);
-        assert_eq!(body.outline[3].x.to_internal(), -300_000);
-        assert_eq!(body.outline[3].y.to_internal(), 250_000);
+        let pts = match &body.outline {
+            Contour::Legacy(pts) => pts,
+            _ => panic!("expected Legacy contour"),
+        };
+        assert_eq!(pts.len(), 4);
+        assert_eq!(pts[0].x.to_internal(), -300_000);
+        assert_eq!(pts[0].y.to_internal(), -250_000);
+        assert_eq!(pts[3].x.to_internal(), -300_000);
+        assert_eq!(pts[3].y.to_internal(), 250_000);
         assert!(body.unique_id.is_none());
     }
 
     #[test]
     fn parse_component_body_empty_outline() {
         let data = make_component_body_data("{00000000-0000-0000-0000-000000000000}", "0", &[]);
-        let body = parse_component_body(&data).unwrap();
-        assert!(body.outline.is_empty());
+        let body = parse_component_body(&data, false).unwrap();
+        assert!(matches!(&body.outline, Contour::Legacy(pts) if pts.is_empty()));
         assert_eq!(body.standoff_height, Coord::ZERO);
     }
 
@@ -452,14 +524,14 @@ mod tests {
                 (0.0, 100_000.0),
             ],
         );
-        let body = parse_component_body(&data).unwrap();
+        let body = parse_component_body(&data, false).unwrap();
         assert_eq!(body.standoff_height, Coord::from_mils_f64(-3.937));
     }
 
     #[test]
     fn parse_component_body_truncated_returns_error() {
         let data = [0u8; 10]; // way too short
-        let result = parse_component_body(&data);
+        let result = parse_component_body(&data, false);
         assert!(result.is_err());
     }
 
@@ -474,7 +546,7 @@ mod tests {
         w.write_bytes(param_str);
         w.write_i32_le(-1); // negative vertex count
         let data = w.finish();
-        let result = parse_component_body(&data);
+        let result = parse_component_body(&data, false);
         assert!(matches!(
             result,
             Err(AltiumFormatError::InvalidParamValue { .. })

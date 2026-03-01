@@ -14,8 +14,8 @@ use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
 use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::{
     Color, Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode,
-    PcbFlags, PcbObjectId, PlaneConnectionStyle, RegionKind, TCacheState, TextAutoposition,
-    TextKind, V6Layer, V7Layer, ViaStructureType,
+    PcbFlags, PcbObjectId, PlaneConnectionStyle, PolySegmentKind, RegionKind, TCacheState,
+    TextAutoposition, TextKind, V6Layer, V7Layer, ViaStructureType,
 };
 
 use crate::block_stream::iter_blocks;
@@ -92,6 +92,26 @@ pub(crate) enum PcbPrimitive {
     Fill(PcbFill),
     Region(PcbRegion),
     ComponentBody(PcbComponentBody),
+}
+
+/// A single edge/vertex from a TPolySegment record in ShapeBasedRegions6/ComponentBodies6.
+#[derive(Debug, Clone)]
+pub(crate) struct PolySegment {
+    pub(crate) kind: PolySegmentKind,
+    pub(crate) vertex: CoordPoint,
+    pub(crate) center: CoordPoint,
+    pub(crate) radius: Coord,
+    pub(crate) angle1: f64,
+    pub(crate) angle2: f64,
+}
+
+/// A region contour: either legacy f64 vertex pairs or extended TPolySegment edges.
+#[derive(Debug, Clone)]
+pub(crate) enum Contour {
+    /// Legacy Regions6: N × (f64 x, f64 y) pairs, closing implied.
+    Legacy(Vec<CoordPoint>),
+    /// ShapeBasedRegions6: (N+1) × TPolySegment, closing vertex explicit.
+    ShapeBased(Vec<PolySegment>),
 }
 
 pub(crate) struct PcbArc {
@@ -329,9 +349,9 @@ pub(crate) struct PcbRegion {
     pub(crate) bending_line_count: i32,
     pub(crate) locked_3d: bool,
     pub(crate) layer_stack_id: String,
-    // Geometry: main outline + hole contours (all f64 vertex pairs)
-    pub(crate) outline: Vec<CoordPoint>,
-    pub(crate) holes: Vec<Vec<CoordPoint>>,
+    // Geometry: main outline + hole contours
+    pub(crate) outline: Contour,
+    pub(crate) holes: Vec<Contour>,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -534,7 +554,7 @@ pub(crate) struct PcbComponentBody {
     pub(crate) model_cylinder_height: Coord,
     /// Sphere model radius (MODEL.SPHERE.RADIUS), only for sphere model types.
     pub(crate) model_sphere_radius: Coord,
-    pub(crate) outline: Vec<CoordPoint>,
+    pub(crate) outline: Contour,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -756,9 +776,14 @@ impl PcbLib {
                         });
                     }
                     PcbPrimitive::Region(r) => {
-                        let outline: Vec<(f64, f64)> = r.outline.iter()
-                            .map(|pt| (pt.x.raw() as f64 / 10_000.0, pt.y.raw() as f64 / 10_000.0))
-                            .collect();
+                        let outline: Vec<(f64, f64)> = match &r.outline {
+                            Contour::Legacy(pts) => pts.iter()
+                                .map(|pt| (pt.x.raw() as f64 / 10_000.0, pt.y.raw() as f64 / 10_000.0))
+                                .collect(),
+                            Contour::ShapeBased(segs) => segs.iter()
+                                .map(|s| (s.vertex.x.raw() as f64 / 10_000.0, s.vertex.y.raw() as f64 / 10_000.0))
+                                .collect(),
+                        };
                         graphics.push(PcbLibGraphicDumpView {
                             graphic_type: "region".to_string(),
                             layer: format!("{:?}", r.common.layer),
@@ -1238,7 +1263,10 @@ impl PcbLib {
 
         if let Some(cfg) = &self.pad_via_library {
             cfb.create_storage("/Library/PadViaLibrary")?;
-            cfb.write_stream("/Library/PadViaLibrary/Header", &serialize_u32_header(0))?;
+            cfb.write_stream(
+                "/Library/PadViaLibrary/Header",
+                &serialize_u32_header(cfg.templates.len() as u32),
+            )?;
             cfb.write_stream("/Library/PadViaLibrary/Data", &serialize_pad_via_library(cfg))?;
         }
 
@@ -1500,7 +1528,14 @@ fn serialize_pad_via_library(cfg: &PcbPadViaLibraryConfig) -> Vec<u8> {
     params.insert("PADVIALIBRARY.LIBRARYID", cfg.library_id.clone());
     params.insert("PADVIALIBRARY.LIBRARYNAME", cfg.library_name.clone());
     params.insert("PADVIALIBRARY.DISPLAYUNITS", cfg.display_units.clone());
-    write_text_block(&params.to_bytes())
+    let mut out = write_text_block(&params.to_bytes());
+    for template in &cfg.templates {
+        let param_bytes = template.params.to_bytes();
+        out.push(template.index);
+        out.extend_from_slice(&(param_bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&param_bytes);
+    }
+    out
 }
 
 fn serialize_embedded_fonts(entries: &[PcbEmbeddedFontEntry]) -> Vec<u8> {
@@ -1860,6 +1895,37 @@ fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
     Ok(vec![sub0.finish(), sub1.finish(), sub2.finish(), sub3.finish(), sub4.finish(), sub5.finish()])
 }
 
+fn write_legacy_contour(w: &mut BinaryWriter, points: &[CoordPoint]) {
+    w.write_i32_le(points.len() as i32);
+    for v in points {
+        w.write_f64_le(v.x.to_internal() as f64);
+        w.write_f64_le(v.y.to_internal() as f64);
+    }
+}
+
+fn write_polysegment_contour(w: &mut BinaryWriter, segments: &[crate::pcblib::PolySegment]) {
+    // edge_count = vertex_count - 1 (N+1 vertices for N edges)
+    let edge_count = segments.len().saturating_sub(1) as i32;
+    w.write_i32_le(edge_count);
+    for seg in segments {
+        w.write_u8(seg.kind as u8);
+        w.write_i32_le(seg.vertex.x.to_internal());
+        w.write_i32_le(seg.vertex.y.to_internal());
+        w.write_i32_le(seg.center.x.to_internal());
+        w.write_i32_le(seg.center.y.to_internal());
+        w.write_i32_le(seg.radius.to_internal());
+        w.write_f64_le(seg.angle1);
+        w.write_f64_le(seg.angle2);
+    }
+}
+
+fn write_contour(w: &mut BinaryWriter, contour: &crate::pcblib::Contour) {
+    match contour {
+        crate::pcblib::Contour::Legacy(points) => write_legacy_contour(w, points),
+        crate::pcblib::Contour::ShapeBased(segments) => write_polysegment_contour(w, segments),
+    }
+}
+
 fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     let mut w = BinaryWriter::new();
     write_primitive_common(&mut w, &p.common);
@@ -1894,17 +1960,9 @@ fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     let pbytes = params.to_bytes();
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
-    w.write_i32_le(p.outline.len() as i32);
-    for v in &p.outline {
-        w.write_f64_le(v.x.to_internal() as f64);
-        w.write_f64_le(v.y.to_internal() as f64);
-    }
+    write_contour(&mut w, &p.outline);
     for hole in &p.holes {
-        w.write_i32_le(hole.len() as i32);
-        for v in hole {
-            w.write_f64_le(v.x.to_internal() as f64);
-            w.write_f64_le(v.y.to_internal() as f64);
-        }
+        write_contour(&mut w, hole);
     }
     w.finish()
 }
@@ -1977,11 +2035,7 @@ fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     let pbytes = params.to_bytes();
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
-    w.write_i32_le(p.outline.len() as i32);
-    for v in &p.outline {
-        w.write_f64_le(v.x.to_internal() as f64);
-        w.write_f64_le(v.y.to_internal() as f64);
-    }
+    write_contour(&mut w, &p.outline);
     w.finish()
 }
 

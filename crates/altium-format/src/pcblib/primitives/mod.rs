@@ -28,10 +28,10 @@ pub(crate) fn dispatch_primitive(
         PcbObjectId::Via => via::parse_via(subrecords[0]).map(PcbPrimitive::Via),
         PcbObjectId::Fill => fill::parse_fill(subrecords[0]).map(PcbPrimitive::Fill),
         PcbObjectId::Text => text::parse_text(subrecords).map(PcbPrimitive::Text),
-        PcbObjectId::Region => region::parse_region(subrecords[0]).map(PcbPrimitive::Region),
+        PcbObjectId::Region => region::parse_region(subrecords[0], false).map(PcbPrimitive::Region),
         PcbObjectId::Pad => pad::parse_pad(subrecords).map(PcbPrimitive::Pad),
         PcbObjectId::ComponentBody => {
-            component_body::parse_component_body(subrecords[0]).map(PcbPrimitive::ComponentBody)
+            component_body::parse_component_body(subrecords[0], false).map(PcbPrimitive::ComponentBody)
         }
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
     }

@@ -89,6 +89,15 @@ pub(crate) struct SharedUnionParamSectionData {
     pub(crate) groups: Vec<records::SharedUnionParamGroup>,
 }
 
+pub(crate) struct ConstraintManagerSectionData {
+    pub(crate) header_value: u32,
+    pub(crate) xml: String,
+}
+
+pub(crate) struct PrimitiveGuidsSectionData {
+    pub(crate) entries: Vec<crate::pcblib::sidecar::PrimitiveGuidEntryPcbDoc>,
+}
+
 pub(crate) enum PcbDocSection {
     Primitive(PrimitiveSectionData),
     Parameter(ParamSectionData),
@@ -105,6 +114,8 @@ pub(crate) enum PcbDocSection {
     PrimitiveParameters(PrimitiveParametersSectionData),
     UnionFeatures(UnionFeaturesSectionData),
     SharedUnionParam(SharedUnionParamSectionData),
+    ConstraintManager(ConstraintManagerSectionData),
+    PrimitiveGuids(PrimitiveGuidsSectionData),
 }
 
 pub struct PcbDoc {
@@ -380,6 +391,31 @@ impl PcbDoc {
                 continue;
             }
 
+            if storage_name == "ConstraintManager" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data_bytes = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let header_value = parse_pcb_section_header(&header_data)?;
+                let xml = decode_constraint_manager_data(&data_bytes)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::ConstraintManager(
+                    ConstraintManagerSectionData { header_value, xml },
+                ));
+                continue;
+            }
+
+            if storage_name == "PrimitiveGuids" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data_bytes = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let entries = crate::pcblib::sidecar::parse_primitive_guids_pcbdoc(&header_data, &data_bytes)
+                    .with_context(|| format!("parsing {storage_path}"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::PrimitiveGuids(
+                    PrimitiveGuidsSectionData { entries },
+                ));
+                continue;
+            }
+
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "PcbDoc storage".to_owned(),
                 detail: format!(
@@ -646,6 +682,8 @@ fn section_identity(section: &PcbDocSection) -> String {
         PcbDocSection::PrimitiveParameters(_) => "PrimitiveParameters".to_owned(),
         PcbDocSection::UnionFeatures(_) => "UnionFeatures".to_owned(),
         PcbDocSection::SharedUnionParam(_) => "SharedUnion".to_owned(),
+        PcbDocSection::ConstraintManager(_) => "ConstraintManager".to_owned(),
+        PcbDocSection::PrimitiveGuids(_) => "PrimitiveGuids".to_owned(),
     }
 }
 
@@ -843,6 +881,57 @@ fn parse_embedded_fonts6_data(
     }
     reader.assert_exhausted()?;
     Ok(entries)
+}
+
+fn decode_constraint_manager_data(data: &[u8]) -> Result<String> {
+    use base64::Engine;
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
+
+    let mut blocks = crate::block_stream::iter_blocks(data);
+    let block = match blocks.next() {
+        Some(Ok(b)) => b,
+        Some(Err(e)) => return Err(e),
+        None => return Ok(String::new()),
+    };
+    if let Some(extra) = blocks.next() {
+        let _ = extra?;
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "ConstraintManager/Data".to_owned(),
+            detail: "expected single block".to_owned(),
+        });
+    }
+
+    let (base64_cow, _, had_errors) = encoding_rs::UTF_16LE.decode(&block.data);
+    if had_errors {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "ConstraintManager/Data".to_owned(),
+            detail: "invalid UTF-16LE encoding".to_owned(),
+        });
+    }
+    let base64_str = base64_cow.trim_end_matches('\0');
+    if base64_str.is_empty() {
+        return Ok(String::new());
+    }
+
+    let compressed = base64::engine::general_purpose::STANDARD
+        .decode(base64_str)
+        .map_err(|e| AltiumFormatError::InvalidParamValue {
+            key: "ConstraintManager/Data".to_owned(),
+            detail: format!("base64 decode failed: {e}"),
+        })?;
+
+    let mut decoder = ZlibDecoder::new(&compressed[..]);
+    let mut xml_bytes = Vec::new();
+    decoder.read_to_end(&mut xml_bytes).map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: "ConstraintManager/Data".to_owned(),
+        detail: format!("zlib decompress failed: {e}"),
+    })?;
+
+    String::from_utf8(xml_bytes).map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: "ConstraintManager/Data".to_owned(),
+        detail: format!("XML is not valid UTF-8: {e}"),
+    })
 }
 
 #[cfg(test)]
