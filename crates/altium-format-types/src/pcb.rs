@@ -2100,7 +2100,7 @@ impl std::fmt::Display for PolygonRepourMode {
     }
 }
 
-/// Polygon thermal relief angle (0-1).
+/// Polygon thermal relief angle (0-3). From TPolygonReliefAngle in C#.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -2108,6 +2108,8 @@ pub enum PolygonReliefAngle {
     #[default]
     Angle45 = 0,
     Angle90 = 1,
+    Angle0 = 2,
+    Angle135 = 3,
 }
 
 impl TryFrom<u8> for PolygonReliefAngle {
@@ -2116,6 +2118,8 @@ impl TryFrom<u8> for PolygonReliefAngle {
         match v {
             0 => Ok(Self::Angle45),
             1 => Ok(Self::Angle90),
+            2 => Ok(Self::Angle0),
+            3 => Ok(Self::Angle135),
             _ => Err(InvalidEnumValue {
                 type_name: "PolygonReliefAngle",
                 value: v as i64,
@@ -2332,5 +2336,399 @@ impl TryFrom<u8> for ViaStructureType {
 impl std::fmt::Display for ViaStructureType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+// ── DRC (Design Rule Check) enums ──────────────────────────────────────────
+
+/// Net scope for DRC rules. From TNetScope in C#.
+/// Serialized as string in DRC params (e.g., NETSCOPE=DifferentNets).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum NetScope {
+    #[default]
+    DifferentNetsOnly = 0,
+    SameNetOnly = 1,
+    AnyNet = 2,
+    DifferentDiffPairsOnly = 3,
+    SameDiffPairOnly = 4,
+}
+
+impl TryFrom<u8> for NetScope {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::DifferentNetsOnly),
+            1 => Ok(Self::SameNetOnly),
+            2 => Ok(Self::AnyNet),
+            3 => Ok(Self::DifferentDiffPairsOnly),
+            4 => Ok(Self::SameDiffPairOnly),
+            _ => Err(InvalidEnumValue { type_name: "NetScope", value: v as i64 }),
+        }
+    }
+}
+
+/// Rule layer kind. From TRuleLayerKind in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum RuleLayerKind {
+    #[default]
+    SameLayer = 0,
+    AdjacentLayers = 1,
+}
+
+impl TryFrom<u8> for RuleLayerKind {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::SameLayer),
+            1 => Ok(Self::AdjacentLayers),
+            _ => Err(InvalidEnumValue { type_name: "RuleLayerKind", value: v as i64 }),
+        }
+    }
+}
+
+/// Net topology for routing rules. From TNetTopology in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum NetTopology {
+    #[default]
+    Shortest = 0,
+    Horizontal = 1,
+    Vertical = 2,
+    DaisyChainSimple = 3,
+    DaisyChainMidDriven = 4,
+    DaisyChainBalanced = 5,
+    Starburst = 6,
+}
+
+impl TryFrom<u8> for NetTopology {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Shortest),
+            1 => Ok(Self::Horizontal),
+            2 => Ok(Self::Vertical),
+            3 => Ok(Self::DaisyChainSimple),
+            4 => Ok(Self::DaisyChainMidDriven),
+            5 => Ok(Self::DaisyChainBalanced),
+            6 => Ok(Self::Starburst),
+            _ => Err(InvalidEnumValue { type_name: "NetTopology", value: v as i64 }),
+        }
+    }
+}
+
+/// Routing via style. From TRouteVia in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum RouteVia {
+    #[default]
+    ThruHole = 0,
+    BlindBuriedPair = 1,
+    BlindBuriedAny = 2,
+    None = 3,
+}
+
+impl TryFrom<u8> for RouteVia {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::ThruHole),
+            1 => Ok(Self::BlindBuriedPair),
+            2 => Ok(Self::BlindBuriedAny),
+            3 => Ok(Self::None),
+            _ => Err(InvalidEnumValue { type_name: "RouteVia", value: v as i64 }),
+        }
+    }
+}
+
+/// Confinement style for room rules. From TConfinementStyle in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ConfinementStyle {
+    #[default]
+    ConfineIn = 0,
+    ConfineOut = 1,
+}
+
+impl TryFrom<u8> for ConfinementStyle {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::ConfineIn),
+            1 => Ok(Self::ConfineOut),
+            _ => Err(InvalidEnumValue { type_name: "ConfinementStyle", value: v as i64 }),
+        }
+    }
+}
+
+/// Clearance constraint mode. From TClearanceConstraintMode in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ClearanceConstraintMode {
+    #[default]
+    SingleClearance = 0,
+    ObjectsClearance = 1,
+}
+
+impl TryFrom<u8> for ClearanceConstraintMode {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::SingleClearance),
+            1 => Ok(Self::ObjectsClearance),
+            _ => Err(InvalidEnumValue { type_name: "ClearanceConstraintMode", value: v as i64 }),
+        }
+    }
+}
+
+/// Object clearance ID for clearance matrix entries. From TObjectClearanceId in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ObjectClearanceId {
+    Arc = 0,
+    Track = 1,
+    SmdPad = 2,
+    ThPad = 3,
+    Via = 4,
+    Fill = 5,
+    Poly = 6,
+    Region = 7,
+    Text = 8,
+    Hole = 9,
+    OutlineEdge = 10,
+    CavityEdge = 11,
+    CutoutEdge = 12,
+    SplitBarrier = 13,
+    SplitContinuation = 14,
+}
+
+impl TryFrom<u8> for ObjectClearanceId {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Arc),
+            1 => Ok(Self::Track),
+            2 => Ok(Self::SmdPad),
+            3 => Ok(Self::ThPad),
+            4 => Ok(Self::Via),
+            5 => Ok(Self::Fill),
+            6 => Ok(Self::Poly),
+            7 => Ok(Self::Region),
+            8 => Ok(Self::Text),
+            9 => Ok(Self::Hole),
+            10 => Ok(Self::OutlineEdge),
+            11 => Ok(Self::CavityEdge),
+            12 => Ok(Self::CutoutEdge),
+            13 => Ok(Self::SplitBarrier),
+            14 => Ok(Self::SplitContinuation),
+            _ => Err(InvalidEnumValue { type_name: "ObjectClearanceId", value: v as i64 }),
+        }
+    }
+}
+
+impl ObjectClearanceId {
+    /// Parse from the "ClearanceObj_Arc" format used in OBJECTCLEARANCES matrix.
+    pub fn from_clearance_string(s: &str) -> Result<Self, InvalidEnumValue> {
+        match s {
+            "ClearanceObj_Arc" => Ok(Self::Arc),
+            "ClearanceObj_Track" => Ok(Self::Track),
+            "ClearanceObj_SMDPad" => Ok(Self::SmdPad),
+            "ClearanceObj_THPad" => Ok(Self::ThPad),
+            "ClearanceObj_Via" => Ok(Self::Via),
+            "ClearanceObj_Fill" => Ok(Self::Fill),
+            "ClearanceObj_Poly" => Ok(Self::Poly),
+            "ClearanceObj_Region" => Ok(Self::Region),
+            "ClearanceObj_Text" => Ok(Self::Text),
+            "ClearanceObj_Hole" => Ok(Self::Hole),
+            "ClearanceObj_OutlineEdge" => Ok(Self::OutlineEdge),
+            "ClearanceObj_CavityEdge" => Ok(Self::CavityEdge),
+            "ClearanceObj_CutoutEdge" => Ok(Self::CutoutEdge),
+            // Note: Altium has a typo "Barrior" — preserved for roundtrip fidelity.
+            "ClearanceObj_SplitBarrior" => Ok(Self::SplitBarrier),
+            "ClearanceObj_SplitContinuation" => Ok(Self::SplitContinuation),
+            _ => Err(InvalidEnumValue {
+                type_name: "ObjectClearanceId",
+                value: -1,
+            }),
+        }
+    }
+
+    /// Serialize to "ClearanceObj_Arc" format for OBJECTCLEARANCES matrix.
+    pub fn to_clearance_string(&self) -> &'static str {
+        match self {
+            Self::Arc => "ClearanceObj_Arc",
+            Self::Track => "ClearanceObj_Track",
+            Self::SmdPad => "ClearanceObj_SMDPad",
+            Self::ThPad => "ClearanceObj_THPad",
+            Self::Via => "ClearanceObj_Via",
+            Self::Fill => "ClearanceObj_Fill",
+            Self::Poly => "ClearanceObj_Poly",
+            Self::Region => "ClearanceObj_Region",
+            Self::Text => "ClearanceObj_Text",
+            Self::Hole => "ClearanceObj_Hole",
+            Self::OutlineEdge => "ClearanceObj_OutlineEdge",
+            Self::CavityEdge => "ClearanceObj_CavityEdge",
+            Self::CutoutEdge => "ClearanceObj_CutoutEdge",
+            Self::SplitBarrier => "ClearanceObj_SplitBarrior",
+            Self::SplitContinuation => "ClearanceObj_SplitContinuation",
+        }
+    }
+}
+
+/// Component collision check mode. From TComponentCollisionCheckMode in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ComponentCollisionCheckMode {
+    QuickCheck = 0,
+    MultiLayerCheck = 1,
+    FullCheck = 2,
+    #[default]
+    ComponentBodyCheck = 3,
+}
+
+impl TryFrom<u8> for ComponentCollisionCheckMode {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::QuickCheck),
+            1 => Ok(Self::MultiLayerCheck),
+            2 => Ok(Self::FullCheck),
+            3 => Ok(Self::ComponentBodyCheck),
+            _ => Err(InvalidEnumValue { type_name: "ComponentCollisionCheckMode", value: v as i64 }),
+        }
+    }
+}
+
+/// Fanout style. From TFanoutStyle in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum FanoutStyle {
+    #[default]
+    Auto = 0,
+    Rows = 1,
+    Staggered = 2,
+    Bga = 3,
+    UnderPads = 4,
+}
+
+impl TryFrom<u8> for FanoutStyle {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Auto),
+            1 => Ok(Self::Rows),
+            2 => Ok(Self::Staggered),
+            3 => Ok(Self::Bga),
+            4 => Ok(Self::UnderPads),
+            _ => Err(InvalidEnumValue { type_name: "FanoutStyle", value: v as i64 }),
+        }
+    }
+}
+
+/// Fanout direction. From TFanoutDirection in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum FanoutDirection {
+    None = 0,
+    InOnly = 1,
+    OutOnly = 2,
+    InThenOut = 3,
+    OutThenIn = 4,
+    #[default]
+    Alternating = 5,
+}
+
+impl TryFrom<u8> for FanoutDirection {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::None),
+            1 => Ok(Self::InOnly),
+            2 => Ok(Self::OutOnly),
+            3 => Ok(Self::InThenOut),
+            4 => Ok(Self::OutThenIn),
+            5 => Ok(Self::Alternating),
+            _ => Err(InvalidEnumValue { type_name: "FanoutDirection", value: v as i64 }),
+        }
+    }
+}
+
+/// BGA fanout direction. From TBGAFanoutDirection in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum BgaFanoutDirection {
+    #[default]
+    Out = 0,
+    In = 1,
+}
+
+impl TryFrom<u8> for BgaFanoutDirection {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Out),
+            1 => Ok(Self::In),
+            _ => Err(InvalidEnumValue { type_name: "BgaFanoutDirection", value: v as i64 }),
+        }
+    }
+}
+
+/// BGA fanout via mode. From TBGAFanoutViaMode in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum BgaFanoutViaMode {
+    #[default]
+    Centered = 0,
+    Offset = 1,
+    Closest = 2,
+}
+
+impl TryFrom<u8> for BgaFanoutViaMode {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Centered),
+            1 => Ok(Self::Offset),
+            2 => Ok(Self::Closest),
+            _ => Err(InvalidEnumValue { type_name: "BgaFanoutViaMode", value: v as i64 }),
+        }
+    }
+}
+
+/// Testpoint validity. From TTestpointValid in C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum TestpointValid {
+    #[default]
+    NoTestPoint = 0,
+    OnePerNet = 1,
+    OnePerPin = 2,
+    AllowMultiple = 3,
+}
+
+impl TryFrom<u8> for TestpointValid {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::NoTestPoint),
+            1 => Ok(Self::OnePerNet),
+            2 => Ok(Self::OnePerPin),
+            3 => Ok(Self::AllowMultiple),
+            _ => Err(InvalidEnumValue { type_name: "TestpointValid", value: v as i64 }),
+        }
     }
 }

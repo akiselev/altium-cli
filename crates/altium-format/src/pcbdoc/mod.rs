@@ -1,3 +1,4 @@
+pub(crate) mod drc;
 pub(crate) mod primitives;
 pub(crate) mod records;
 
@@ -144,6 +145,10 @@ pub struct PcbDoc {
     pub(crate) legacy_header: String,
     pub(crate) header: PcbFileHeader,
     pub(crate) sections: Vec<PcbDocSection>,
+    pub(crate) rules: Vec<drc::PcbRule>,
+    pub(crate) violations: indexmap::IndexMap<records::ParamSectionKind, Vec<drc::PcbViolation>>,
+    pub(crate) waived_violations: Vec<drc::WaivedViolation>,
+    pub(crate) drc_options: Option<drc::DrcOptions>,
     pub(crate) source_path: Option<PathBuf>,
 }
 
@@ -193,6 +198,11 @@ impl PcbDoc {
 
         let (storages, _) = doc.list_entries("/")?;
         let mut sections = Vec::new();
+        let mut rules = Vec::new();
+        let mut violations: indexmap::IndexMap<records::ParamSectionKind, Vec<drc::PcbViolation>> =
+            indexmap::IndexMap::new();
+        let mut waived_violations = Vec::new();
+        let mut drc_options = None;
 
         for storage_name in storages {
             let storage_name = storage_name.trim_start_matches('/').to_owned();
@@ -393,7 +403,45 @@ impl PcbDoc {
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
                 validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
-                sections.push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
+
+                if kind.is_violation() {
+                    let mut parsed = Vec::new();
+                    for (i, mut record) in records.into_iter().enumerate() {
+                        let violation = drc::parse_violation(kind, &mut record.params)
+                            .with_context(|| {
+                                format!("parsing {storage_path}/Data record #{i}")
+                            })?;
+                        parsed.push(violation);
+                    }
+                    violations.entry(kind).or_default().extend(parsed);
+                } else if kind == records::ParamSectionKind::WaivedViolations {
+                    for (i, mut record) in records.into_iter().enumerate() {
+                        record.params.apply_unicode_sidecars()?;
+                        let wv = drc::WaivedViolation::from_params(&mut record.params)
+                            .with_context(|| {
+                                format!("parsing {storage_path}/Data record #{i}")
+                            })?;
+                        record.params.assert_exhausted()?;
+                        waived_violations.push(wv);
+                    }
+                } else if kind == records::ParamSectionKind::DesignRuleCheckerOptions6 {
+                    if records.len() != 1 {
+                        return Err(AltiumFormatError::RecordCountMismatch {
+                            section: storage_name.clone(),
+                            expected: 1,
+                            actual: records.len(),
+                        });
+                    }
+                    let mut record = records.into_iter().next().unwrap();
+                    drc_options = Some(
+                        drc::DrcOptions::from_params(&mut record.params).with_context(|| {
+                            format!("parsing {storage_path}/Data")
+                        })?,
+                    );
+                } else {
+                    sections
+                        .push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
+                }
                 continue;
             }
 
@@ -406,10 +454,22 @@ impl PcbDoc {
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
                 validate_record_count(&storage_name, expected_count, records.len())?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
-                sections.push(PcbDocSection::PrefixedParameter(PrefixedParamSectionData {
-                    kind,
-                    records,
-                }));
+
+                if kind == records::PrefixedParamSectionKind::Rules6
+                    || kind == records::PrefixedParamSectionKind::NewRules6
+                {
+                    for (i, mut record) in records.into_iter().enumerate() {
+                        let rule = drc::parse_rule(record.prefix, &mut record.params)
+                            .with_context(|| {
+                                format!("parsing {storage_path}/Data record #{i}")
+                            })?;
+                        rules.push(rule);
+                    }
+                } else {
+                    sections.push(PcbDocSection::PrefixedParameter(
+                        PrefixedParamSectionData { kind, records },
+                    ));
+                }
                 continue;
             }
 
@@ -496,6 +556,10 @@ impl PcbDoc {
             legacy_header,
             header,
             sections,
+            rules,
+            violations,
+            waived_violations,
+            drc_options,
             source_path: Some(path.to_path_buf()),
         };
         doc.validate_invariants()

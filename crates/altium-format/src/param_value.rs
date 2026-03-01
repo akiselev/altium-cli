@@ -3,9 +3,12 @@
 //! `ToParamValue`: serialize `T` back to the Altium string representation.
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
 use altium_format_types::{
-    Color, ComponentKind, Coord, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape, LineStyle,
-    ParameterReadOnlyState, ParameterType, PenWidth, RotationBy90, SheetSymbolType, TextHorzAnchor,
-    TextJustification, TextVertAnchor, UniqueId,
+    BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, Color, ComponentKind,
+    ComponentCollisionCheckMode, ConfinementStyle, Coord, CornerStyle, FanoutDirection,
+    FanoutStyle, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape, LineStyle, NetScope,
+    NetTopology, ObjectClearanceId, ParameterReadOnlyState, ParameterType, PenWidth,
+    PlaneConnectionStyle, PolygonReliefAngle, RotationBy90, RouteVia, RuleKind, RuleLayerKind,
+    SheetSymbolType, TestpointValid, TextHorzAnchor, TextJustification, TextVertAnchor, UniqueId,
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle},
 };
 
@@ -198,6 +201,337 @@ impl_enum_param_value!(
     PortIoType,
     LeftRightSide,
 );
+
+// ── String-keyed enum macro ─────────────────────────────────────────────────
+// For enums serialized as string identifiers (e.g., RULEKIND="Clearance") rather
+// than integer discriminants. Used by DRC parameters.
+macro_rules! impl_string_enum_param_value {
+    ($t:ty, $($variant:ident => $s:literal),+ $(,)?) => {
+        impl FromParamValue for $t {
+            #[allow(unreachable_patterns)]
+            fn from_param_value(key: &str, value: &str) -> Result<Self> {
+                match value {
+                    $($s => Ok(<$t>::$variant),)+
+                    _ => Err(AltiumFormatError::InvalidParamValue {
+                        key: key.to_owned(),
+                        detail: format!("unknown {} string: {:?}", stringify!($t), value),
+                    }),
+                }
+            }
+        }
+        impl ToParamValue for $t {
+            #[allow(unreachable_patterns)]
+            fn to_param_value(&self) -> String {
+                match self {
+                    $(<$t>::$variant => $s,)+
+                    // #[non_exhaustive] enums require a wildcard; unreachable at runtime
+                    // because we define arms for every variant.
+                    _ => unreachable!("unknown {} variant", stringify!($t)),
+                }.to_owned()
+            }
+        }
+    };
+}
+
+// All 70 RuleKind string mappings from cRuleIdStrings (Consts.cs L445-515).
+impl_string_enum_param_value!(RuleKind,
+    Clearance => "Clearance",
+    ParallelSegment => "ParallelSegment",
+    Width => "Width",
+    Length => "Length",
+    MatchedLengths => "MatchedLengths",
+    DaisyChainStubLength => "StubLength",
+    PowerPlaneConnectStyle => "PlaneConnect",
+    RoutingTopology => "RoutingTopology",
+    RoutingPriority => "RoutingPriority",
+    RoutingLayers => "RoutingLayers",
+    RoutingCornerStyle => "RoutingCorners",
+    RoutingViaStyle => "RoutingVias",
+    PowerPlaneClearance => "PlaneClearance",
+    SolderMaskExpansion => "SolderMaskExpansion",
+    PasteMaskExpansion => "PasteMaskExpansion",
+    ShortCircuit => "ShortCircuit",
+    BrokenNets => "UnRoutedNet",
+    ViasUnderSmd => "ViasUnderSMD",
+    MaximumViaCount => "MaximumViaCount",
+    MinimumAnnularRing => "MinimumAnnularRing",
+    PolygonConnectStyle => "PolygonConnect",
+    AcuteAngle => "AcuteAngle",
+    ConfinementConstraint => "RoomDefinition",
+    SmdToCorner => "SMDToCorner",
+    ComponentClearance => "ComponentClearance",
+    ComponentRotations => "ComponentOrientations",
+    PermittedLayers => "PermittedLayers",
+    NetsToIgnore => "NetsToIgnore",
+    SignalStimulus => "SignalStimulus",
+    OvershootFallingEdge => "OvershootFalling",
+    OvershootRisingEdge => "OvershootRising",
+    UndershootFallingEdge => "UndershootFalling",
+    UndershootRisingEdge => "UndershootRising",
+    MaxMinImpedance => "MaxMinImpedance",
+    SignalTopValue => "SignalTopValue",
+    SignalBaseValue => "SignalBaseValue",
+    FlightTimeRisingEdge => "FlightTimeRising",
+    FlightTimeFallingEdge => "FlightTimeFalling",
+    LayerStack => "LayerStack",
+    MaxSlopeRisingEdge => "SlopeRising",
+    MaxSlopeFallingEdge => "SlopeFalling",
+    SupplyNets => "SupplyNets",
+    MaxMinHoleSize => "HoleSize",
+    FabricationTestpointStyle => "FabricationTestpoint",
+    FabricationTestpointUsage => "FabricationTestPointUsage",
+    UnconnectedPin => "UnConnectedPin",
+    SmdToPlane => "SMDToPlane",
+    SmdNeckDown => "SMDNeckDown",
+    LayerPair => "LayerPairs",
+    FanoutControl => "FanoutControl",
+    MaxMinHeight => "Height",
+    DifferentialPairsRouting => "DiffPairsRouting",
+    HoleToHoleClearance => "HoleToHoleClearance",
+    MinimumSolderMaskSliver => "MinimumSolderMaskSliver",
+    SilkToSolderMaskClearance => "SilkToSolderMaskClearance",
+    SilkToSilkClearance => "SilkToSilkClearance",
+    NetAntennae => "NetAntennae",
+    AssyTestPointStyle => "AssemblyTestpoint",
+    AssyTestPointUsage => "AssemblyTestPointUsage",
+    SilkToBoardRegionClearance => "SilkToBoardRegionClearance",
+    SmdEntry => "SMDEntry",
+    None => "PCAD Rule",
+    UnpouredPolygon => "UnpouredPolygon",
+    BoardOutlineClearance => "BoardOutlineClearance",
+    BackDrilling => "BackDrilling",
+    Creepage => "Creepage",
+    ReturnPath => "ReturnPath",
+    RoutingNeckDown => "RoutingNeckDown",
+    WireBonding => "WireBonding",
+    ZAxisClearance => "ZAxisClearance",
+);
+
+impl_string_enum_param_value!(NetScope,
+    DifferentNetsOnly => "DifferentNets",
+    SameNetOnly => "SameNetOnly",
+    AnyNet => "AnyNet",
+    DifferentDiffPairsOnly => "DifferentPairs",
+    SameDiffPairOnly => "SameDiffPairs",
+);
+
+impl_string_enum_param_value!(RuleLayerKind,
+    SameLayer => "SameLayer",
+    AdjacentLayers => "AdjacentLayers",
+);
+
+impl_string_enum_param_value!(NetTopology,
+    Shortest => "Shortest",
+    Horizontal => "Horizontal",
+    Vertical => "Vertical",
+    DaisyChainSimple => "Daisy_Simple",
+    DaisyChainMidDriven => "Daisy_MidDriven",
+    DaisyChainBalanced => "Daisy_Balanced",
+    Starburst => "Starburst",
+);
+
+impl_string_enum_param_value!(RouteVia,
+    ThruHole => "Through Hole",
+    BlindBuriedPair => "Blind Buried (Adjacent Layers)",
+    BlindBuriedAny => "Blind Buried (Any Layer Pair)",
+    None => "xxx",
+);
+
+impl_string_enum_param_value!(PolygonReliefAngle,
+    Angle45 => "45 Angle",
+    Angle90 => "90 Angle",
+    Angle0 => "0 Angle",
+    Angle135 => "135 Angle",
+);
+
+impl_string_enum_param_value!(PlaneConnectionStyle,
+    Relief => "Relief",
+    Direct => "Direct",
+    NoConnect => "NoConnect",
+);
+
+impl_string_enum_param_value!(ConfinementStyle,
+    ConfineIn => "ConfineIn",
+    ConfineOut => "ConfineOut",
+);
+
+impl_string_enum_param_value!(ClearanceConstraintMode,
+    SingleClearance => "SingleClearance",
+    ObjectsClearance => "ObjectsClearance",
+);
+
+impl_string_enum_param_value!(FanoutStyle,
+    Auto => "Auto",
+    Rows => "Rows",
+    Staggered => "Staggered",
+    Bga => "BGA",
+    UnderPads => "UnderPads",
+);
+
+impl_string_enum_param_value!(FanoutDirection,
+    None => "None",
+    InOnly => "InOnly",
+    OutOnly => "OutOnly",
+    InThenOut => "InThenOut",
+    OutThenIn => "OutThenIn",
+    Alternating => "Alternating",
+);
+
+impl_string_enum_param_value!(BgaFanoutDirection,
+    Out => "Out",
+    In => "In",
+);
+
+impl_string_enum_param_value!(BgaFanoutViaMode,
+    Centered => "Centered",
+    Offset => "Offset",
+    Closest => "Closest",
+);
+
+impl FromParamValue for CornerStyle {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        match value {
+            "90-Degree" => Ok(Self::Degree90),
+            "45-Degree" => Ok(Self::Degree45),
+            "Rounded" | "Round" => Ok(Self::Round),
+            _ => Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("unknown CornerStyle string: {:?}", value),
+            }),
+        }
+    }
+}
+
+impl ToParamValue for CornerStyle {
+    fn to_param_value(&self) -> String {
+        match self {
+            Self::Degree90 => "90-Degree",
+            Self::Degree45 => "45-Degree",
+            Self::Round => "Rounded",
+            _ => unreachable!("unknown CornerStyle variant"),
+        }.to_owned()
+    }
+}
+
+// ComponentCollisionCheckMode serializes as integer string (not string name).
+impl_enum_param_value!(ComponentCollisionCheckMode, TestpointValid);
+
+// ObjectClearanceId: helper methods (from_clearance_string / to_clearance_string) are
+// defined in altium-format-types. Used by ClearanceMatrix parser below.
+
+// ── MilCoord ────────────────────────────────────────────────────────────────
+// A newtype around Coord for parameters serialized as "7mil", "11.811mil", etc.
+// Used exclusively by DRC rule/violation parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct MilCoord(pub Coord);
+
+impl FromParamValue for MilCoord {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        let trimmed = value.strip_suffix("mil").unwrap_or(value);
+        let normalized = trimmed.replace(',', ".");
+        let mils: f64 = normalized.parse().map_err(|e: std::num::ParseFloatError| {
+            AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("cannot parse '{}' as mil value: {}", value, e),
+            }
+        })?;
+        Ok(MilCoord(Coord::from_mils_f64(mils)))
+    }
+}
+
+impl ToParamValue for MilCoord {
+    fn to_param_value(&self) -> String {
+        let mils = self.0.to_mils();
+        // Altium formats with up to 4 decimal places, stripping trailing zeros.
+        let s = format!("{:.4}", mils);
+        let s = s.trim_end_matches('0');
+        let s = s.trim_end_matches('.');
+        format!("{s}mil")
+    }
+}
+
+// ── ClearanceMatrix ─────────────────────────────────────────────────────────
+// Sparse symmetric clearance matrix indexed by ObjectClearanceId pairs.
+// Serialized as semicolon-delimited "Type1-Type2:value" entries.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ClearanceMatrix {
+    entries: indexmap::IndexMap<(ObjectClearanceId, ObjectClearanceId), Coord>,
+}
+
+impl ClearanceMatrix {
+    fn normalize(
+        a: ObjectClearanceId,
+        b: ObjectClearanceId,
+    ) -> (ObjectClearanceId, ObjectClearanceId) {
+        if (a as u8) <= (b as u8) {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+}
+
+impl FromParamValue for ClearanceMatrix {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        let mut matrix = ClearanceMatrix::default();
+        if value.is_empty() {
+            return Ok(matrix);
+        }
+        for entry in value.split(';') {
+            if entry.is_empty() {
+                continue;
+            }
+            let (pair_str, val_str) = entry.split_once(':').ok_or_else(|| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("expected 'Type1-Type2:value', got {entry:?}"),
+                }
+            })?;
+            let (type1_str, type2_str) = pair_str.split_once('-').ok_or_else(|| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("expected 'Type1-Type2', got {pair_str:?}"),
+                }
+            })?;
+            let type1 = ObjectClearanceId::from_clearance_string(type1_str).map_err(|_| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("unknown clearance object type: {type1_str:?}"),
+                }
+            })?;
+            let type2 = ObjectClearanceId::from_clearance_string(type2_str).map_err(|_| {
+                AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("unknown clearance object type: {type2_str:?}"),
+                }
+            })?;
+            let raw: i32 = val_str.parse().map_err(|_| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("invalid clearance value: {val_str:?}"),
+            })?;
+            let norm = Self::normalize(type1, type2);
+            matrix.entries.insert(norm, Coord::from_internal(raw));
+        }
+        Ok(matrix)
+    }
+}
+
+impl ToParamValue for ClearanceMatrix {
+    fn to_param_value(&self) -> String {
+        self.entries
+            .iter()
+            .map(|(&(a, b), &v)| {
+                format!(
+                    "{}-{}:{}",
+                    a.to_clearance_string(),
+                    b.to_clearance_string(),
+                    v.to_internal()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+}
 
 // Angle value that serializes with exactly 3 decimal places (matching Altium's N3 format).
 // C#: StrUtils.DoubleToString(value, "N3") always produces "180.000", "45.000", etc.

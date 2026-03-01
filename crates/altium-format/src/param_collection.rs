@@ -465,6 +465,13 @@ impl ParameterCollection {
         self.params.len()
     }
 
+    // Drains all remaining key-value pairs, returning them as a Vec.
+    // Used for generic/partial parsing where remaining params are captured
+    // but not yet type-checked (e.g. transitional violation/options parsing).
+    pub(crate) fn drain_remaining(&mut self) -> Vec<(String, String)> {
+        self.params.drain(..).collect()
+    }
+
     // Returns Err(UnknownParams) if any keys remain unconsumed.
     // Call at the dispatch boundary after all known fields are removed.
     pub(crate) fn assert_exhausted(&self) -> Result<()> {

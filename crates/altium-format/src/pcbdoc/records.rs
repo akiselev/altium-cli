@@ -40,7 +40,7 @@ impl PrimitiveSectionKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ParamSectionKind {
     Board6,
     Nets6,
@@ -193,6 +193,51 @@ impl ParamSectionKind {
             "ViaStructureManager" => Some(Self::ViaStructureManager),
             _ => None,
         }
+    }
+
+    /// Returns true if this section kind is a DRC violation storage.
+    pub(crate) fn is_violation(&self) -> bool {
+        matches!(
+            self,
+            Self::TAcuteAngleViolation
+                | Self::TBackDrillViolation
+                | Self::TBoardOutlineClearanceViolation
+                | Self::TClearanceViolation
+                | Self::TComponentClearanceViolation
+                | Self::TCreepageViolation
+                | Self::TDiffPairsViolation
+                | Self::TDisconnectedSubnetsViolation
+                | Self::THoleToHoleViolation
+                | Self::TMatchedNetLengthsViolation
+                | Self::TMaximumViaCountViolation
+                | Self::TMaxMinComponentHeightViolation
+                | Self::TMaxMinLengthViolation
+                | Self::TMaxMinPadSlotWidthViolation
+                | Self::TMaxMinViaHoleSizeViolation
+                | Self::TMinimumAnnularRingViolation
+                | Self::TMinSolderMaskSliverViolation
+                | Self::TMinWidthViolation
+                | Self::TModifiedPolygonViolation
+                | Self::TNetAntennaeViolation
+                | Self::TPadUnderSMDViolation
+                | Self::TParallelSegmentViolation
+                | Self::TReturnPathViolation
+                | Self::TRoutingNeckDownViolation
+                | Self::TRoutingViaStyleViolation
+                | Self::TShortCircuitViolation
+                | Self::TSilkToBoardRegionClearanceViolation
+                | Self::TSilkToSilkClearanceViolation
+                | Self::TSilkToSolderMaskClearanceViolation
+                | Self::TSMDNeckDownViolation
+                | Self::TSMDPADEntryViolation
+                | Self::TSMDToCornerViolation
+                | Self::TTestPointViolation
+                | Self::TUnconnectedPinViolation
+                | Self::TViaUnderSMDViolation
+                | Self::TWirebondLengthViolation
+                | Self::TWirebondWireToWireViolation
+                | Self::TZAxisClearanceViolation
+        )
     }
 }
 

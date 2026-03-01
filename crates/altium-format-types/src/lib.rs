@@ -42,6 +42,10 @@ pub use pcb::{
     BarcodeKind, BarcodeRenderMode, RuleKind, TCacheState, TextAutoposition, ViewableObjectId,
     ViaStructureType, TextKind,
     V6Layer, V7Layer,
+    // DRC enums
+    BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, ComponentCollisionCheckMode,
+    ConfinementStyle, FanoutDirection, FanoutStyle, NetScope, NetTopology,
+    ObjectClearanceId, PolygonReliefAngle, RouteVia, RuleLayerKind, TestpointValid,
 };
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,
