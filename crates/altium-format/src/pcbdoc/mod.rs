@@ -632,7 +632,9 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                         check_dimension(p.pin_package_length, "Pad", idx, "pin_package_length", &section_name)?;
                     }
                     primitives::PcbPrimitive::Arc(a) => {
-                        check_dimension(a.radius, "Arc", idx, "radius", &section_name)?;
+                        // Arc radius is signed in Altium (IPCB_Arc.GetState_Radius
+                        // returns int). Degenerate zero-sweep arcs used in unions
+                        // can have negative or very large radii — no range check.
                         check_dimension(a.width, "Arc", idx, "width", &section_name)?;
                         if !a.start_angle.is_finite() || a.start_angle < 0.0 || a.start_angle > 360.0 {
                             return Err(AltiumFormatError::InvalidParamValue {
@@ -934,20 +936,31 @@ fn parse_embedded_fonts6_data(
     let mut reader = BinaryReader::new(data);
     let mut entries = Vec::with_capacity(expected_count);
     for idx in 0..expected_count {
-        let name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.name")?;
-        let style_name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.style_name")?;
-        let localized_name =
-            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.localized_name")?;
-        let unknown_u16 = reader.read_u16_le()?;
-        let flag = reader.read_u8()?;
+        let full_name =
+            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.full_name")?;
+        let face_name =
+            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.face_name")?;
+        let style_name =
+            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.style_name")?;
+        // Bold and italic bytes are only present when style_name is non-empty.
+        // When style_name is empty (byte_len == 2, just NUL), they are omitted.
+        let (bold, italic) = if !style_name.is_empty() {
+            let b = reader.read_u8()? != 0;
+            let i = reader.read_u8()? != 0;
+            (Some(b), Some(i))
+        } else {
+            (None, None)
+        };
+        let charset = reader.read_u8()?;
         let blob_size = reader.read_u32_le()? as usize;
         let blob = reader.read_bytes(blob_size)?;
         entries.push(PcbEmbeddedFontEntry {
-            name,
+            full_name,
+            face_name,
             style_name,
-            localized_name,
-            unknown_u16,
-            flag,
+            bold,
+            italic,
+            charset,
             data: blob.to_vec(),
         });
         if idx + 1 == expected_count {

@@ -121,6 +121,18 @@ pub const BLOCK_FLAG_TEXT: u8 = 0x00;
 pub const BLOCK_FLAG_BINARY: u8 = 0x01;
 
 // ---------------------------------------------------------------------------
+// WideStrings6 indexed record format (PcbDoc)
+// ---------------------------------------------------------------------------
+
+/// Empty string sentinel in PcbDoc WideStrings6/Data indexed records.
+///
+/// Entry format: `[u32 index][u32 byte_len][byte_len bytes UTF-16LE]`.
+/// When `byte_len == 2`, no payload bytes follow — the entry is just 8 bytes
+/// and represents an empty string. The minimum valid payload for an actual
+/// string is 4 bytes (one UTF-16LE character + NUL terminator).
+pub const WIDE_STRING6_EMPTY_SENTINEL: u32 = 2;
+
+// ---------------------------------------------------------------------------
 // WideStrings6 TLV type codes
 // ---------------------------------------------------------------------------
 

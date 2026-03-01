@@ -362,12 +362,26 @@ pub(crate) struct PcbPadViaLibraryConfig {
 }
 
 /// Embedded font entry from the EmbeddedFonts stream.
+///
+/// Each entry contains three UTF-16LE strings (full name, face/family name,
+/// style name), optional bold/italic flags (present only when `style_name`
+/// is non-empty), a charset byte, and zlib-compressed TTF font data.
+///
+/// Field order matches C# `IPCB_TTFontsCache.AddEmbeddedFont`:
+/// `(argFullFontName, argFaceName, argStyleName, argBold, argItalic, argCharSet, ...)`
 pub(crate) struct PcbEmbeddedFontEntry {
-    pub(crate) name: String,
+    /// Full font name, e.g. "Arial Bold" (1st string).
+    pub(crate) full_name: String,
+    /// Font family/face name, e.g. "Arial" (2nd string).
+    pub(crate) face_name: String,
+    /// Style descriptor, e.g. "Bold", "Normalny", "" (3rd string, possibly localized).
     pub(crate) style_name: String,
-    pub(crate) localized_name: String,
-    pub(crate) unknown_u16: u16,
-    pub(crate) flag: u8,
+    /// Bold flag — `None` when `style_name` is empty (bytes omitted in file).
+    pub(crate) bold: Option<bool>,
+    /// Italic flag — `None` when `style_name` is empty (bytes omitted in file).
+    pub(crate) italic: Option<bool>,
+    /// Windows charset ID (typically 1 = DEFAULT_CHARSET).
+    pub(crate) charset: u8,
     pub(crate) data: Vec<u8>,
 }
 
@@ -557,19 +571,28 @@ pub(crate) fn parse_embedded_fonts(data: &[u8]) -> Result<Vec<PcbEmbeddedFontEnt
     let count = reader.read_u32_le()? as usize;
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
-        let name = read_utf16le_string(&mut reader)?;
+        let full_name = read_utf16le_string(&mut reader)?;
+        let face_name = read_utf16le_string(&mut reader)?;
         let style_name = read_utf16le_string(&mut reader)?;
-        let localized_name = read_utf16le_string(&mut reader)?;
-        let unknown_u16 = reader.read_u16_le()?;
-        let flag = reader.read_u8()?;
+        // Bold and italic bytes are only present when style_name is non-empty.
+        // When style_name is empty (byte_len == 2, just NUL), they are omitted.
+        let (bold, italic) = if !style_name.is_empty() {
+            let b = reader.read_u8()? != 0;
+            let i = reader.read_u8()? != 0;
+            (Some(b), Some(i))
+        } else {
+            (None, None)
+        };
+        let charset = reader.read_u8()?;
         let blob_size = reader.read_u32_le()? as usize;
         let data_blob = reader.read_bytes(blob_size)?.to_vec();
         entries.push(PcbEmbeddedFontEntry {
-            name,
+            full_name,
+            face_name,
             style_name,
-            localized_name,
-            unknown_u16,
-            flag,
+            bold,
+            italic,
+            charset,
             data: data_blob,
         });
     }

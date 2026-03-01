@@ -1542,11 +1542,15 @@ fn serialize_embedded_fonts(entries: &[PcbEmbeddedFontEntry]) -> Vec<u8> {
     let mut w = BinaryWriter::new();
     w.write_u32_le(entries.len() as u32);
     for entry in entries {
-        write_utf16lp(&mut w, &entry.name);
+        write_utf16lp(&mut w, &entry.full_name);
+        write_utf16lp(&mut w, &entry.face_name);
         write_utf16lp(&mut w, &entry.style_name);
-        write_utf16lp(&mut w, &entry.localized_name);
-        w.write_u16_le(entry.unknown_u16);
-        w.write_u8(entry.flag);
+        // Bold and italic are only written when style_name is non-empty.
+        if let (Some(bold), Some(italic)) = (entry.bold, entry.italic) {
+            w.write_u8(u8::from(bold));
+            w.write_u8(u8::from(italic));
+        }
+        w.write_u8(entry.charset);
         w.write_u32_le(entry.data.len() as u32);
         w.write_bytes(&entry.data);
     }

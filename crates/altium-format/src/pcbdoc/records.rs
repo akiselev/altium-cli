@@ -313,71 +313,74 @@ pub(crate) fn parse_len_prefixed_binary_records(data: &[u8]) -> Result<Vec<Binar
 }
 
 pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6Record>> {
+    use altium_format_types::constants::parsing::WIDE_STRING6_EMPTY_SENTINEL;
+
     let mut out = Vec::new();
     let mut offset = 0usize;
 
     while offset < data.len() {
         let expected_index = out.len() as u32;
 
-        // Format A (common): [u32 index][u32 utf16_byte_len][bytes...]
-        let try_full = if offset + 8 <= data.len() {
-            let index_bytes = &data[offset..offset + 4];
-            let index = u32::from_le_bytes([
-                index_bytes[0],
-                index_bytes[1],
-                index_bytes[2],
-                index_bytes[3],
-            ]);
-            let len_bytes = &data[offset + 4..offset + 8];
-            let byte_len =
-                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                    as usize;
-            let data_off = offset + 8;
-            (index, byte_len, data_off)
-        } else {
-            (u32::MAX, usize::MAX, usize::MAX)
-        };
-
-        let mut parsed = None;
-        if try_full.0 == expected_index
-            && (try_full.1 % 2) == 0
-            && try_full.2 <= data.len()
-            && try_full.1 <= (data.len() - try_full.2)
-        {
-            parsed = Some((try_full.0, try_full.1, try_full.2));
-        } else if offset + 6 <= data.len() {
-            // Format B (observed variant): [u16=0][u32 utf16_byte_len][bytes...]
-            // Index is implicit and must equal the next sequential index.
-            let sentinel_bytes = &data[offset..offset + 2];
-            let sentinel = u16::from_le_bytes([sentinel_bytes[0], sentinel_bytes[1]]);
-            let len_bytes = &data[offset + 2..offset + 6];
-            let byte_len =
-                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                    as usize;
-            let data_off = offset + 6;
-            if sentinel == 0
-                && (byte_len % 2) == 0
-                && data_off <= data.len()
-                && byte_len <= (data.len() - data_off)
-            {
-                parsed = Some((expected_index, byte_len, data_off));
-            }
-        }
-
-        let (index, size, payload_off) = parsed.ok_or_else(|| {
-            let remaining = data.len() - offset;
-            let sample_len = remaining.min(16);
-            let sample = &data[offset..offset + sample_len];
-            AltiumFormatError::InvalidParamValue {
+        // Each entry: [u32 index][u32 byte_len][byte_len bytes UTF-16LE]
+        // Special case: byte_len == WIDE_STRING6_EMPTY_SENTINEL (2) means
+        // "empty string" with NO payload bytes — the entry is just 8 bytes.
+        if offset + 8 > data.len() {
+            return Err(AltiumFormatError::InvalidParamValue {
                 key: "WideStrings6/Data".to_owned(),
                 detail: format!(
-                    "cannot decode entry at offset {offset} (expected index {expected_index}); next bytes {:02x?}",
-                    sample
+                    "truncated entry header at offset {offset} (need 8 bytes, have {})",
+                    data.len() - offset
                 ),
-            }
-        })?;
+            });
+        }
 
-        let payload = &data[payload_off..payload_off + size];
+        let index = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+        let byte_len =
+            u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+
+        if index != expected_index {
+            let sample_len = (data.len() - offset).min(16);
+            let sample = &data[offset..offset + sample_len];
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "WideStrings6/Data".to_owned(),
+                detail: format!(
+                    "expected index {expected_index} at offset {offset}, got {index}; next bytes {sample:02x?}"
+                ),
+            });
+        }
+
+        if byte_len == WIDE_STRING6_EMPTY_SENTINEL as usize {
+            // Empty string sentinel: no payload bytes follow.
+            out.push(WideString6Record {
+                index,
+                text: String::new(),
+            });
+            offset += 8;
+            continue;
+        }
+
+        if byte_len % 2 != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "WideStrings6/Data".to_owned(),
+                detail: format!(
+                    "odd UTF-16LE byte_len {byte_len} for string index {index} at offset {offset}"
+                ),
+            });
+        }
+
+        let payload_off = offset + 8;
+        if payload_off + byte_len > data.len() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "WideStrings6/Data".to_owned(),
+                detail: format!(
+                    "payload extends past end for string index {index} at offset {offset} \
+                     (byte_len={byte_len}, available={})",
+                    data.len() - payload_off
+                ),
+            });
+        }
+
+        let payload = &data[payload_off..payload_off + byte_len];
         let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(payload);
         if had_errors {
             return Err(AltiumFormatError::InvalidParamValue {
@@ -390,7 +393,7 @@ pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6
             index,
             text: decoded.trim_end_matches('\0').to_owned(),
         });
-        offset = payload_off + size;
+        offset = payload_off + byte_len;
     }
 
     Ok(out)
