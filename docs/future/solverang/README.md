@@ -14,6 +14,7 @@ solver with altium-cli for automated PCB component placement and design rule che
 | [rotation-and-ratsnest.md](rotation-and-ratsnest.md) | Deep-dive: discrete rotation + HPWL optimization math |
 | [placement-algorithms.md](placement-algorithms.md) | Survey of SA, analytical, RL, diffusion + multi-stage pipeline |
 | [llm-constraint-generation.md](llm-constraint-generation.md) | Phase 0: LLM agent reads PcbDoc + datasheets → intelligent constraints |
+| [ir.md](ir.md) | altium-format-ir crate: domain-semantic intermediate representation for downstream consumers |
 
 ## Key Insight
 
