@@ -16,6 +16,7 @@ Reference documentation for implementing the PcbDoc (PCB Board Document) parser 
 | [loading-pipeline.md](loading-pipeline.md) | Complete load (7 phases) and save (5 phases) pipelines in exact execution order |
 | [enumerations.md](enumerations.md) | All enumerations: TObjectId, layers, pad shapes, TRuleKind (70 values), TStorageFeature, and more |
 | [shared-with-pcblib.md](shared-with-pcblib.md) | Overlap analysis with PcbLib: shared primitives, different document structure |
+| [serialization.md](serialization.md) | Save pipeline (5 phases), section export, sidecar build, implementation checklist |
 
 ## Quick orientation
 
