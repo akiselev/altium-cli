@@ -1,7 +1,6 @@
 use altium_format_types::{Coord, PlaneConnectionStyle, TCacheState, V6Layer, ViaStructureType};
 
 use crate::Result;
-use crate::ResultExt;
 use crate::binary_io::BinaryReader;
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::pcblib::{PcbVia, PcbViaPadLayerEntry, PcbViaSection2Entry};
@@ -298,12 +297,30 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             let mut guid2 = [0u8; 16];
             guid2.copy_from_slice(ext.read_bytes(16)?);
             template_link_template_id = Some(guid2);
-            hole_positive_tolerance = Some(Coord::from_internal(ext.read_i32_le()?));
-            hole_negative_tolerance = Some(Coord::from_internal(ext.read_i32_le()?));
+            // Tolerances: i32::MAX (0x7FFFFFFF) is the Delphi "not set" sentinel
+            // (Delphi initializes to MaxInt). Treat as None.
+            let pos_tol_raw = ext.read_i32_le()?;
+            if pos_tol_raw != i32::MAX {
+                hole_positive_tolerance = Some(Coord::from_internal(pos_tol_raw));
+            }
+            let neg_tol_raw = ext.read_i32_le()?;
+            if neg_tol_raw != i32::MAX {
+                hole_negative_tolerance = Some(Coord::from_internal(neg_tol_raw));
+            }
             if ext.remaining() >= 1 {
                 template_link_flags = Some(ext.read_u8()?);
             }
-            ext.assert_exhausted().context("Via template link block")?;
+            // ext_size=45: flags(1) + 3 extra bytes (empty RevisionID field,
+            // from IPCB_PadViaTemplateLink.RevisionID). Always observed as zeros.
+            if ext.remaining() > 0 {
+                let trailing = ext.read_bytes(ext.remaining())?;
+                if trailing.iter().any(|&b| b != 0) {
+                    return Err(crate::AltiumFormatError::InvalidParamValue {
+                        key: "Via template link trailing bytes".to_owned(),
+                        detail: format!("expected zeros, got {:02x?}", trailing),
+                    });
+                }
+            }
         }
 
         // Section 4: Per-layer pad stack entries (stride varies: 23, 29, 30).

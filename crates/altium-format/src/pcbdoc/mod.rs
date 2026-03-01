@@ -98,6 +98,26 @@ pub(crate) struct PrimitiveGuidsSectionData {
     pub(crate) entries: Vec<crate::pcblib::sidecar::PrimitiveGuidEntryPcbDoc>,
 }
 
+/// DrillManager storage: drill symbol configuration with per-hole-group records.
+/// Format: i32 sentinel(-1) + u32 count + N records (param text + pad/via index lists) + u32 trailing.
+pub(crate) struct DrillManagerSectionData {
+    pub(crate) records: Vec<DrillManagerRecord>,
+}
+
+pub(crate) struct DrillManagerRecord {
+    pub(crate) params: crate::param_collection::ParameterCollection,
+    pub(crate) pad_indices: Vec<u32>,
+    pub(crate) via_indices: Vec<u32>,
+}
+
+/// LettersGeometry storage: cached TrueType font glyph tessellation data.
+/// Contains Header (u32 count), PrimIndexes, and Data streams.
+pub(crate) struct LettersGeometrySectionData {
+    pub(crate) header_count: u32,
+    pub(crate) prim_indexes: Vec<u8>,
+    pub(crate) data: Vec<u8>,
+}
+
 pub(crate) enum PcbDocSection {
     Primitive(PrimitiveSectionData),
     Parameter(ParamSectionData),
@@ -116,6 +136,8 @@ pub(crate) enum PcbDocSection {
     SharedUnionParam(SharedUnionParamSectionData),
     ConstraintManager(ConstraintManagerSectionData),
     PrimitiveGuids(PrimitiveGuidsSectionData),
+    DrillManager(DrillManagerSectionData),
+    LettersGeometry(LettersGeometrySectionData),
 }
 
 pub struct PcbDoc {
@@ -416,6 +438,50 @@ impl PcbDoc {
                 continue;
             }
 
+            if storage_name == "DrillManager" {
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let data_bytes = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let _header_value = parse_pcb_section_header(&header_data)?;
+                let records = parse_drill_manager_data(&data_bytes)
+                    .with_context(|| format!("parsing {storage_path}/Data"))?;
+                assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
+                sections.push(PcbDocSection::DrillManager(
+                    DrillManagerSectionData { records },
+                ));
+                continue;
+            }
+
+            if storage_name == "LettersGeometry" {
+                // LettersGeometry has 3 streams: Header, PrimIndexes, Data.
+                // read_stream auto-marks each as consumed.
+                let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let prim_indexes = doc.read_stream(&format!("{storage_path}/PrimIndexes"))?;
+                let data = doc.read_stream(&format!("{storage_path}/Data"))?;
+                let mut hr = BinaryReader::new(&header_data);
+                let header_count = hr.read_u32_le()?;
+                hr.assert_exhausted().with_context(|| {
+                    format!("parsing {storage_path}/Header")
+                })?;
+                // Validate the storage layout: expect exactly Header, PrimIndexes, Data
+                let (_storages, streams) = doc.list_entries(&storage_path)?;
+                let expected: HashSet<&str> = ["Header", "PrimIndexes", "Data"].into_iter().collect();
+                let actual: HashSet<&str> = streams.iter().map(|s| s.as_str()).collect();
+                if actual != expected {
+                    return Err(AltiumFormatError::InvalidParamValue {
+                        key: storage_name.to_owned(),
+                        detail: format!("unexpected streams: expected {{Header, PrimIndexes, Data}}, got {:?}", streams),
+                    });
+                }
+                sections.push(PcbDocSection::LettersGeometry(
+                    LettersGeometrySectionData {
+                        header_count,
+                        prim_indexes,
+                        data,
+                    },
+                ));
+                continue;
+            }
+
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "PcbDoc storage".to_owned(),
                 detail: format!(
@@ -516,9 +582,16 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                         check_expansion(v.thermal_relief_conductor_width, "Via", idx, "thermal_relief_conductor_width", &section_name)?;
                         check_expansion(v.power_plane_relief_expansion, "Via", idx, "power_plane_relief_expansion", &section_name)?;
                         check_expansion(v.power_plane_clearance, "Via", idx, "power_plane_clearance", &section_name)?;
-                        check_expansion(v.paste_mask_expansion, "Via", idx, "paste_mask_expansion", &section_name)?;
-                        check_expansion(v.solder_mask_expansion_front, "Via", idx, "solder_mask_expansion_front", &section_name)?;
-                        check_expansion(v.solder_mask_expansion_back, "Via", idx, "solder_mask_expansion_back", &section_name)?;
+                        // Only validate mask expansions when override is active.
+                        // When "from rule", the stored value is a stale default and
+                        // may contain arbitrary data.
+                        if v.paste_mask_override {
+                            check_expansion(v.paste_mask_expansion, "Via", idx, "paste_mask_expansion", &section_name)?;
+                        }
+                        if v.solder_mask_override {
+                            check_expansion(v.solder_mask_expansion_front, "Via", idx, "solder_mask_expansion_front", &section_name)?;
+                            check_expansion(v.solder_mask_expansion_back, "Via", idx, "solder_mask_expansion_back", &section_name)?;
+                        }
                         for (i, d) in v.diameters_per_layer.iter().enumerate() {
                             check_dimension(*d, "Via", idx, &format!("diameters_per_layer[{i}]"), &section_name)?;
                         }
@@ -684,6 +757,8 @@ fn section_identity(section: &PcbDocSection) -> String {
         PcbDocSection::SharedUnionParam(_) => "SharedUnion".to_owned(),
         PcbDocSection::ConstraintManager(_) => "ConstraintManager".to_owned(),
         PcbDocSection::PrimitiveGuids(_) => "PrimitiveGuids".to_owned(),
+        PcbDocSection::DrillManager(_) => "DrillManager".to_owned(),
+        PcbDocSection::LettersGeometry(_) => "LettersGeometry".to_owned(),
     }
 }
 
@@ -881,6 +956,65 @@ fn parse_embedded_fonts6_data(
     }
     reader.assert_exhausted()?;
     Ok(entries)
+}
+
+/// Parses DrillManager Data stream.
+///
+/// Format: `i32(-1)` sentinel + `u32(count)` + N records + `u32(0)` trailing.
+/// Each record: `u32(text_len)` + NUL-terminated params + `u32(pad_count)` +
+/// pad_indices + `u32(via_count)` + via_indices.
+fn parse_drill_manager_data(data: &[u8]) -> Result<Vec<DrillManagerRecord>> {
+    use crate::param_collection::ParameterCollection;
+
+    let mut reader = BinaryReader::new(data);
+
+    let sentinel = reader.read_i32_le()?;
+    if sentinel != -1 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "DrillManager/Data".to_owned(),
+            detail: format!("expected sentinel -1, got {sentinel}"),
+        });
+    }
+
+    let count = reader.read_u32_le()? as usize;
+    let mut records = Vec::with_capacity(count);
+
+    for i in 0..count {
+        let text_len = reader.read_u32_le()? as usize;
+        let text_bytes = reader.read_bytes(text_len)?;
+        let params = ParameterCollection::from_bytes(text_bytes)
+            .with_context(|| format!("DrillManager record {i}"))?;
+
+        let pad_count = reader.read_u32_le()? as usize;
+        let mut pad_indices = Vec::with_capacity(pad_count);
+        for _ in 0..pad_count {
+            pad_indices.push(reader.read_u32_le()?);
+        }
+
+        let via_count = reader.read_u32_le()? as usize;
+        let mut via_indices = Vec::with_capacity(via_count);
+        for _ in 0..via_count {
+            via_indices.push(reader.read_u32_le()?);
+        }
+
+        records.push(DrillManagerRecord {
+            params,
+            pad_indices,
+            via_indices,
+        });
+    }
+
+    // Trailing u32(0) — observed as PairIndex or reserved field
+    let trailing = reader.read_u32_le()?;
+    if trailing != 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "DrillManager/Data".to_owned(),
+            detail: format!("expected trailing 0, got {trailing}"),
+        });
+    }
+
+    reader.assert_exhausted().context("DrillManager/Data")?;
+    Ok(records)
 }
 
 fn decode_constraint_manager_data(data: &[u8]) -> Result<String> {
