@@ -17,6 +17,7 @@ Reference documentation for implementing the PcbDoc (PCB Board Document) parser 
 | [enumerations.md](enumerations.md) | All enumerations: TObjectId, layers, pad shapes, TRuleKind (70 values), TStorageFeature, and more |
 | [shared-with-pcblib.md](shared-with-pcblib.md) | Overlap analysis with PcbLib: shared primitives, different document structure |
 | [serialization.md](serialization.md) | Save pipeline (5 phases), section export, sidecar build, implementation checklist |
+| [stream_table.md](stream_table.md) | Complete section name table: all ~166 CFB storages, Delphi addresses, DRC violations, TObjectId, TStorageFeature |
 
 ## Quick orientation
 
