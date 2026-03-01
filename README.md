@@ -12,11 +12,10 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 
 ## KNOWN LIMITATIONS
 
-Although `altium-cli` supports older file formats when reading, all mutations RESAVE THE FILE IN THE LATEST FORMAT (Altium/DXP 26 as of the time of this writing). If you are stuck on an older version of Altium, you may have problems opening the files afterwards.
-
-Our implementation is more strict than Altium's because of ambiguity in the reverse engineered implementation.
-
-This is mostly developed as a tool for agents to use, so expect lots of breaking changes.
+* Although `altium-cli` supports older file formats when reading, all mutations RESAVE THE FILE IN THE LATEST FORMAT (Altium/DXP 26 as of the time of this writing). If you are stuck on an older version of Altium, you may have problems opening the files afterwards.
+* Our implementation is more strict than Altium's because of ambiguity in the reverse engineered implementation.
+* This is mostly developed as a tool for agents to use, so expect lots of breaking changes.
+* Only supports CFB format Altium files. Legacy ASCII PcbDocs are not supported.
 
 
 ## Workspace crates
