@@ -167,6 +167,15 @@ impl PcbDoc {
         validate_pcbdoc_invariants(self)
     }
 
+    /// Convert internal sections into a public, domain-typed `PcbDocBoard`.
+    ///
+    /// All cross-references are resolved: net indices become net names,
+    /// component indices become designators, and WideStrings6 indices
+    /// become text strings.
+    pub fn board(&self) -> Result<crate::api::PcbDocBoard> {
+        crate::api::pcbdoc_read::board_from_internal(self)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let mut doc = TrackedCfbDocument::open(path)?;

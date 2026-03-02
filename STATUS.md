@@ -30,7 +30,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ✅         | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ❌ None         | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
+| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ✅ Read-only    | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
 | **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ✅      |
 | **IntLib** | .IntLib   | ❌ Stub | ❌ Stub | ❌ None         | ❌         | ❌     | ❌        | ⚠️ open only | ❌          | ❌      |
 
@@ -151,7 +151,7 @@ rounded-rect), fills, regions, text, component bodies.
 
 ---
 
-### PcbDoc (.PcbDoc) — COMPLETE PARSE/SERIALIZE, NO HIGH-LEVEL API
+### PcbDoc (.PcbDoc) — COMPLETE PARSE/SERIALIZE, READ-ONLY API
 
 **Parsing:** Complete. Reads legacy v1 header, v6 file header, and all 18+ section
 types from the CFB container.
@@ -184,8 +184,17 @@ Text in `pcbdoc/mod.rs`.
 - **Param key ordering** — `ParameterCollection` uses insertion order; Altium may differ
 - **Duplicate param keys** — Board6 LAYER/LOCKED written twice by Altium; ParameterCollection deduplicates
 
-**High-Level API:** None. PcbDoc has no public API types beyond `open()`, `save()`,
-and `validate_invariants()`.
+**High-Level API:** Read-only — `board()` returns typed `PcbDocBoard` with all
+cross-references resolved (net indices → names, component indices → designators,
+WideStrings6 indices → text strings). Contains `BoardSettings`, typed collections
+for all named entities (`Net`, `PcbDocComponent`, `Polygon`, `NetClass`,
+`DesignRule`, `DifferentialPair`), all 8 primitive types (`Track`, `Arc`, `Via`,
+`Pad`, `Fill`, `Text`, `Region`, `ComponentBody`), plus `Dimension` and `Model3D`.
+Query helpers: `net()`, `component()`, `tracks_for_net()`, `pads_for_net()`,
+`vias_for_net()`, `pads_for_component()`, `tracks_for_component()`,
+`bodies_for_component()`, `rule()`, `rules_for_kind()`. Handles legacy/modern
+section pairs (prefers ShapeBasedRegions6 over Regions6, etc.). Board outline
+auto-extracted from region primitives.
 
 **Spec Language:** Not supported.
 
@@ -342,10 +351,6 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 
 1. **IntLib is a stub** — returns `NotImplemented`. Violates fail-fast if users expect
    it to work. Should either implement or clearly document as unsupported.
-
-2. **PcbDoc has no high-level API** — parsing and serialization are complete but there
-   are no public API types for programmatic access to boards, nets, components, rules,
-   etc.
 
 ### Moderate
 

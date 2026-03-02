@@ -27,6 +27,8 @@ pub(crate) mod schdoc_write;
 mod pcblib_types;
 pub(crate) mod pcblib_read;
 pub(crate) mod pcblib_write;
+mod pcbdoc_types;
+pub(crate) mod pcbdoc_read;
 mod project_types;
 pub(crate) mod project_read;
 pub(crate) mod project_write;
@@ -60,6 +62,15 @@ pub use pcblib_types::{
     Footprint, Pad, PcbGraphic,
     TrackGraphic, PcbArcGraphic, FillGraphic, RegionGraphic,
     TextGraphic, ViaGraphic, ComponentBodyGraphic,
+};
+
+// ── PcbDoc types ────────────────────────────────────────────────────────────
+
+pub use pcbdoc_types::{
+    PcbDocBoard, BoardSettings,
+    Net, PcbDocComponent, Polygon, NetClass, DesignRule, DifferentialPair,
+    Track, Arc, Via, Pad as PcbDocPad, Fill, Text as PcbDocText, Region, ComponentBody,
+    Dimension, Model3D,
 };
 
 // ── PrjPcb types ────────────────────────────────────────────────────────────
