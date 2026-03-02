@@ -1,6 +1,6 @@
 # Codebase Status Report
 
-Generated: 2026-03-01
+Generated: 2026-03-02
 
 ## Workspace Overview
 
@@ -30,7 +30,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ✅         | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ✅ Read/Write   | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
+| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ✅ Read/Write   | ❌         | ✅     | ❌        | ✅          | ✅          | ❌      |
 | **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ✅      |
 | **IntLib** | .IntLib   | ❌ Stub | ❌ Stub | ❌ None         | ❌         | ❌     | ❌        | ⚠️ open only | ❌          | ❌      |
 
@@ -205,11 +205,17 @@ region primitives.
 
 **Spec Language:** Not supported.
 
-**Query:** Not supported.
+**Query:** Supported. Entity types: pcbdoc_net, pcbdoc_component, pcbdoc_polygon,
+pcbdoc_rule, pcbdoc_class, pcbdoc_dimension, pcbdoc_differential_pair, plus reused
+PcbLib primitive selectors (track, pad, via, arc, fill, text, region, component_body).
+Supports attribute filters on all fields. Pseudo-classes: `:smd`, `:through_hole`
+(pad hole detection), `:top`, `:bottom` (layer filtering). Flat query model — all
+objects are root-level nodes; component/net relationships queryable via attribute
+filters (e.g., `pad[component='U1']`, `track[net='GND']`).
 
 **Rendering:** Not supported.
 
-**CLI:** `validate`, `save-as`. No render, query, plan, apply, or dump.
+**CLI:** `validate`, `save-as`, `info`, `query`, `dump`. No render, plan, or apply.
 
 **Validation status:** 94/96 V6 test files passing (97.9%). Known issues tracked in
 `PCBDOC-next.md`:
@@ -261,11 +267,11 @@ or CLI support beyond a basic `validate` call that just attempts to open.
 | `save-as`      | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `get version`  | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `render`       | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `query`        | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `info`         | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `query`        | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `info`         | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `plan`         | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | `apply`        | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| `dump`         | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
+| `dump`         | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `cfb ls`       | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
 | `cfb dump`     | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
 | `cfb blocks`   | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
@@ -328,7 +334,9 @@ CSS-selector-inspired query language. Supports type selectors, attribute filters
 (`[field=value]`, `[field>value]`, etc.), pseudo-classes (`:power`, `:input`),
 combinators (descendant, child `>`), and logical operators (AND, OR, NOT, UNION).
 
-SchLib, PcbLib, and SchDoc are queryable. PcbDoc marked "Future".
+SchLib, PcbLib, SchDoc, and PcbDoc are queryable. PcbDoc uses a flat query model
+(all objects as root nodes) with PcbDoc-specific pseudo-classes (`:smd`, `:through_hole`,
+`:top`, `:bottom`).
 
 ### altium-format-render-svg / render-png
 
@@ -364,10 +372,7 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 3. **PrjPcb has no public write API** — internal write support exists but isn't
    surfaced through the API module.
 
-4. **Query does not support PcbDoc** — PcbDoc entity adapter not implemented (no
-   high-level API).
-
-5. **PcbDoc rendering not supported** — no SVG/PNG rendering for board designs.
+4. **PcbDoc rendering not supported** — no SVG/PNG rendering for board designs.
 
 ### Minor
 
