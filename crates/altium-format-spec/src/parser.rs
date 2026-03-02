@@ -1,15 +1,16 @@
 use crate::diagnostic::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
 
 use super::ast::{
-    AliasDecl, AnnotationBlockDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem,
-    DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr,
-    FontBlockDecl, FontDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
-    GraphicDecl, GridDecl, ImportDecl, LetBinding, MapEntry, MatchParameterDecl, NetDecl,
-    Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl, PadDecl, ParamVariationDecl,
-    ParameterDecl, PartBlock, PartItem, PinDecl, PowerDecl, ProjectDecl, ProjectItem, Property,
-    RowDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
-    VariantBlockDecl, VariationDecl,
-    is_graphic_type, is_schdoc_object_type,
+    AliasDecl, AnnotationBlockDecl, BoardDecl, BoardItem, ClassDecl, ComparisonRuleDecl,
+    ComponentDecl, ComponentItem, DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl,
+    ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl,
+    FootprintItem, FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
+    MapEntry, MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl,
+    OutputGroupBlockDecl, PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem,
+    PcbDocPrimitiveDecl, PinDecl, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property,
+    RowDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile,
+    SpecItem, VariantBlockDecl, VariationDecl,
+    is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
 
@@ -243,6 +244,20 @@ impl<'a> SpecParser<'a> {
             return Ok(Spanned::new(SpecItem::Power(decl), start.merge(end)));
         }
 
+        // Handle: board NAME { ... } (PcbDoc)
+        if self.at(&TokenKind::Board) {
+            let decl = self.parse_board()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::Board(decl), start.merge(end)));
+        }
+
+        // Handle: pad NAME { ... } at top level (PcbDoc pad primitive)
+        if self.at(&TokenKind::Pad) {
+            let decl = self.parse_pcbdoc_primitive_from_keyword("pad")?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::PcbDocPrimitive(decl), start.merge(end)));
+        }
+
         // Handle: parameter NAME { ... } at top level (SchDoc sheet-level parameter)
         // `parameter` is a keyword, but in SchDoc context it also appears as a
         // freestanding top-level object (like `wire`, `bus`, etc.).
@@ -308,6 +323,19 @@ impl<'a> SpecParser<'a> {
             return Err(self.err("expected identifier after 'let'"));
         }
 
+        // PcbDoc block types (polygon, rule, class, differential_pair) — checked before
+        // SchDoc types to avoid conflicts (polygon exists in both).
+        if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            if is_pcbdoc_block_type(name) {
+                return self.parse_pcbdoc_named_block(start);
+            }
+            if is_pcbdoc_primitive_type(name) {
+                let decl = self.parse_pcbdoc_primitive()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(SpecItem::PcbDocPrimitive(decl), start.merge(end)));
+            }
+        }
+
         // SchDoc object types and graphics as top-level identifier-dispatched blocks
         if let TokenKind::Ident(ref name) = self.current_kind().clone() {
             if is_schdoc_object_type(name) || is_graphic_type(name) {
@@ -317,7 +345,7 @@ impl<'a> SpecParser<'a> {
             }
         }
 
-        Err(self.err("expected import, component, footprint, project, sheet, net, power, or let binding"))
+        Err(self.err("expected import, component, footprint, project, sheet, net, power, board, or let binding"))
     }
 
     // ── Import ─────────────────────────────────────────────────────────────
@@ -1209,6 +1237,127 @@ impl<'a> SpecParser<'a> {
             variations,
             param_variations,
         })
+    }
+
+    // ── PcbDoc: board, primitives, named blocks ────────────────────────────
+
+    /// Parse `board NAME { ... }` — board settings block.
+    fn parse_board(&mut self) -> Result<BoardDecl, ParseError> {
+        self.expect(&TokenKind::Board, "expected 'board'")?;
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after board name")?;
+        let body = self.parse_board_body()?;
+        self.expect(&TokenKind::RBrace, "expected '}' to close board block")?;
+        Ok(BoardDecl { name, body })
+    }
+
+    fn parse_board_body(&mut self) -> Result<Vec<Spanned<BoardItem>>, ParseError> {
+        let mut items = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let start = self.current_span();
+
+            // let binding
+            if self.at(&TokenKind::Let) {
+                let binding = self.parse_let_binding()?;
+                let end = self.prev_span();
+                items.push(Spanned::new(BoardItem::LetBinding(binding), start.merge(end)));
+                self.skip_separators();
+                continue;
+            }
+
+            // property: key: value
+            let prop = self.parse_property()?;
+            let end = self.prev_span();
+            items.push(Spanned::new(BoardItem::Property(prop), start.merge(end)));
+            self.skip_separators();
+        }
+        Ok(items)
+    }
+
+    /// Parse a PcbDoc primitive from an identifier token: `track { ... }`, `arc { ... }`, etc.
+    fn parse_pcbdoc_primitive(&mut self) -> Result<PcbDocPrimitiveDecl, ParseError> {
+        let type_start = self.current_span();
+        let type_name = match self.current_kind().clone() {
+            TokenKind::Ident(s) => {
+                self.bump();
+                Spanned::new(s, type_start)
+            }
+            _ => return Err(self.err("expected PcbDoc primitive type identifier")),
+        };
+        self.skip_newlines();
+        // Optional name before '{'
+        let name = if !self.at(&TokenKind::LBrace) {
+            Some(self.parse_entity_name()?)
+        } else {
+            None
+        };
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(PcbDocPrimitiveDecl { primitive_type: type_name, name, body })
+    }
+
+    /// Parse a PcbDoc primitive from a keyword token (e.g. `pad NAME { ... }` at top level).
+    fn parse_pcbdoc_primitive_from_keyword(&mut self, keyword: &str) -> Result<PcbDocPrimitiveDecl, ParseError> {
+        let type_start = self.current_span();
+        self.bump(); // consume the keyword token
+        self.skip_newlines();
+        let name = if !self.at(&TokenKind::LBrace) {
+            Some(self.parse_entity_name()?)
+        } else {
+            None
+        };
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(PcbDocPrimitiveDecl {
+            primitive_type: Spanned::new(keyword.to_string(), type_start),
+            name,
+            body,
+        })
+    }
+
+    /// Parse a PcbDoc named block: `polygon NAME { ... }`, `rule NAME { ... }`, etc.
+    fn parse_pcbdoc_named_block(&mut self, start: Span) -> Result<Spanned<SpecItem>, ParseError> {
+        let type_name = match self.current_kind().clone() {
+            TokenKind::Ident(s) => {
+                self.bump();
+                s
+            }
+            _ => return Err(self.err("expected PcbDoc block type identifier")),
+        };
+        self.skip_newlines();
+        match type_name.as_str() {
+            "polygon" => {
+                let name = self.parse_entity_name()?;
+                self.skip_newlines();
+                let body = self.parse_object()?;
+                let end = self.prev_span();
+                Ok(Spanned::new(SpecItem::Polygon(PolygonDecl { name, body }), start.merge(end)))
+            }
+            "rule" => {
+                let name = self.parse_entity_name()?;
+                self.skip_newlines();
+                let body = self.parse_object()?;
+                let end = self.prev_span();
+                Ok(Spanned::new(SpecItem::Rule(RuleDecl { name, body }), start.merge(end)))
+            }
+            "class" => {
+                let name = self.parse_entity_name()?;
+                self.skip_newlines();
+                let body = self.parse_object()?;
+                let end = self.prev_span();
+                Ok(Spanned::new(SpecItem::Class(ClassDecl { name, body }), start.merge(end)))
+            }
+            "differential_pair" => {
+                let name = self.parse_entity_name()?;
+                self.skip_newlines();
+                let body = self.parse_object()?;
+                let end = self.prev_span();
+                Ok(Spanned::new(SpecItem::DifferentialPair(DifferentialPairDecl { name, body }), start.merge(end)))
+            }
+            _ => unreachable!("guarded by is_pcbdoc_block_type"),
+        }
     }
 
     // ── Pad ────────────────────────────────────────────────────────────────

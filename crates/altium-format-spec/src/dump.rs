@@ -11,6 +11,10 @@ use altium_format::api::{
 };
 use altium_format::api::PcbDocBoard;
 use altium_format_types::coord::Coord;
+use altium_format_types::common::Unit;
+use altium_format_types::pcb::{
+    ClassMemberKind, DimensionKind, PadShape, PlaneConnectionStyle, RegionKind, RuleKind,
+};
 use altium_format_types::project::{
     ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle,
     ErrorLevel, FlattenMode,
@@ -233,7 +237,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     out.push_str(&format!("    signal_layer_count: {}\n", board.settings.signal_layer_count));
     out.push_str(&format!("    snap_grid_size: {}\n", board.settings.snap_grid_size));
     out.push_str(&format!("    visible_grid_size: {}\n", board.settings.visible_grid_size));
-    out.push_str(&format!("    display_unit: {:?}\n", board.settings.display_unit));
+    out.push_str(&format!("    display_unit: \"{}\"\n", unit_to_spec_string(board.settings.display_unit)));
     out.push_str("}\n\n");
 
     // Nets
@@ -307,7 +311,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         if let Some(comp) = &pad.component { props.push(format!("component: {}", quote_entity_name(comp))); }
         props.push(format!("at: {}", pad.location));
         props.push(format!("layer: {}", pad.layer));
-        props.push(format!("shape: {:?}", pad.shape));
+        props.push(format!("shape: \"{}\"", pad_shape_to_spec_string(pad.shape)));
         props.push(format!("x_size: {}", pad.x_size));
         props.push(format!("y_size: {}", pad.y_size));
         out.push_str(&format!("pad {} {{ {} }}\n", quote_entity_name(&pad.pad_name), props.join(", ")));
@@ -333,7 +337,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     for region in &board.regions {
         let mut props = vec![format!("layer: {}", region.layer)];
         if let Some(net) = &region.net { props.push(format!("net: {}", quote_entity_name(net))); }
-        props.push(format!("kind: {:?}", region.kind));
+        props.push(format!("kind: \"{}\"", region_kind_to_spec_string(region.kind)));
         out.push_str(&format!("region {{ {} }}\n", props.join(", ")));
     }
 
@@ -351,7 +355,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         let mut props = Vec::new();
         if let Some(net) = &poly.net { props.push(format!("net: {}", quote_entity_name(net))); }
         props.push(format!("layer: {}", poly.layer));
-        props.push(format!("connect_style: {:?}", poly.connect_style));
+        props.push(format!("connect_style: \"{}\"", plane_connection_to_spec_string(poly.connect_style)));
         props.push(format!("pour_order: {}", poly.pour_order));
         out.push_str(&format!("polygon {} {{ {} }}\n", quote_entity_name(&poly.name), props.join(", ")));
     }
@@ -360,9 +364,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     // Design rules
     for rule in &board.rules {
         out.push_str(&format!(
-            "rule {} {{ kind: {:?}, enabled: {}, priority: {} }}\n",
+            "rule {} {{ kind: \"{}\", enabled: {}, priority: {} }}\n",
             quote_entity_name(&rule.name),
-            rule.kind,
+            rule_kind_to_spec_string(rule.kind),
             rule.enabled,
             rule.priority
         ));
@@ -372,9 +376,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     // Net/component classes
     for class in &board.classes {
         out.push_str(&format!(
-            "class {} {{ kind: {:?} }}\n",
+            "class {} {{ kind: \"{}\" }}\n",
             quote_entity_name(&class.name),
-            class.kind
+            class_member_kind_to_spec_string(class.kind)
         ));
     }
     if !board.classes.is_empty() { out.push('\n'); }
@@ -382,8 +386,8 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     // Dimensions
     for dim in &board.dimensions {
         out.push_str(&format!(
-            "dimension {{ kind: {:?}, layer: {} }}\n",
-            dim.kind,
+            "dimension {{ kind: \"{}\", layer: {} }}\n",
+            dimension_kind_to_spec_string(dim.kind),
             dim.layer
         ));
     }
@@ -398,6 +402,83 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
             quote_entity_name(&dp.negative_net)
         ));
     }
+}
+
+// ── Enum-to-spec-string helpers ───────────────────────────────────────────────
+//
+// These produce the canonical lowercase spec-language string representation for
+// each Altium enum, matching what the compiler's parse_* functions accept.
+
+fn unit_to_spec_string(u: Unit) -> &'static str {
+    match u {
+        Unit::Metric => "metric",
+        Unit::Imperial => "imperial",
+        _ => "imperial",
+    }
+}
+
+fn pad_shape_to_spec_string(s: PadShape) -> &'static str {
+    match s {
+        PadShape::NoShape => "no_shape",
+        PadShape::Round => "round",
+        PadShape::Rectangular => "rectangular",
+        PadShape::Octagonal => "octagonal",
+        PadShape::Arc => "arc",
+        PadShape::Terminator => "terminator",
+        PadShape::RoundRect => "round_rect",
+        PadShape::RotatedRect => "rotated_rect",
+        PadShape::RoundedRectangular => "rounded_rectangular",
+        PadShape::Custom => "custom",
+        _ => "round",
+    }
+}
+
+fn region_kind_to_spec_string(k: RegionKind) -> &'static str {
+    match k {
+        RegionKind::Copper => "copper",
+        RegionKind::Cutout => "cutout",
+        RegionKind::Named => "named",
+        RegionKind::BoardCutout => "board_cutout",
+        RegionKind::Cavity => "cavity",
+        _ => "copper",
+    }
+}
+
+fn plane_connection_to_spec_string(c: PlaneConnectionStyle) -> &'static str {
+    match c {
+        PlaneConnectionStyle::NoConnect => "no_connect",
+        PlaneConnectionStyle::Relief => "relief",
+        PlaneConnectionStyle::Direct => "direct",
+        _ => "no_connect",
+    }
+}
+
+fn rule_kind_to_spec_string(k: RuleKind) -> String {
+    // Convert PascalCase Display to snake_case
+    let display = format!("{}", k);
+    pascal_to_snake(&display)
+}
+
+fn class_member_kind_to_spec_string(k: ClassMemberKind) -> String {
+    let display = format!("{:?}", k);
+    pascal_to_snake(&display)
+}
+
+fn dimension_kind_to_spec_string(k: DimensionKind) -> String {
+    let display = format!("{:?}", k);
+    pascal_to_snake(&display)
+}
+
+/// Convert PascalCase to snake_case.
+fn pascal_to_snake(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
 }
 
 fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {

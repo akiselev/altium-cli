@@ -8,15 +8,17 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use altium_format::api;
-use altium_format::{PcbLib, SchDoc, SchLib};
+use altium_format::{PcbDoc, PcbLib, SchDoc, SchLib};
 
 use crate::eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, PropChange, PropValue, compute_summary,
 };
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
-    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec, PinSpec,
-    PrjPcbSpec, ProjectSpec, SchDocSpec, SchDocObjectSpec, SchLibSpec, PcbLibSpec,
+    BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec,
+    PcbDocClassSpec, PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec,
+    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PinSpec, PrjPcbSpec,
+    ProjectSpec, SchDocSpec, SchDocObjectSpec, SchLibSpec, PcbLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -1393,6 +1395,684 @@ fn schdoc_object_to_add(spec: &SchDocObjectSpec) -> EntityChange {
         ),
     };
     EntityChange::Add { kind, identity, props, children: vec![] }
+}
+
+// ── PcbDoc reconciler ─────────────────────────────────────────────────────────
+
+/// Reconcile a PcbDoc spec against an existing PcbDoc document.
+///
+/// Compares named collections by name/designator and primitives by ID/position.
+/// This is a read-only operation: the document is not modified.
+pub fn reconcile_pcbdoc(
+    spec: &PcbDocSpec,
+    doc: &PcbDoc,
+    library_path: PathBuf,
+    spec_path: PathBuf,
+) -> Result<EngineeringChangeOrder, SpecError> {
+    let board = doc.board()
+        .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+
+    let mut changes = Vec::new();
+
+    for board_spec in &spec.boards {
+        // Board settings diff
+        diff_board_settings(&board.settings, board_spec, &mut changes);
+
+        // Named collections: match by name/designator
+        diff_pcbdoc_nets(&board, &board_spec.nets, &mut changes);
+        diff_pcbdoc_components(&board, &board_spec.components, &mut changes);
+        diff_pcbdoc_polygons(&board, &board_spec.polygons, &mut changes);
+        diff_pcbdoc_rules(&board, &board_spec.rules, &mut changes);
+        diff_pcbdoc_classes(&board, &board_spec.classes, &mut changes);
+        diff_pcbdoc_diff_pairs(&board, &board_spec.differential_pairs, &mut changes);
+
+        // Primitives: match by ID, fallback to position_index
+        diff_pcbdoc_tracks(&board, &board_spec.tracks, &mut changes);
+        diff_pcbdoc_arcs(&board, &board_spec.arcs, &mut changes);
+        diff_pcbdoc_vias(&board, &board_spec.vias, &mut changes);
+        diff_pcbdoc_fills(&board, &board_spec.fills, &mut changes);
+        diff_pcbdoc_texts(&board, &board_spec.texts, &mut changes);
+    }
+
+    let summary = compute_summary(&changes);
+    Ok(EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    })
+}
+
+/// Reconcile against an empty PcbDoc: every entity in the spec is an Add.
+pub fn reconcile_pcbdoc_empty(
+    spec: &PcbDocSpec,
+    library_path: PathBuf,
+    spec_path: PathBuf,
+) -> EngineeringChangeOrder {
+    let mut changes = Vec::new();
+
+    for board_spec in &spec.boards {
+        // Board settings as Add
+        if !board_spec.name.is_empty() {
+            changes.push(EntityChange::Add {
+                kind: EntityKind::Board,
+                identity: board_spec.name.clone(),
+                props: board_settings_props(board_spec),
+                children: vec![],
+            });
+        }
+
+        // Named collections
+        for net in &board_spec.nets {
+            changes.push(pcbdoc_net_to_add(net));
+        }
+        for comp in &board_spec.components {
+            changes.push(pcbdoc_component_to_add(comp));
+        }
+        for poly in &board_spec.polygons {
+            changes.push(pcbdoc_polygon_to_add(poly));
+        }
+        for rule in &board_spec.rules {
+            changes.push(pcbdoc_rule_to_add(rule));
+        }
+        for cls in &board_spec.classes {
+            changes.push(pcbdoc_class_to_add(cls));
+        }
+        for dp in &board_spec.differential_pairs {
+            changes.push(pcbdoc_diff_pair_to_add(dp));
+        }
+
+        // Primitives
+        for prim in board_spec.tracks.iter()
+            .chain(&board_spec.arcs)
+            .chain(&board_spec.vias)
+            .chain(&board_spec.pads)
+            .chain(&board_spec.fills)
+            .chain(&board_spec.texts)
+            .chain(&board_spec.regions)
+            .chain(&board_spec.component_bodies)
+            .chain(&board_spec.dimensions)
+        {
+            changes.push(pcbdoc_primitive_to_add(prim));
+        }
+    }
+
+    let summary = compute_summary(&changes);
+    EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    }
+}
+
+// ── PcbDoc diff helpers ──────────────────────────────────────────────────────
+
+fn diff_board_settings(
+    existing: &api::BoardSettings,
+    spec: &BoardSpec,
+    changes: &mut Vec<EntityChange>,
+) {
+    let mut prop_changes = Vec::new();
+    if let Some(count) = spec.signal_layer_count {
+        if count != existing.signal_layer_count {
+            prop_changes.push(PropChange {
+                field: "signal_layer_count".to_string(),
+                old_value: existing.signal_layer_count.to_string(),
+                new_value: count.to_string(),
+            });
+        }
+    }
+    if let Some(grid) = spec.snap_grid_size {
+        if grid != existing.snap_grid_size {
+            prop_changes.push(PropChange {
+                field: "snap_grid_size".to_string(),
+                old_value: format!("{}", existing.snap_grid_size),
+                new_value: format!("{}", grid),
+            });
+        }
+    }
+    if let Some(grid) = spec.visible_grid_size {
+        if grid != existing.visible_grid_size {
+            prop_changes.push(PropChange {
+                field: "visible_grid_size".to_string(),
+                old_value: format!("{}", existing.visible_grid_size),
+                new_value: format!("{}", grid),
+            });
+        }
+    }
+    if let Some(ref unit_str) = spec.display_unit {
+        let existing_unit = format!("{:?}", existing.display_unit).to_lowercase();
+        if *unit_str != existing_unit {
+            prop_changes.push(PropChange {
+                field: "display_unit".to_string(),
+                old_value: existing_unit,
+                new_value: unit_str.clone(),
+            });
+        }
+    }
+
+    if !prop_changes.is_empty() {
+        changes.push(EntityChange::Update {
+            kind: EntityKind::Board,
+            identity: spec.name.clone(),
+            prop_changes,
+            children: vec![],
+        });
+    } else if !spec.name.is_empty() {
+        changes.push(EntityChange::Unchanged {
+            kind: EntityKind::Board,
+            identity: spec.name.clone(),
+        });
+    }
+}
+
+fn diff_pcbdoc_nets(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocNetSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::Net> = board.nets.iter()
+        .map(|n| (n.name.as_str(), n))
+        .collect();
+
+    for spec in specs {
+        if let Some(existing) = existing_map.get(spec.name.as_str()) {
+            let mut prop_changes = Vec::new();
+            if let Some(color) = spec.color {
+                if color != existing.color {
+                    prop_changes.push(PropChange {
+                        field: "color".to_string(),
+                        old_value: format!("{:?}", existing.color),
+                        new_value: format!("{:?}", color),
+                    });
+                }
+            }
+            if let Some(visible) = spec.visible {
+                if visible != existing.visible {
+                    prop_changes.push(PropChange {
+                        field: "visible".to_string(),
+                        old_value: existing.visible.to_string(),
+                        new_value: visible.to_string(),
+                    });
+                }
+            }
+            if prop_changes.is_empty() {
+                changes.push(EntityChange::Unchanged {
+                    kind: EntityKind::PcbDocNet,
+                    identity: spec.name.clone(),
+                });
+            } else {
+                changes.push(EntityChange::Update {
+                    kind: EntityKind::PcbDocNet,
+                    identity: spec.name.clone(),
+                    prop_changes,
+                    children: vec![],
+                });
+            }
+        } else {
+            changes.push(pcbdoc_net_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_components(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocComponentSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::PcbDocComponent> = board.components.iter()
+        .map(|c| (c.designator.as_str(), c))
+        .collect();
+
+    for spec in specs {
+        if let Some(existing) = existing_map.get(spec.designator.as_str()) {
+            let mut prop_changes = Vec::new();
+            if let Some(ref pattern) = spec.pattern {
+                if *pattern != existing.pattern {
+                    prop_changes.push(PropChange {
+                        field: "pattern".to_string(),
+                        old_value: existing.pattern.clone(),
+                        new_value: pattern.clone(),
+                    });
+                }
+            }
+            if let Some(loc) = spec.location {
+                if loc != existing.location {
+                    prop_changes.push(PropChange {
+                        field: "location".to_string(),
+                        old_value: format!("{}", existing.location),
+                        new_value: format!("{}", loc),
+                    });
+                }
+            }
+            if let Some(rot) = spec.rotation {
+                if (rot - existing.rotation).abs() > 0.001 {
+                    prop_changes.push(PropChange {
+                        field: "rotation".to_string(),
+                        old_value: format!("{}", existing.rotation),
+                        new_value: format!("{}", rot),
+                    });
+                }
+            }
+            if prop_changes.is_empty() {
+                changes.push(EntityChange::Unchanged {
+                    kind: EntityKind::PcbDocComponent,
+                    identity: spec.designator.clone(),
+                });
+            } else {
+                changes.push(EntityChange::Update {
+                    kind: EntityKind::PcbDocComponent,
+                    identity: spec.designator.clone(),
+                    prop_changes,
+                    children: vec![],
+                });
+            }
+        } else {
+            changes.push(pcbdoc_component_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_polygons(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocPolygonSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::Polygon> = board.polygons.iter()
+        .map(|p| (p.name.as_str(), p))
+        .collect();
+
+    for spec in specs {
+        if let Some(_existing) = existing_map.get(spec.name.as_str()) {
+            // For now, just mark as unchanged (polygon property diff is complex)
+            changes.push(EntityChange::Unchanged {
+                kind: EntityKind::Polygon,
+                identity: spec.name.clone(),
+            });
+        } else {
+            changes.push(pcbdoc_polygon_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_rules(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocRuleSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::DesignRule> = board.rules.iter()
+        .map(|r| (r.name.as_str(), r))
+        .collect();
+
+    for spec in specs {
+        if let Some(existing) = existing_map.get(spec.name.as_str()) {
+            let mut prop_changes = Vec::new();
+            if let Some(enabled) = spec.enabled {
+                if enabled != existing.enabled {
+                    prop_changes.push(PropChange {
+                        field: "enabled".to_string(),
+                        old_value: existing.enabled.to_string(),
+                        new_value: enabled.to_string(),
+                    });
+                }
+            }
+            if let Some(priority) = spec.priority {
+                if priority != existing.priority {
+                    prop_changes.push(PropChange {
+                        field: "priority".to_string(),
+                        old_value: existing.priority.to_string(),
+                        new_value: priority.to_string(),
+                    });
+                }
+            }
+            if prop_changes.is_empty() {
+                changes.push(EntityChange::Unchanged {
+                    kind: EntityKind::Rule,
+                    identity: spec.name.clone(),
+                });
+            } else {
+                changes.push(EntityChange::Update {
+                    kind: EntityKind::Rule,
+                    identity: spec.name.clone(),
+                    prop_changes,
+                    children: vec![],
+                });
+            }
+        } else {
+            changes.push(pcbdoc_rule_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_classes(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocClassSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::NetClass> = board.classes.iter()
+        .map(|c| (c.name.as_str(), c))
+        .collect();
+
+    for spec in specs {
+        if existing_map.contains_key(spec.name.as_str()) {
+            changes.push(EntityChange::Unchanged {
+                kind: EntityKind::Class,
+                identity: spec.name.clone(),
+            });
+        } else {
+            changes.push(pcbdoc_class_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_diff_pairs(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocDifferentialPairSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::DifferentialPair> = board.differential_pairs.iter()
+        .map(|dp| (dp.name.as_str(), dp))
+        .collect();
+
+    for spec in specs {
+        if let Some(existing) = existing_map.get(spec.name.as_str()) {
+            let mut prop_changes = Vec::new();
+            if let Some(ref pos) = spec.positive_net {
+                if *pos != existing.positive_net {
+                    prop_changes.push(PropChange {
+                        field: "positive_net".to_string(),
+                        old_value: existing.positive_net.clone(),
+                        new_value: pos.clone(),
+                    });
+                }
+            }
+            if let Some(ref neg) = spec.negative_net {
+                if *neg != existing.negative_net {
+                    prop_changes.push(PropChange {
+                        field: "negative_net".to_string(),
+                        old_value: existing.negative_net.clone(),
+                        new_value: neg.clone(),
+                    });
+                }
+            }
+            if prop_changes.is_empty() {
+                changes.push(EntityChange::Unchanged {
+                    kind: EntityKind::DifferentialPair,
+                    identity: spec.name.clone(),
+                });
+            } else {
+                changes.push(EntityChange::Update {
+                    kind: EntityKind::DifferentialPair,
+                    identity: spec.name.clone(),
+                    prop_changes,
+                    children: vec![],
+                });
+            }
+        } else {
+            changes.push(pcbdoc_diff_pair_to_add(spec));
+        }
+    }
+}
+
+// ── Primitive diff (match by ID then position_index) ─────────────────────────
+
+fn diff_pcbdoc_tracks(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocPrimitiveSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_by_id: HashMap<&str, &api::Track> = board.tracks.iter()
+        .map(|t| (t.id.as_str(), t))
+        .collect();
+
+    for spec in specs {
+        if let Some(existing) = existing_by_id.get(spec.id.as_str()) {
+            let mut prop_changes = Vec::new();
+            check_coord_prop(&spec.properties, "from", &format!("{}", existing.start), &mut prop_changes, "start");
+            check_coord_prop(&spec.properties, "to", &format!("{}", existing.end), &mut prop_changes, "end");
+            if prop_changes.is_empty() {
+                changes.push(EntityChange::Unchanged { kind: EntityKind::Track, identity: spec.id.clone() });
+            } else {
+                changes.push(EntityChange::Update { kind: EntityKind::Track, identity: spec.id.clone(), prop_changes, children: vec![] });
+            }
+        } else {
+            changes.push(pcbdoc_primitive_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_arcs(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocPrimitiveSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_by_id: HashMap<&str, &api::Arc> = board.arcs.iter()
+        .map(|a| (a.id.as_str(), a))
+        .collect();
+
+    for spec in specs {
+        if existing_by_id.contains_key(spec.id.as_str()) {
+            changes.push(EntityChange::Unchanged { kind: EntityKind::Arc, identity: spec.id.clone() });
+        } else {
+            changes.push(pcbdoc_primitive_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_vias(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocPrimitiveSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_by_id: HashMap<&str, &api::Via> = board.vias.iter()
+        .map(|v| (v.id.as_str(), v))
+        .collect();
+
+    for spec in specs {
+        if existing_by_id.contains_key(spec.id.as_str()) {
+            changes.push(EntityChange::Unchanged { kind: EntityKind::Via, identity: spec.id.clone() });
+        } else {
+            changes.push(pcbdoc_primitive_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_fills(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocPrimitiveSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_by_id: HashMap<&str, &api::Fill> = board.fills.iter()
+        .map(|f| (f.id.as_str(), f))
+        .collect();
+
+    for spec in specs {
+        if existing_by_id.contains_key(spec.id.as_str()) {
+            changes.push(EntityChange::Unchanged { kind: EntityKind::Fill, identity: spec.id.clone() });
+        } else {
+            changes.push(pcbdoc_primitive_to_add(spec));
+        }
+    }
+}
+
+fn diff_pcbdoc_texts(
+    board: &api::PcbDocBoard,
+    specs: &[PcbDocPrimitiveSpec],
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_by_id: HashMap<&str, &api::PcbDocText> = board.texts.iter()
+        .map(|t| (t.id.as_str(), t))
+        .collect();
+
+    for spec in specs {
+        if existing_by_id.contains_key(spec.id.as_str()) {
+            changes.push(EntityChange::Unchanged { kind: EntityKind::Text, identity: spec.id.clone() });
+        } else {
+            changes.push(pcbdoc_primitive_to_add(spec));
+        }
+    }
+}
+
+fn check_coord_prop(
+    props: &indexmap::IndexMap<String, crate::eval::Value>,
+    key: &str,
+    existing_str: &str,
+    prop_changes: &mut Vec<PropChange>,
+    field_name: &str,
+) {
+    use crate::eval::Value;
+    if let Some(val) = props.get(key) {
+        let new_str = match val {
+            Value::CoordPoint(x, y) => {
+                use altium_format_types::Coord;
+                format!("{}", altium_format_types::CoordPoint::new(Coord::new(*x), Coord::new(*y)))
+            }
+            other => format!("{:?}", other),
+        };
+        if new_str != existing_str {
+            prop_changes.push(PropChange {
+                field: field_name.to_string(),
+                old_value: existing_str.to_string(),
+                new_value: new_str,
+            });
+        }
+    }
+}
+
+// ── PcbDoc Add helpers ───────────────────────────────────────────────────────
+
+fn board_settings_props(spec: &BoardSpec) -> Vec<PropValue> {
+    let mut props = Vec::new();
+    if let Some(count) = spec.signal_layer_count {
+        props.push(PropValue { field: "signal_layer_count".to_string(), value: count.to_string() });
+    }
+    if let Some(ref unit) = spec.display_unit {
+        props.push(PropValue { field: "display_unit".to_string(), value: unit.clone() });
+    }
+    props
+}
+
+fn pcbdoc_net_to_add(spec: &PcbDocNetSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue { field: "name".to_string(), value: spec.name.clone() },
+    ];
+    if let Some(visible) = spec.visible {
+        props.push(PropValue { field: "visible".to_string(), value: visible.to_string() });
+    }
+    EntityChange::Add {
+        kind: EntityKind::PcbDocNet,
+        identity: spec.name.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn pcbdoc_component_to_add(spec: &PcbDocComponentSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue { field: "designator".to_string(), value: spec.designator.clone() },
+    ];
+    if let Some(ref pattern) = spec.pattern {
+        props.push(PropValue { field: "pattern".to_string(), value: pattern.clone() });
+    }
+    if let Some(loc) = spec.location {
+        props.push(PropValue { field: "location".to_string(), value: format!("{}", loc) });
+    }
+    EntityChange::Add {
+        kind: EntityKind::PcbDocComponent,
+        identity: spec.designator.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn pcbdoc_polygon_to_add(spec: &PcbDocPolygonSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue { field: "name".to_string(), value: spec.name.clone() },
+    ];
+    if let Some(ref net) = spec.net {
+        props.push(PropValue { field: "net".to_string(), value: net.clone() });
+    }
+    EntityChange::Add {
+        kind: EntityKind::Polygon,
+        identity: spec.name.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn pcbdoc_rule_to_add(spec: &PcbDocRuleSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue { field: "name".to_string(), value: spec.name.clone() },
+    ];
+    if let Some(ref kind) = spec.kind {
+        props.push(PropValue { field: "kind".to_string(), value: kind.clone() });
+    }
+    EntityChange::Add {
+        kind: EntityKind::Rule,
+        identity: spec.name.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn pcbdoc_class_to_add(spec: &PcbDocClassSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue { field: "name".to_string(), value: spec.name.clone() },
+    ];
+    if let Some(ref kind) = spec.kind {
+        props.push(PropValue { field: "kind".to_string(), value: kind.clone() });
+    }
+    EntityChange::Add {
+        kind: EntityKind::Class,
+        identity: spec.name.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn pcbdoc_diff_pair_to_add(spec: &PcbDocDifferentialPairSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue { field: "name".to_string(), value: spec.name.clone() },
+    ];
+    if let Some(ref pos) = spec.positive_net {
+        props.push(PropValue { field: "positive_net".to_string(), value: pos.clone() });
+    }
+    if let Some(ref neg) = spec.negative_net {
+        props.push(PropValue { field: "negative_net".to_string(), value: neg.clone() });
+    }
+    EntityChange::Add {
+        kind: EntityKind::DifferentialPair,
+        identity: spec.name.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn pcbdoc_primitive_to_add(spec: &PcbDocPrimitiveSpec) -> EntityChange {
+    let kind = match spec.primitive_type.as_str() {
+        "track" => EntityKind::Track,
+        "arc" => EntityKind::Arc,
+        "via" => EntityKind::Via,
+        "pad" => EntityKind::Pad,
+        "fill" => EntityKind::Fill,
+        "text" => EntityKind::Text,
+        "region" => EntityKind::Region,
+        "component_body" => EntityKind::ComponentBody,
+        "dimension" => EntityKind::Dimension,
+        _ => EntityKind::Track, // fallback
+    };
+    let props: Vec<PropValue> = spec.properties.iter()
+        .map(|(k, v)| PropValue { field: k.clone(), value: format!("{:?}", v) })
+        .collect();
+    EntityChange::Add {
+        kind,
+        identity: spec.id.clone(),
+        props,
+        children: vec![],
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

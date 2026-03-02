@@ -459,6 +459,7 @@ pub enum SpecDomain {
     SchLib,
     SchDoc,
     PcbLib,
+    PcbDoc,
     PrjPcb,
 }
 
@@ -466,7 +467,89 @@ pub enum SpecModel {
     SchLib(SchLibSpec),
     SchDoc(SchDocSpec),
     PcbLib(PcbLibSpec),
+    PcbDoc(PcbDocSpec),
     PrjPcb(PrjPcbSpec),
+}
+
+// ── PcbDoc ──────────────────────────────────────────────────────────────────
+
+pub struct PcbDocSpec {
+    pub boards: Vec<BoardSpec>,
+}
+
+pub struct BoardSpec {
+    pub name: String,
+    pub signal_layer_count: Option<i32>,
+    pub snap_grid_size: Option<Coord>,
+    pub visible_grid_size: Option<Coord>,
+    pub display_unit: Option<String>,
+
+    pub nets: Vec<PcbDocNetSpec>,
+    pub components: Vec<PcbDocComponentSpec>,
+    pub tracks: Vec<PcbDocPrimitiveSpec>,
+    pub arcs: Vec<PcbDocPrimitiveSpec>,
+    pub vias: Vec<PcbDocPrimitiveSpec>,
+    pub pads: Vec<PcbDocPrimitiveSpec>,
+    pub fills: Vec<PcbDocPrimitiveSpec>,
+    pub texts: Vec<PcbDocPrimitiveSpec>,
+    pub regions: Vec<PcbDocPrimitiveSpec>,
+    pub component_bodies: Vec<PcbDocPrimitiveSpec>,
+    pub dimensions: Vec<PcbDocPrimitiveSpec>,
+    pub polygons: Vec<PcbDocPolygonSpec>,
+    pub rules: Vec<PcbDocRuleSpec>,
+    pub classes: Vec<PcbDocClassSpec>,
+    pub differential_pairs: Vec<PcbDocDifferentialPairSpec>,
+}
+
+/// A generic PcbDoc primitive spec (track, arc, via, pad, fill, text, region, component_body, dimension).
+/// Properties are stored as evaluated key-value pairs; the executor converts them to typed API objects.
+pub struct PcbDocPrimitiveSpec {
+    pub id: String,
+    pub position_index: usize,
+    pub primitive_type: String,
+    pub properties: indexmap::IndexMap<String, crate::eval::Value>,
+}
+
+pub struct PcbDocNetSpec {
+    pub name: String,
+    pub color: Option<Color>,
+    pub visible: Option<bool>,
+}
+
+pub struct PcbDocComponentSpec {
+    pub designator: String,
+    pub pattern: Option<String>,
+    pub comment: Option<String>,
+    pub location: Option<CoordPoint>,
+    pub rotation: Option<f64>,
+    pub layer: Option<LayerSpec>,
+    pub source_library: Option<String>,
+}
+
+pub struct PcbDocPolygonSpec {
+    pub name: String,
+    pub net: Option<String>,
+    pub layer: Option<LayerSpec>,
+    pub connect_style: Option<String>,
+    pub pour_order: Option<i32>,
+}
+
+pub struct PcbDocRuleSpec {
+    pub name: String,
+    pub kind: Option<String>,
+    pub enabled: Option<bool>,
+    pub priority: Option<i32>,
+}
+
+pub struct PcbDocClassSpec {
+    pub name: String,
+    pub kind: Option<String>,
+}
+
+pub struct PcbDocDifferentialPairSpec {
+    pub name: String,
+    pub positive_net: Option<String>,
+    pub negative_net: Option<String>,
 }
 
 // ── PrjPcb ──────────────────────────────────────────────────────────────────

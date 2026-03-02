@@ -20,6 +20,13 @@ pub enum SpecItem {
     Net(NetDecl),
     Power(PowerDecl),
     SchDocObject(SchDocObjectDecl),
+    // PcbDoc-specific
+    Board(BoardDecl),
+    PcbDocPrimitive(PcbDocPrimitiveDecl),
+    Polygon(PolygonDecl),
+    Rule(RuleDecl),
+    Class(ClassDecl),
+    DifferentialPair(DifferentialPairDecl),
 }
 
 /// import "path" [as alias]
@@ -328,6 +335,58 @@ pub struct EntryDecl {
     pub body: Spanned<Object>,
 }
 
+// ── PcbDoc declarations ──────────────────────────────────────────────
+
+/// board NAME { settings... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoardDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Vec<Spanned<BoardItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoardItem {
+    Property(Property),
+    LetBinding(LetBinding),
+}
+
+/// track [NAME] { ... }, arc { ... }, via { ... }, pad NAME { ... }, etc.
+/// Also used for dimension { ... } at PcbDoc top level.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PcbDocPrimitiveDecl {
+    pub primitive_type: Spanned<String>,
+    pub name: Option<Spanned<EntityName>>,
+    pub body: Spanned<Object>,
+}
+
+/// polygon NAME { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolygonDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// rule NAME { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuleDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// class NAME { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// differential_pair NAME { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct DifferentialPairDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
 /// [binding =] GRAPHIC_TYPE { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphicDecl {
@@ -496,4 +555,22 @@ pub const SCHDOC_OBJECT_TYPES: &[&str] = &[
 
 pub fn is_schdoc_object_type(s: &str) -> bool {
     SCHDOC_OBJECT_TYPES.contains(&s)
+}
+
+/// PcbDoc primitive types at top level.
+pub const PCBDOC_PRIMITIVE_TYPES: &[&str] = &[
+    "track", "arc", "via", "fill", "text", "region", "component_body", "dimension",
+];
+
+/// PcbDoc named block types at top level.
+pub const PCBDOC_BLOCK_TYPES: &[&str] = &[
+    "polygon", "rule", "class", "differential_pair",
+];
+
+pub fn is_pcbdoc_primitive_type(s: &str) -> bool {
+    PCBDOC_PRIMITIVE_TYPES.contains(&s)
+}
+
+pub fn is_pcbdoc_block_type(s: &str) -> bool {
+    PCBDOC_BLOCK_TYPES.contains(&s)
 }

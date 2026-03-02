@@ -613,6 +613,19 @@ The internal-to-public conversion paths (`pcblib_read.rs` vs `pcbdoc_read.rs`) h
 the different contexts. Common conversion logic for shared primitive fields can be
 extracted to helper functions.
 
+## Extended API (v2)
+
+See [high-level-api-v2.md](high-level-api-v2.md) for the v2 extensions that add:
+
+- **LayerStack** — physical layer ordering, copper/dielectric thicknesses
+- **BoardGeometry** — arc-preserving outlines, cutouts, keepouts, bounding box
+- **PadStack** — per-layer pad shapes for multi-layer Gerber aperture generation
+- **RuleParams** — typed design rule parameter values (clearance, width, expansion)
+- **BoardConnectivity** — pre-built net-to-pin connectivity graph
+
+These extensions are needed by downstream consumers: Gerber export, DRC engine,
+placement solver, and the spec language.
+
 ## What's Deferred
 
 The initial API is **read-only with write support for core collections**. Deferred:

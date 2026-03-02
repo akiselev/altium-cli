@@ -25,14 +25,14 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 
 ## Document Type Summary
 
-| Document   | Ext       | Parse | Serialize | High-Level API | Spec Lang | Query | Render  | CLI validate | CLI save-as | CLI new |
-|------------|-----------|-------|-----------|----------------|-----------|-------|---------|--------------|-------------|---------|
-| **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ✅         | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ✅ Read/Write   | ❌         | ✅     | ❌        | ✅          | ✅          | ❌      |
-| **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ✅      |
-| **IntLib** | .IntLib   | ❌ Stub | ❌ Stub | ❌ None         | ❌         | ❌     | ❌        | ⚠️ open only | ❌          | ❌      |
+| Document   | Ext     | Parse  | Serialize | High-Level API | Spec Lang | Query | Render    | CLI validate | CLI save-as | CLI new |
+| ---------- | ------- | ------ | --------- | -------------- | --------- | ----- | --------- | ------------ | ----------- | ------- |
+| **SchLib** | .SchLib | ✅      | ✅         | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅            | ✅           | ✅       |
+| **SchDoc** | .SchDoc | ✅      | ✅         | ✅ Read/Write   | ✅         | ✅     | ✅ SVG/PNG | ✅            | ✅           | ✅       |
+| **PcbLib** | .PcbLib | ✅      | ✅         | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅            | ✅           | ✅       |
+| **PcbDoc** | .PcbDoc | ✅      | ✅         | ✅ Read/Write   | ✅         | ✅     | ❌         | ✅            | ✅           | ❌       |
+| **PrjPcb** | .PrjPcb | ✅      | ✅         | ✅ Read-only    | ✅         | ❌     | ❌         | ✅            | ✅           | ✅       |
+| **IntLib** | .IntLib | ❌ Stub | ❌ Stub    | ❌ None         | ❌         | ❌     | ❌         | ⚠️ open only  | ❌           | ❌       |
 
 ---
 
@@ -203,7 +203,13 @@ all 8 primitive types (`Track`, `Arc`, `Via`, `Pad`, `Fill`, `Text`, `Region`,
 ShapeBasedRegions6 over Regions6, etc.). Board outline auto-extracted from
 region primitives.
 
-**Spec Language:** Not supported.
+**Spec Language:** Full support — compile, execute, reconcile, dump. Board settings
+(signal_layer_count, snap/visible grid, display_unit), named collections (nets,
+components, polygons, rules, classes, differential pairs), and primitives (tracks,
+arcs, vias, pads, fills, texts, regions, component_bodies, dimensions). `apply`
+requires an existing target file (no `new` for PcbDoc). Dump produces roundtrippable
+`.pcbdoc-spec` output. Reconciler uses name-based matching for named collections and
+ID-based matching for primitives.
 
 **Query:** Supported. Entity types: pcbdoc_net, pcbdoc_component, pcbdoc_polygon,
 pcbdoc_rule, pcbdoc_class, pcbdoc_dimension, pcbdoc_differential_pair, plus reused
@@ -215,7 +221,7 @@ filters (e.g., `pad[component='U1']`, `track[net='GND']`).
 
 **Rendering:** Not supported.
 
-**CLI:** `validate`, `save-as`, `info`, `query`, `dump`. No render, plan, or apply.
+**CLI:** `validate`, `save-as`, `info`, `query`, `dump`, `plan`, `apply`.
 
 **Validation status:** 94/96 V6 test files passing (97.9%). Known issues tracked in
 `PCBDOC-next.md`:
@@ -260,23 +266,23 @@ or CLI support beyond a basic `validate` call that just attempts to open.
 
 ## CLI Command Matrix
 
-| Command | SchLib | SchDoc | PcbLib | PcbDoc | PrjPcb | IntLib |
-|---------|--------|--------|--------|--------|--------|--------|
-| `new`          | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| `validate`     | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ open only |
-| `save-as`      | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `get version`  | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| `render`       | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `query`        | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `info`         | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `plan`         | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| `apply`        | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| `dump`         | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `cfb ls`       | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
-| `cfb dump`     | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
-| `cfb blocks`   | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
-| `cfb diff`     | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
-| `cfb cat`      | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
+| Command       | SchLib | SchDoc | PcbLib | PcbDoc | PrjPcb | IntLib      |
+| ------------- | ------ | ------ | ------ | ------ | ------ | ----------- |
+| `new`         | ✅      | ✅      | ✅      | ❌      | ✅      | ❌           |
+| `validate`    | ✅      | ✅      | ✅      | ✅      | ✅      | ⚠️ open only |
+| `save-as`     | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
+| `get version` | ✅      | ❌      | ✅      | ❌      | ❌      | ❌           |
+| `render`      | ✅      | ✅      | ✅      | ❌      | ❌      | ❌           |
+| `query`       | ✅      | ✅      | ✅      | ✅      | ❌      | ❌           |
+| `info`        | ✅      | ✅      | ✅      | ✅      | ❌      | ❌           |
+| `plan`        | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
+| `apply`       | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
+| `dump`        | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
+| `cfb ls`      | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
+| `cfb dump`    | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
+| `cfb blocks`  | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
+| `cfb diff`    | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
+| `cfb cat`     | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
 
 
 ### CFB Tools (Low-Level Debugging)
@@ -352,7 +358,7 @@ no PCB layer filtering, no text kerning/shaping.
 Declarative DSL for defining libraries and projects. Complete pipeline:
 lexer → parser → AST → compiler → `SpecModel` → executor/reconciler/dump.
 
-Supports SchLib, PcbLib, PrjPcb, and SchDoc (full compile/plan/apply support).
+Supports SchLib, PcbLib, PrjPcb, SchDoc, and PcbDoc (full compile/plan/apply support).
 
 Features: let bindings, arithmetic expressions, dimensional units (`100mil`, `2.54mm`),
 color literals (`#FF0000`), spread operators, template interpolation, row/column/grid

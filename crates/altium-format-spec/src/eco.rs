@@ -149,6 +149,16 @@ pub enum EntityKind {
     Power,
     HarnessConnector,
     SignalHarness,
+    // PcbDoc
+    Board,
+    PcbDocNet,
+    PcbDocComponent,
+    ComponentBody,
+    Polygon,
+    Rule,
+    Class,
+    DifferentialPair,
+    Dimension,
 }
 
 impl EntityKind {
@@ -196,6 +206,15 @@ impl EntityKind {
             Self::Power => "Power Rails",
             Self::HarnessConnector => "Harness Connectors",
             Self::SignalHarness => "Signal Harnesses",
+            Self::Board => "Boards",
+            Self::PcbDocNet => "Nets",
+            Self::PcbDocComponent => "Components",
+            Self::ComponentBody => "Component Bodies",
+            Self::Polygon => "Polygons",
+            Self::Rule => "Rules",
+            Self::Class => "Classes",
+            Self::DifferentialPair => "Differential Pairs",
+            Self::Dimension => "Dimensions",
         }
     }
 }
@@ -510,6 +529,15 @@ fn kind_label(kind: EntityKind) -> &'static str {
         EntityKind::Power => "power",
         EntityKind::HarnessConnector => "harness_connector",
         EntityKind::SignalHarness => "signal_harness",
+        EntityKind::Board => "board",
+        EntityKind::PcbDocNet => "net",
+        EntityKind::PcbDocComponent => "component",
+        EntityKind::ComponentBody => "component_body",
+        EntityKind::Polygon => "polygon",
+        EntityKind::Rule => "rule",
+        EntityKind::Class => "class",
+        EntityKind::DifferentialPair => "differential_pair",
+        EntityKind::Dimension => "dimension",
     }
 }
 

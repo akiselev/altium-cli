@@ -148,6 +148,53 @@ pub fn reconcile_pcbdoc(
 - Classes: match by name
 - Polygons: match by name/ID
 
+## 5f: Extended Types in Spec Language
+
+The v2 API extensions (see [high-level-api-v2.md](../high-level-api-v2.md)) add new
+spec syntax:
+
+**Layer stack** (inside `board {}` block):
+```
+board "MyPCB" {
+    layer_stack {
+        style: "layer_pairs"
+        layer "Top Layer" { copper_thickness: 1.35mil, dielectric: "core" 11.8mil "FR-4" }
+        layer "GND" { is_plane: true, copper_thickness: 1.35mil, dielectric: "prepreg" 7.5mil }
+        layer "Bottom Layer" { copper_thickness: 1.35mil }
+    }
+}
+```
+
+**Design rule parameters** (inline in `rule {}` blocks):
+```
+rule "Clearance_Default" { kind: "clearance", gap: 6mil, scope: "All", scope2: "All" }
+rule "Width_Signal" { kind: "width", min: 4mil, max: 50mil, preferred: 10mil }
+rule "SMExpansion" { kind: "solder_mask_expansion", expansion: 4mil, tenting_top: true }
+```
+
+**Pad stack** (optional `stack {}` sub-block in `pad {}`, only for non-Simple pads):
+```
+pad 1 {
+    shape: round, x_size: 1.6mm, y_size: 1.6mm
+    pad_mode: local_stack
+    stack {
+        top { shape: round, x_size: 1.6mm, y_size: 1.6mm }
+        mid { shape: round, x_size: 1.4mm, y_size: 1.4mm }
+        bot { shape: round, x_size: 1.6mm, y_size: 1.6mm }
+    }
+}
+```
+
+**Board geometry** (read-only in dump, not compilable — physical property):
+```
+board "MyPCB" {
+    geometry {
+        outline: [ line (0, 0), line (100mm, 0), line (100mm, 50mm), line (0, 50mm) ]
+        bounds: (0, 0) to (100mm, 50mm)
+    }
+}
+```
+
 ## Estimated Scope
 
 - 5a (parser): ~150 lines
@@ -155,4 +202,5 @@ pub fn reconcile_pcbdoc(
 - 5c (compiler): ~300 lines
 - 5d (executor): ~200 lines
 - 5e (reconciler): ~400 lines
-- Total: ~1,250 lines
+- 5f (extended types): ~300 lines (parser + model + dump for layer_stack, rule params, pad stack)
+- Total: ~1,550 lines

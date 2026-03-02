@@ -5,10 +5,11 @@ use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, Versi
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
+    reconcile_pcbdoc, reconcile_pcbdoc_empty,
     reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
     reconcile_schdoc, reconcile_schdoc_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports,
-    apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc,
+    apply_spec_pcbdoc, apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -519,7 +520,8 @@ fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
         Some("schdoc-spec") => Ok(SpecDomain::SchDoc),
         Some("pcblib-spec") => Ok(SpecDomain::PcbLib),
         Some("prjpcb-spec") => Ok(SpecDomain::PrjPcb),
-        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .schdoc-spec, .pcblib-spec, .prjpcb-spec)"),
+        Some("pcbdoc-spec") => Ok(SpecDomain::PcbDoc),
+        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .schdoc-spec, .pcblib-spec, .prjpcb-spec, .pcbdoc-spec)"),
         None => anyhow::bail!("spec file has no extension: {}", path.display()),
     }
 }
@@ -531,7 +533,8 @@ fn detect_document_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
         "schdoc" => Ok(SpecDomain::SchDoc),
         "pcblib" => Ok(SpecDomain::PcbLib),
         "prjpcb" => Ok(SpecDomain::PrjPcb),
-        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .schdoc, .pcblib, .prjpcb)"),
+        "pcbdoc" => Ok(SpecDomain::PcbDoc),
+        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .schdoc, .pcblib, .prjpcb, .pcbdoc)"),
     }
 }
 
@@ -542,6 +545,7 @@ fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf 
         SpecDomain::SchDoc => "SchDoc",
         SpecDomain::PcbLib => "PcbLib",
         SpecDomain::PrjPcb => "PrjPcb",
+        SpecDomain::PcbDoc => "PcbDoc",
     };
     spec_file.with_file_name(format!("{stem}.{ext}"))
 }
@@ -553,6 +557,7 @@ fn default_spec_for_document(doc: &PathBuf, domain: &SpecDomain) -> PathBuf {
         SpecDomain::SchDoc => "schdoc-spec",
         SpecDomain::PcbLib => "pcblib-spec",
         SpecDomain::PrjPcb => "prjpcb-spec",
+        SpecDomain::PcbDoc => "pcbdoc-spec",
     };
     doc.with_file_name(format!("{stem}.{ext}"))
 }
@@ -661,6 +666,17 @@ fn plan_for_model(
                     .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
             } else {
                 reconcile_schdoc_empty(spec, library_path, spec_path)
+            }
+        }
+        altium_format_spec::model::SpecModel::PcbDoc(spec) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            if resolved_target.exists() {
+                let doc = PcbDoc::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                reconcile_pcbdoc(spec, &doc, library_path, spec_path)
+                    .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
+            } else {
+                reconcile_pcbdoc_empty(spec, library_path, spec_path)
             }
         }
     };
@@ -786,6 +802,25 @@ fn apply_for_model(
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
+        altium_format_spec::model::SpecModel::PcbDoc(spec) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            if !resolved_target.exists() {
+                anyhow::bail!(
+                    "PcbDoc apply requires an existing target file: {}",
+                    resolved_target.display()
+                );
+            }
+            let mut doc = PcbDoc::open(&resolved_target)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+
+            let out_path = output.cloned().unwrap_or(library_path);
+
+            apply_spec_pcbdoc(spec, &mut doc)
+                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            doc.save(&out_path)?;
+            println!("Saved: {}", out_path.display());
+        }
     }
 
     Ok(())
@@ -794,24 +829,6 @@ fn apply_for_model(
 // ── dump ──────────────────────────────────────────────────────────────────────
 
 fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
-    // Handle PcbDoc separately (not a SpecDomain)
-    let ext = document.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if ext == "pcbdoc" {
-        let out_path = output.cloned()
-            .unwrap_or_else(|| document.with_extension("pcbdoc-dump"));
-        let doc = PcbDoc::open(document)
-            .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
-        let text = dump_pcbdoc(&doc)
-            .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
-        std::fs::write(&out_path, &text)
-            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-        println!("Dumped: {} -> {}", document.display(), out_path.display());
-        return Ok(());
-    }
-
     let domain = detect_document_domain(document)?;
     let out_path = output.cloned().unwrap_or_else(|| default_spec_for_document(document, &domain));
 
@@ -847,6 +864,15 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_prjpcb(&doc)
                 .map_err(|e| anyhow::anyhow!("dump failed: {e}"))?;
+            std::fs::write(&out_path, &spec_source)
+                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+            println!("Dumped: {} -> {}", document.display(), out_path.display());
+        }
+        SpecDomain::PcbDoc => {
+            let doc = PcbDoc::open(document)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+            let spec_source = dump_pcbdoc(&doc)
+                .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
             std::fs::write(&out_path, &spec_source)
                 .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
             println!("Dumped: {} -> {}", document.display(), out_path.display());

@@ -44,6 +44,7 @@ pub enum TokenKind {
     Row,
     Column,
     Grid,
+    Board,
 
     // Shared keywords
     Let,
@@ -103,6 +104,7 @@ impl TokenKind {
                 | (Row, Row)
                 | (Column, Column)
                 | (Grid, Grid)
+                | (Board, Board)
                 | (Let, Let)
                 | (True, True)
                 | (False, False)
@@ -330,6 +332,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                         "row" => TokenKind::Row,
                         "column" => TokenKind::Column,
                         "grid" => TokenKind::Grid,
+                        "board" => TokenKind::Board,
                         "let" => TokenKind::Let,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
@@ -677,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_basic_keywords() {
-        let kinds = lex_kinds("import as component footprint pin pad part parameter alias map row column grid let true false null");
+        let kinds = lex_kinds("import as component footprint pin pad part parameter alias map row column grid board let true false null");
         assert_eq!(kinds, vec![
             TokenKind::Import,
             TokenKind::As,
@@ -692,6 +695,7 @@ mod tests {
             TokenKind::Row,
             TokenKind::Column,
             TokenKind::Grid,
+            TokenKind::Board,
             TokenKind::Let,
             TokenKind::True,
             TokenKind::False,

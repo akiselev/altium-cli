@@ -4,7 +4,7 @@
 //! documents, converting spec model types into API types.
 
 use altium_format::api;
-use altium_format::{AltiumProject, PcbLib, SchDoc, SchLib};
+use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
 
 use altium_format_types::color::Color;
 use altium_format_types::coord::{Coord, CoordPoint};
@@ -15,14 +15,16 @@ use altium_format_types::sch::{
     StdLogicState, TextJustification, LineShape, HorizontalAlign,
 };
 
+use altium_format_types::common::Unit;
 use altium_format_types::pcb::{LayerRef, PadShape, PcbFlags, RegionKind, V6Layer};
 
 use crate::eval::{SpecError, SpecErrorCode};
+use crate::eval::Value;
 use crate::model::{
-    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
-    PadSpec, ParameterSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec,
-    PinSpec, PrjPcbSpec, SchLibSpec,
-    SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
+    BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
+    PadSpec, ParameterSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocPolygonSpec,
+    PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinSpec,
+    PrjPcbSpec, SchLibSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -181,6 +183,342 @@ pub fn apply_spec_prjpcb(
         }
     }
     Ok(())
+}
+
+// ── PcbDoc ────────────────────────────────────────────────────────────────────
+
+/// Apply a PcbDoc spec directly to a document.
+///
+/// For named collections (nets, components, polygons, rules, classes, diff pairs):
+/// match by name/designator; if found, merge spec fields over existing; if not found, create new.
+///
+/// For primitives (tracks, arcs, vias, etc.): additive — spec primitives are
+/// appended to the board. Matching is deferred to the reconciler.
+pub fn apply_spec_pcbdoc(
+    spec: &PcbDocSpec,
+    doc: &mut PcbDoc,
+) -> Result<(), SpecError> {
+    for board_spec in &spec.boards {
+        let mut board = doc.board()
+            .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+
+        // Board settings
+        apply_pcbdoc_board_settings(&mut board.settings, board_spec);
+
+        // Named collections
+        apply_pcbdoc_nets(&mut board, &board_spec.nets);
+        apply_pcbdoc_components(&mut board, &board_spec.components);
+        apply_pcbdoc_polygons(&mut board, &board_spec.polygons);
+
+        // Primitives (additive)
+        apply_pcbdoc_primitives(&mut board, board_spec)?;
+
+        doc.update_board(&board)
+            .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn apply_pcbdoc_board_settings(
+    settings: &mut api::BoardSettings,
+    spec: &BoardSpec,
+) {
+    if let Some(count) = spec.signal_layer_count {
+        settings.signal_layer_count = count;
+    }
+    if let Some(grid) = spec.snap_grid_size {
+        settings.snap_grid_size = grid;
+    }
+    if let Some(grid) = spec.visible_grid_size {
+        settings.visible_grid_size = grid;
+    }
+    if let Some(ref unit_str) = spec.display_unit {
+        match unit_str.as_str() {
+            "metric" => settings.display_unit = Unit::Metric,
+            "imperial" => settings.display_unit = Unit::Imperial,
+            _ => {} // unknown unit string, leave unchanged
+        }
+    }
+}
+
+fn apply_pcbdoc_nets(board: &mut api::PcbDocBoard, specs: &[PcbDocNetSpec]) {
+    for spec in specs {
+        if let Some(existing) = board.nets.iter_mut().find(|n| n.name == spec.name) {
+            if let Some(color) = spec.color {
+                existing.color = color;
+            }
+            if let Some(visible) = spec.visible {
+                existing.visible = visible;
+            }
+        } else {
+            board.nets.push(api::Net {
+                id: spec.name.clone(),
+                name: spec.name.clone(),
+                color: spec.color.unwrap_or(Color::WHITE),
+                visible: spec.visible.unwrap_or(true),
+            });
+        }
+    }
+}
+
+fn apply_pcbdoc_components(
+    board: &mut api::PcbDocBoard,
+    specs: &[PcbDocComponentSpec],
+) {
+    for spec in specs {
+        if let Some(existing) = board.components.iter_mut().find(|c| c.designator == spec.designator) {
+            if let Some(ref pattern) = spec.pattern {
+                existing.pattern = pattern.clone();
+            }
+            if let Some(ref comment) = spec.comment {
+                existing.comment = comment.clone();
+            }
+            if let Some(loc) = spec.location {
+                existing.location = loc;
+            }
+            if let Some(rot) = spec.rotation {
+                existing.rotation = rot;
+            }
+            if let Some(ref layer) = spec.layer {
+                existing.layer = resolve_layer_spec(layer);
+            }
+            if let Some(ref src) = spec.source_library {
+                existing.source_library = src.clone();
+            }
+        } else {
+            board.components.push(api::PcbDocComponent {
+                id: spec.designator.clone(),
+                designator: spec.designator.clone(),
+                pattern: spec.pattern.clone().unwrap_or_default(),
+                comment: spec.comment.clone().unwrap_or_default(),
+                location: spec.location.unwrap_or_default(),
+                rotation: spec.rotation.unwrap_or(0.0),
+                layer: spec.layer.as_ref().map(resolve_layer_spec)
+                    .unwrap_or(LayerRef::from_v6(V6Layer::TopLayer)),
+                source_library: spec.source_library.clone().unwrap_or_default(),
+                source_lib_reference: String::new(),
+            });
+        }
+    }
+}
+
+fn apply_pcbdoc_polygons(
+    board: &mut api::PcbDocBoard,
+    specs: &[PcbDocPolygonSpec],
+) {
+    for spec in specs {
+        if let Some(existing) = board.polygons.iter_mut().find(|p| p.name == spec.name) {
+            if let Some(ref net) = spec.net {
+                existing.net = Some(net.clone());
+            }
+            if let Some(ref layer) = spec.layer {
+                existing.layer = resolve_layer_spec(layer);
+            }
+            if let Some(ref cs) = spec.connect_style {
+                if let Some(style) = parse_plane_connection(cs) {
+                    existing.connect_style = style;
+                }
+            }
+            if let Some(order) = spec.pour_order {
+                existing.pour_order = order;
+            }
+        }
+        // Don't create new polygons from spec alone — they need vertices
+        // which aren't captured in the simplified spec model.
+    }
+}
+
+fn apply_pcbdoc_primitives(
+    board: &mut api::PcbDocBoard,
+    spec: &BoardSpec,
+) -> Result<(), SpecError> {
+    for prim in &spec.tracks {
+        if let Some(track) = primitive_to_track(prim)? {
+            board.tracks.push(track);
+        }
+    }
+    for prim in &spec.arcs {
+        if let Some(arc) = primitive_to_arc(prim)? {
+            board.arcs.push(arc);
+        }
+    }
+    for prim in &spec.vias {
+        if let Some(via) = primitive_to_via(prim)? {
+            board.vias.push(via);
+        }
+    }
+    for prim in &spec.fills {
+        if let Some(fill) = primitive_to_fill(prim)? {
+            board.fills.push(fill);
+        }
+    }
+    for prim in &spec.texts {
+        if let Some(text) = primitive_to_text(prim)? {
+            board.texts.push(text);
+        }
+    }
+    Ok(())
+}
+
+// ── Primitive → API type converters ──────────────────────────────────────────
+
+fn prop_coord(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<Coord> {
+    props.get(key).and_then(|v| v.to_dim(None).ok()).map(Coord::new)
+}
+
+fn prop_coord_point(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<CoordPoint> {
+    match props.get(key)? {
+        Value::CoordPoint(x, y) => Some(CoordPoint::new(Coord::new(*x), Coord::new(*y))),
+        _ => None,
+    }
+}
+
+fn prop_string(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<String> {
+    match props.get(key)? {
+        Value::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn prop_float(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<f64> {
+    match props.get(key)? {
+        Value::Float(f) => Some(*f),
+        Value::Integer(n) => Some(*n as f64),
+        _ => None,
+    }
+}
+
+fn prop_bool(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<bool> {
+    match props.get(key)? {
+        Value::Bool(b) => Some(*b),
+        _ => None,
+    }
+}
+
+fn prop_layer(props: &indexmap::IndexMap<String, Value>, key: &str) -> LayerRef {
+    prop_string(props, key)
+        .and_then(|s| {
+            if let Some(lr) = LayerRef::from_string_name(&s) {
+                Some(lr)
+            } else {
+                Some(LayerRef::from_v6(V6Layer::TopLayer))
+            }
+        })
+        .unwrap_or(LayerRef::from_v6(V6Layer::TopLayer))
+}
+
+fn primitive_to_track(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::Track>, SpecError> {
+    let p = &prim.properties;
+    let start = match prop_coord_point(p, "from") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    let end = match prop_coord_point(p, "to") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    Ok(Some(api::Track {
+        id: prim.id.clone(),
+        layer: prop_layer(p, "layer"),
+        net: prop_string(p, "net"),
+        component: prop_string(p, "component"),
+        start,
+        end,
+        width: prop_coord(p, "width").unwrap_or(Coord::from_mils_f64(10.0)),
+    }))
+}
+
+fn primitive_to_arc(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::Arc>, SpecError> {
+    let p = &prim.properties;
+    let center = match prop_coord_point(p, "center") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    Ok(Some(api::Arc {
+        id: prim.id.clone(),
+        layer: prop_layer(p, "layer"),
+        net: prop_string(p, "net"),
+        component: prop_string(p, "component"),
+        center,
+        radius: prop_coord(p, "radius").unwrap_or(Coord::from_mils_f64(50.0)),
+        start_angle: prop_float(p, "start_angle").unwrap_or(0.0),
+        end_angle: prop_float(p, "end_angle").unwrap_or(360.0),
+        width: prop_coord(p, "width").unwrap_or(Coord::from_mils_f64(10.0)),
+    }))
+}
+
+fn primitive_to_via(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::Via>, SpecError> {
+    let p = &prim.properties;
+    let location = match prop_coord_point(p, "at") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    Ok(Some(api::Via {
+        id: prim.id.clone(),
+        net: prop_string(p, "net"),
+        component: prop_string(p, "component"),
+        location,
+        diameter: prop_coord(p, "diameter").unwrap_or(Coord::from_mils_f64(50.0)),
+        hole_size: prop_coord(p, "hole_size").unwrap_or(Coord::from_mils_f64(28.0)),
+        from_layer: prop_layer(p, "from_layer"),
+        to_layer: prop_string(p, "to_layer")
+            .and_then(|s| LayerRef::from_string_name(&s))
+            .unwrap_or(LayerRef::from_v6(V6Layer::BottomLayer)),
+        solder_mask_expansion: prop_coord(p, "solder_mask_expansion"),
+    }))
+}
+
+fn primitive_to_fill(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::Fill>, SpecError> {
+    let p = &prim.properties;
+    let corner1 = match prop_coord_point(p, "corner1") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    let corner2 = match prop_coord_point(p, "corner2") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    Ok(Some(api::Fill {
+        id: prim.id.clone(),
+        layer: prop_layer(p, "layer"),
+        net: prop_string(p, "net"),
+        component: prop_string(p, "component"),
+        corner1,
+        corner2,
+        rotation: prop_float(p, "rotation").unwrap_or(0.0),
+    }))
+}
+
+fn primitive_to_text(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::PcbDocText>, SpecError> {
+    let p = &prim.properties;
+    let location = match prop_coord_point(p, "at") {
+        Some(pt) => pt,
+        None => return Ok(None),
+    };
+    Ok(Some(api::PcbDocText {
+        id: prim.id.clone(),
+        layer: prop_layer(p, "layer"),
+        component: prop_string(p, "component"),
+        location,
+        text: prop_string(p, "text").unwrap_or_default(),
+        height: prop_coord(p, "height").unwrap_or(Coord::from_mils_f64(60.0)),
+        width: prop_coord(p, "width").unwrap_or(Coord::from_mils_f64(6.0)),
+        rotation: prop_float(p, "rotation").unwrap_or(0.0),
+        font_name: prop_string(p, "font_name").unwrap_or_else(|| "Arial".to_string()),
+        is_mirrored: prop_bool(p, "is_mirrored").unwrap_or(false),
+        is_comment: prop_bool(p, "is_comment").unwrap_or(false),
+        is_designator: prop_bool(p, "is_designator").unwrap_or(false),
+    }))
+}
+
+fn parse_plane_connection(s: &str) -> Option<altium_format_types::pcb::PlaneConnectionStyle> {
+    use altium_format_types::pcb::PlaneConnectionStyle;
+    match s {
+        "no_connect" => Some(PlaneConnectionStyle::NoConnect),
+        "relief" => Some(PlaneConnectionStyle::Relief),
+        "direct" | "direct_connect" => Some(PlaneConnectionStyle::Direct),
+        _ => None,
+    }
 }
 
 fn bool_to_ini(v: bool) -> String {

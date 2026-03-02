@@ -26,19 +26,22 @@ use altium_format_types::sch::{
 };
 
 use crate::ast::{
-    AliasDecl, ComponentDecl, ComponentItem, FootprintDecl, FootprintItem, FootprintMapDecl,
-    FootprintRef, GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock,
-    PartItem, PinDecl, ProjectDecl, ProjectItem, SchDocObjectDecl, SchDocObjectItem, SheetDecl,
-    SheetItem, SpecFile, SpecItem,
+    AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem,
+    DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
+    GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
+    PcbDocPrimitiveDecl, PinDecl, PolygonDecl, ProjectDecl, ProjectItem, RuleDecl,
+    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
-    AnnotationMatchParamSpec, AnnotationSpec, BlanketSpec, BusEntrySpec, BusSpec, ClassGenSpec,
-    ComparisonRuleSpec, CompileMaskSpec, ComponentSpec, DocumentSpec, ErcLevelOverride,
-    ErcMatrixOverride, FontSpec, FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec,
-    GraphicType, HarnessConnectorSpec, JunctionSpec, LayerSpec, LibraryUpdateSpec, NetLabelSpec,
-    NetSpec, NoConnectSpec, NoteSpec, OutputGroupSpec, OutputSpec, PadSpec, ParamVariationSpec,
-    ParameterSetSpec, ParameterSpec, PartSpec, PcbGraphicProperties, PcbGraphicSpec,
+    AnnotationMatchParamSpec, AnnotationSpec, BlanketSpec, BoardSpec, BusEntrySpec, BusSpec,
+    ClassGenSpec, ComparisonRuleSpec, CompileMaskSpec, ComponentSpec, DocumentSpec,
+    ErcLevelOverride, ErcMatrixOverride, FontSpec, FootprintMapSpec, FootprintSpec,
+    GraphicProperties, GraphicSpec, GraphicType, HarnessConnectorSpec, JunctionSpec, LayerSpec,
+    LibraryUpdateSpec, NetLabelSpec, NetSpec, NoConnectSpec, NoteSpec, OutputGroupSpec, OutputSpec,
+    PadSpec, ParamVariationSpec, ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec,
+    PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec,
+    PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec,
     PcbGraphicType, PinPadMap, PinRef, PinSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec,
     ProbeSpec, ProjectSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec,
     SheetEntrySpec, SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel,
@@ -134,6 +137,11 @@ impl SpecCompiler {
                 let spec = self.compile_schdoc(file)?;
                 self.scope.pop();
                 Ok(SpecModel::SchDoc(spec))
+            }
+            SpecDomain::PcbDoc => {
+                let spec = self.compile_pcbdoc(file)?;
+                self.scope.pop();
+                Ok(SpecModel::PcbDoc(spec))
             }
         }
     }
@@ -290,7 +298,10 @@ impl SpecCompiler {
                     objects.push(self.compile_schdoc_object(obj_decl)?);
                 }
                 SpecItem::Import(_) | SpecItem::LetBinding(_)
-                | SpecItem::Footprint(_) | SpecItem::Project(_) => {
+                | SpecItem::Footprint(_) | SpecItem::Project(_)
+                | SpecItem::Board(_) | SpecItem::PcbDocPrimitive(_)
+                | SpecItem::Polygon(_) | SpecItem::Rule(_)
+                | SpecItem::Class(_) | SpecItem::DifferentialPair(_) => {
                     // Imports and let bindings handled above; other domains silently skipped.
                 }
             }
@@ -1190,6 +1201,259 @@ impl SpecCompiler {
             *n += 1;
             id
         }
+    }
+
+    // ── PcbDoc compilation ─────────────────────────────────────────────────
+
+    fn compile_pcbdoc(&mut self, file: &SpecFile) -> Result<PcbDocSpec, SpecError> {
+        self.context_name = "board".to_string();
+        self.unnamed_counters.clear();
+
+        let mut board_name = String::new();
+        let mut board_settings_props = IndexMap::new();
+        let mut nets = Vec::new();
+        let mut components = Vec::new();
+        let mut primitives_by_type: IndexMap<String, Vec<PcbDocPrimitiveSpec>> = IndexMap::new();
+        let mut polygons = Vec::new();
+        let mut rules = Vec::new();
+        let mut classes = Vec::new();
+        let mut differential_pairs = Vec::new();
+
+        for item in &file.items {
+            match &item.node {
+                SpecItem::Board(decl) => {
+                    board_name = decl.name.node.as_str();
+                    board_settings_props = self.compile_board_settings(decl)?;
+                }
+                SpecItem::Net(decl) => {
+                    nets.push(self.compile_pcbdoc_net(decl)?);
+                }
+                SpecItem::Component(decl) => {
+                    components.push(self.compile_pcbdoc_component(decl)?);
+                }
+                SpecItem::PcbDocPrimitive(decl) => {
+                    let spec = self.compile_pcbdoc_primitive(decl)?;
+                    let type_name = spec.primitive_type.clone();
+                    primitives_by_type.entry(type_name).or_default().push(spec);
+                }
+                SpecItem::Polygon(decl) => {
+                    polygons.push(self.compile_pcbdoc_polygon(decl)?);
+                }
+                SpecItem::Rule(decl) => {
+                    rules.push(self.compile_pcbdoc_rule(decl)?);
+                }
+                SpecItem::Class(decl) => {
+                    classes.push(self.compile_pcbdoc_class(decl)?);
+                }
+                SpecItem::DifferentialPair(decl) => {
+                    differential_pairs.push(self.compile_pcbdoc_diff_pair(decl)?);
+                }
+                SpecItem::Import(_) | SpecItem::LetBinding(_) | _ => {
+                    // Imports, let bindings, and other-domain items silently skipped.
+                }
+            }
+        }
+
+        let board = BoardSpec {
+            name: board_name,
+            signal_layer_count: get_integer_opt(&board_settings_props, "signal_layer_count"),
+            snap_grid_size: get_coord_opt(&board_settings_props, "snap_grid_size")?,
+            visible_grid_size: get_coord_opt(&board_settings_props, "visible_grid_size")?,
+            display_unit: get_string_opt(&board_settings_props, "display_unit"),
+            nets,
+            components,
+            tracks: primitives_by_type.shift_remove("track").unwrap_or_default(),
+            arcs: primitives_by_type.shift_remove("arc").unwrap_or_default(),
+            vias: primitives_by_type.shift_remove("via").unwrap_or_default(),
+            pads: primitives_by_type.shift_remove("pad").unwrap_or_default(),
+            fills: primitives_by_type.shift_remove("fill").unwrap_or_default(),
+            texts: primitives_by_type.shift_remove("text").unwrap_or_default(),
+            regions: primitives_by_type.shift_remove("region").unwrap_or_default(),
+            component_bodies: primitives_by_type.shift_remove("component_body").unwrap_or_default(),
+            dimensions: primitives_by_type.shift_remove("dimension").unwrap_or_default(),
+            polygons,
+            rules,
+            classes,
+            differential_pairs,
+        };
+
+        Ok(PcbDocSpec { boards: vec![board] })
+    }
+
+    fn compile_board_settings(
+        &mut self,
+        decl: &BoardDecl,
+    ) -> Result<IndexMap<String, Value>, SpecError> {
+        // Evaluate let bindings in board body.
+        let board_lets: Vec<_> = decl.body.iter().filter_map(|item| {
+            match &item.node {
+                BoardItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
+                _ => None,
+            }
+        }).collect();
+        self.scope.push();
+        eval_let_bindings_slice(&board_lets, &mut self.scope)?;
+
+        let props = collect_object_properties_from_items(
+            decl.body.iter().filter_map(|item| {
+                match &item.node {
+                    BoardItem::Property(p) => Some(p),
+                    _ => None,
+                }
+            }),
+            &self.scope,
+        )?;
+
+        self.scope.pop();
+        Ok(props)
+    }
+
+    fn compile_pcbdoc_net(
+        &mut self,
+        decl: &crate::ast::NetDecl,
+    ) -> Result<PcbDocNetSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        let color = props.get("color")
+            .map(|v| value_to_color(v, Some(decl.body.span)))
+            .transpose()?;
+        let visible = get_bool_opt(&props, "visible");
+
+        Ok(PcbDocNetSpec { name, color, visible })
+    }
+
+    fn compile_pcbdoc_component(
+        &mut self,
+        decl: &ComponentDecl,
+    ) -> Result<PcbDocComponentSpec, SpecError> {
+        let designator = decl.name.node.as_str();
+
+        // Collect properties from component body items.
+        let props = collect_object_properties_from_items(
+            decl.body.iter().filter_map(|item| {
+                match &item.node {
+                    ComponentItem::Property(p) => Some(p),
+                    _ => None,
+                }
+            }),
+            &self.scope,
+        )?;
+
+        let pattern = get_string_opt(&props, "pattern");
+        let comment = get_string_opt(&props, "comment");
+        let location = props.get("at")
+            .map(|v| value_to_coord_point(v, None))
+            .transpose()?;
+        let rotation = get_float_opt(&props, "rotation");
+        let layer = get_enum_opt(&props, "layer", parse_layer_spec)?;
+        let source_library = get_string_opt(&props, "source_library");
+
+        Ok(PcbDocComponentSpec {
+            designator,
+            pattern,
+            comment,
+            location,
+            rotation,
+            layer,
+            source_library,
+        })
+    }
+
+    fn compile_pcbdoc_primitive(
+        &mut self,
+        decl: &PcbDocPrimitiveDecl,
+    ) -> Result<PcbDocPrimitiveSpec, SpecError> {
+        let type_name = decl.primitive_type.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        // Generate unique ID: named primitives use the name, unnamed get auto-generated IDs.
+        let id = match &decl.name {
+            Some(name_spanned) => {
+                format!("spec:{}:{}", self.context_name, name_spanned.node.as_str())
+            }
+            None => {
+                let counter_key = format!("{}:{}", self.context_name, type_name);
+                let n = self.unnamed_counters.entry(counter_key).or_insert(0);
+                let id = format!("spec:{}:{}_{}", self.context_name, type_name, n);
+                *n += 1;
+                id
+            }
+        };
+
+        // position_index tracks order within each primitive type.
+        let pos_key = format!("pos:{}", type_name);
+        let position_index = {
+            let n = self.unnamed_counters.entry(pos_key).or_insert(0);
+            let idx = *n as usize;
+            *n += 1;
+            idx
+        };
+
+        Ok(PcbDocPrimitiveSpec {
+            id,
+            position_index,
+            primitive_type: type_name.to_string(),
+            properties: props,
+        })
+    }
+
+    fn compile_pcbdoc_polygon(
+        &mut self,
+        decl: &PolygonDecl,
+    ) -> Result<PcbDocPolygonSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        Ok(PcbDocPolygonSpec {
+            name,
+            net: get_string_opt(&props, "net"),
+            layer: get_enum_opt(&props, "layer", parse_layer_spec)?,
+            connect_style: get_string_opt(&props, "connect_style"),
+            pour_order: get_integer_opt(&props, "pour_order"),
+        })
+    }
+
+    fn compile_pcbdoc_rule(
+        &mut self,
+        decl: &RuleDecl,
+    ) -> Result<PcbDocRuleSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        Ok(PcbDocRuleSpec {
+            name,
+            kind: get_string_opt(&props, "kind"),
+            enabled: get_bool_opt(&props, "enabled"),
+            priority: get_integer_opt(&props, "priority"),
+        })
+    }
+
+    fn compile_pcbdoc_class(
+        &mut self,
+        decl: &ClassDecl,
+    ) -> Result<PcbDocClassSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        Ok(PcbDocClassSpec {
+            name,
+            kind: get_string_opt(&props, "kind"),
+        })
+    }
+
+    fn compile_pcbdoc_diff_pair(
+        &mut self,
+        decl: &DifferentialPairDecl,
+    ) -> Result<PcbDocDifferentialPairSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        Ok(PcbDocDifferentialPairSpec {
+            name,
+            positive_net: get_string_opt(&props, "positive_net"),
+            negative_net: get_string_opt(&props, "negative_net"),
+        })
     }
 
     // ── Project compilation (PrjPcb) ──────────────────────────────────────
