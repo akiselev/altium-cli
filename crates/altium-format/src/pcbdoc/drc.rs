@@ -1513,9 +1513,7 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
 /// Common fields shared by ALL violation records.
 ///
 /// Most fields use `tier2` (always write) because Altium writes them even at default values.
-/// Most fields use `tier2` (always write) because Altium writes them even at default values.
-/// `INVOLVEDPRIMCOUNT` uses tier2 (always write) because Altium always includes it,
-/// even when zero.
+/// `INVOLVEDPRIMCOUNT` uses default tier because Altium omits it when zero.
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct PcbViolationBase {
     #[param(tier2, key = "SELECTION", default = false)]
@@ -1540,7 +1538,7 @@ pub(crate) struct PcbViolationBase {
     pub prim1_index: u32,
     #[param(tier2, key = "DESCRIPTION", default = String::new())]
     pub description: String,
-    #[param(tier2, key = "INVOLVEDPRIMCOUNT", default = 0u32)]
+    #[param(key = "INVOLVEDPRIMCOUNT", default = 0u32)]
     pub involved_prim_count: u32,
 }
 

@@ -393,11 +393,15 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     params.insert("ARCRESOLUTION", format_mil(p.arc_resolution));
     params.insert("ISSHAPEBASED", if p.is_shape_based { "TRUE".to_owned() } else { "FALSE".to_owned() });
     params.insert("CAVITYHEIGHT", format_mil(p.cavity_height));
-    params.insert("KEEPOUTRESTRICTIONS", p.keepout_restrictions.to_string());
+    if p.keepout_restrictions != 0 {
+        params.insert("KEEPOUTRESTRICTIONS", p.keepout_restrictions.to_string());
+    }
     params.insert("LAYER", p.layer.clone());
     params.insert("KEEPOUT", if p.keepout { "TRUE".to_owned() } else { "FALSE".to_owned() });
     params.insert("ISBOARDCUTOUT", if p.is_board_cutout { "TRUE".to_owned() } else { "FALSE".to_owned() });
-    params.insert("PADINDEX", p.pad_index.to_string());
+    if p.pad_index != -1 {
+        params.insert("PADINDEX", p.pad_index.to_string());
+    }
     if !p.object_kind.is_empty() {
         params.insert("OBJECTKIND", p.object_kind.clone());
     }
