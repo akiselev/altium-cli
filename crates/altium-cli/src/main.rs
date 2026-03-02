@@ -158,6 +158,11 @@ enum NewSubcommand {
         /// Output path for the new .PcbLib
         output: PathBuf,
     },
+    /// Create a new blank .PrjPcb
+    Prjpcb {
+        /// Output path for the new .PrjPcb
+        output: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -279,6 +284,16 @@ fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
             }
             let lib = PcbLib::new_blank_ad26();
             lib.save(output.as_path())?;
+            println!("Created {}", output.display());
+        }
+        NewSubcommand::Prjpcb { output } => {
+            if let Some(parent) = output.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let proj = AltiumProject::new_blank_ad26();
+            proj.save(output.as_path())?;
             println!("Created {}", output.display());
         }
     }
@@ -731,10 +746,7 @@ fn apply_for_model(
                 AltiumProject::open(&resolved_target)
                     .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
             } else {
-                anyhow::bail!(
-                    "no existing PrjPcb found at {}; provide an existing project via --target",
-                    resolved_target.display()
-                )
+                AltiumProject::new_blank_ad26()
             };
 
             let out_path = output.cloned().unwrap_or(library_path);

@@ -221,7 +221,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Ident(_)
                     | TokenKind::Dollar
                     | TokenKind::At
-                    | TokenKind::Tilde
+                    | TokenKind::Percent
                     | TokenKind::Hash
                     | TokenKind::Star
                     | TokenKind::LParen
@@ -477,7 +477,7 @@ impl<'a> Parser<'a> {
     /// - `*` alone → Any
     /// - `$ident` → PartNumber
     /// - `@ident` → ValuePattern
-    /// - `~ident` → NetName
+    /// - `%ident` → NetName
     /// - `#number` → RecordId
     /// - Known type keyword → TypeSelector
     /// - Identifier + `*`/`?` → DesignatorPattern
@@ -520,7 +520,7 @@ impl<'a> Parser<'a> {
                     start_span.merge(end_span),
                 ))
             }
-            TokenKind::Tilde => {
+            TokenKind::Percent => {
                 self.advance();
                 let name = self.parse_pattern_ident()?;
                 let end_span = self.tokens.get(self.pos.wrapping_sub(1))
@@ -789,7 +789,7 @@ mod tests {
 
     #[test]
     fn test_parse_net_name() {
-        let q = parse_query("~VCC").unwrap();
+        let q = parse_query("%VCC").unwrap();
         match &q.expr.node {
             QueryExpr::Selector(chain) => {
                 match &chain.segments[0].selector.node.base.node {

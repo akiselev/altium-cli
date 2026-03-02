@@ -119,7 +119,19 @@ enum Section {
     Unknown,
 }
 
+/// Default INI content for a blank AD26 project (no document references).
+const BLANK_AD26_INI: &str = include_str!("blank_project_ad26.ini");
+
 impl AltiumProject {
+    /// Create a new blank project with Altium Designer 26 defaults.
+    ///
+    /// The project contains all default sections (Design, ERC, Output Groups,
+    /// etc.) but no document references — documents are added after creation.
+    pub fn new_blank_ad26() -> Self {
+        Self::parse("unnamed".to_owned(), BLANK_AD26_INI)
+            .expect("embedded blank project content should always parse")
+    }
+
     pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
         let name = path
@@ -577,6 +589,42 @@ mod tests {
         let input = "[UnknownFutureSection]\nKey=Value\n[Design]\nVersion=1.0\n";
         let project = AltiumProject::parse("UnkTest".to_owned(), input).unwrap();
         assert_eq!(project.design().get("Version").map(|s| s.as_str()), Some("1.0"));
+    }
+
+    #[test]
+    fn new_blank_ad26_roundtrip() {
+        let proj = AltiumProject::new_blank_ad26();
+
+        // Verify key structural properties of the blank project.
+        assert_eq!(proj.design().get("Version").map(|s| s.as_str()), Some("1.0"));
+        assert_eq!(proj.documents().len(), 0, "blank project should have no documents");
+        assert_eq!(proj.configurations().len(), 1);
+        assert_eq!(proj.output_groups().len(), 10);
+        assert_eq!(proj.erc_matrix().len(), 17, "ERC matrix should have 17 rows");
+        assert!(!proj.modification_levels().is_empty());
+        assert!(!proj.difference_levels().is_empty());
+        assert!(!proj.erc_levels().is_empty());
+
+        // Save to a temp file and reopen.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        proj.save(tmp.path()).unwrap();
+
+        let reopened = AltiumProject::open(tmp.path()).unwrap();
+
+        // Verify the reopened project matches the original.
+        assert_eq!(reopened.design().len(), proj.design().len());
+        assert_eq!(reopened.documents().len(), 0);
+        assert_eq!(reopened.configurations().len(), 1);
+        assert_eq!(reopened.output_groups().len(), 10);
+        assert_eq!(reopened.erc_matrix().len(), 17);
+        assert_eq!(reopened.modification_levels().len(), proj.modification_levels().len());
+        assert_eq!(reopened.difference_levels().len(), proj.difference_levels().len());
+        assert_eq!(reopened.erc_levels().len(), proj.erc_levels().len());
+
+        // Verify save→reopen produces identical INI content.
+        let ini1 = crate::api::project_write::write_ini(&proj);
+        let ini2 = crate::api::project_write::write_ini(&reopened);
+        assert_eq!(ini1, ini2, "roundtrip INI content should be identical");
     }
 
     #[cfg(feature = "test-fixtures")]

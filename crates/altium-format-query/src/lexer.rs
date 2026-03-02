@@ -17,6 +17,7 @@ pub enum TokenKind {
     Dollar,  // $
     At,      // @
     Tilde,   // ~
+    Percent, // %
     Hash,    // #
 
     // Wildcards
@@ -177,7 +178,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, QueryError> {
                 i += 1;
             }
 
-            // Tilde: ~= (word match) or ~ (net prefix / general sibling)
+            // Tilde: ~= (word match) or ~ (standalone, currently unused as prefix)
             b'~' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
                     tokens.push(Token {
@@ -192,6 +193,15 @@ pub fn lex(input: &str) -> Result<Vec<Token>, QueryError> {
                     });
                     i += 1;
                 }
+            }
+
+            // Percent: % (net name prefix)
+            b'%' => {
+                tokens.push(Token {
+                    kind: TokenKind::Percent,
+                    span: Span::new(start as u32, (i + 1) as u32),
+                });
+                i += 1;
             }
 
             // Star: *= (contains) or * (wildcard)
@@ -648,8 +658,8 @@ mod tests {
             vec![TokenKind::At, TokenKind::Integer(10), TokenKind::Ident("K".into())]
         );
         assert_eq!(
-            kinds("~VCC").unwrap(),
-            vec![TokenKind::Tilde, TokenKind::Ident("VCC".into())]
+            kinds("%VCC").unwrap(),
+            vec![TokenKind::Percent, TokenKind::Ident("VCC".into())]
         );
         assert_eq!(
             kinds("#42").unwrap(),

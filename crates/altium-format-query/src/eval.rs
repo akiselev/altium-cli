@@ -614,8 +614,8 @@ mod tests {
         let doc = MockDoc {
             components: vec![make_test_component()],
         };
-        // ~VCC matches no nodes in a SchLib mock (no NetLabel/PowerObject/Port/SheetEntry)
-        let query = parse_query("~VCC").unwrap();
+        // %VCC matches no nodes in a SchLib mock (no NetLabel/PowerObject/Port/SheetEntry)
+        let query = parse_query("%VCC").unwrap();
         let results = eval_query(&query, &doc).unwrap();
         assert_eq!(results.len(), 0);
     }

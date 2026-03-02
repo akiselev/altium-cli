@@ -68,7 +68,7 @@ pub enum BaseSelector {
     PartNumber(String),
     /// Value pattern: `@10K`
     ValuePattern(String),
-    /// Net name: `~VCC`
+    /// Net name: `%VCC`
     NetName(String),
     /// Record ID: `#42`
     RecordId(i64),
