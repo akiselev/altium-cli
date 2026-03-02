@@ -447,6 +447,20 @@ pub(crate) struct MatchedLengthsRuleData {
     pub check_x_signals: bool,
     #[param(key = "CHECKOTHERS", default = false)]
     pub check_others: bool,
+    #[param(key = "USEDELAYUNITS", default = false)]
+    pub use_delay_units: bool,
+    #[param(key = "DELAYTOLERANCE", default = 0f64)]
+    pub delay_tolerance: f64,
+    #[param(key = "TARGETSOURCENAME", default = String::new())]
+    pub target_source_name: String,
+    #[param(key = "PHASEMATCHING", default = false)]
+    pub phase_matching: bool,
+    #[param(key = "PHASETOLERANCE", default = MilCoord::default())]
+    pub phase_tolerance: MilCoord,
+    #[param(key = "PHASEDELAYTOLERANCE", default = 0f64)]
+    pub phase_delay_tolerance: f64,
+    #[param(key = "PHASEDISTANCE", default = MilCoord::default())]
+    pub phase_distance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]

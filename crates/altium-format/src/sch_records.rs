@@ -1823,8 +1823,8 @@ pub(crate) struct SchJunction {
     pub base: SchPrimitiveBase,
     #[param(coord_point, x_key = LOCATION_X, x_frac = LOCATION_X_FRAC, y_key = LOCATION_Y, y_frac = LOCATION_Y_FRAC)]
     pub location: CoordPoint,
-    #[param(key = SIZE, default = 0i32)]
-    pub size: i32,
+    #[param(key = SIZE, default = PenWidth::Zero)]
+    pub size: PenWidth,
     #[param(key = COLOR, default = Color::BLACK)]
     pub color: Color,
     #[param(key = LOCKED, default = true)]

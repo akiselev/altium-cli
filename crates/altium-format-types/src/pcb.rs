@@ -1396,6 +1396,11 @@ impl TryFrom<u8> for PlaneConnectionStyle {
 // TextAutoPosition is defined in crate::common (shared across PCB and schematic).
 
 /// Mask expansion mode (from ExtendedPrimitiveInformation sidecar).
+///
+/// This 3-value enum maps to the string-based `SOLDERMASKEXPANSIONMODE` /
+/// `PASTEMASKEXPANSIONMODE` parameters in the ExtendedPrimitiveInformation
+/// sidecar stream. For the binary via/pad record field (which can store
+/// values 0-7), see [`MaskExpansionState`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1427,6 +1432,54 @@ impl std::fmt::Display for MaskExpansionMode {
             Self::NoMask => write!(f, "NoMask"),
             Self::Rule => write!(f, "Rule"),
             Self::Manual => write!(f, "Manual"),
+        }
+    }
+}
+
+/// Packed mask expansion state byte from via/pad binary records.
+///
+/// The binary via/pad record stores mask expansion state as a single byte at
+/// offsets 71 (solder mask) and 73 (paste mask), alongside the adjacent packed
+/// cache flags bytes at offsets 70 and 72.
+///
+/// In most files the value matches [`MaskExpansionMode`] (0-2), but some files
+/// (particularly complex multi-layer designs) use values 3-7, indicating
+/// additional packed state beyond the basic 3-value mode enum. The full
+/// bit-level semantics of values > 2 require Delphi reverse engineering.
+///
+/// The C# SDK `TMaskExpansionMode` (in `Altium.Edp.Interfaces`) only defines
+/// values 0-2, but the internal Delphi engine writes the full byte range.
+///
+/// This type is distinct from [`MaskExpansionMode`], which is the 3-value enum
+/// used in the ExtendedPrimitiveInformation sidecar string parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct MaskExpansionState(u8);
+
+impl MaskExpansionState {
+    /// Create from a raw byte value.
+    pub const fn new(v: u8) -> Self {
+        Self(v)
+    }
+
+    /// Get the raw byte value.
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<u8> for MaskExpansionState {
+    fn from(v: u8) -> Self {
+        Self(v)
+    }
+}
+
+impl std::fmt::Display for MaskExpansionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            0 => write!(f, "NoMask"),
+            1 => write!(f, "Rule"),
+            2 => write!(f, "Manual"),
+            v => write!(f, "MaskState({v})"),
         }
     }
 }

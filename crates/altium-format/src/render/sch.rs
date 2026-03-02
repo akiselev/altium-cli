@@ -217,9 +217,7 @@ pub(crate) fn draw_sch_record(
             canvas.draw_text(&t.text, to_dp(t.location), 0.0, &font, &text_pen);
         }
         SchRecord::Junction(j) => {
-            // TODO: SchJunction should parse JUNCTIONSIZE parameter (TSize enum).
-            // For now, use Small as default (15 mil radius = 30 mil diameter).
-            let r = junction_radius_mils(altium_format_types::PenWidth::Small);
+            let r = junction_radius_mils(j.size);
             let pen = Pen::new(j.color, 0.0);
             let brush = Brush::solid(j.color);
             canvas.draw_ellipse(to_dp(j.location), r, r, &pen, Some(&brush));
@@ -415,7 +413,7 @@ mod tests {
         let j = SchJunction {
             base: make_base(),
             location: CoordPoint::new(Coord::from_mils(0), Coord::from_mils(0)),
-            size: 0,
+            size: PenWidth::Zero,
             color: Color::BLACK,
             locked: true,
             unique_id: String::new(),

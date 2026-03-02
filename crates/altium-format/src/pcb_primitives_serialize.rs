@@ -76,9 +76,9 @@ pub(crate) fn serialize_via(p: &PcbVia) -> Vec<u8> {
     w.write_u8(p.planes_valid as u8);
     w.write_u8(p.plane_connection_style as u8);
     w.write_u8(p.solder_mask_cache_flags);
-    w.write_u8(p.solder_mask_expansion_mode as u8);
+    w.write_u8(p.solder_mask_expansion_state.as_u8());
     w.write_u8(p.paste_mask_cache_flags);
-    w.write_u8(p.paste_mask_expansion_mode as u8);
+    w.write_u8(p.paste_mask_expansion_state.as_u8());
     w.write_u8(p.via_mode as u8);
     for d in &p.diameters_per_layer {
         w.write_coord(*d);

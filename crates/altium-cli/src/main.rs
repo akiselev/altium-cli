@@ -145,6 +145,11 @@ enum NewSubcommand {
         /// Output path for the new .SchLib
         output: PathBuf,
     },
+    /// Create a new blank .PcbLib
+    Pcblib {
+        /// Output path for the new .PcbLib
+        output: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -249,6 +254,16 @@ fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
                 }
             }
             let lib = SchLib::new_blank_ad26();
+            lib.save(output.as_path())?;
+            println!("Created {}", output.display());
+        }
+        NewSubcommand::Pcblib { output } => {
+            if let Some(parent) = output.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let lib = PcbLib::new_blank_ad26();
             lib.save(output.as_path())?;
             println!("Created {}", output.display());
         }
@@ -833,10 +848,14 @@ fn run_query(
             eval_query(&query, &lib)
                 .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
-        // Future: PcbLib, SchDoc, PcbDoc support
+        "pcblib" => {
+            let lib = PcbLib::open(path)?;
+            eval_query(&query, &lib)
+                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+        }
         _ => {
             anyhow::bail!(
-                "unsupported file type '.{ext}' for query (supported: .SchLib)"
+                "unsupported file type '.{ext}' for query (supported: .SchLib, .PcbLib)"
             );
         }
     };

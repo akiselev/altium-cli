@@ -659,7 +659,7 @@ fn junction_to_internal(j: &Junction) -> SchRecord {
             ..default_base()
         },
         location: j.location,
-        size: 0,
+        size: PenWidth::Zero,
         color: j.color,
         locked: true,
         unique_id: j.unique_id.clone(),

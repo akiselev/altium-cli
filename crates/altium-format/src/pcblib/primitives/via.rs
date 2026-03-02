@@ -1,5 +1,5 @@
 use altium_format_types::{
-    Coord, MaskExpansionMode, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState, V6Layer,
+    Coord, MaskExpansionState, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState, V6Layer,
     ViaStructureType,
 };
 
@@ -139,9 +139,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut planes_valid = TCacheState::Invalid;
     let mut plane_connection_style = PlaneConnectionStyle::NoConnect;
     let mut solder_mask_cache_flags: u8 = 0;
-    let mut solder_mask_expansion_mode = MaskExpansionMode::NoMask;
+    let mut solder_mask_expansion_state = MaskExpansionState::default();
     let mut paste_mask_cache_flags: u8 = 0;
-    let mut paste_mask_expansion_mode = MaskExpansionMode::NoMask;
+    let mut paste_mask_expansion_state = MaskExpansionState::default();
 
     let mut via_mode = PadStackMode::Simple;
     let mut diameters_per_layer = [Coord::ZERO; 32];
@@ -204,9 +204,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         // Byte 72: paste mask cache flags (packed 4×2-bit fields).
         // Byte 73: paste mask expansion mode/count (observed: 0 in all test files).
         solder_mask_cache_flags = reader.read_u8()?;
-        solder_mask_expansion_mode = MaskExpansionMode::try_from(reader.read_u8()?)?;
+        solder_mask_expansion_state = MaskExpansionState::from(reader.read_u8()?);
         paste_mask_cache_flags = reader.read_u8()?;
-        paste_mask_expansion_mode = MaskExpansionMode::try_from(reader.read_u8()?)?;
+        paste_mask_expansion_state = MaskExpansionState::from(reader.read_u8()?);
 
         via_mode = PadStackMode::try_from(reader.read_u8()?)?;
         for d in &mut diameters_per_layer {
@@ -433,9 +433,9 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         planes_valid,
         plane_connection_style,
         solder_mask_cache_flags,
-        solder_mask_expansion_mode,
+        solder_mask_expansion_state,
         paste_mask_cache_flags,
-        paste_mask_expansion_mode,
+        paste_mask_expansion_state,
         via_mode,
         diameters_per_layer,
         layer_enum_index,
@@ -741,9 +741,9 @@ mod tests {
         w.write_u8(0);  // planes_valid
         w.write_u8(0);  // plane_connection_style
         w.write_u8(0);  // solder_mask_cache_flags
-        w.write_u8(0);  // solder_mask_expansion_mode
+        w.write_u8(0);  // solder_mask_expansion_state
         w.write_u8(0);  // paste_mask_cache_flags
-        w.write_u8(0);  // paste_mask_expansion_mode
+        w.write_u8(0);  // paste_mask_expansion_state
         w.write_u8(0);  // via_mode
         for _ in 0..32 { w.write_coord(Coord::ZERO); } // diameters_per_layer
         w.write_i32_le(0); // layer_enum_index

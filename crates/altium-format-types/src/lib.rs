@@ -36,7 +36,8 @@ pub use common::{ComponentKind, RotationBy90, TextAutoPosition, Unit};
 pub use coord::{BoundingBox, Coord, CoordPoint};
 pub use pcb::{
     BoardSide, ComponentPlacementType, CornerStyle, DaisyChainStyle, DielectricType,
-    DimensionKind, HoleType, LayerStackStyle, MaskExpansionMode, PadShape, PadShapeSubKind,
+    DimensionKind, HoleType, LayerStackStyle, MaskExpansionMode, MaskExpansionState, PadShape,
+    PadShapeSubKind,
     PadStackMode, PcbFileFormatVersion, PcbFlags, PcbObjectId, PlaneConnectionStyle,
     PolySegmentKind, RegionKind,
     BarcodeKind, BarcodeRenderMode, RuleKind, TCacheState, TextAutoposition, ViewableObjectId,

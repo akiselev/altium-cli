@@ -1,4 +1,5 @@
 use altium_format::api;
+use altium_format::PcbLib;
 use altium_format::SchLib;
 
 use crate::ast::TypeSelector;
@@ -47,6 +48,13 @@ impl Queryable for SchLib {
             )
         })?;
         Ok(components.into_iter().map(QueryNode::Component).collect())
+    }
+}
+
+impl Queryable for PcbLib {
+    fn root_nodes(&self) -> Result<Vec<QueryNode>, QueryError> {
+        let footprints = self.footprints();
+        Ok(footprints.into_iter().map(QueryNode::Footprint).collect())
     }
 }
 

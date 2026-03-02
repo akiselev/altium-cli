@@ -2,13 +2,13 @@
 
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    Contour, PcbArc, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive, PcbPrimitiveCommon,
-    PcbRegion, PcbText, PcbTrack, PcbVia,
+    Contour, PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive,
+    PcbPrimitiveCommon, PcbRegion, PcbText, PcbTrack, PcbVia,
 };
 use crate::util::generate_unique_id;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionMode, PadStackMode, PcbFlags,
+    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
     PlaneConnectionStyle, TCacheState, TextKind, V6Layer,
 };
 
@@ -26,8 +26,6 @@ fn default_primitive_common(layer: &LayerRef, flags: PcbFlags) -> PcbPrimitiveCo
 }
 
 /// Convert a public `Footprint` to a fresh internal `PcbFootprint`.
-///
-/// ComponentBody graphics are skipped — they cannot be created from scratch.
 pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> PcbFootprint {
     let mut primitives: Vec<PcbPrimitive> = Vec::new();
 
@@ -43,7 +41,9 @@ pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> PcbFootpri
             PcbGraphic::Region(g) => primitives.push(PcbPrimitive::Region(region_to_internal(g))),
             PcbGraphic::Text(g) => primitives.push(PcbPrimitive::Text(text_to_internal(g))),
             PcbGraphic::Via(g) => primitives.push(PcbPrimitive::Via(via_to_internal(g))),
-            PcbGraphic::ComponentBody(_) => {}
+            PcbGraphic::ComponentBody(g) => {
+                primitives.push(PcbPrimitive::ComponentBody(component_body_to_internal(g)))
+            }
         }
     }
 
@@ -178,10 +178,29 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
         // No additional format-internal fields to copy for these primitive types at this time.
     }
 
-    // Preserve all existing ComponentBody primitives unchanged
+    // Collect unique_ids of ComponentBody graphics converted from the API type.
+    let converted_body_uids: Vec<Option<String>> = updated
+        .primitives
+        .iter()
+        .filter_map(|p| {
+            if let PcbPrimitive::ComponentBody(cb) = p {
+                Some(cb.unique_id.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Preserve existing ComponentBody primitives not already represented by a
+    // converted API body (matched by unique_id).
     for existing_prim in &existing.primitives {
         if let PcbPrimitive::ComponentBody(cb) = existing_prim {
-            updated.primitives.push(PcbPrimitive::ComponentBody(cb.clone()));
+            let already_converted = converted_body_uids.iter().any(|uid| {
+                uid.is_some() && cb.unique_id.is_some() && uid == &cb.unique_id
+            });
+            if !already_converted {
+                updated.primitives.push(PcbPrimitive::ComponentBody(cb.clone()));
+            }
         }
     }
 
@@ -402,9 +421,9 @@ fn via_to_internal(g: &ViaGraphic) -> PcbVia {
         planes_valid: TCacheState::default(),
         plane_connection_style: PlaneConnectionStyle::default(),
         solder_mask_cache_flags: 0,
-        solder_mask_expansion_mode: MaskExpansionMode::NoMask,
+        solder_mask_expansion_state: MaskExpansionState::default(),
         paste_mask_cache_flags: 0,
-        paste_mask_expansion_mode: MaskExpansionMode::NoMask,
+        paste_mask_expansion_state: MaskExpansionState::default(),
         via_mode: PadStackMode::Simple,
         diameters_per_layer: [Coord::ZERO; 32],
         layer_enum_index: 0,
@@ -431,6 +450,54 @@ fn via_to_internal(g: &ViaGraphic) -> PcbVia {
         counter_hole_angle: None,
         via_structure_type: None,
         layer_diameter_overrides: Vec::new(),
+        unique_id: g.unique_id.clone(),
+    }
+}
+
+fn component_body_to_internal(g: &ComponentBodyGraphic) -> PcbComponentBody {
+    PcbComponentBody {
+        common: default_primitive_common(&g.layer, g.flags),
+        v7_layer: String::new(),
+        name: String::new(),
+        kind: 0,
+        subpoly_index: -1,
+        union_index: 0,
+        arc_resolution: Coord::ZERO,
+        is_shape_based: false,
+        cavity_height: Coord::ZERO,
+        standoff_height: g.standoff_height,
+        overall_height: g.overall_height,
+        body_projection: 0,
+        body_color_3d: g.body_color_3d,
+        body_opacity_3d: g.body_opacity_3d,
+        identifier: String::new(),
+        texture: String::new(),
+        texture_center_x: Coord::ZERO,
+        texture_center_y: Coord::ZERO,
+        texture_size_x: Coord::ZERO,
+        texture_size_y: Coord::ZERO,
+        texture_rotation: 0.0,
+        body_override_color: false,
+        model_guid: String::new(),
+        model_checksum: String::new(),
+        model_embed: false,
+        model_name: g.model_name.clone(),
+        model_2d_x: Coord::ZERO,
+        model_2d_y: Coord::ZERO,
+        model_2d_rotation: 0.0,
+        rotation_x: 0.0,
+        rotation_y: 0.0,
+        rotation_z: 0.0,
+        model_3d_dz: Coord::ZERO,
+        model_type: 0,
+        model_source: String::new(),
+        model_snap_points: Vec::new(),
+        model_extruded_min_z: Coord::ZERO,
+        model_extruded_max_z: Coord::ZERO,
+        model_cylinder_radius: Coord::ZERO,
+        model_cylinder_height: Coord::ZERO,
+        model_sphere_radius: Coord::ZERO,
+        outline: Contour::Legacy(g.outline.clone()),
         unique_id: g.unique_id.clone(),
     }
 }

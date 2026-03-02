@@ -13,7 +13,7 @@ use altium_format_types::constants::file_headers::PCB_LIBRARY_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::{FILE_HEADER, SECTION_KEYS};
 use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::{
-    BarcodeRenderMode, Color, Coord, CoordPoint, DaisyChainStyle, MaskExpansionMode, PadShape,
+    BarcodeRenderMode, Color, Coord, CoordPoint, DaisyChainStyle, MaskExpansionState, PadShape,
     PadStackMode, PcbFlags, PcbObjectId, PlaneConnectionStyle, PolySegmentKind, RegionKind,
     TCacheState, TextAutoposition, TextKind, V6Layer, V7Layer, ViaStructureType,
 };
@@ -175,12 +175,13 @@ pub(crate) struct PcbVia {
     pub(crate) plane_connection_style: PlaneConnectionStyle,
     /// Packed 4×2-bit cache/mode flags for solder mask (bits [1:0], [3:2], [5:4], [7:6]).
     pub(crate) solder_mask_cache_flags: u8,
-    /// Solder mask expansion mode/count (observed: 0-7).
-    pub(crate) solder_mask_expansion_mode: MaskExpansionMode,
+    /// Solder mask expansion state (packed byte, values 0-7 observed).
+    /// See [`MaskExpansionState`] — NOT the same as `MaskExpansionMode`.
+    pub(crate) solder_mask_expansion_state: MaskExpansionState,
     /// Packed 4×2-bit cache/mode flags for paste mask (same encoding as solder_mask).
     pub(crate) paste_mask_cache_flags: u8,
-    /// Paste mask expansion mode/count (observed: 0 in most files, up to 7 in some).
-    pub(crate) paste_mask_expansion_mode: MaskExpansionMode,
+    /// Paste mask expansion state (packed byte, values 0-7 observed).
+    pub(crate) paste_mask_expansion_state: MaskExpansionState,
     pub(crate) via_mode: PadStackMode,
     pub(crate) diameters_per_layer: [Coord; 32],
     // Additional extended (offset 203+)

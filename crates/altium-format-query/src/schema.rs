@@ -123,7 +123,7 @@ pub fn fields_for_type(ts: TypeSelector) -> &'static [FieldDef] {
         TypeSelector::Component => COMPONENT_FIELDS,
         TypeSelector::Pin => PIN_FIELDS,
         TypeSelector::Parameter => PARAMETER_FIELDS,
-        TypeSelector::Footprint => FOOTPRINT_FIELDS,
+        TypeSelector::Footprint => PCB_FOOTPRINT_FIELDS,
         TypeSelector::Graphic
         | TypeSelector::Line
         | TypeSelector::Rectangle
