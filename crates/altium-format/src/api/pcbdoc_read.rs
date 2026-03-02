@@ -9,10 +9,14 @@ use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, RegionKind, V7Layer,
+    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, RegionKind, RuleKind,
+    V6Layer, V7Layer,
 };
+use altium_format_types::{DielectricType, LayerStackStyle};
 
+use crate::api::pcb_common::{extract_pad_stack, contour_to_pcb_contour};
 use crate::api::pcbdoc_types::*;
+use crate::board_config::PcbBoardConfig;
 use crate::pcbdoc::primitives::PcbPrimitive;
 use crate::pcbdoc::records::{
     ParamSectionKind, PrefixedParamSectionKind, PrimitiveSectionKind,
@@ -21,6 +25,7 @@ use crate::pcbdoc::{
     ModelsSectionData, ParamSectionData, PcbDoc, PcbDocSection, PrefixedParamSectionData,
     PrimitiveSectionData, WideStringsSectionData,
 };
+use crate::pcbdoc::drc::PcbRuleKindData;
 use crate::pcblib::{Contour, PcbComponentBody, PcbPad, PcbRegion, PcbVia};
 use crate::{Result, ResultExt};
 
@@ -87,6 +92,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
     let mut texts = Vec::new();
     let mut regions = Vec::new();
     let mut component_bodies = Vec::new();
+    let mut internal_regions: Vec<&PcbRegion> = Vec::new();
 
     // Track which legacy section kinds have modern counterparts present.
     let has_shape_based_regions = has_section(doc, PrimitiveSectionKind::ShapeBasedRegions6);
@@ -104,6 +110,13 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
                 _ => {}
             }
 
+            // Collect internal regions for geometry extraction (before flattening).
+            for record in &prim.records {
+                if let PcbPrimitive::Region(r) = &record.primitive {
+                    internal_regions.push(r);
+                }
+            }
+
             convert_primitive_section(
                 prim,
                 &ctx,
@@ -119,10 +132,12 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
         }
     }
 
-    // Step 4: Extract board outline from regions.
+    // Step 4: Extract board geometry from internal regions (arc-preserving).
+    let geometry = extract_board_geometry(&internal_regions);
     let board_outline = find_board_outline(&regions);
     let mut settings = settings;
     settings.board_outline = board_outline;
+    settings.geometry = geometry;
 
     Ok(PcbDocBoard {
         settings,
@@ -569,10 +584,184 @@ fn convert_rules(doc: &PcbDoc) -> Vec<DesignRule> {
                 enabled: rule.base.enabled,
                 priority: rule.base.priority as i32,
                 scope: rule.base.scope1_expression.clone(),
+                scope2: rule.base.scope2_expression.clone(),
+                net_scope: rule.base.net_scope,
+                layer_scope: rule.base.layer_kind,
                 comment: rule.base.comment.clone(),
+                params: rule_params_from_internal(&rule.kind_data, rule.base.rule_kind),
             }
         })
         .collect()
+}
+
+fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -> RuleParams {
+    match kind_data {
+        PcbRuleKindData::Clearance(d) => RuleParams::Clearance {
+            gap: d.gap.0,
+            ignore_pad_to_pad: d.ignore_pad_to_pad,
+        },
+        PcbRuleKindData::Width(d) => RuleParams::Width {
+            min: d.min_limit.0,
+            max: d.max_limit.0,
+            preferred: d.preferred_width.0,
+        },
+        PcbRuleKindData::Length(d) => RuleParams::Length {
+            min: d.min_limit.0,
+            max: d.max_limit.0,
+        },
+        PcbRuleKindData::MatchedLengths(d) => RuleParams::MatchedLengths {
+            tolerance: d.tolerance.0,
+        },
+        PcbRuleKindData::ParallelSegment(d) => RuleParams::ParallelSegment {
+            gap: d.gap.0,
+            limit: d.limit.0,
+            parallel_length: d.parallel_length.0,
+        },
+        PcbRuleKindData::DaisyChainStubLength(d) => RuleParams::DaisyChainStubLength {
+            max_limit: d.max_limit.0,
+        },
+        PcbRuleKindData::ShortCircuit(d) => RuleParams::ShortCircuit {
+            allowed: d.allowed,
+        },
+        PcbRuleKindData::BrokenNets(d) => RuleParams::BrokenNets {
+            check_bad_connections: d.check_bad_connections,
+        },
+        PcbRuleKindData::ViasUnderSmd(d) => RuleParams::ViasUnderSmd {
+            allowed: d.allowed,
+        },
+        PcbRuleKindData::MaximumViaCount(d) => RuleParams::MaximumViaCount {
+            max_via_count: d.max_via_count,
+        },
+        PcbRuleKindData::MinimumAnnularRing(d) => RuleParams::MinimumAnnularRing {
+            min: d.min_limit.0,
+        },
+        PcbRuleKindData::HoleToHoleClearance(d) => RuleParams::HoleToHoleClearance {
+            gap: d.gap.0,
+        },
+        PcbRuleKindData::BoardOutlineClearance(d) => RuleParams::BoardOutlineClearance {
+            gap: d.gap.0,
+        },
+        PcbRuleKindData::MaxMinHoleSize(d) => RuleParams::MaxMinHoleSize {
+            min: d.min_limit.0,
+            max: d.max_limit.0,
+        },
+        PcbRuleKindData::SolderMaskExpansion(d) => RuleParams::SolderMaskExpansion {
+            expansion: d.expansion.0,
+            is_tenting_top: d.is_tenting_top,
+            is_tenting_bottom: d.is_tenting_bottom,
+        },
+        PcbRuleKindData::PasteMaskExpansion(d) => RuleParams::PasteMaskExpansion {
+            expansion: d.expansion.0,
+            percent: d.percent,
+        },
+        PcbRuleKindData::PowerPlaneClearance(d) => RuleParams::PowerPlaneClearance {
+            clearance: d.clearance.0,
+        },
+        PcbRuleKindData::PowerPlaneConnectStyle(d) => RuleParams::PowerPlaneConnectStyle {
+            connect_style: d.connect_style.unwrap_or_default(),
+            relief_conductor_width: d.relief_conductor_width.map(|m| m.0).unwrap_or(Coord::ZERO),
+            relief_entries: d.relief_entries.unwrap_or(4),
+            relief_air_gap: d.relief_air_gap.map(|m| m.0).unwrap_or(Coord::ZERO),
+        },
+        PcbRuleKindData::PolygonConnectStyle(d) => RuleParams::PolygonConnectStyle {
+            connect_style: d.connect_style.unwrap_or_default(),
+            relief_conductor_width: d.relief_conductor_width.map(|m| m.0).unwrap_or(Coord::ZERO),
+            relief_entries: d.relief_entries.unwrap_or(4),
+            relief_angle: d.polygon_relief_angle.unwrap_or_default(),
+            air_gap_width: d.air_gap_width.map(|m| m.0).unwrap_or(Coord::ZERO),
+        },
+        PcbRuleKindData::RoutingTopology(d) => RuleParams::RoutingTopology {
+            topology: d.topology,
+        },
+        PcbRuleKindData::RoutingPriority(d) => RuleParams::RoutingPriority {
+            priority: d.routing_priority,
+        },
+        PcbRuleKindData::RoutingLayers(d) => RuleParams::RoutingLayers {
+            layer_flags: d.layer_flags.clone(),
+        },
+        PcbRuleKindData::RoutingCornerStyle(d) => RuleParams::RoutingCornerStyle {
+            corner_style: d.corner_style,
+            min_setback: d.min_setback.0,
+            max_setback: d.max_setback.0,
+        },
+        PcbRuleKindData::RoutingViaStyle(d) => RuleParams::RoutingViaStyle {
+            min_hole_width: d.min_hole_width.0,
+            max_hole_width: d.max_hole_width.0,
+            preferred_hole_width: d.preferred_hole_width.0,
+            min_width: d.min_width.0,
+            max_width: d.max_width.0,
+            preferred_width: d.preferred_width.0,
+            via_style: d.via_style,
+        },
+        PcbRuleKindData::ComponentClearance(d) => RuleParams::ComponentClearance {
+            gap: d.gap.0,
+            collision_check_mode: d.collision_check_mode,
+            vertical_gap: d.vertical_gap.0,
+        },
+        PcbRuleKindData::ConfinementConstraint(d) => RuleParams::ConfinementConstraint {
+            confinement_style: d.confinement_style,
+        },
+        PcbRuleKindData::DifferentialPairsRouting(d) => RuleParams::DiffPairsRouting {
+            min_gap: d.min_limit.0,
+            max_gap: d.max_limit.0,
+            preferred_gap: d.most_freq_gap.0,
+            max_uncoupled_length: d.max_uncoupled_length.0,
+        },
+        PcbRuleKindData::FanoutControl(d) => RuleParams::FanoutControl {
+            bga_dir: d.bga_dir,
+            bga_via_mode: d.bga_via_mode,
+            fanout_style: d.fanout_style,
+            fanout_direction: d.fanout_direction,
+        },
+        PcbRuleKindData::MaxMinHeight(d) => RuleParams::MaxMinHeight {
+            min_height: d.min_height.0,
+            max_height: d.max_height.0,
+            pref_height: d.pref_height.0,
+        },
+        PcbRuleKindData::MinimumSolderMaskSliver(d) => RuleParams::MinimumSolderMaskSliver {
+            min_width: d.min_solder_mask_width.0,
+        },
+        PcbRuleKindData::SilkToSolderMaskClearance(d) => RuleParams::SilkToSolderMaskClearance {
+            gap: d.min_silkscreen_to_mask_gap.0,
+        },
+        PcbRuleKindData::SilkToSilkClearance(d) => RuleParams::SilkToSilkClearance {
+            gap: d.silk_to_silk_clearance.0,
+        },
+        PcbRuleKindData::NetAntennae(d) => RuleParams::NetAntennae {
+            tolerance: d.net_antennae_tolerance.0,
+        },
+        PcbRuleKindData::SmdToCorner(d) => RuleParams::SmdToCorner {
+            distance: d.distance.0,
+        },
+        PcbRuleKindData::SmdToPlane(d) => RuleParams::SmdToPlane {
+            distance: d.distance.0,
+        },
+        PcbRuleKindData::SmdNeckDown(d) => RuleParams::SmdNeckDown {
+            percent: d.percent,
+        },
+        PcbRuleKindData::SmdEntry(d) => RuleParams::SmdEntry {
+            side: d.side,
+            corner: d.corner,
+            any_angle: d.any_angle,
+        },
+        PcbRuleKindData::UnpouredPolygon(d) => RuleParams::UnpouredPolygon {
+            allow_unpoured: d.allow_unpoured,
+        },
+        PcbRuleKindData::BackDrilling(d) => RuleParams::BackDrilling {
+            depth: d.backdrill_depth.0,
+        },
+        PcbRuleKindData::Creepage(d) => RuleParams::CreepageDistance {
+            gap: d.gap.0,
+        },
+        PcbRuleKindData::AcuteAngle(d) => RuleParams::AcuteAngle {
+            minimum: d.minimum,
+        },
+        PcbRuleKindData::LayerPair(d) => RuleParams::LayerPair {
+            enforce: d.enforce,
+        },
+        // All other variants fall through to Other
+        _ => RuleParams::Other { kind: rule_kind },
+    }
 }
 
 fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
@@ -584,6 +773,17 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
         snap_grid_size: Coord::from_internal(100_000), // 10 mil default
         visible_grid_size: Coord::from_internal(100_000),
         display_unit: Unit::Imperial,
+        layer_stack: LayerStack {
+            style: LayerStackStyle::Pairs,
+            is_flex: false,
+            layers: Vec::new(),
+            copper_layer_count: 0,
+        },
+        geometry: BoardGeometry {
+            outline: None,
+            cutouts: Vec::new(),
+            keepouts: Vec::new(),
+        },
     };
 
     if let Some(records) = records {
@@ -607,10 +807,237 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
                 .remove_with_default("DISPLAYUNIT", 1u8)
                 .context("Board6 display unit")?;
             settings.display_unit = Unit::try_from(unit_raw).unwrap_or(Unit::Imperial);
+
+            // Parse full board config for layer stack extraction.
+            // Re-parse from the original params (the above consumed only a few keys).
+            let mut config_params = first.params.clone();
+            if let Ok(config) = crate::board_config::parse_board_config(&mut config_params) {
+                settings.layer_stack = extract_layer_stack(&config);
+            }
         }
     }
 
     Ok(settings)
+}
+
+// ── Layer stack extraction ──────────────────────────────────────────────────
+
+/// Extract a unified `LayerStack` from whichever layer stack version is present.
+/// Priority: V9 > V8 > V7 > legacy (first non-empty wins).
+fn extract_layer_stack(config: &PcbBoardConfig) -> LayerStack {
+    // Try V9 first
+    if !config.v9_stack_layers.is_empty() {
+        return extract_layer_stack_v9(config);
+    }
+    // Try V8
+    if !config.v8_layers.is_empty() {
+        return extract_layer_stack_v8(config);
+    }
+    // Try V7
+    if !config.v7_layers.is_empty() {
+        return extract_layer_stack_v7(config);
+    }
+    // Try legacy
+    if !config.legacy_layers.is_empty() {
+        return extract_layer_stack_legacy(config);
+    }
+    // Empty stack
+    LayerStack {
+        style: LayerStackStyle::Pairs,
+        is_flex: false,
+        layers: Vec::new(),
+        copper_layer_count: 0,
+    }
+}
+
+fn extract_layer_stack_v9(config: &PcbBoardConfig) -> LayerStack {
+    let (style, is_flex) = config.v9_master_stack.as_ref().map_or(
+        (LayerStackStyle::Pairs, false),
+        |ms| (ms.style, ms.is_flex),
+    );
+
+    let mut layers: Vec<StackLayer> = config
+        .v9_stack_layers
+        .iter()
+        .filter(|l| is_copper_layer_id(l.layer_id))
+        .enumerate()
+        .map(|(i, l)| stack_layer_from_v9_v8(l, i + 1))
+        .collect();
+
+    let copper_count = layers.len();
+    // Layers are already in order (top → bottom) as stored in the V9 array.
+    // Re-number physical_order to be safe.
+    for (i, layer) in layers.iter_mut().enumerate() {
+        layer.physical_order = i + 1;
+    }
+
+    LayerStack {
+        style,
+        is_flex,
+        layers,
+        copper_layer_count: copper_count,
+    }
+}
+
+fn extract_layer_stack_v8(config: &PcbBoardConfig) -> LayerStack {
+    let (style, is_flex) = config.v8_master_stack.as_ref().map_or(
+        (LayerStackStyle::Pairs, false),
+        |ms| (ms.style, ms.is_flex),
+    );
+
+    let mut layers: Vec<StackLayer> = config
+        .v8_layers
+        .iter()
+        .filter(|l| is_copper_layer_id(l.layer_id))
+        .enumerate()
+        .map(|(i, l)| stack_layer_from_v9_v8(l, i + 1))
+        .collect();
+
+    let copper_count = layers.len();
+    for (i, layer) in layers.iter_mut().enumerate() {
+        layer.physical_order = i + 1;
+    }
+
+    LayerStack {
+        style,
+        is_flex,
+        layers,
+        copper_layer_count: copper_count,
+    }
+}
+
+fn extract_layer_stack_v7(config: &PcbBoardConfig) -> LayerStack {
+    // V7 layers use prev/next linked-list. Walk from top (prev == -1).
+    let layers_map: std::collections::HashMap<i32, &crate::board_config::PcbV7LayerEntry> =
+        config.v7_layers.iter().map(|l| (l.layer_id, l)).collect();
+
+    // Find the head: layer with prev == -1
+    let head = config.v7_layers.iter().find(|l| l.prev == -1);
+
+    let mut ordered = Vec::new();
+    if let Some(start) = head {
+        let mut current = Some(start);
+        while let Some(layer) = current {
+            if is_copper_layer_id(layer.layer_id) {
+                ordered.push(StackLayer {
+                    layer: layer_ref_from_id(layer.layer_id),
+                    name: layer.name.clone(),
+                    physical_order: ordered.len() + 1,
+                    is_plane: is_internal_plane_id(layer.layer_id),
+                    copper_thickness: layer.cop_thick,
+                    dielectric_type: layer.diel_type,
+                    dielectric_constant: layer.diel_const,
+                    dielectric_height: layer.diel_height,
+                    dielectric_material: layer.diel_material.clone(),
+                    component_placement: None,
+                });
+            }
+            current = if layer.next >= 0 {
+                layers_map.get(&layer.next).copied()
+            } else {
+                None
+            };
+        }
+    }
+
+    let copper_count = ordered.len();
+    LayerStack {
+        style: LayerStackStyle::Pairs,
+        is_flex: false,
+        layers: ordered,
+        copper_layer_count: copper_count,
+    }
+}
+
+fn extract_layer_stack_legacy(config: &PcbBoardConfig) -> LayerStack {
+    // Legacy layers also use prev/next linked-list, but don't have layer_id.
+    // They're indexed 1-82 in the file. We walk by prev/next on index position.
+    let mut layers: Vec<StackLayer> = Vec::new();
+
+    // Find head: layer with prev == 0 (legacy uses 0 for "none")
+    // Legacy layers are stored in order already — index 1 = Top Layer, etc.
+    // Just iterate in order and filter copper layers.
+    for (idx, leg) in config.legacy_layers.iter().enumerate() {
+        let layer_num = idx + 1; // 1-based
+        if is_copper_layer_num(layer_num) {
+            layers.push(StackLayer {
+                layer: layer_ref_from_num(layer_num),
+                name: leg.name.clone(),
+                physical_order: layers.len() + 1,
+                is_plane: is_internal_plane_num(layer_num),
+                copper_thickness: leg.cop_thick,
+                dielectric_type: leg.diel_type,
+                dielectric_constant: leg.diel_const,
+                dielectric_height: leg.diel_height,
+                dielectric_material: leg.diel_material.clone(),
+                component_placement: None,
+            });
+        }
+    }
+
+    let copper_count = layers.len();
+    LayerStack {
+        style: LayerStackStyle::Pairs,
+        is_flex: false,
+        layers,
+        copper_layer_count: copper_count,
+    }
+}
+
+fn stack_layer_from_v9_v8(
+    l: &crate::board_config::PcbStackLayerEntry,
+    physical_order: usize,
+) -> StackLayer {
+    StackLayer {
+        layer: layer_ref_from_id(l.layer_id),
+        name: l.name.clone(),
+        physical_order,
+        is_plane: is_internal_plane_id(l.layer_id),
+        copper_thickness: l.cop_thick.unwrap_or(Coord::ZERO),
+        dielectric_type: l.diel_type.unwrap_or(DielectricType::NoDielectric),
+        dielectric_constant: l.diel_const.unwrap_or(0.0),
+        dielectric_height: l.diel_height.unwrap_or(Coord::ZERO),
+        dielectric_material: l.diel_material.clone().unwrap_or_default(),
+        component_placement: l.component_placement,
+    }
+}
+
+/// Check if a layer_id corresponds to a copper layer.
+/// Copper layers: 1 (Top), 2-31 (Mid/Internal Plane), 32 (Bottom).
+fn is_copper_layer_id(id: i32) -> bool {
+    (1..=32).contains(&id)
+}
+
+/// Check if a layer_id is an internal plane layer.
+/// Internal plane layers are 33-48 in V6 encoding, but in V7+ the layer_id
+/// uses the V6Layer enum. Internal planes are IDs 39-54 (InternalPlane1..16).
+/// Actually in the Altium numbering, Mid layers 2-31 include both signal and plane.
+/// Internal planes are determined by the V6Layer enum: InternalPlane1 = 39..54.
+fn is_internal_plane_id(id: i32) -> bool {
+    (39..=54).contains(&id)
+}
+
+fn is_copper_layer_num(num: usize) -> bool {
+    // In legacy layers, positions 1..=32 are copper
+    (1..=32).contains(&num)
+}
+
+fn is_internal_plane_num(_num: usize) -> bool {
+    // In legacy encoding, internal planes are not distinguishable by index alone.
+    // They use the same positions as mid layers. We'd need to check layer name.
+    false
+}
+
+fn layer_ref_from_id(id: i32) -> LayerRef {
+    match V6Layer::try_from(id as u8) {
+        Ok(v6) => LayerRef::from_v6(v6),
+        Err(_) => LayerRef::from_v6(V6Layer::NoLayer),
+    }
+}
+
+fn layer_ref_from_num(num: usize) -> LayerRef {
+    // Legacy layer numbering: 1=Top, 2=MidLayer1, ..., 32=Bottom
+    layer_ref_from_id(num as i32)
 }
 
 // ── Primitive conversion ────────────────────────────────────────────────────
@@ -726,6 +1153,7 @@ fn via_from_internal(idx: usize, v: &PcbVia, ctx: &ConvertContext) -> Via {
 }
 
 fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Pad {
+    let stack = extract_pad_stack(p);
     Pad {
         id: format!("pad_{idx}"),
         pad_name: p.pad_name.clone(),
@@ -746,6 +1174,7 @@ fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Pad {
         relief_conductor_width: p.cache.relief_conductor_width,
         relief_entries: p.cache.relief_entries as i32,
         relief_air_gap: p.cache.relief_air_gap,
+        stack,
     }
 }
 
@@ -860,3 +1289,39 @@ fn find_board_outline(regions: &[Region]) -> Option<Vec<CoordPoint>> {
     }
     None
 }
+
+fn extract_board_geometry(internal_regions: &[&PcbRegion]) -> BoardGeometry {
+    let mut outline: Option<BoardContour> = None;
+    let mut cutouts = Vec::new();
+    let mut keepouts = Vec::new();
+
+    for r in internal_regions {
+        if r.is_board_cutout || r.kind == RegionKind::BoardCutout {
+            let contour = contour_to_pcb_contour(&r.outline);
+            if outline.is_none() {
+                outline = Some(contour);
+            } else {
+                cutouts.push(contour);
+            }
+        } else if r.keepout {
+            let layer = if !r.v7_layer.is_empty() {
+                LayerRef::from_string_name(&r.v7_layer)
+                    .unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
+            } else {
+                LayerRef::from_v6(r.common.layer)
+            };
+            keepouts.push(KeepoutZone {
+                outline: contour_to_pcb_contour(&r.outline),
+                layer,
+            });
+        }
+    }
+
+    BoardGeometry {
+        outline,
+        cutouts,
+        keepouts,
+    }
+}
+
+// contour_to_pcb_contour is imported from pcb_common

@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
+use altium_format_types::coord::Coord;
 use altium_format_types::{ComponentPlacementType, DielectricType, LayerStackStyle};
 use altium_format_types::constants::record_structure::RECORD;
 use indexmap::IndexMap;
 
 use crate::param_collection::ParameterCollection;
+use crate::param_value::MilCoord;
 use crate::{AltiumFormatError, Result};
 
 pub(crate) struct PcbBoardConfig {
@@ -77,20 +79,20 @@ pub(crate) struct PcbStackLayerEntry {
     pub(crate) layer_id: i32,
     pub(crate) used_by_prims: bool,
     pub(crate) mech_enabled: Option<bool>,
-    pub(crate) cop_thick: Option<String>,
+    pub(crate) cop_thick: Option<Coord>,
     pub(crate) component_placement: Option<ComponentPlacementType>,
     pub(crate) diel_type: Option<DielectricType>,
-    pub(crate) diel_const: Option<String>,
-    pub(crate) diel_height: Option<String>,
+    pub(crate) diel_const: Option<f64>,
+    pub(crate) diel_height: Option<Coord>,
     pub(crate) diel_material: Option<String>,
-    pub(crate) coverlay_expansion: Option<String>,
+    pub(crate) coverlay_expansion: Option<Coord>,
     pub(crate) mech_kind: Option<String>,
-    pub(crate) pullback_distance: Option<String>,
+    pub(crate) pullback_distance: Option<Coord>,
 }
 
 pub(crate) struct PcbCacheLayerEntry {
     pub(crate) layer: PcbStackLayerEntry,
-    pub(crate) pullback_distance: Option<String>,
+    pub(crate) pullback_distance: Option<Coord>,
 }
 
 pub(crate) struct PcbV7LayerEntry {
@@ -100,10 +102,10 @@ pub(crate) struct PcbV7LayerEntry {
     pub(crate) next: i32,
     pub(crate) mech_enabled: bool,
     pub(crate) mech_kind: Option<String>,
-    pub(crate) cop_thick: String,
+    pub(crate) cop_thick: Coord,
     pub(crate) diel_type: DielectricType,
-    pub(crate) diel_const: String,
-    pub(crate) diel_height: String,
+    pub(crate) diel_const: f64,
+    pub(crate) diel_height: Coord,
     pub(crate) diel_material: String,
 }
 
@@ -113,10 +115,10 @@ pub(crate) struct PcbLegacyLayerEntry {
     pub(crate) next: i32,
     pub(crate) mech_enabled: bool,
     pub(crate) mech_kind: Option<String>,
-    pub(crate) cop_thick: String,
+    pub(crate) cop_thick: Coord,
     pub(crate) diel_type: DielectricType,
-    pub(crate) diel_const: String,
-    pub(crate) diel_height: String,
+    pub(crate) diel_const: f64,
+    pub(crate) diel_height: Coord,
     pub(crate) diel_material: String,
 }
 
@@ -128,12 +130,12 @@ pub(crate) struct PcbPlanePullback {
 
 pub(crate) struct PcbSurfaceProperties {
     pub(crate) top_type: String,
-    pub(crate) top_const: String,
-    pub(crate) top_height: String,
+    pub(crate) top_const: f64,
+    pub(crate) top_height: Coord,
     pub(crate) top_material: String,
     pub(crate) bottom_type: String,
-    pub(crate) bottom_const: String,
-    pub(crate) bottom_height: String,
+    pub(crate) bottom_const: f64,
+    pub(crate) bottom_height: Coord,
     pub(crate) bottom_material: String,
     pub(crate) layer_stack_style: String,
     pub(crate) show_top_dielectric: bool,
@@ -375,8 +377,9 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                 let prefix = format!("V9_CACHE_LAYER{idx}_");
                 let mut layer = parse_stack_layer_fields_after_id(params, &prefix)?;
                 layer.id = id;
-                let pullback_distance =
-                    params.remove_optional::<String>(&format!("{prefix}PULLBACKDISTANCE"))?;
+                let pullback_distance = params
+                    .remove_optional::<MilCoord>(&format!("{prefix}PULLBACKDISTANCE"))?
+                    .map(|m| m.0);
                 v9_cache_layers.push(PcbCacheLayerEntry {
                     layer,
                     pullback_distance,
@@ -481,7 +484,8 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                 let mech_kind =
                     params.remove_optional::<String>(&format!("LAYERV7_{idx}MECHKIND"))?;
                 let cop_thick = params
-                    .remove_optional::<String>(&format!("LAYERV7_{idx}COPTHICK"))?
+                    .remove_optional::<MilCoord>(&format!("LAYERV7_{idx}COPTHICK"))?
+                    .map(|m| m.0)
                     .unwrap_or_default();
                 let diel_type_raw = params
                     .remove_optional::<i32>(&format!("LAYERV7_{idx}DIELTYPE"))?
@@ -493,10 +497,11 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                     }
                 })?;
                 let diel_const = params
-                    .remove_optional::<String>(&format!("LAYERV7_{idx}DIELCONST"))?
+                    .remove_optional::<f64>(&format!("LAYERV7_{idx}DIELCONST"))?
                     .unwrap_or_default();
                 let diel_height = params
-                    .remove_optional::<String>(&format!("LAYERV7_{idx}DIELHEIGHT"))?
+                    .remove_optional::<MilCoord>(&format!("LAYERV7_{idx}DIELHEIGHT"))?
+                    .map(|m| m.0)
                     .unwrap_or_default();
                 let diel_material = params
                     .remove_optional::<String>(&format!("LAYERV7_{idx}DIELMATERIAL"))?
@@ -537,7 +542,8 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                     .unwrap_or_default();
                 let mech_kind = params.remove_optional::<String>(&format!("LAYER{n}MECHKIND"))?;
                 let cop_thick = params
-                    .remove_optional::<String>(&format!("LAYER{n}COPTHICK"))?
+                    .remove_optional::<MilCoord>(&format!("LAYER{n}COPTHICK"))?
+                    .map(|m| m.0)
                     .unwrap_or_default();
                 let diel_type_raw = params
                     .remove_optional::<i32>(&format!("LAYER{n}DIELTYPE"))?
@@ -549,10 +555,11 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                     }
                 })?;
                 let diel_const = params
-                    .remove_optional::<String>(&format!("LAYER{n}DIELCONST"))?
+                    .remove_optional::<f64>(&format!("LAYER{n}DIELCONST"))?
                     .unwrap_or_default();
                 let diel_height = params
-                    .remove_optional::<String>(&format!("LAYER{n}DIELHEIGHT"))?
+                    .remove_optional::<MilCoord>(&format!("LAYER{n}DIELHEIGHT"))?
+                    .map(|m| m.0)
                     .unwrap_or_default();
                 let diel_material = params
                     .remove_optional::<String>(&format!("LAYER{n}DIELMATERIAL"))?
@@ -579,10 +586,11 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
             .remove_optional::<String>("TOPTYPE")?
             .unwrap_or_default(),
         top_const: params
-            .remove_optional::<String>("TOPCONST")?
+            .remove_optional::<f64>("TOPCONST")?
             .unwrap_or_default(),
         top_height: params
-            .remove_optional::<String>("TOPHEIGHT")?
+            .remove_optional::<MilCoord>("TOPHEIGHT")?
+            .map(|m| m.0)
             .unwrap_or_default(),
         top_material: params
             .remove_optional::<String>("TOPMATERIAL")?
@@ -591,10 +599,11 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
             .remove_optional::<String>("BOTTOMTYPE")?
             .unwrap_or_default(),
         bottom_const: params
-            .remove_optional::<String>("BOTTOMCONST")?
+            .remove_optional::<f64>("BOTTOMCONST")?
             .unwrap_or_default(),
         bottom_height: params
-            .remove_optional::<String>("BOTTOMHEIGHT")?
+            .remove_optional::<MilCoord>("BOTTOMHEIGHT")?
+            .map(|m| m.0)
             .unwrap_or_default(),
         bottom_material: params
             .remove_optional::<String>("BOTTOMMATERIAL")?
@@ -1133,6 +1142,7 @@ pub(crate) fn serialize_board_config(
     config: &PcbBoardConfig,
     params: &mut ParameterCollection,
 ) {
+    use crate::param_value::ToParamValue;
     fn bool_str(b: bool) -> String {
         if b { "TRUE".to_owned() } else { "FALSE".to_owned() }
     }
@@ -1173,8 +1183,8 @@ pub(crate) fn serialize_board_config(
         let prefix = format!("V9_CACHE_LAYER{i}_");
         params.insert(&format!("{prefix}ID"), cache.layer.id.clone());
         serialize_stack_layer_fields(params, &prefix, &cache.layer);
-        if let Some(pb) = &cache.pullback_distance {
-            params.insert(&format!("{prefix}PULLBACKDISTANCE"), pb.clone());
+        if let Some(pb) = cache.pullback_distance {
+            params.insert(&format!("{prefix}PULLBACKDISTANCE"), MilCoord(pb).to_param_value());
         }
     }
 
@@ -1205,10 +1215,10 @@ pub(crate) fn serialize_board_config(
         if let Some(mk) = &v7.mech_kind {
             params.insert(&format!("LAYERV7_{i}MECHKIND"), mk.clone());
         }
-        params.insert(&format!("LAYERV7_{i}COPTHICK"), v7.cop_thick.clone());
+        params.insert(&format!("LAYERV7_{i}COPTHICK"), MilCoord(v7.cop_thick).to_param_value());
         params.insert(&format!("LAYERV7_{i}DIELTYPE"), (v7.diel_type as u8).to_string());
-        params.insert(&format!("LAYERV7_{i}DIELCONST"), v7.diel_const.clone());
-        params.insert(&format!("LAYERV7_{i}DIELHEIGHT"), v7.diel_height.clone());
+        params.insert(&format!("LAYERV7_{i}DIELCONST"), v7.diel_const.to_param_value());
+        params.insert(&format!("LAYERV7_{i}DIELHEIGHT"), MilCoord(v7.diel_height).to_param_value());
         params.insert(&format!("LAYERV7_{i}DIELMATERIAL"), v7.diel_material.clone());
     }
 
@@ -1222,22 +1232,22 @@ pub(crate) fn serialize_board_config(
         if let Some(mk) = &leg.mech_kind {
             params.insert(&format!("LAYER{n}MECHKIND"), mk.clone());
         }
-        params.insert(&format!("LAYER{n}COPTHICK"), leg.cop_thick.clone());
+        params.insert(&format!("LAYER{n}COPTHICK"), MilCoord(leg.cop_thick).to_param_value());
         params.insert(&format!("LAYER{n}DIELTYPE"), (leg.diel_type as u8).to_string());
-        params.insert(&format!("LAYER{n}DIELCONST"), leg.diel_const.clone());
-        params.insert(&format!("LAYER{n}DIELHEIGHT"), leg.diel_height.clone());
+        params.insert(&format!("LAYER{n}DIELCONST"), leg.diel_const.to_param_value());
+        params.insert(&format!("LAYER{n}DIELHEIGHT"), MilCoord(leg.diel_height).to_param_value());
         params.insert(&format!("LAYER{n}DIELMATERIAL"), leg.diel_material.clone());
     }
 
     // 10. Surface properties
     let sp = &config.surface_properties;
     params.insert("TOPTYPE", sp.top_type.clone());
-    params.insert("TOPCONST", sp.top_const.clone());
-    params.insert("TOPHEIGHT", sp.top_height.clone());
+    params.insert("TOPCONST", sp.top_const.to_param_value());
+    params.insert("TOPHEIGHT", MilCoord(sp.top_height).to_param_value());
     params.insert("TOPMATERIAL", sp.top_material.clone());
     params.insert("BOTTOMTYPE", sp.bottom_type.clone());
-    params.insert("BOTTOMCONST", sp.bottom_const.clone());
-    params.insert("BOTTOMHEIGHT", sp.bottom_height.clone());
+    params.insert("BOTTOMCONST", sp.bottom_const.to_param_value());
+    params.insert("BOTTOMHEIGHT", MilCoord(sp.bottom_height).to_param_value());
     params.insert("BOTTOMMATERIAL", sp.bottom_material.clone());
     params.insert("LAYERSTACKSTYLE", sp.layer_stack_style.clone());
     params.insert("SHOWTOPDIELECTRIC", bool_str(sp.show_top_dielectric));
@@ -1440,14 +1450,15 @@ fn serialize_stack_layer_fields(
     fn bool_str(b: bool) -> String {
         if b { "TRUE".to_owned() } else { "FALSE".to_owned() }
     }
+    use crate::param_value::ToParamValue;
     params.insert(&format!("{prefix}NAME"), layer.name.clone());
     params.insert(&format!("{prefix}LAYERID"), layer.layer_id.to_string());
     params.insert(&format!("{prefix}USEDBYPRIMS"), bool_str(layer.used_by_prims));
     if let Some(me) = layer.mech_enabled {
         params.insert(&format!("{prefix}MECHENABLED"), bool_str(me));
     }
-    if let Some(ct) = &layer.cop_thick {
-        params.insert(&format!("{prefix}COPTHICK"), ct.clone());
+    if let Some(ct) = layer.cop_thick {
+        params.insert(&format!("{prefix}COPTHICK"), MilCoord(ct).to_param_value());
     }
     if let Some(cp) = layer.component_placement {
         params.insert(&format!("{prefix}COMPONENTPLACEMENT"), (cp as u8).to_string());
@@ -1455,23 +1466,23 @@ fn serialize_stack_layer_fields(
     if let Some(dt) = layer.diel_type {
         params.insert(&format!("{prefix}DIELTYPE"), (dt as u8).to_string());
     }
-    if let Some(dc) = &layer.diel_const {
-        params.insert(&format!("{prefix}DIELCONST"), dc.clone());
+    if let Some(dc) = layer.diel_const {
+        params.insert(&format!("{prefix}DIELCONST"), dc.to_param_value());
     }
-    if let Some(dh) = &layer.diel_height {
-        params.insert(&format!("{prefix}DIELHEIGHT"), dh.clone());
+    if let Some(dh) = layer.diel_height {
+        params.insert(&format!("{prefix}DIELHEIGHT"), MilCoord(dh).to_param_value());
     }
     if let Some(dm) = &layer.diel_material {
         params.insert(&format!("{prefix}DIELMATERIAL"), dm.clone());
     }
-    if let Some(ce) = &layer.coverlay_expansion {
-        params.insert(&format!("{prefix}COVERLAY_EXPANSION"), ce.clone());
+    if let Some(ce) = layer.coverlay_expansion {
+        params.insert(&format!("{prefix}COVERLAY_EXPANSION"), MilCoord(ce).to_param_value());
     }
     if let Some(mk) = &layer.mech_kind {
         params.insert(&format!("{prefix}MECHKIND"), mk.clone());
     }
-    if let Some(pd) = &layer.pullback_distance {
-        params.insert(&format!("{prefix}PULLBACKDISTANCE"), pd.clone());
+    if let Some(pd) = layer.pullback_distance {
+        params.insert(&format!("{prefix}PULLBACKDISTANCE"), MilCoord(pd).to_param_value());
     }
 }
 
@@ -1485,14 +1496,15 @@ fn serialize_v8_layer_fields(
     fn bool_str(b: bool) -> String {
         if b { "TRUE".to_owned() } else { "FALSE".to_owned() }
     }
+    use crate::param_value::ToParamValue;
     params.insert(&format!("{prefix}NAME"), layer.name.clone());
     params.insert(&format!("{prefix}LAYERID"), layer.layer_id.to_string());
     params.insert(&format!("{prefix}USEDBYPRIMS"), bool_str(layer.used_by_prims));
     if let Some(me) = layer.mech_enabled {
         params.insert(&format!("{prefix}MECHENABLED"), bool_str(me));
     }
-    if let Some(ct) = &layer.cop_thick {
-        params.insert(&format!("{prefix}COPTHICK"), ct.clone());
+    if let Some(ct) = layer.cop_thick {
+        params.insert(&format!("{prefix}COPTHICK"), MilCoord(ct).to_param_value());
     }
     if let Some(cp) = layer.component_placement {
         params.insert(&format!("{prefix}COMPONENTPLACEMENT"), (cp as u8).to_string());
@@ -1500,23 +1512,23 @@ fn serialize_v8_layer_fields(
     if let Some(dt) = layer.diel_type {
         params.insert(&format!("{prefix}DIELTYPE"), (dt as u8).to_string());
     }
-    if let Some(dc) = &layer.diel_const {
-        params.insert(&format!("{prefix}DIELCONST"), dc.clone());
+    if let Some(dc) = layer.diel_const {
+        params.insert(&format!("{prefix}DIELCONST"), dc.to_param_value());
     }
-    if let Some(dh) = &layer.diel_height {
-        params.insert(&format!("{prefix}DIELHEIGHT"), dh.clone());
+    if let Some(dh) = layer.diel_height {
+        params.insert(&format!("{prefix}DIELHEIGHT"), MilCoord(dh).to_param_value());
     }
     if let Some(dm) = &layer.diel_material {
         params.insert(&format!("{prefix}DIELMATERIAL"), dm.clone());
     }
-    if let Some(ce) = &layer.coverlay_expansion {
-        params.insert(&format!("{prefix}COVERLAY_EXPANSION"), ce.clone());
+    if let Some(ce) = layer.coverlay_expansion {
+        params.insert(&format!("{prefix}COVERLAY_EXPANSION"), MilCoord(ce).to_param_value());
     }
     if let Some(mk) = &layer.mech_kind {
         params.insert(&format!("{prefix}MECHKIND"), mk.clone());
     }
-    if let Some(pd) = &layer.pullback_distance {
-        params.insert(&format!("{prefix}PULLBACKDISTANCE"), pd.clone());
+    if let Some(pd) = layer.pullback_distance {
+        params.insert(&format!("{prefix}PULLBACKDISTANCE"), MilCoord(pd).to_param_value());
     }
 }
 
@@ -1536,7 +1548,9 @@ fn parse_stack_layer_fields_after_id(
         .remove_optional::<bool>(&format!("{prefix}USEDBYPRIMS"))?
         .unwrap_or_default();
     let mech_enabled = params.remove_optional::<bool>(&format!("{prefix}MECHENABLED"))?;
-    let cop_thick = params.remove_optional::<String>(&format!("{prefix}COPTHICK"))?;
+    let cop_thick = params
+        .remove_optional::<MilCoord>(&format!("{prefix}COPTHICK"))?
+        .map(|m| m.0);
     let component_placement = params
         .remove_optional::<i32>(&format!("{prefix}COMPONENTPLACEMENT"))?
         .map(|v| {
@@ -1559,14 +1573,19 @@ fn parse_stack_layer_fields_after_id(
             })
         })
         .transpose()?;
-    let diel_const = params.remove_optional::<String>(&format!("{prefix}DIELCONST"))?;
-    let diel_height = params.remove_optional::<String>(&format!("{prefix}DIELHEIGHT"))?;
+    let diel_const = params
+        .remove_optional::<f64>(&format!("{prefix}DIELCONST"))?;
+    let diel_height = params
+        .remove_optional::<MilCoord>(&format!("{prefix}DIELHEIGHT"))?
+        .map(|m| m.0);
     let diel_material = params.remove_optional::<String>(&format!("{prefix}DIELMATERIAL"))?;
-    let coverlay_expansion =
-        params.remove_optional::<String>(&format!("{prefix}COVERLAY_EXPANSION"))?;
+    let coverlay_expansion = params
+        .remove_optional::<MilCoord>(&format!("{prefix}COVERLAY_EXPANSION"))?
+        .map(|m| m.0);
     let mech_kind = params.remove_optional::<String>(&format!("{prefix}MECHKIND"))?;
-    let pullback_distance =
-        params.remove_optional::<String>(&format!("{prefix}PULLBACKDISTANCE"))?;
+    let pullback_distance = params
+        .remove_optional::<MilCoord>(&format!("{prefix}PULLBACKDISTANCE"))?
+        .map(|m| m.0);
     Ok(PcbStackLayerEntry {
         id: String::new(),
         name,
@@ -1602,7 +1621,9 @@ fn parse_v8_layer_fields_after_id(
         .remove_optional::<bool>(&format!("{prefix}USEDBYPRIMS"))?
         .unwrap_or_default();
     let mech_enabled = params.remove_optional::<bool>(&format!("{prefix}MECHENABLED"))?;
-    let cop_thick = params.remove_optional::<String>(&format!("{prefix}COPTHICK"))?;
+    let cop_thick = params
+        .remove_optional::<MilCoord>(&format!("{prefix}COPTHICK"))?
+        .map(|m| m.0);
     let component_placement = params
         .remove_optional::<i32>(&format!("{prefix}COMPONENTPLACEMENT"))?
         .map(|v| {
@@ -1625,14 +1646,19 @@ fn parse_v8_layer_fields_after_id(
             })
         })
         .transpose()?;
-    let diel_const = params.remove_optional::<String>(&format!("{prefix}DIELCONST"))?;
-    let diel_height = params.remove_optional::<String>(&format!("{prefix}DIELHEIGHT"))?;
+    let diel_const = params
+        .remove_optional::<f64>(&format!("{prefix}DIELCONST"))?;
+    let diel_height = params
+        .remove_optional::<MilCoord>(&format!("{prefix}DIELHEIGHT"))?
+        .map(|m| m.0);
     let diel_material = params.remove_optional::<String>(&format!("{prefix}DIELMATERIAL"))?;
-    let coverlay_expansion =
-        params.remove_optional::<String>(&format!("{prefix}COVERLAY_EXPANSION"))?;
+    let coverlay_expansion = params
+        .remove_optional::<MilCoord>(&format!("{prefix}COVERLAY_EXPANSION"))?
+        .map(|m| m.0);
     let mech_kind = params.remove_optional::<String>(&format!("{prefix}MECHKIND"))?;
-    let pullback_distance =
-        params.remove_optional::<String>(&format!("{prefix}PULLBACKDISTANCE"))?;
+    let pullback_distance = params
+        .remove_optional::<MilCoord>(&format!("{prefix}PULLBACKDISTANCE"))?
+        .map(|m| m.0);
     Ok(PcbStackLayerEntry {
         id: String::new(),
         name,

@@ -137,6 +137,12 @@ CustomMaskShapes, CornerRadiusChamfer, WideStrings6 (UTF-16LE TLV).
 **High-Level API:** Full CRUD — `footprint()`, `footprints()`, `footprint_names()`,
 `footprint_count()`, `add_footprint()`, `update_footprint()`, `remove_footprint()`.
 Note: ComponentBody graphics cannot be *created* via API but are preserved on update.
+- `PadStack` support: multi-layer pad shapes (top/mid/bot/inner) exposed via `pad.stack`
+- `PcbContour` on regions/component bodies: arc-preserving contours instead of `Vec<CoordPoint>`
+- Query helpers: `pad()`, `pads_on_layer()`, `plated_through_hole_pads()`,
+  `non_plated_through_hole_pads()`, `smd_pads()`, `graphics_on_layer()`,
+  `regions()`, `component_bodies()`
+- Shared types with PcbDoc via `pcb_common.rs` (PadStack, PcbContour, ContourSegment)
 
 **Spec Language:** Full support — compile, execute, reconcile, dump. Supports pad
 templates, spread operators, row/column/grid expansion.
@@ -196,11 +202,31 @@ detection (ShapeBasedRegions6 vs Regions6, etc.) for write path. Contains
 `BoardSettings`, typed collections for all named entities (`Net`,
 `PcbDocComponent`, `Polygon`, `NetClass`, `DesignRule`, `DifferentialPair`),
 all 8 primitive types (`Track`, `Arc`, `Via`, `Pad`, `Fill`, `Text`, `Region`,
-`ComponentBody`), plus `Dimension` and `Model3D`. Query helpers: `net()`,
-`component()`, `tracks_for_net()`, `pads_for_net()`, `vias_for_net()`,
-`pads_for_component()`, `tracks_for_component()`, `bodies_for_component()`,
-`rule()`, `rules_for_kind()`. Handles legacy/modern section pairs (prefers
-ShapeBasedRegions6 over Regions6, etc.). Board outline auto-extracted from
+`ComponentBody`), plus `Dimension` and `Model3D`.
+
+**V2 API extensions** (non-breaking):
+- `LayerStack`: Full layer stack from Board6 (V9/V8/V7/legacy), with copper thickness,
+  dielectric properties, and physical ordering. Convenience methods: `top()`, `bottom()`,
+  `layer()`, `inner_layers()`.
+- `RuleParams`: Typed parameters for ~35 design rule kinds (clearance, width, mask expansion,
+  routing via style, etc.) plus `Other` fallback. `DesignRule` extended with `scope2`,
+  `net_scope`, `layer_scope`.
+- `PadStack`: Per-layer pad shapes (top/mid/bot) with corner radius, inner layer overrides,
+  hole shape, and slot data.
+- `BoardGeometry`: Arc-preserving board outline and cutouts from internal region contours.
+  `BoardContour` with `Line`/`Arc` segments, keepout zones.
+- `BoardConnectivity`: `connectivity()` method groups pads by net with component counts.
+- Layer/drill queries: `tracks_on_layer()`, `pads_on_layer()`, `primitives_on_layer()`,
+  `vias_by_drill_pair()`, `plated_through_hole_pads()`, `non_plated_through_hole_pads()`,
+  `regions_for_polygon()`.
+
+**Internal type fixes:** `PcbStackLayerEntry`, `PcbV7LayerEntry`, `PcbLegacyLayerEntry`,
+`PcbSurfaceProperties` fields changed from `String` to `Coord`/`f64` (D3 violation fix).
+
+Legacy query helpers: `net()`, `component()`, `tracks_for_net()`, `pads_for_net()`,
+`vias_for_net()`, `pads_for_component()`, `tracks_for_component()`,
+`bodies_for_component()`, `rule()`, `rules_for_kind()`. Handles legacy/modern section
+pairs (prefers ShapeBasedRegions6 over Regions6, etc.). Board outline auto-extracted from
 region primitives.
 
 **Spec Language:** Full support — compile, execute, reconcile, dump. Board settings

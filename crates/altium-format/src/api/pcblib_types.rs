@@ -9,6 +9,7 @@ use altium_format_types::pcb::{
     LayerRef, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind,
 };
 use altium_format_types::color::Color;
+use super::pcb_common::{PadStack, PcbContour};
 
 // ── Footprint ────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ pub struct Footprint {
 /// A PCB pad.
 ///
 /// Identified by `pad_name` (natural key, unique within a Footprint).
+/// The `shape`/`x_size`/`y_size` fields are top-layer convenience accessors.
+/// For multi-layer pad details, use the `stack` field.
 #[derive(Debug, Clone)]
 pub struct Pad {
     pub pad_name: String,
@@ -50,6 +53,8 @@ pub struct Pad {
     pub relief_conductor_width: Coord,
     pub relief_entries: i32,
     pub relief_air_gap: Coord,
+    /// Per-layer pad shapes. Only populated for non-Simple pad modes.
+    pub stack: PadStack,
 }
 
 // ── PcbGraphic ───────────────────────────────────────────────────────────────
@@ -81,6 +86,19 @@ impl PcbGraphic {
             PcbGraphic::Text(g) => g.unique_id.as_deref(),
             PcbGraphic::Via(g) => g.unique_id.as_deref(),
             PcbGraphic::ComponentBody(g) => g.unique_id.as_deref(),
+        }
+    }
+
+    /// Returns the layer reference for this graphic.
+    pub fn layer(&self) -> &LayerRef {
+        match self {
+            PcbGraphic::Track(g) => &g.layer,
+            PcbGraphic::Arc(g) => &g.layer,
+            PcbGraphic::Fill(g) => &g.layer,
+            PcbGraphic::Region(g) => &g.layer,
+            PcbGraphic::Text(g) => &g.layer,
+            PcbGraphic::Via(g) => &g.layer,
+            PcbGraphic::ComponentBody(g) => &g.layer,
         }
     }
 }
@@ -123,8 +141,8 @@ pub struct RegionGraphic {
     pub layer: LayerRef,
     pub flags: PcbFlags,
     pub kind: RegionKind,
-    pub outline: Vec<CoordPoint>,
-    pub holes: Vec<Vec<CoordPoint>>,
+    pub outline: PcbContour,
+    pub holes: Vec<PcbContour>,
 }
 
 #[derive(Debug, Clone)]
@@ -172,5 +190,73 @@ pub struct ComponentBodyGraphic {
     pub body_color_3d: Color,
     pub body_opacity_3d: f64,
     pub model_name: String,
-    pub outline: Vec<CoordPoint>,
+    pub outline: PcbContour,
+}
+
+// ── Footprint query helpers ──────────────────────────────────────────────────
+
+impl Footprint {
+    /// Find a pad by name.
+    pub fn pad(&self, name: &str) -> Option<&Pad> {
+        self.pads.iter().find(|p| p.pad_name == name)
+    }
+
+    /// All pads on a given layer.
+    pub fn pads_on_layer(&self, layer: &LayerRef) -> Vec<&Pad> {
+        self.pads.iter().filter(|p| p.layer == *layer).collect()
+    }
+
+    /// All plated through-hole pads (has hole and is plated).
+    pub fn plated_through_hole_pads(&self) -> Vec<&Pad> {
+        self.pads
+            .iter()
+            .filter(|p| p.is_plated && p.hole_size != Coord::ZERO)
+            .collect()
+    }
+
+    /// All non-plated through-hole pads (has hole but not plated).
+    pub fn non_plated_through_hole_pads(&self) -> Vec<&Pad> {
+        self.pads
+            .iter()
+            .filter(|p| !p.is_plated && p.hole_size != Coord::ZERO)
+            .collect()
+    }
+
+    /// All surface-mount pads (no hole).
+    pub fn smd_pads(&self) -> Vec<&Pad> {
+        self.pads
+            .iter()
+            .filter(|p| p.hole_size == Coord::ZERO)
+            .collect()
+    }
+
+    /// All graphics on a given layer.
+    pub fn graphics_on_layer(&self, layer: &LayerRef) -> Vec<&PcbGraphic> {
+        self.graphics
+            .iter()
+            .filter(|g| *g.layer() == *layer)
+            .collect()
+    }
+
+    /// All region graphics.
+    pub fn regions(&self) -> Vec<&RegionGraphic> {
+        self.graphics
+            .iter()
+            .filter_map(|g| match g {
+                PcbGraphic::Region(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All component body graphics.
+    pub fn component_bodies(&self) -> Vec<&ComponentBodyGraphic> {
+        self.graphics
+            .iter()
+            .filter_map(|g| match g {
+                PcbGraphic::ComponentBody(b) => Some(b),
+                _ => None,
+            })
+            .collect()
+    }
 }

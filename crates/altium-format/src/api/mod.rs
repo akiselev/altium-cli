@@ -24,6 +24,7 @@ pub(crate) mod schlib_write;
 mod schdoc_types;
 pub(crate) mod schdoc_read;
 pub(crate) mod schdoc_write;
+pub(crate) mod pcb_common;
 mod pcblib_types;
 pub(crate) mod pcblib_read;
 pub(crate) mod pcblib_write;
@@ -57,6 +58,13 @@ pub use schdoc_types::{
     HarnessConnector, HarnessChild, SignalHarness,
 };
 
+// ── Shared PCB types ────────────────────────────────────────────────────────
+
+pub use pcb_common::{
+    PcbContour, ContourSegment,
+    PadStack, PadLayerShape, PadInnerLayerOverride,
+};
+
 // ── PcbLib types ─────────────────────────────────────────────────────────────
 
 pub use pcblib_types::{
@@ -68,9 +76,12 @@ pub use pcblib_types::{
 // ── PcbDoc types ────────────────────────────────────────────────────────────
 
 pub use pcbdoc_types::{
-    PcbDocBoard, BoardSettings,
-    Net, PcbDocComponent, Polygon, NetClass, DesignRule, DifferentialPair,
-    Track, Arc, Via, Pad as PcbDocPad, Fill, Text as PcbDocText, Region, ComponentBody,
+    PcbDocBoard, BoardSettings, LayerStack, StackLayer,
+    BoardGeometry, BoardContour, KeepoutZone,
+    BoardConnectivity, NetPinList, NetPin, LayerPrimitives, DrillPairGroup,
+    Net, PcbDocComponent, Polygon, NetClass, DesignRule, RuleParams, DifferentialPair,
+    Track, Arc, Via, Pad as PcbDocPad,
+    Fill, Text as PcbDocText, Region, ComponentBody,
     Dimension, Model3D,
 };
 

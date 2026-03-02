@@ -458,7 +458,6 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
 fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
     pads.iter()
         .map(|p| {
-            let size = CoordPoint::new(p.x_size, p.y_size);
             ParsedPrimitiveRecord {
                 object_id: PcbObjectId::Pad,
                 primitive: PcbPrimitive::Pad(PcbPad {
@@ -468,13 +467,13 @@ fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
                     unknown_sub2: String::new(),
                     unknown_sub3: String::new(),
                     location: p.location,
-                    size_top: size,
-                    size_mid: size,
-                    size_bot: size,
+                    size_top: CoordPoint::new(p.stack.top.x_size, p.stack.top.y_size),
+                    size_mid: CoordPoint::new(p.stack.mid.x_size, p.stack.mid.y_size),
+                    size_bot: CoordPoint::new(p.stack.bot.x_size, p.stack.bot.y_size),
                     hole_size: p.hole_size,
-                    shape_top: p.shape,
-                    shape_mid: p.shape,
-                    shape_bot: p.shape,
+                    shape_top: p.stack.top.shape,
+                    shape_mid: p.stack.mid.shape,
+                    shape_bot: p.stack.bot.shape,
                     rotation: p.rotation,
                     is_plated: p.is_plated,
                     daisy_chain_style: DaisyChainStyle::default(),
@@ -835,10 +834,6 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.unknown_sub1 = old.unknown_sub1.clone();
     new.unknown_sub2 = old.unknown_sub2.clone();
     new.unknown_sub3 = old.unknown_sub3.clone();
-    new.size_mid = old.size_mid;
-    new.size_bot = old.size_bot;
-    new.shape_mid = old.shape_mid;
-    new.shape_bot = old.shape_bot;
     new.daisy_chain_style = old.daisy_chain_style;
     new.unknown_63 = old.unknown_63;
     // Cache validity flags (values set from API, validity flags preserved)

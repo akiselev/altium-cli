@@ -595,226 +595,7 @@ fn parse_file_version_info(header_data: &[u8], data: &[u8]) -> Result<String> {
     Ok(blocks.into_iter().next().unwrap_or_default())
 }
 
-// ── Public dump view types ────────────────────────────────────────────────────
-
-/// Dump view for a single PCB pad.
-pub struct PcbLibPadDumpView {
-    pub pad_name: String,
-    pub location_x_mils: f64,
-    pub location_y_mils: f64,
-    pub size_x_mils: f64,
-    pub size_y_mils: f64,
-    pub hole_size_mils: f64,
-    pub rotation: f64,
-    pub is_plated: bool,
-    pub shape: String,
-    pub layer: String,
-    pub pad_mode: String,
-    pub solder_mask_expansion_mils: f64,
-    pub paste_mask_expansion_mils: f64,
-}
-
-/// Dump view for a PCB graphic primitive.
-pub struct PcbLibGraphicDumpView {
-    pub graphic_type: String,
-    pub layer: String,
-    // Track/line: from→to, width
-    pub from_x_mils: Option<f64>,
-    pub from_y_mils: Option<f64>,
-    pub to_x_mils: Option<f64>,
-    pub to_y_mils: Option<f64>,
-    pub width_mils: Option<f64>,
-    // Arc: center, radius, angles
-    pub center_x_mils: Option<f64>,
-    pub center_y_mils: Option<f64>,
-    pub radius_mils: Option<f64>,
-    pub start_angle: Option<f64>,
-    pub end_angle: Option<f64>,
-    // Fill: corner1, corner2
-    pub corner1_x_mils: Option<f64>,
-    pub corner1_y_mils: Option<f64>,
-    pub corner2_x_mils: Option<f64>,
-    pub corner2_y_mils: Option<f64>,
-    // Text
-    pub text: Option<String>,
-    pub location_x_mils: Option<f64>,
-    pub location_y_mils: Option<f64>,
-    pub rotation: Option<f64>,
-    // Via: location, diameter, hole_size
-    pub diameter_mils: Option<f64>,
-    pub hole_size_mils: Option<f64>,
-    // Region: outline vertices
-    pub outline: Vec<(f64, f64)>,
-}
-
-/// Dump view for a PCB footprint.
-pub struct PcbLibFootprintDumpView {
-    pub display_name: String,
-    pub description: String,
-    pub height_mils: f64,
-    pub pads: Vec<PcbLibPadDumpView>,
-    pub graphics: Vec<PcbLibGraphicDumpView>,
-}
-
 impl PcbLib {
-    /// Returns footprint dump views for reverse generation.
-    pub fn dump_footprints(&self) -> Vec<PcbLibFootprintDumpView> {
-        self.footprints.iter().map(|fp| {
-            let mut pads = Vec::new();
-            let mut graphics = Vec::new();
-
-            for prim in &fp.primitives {
-                match prim {
-                    PcbPrimitive::Pad(p) => {
-                        pads.push(PcbLibPadDumpView {
-                            pad_name: p.pad_name.clone(),
-                            location_x_mils: p.location.x.raw() as f64 / 10_000.0,
-                            location_y_mils: p.location.y.raw() as f64 / 10_000.0,
-                            size_x_mils: p.size_top.x.raw() as f64 / 10_000.0,
-                            size_y_mils: p.size_top.y.raw() as f64 / 10_000.0,
-                            hole_size_mils: p.hole_size.raw() as f64 / 10_000.0,
-                            rotation: p.rotation,
-                            is_plated: p.is_plated,
-                            shape: format!("{:?}", p.shape_top).to_lowercase(),
-                            layer: format!("{:?}", p.common.layer),
-                            pad_mode: format!("{:?}", p.pad_mode).to_lowercase(),
-                            solder_mask_expansion_mils: p.cache.solder_mask_expansion.raw() as f64 / 10_000.0,
-                            paste_mask_expansion_mils: p.cache.paste_mask_expansion.raw() as f64 / 10_000.0,
-                        });
-                    }
-                    PcbPrimitive::Track(t) => {
-                        graphics.push(PcbLibGraphicDumpView {
-                            graphic_type: "track".to_string(),
-                            layer: format!("{:?}", t.common.layer),
-                            from_x_mils: Some(t.start.x.raw() as f64 / 10_000.0),
-                            from_y_mils: Some(t.start.y.raw() as f64 / 10_000.0),
-                            to_x_mils: Some(t.end.x.raw() as f64 / 10_000.0),
-                            to_y_mils: Some(t.end.y.raw() as f64 / 10_000.0),
-                            width_mils: Some(t.width.raw() as f64 / 10_000.0),
-                            center_x_mils: None, center_y_mils: None,
-                            radius_mils: None, start_angle: None, end_angle: None,
-                            corner1_x_mils: None, corner1_y_mils: None,
-                            corner2_x_mils: None, corner2_y_mils: None,
-                            text: None, location_x_mils: None, location_y_mils: None,
-                            rotation: None, diameter_mils: None, hole_size_mils: None,
-                            outline: vec![],
-                        });
-                    }
-                    PcbPrimitive::Arc(a) => {
-                        graphics.push(PcbLibGraphicDumpView {
-                            graphic_type: "arc".to_string(),
-                            layer: format!("{:?}", a.common.layer),
-                            center_x_mils: Some(a.center.x.raw() as f64 / 10_000.0),
-                            center_y_mils: Some(a.center.y.raw() as f64 / 10_000.0),
-                            radius_mils: Some(a.radius.raw() as f64 / 10_000.0),
-                            start_angle: Some(a.start_angle),
-                            end_angle: Some(a.end_angle),
-                            width_mils: Some(a.width.raw() as f64 / 10_000.0),
-                            from_x_mils: None, from_y_mils: None,
-                            to_x_mils: None, to_y_mils: None,
-                            corner1_x_mils: None, corner1_y_mils: None,
-                            corner2_x_mils: None, corner2_y_mils: None,
-                            text: None, location_x_mils: None, location_y_mils: None,
-                            rotation: None, diameter_mils: None, hole_size_mils: None,
-                            outline: vec![],
-                        });
-                    }
-                    PcbPrimitive::Fill(f) => {
-                        graphics.push(PcbLibGraphicDumpView {
-                            graphic_type: "fill".to_string(),
-                            layer: format!("{:?}", f.common.layer),
-                            corner1_x_mils: Some(f.corner1.x.raw() as f64 / 10_000.0),
-                            corner1_y_mils: Some(f.corner1.y.raw() as f64 / 10_000.0),
-                            corner2_x_mils: Some(f.corner2.x.raw() as f64 / 10_000.0),
-                            corner2_y_mils: Some(f.corner2.y.raw() as f64 / 10_000.0),
-                            rotation: Some(f.rotation),
-                            from_x_mils: None, from_y_mils: None,
-                            to_x_mils: None, to_y_mils: None,
-                            width_mils: None,
-                            center_x_mils: None, center_y_mils: None,
-                            radius_mils: None, start_angle: None, end_angle: None,
-                            text: None, location_x_mils: None, location_y_mils: None,
-                            diameter_mils: None, hole_size_mils: None,
-                            outline: vec![],
-                        });
-                    }
-                    PcbPrimitive::Text(t) => {
-                        graphics.push(PcbLibGraphicDumpView {
-                            graphic_type: "text".to_string(),
-                            layer: format!("{:?}", t.common.layer),
-                            text: Some(t.text.clone()),
-                            location_x_mils: Some(t.location.x.raw() as f64 / 10_000.0),
-                            location_y_mils: Some(t.location.y.raw() as f64 / 10_000.0),
-                            rotation: Some(t.rotation),
-                            from_x_mils: None, from_y_mils: None,
-                            to_x_mils: None, to_y_mils: None,
-                            width_mils: None,
-                            center_x_mils: None, center_y_mils: None,
-                            radius_mils: None, start_angle: None, end_angle: None,
-                            corner1_x_mils: None, corner1_y_mils: None,
-                            corner2_x_mils: None, corner2_y_mils: None,
-                            diameter_mils: None, hole_size_mils: None,
-                            outline: vec![],
-                        });
-                    }
-                    PcbPrimitive::Via(v) => {
-                        graphics.push(PcbLibGraphicDumpView {
-                            graphic_type: "via".to_string(),
-                            layer: format!("{:?}", v.common.layer),
-                            location_x_mils: Some(v.location.x.raw() as f64 / 10_000.0),
-                            location_y_mils: Some(v.location.y.raw() as f64 / 10_000.0),
-                            diameter_mils: Some(v.diameter.raw() as f64 / 10_000.0),
-                            hole_size_mils: Some(v.hole_size.raw() as f64 / 10_000.0),
-                            from_x_mils: None, from_y_mils: None,
-                            to_x_mils: None, to_y_mils: None,
-                            width_mils: None,
-                            center_x_mils: None, center_y_mils: None,
-                            radius_mils: None, start_angle: None, end_angle: None,
-                            corner1_x_mils: None, corner1_y_mils: None,
-                            corner2_x_mils: None, corner2_y_mils: None,
-                            text: None, rotation: None,
-                            outline: vec![],
-                        });
-                    }
-                    PcbPrimitive::Region(r) => {
-                        let outline: Vec<(f64, f64)> = match &r.outline {
-                            Contour::Legacy(pts) => pts.iter()
-                                .map(|pt| (pt.x.raw() as f64 / 10_000.0, pt.y.raw() as f64 / 10_000.0))
-                                .collect(),
-                            Contour::ShapeBased(segs) => segs.iter()
-                                .map(|s| (s.vertex.x.raw() as f64 / 10_000.0, s.vertex.y.raw() as f64 / 10_000.0))
-                                .collect(),
-                        };
-                        graphics.push(PcbLibGraphicDumpView {
-                            graphic_type: "region".to_string(),
-                            layer: format!("{:?}", r.common.layer),
-                            outline,
-                            from_x_mils: None, from_y_mils: None,
-                            to_x_mils: None, to_y_mils: None,
-                            width_mils: None,
-                            center_x_mils: None, center_y_mils: None,
-                            radius_mils: None, start_angle: None, end_angle: None,
-                            corner1_x_mils: None, corner1_y_mils: None,
-                            corner2_x_mils: None, corner2_y_mils: None,
-                            text: None, location_x_mils: None, location_y_mils: None,
-                            rotation: None, diameter_mils: None, hole_size_mils: None,
-                        });
-                    }
-                    PcbPrimitive::ComponentBody(_) => {
-                        // ComponentBody is a 3D model reference — skip for 2D spec dump
-                    }
-                }
-            }
-
-            PcbLibFootprintDumpView {
-                display_name: fp.display_name.clone(),
-                description: fp.description.clone(),
-                height_mils: fp.height.raw() as f64 / 10_000.0,
-                pads,
-                graphics,
-            }
-        }).collect()
-    }
 
     /// Returns the on-disk header string identifying the file format version.
     pub fn version_header(&self) -> &str {
@@ -2038,12 +1819,12 @@ mod tests {
                     mech_pairs: Vec::new(),
                     surface_properties: crate::board_config::PcbSurfaceProperties {
                         top_type: String::new(),
-                        top_const: String::new(),
-                        top_height: String::new(),
+                        top_const: 0.0,
+                        top_height: Coord::ZERO,
                         top_material: String::new(),
                         bottom_type: String::new(),
-                        bottom_const: String::new(),
-                        bottom_height: String::new(),
+                        bottom_const: 0.0,
+                        bottom_height: Coord::ZERO,
                         bottom_material: String::new(),
                         layer_stack_style: String::new(),
                         show_top_dielectric: false,
@@ -2206,7 +1987,8 @@ mod tests {
     // ── High-Level API tests ─────────────────────────────────────────────
 
     fn make_test_footprint(name: &str) -> crate::api::Footprint {
-        use crate::api::{Pad, TrackGraphic, PcbGraphic};
+        use crate::api::{Pad, PadStack, TrackGraphic, PcbGraphic};
+        let pad_size = Coord::from_mils(60).expect("60 mils fits Coord");
         crate::api::Footprint {
             display_name: name.to_owned(),
             description: format!("Test footprint {name}"),
@@ -2218,8 +2000,8 @@ mod tests {
                     unique_id: None,
                     location: CoordPoint::new(Coord::ZERO, Coord::ZERO),
                     shape: PadShape::Round,
-                    x_size: Coord::from_mils(60).expect("60 mils fits Coord"),
-                    y_size: Coord::from_mils(60).expect("60 mils fits Coord"),
+                    x_size: pad_size,
+                    y_size: pad_size,
                     rotation: 0.0,
                     hole_size: Coord::from_mils(30).expect("30 mils fits Coord"),
                     is_plated: true,
@@ -2231,6 +2013,7 @@ mod tests {
                     relief_conductor_width: Coord::ZERO,
                     relief_entries: 4,
                     relief_air_gap: Coord::ZERO,
+                    stack: PadStack::simple(PadShape::Round, pad_size, pad_size),
                 },
             ],
             graphics: vec![
@@ -2287,13 +2070,14 @@ mod tests {
         let mut fp = lib.footprint("UpdateMe").unwrap();
         assert_eq!(fp.pads.len(), 1);
         // Add another pad
+        let pad_size = Coord::from_mils(60).expect("60 mils fits Coord");
         fp.pads.push(crate::api::Pad {
             pad_name: "2".to_owned(),
             unique_id: None,
             location: CoordPoint::new(Coord::from_mils(100).expect("100 mils fits Coord"), Coord::ZERO),
             shape: PadShape::Round,
-            x_size: Coord::from_mils(60).expect("60 mils fits Coord"),
-            y_size: Coord::from_mils(60).expect("60 mils fits Coord"),
+            x_size: pad_size,
+            y_size: pad_size,
             rotation: 0.0,
             hole_size: Coord::from_mils(30).expect("30 mils fits Coord"),
             is_plated: true,
@@ -2305,6 +2089,7 @@ mod tests {
             relief_conductor_width: Coord::ZERO,
             relief_entries: 4,
             relief_air_gap: Coord::ZERO,
+            stack: crate::api::PadStack::simple(PadShape::Round, pad_size, pad_size),
         });
         lib.update_footprint(&fp).unwrap();
 

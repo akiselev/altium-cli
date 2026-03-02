@@ -1,8 +1,9 @@
 //! Read path: convert internal PcbLib types → public API types.
 
+use crate::api::pcb_common::{contour_to_pcb_contour, extract_pad_stack};
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    Contour, PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion,
+    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion,
     PcbText, PcbTrack, PcbVia,
 };
 use altium_format_types::color::Color;
@@ -53,6 +54,7 @@ pub(crate) fn footprint_from_internal(fp: &PcbFootprint) -> Footprint {
 }
 
 fn pad_from_internal(p: &PcbPad) -> Pad {
+    let stack = extract_pad_stack(p);
     Pad {
         pad_name: p.pad_name.clone(),
         unique_id: p.unique_id.clone(),
@@ -71,6 +73,7 @@ fn pad_from_internal(p: &PcbPad) -> Pad {
         relief_conductor_width: p.cache.relief_conductor_width,
         relief_entries: p.cache.relief_entries as i32,
         relief_air_gap: p.cache.relief_air_gap,
+        stack,
     }
 }
 
@@ -114,16 +117,8 @@ fn fill_from_internal(f: &PcbFill) -> FillGraphic {
     }
 }
 
-fn contour_to_coord_points(contour: &Contour) -> Vec<altium_format_types::CoordPoint> {
-    match contour {
-        Contour::Legacy(pts) => pts.clone(),
-        Contour::ShapeBased(segs) => segs.iter().map(|s| s.vertex).collect(),
-    }
-}
-
 fn region_from_internal(r: &PcbRegion) -> RegionGraphic {
     let layer = if !r.v7_layer.is_empty() {
-        // Region stores V7 layer as a name string — try V6 lookup first
         LayerRef::from_string_name(&r.v7_layer)
             .unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
     } else {
@@ -134,8 +129,8 @@ fn region_from_internal(r: &PcbRegion) -> RegionGraphic {
         layer,
         flags: r.common.flags,
         kind: r.kind,
-        outline: contour_to_coord_points(&r.outline),
-        holes: r.holes.iter().map(contour_to_coord_points).collect(),
+        outline: contour_to_pcb_contour(&r.outline),
+        holes: r.holes.iter().map(contour_to_pcb_contour).collect(),
     }
 }
 
@@ -192,6 +187,6 @@ fn body_from_internal(b: &PcbComponentBody) -> ComponentBodyGraphic {
         body_color_3d: b.body_color_3d,
         body_opacity_3d: b.body_opacity_3d,
         model_name: b.model_name.clone(),
-        outline: contour_to_coord_points(&b.outline),
+        outline: contour_to_pcb_contour(&b.outline),
     }
 }

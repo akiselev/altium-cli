@@ -1,8 +1,9 @@
 //! Write path: convert public API types → internal PcbLib types.
 
+use crate::api::pcb_common::pcb_contour_to_internal;
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    Contour, PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive,
+    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive,
     PcbPrimitiveCommon, PcbRegion, PcbText, PcbTrack, PcbVia,
 };
 use crate::util::generate_unique_id;
@@ -103,10 +104,6 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
                 new_pad.unknown_sub1 = ep.unknown_sub1.clone();
                 new_pad.unknown_sub2 = ep.unknown_sub2.clone();
                 new_pad.unknown_sub3 = ep.unknown_sub3.clone();
-                new_pad.size_mid = ep.size_mid;
-                new_pad.size_bot = ep.size_bot;
-                new_pad.shape_mid = ep.shape_mid;
-                new_pad.shape_bot = ep.shape_bot;
                 new_pad.daisy_chain_style = ep.daisy_chain_style;
                 new_pad.unknown_63 = ep.unknown_63;
                 // Copy cache validity flags from existing
@@ -208,7 +205,6 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
 }
 
 fn pad_to_internal(pad: &Pad) -> PcbPad {
-    let size = CoordPoint::new(pad.x_size, pad.y_size);
     PcbPad {
         common: default_primitive_common(&pad.layer, PcbFlags::default()),
         pad_name: pad.pad_name.clone(),
@@ -216,13 +212,13 @@ fn pad_to_internal(pad: &Pad) -> PcbPad {
         unknown_sub2: String::new(),
         unknown_sub3: String::new(),
         location: pad.location,
-        size_top: size,
-        size_mid: size,
-        size_bot: size,
+        size_top: CoordPoint::new(pad.stack.top.x_size, pad.stack.top.y_size),
+        size_mid: CoordPoint::new(pad.stack.mid.x_size, pad.stack.mid.y_size),
+        size_bot: CoordPoint::new(pad.stack.bot.x_size, pad.stack.bot.y_size),
         hole_size: pad.hole_size,
-        shape_top: pad.shape,
-        shape_mid: pad.shape,
-        shape_bot: pad.shape,
+        shape_top: pad.stack.top.shape,
+        shape_mid: pad.stack.mid.shape,
+        shape_bot: pad.stack.bot.shape,
         rotation: pad.rotation,
         is_plated: pad.is_plated,
         daisy_chain_style: DaisyChainStyle::default(),
@@ -319,6 +315,8 @@ fn fill_to_internal(g: &FillGraphic) -> PcbFill {
 }
 
 fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
+    let outline = pcb_contour_to_internal(&g.outline);
+    let is_shape_based = matches!(&outline, crate::pcblib::Contour::ShapeBased(_));
     PcbRegion {
         common: default_primitive_common(&g.layer, g.flags),
         kind: g.kind,
@@ -328,7 +326,7 @@ fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
         subpoly_index: 0,
         union_index: 0,
         arc_resolution: Coord::ZERO,
-        is_shape_based: false,
+        is_shape_based,
         cavity_height: Coord::ZERO,
         keepout_restrictions: 0,
         layer: String::new(),
@@ -339,8 +337,8 @@ fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
         bending_line_count: 0,
         locked_3d: false,
         layer_stack_id: String::new(),
-        outline: Contour::Legacy(g.outline.clone()),
-        holes: g.holes.iter().map(|h| Contour::Legacy(h.clone())).collect(),
+        outline,
+        holes: g.holes.iter().map(|h| pcb_contour_to_internal(h)).collect(),
         unique_id: g.unique_id.clone(),
     }
 }
@@ -455,6 +453,8 @@ fn via_to_internal(g: &ViaGraphic) -> PcbVia {
 }
 
 fn component_body_to_internal(g: &ComponentBodyGraphic) -> PcbComponentBody {
+    let outline = pcb_contour_to_internal(&g.outline);
+    let is_shape_based = matches!(&outline, crate::pcblib::Contour::ShapeBased(_));
     PcbComponentBody {
         common: default_primitive_common(&g.layer, g.flags),
         v7_layer: String::new(),
@@ -463,7 +463,7 @@ fn component_body_to_internal(g: &ComponentBodyGraphic) -> PcbComponentBody {
         subpoly_index: -1,
         union_index: 0,
         arc_resolution: Coord::ZERO,
-        is_shape_based: false,
+        is_shape_based,
         cavity_height: Coord::ZERO,
         standoff_height: g.standoff_height,
         overall_height: g.overall_height,
@@ -497,7 +497,7 @@ fn component_body_to_internal(g: &ComponentBodyGraphic) -> PcbComponentBody {
         model_cylinder_radius: Coord::ZERO,
         model_cylinder_height: Coord::ZERO,
         model_sphere_radius: Coord::ZERO,
-        outline: Contour::Legacy(g.outline.clone()),
+        outline,
         unique_id: g.unique_id.clone(),
     }
 }

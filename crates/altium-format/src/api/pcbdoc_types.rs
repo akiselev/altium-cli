@@ -15,6 +15,15 @@ use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PadShape, PadStackMode, PlaneConnectionStyle,
     RegionKind, RuleKind,
 };
+use super::pcb_common::PadStack;
+use altium_format_types::{
+    ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle, NetScope,
+    RuleLayerKind,
+};
+use altium_format_types::pcb::{
+    BgaFanoutDirection, BgaFanoutViaMode, ComponentCollisionCheckMode, CornerStyle,
+    FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
+};
 
 // ── Root type ───────────────────────────────────────────────────────────────
 
@@ -68,7 +77,115 @@ pub struct BoardSettings {
     pub snap_grid_size: Coord,
     pub visible_grid_size: Coord,
     pub display_unit: Unit,
+    /// Full layer stack metadata from Board6 configuration.
+    pub layer_stack: LayerStack,
+    /// Board geometry with arc-preserving contours.
+    pub geometry: BoardGeometry,
 }
+
+// ── Layer stack ─────────────────────────────────────────────────────────────
+
+/// The PCB layer stack describing copper and dielectric layer ordering.
+///
+/// Extracted from whichever layer stack version is present in the file
+/// (V9 > V8 > V7 > legacy, first non-empty wins). Contains only copper
+/// and dielectric layers in physical order from top to bottom.
+#[derive(Debug, Clone)]
+pub struct LayerStack {
+    /// Stack construction style (LayerPairs, InternalLayerPairs, BuildUp).
+    pub style: LayerStackStyle,
+    /// Whether this is a flex PCB stack.
+    pub is_flex: bool,
+    /// Layers in physical order from top to bottom.
+    pub layers: Vec<StackLayer>,
+    /// Number of copper layers (signal + internal plane).
+    pub copper_layer_count: usize,
+}
+
+/// A single layer in the physical stack.
+#[derive(Debug, Clone)]
+pub struct StackLayer {
+    /// Layer reference for cross-referencing with primitives.
+    pub layer: LayerRef,
+    /// Human-readable layer name (e.g. "Top Layer", "Mid-Layer 1").
+    pub name: String,
+    /// 1-based physical position from top (1 = topmost copper).
+    pub physical_order: usize,
+    /// Whether this is an internal plane layer.
+    pub is_plane: bool,
+    /// Copper thickness for this layer.
+    pub copper_thickness: Coord,
+    /// Type of dielectric below this layer.
+    pub dielectric_type: DielectricType,
+    /// Dielectric constant (Er) for the dielectric below this layer.
+    pub dielectric_constant: f64,
+    /// Dielectric height (thickness) below this layer.
+    pub dielectric_height: Coord,
+    /// Dielectric material name (e.g. "FR-4").
+    pub dielectric_material: String,
+    /// Component placement allowed on this layer (top/bottom/not allowed).
+    pub component_placement: Option<ComponentPlacementType>,
+}
+
+impl LayerStack {
+    /// Get the topmost layer.
+    pub fn top(&self) -> Option<&StackLayer> {
+        self.layers.first()
+    }
+
+    /// Get the bottommost layer.
+    pub fn bottom(&self) -> Option<&StackLayer> {
+        self.layers.last()
+    }
+
+    /// Find a layer by its `LayerRef`.
+    pub fn layer(&self, layer: &LayerRef) -> Option<&StackLayer> {
+        self.layers.iter().find(|l| l.layer == *layer)
+    }
+
+    /// Get the physical order (1-based) of a layer.
+    pub fn physical_order(&self, layer: &LayerRef) -> Option<usize> {
+        self.layer(layer).map(|l| l.physical_order)
+    }
+
+    /// Get all inner layers (excluding top and bottom).
+    pub fn inner_layers(&self) -> &[StackLayer] {
+        if self.layers.len() <= 2 {
+            &[]
+        } else {
+            &self.layers[1..self.layers.len() - 1]
+        }
+    }
+}
+
+// ── Board geometry ─────────────────────────────────────────────────────────
+
+/// Board geometry with arc-preserving contours.
+///
+/// Extracted from regions with `is_board_cutout` and `keepout` flags.
+/// Unlike `BoardSettings.board_outline` (which flattens arcs to points), these
+/// contours preserve arc segments for accurate Gerber output and DRC.
+#[derive(Debug, Clone)]
+pub struct BoardGeometry {
+    /// Primary board outline (first board cutout region found).
+    pub outline: Option<BoardContour>,
+    /// Additional cutout regions (holes in the board).
+    pub cutouts: Vec<BoardContour>,
+    /// Keepout zones.
+    pub keepouts: Vec<KeepoutZone>,
+}
+
+/// A board contour — type alias for the shared `PcbContour`.
+pub type BoardContour = super::pcb_common::PcbContour;
+
+/// A keepout zone on a specific layer.
+#[derive(Debug, Clone)]
+pub struct KeepoutZone {
+    pub outline: BoardContour,
+    pub layer: LayerRef,
+}
+
+// `BoardContour::to_points()` is inherited from `PcbContour`.
 
 // ── Named collections ───────────────────────────────────────────────────────
 
@@ -128,7 +245,188 @@ pub struct DesignRule {
     pub enabled: bool,
     pub priority: i32,
     pub scope: String,
+    pub scope2: String,
+    pub net_scope: NetScope,
+    pub layer_scope: RuleLayerKind,
     pub comment: String,
+    /// Typed rule parameters. `RuleParams::Other` for unrecognized kinds.
+    pub params: RuleParams,
+}
+
+/// Typed rule parameters extracted from the internal `PcbRuleKindData`.
+///
+/// Common rules (clearance, width, mask expansion, etc.) have fully typed
+/// variants. Less common rules use `Other { kind }`.
+#[derive(Debug, Clone)]
+pub enum RuleParams {
+    Clearance {
+        gap: Coord,
+        ignore_pad_to_pad: bool,
+    },
+    Width {
+        min: Coord,
+        max: Coord,
+        preferred: Coord,
+    },
+    Length {
+        min: Coord,
+        max: Coord,
+    },
+    MatchedLengths {
+        tolerance: Coord,
+    },
+    ParallelSegment {
+        gap: Coord,
+        limit: Coord,
+        parallel_length: Coord,
+    },
+    DaisyChainStubLength {
+        max_limit: Coord,
+    },
+    ShortCircuit {
+        allowed: bool,
+    },
+    BrokenNets {
+        check_bad_connections: bool,
+    },
+    ViasUnderSmd {
+        allowed: bool,
+    },
+    MaximumViaCount {
+        max_via_count: u32,
+    },
+    MinimumAnnularRing {
+        min: Coord,
+    },
+    HoleToHoleClearance {
+        gap: Coord,
+    },
+    BoardOutlineClearance {
+        gap: Coord,
+    },
+    MaxMinHoleSize {
+        min: Coord,
+        max: Coord,
+    },
+    SolderMaskExpansion {
+        expansion: Coord,
+        is_tenting_top: bool,
+        is_tenting_bottom: bool,
+    },
+    PasteMaskExpansion {
+        expansion: Coord,
+        percent: f64,
+    },
+    PowerPlaneClearance {
+        clearance: Coord,
+    },
+    PowerPlaneConnectStyle {
+        connect_style: PlaneConnectionStyle,
+        relief_conductor_width: Coord,
+        relief_entries: i32,
+        relief_air_gap: Coord,
+    },
+    PolygonConnectStyle {
+        connect_style: PlaneConnectionStyle,
+        relief_conductor_width: Coord,
+        relief_entries: i32,
+        relief_angle: PolygonReliefAngle,
+        air_gap_width: Coord,
+    },
+    RoutingTopology {
+        topology: NetTopology,
+    },
+    RoutingPriority {
+        priority: i32,
+    },
+    RoutingLayers {
+        /// (layer_name, enabled) pairs.
+        layer_flags: Vec<(String, bool)>,
+    },
+    RoutingCornerStyle {
+        corner_style: CornerStyle,
+        min_setback: Coord,
+        max_setback: Coord,
+    },
+    RoutingViaStyle {
+        min_hole_width: Coord,
+        max_hole_width: Coord,
+        preferred_hole_width: Coord,
+        min_width: Coord,
+        max_width: Coord,
+        preferred_width: Coord,
+        via_style: RouteVia,
+    },
+    ComponentClearance {
+        gap: Coord,
+        collision_check_mode: ComponentCollisionCheckMode,
+        vertical_gap: Coord,
+    },
+    ConfinementConstraint {
+        confinement_style: ConfinementStyle,
+    },
+    DiffPairsRouting {
+        min_gap: Coord,
+        max_gap: Coord,
+        preferred_gap: Coord,
+        max_uncoupled_length: Coord,
+    },
+    FanoutControl {
+        bga_dir: BgaFanoutDirection,
+        bga_via_mode: BgaFanoutViaMode,
+        fanout_style: FanoutStyle,
+        fanout_direction: FanoutDirection,
+    },
+    MaxMinHeight {
+        min_height: Coord,
+        max_height: Coord,
+        pref_height: Coord,
+    },
+    MinimumSolderMaskSliver {
+        min_width: Coord,
+    },
+    SilkToSolderMaskClearance {
+        gap: Coord,
+    },
+    SilkToSilkClearance {
+        gap: Coord,
+    },
+    NetAntennae {
+        tolerance: Coord,
+    },
+    SmdToCorner {
+        distance: Coord,
+    },
+    SmdToPlane {
+        distance: Coord,
+    },
+    SmdNeckDown {
+        percent: f64,
+    },
+    SmdEntry {
+        side: bool,
+        corner: bool,
+        any_angle: bool,
+    },
+    UnpouredPolygon {
+        allow_unpoured: bool,
+    },
+    BackDrilling {
+        depth: Coord,
+    },
+    CreepageDistance {
+        gap: Coord,
+    },
+    AcuteAngle {
+        minimum: f64,
+    },
+    LayerPair {
+        enforce: bool,
+    },
+    /// Fallback for rule kinds not yet given a typed variant.
+    Other {
+        kind: RuleKind,
+    },
 }
 
 /// A differential pair definition.
@@ -207,7 +505,11 @@ pub struct Pad {
     pub relief_conductor_width: Coord,
     pub relief_entries: i32,
     pub relief_air_gap: Coord,
+    /// Per-layer pad shapes. Only populated for non-Simple pad modes.
+    pub stack: PadStack,
 }
+
+// PadStack, PadLayerShape, PadInnerLayerOverride are re-exported from pcb_common.
 
 /// A PCB fill (solid rectangle).
 #[derive(Debug, Clone)]
@@ -288,6 +590,50 @@ pub struct Model3D {
     pub checksum: String,
 }
 
+// ── Connectivity ────────────────────────────────────────────────────────────
+
+/// Board connectivity: pads grouped by net.
+#[derive(Debug, Clone)]
+pub struct BoardConnectivity {
+    pub net_pins: Vec<NetPinList>,
+}
+
+/// All pins (pads) belonging to a single net.
+#[derive(Debug, Clone)]
+pub struct NetPinList {
+    pub net_name: String,
+    pub pins: Vec<NetPin>,
+    /// Number of distinct components connected to this net.
+    pub component_count: usize,
+}
+
+/// A single pin (pad) in a net's connectivity list.
+#[derive(Debug, Clone)]
+pub struct NetPin {
+    pub component: Option<String>,
+    pub pad_name: String,
+    pub location: CoordPoint,
+}
+
+/// Primitives on a single layer.
+#[derive(Debug, Clone)]
+pub struct LayerPrimitives<'a> {
+    pub tracks: Vec<&'a Track>,
+    pub arcs: Vec<&'a Arc>,
+    pub pads: Vec<&'a Pad>,
+    pub fills: Vec<&'a Fill>,
+    pub texts: Vec<&'a Text>,
+    pub regions: Vec<&'a Region>,
+}
+
+/// A group of vias sharing the same drill pair (from/to layers).
+#[derive(Debug, Clone)]
+pub struct DrillPairGroup<'a> {
+    pub from_layer: LayerRef,
+    pub to_layer: LayerRef,
+    pub vias: Vec<&'a Via>,
+}
+
 // ── Query helpers ───────────────────────────────────────────────────────────
 
 impl PcbDocBoard {
@@ -363,5 +709,130 @@ impl PcbDocBoard {
     /// All design rules of a given kind.
     pub fn rules_for_kind(&self, kind: RuleKind) -> Vec<&DesignRule> {
         self.rules.iter().filter(|r| r.kind == kind).collect()
+    }
+
+    // ── Layer queries ────────────────────────────────────────────────────
+
+    /// All tracks on a given layer.
+    pub fn tracks_on_layer(&self, layer: &LayerRef) -> Vec<&Track> {
+        self.tracks.iter().filter(|t| t.layer == *layer).collect()
+    }
+
+    /// All pads on a given layer.
+    pub fn pads_on_layer(&self, layer: &LayerRef) -> Vec<&Pad> {
+        self.pads.iter().filter(|p| p.layer == *layer).collect()
+    }
+
+    /// All primitives on a given layer.
+    pub fn primitives_on_layer(&self, layer: &LayerRef) -> LayerPrimitives<'_> {
+        LayerPrimitives {
+            tracks: self.tracks.iter().filter(|t| t.layer == *layer).collect(),
+            arcs: self.arcs.iter().filter(|a| a.layer == *layer).collect(),
+            pads: self.pads.iter().filter(|p| p.layer == *layer).collect(),
+            fills: self.fills.iter().filter(|f| f.layer == *layer).collect(),
+            texts: self.texts.iter().filter(|t| t.layer == *layer).collect(),
+            regions: self.regions.iter().filter(|r| r.layer == *layer).collect(),
+        }
+    }
+
+    // ── Polygon queries ──────────────────────────────────────────────────
+
+    /// All regions that belong to a named polygon (matched by net).
+    pub fn regions_for_polygon(&self, polygon_name: &str) -> Vec<&Region> {
+        // Find the polygon's net.
+        let poly_net = self
+            .polygons
+            .iter()
+            .find(|p| p.name == polygon_name)
+            .and_then(|p| p.net.as_deref());
+        match poly_net {
+            Some(net) => self
+                .regions
+                .iter()
+                .filter(|r| r.net.as_deref() == Some(net))
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    // ── Via queries ──────────────────────────────────────────────────────
+
+    /// Group vias by their drill pair (from_layer, to_layer).
+    pub fn vias_by_drill_pair(&self) -> Vec<DrillPairGroup<'_>> {
+        let mut groups: std::collections::HashMap<(LayerRef, LayerRef), Vec<&Via>> =
+            std::collections::HashMap::new();
+        for via in &self.vias {
+            groups
+                .entry((via.from_layer.clone(), via.to_layer.clone()))
+                .or_default()
+                .push(via);
+        }
+        groups
+            .into_iter()
+            .map(|((from, to), vias)| DrillPairGroup {
+                from_layer: from,
+                to_layer: to,
+                vias,
+            })
+            .collect()
+    }
+
+    // ── Pad queries ──────────────────────────────────────────────────────
+
+    /// All plated through-hole pads.
+    pub fn plated_through_hole_pads(&self) -> Vec<&Pad> {
+        self.pads
+            .iter()
+            .filter(|p| p.is_plated && p.hole_size != Coord::ZERO)
+            .collect()
+    }
+
+    /// All non-plated through-hole pads.
+    pub fn non_plated_through_hole_pads(&self) -> Vec<&Pad> {
+        self.pads
+            .iter()
+            .filter(|p| !p.is_plated && p.hole_size != Coord::ZERO)
+            .collect()
+    }
+
+    // ── Connectivity ─────────────────────────────────────────────────────
+
+    /// Build net connectivity from pads.
+    pub fn connectivity(&self) -> BoardConnectivity {
+        let mut net_map: std::collections::HashMap<&str, Vec<NetPin>> =
+            std::collections::HashMap::new();
+        for pad in &self.pads {
+            if let Some(net_name) = pad.net.as_deref() {
+                net_map.entry(net_name).or_default().push(NetPin {
+                    component: pad.component.clone(),
+                    pad_name: pad.pad_name.clone(),
+                    location: pad.location,
+                });
+            }
+        }
+
+        let mut net_pins: Vec<NetPinList> = net_map
+            .into_iter()
+            .map(|(net_name, pins)| {
+                let component_count = {
+                    let mut comps: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    for pin in &pins {
+                        if let Some(comp) = pin.component.as_deref() {
+                            comps.insert(comp);
+                        }
+                    }
+                    comps.len()
+                };
+                NetPinList {
+                    net_name: net_name.to_string(),
+                    pins,
+                    component_count,
+                }
+            })
+            .collect();
+
+        net_pins.sort_by(|a, b| a.net_name.cmp(&b.net_name));
+        BoardConnectivity { net_pins }
     }
 }

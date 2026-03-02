@@ -1290,13 +1290,16 @@ fn resolve_layer_spec_opt(spec: &Option<LayerSpec>, default: V6Layer) -> LayerRe
 }
 
 fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
+    let shape = spec.shape.unwrap_or(PadShape::Round);
+    let x_size = spec.x_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
+    let y_size = spec.y_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
     api::Pad {
         pad_name: spec.pad_name.clone(),
         unique_id: None,
         location: spec.at,
-        shape: spec.shape.unwrap_or(PadShape::Round),
-        x_size: spec.x_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
-        y_size: spec.y_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
+        shape,
+        x_size,
+        y_size,
         rotation: spec.rotation.unwrap_or(0.0),
         hole_size: spec.hole_size.unwrap_or(Coord::ZERO),
         is_plated: spec.is_plated.unwrap_or(true),
@@ -1308,6 +1311,7 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
         relief_conductor_width: spec.relief_conductor_width.unwrap_or(Coord::ZERO),
         relief_entries: spec.relief_entries.unwrap_or(4),
         relief_air_gap: spec.relief_air_gap.unwrap_or(Coord::ZERO),
+        stack: api::PadStack::simple(shape, x_size, y_size),
     }
 }
 
@@ -1344,14 +1348,21 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             corner2: props.to.unwrap_or_default(),
             rotation: props.rotation.unwrap_or(0.0),
         })),
-        PcbGraphicType::Region => Some(api::PcbGraphic::Region(api::RegionGraphic {
-            unique_id: Some(spec.unique_id.clone()),
-            layer,
-            flags,
-            kind: RegionKind::default(),
-            outline: props.points.clone().unwrap_or_default(),
-            holes: Vec::new(),
-        })),
+        PcbGraphicType::Region => {
+            let points = props.points.clone().unwrap_or_default();
+            let segments = points
+                .iter()
+                .map(|pt| api::ContourSegment::Line { endpoint: *pt })
+                .collect();
+            Some(api::PcbGraphic::Region(api::RegionGraphic {
+                unique_id: Some(spec.unique_id.clone()),
+                layer,
+                flags,
+                kind: RegionKind::default(),
+                outline: api::PcbContour { segments },
+                holes: Vec::new(),
+            }))
+        }
         PcbGraphicType::Text => Some(api::PcbGraphic::Text(api::TextGraphic {
             unique_id: Some(spec.unique_id.clone()),
             layer,

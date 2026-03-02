@@ -52,7 +52,7 @@ pub mod schlib;
 pub use document::Document;
 pub use intlib::IntLib;
 pub use pcbdoc::PcbDoc;
-pub use pcblib::{PcbLib, PcbLibFootprintDumpView, PcbLibGraphicDumpView, PcbLibPadDumpView};
+pub use pcblib::PcbLib;
 pub use project::AltiumProject;
 pub use schdoc::SchDoc;
 pub use schlib::SchLib;
