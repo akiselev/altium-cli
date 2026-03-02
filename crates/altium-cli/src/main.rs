@@ -853,9 +853,14 @@ fn run_query(
             eval_query(&query, &lib)
                 .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
+        "schdoc" => {
+            let doc = SchDoc::open(path)?;
+            eval_query(&query, &doc)
+                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+        }
         _ => {
             anyhow::bail!(
-                "unsupported file type '.{ext}' for query (supported: .SchLib, .PcbLib)"
+                "unsupported file type '.{ext}' for query (supported: .SchLib, .PcbLib, .SchDoc)"
             );
         }
     };

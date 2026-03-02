@@ -196,6 +196,24 @@ pub enum TypeSelector {
     Text,
     PcbArc,
     ComponentBody,
+
+    // SchDoc types
+    SchDocComponent,
+    Wire,
+    Bus,
+    NetLabel,
+    PowerObject,
+    Port,
+    Junction,
+    NoConnect,
+    BusEntry,
+    SheetSymbol,
+    Note,
+    Probe,
+    CompileMask,
+    Blanket,
+    HarnessConnector,
+    SignalHarness,
 }
 
 impl TypeSelector {
@@ -227,6 +245,23 @@ impl TypeSelector {
         ("text", TypeSelector::Text),
         ("pcb_arc", TypeSelector::PcbArc),
         ("component_body", TypeSelector::ComponentBody),
+        // SchDoc types
+        ("schdoc_component", TypeSelector::SchDocComponent),
+        ("wire", TypeSelector::Wire),
+        ("bus", TypeSelector::Bus),
+        ("net_label", TypeSelector::NetLabel),
+        ("power_object", TypeSelector::PowerObject),
+        ("port", TypeSelector::Port),
+        ("junction", TypeSelector::Junction),
+        ("no_connect", TypeSelector::NoConnect),
+        ("bus_entry", TypeSelector::BusEntry),
+        ("sheet_symbol", TypeSelector::SheetSymbol),
+        ("note", TypeSelector::Note),
+        ("probe", TypeSelector::Probe),
+        ("compile_mask", TypeSelector::CompileMask),
+        ("blanket", TypeSelector::Blanket),
+        ("harness_connector", TypeSelector::HarnessConnector),
+        ("signal_harness", TypeSelector::SignalHarness),
     ];
 
     /// Try to parse a type selector from a keyword string (case-insensitive).

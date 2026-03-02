@@ -1,6 +1,6 @@
 # Codebase Status Report
 
-Generated: 2026-03-01
+Generated: 2026-03-02
 
 ## Workspace Overview
 
@@ -29,7 +29,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 |------------|-----------|-------|-----------|----------------|-----------|-------|---------|--------------|-------------|---------|
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read, ⚠️ Write | ⚠️ dump only | ❌ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ❌     | ✅ SVG/PNG | ✅          | ✅          | ❌      |
+| **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbDoc** | .PcbDoc   | ✅    | ✅        | ❌ None         | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
 | **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ❌      |
 | **IntLib** | .IntLib   | ❌ Stub | ❌ Stub | ❌ None         | ❌         | ❌     | ❌        | ⚠️ open only | ❌          | ❌      |
@@ -287,7 +287,7 @@ CSS-selector-inspired query language. Supports type selectors, attribute filters
 (`[field=value]`, `[field>value]`, etc.), pseudo-classes (`:power`, `:input`),
 combinators (descendant, child `>`), and logical operators (AND, OR, NOT, UNION).
 
-Currently only SchLib is queryable. PcbLib, SchDoc, PcbDoc marked "Future".
+SchLib and PcbLib are queryable. SchDoc, PcbDoc marked "Future".
 
 ### altium-format-render-svg / render-png
 
@@ -296,8 +296,7 @@ PNG backend wraps SVG via usvg/tiny-skia rasterization at configurable scale
 (default 4.0 px/mil).
 
 Known gaps: clip regions not applied, embedded image pixel data not preserved,
-junction size hardcoded (TODO exists), no PCB layer filtering, no text
-kerning/shaping.
+no PCB layer filtering, no text kerning/shaping.
 
 ### altium-format-spec
 
@@ -331,7 +330,7 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 4. **PrjPcb has no public write API** — internal write support exists but isn't
    surfaced through the API module.
 
-5. **Query only supports SchLib** — PcbLib, SchDoc, PcbDoc entity adapters not
+5. **Query only supports SchLib and PcbLib** — SchDoc, PcbDoc entity adapters not
    implemented.
 
 6. **SchDoc spec compilation not implemented** — dump works but compile/execute returns
@@ -349,14 +348,9 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 10. **SVG clip regions not applied** — PushClip/PopClip recorded but skipped in SVG
     generation.
 
-11. **Junction size hardcoded at 15 mil** — TODO to read JUNCTIONSIZE parameter.
+11. **`get version` only works for SchLib and PcbLib** — not PcbDoc, SchDoc, PrjPcb.
 
-12. **ComponentBody graphics can't be created via PcbLib API** — only preserved on
-    update.
-
-13. **`get version` only works for SchLib and PcbLib** — not PcbDoc, SchDoc, PrjPcb.
-
-14. **`apply --report-json` flag accepted but not used** — dead code.
+12. **`apply --report-json` flag accepted but not used** — dead code.
 
 ---
 

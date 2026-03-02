@@ -1,5 +1,6 @@
 use altium_format::api;
 use altium_format::PcbLib;
+use altium_format::SchDoc;
 use altium_format::SchLib;
 
 use crate::ast::TypeSelector;
@@ -20,6 +21,23 @@ pub enum QueryNode {
     Footprint(api::Footprint),
     Pad(api::Pad),
     PcbGraphic(api::PcbGraphic),
+    // SchDoc types
+    SchDocComponent(api::SchDocComponent),
+    Wire(api::Wire),
+    Bus(api::Bus),
+    NetLabel(api::NetLabel),
+    PowerObject(api::PowerObject),
+    Port(api::Port),
+    Junction(api::Junction),
+    NoConnect(api::NoConnect),
+    BusEntry(api::BusEntry),
+    SheetSymbol(api::SheetSymbol),
+    Note(api::Note),
+    Probe(api::Probe),
+    CompileMask(api::CompileMask),
+    Blanket(api::Blanket),
+    HarnessConnector(api::HarnessConnector),
+    SignalHarness(api::SignalHarness),
 }
 
 /// A matched result from query evaluation.
@@ -58,6 +76,47 @@ impl Queryable for PcbLib {
     }
 }
 
+impl Queryable for SchDoc {
+    fn root_nodes(&self) -> Result<Vec<QueryNode>, QueryError> {
+        let sheet = self.sheet().map_err(|e| {
+            QueryError::new(
+                QueryErrorCode::DocumentError,
+                format!("failed to read schematic sheet: {e}"),
+            )
+        })?;
+        let mut nodes = Vec::new();
+        for obj in sheet.objects {
+            match obj {
+                api::SheetObject::Component(c) => nodes.push(QueryNode::SchDocComponent(c)),
+                api::SheetObject::Wire(w) => nodes.push(QueryNode::Wire(w)),
+                api::SheetObject::Bus(b) => nodes.push(QueryNode::Bus(b)),
+                api::SheetObject::NetLabel(n) => nodes.push(QueryNode::NetLabel(n)),
+                api::SheetObject::PowerObject(p) => nodes.push(QueryNode::PowerObject(p)),
+                api::SheetObject::Port(p) => nodes.push(QueryNode::Port(p)),
+                api::SheetObject::Junction(j) => nodes.push(QueryNode::Junction(j)),
+                api::SheetObject::NoConnect(n) => nodes.push(QueryNode::NoConnect(n)),
+                api::SheetObject::BusEntry(b) => nodes.push(QueryNode::BusEntry(b)),
+                api::SheetObject::SheetSymbol(s) => nodes.push(QueryNode::SheetSymbol(s)),
+                api::SheetObject::Note(n) => nodes.push(QueryNode::Note(n)),
+                api::SheetObject::Probe(p) => nodes.push(QueryNode::Probe(p)),
+                api::SheetObject::CompileMask(c) => nodes.push(QueryNode::CompileMask(c)),
+                api::SheetObject::Blanket(b) => nodes.push(QueryNode::Blanket(b)),
+                api::SheetObject::HarnessConnector(h) => nodes.push(QueryNode::HarnessConnector(h)),
+                api::SheetObject::SignalHarness(s) => nodes.push(QueryNode::SignalHarness(s)),
+                // Sheet-level graphics and parameters are leaf nodes
+                api::SheetObject::Graphic(g) => nodes.push(QueryNode::Graphic(g)),
+                api::SheetObject::Parameter(p) => nodes.push(QueryNode::Parameter(p)),
+                // ParameterSet: expose as a node; its parameters are children
+                api::SheetObject::ParameterSet(_ps) => {
+                    // ParameterSet is not currently a QueryNode variant;
+                    // its child parameters are not exposed at the top level
+                }
+            }
+        }
+        Ok(nodes)
+    }
+}
+
 impl QueryNode {
     /// What type selector matches this node?
     pub fn type_selector(&self) -> TypeSelector {
@@ -70,6 +129,23 @@ impl QueryNode {
             QueryNode::Footprint(_) => TypeSelector::Footprint,
             QueryNode::Pad(_) => TypeSelector::Pad,
             QueryNode::PcbGraphic(g) => pcb_graphic_type_selector(g),
+            // SchDoc types
+            QueryNode::SchDocComponent(_) => TypeSelector::SchDocComponent,
+            QueryNode::Wire(_) => TypeSelector::Wire,
+            QueryNode::Bus(_) => TypeSelector::Bus,
+            QueryNode::NetLabel(_) => TypeSelector::NetLabel,
+            QueryNode::PowerObject(_) => TypeSelector::PowerObject,
+            QueryNode::Port(_) => TypeSelector::Port,
+            QueryNode::Junction(_) => TypeSelector::Junction,
+            QueryNode::NoConnect(_) => TypeSelector::NoConnect,
+            QueryNode::BusEntry(_) => TypeSelector::BusEntry,
+            QueryNode::SheetSymbol(_) => TypeSelector::SheetSymbol,
+            QueryNode::Note(_) => TypeSelector::Note,
+            QueryNode::Probe(_) => TypeSelector::Probe,
+            QueryNode::CompileMask(_) => TypeSelector::CompileMask,
+            QueryNode::Blanket(_) => TypeSelector::Blanket,
+            QueryNode::HarnessConnector(_) => TypeSelector::HarnessConnector,
+            QueryNode::SignalHarness(_) => TypeSelector::SignalHarness,
         }
     }
 
@@ -87,6 +163,7 @@ impl QueryNode {
         match self {
             QueryNode::Component(c) => Some(&c.lib_reference),
             QueryNode::Footprint(f) => Some(&f.display_name),
+            QueryNode::SchDocComponent(c) => Some(&c.lib_reference),
             _ => None,
         }
     }
@@ -97,6 +174,8 @@ impl QueryNode {
             QueryNode::Component(c) => c.designator.as_deref(),
             QueryNode::Pin(p) => Some(&p.designator),
             QueryNode::Pad(p) => Some(&p.pad_name),
+            QueryNode::SchDocComponent(c) => Some(&c.designator),
+            QueryNode::NetLabel(n) => Some(&n.text),
             _ => None,
         }
     }
@@ -130,6 +209,33 @@ impl QueryNode {
                 }
                 children
             }
+            // SchDoc container nodes
+            QueryNode::SchDocComponent(c) => {
+                let mut children = Vec::new();
+                for child in &c.children {
+                    match child {
+                        api::ComponentChild::Pin(p) => children.push(QueryNode::Pin(p.clone())),
+                        api::ComponentChild::Parameter(p) => children.push(QueryNode::Parameter(p.clone())),
+                        api::ComponentChild::Graphic(g) => children.push(QueryNode::Graphic(g.clone())),
+                        api::ComponentChild::FootprintMap(f) => children.push(QueryNode::FootprintMap(f.clone())),
+                    }
+                }
+                children
+            }
+            QueryNode::SheetSymbol(s) => {
+                let mut children = Vec::new();
+                for child in &s.children {
+                    match child {
+                        api::SheetSymbolChild::Entry(_) => {
+                            // SheetEntry is not currently a QueryNode variant
+                        }
+                        api::SheetSymbolChild::Parameter(p) => {
+                            children.push(QueryNode::Parameter(p.clone()));
+                        }
+                    }
+                }
+                children
+            }
             // Leaf nodes have no children
             _ => Vec::new(),
         }
@@ -156,6 +262,23 @@ impl QueryNode {
             QueryNode::Footprint(f) => get_pcb_footprint_field(f, name),
             QueryNode::Pad(p) => get_pad_field(p, name),
             QueryNode::PcbGraphic(g) => get_pcb_graphic_field(g, name),
+            // SchDoc types
+            QueryNode::SchDocComponent(c) => get_schdoc_component_field(c, name),
+            QueryNode::Wire(w) => get_wire_field(w, name),
+            QueryNode::Bus(b) => get_bus_field(b, name),
+            QueryNode::NetLabel(n) => get_net_label_field(n, name),
+            QueryNode::PowerObject(p) => get_power_object_field(p, name),
+            QueryNode::Port(p) => get_port_field(p, name),
+            QueryNode::Junction(j) => get_junction_field(j, name),
+            QueryNode::NoConnect(n) => get_no_connect_field(n, name),
+            QueryNode::BusEntry(b) => get_bus_entry_field(b, name),
+            QueryNode::SheetSymbol(s) => get_sheet_symbol_field(s, name),
+            QueryNode::Note(n) => get_note_field(n, name),
+            QueryNode::Probe(p) => get_probe_field(p, name),
+            QueryNode::CompileMask(c) => get_compile_mask_field(c, name),
+            QueryNode::Blanket(b) => get_blanket_field(b, name),
+            QueryNode::HarnessConnector(h) => get_harness_connector_field(h, name),
+            QueryNode::SignalHarness(s) => get_signal_harness_field(s, name),
         }
     }
 
@@ -166,6 +289,16 @@ impl QueryNode {
                 for param in &c.parameters {
                     if param.name.eq_ignore_ascii_case(name) {
                         return QueryValue::String(param.text.clone());
+                    }
+                }
+                QueryValue::Null
+            }
+            QueryNode::SchDocComponent(c) => {
+                for child in &c.children {
+                    if let api::ComponentChild::Parameter(p) = child {
+                        if p.name.eq_ignore_ascii_case(name) {
+                            return QueryValue::String(p.text.clone());
+                        }
                     }
                 }
                 QueryValue::Null
@@ -193,6 +326,23 @@ impl QueryNode {
             QueryNode::Footprint(f) => format!("Footprint '{}'", f.display_name),
             QueryNode::Pad(p) => format!("Pad '{}'", p.pad_name),
             QueryNode::PcbGraphic(_) => "PcbGraphic".to_string(),
+            // SchDoc types
+            QueryNode::SchDocComponent(c) => format!("Component '{}'", c.designator),
+            QueryNode::Wire(w) => format!("Wire '{}'", w.unique_id),
+            QueryNode::Bus(b) => format!("Bus '{}'", b.unique_id),
+            QueryNode::NetLabel(n) => format!("NetLabel '{}'", n.text),
+            QueryNode::PowerObject(p) => format!("PowerObject '{}'", p.text),
+            QueryNode::Port(p) => format!("Port '{}'", p.name),
+            QueryNode::Junction(j) => format!("Junction '{}'", j.unique_id),
+            QueryNode::NoConnect(n) => format!("NoConnect '{}'", n.unique_id),
+            QueryNode::BusEntry(b) => format!("BusEntry '{}'", b.unique_id),
+            QueryNode::SheetSymbol(s) => format!("SheetSymbol '{}'", s.sheet_name),
+            QueryNode::Note(n) => format!("Note '{}'", n.unique_id),
+            QueryNode::Probe(p) => format!("Probe '{}'", p.name),
+            QueryNode::CompileMask(c) => format!("CompileMask '{}'", c.unique_id),
+            QueryNode::Blanket(b) => format!("Blanket '{}'", b.unique_id),
+            QueryNode::HarnessConnector(h) => format!("HarnessConnector '{}'", h.unique_id),
+            QueryNode::SignalHarness(s) => format!("SignalHarness '{}'", s.unique_id),
         }
     }
 }
@@ -422,6 +572,227 @@ fn get_pad_field(p: &api::Pad, name: &str) -> QueryValue {
         "relief_conductor_width" => QueryValue::Coord(p.relief_conductor_width.raw()),
         "relief_entries" => QueryValue::Integer(p.relief_entries as i64),
         "relief_air_gap" => QueryValue::Coord(p.relief_air_gap.raw()),
+        _ => QueryValue::Null,
+    }
+}
+
+// ── SchDoc field extraction ───────────────────────────────────────────────────
+
+fn get_schdoc_component_field(c: &api::SchDocComponent, name: &str) -> QueryValue {
+    match name {
+        "designator" => QueryValue::String(c.designator.clone()),
+        "unique_id" => QueryValue::String(c.unique_id.clone()),
+        "lib_reference" => QueryValue::String(c.lib_reference.clone()),
+        "source_library_name" => QueryValue::String(c.source_library_name.clone()),
+        "design_item_id" => QueryValue::String(c.design_item_id.clone()),
+        "library_path" => QueryValue::String(c.library_path.clone()),
+        "x" => QueryValue::Coord(c.location.x.raw()),
+        "y" => QueryValue::Coord(c.location.y.raw()),
+        "orientation" => QueryValue::String(format!("{:?}", c.orientation)),
+        "is_mirrored" => QueryValue::Bool(c.is_mirrored),
+        "description" => match &c.description {
+            Some(d) => QueryValue::String(d.clone()),
+            None => QueryValue::Null,
+        },
+        "component_kind" => QueryValue::String(format!("{:?}", c.component_kind)),
+        "part_count" => QueryValue::Integer(c.part_count as i64),
+        "current_part_id" => QueryValue::Integer(c.current_part_id as i64),
+        "show_hidden_pins" => QueryValue::Bool(c.show_hidden_pins),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_wire_field(w: &api::Wire, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(w.unique_id.clone()),
+        "color" => QueryValue::Color(w.color.r(), w.color.g(), w.color.b()),
+        "line_width" => QueryValue::String(format!("{:?}", w.line_width)),
+        "line_style" => QueryValue::String(format!("{:?}", w.line_style)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_bus_field(b: &api::Bus, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(b.unique_id.clone()),
+        "color" => QueryValue::Color(b.color.r(), b.color.g(), b.color.b()),
+        "line_width" => QueryValue::String(format!("{:?}", b.line_width)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_net_label_field(n: &api::NetLabel, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(n.unique_id.clone()),
+        "text" => QueryValue::String(n.text.clone()),
+        "x" => QueryValue::Coord(n.location.x.raw()),
+        "y" => QueryValue::Coord(n.location.y.raw()),
+        "orientation" => QueryValue::String(format!("{:?}", n.orientation)),
+        "justification" => QueryValue::String(format!("{:?}", n.justification)),
+        "font_id" => QueryValue::Integer(n.font_id as i64),
+        "color" => QueryValue::Color(n.color.r(), n.color.g(), n.color.b()),
+        "is_mirrored" => QueryValue::Bool(n.is_mirrored),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_power_object_field(p: &api::PowerObject, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(p.unique_id.clone()),
+        "text" => QueryValue::String(p.text.clone()),
+        "x" => QueryValue::Coord(p.location.x.raw()),
+        "y" => QueryValue::Coord(p.location.y.raw()),
+        "orientation" => QueryValue::String(format!("{:?}", p.orientation)),
+        "style" => QueryValue::String(format!("{:?}", p.style)),
+        "show_net_name" => QueryValue::Bool(p.show_net_name),
+        "font_id" => QueryValue::Integer(p.font_id as i64),
+        "color" => QueryValue::Color(p.color.r(), p.color.g(), p.color.b()),
+        "is_cross_sheet_connector" => QueryValue::Bool(p.is_cross_sheet_connector),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_port_field(p: &api::Port, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(p.unique_id.clone()),
+        "name" => QueryValue::String(p.name.clone()),
+        "x" => QueryValue::Coord(p.location.x.raw()),
+        "y" => QueryValue::Coord(p.location.y.raw()),
+        "io_type" => QueryValue::String(format!("{:?}", p.io_type)),
+        "style" => QueryValue::String(format!("{:?}", p.style)),
+        "width" => QueryValue::Coord(p.width.raw()),
+        "height" => QueryValue::Coord(p.height.raw()),
+        "color" => QueryValue::Color(p.color.r(), p.color.g(), p.color.b()),
+        "area_color" => QueryValue::Color(p.area_color.r(), p.area_color.g(), p.area_color.b()),
+        "text_color" => QueryValue::Color(p.text_color.r(), p.text_color.g(), p.text_color.b()),
+        "font_id" => QueryValue::Integer(p.font_id as i64),
+        "alignment" => QueryValue::String(format!("{:?}", p.alignment)),
+        "harness_type" => QueryValue::String(p.harness_type.clone()),
+        "auto_size" => QueryValue::Bool(p.auto_size),
+        "port_name_is_hidden" => QueryValue::Bool(p.port_name_is_hidden),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_junction_field(j: &api::Junction, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(j.unique_id.clone()),
+        "x" => QueryValue::Coord(j.location.x.raw()),
+        "y" => QueryValue::Coord(j.location.y.raw()),
+        "color" => QueryValue::Color(j.color.r(), j.color.g(), j.color.b()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_no_connect_field(n: &api::NoConnect, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(n.unique_id.clone()),
+        "x" => QueryValue::Coord(n.location.x.raw()),
+        "y" => QueryValue::Coord(n.location.y.raw()),
+        "color" => QueryValue::Color(n.color.r(), n.color.g(), n.color.b()),
+        "orientation" => QueryValue::String(format!("{:?}", n.orientation)),
+        "symbol" => QueryValue::String(n.symbol.clone()),
+        "is_active" => QueryValue::Bool(n.is_active),
+        "suppress_all" => QueryValue::Bool(n.suppress_all),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_bus_entry_field(b: &api::BusEntry, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(b.unique_id.clone()),
+        "x" => QueryValue::Coord(b.location.x.raw()),
+        "y" => QueryValue::Coord(b.location.y.raw()),
+        "color" => QueryValue::Color(b.color.r(), b.color.g(), b.color.b()),
+        "line_width" => QueryValue::String(format!("{:?}", b.line_width)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_sheet_symbol_field(s: &api::SheetSymbol, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(s.unique_id.clone()),
+        "x" => QueryValue::Coord(s.location.x.raw()),
+        "y" => QueryValue::Coord(s.location.y.raw()),
+        "x_size" => QueryValue::Coord(s.x_size.raw()),
+        "y_size" => QueryValue::Coord(s.y_size.raw()),
+        "color" => QueryValue::Color(s.color.r(), s.color.g(), s.color.b()),
+        "area_color" => QueryValue::Color(s.area_color.r(), s.area_color.g(), s.area_color.b()),
+        "is_solid" => QueryValue::Bool(s.is_solid),
+        "symbol_type" => QueryValue::String(format!("{:?}", s.symbol_type)),
+        "sheet_name" => QueryValue::String(s.sheet_name.clone()),
+        "file_name" => QueryValue::String(s.file_name.clone()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_note_field(n: &api::Note, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(n.unique_id.clone()),
+        "x" => QueryValue::Coord(n.location.x.raw()),
+        "y" => QueryValue::Coord(n.location.y.raw()),
+        "text" => QueryValue::String(n.text.clone()),
+        "author" => QueryValue::String(n.author.clone()),
+        "font_id" => QueryValue::Integer(n.font_id as i64),
+        "color" => QueryValue::Color(n.color.r(), n.color.g(), n.color.b()),
+        "is_solid" => QueryValue::Bool(n.is_solid),
+        "collapsed" => QueryValue::Bool(n.collapsed),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_probe_field(p: &api::Probe, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(p.unique_id.clone()),
+        "x" => QueryValue::Coord(p.location.x.raw()),
+        "y" => QueryValue::Coord(p.location.y.raw()),
+        "color" => QueryValue::Color(p.color.r(), p.color.g(), p.color.b()),
+        "orientation" => QueryValue::String(format!("{:?}", p.orientation)),
+        "name" => QueryValue::String(p.name.clone()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_compile_mask_field(c: &api::CompileMask, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(c.unique_id.clone()),
+        "x" => QueryValue::Coord(c.location.x.raw()),
+        "y" => QueryValue::Coord(c.location.y.raw()),
+        "color" => QueryValue::Color(c.color.r(), c.color.g(), c.color.b()),
+        "collapsed" => QueryValue::Bool(c.collapsed),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_blanket_field(b: &api::Blanket, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(b.unique_id.clone()),
+        "x" => QueryValue::Coord(b.location.x.raw()),
+        "y" => QueryValue::Coord(b.location.y.raw()),
+        "color" => QueryValue::Color(b.color.r(), b.color.g(), b.color.b()),
+        "line_style" => QueryValue::String(format!("{:?}", b.line_style)),
+        "collapsed" => QueryValue::Bool(b.collapsed),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_harness_connector_field(h: &api::HarnessConnector, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(h.unique_id.clone()),
+        "x" => QueryValue::Coord(h.location.x.raw()),
+        "y" => QueryValue::Coord(h.location.y.raw()),
+        "x_size" => QueryValue::Coord(h.x_size.raw()),
+        "y_size" => QueryValue::Coord(h.y_size.raw()),
+        "color" => QueryValue::Color(h.color.r(), h.color.g(), h.color.b()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_signal_harness_field(s: &api::SignalHarness, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(s.unique_id.clone()),
+        "color" => QueryValue::Color(s.color.r(), s.color.g(), s.color.b()),
+        "line_width" => QueryValue::String(format!("{:?}", s.line_width)),
         _ => QueryValue::Null,
     }
 }
