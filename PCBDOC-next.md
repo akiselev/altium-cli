@@ -374,22 +374,370 @@ milestone with its own format investigation.
 
 ---
 
-## Summary: Expected Outcome After Fixes
+## Status: All V6 Bugs Fixed
 
-| Bug | Fix complexity | Files fixed | New total |
-|-----|---------------|-------------|-----------|
-| #1 EmbeddedFonts6 | Small (conditional read) | +7 | 92/95 V6 |
-| #2 WideStrings6 sentinel | Small (sentinel check) | +1 directly, +27 silently fixed | 93/95 V6 |
-| #3 Arc radius validation | Trivial (relax check) | +1 | 94/95 V6 |
-| #4 V5 format | Large (deferred) | 0 (2 V5 files) | — |
+All bugs #1-#3 have been implemented. Bug #4 (V5 format) is deferred.
 
-After bugs #1-#3: **94/95 V6 files (99%)** should pass, with only the 2 V5 files
-remaining as a separate format version issue.
+**Current result: 94/96 non-ASCII PcbDoc files pass (97.9%).**
 
-### Implementation order
+The only 2 remaining failures are V5-format files (`fingerprint-lock-v2as`, `stm32f103-core`).
 
-All three fixes are independent and can be implemented in parallel:
+Additionally, all **38 persistable DRC violation types** are now registered in
+`ParamSectionKind`, future-proofing against files containing any Altium DRC result.
 
-1. **Bug #3 (Arc radius)** — one-line change, zero risk
-2. **Bug #2 (WideStrings6)** — small targeted fix, removes dead code
-3. **Bug #1 (EmbeddedFonts6)** — struct change + conditional logic in two parsers
+---
+
+## Research: High-Level API Types for DRC Rules and Violations
+
+This section documents the data model for a future typed API over PcbDoc DRC rules
+and violations, based on the C# decompiled source (`AD26-dotnet/`).
+
+### Overview
+
+The DRC system has three interconnected concepts:
+
+```
+IPCB_Rule (stored in Rules6 section)
+    ↓ referenced by RULEINDEX
+IPCB_Violation (stored in T*Violation sections)
+    ↓ references primitives by PRIM1ID/PRIM1INDEX
+IPCB_Primitive (stored in Arcs6, Pads6, Tracks6, etc.)
+```
+
+### TRuleKind Enum (70 variants, u8)
+
+Defined in `AD26-dotnet/Altium.Edp.Interfaces/RT_PCB/TRuleKind.cs`. Each rule kind
+has a string identifier used in the `RULEKIND=` parameter (from `Consts.cs` lines 1121-1192).
+
+```
+ 0  eRule_Clearance                    → "Clearance"
+ 1  eRule_ParallelSegment              → "ParallelSegment"
+ 2  eRule_MaxMinWidth                  → "Width"
+ 3  eRule_MaxMinLength                 → "Length"
+ 4  eRule_MatchedLengths               → "MatchedLengths"
+ 5  eRule_DaisyChainStubLength         → "StubLength"
+ 6  eRule_PowerPlaneConnectStyle       → "PlaneConnect"
+ 7  eRule_RoutingTopology              → "RoutingTopology"
+ 8  eRule_RoutingPriority              → "RoutingPriority"
+ 9  eRule_RoutingLayers                → "RoutingLayers"
+10  eRule_RoutingCornerStyle           → "RoutingCorners"
+11  eRule_RoutingViaStyle              → "RoutingVias"
+12  eRule_PowerPlaneClearance          → "PlaneClearance"
+13  eRule_SolderMaskExpansion          → "SolderMaskExpansion"
+14  eRule_PasteMaskExpansion           → "PasteMaskExpansion"
+15  eRule_ShortCircuit                 → "ShortCircuit"
+16  eRule_BrokenNets                   → "UnRoutedNet"
+17  eRule_ViasUnderSMD                 → "ViasUnderSMD"
+18  eRule_MaximumViaCount              → "MaximumViaCount"
+19  eRule_MinimumAnnularRing           → "MinimumAnnularRing"
+20  eRule_PolygonConnectStyle          → "PolygonConnect"
+21  eRule_AcuteAngle                   → "AcuteAngle"
+22  eRule_ConfinementConstraint        → "RoomDefinition"
+23  eRule_SMDToCorner                  → "SMDToCorner"
+24  eRule_ComponentClearance           → "ComponentClearance"
+25  eRule_ComponentRotations           → "ComponentOrientations"
+26  eRule_PermittedLayers              → "PermittedLayers"
+27  eRule_NetsToIgnore                 → "NetsToIgnore"
+28  eRule_SignalStimulus               → "SignalStimulus"
+29  eRule_Overshoot_FallingEdge        → "OvershootFalling"
+30  eRule_Overshoot_RisingEdge         → "OvershootRising"
+31  eRule_Undershoot_FallingEdge       → "UndershootFalling"
+32  eRule_Undershoot_RisingEdge        → "UndershootRising"
+33  eRule_MaxMinImpedance              → "MaxMinImpedance"
+34  eRule_SignalTopValue               → "SignalTopValue"
+35  eRule_SignalBaseValue              → "SignalBaseValue"
+36  eRule_FlightTime_RisingEdge        → "FlightTimeRising"
+37  eRule_FlightTime_FallingEdge       → "FlightTimeFalling"
+38  eRule_LayerStack                   → "LayerStack"
+39  eRule_MaxSlope_RisingEdge          → "SlopeRising"
+40  eRule_MaxSlope_FallingEdge         → "SlopeFalling"
+41  eRule_SupplyNets                   → "SupplyNets"
+42  eRule_MaxMinHoleSize               → "HoleSize"
+43  eRule_TestPointStyle               → "FabricationTestpoint"
+44  eRule_TestPointUsage               → "FabricationTestPointUsage"
+45  eRule_UnconnectedPin               → "UnConnectedPin"
+46  eRule_SMDToPlane                   → "SMDToPlane"
+47  eRule_SMDNeckDown                  → "SMDNeckDown"
+48  eRule_LayerPair                    → "LayerPairs"
+49  eRule_FanoutControl                → "FanoutControl"
+50  eRule_MaxMinHeight                 → "Height"
+51  eRule_DifferentialPairsRouting     → "DiffPairsRouting"
+52  eRule_HoleToHoleClearance          → "HoleToHoleClearance"
+53  eRule_MinimumSolderMaskSliver      → "MinimumSolderMaskSliver"
+54  eRule_SilkToSolderMaskClearance    → "SilkToSolderMaskClearance"
+55  eRule_SilkToSilkClearance          → "SilkToSilkClearance"
+56  eRule_NetAntennae                  → "NetAntennae"
+57  eRule_AssyTestPointStyle           → "AssemblyTestpoint"
+58  eRule_AssyTestPointUsage           → "AssemblyTestPointUsage"
+59  eRule_SilkToBoardRegion            → "SilkToBoardRegionClearance"
+60  eRule_SMDPADEntry                  → "SMDEntry"
+61  eRule_None                         → "None"
+62  eRule_ModifiedPolygon              → "UnpouredPolygon"
+63  eRule_BoardOutlineClearance        → "BoardOutlineClearance"
+64  eRule_BackDrilling                 → "BackDrilling"
+65  eRule_Creepage                     → "Creepage"
+66  eRule_ReturnPath                   → "ReturnPath"
+67  eRule_RoutingNeckDown              → "RoutingNeckDown"
+68  eRule_Wirebonding                  → "WireBonding"
+69  eRule_ZAxisClearance               → "ZAxisClearance"
+```
+
+### Rules6 Section Format
+
+Rules are stored as **PrefixedParamRecords** (u16 prefix + block-encoded `|KEY=VALUE|`).
+Currently parsed at the `PrefixedParamSectionKind::Rules6` level.
+
+**Common rule parameters** (all rule types):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `RULEKIND` | string | Rule type string from table above |
+| `NETSCOPE` | string | `"AnyNet"`, `"DifferentNets"`, `"SameNetOnly"`, etc. |
+| `LAYERKIND` | string | `"SameLayer"` or `"AdjacentLayer"` |
+| `SCOPE1EXPRESSION` | string | Scope 1 query (e.g. `"All"`, `"HasFootprint('QFP')"`) |
+| `SCOPE2EXPRESSION` | string | Scope 2 query (unary rules use `"All"`) |
+| `NAME` | string | Unique rule name (e.g. `"Clearance_1"`) |
+| `ENABLED` | bool | `"TRUE"` or `"FALSE"` |
+| `PRIORITY` | u16 | Priority (lower = higher priority) |
+| `COMMENT` | string | User comment |
+| `UNIQUEID` | string | 8-char unique ID |
+| `DEFINEDBYLOGICALDOCUMENT` | bool | Whether rule came from schematic |
+
+**Rule-type-specific parameters** (examples):
+
+| Rule Type | Extra Parameters |
+|-----------|-----------------|
+| Clearance | `GAP`, `GENERICCLEARANCE`, `OBJECTCLEARANCES`, `IGNOREPADTOPADCLEARANCEINFOOTPRINT` |
+| Width | `MINWIDTH`, `MAXWIDTH`, `PREFERREDWIDTH` |
+| HoleSize | `MINHOLESIZE`, `MAXHOLESIZE` |
+| PolygonConnect | `CONNECTSTYLE`, `RELIEFCONDUCTORWIDTH`, `RELIEFENTRIES`, `POLYGONRELIEFANGLE`, `AIRGAPWIDTH` |
+| RoutingVias | `VIATEMPLATENAME`, `DIAMETER`, `HOLESIZE` |
+| DiffPairsRouting | `PREFERREDGAP`, `MAXGAP`, `MINGAP` |
+| Height | `MINHEIGHT`, `MAXHEIGHT` |
+
+### Violation Storage Format
+
+All 38 violation types share the same CFB storage layout:
+
+- **Storage name**: Delphi class name (e.g. `/TClearanceViolation/`)
+- **Header stream**: 4-byte u32le record count
+- **Data stream**: standard block-encoded `|KEY=VALUE|` param records
+
+**Common violation parameters** (all violation types):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `SELECTION` | bool | Always `"FALSE"` |
+| `LAYER` | string | Layer name (e.g. `"TOP"`, `"MULTILAYER"`) |
+| `LOCKED` | bool | Always `"FALSE"` |
+| `POLYGONOUTLINE` | bool | Always `"FALSE"` |
+| `USERROUTED` | bool | Usually `"TRUE"` |
+| `KEEPOUT` | bool | Always `"FALSE"` |
+| `UNIONINDEX` | u32 | Union index (0 = none) |
+| `RULEINDEX` | u32 | **Index into Rules6** linking to the rule |
+| `PRIM1ID` | string | First primitive type (`"Via"`, `"Pad"`, `"Track"`, etc.) |
+| `PRIM1INDEX` | u32 | Index into that primitive's section |
+| `PRIM2ID` | string | Second primitive type (binary violations only) |
+| `PRIM2INDEX` | u32 | Index (binary violations only) |
+| `DESCRIPTION` | string | Human-readable violation description |
+| `INVOLVEDPRIMCOUNT` | u32 | Count of additional involved primitives |
+
+**Location parameters vary by violation subtype:**
+
+| Pattern | Used By |
+|---------|---------|
+| `LOCATION1.X/Y`, `LOCATION2.X/Y` | Clearance, HoleToHole, ComponentClearance, MaxMinViaHoleSize, MaxMinPadSlotWidth |
+| `FX1/FY1`, `FX2/FY2` | DisconnectedSubnets |
+| `LOCATION.X/Y`, `CIRCLERADIUS` | NetAntennae, SMDPADEntry |
+| `VX1/VY1`, `VX2/VY2`, `VX3/VY3`, `VX4/VY4` | ShortCircuit (area) |
+| (none) | ModifiedPolygon, RoutingViaStyle (description only) |
+
+### Violation-to-Rule Linkage
+
+Violations reference rules by index: `RULEINDEX=N` → `Rules6[N]`. At runtime,
+`IPCB_Violation.GetState_Rule()` returns the corresponding `IPCB_Rule` object.
+
+### Supporting Enums
+
+**TNetScope** (5 variants):
+```
+0  eNetScope_DifferentNetsOnly  → "DifferentNets"
+1  eNetScope_SameNetOnly        → "SameNetOnly"
+2  eNetScope_AnyNet             → "AnyNet"
+3  eNetScope_DifferentDiffPairsOnly → "DifferentPairs"
+4  eNetScope_SameDiffPairOnly   → "SameDiffPairs"
+```
+
+**TRuleLayerKind** (2 variants):
+```
+0  eRuleLayerKind_SameLayer     → "SameLayer"
+1  eRuleLayerKind_AdjacentLayer → "AdjacentLayer"
+```
+
+### Proposed API Types for `altium-format-types`
+
+```rust
+/// DRC rule kind — discriminant for rule-type-specific parameters.
+/// Source: TRuleKind enum (AD26-dotnet Altium.Edp.Interfaces/RT_PCB/TRuleKind.cs)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PcbRuleKind {
+    Clearance = 0,
+    ParallelSegment = 1,
+    MaxMinWidth = 2,
+    MaxMinLength = 3,
+    MatchedLengths = 4,
+    DaisyChainStubLength = 5,
+    PowerPlaneConnectStyle = 6,
+    RoutingTopology = 7,
+    RoutingPriority = 8,
+    RoutingLayers = 9,
+    RoutingCornerStyle = 10,
+    RoutingViaStyle = 11,
+    PowerPlaneClearance = 12,
+    SolderMaskExpansion = 13,
+    PasteMaskExpansion = 14,
+    ShortCircuit = 15,
+    BrokenNets = 16,
+    ViasUnderSMD = 17,
+    MaximumViaCount = 18,
+    MinimumAnnularRing = 19,
+    PolygonConnectStyle = 20,
+    AcuteAngle = 21,
+    ConfinementConstraint = 22,
+    SMDToCorner = 23,
+    ComponentClearance = 24,
+    ComponentRotations = 25,
+    PermittedLayers = 26,
+    NetsToIgnore = 27,
+    SignalStimulus = 28,
+    OvershootFallingEdge = 29,
+    OvershootRisingEdge = 30,
+    UndershootFallingEdge = 31,
+    UndershootRisingEdge = 32,
+    MaxMinImpedance = 33,
+    SignalTopValue = 34,
+    SignalBaseValue = 35,
+    FlightTimeRisingEdge = 36,
+    FlightTimeFallingEdge = 37,
+    LayerStack = 38,
+    MaxSlopeRisingEdge = 39,
+    MaxSlopeFallingEdge = 40,
+    SupplyNets = 41,
+    MaxMinHoleSize = 42,
+    TestPointStyle = 43,
+    TestPointUsage = 44,
+    UnconnectedPin = 45,
+    SMDToPlane = 46,
+    SMDNeckDown = 47,
+    LayerPair = 48,
+    FanoutControl = 49,
+    MaxMinHeight = 50,
+    DifferentialPairsRouting = 51,
+    HoleToHoleClearance = 52,
+    MinimumSolderMaskSliver = 53,
+    SilkToSolderMaskClearance = 54,
+    SilkToSilkClearance = 55,
+    NetAntennae = 56,
+    AssyTestPointStyle = 57,
+    AssyTestPointUsage = 58,
+    SilkToBoardRegion = 59,
+    SMDPADEntry = 60,
+    None = 61,
+    ModifiedPolygon = 62,
+    BoardOutlineClearance = 63,
+    BackDrilling = 64,
+    Creepage = 65,
+    ReturnPath = 66,
+    RoutingNeckDown = 67,
+    Wirebonding = 68,
+    ZAxisClearance = 69,
+}
+
+/// Net scope for DRC rule applicability.
+/// Source: TNetScope (AD26-dotnet)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PcbNetScope {
+    DifferentNetsOnly = 0,
+    SameNetOnly = 1,
+    AnyNet = 2,
+    DifferentDiffPairsOnly = 3,
+    SameDiffPairOnly = 4,
+}
+
+/// Layer applicability for DRC rules.
+/// Source: TRuleLayerKind (AD26-dotnet)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PcbRuleLayerKind {
+    SameLayer = 0,
+    AdjacentLayer = 1,
+}
+
+/// DRC violation storage type — identifies which T*Violation section a
+/// violation record belongs to. Each variant corresponds to a Delphi class
+/// name used as the CFB storage name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PcbViolationKind {
+    AcuteAngle,
+    BackDrill,
+    BoardOutlineClearance,
+    Clearance,
+    ComponentClearance,
+    Creepage,
+    DiffPairs,
+    DisconnectedSubnets,
+    HoleToHole,
+    MatchedNetLengths,
+    MaximumViaCount,
+    MaxMinComponentHeight,
+    MaxMinLength,
+    MaxMinPadSlotWidth,
+    MaxMinViaHoleSize,
+    MinimumAnnularRing,
+    MinSolderMaskSliver,
+    MinWidth,
+    ModifiedPolygon,
+    NetAntennae,
+    PadUnderSMD,
+    ParallelSegment,
+    ReturnPath,
+    RoutingNeckDown,
+    RoutingViaStyle,
+    ShortCircuit,
+    SilkToBoardRegionClearance,
+    SilkToSilkClearance,
+    SilkToSolderMaskClearance,
+    SMDNeckDown,
+    SMDPADEntry,
+    SMDToCorner,
+    TestPoint,
+    UnconnectedPin,
+    ViaUnderSMD,
+    WirebondLength,
+    WirebondWireToWire,
+    ZAxisClearance,
+}
+```
+
+### Notes for Implementation
+
+1. **`PcbRuleKind` string serialization**: Must use the `RULEKIND=` string mapping
+   from the table above (NOT the enum variant names). E.g. `MaxMinWidth` → `"Width"`,
+   `BrokenNets` → `"UnRoutedNet"`. This is a non-obvious mapping — a `to_rule_kind_str()`
+   / `from_rule_kind_str()` pair is essential.
+
+2. **Rule-type-specific parameters**: Each `PcbRuleKind` has its own set of extra
+   `|KEY=VALUE|` parameters. A full typed API would need per-kind structs or an enum
+   dispatch, but for initial implementation, storing all params as a
+   `ParameterCollection` and dispatching on `PcbRuleKind` for typed access is sufficient.
+
+3. **Violation-to-Rule cross-reference**: `RULEINDEX` is a u32 index into `Rules6`.
+   The API should expose this as a typed reference, not a raw integer.
+
+4. **`PcbViolationKind` maps to `ParamSectionKind`**: The violation kind can be
+   derived from the section kind (stripping `T` prefix and `Violation` suffix) or
+   maintained as a separate enum with a mapping function. It represents the semantic
+   meaning (what DRC check failed), vs `ParamSectionKind` which represents the storage
+   location.

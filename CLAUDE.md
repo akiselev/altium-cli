@@ -36,6 +36,9 @@ capture, no opaque blobs. If our parser encounters data it doesn't understand, t
 bug in our code that must be fixed -- never silently skipped. These files control PCB
 fabrication; a silently dropped field could cost thousands of dollars.
 
+Keep STATUS.md updated with the state of the codebase whenever you implement something.
+
+
 ## CARDINAL RULE: NEVER RETAIN OPAQUE FORMAT DATA
 
 This rule is non-negotiable and overrides convenience during implementation:
@@ -361,3 +364,5 @@ We want to support the last few legacy versions of file formats but like Altium 
 # TESTS
 
 DO NOT RUN text-fixture TESTS AND proptest TESTS UNLESS EXPLICITLY ASKED TO.
+
+Keep STATUS.md updated with the state of the codebase whenever you implement something.
