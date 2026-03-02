@@ -131,6 +131,8 @@ fn type_name(ts: TypeSelector) -> &'static str {
         TypeSelector::Blanket => "blanket",
         TypeSelector::HarnessConnector => "harness_connector",
         TypeSelector::SignalHarness => "signal_harness",
+        TypeSelector::SheetEntry => "sheet_entry",
+        TypeSelector::ParameterSet => "parameter_set",
     }
 }
 
@@ -180,6 +182,8 @@ pub fn fields_for_type(ts: TypeSelector) -> &'static [FieldDef] {
         TypeSelector::Blanket => BLANKET_FIELDS,
         TypeSelector::HarnessConnector => HARNESS_CONNECTOR_FIELDS,
         TypeSelector::SignalHarness => SIGNAL_HARNESS_FIELDS,
+        TypeSelector::SheetEntry => SHEET_ENTRY_FIELDS,
+        TypeSelector::ParameterSet => PARAMETER_SET_FIELDS,
     }
 }
 
@@ -493,6 +497,29 @@ static SIGNAL_HARNESS_FIELDS: &[FieldDef] = &[
     FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
     FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
     FieldDef { canonical_name: "line_width", aliases: &["LineWidth"], field_type: FieldType::Enum },
+];
+
+static SHEET_ENTRY_FIELDS: &[FieldDef] = &[
+    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
+    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
+    FieldDef { canonical_name: "io_type", aliases: &["IoType", "IOType"], field_type: FieldType::Enum },
+    FieldDef { canonical_name: "side", aliases: &["Side"], field_type: FieldType::Enum },
+    FieldDef { canonical_name: "distance_from_top", aliases: &["DistanceFromTop"], field_type: FieldType::Coord },
+    FieldDef { canonical_name: "style", aliases: &["Style"], field_type: FieldType::Enum },
+    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
+    FieldDef { canonical_name: "area_color", aliases: &["AreaColor"], field_type: FieldType::Color },
+    FieldDef { canonical_name: "text_color", aliases: &["TextColor"], field_type: FieldType::Color },
+    FieldDef { canonical_name: "text_font_id", aliases: &["TextFontId", "FontId"], field_type: FieldType::Integer },
+];
+
+static PARAMETER_SET_FIELDS: &[FieldDef] = &[
+    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
+    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
+    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
+    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
+    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
+    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
+    FieldDef { canonical_name: "style", aliases: &["Style"], field_type: FieldType::Integer },
 ];
 
 #[cfg(test)]

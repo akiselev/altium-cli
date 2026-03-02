@@ -185,14 +185,11 @@ fn matches_base_selector(
             }
         }
 
-        BaseSelector::NetName(_) => {
-            // Net names not yet supported (no net API)
-            Err(QueryError::new(
-                QueryErrorCode::Unsupported,
-                "net name queries (~name) are not yet supported",
-            )
-            .with_span(base.span)
-            .with_help("net queries require a net API which is not yet implemented"))
+        BaseSelector::NetName(name) => {
+            match node.net_name() {
+                Some(nn) => Ok(nn.eq_ignore_ascii_case(name)),
+                None => Ok(false),
+            }
         }
 
         BaseSelector::RecordId(_) => {
@@ -613,14 +610,14 @@ mod tests {
     }
 
     #[test]
-    fn test_eval_net_name_unsupported() {
+    fn test_eval_net_name() {
         let doc = MockDoc {
             components: vec![make_test_component()],
         };
+        // ~VCC matches no nodes in a SchLib mock (no NetLabel/PowerObject/Port/SheetEntry)
         let query = parse_query("~VCC").unwrap();
-        let result = eval_query(&query, &doc);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, QueryErrorCode::Unsupported);
+        let results = eval_query(&query, &doc).unwrap();
+        assert_eq!(results.len(), 0);
     }
 
     #[test]

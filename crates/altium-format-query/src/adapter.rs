@@ -38,6 +38,8 @@ pub enum QueryNode {
     Blanket(api::Blanket),
     HarnessConnector(api::HarnessConnector),
     SignalHarness(api::SignalHarness),
+    SheetEntry(api::SheetEntry),
+    ParameterSet(api::ParameterSet),
 }
 
 /// A matched result from query evaluation.
@@ -106,11 +108,7 @@ impl Queryable for SchDoc {
                 // Sheet-level graphics and parameters are leaf nodes
                 api::SheetObject::Graphic(g) => nodes.push(QueryNode::Graphic(g)),
                 api::SheetObject::Parameter(p) => nodes.push(QueryNode::Parameter(p)),
-                // ParameterSet: expose as a node; its parameters are children
-                api::SheetObject::ParameterSet(_ps) => {
-                    // ParameterSet is not currently a QueryNode variant;
-                    // its child parameters are not exposed at the top level
-                }
+                api::SheetObject::ParameterSet(ps) => nodes.push(QueryNode::ParameterSet(ps)),
             }
         }
         Ok(nodes)
@@ -146,6 +144,8 @@ impl QueryNode {
             QueryNode::Blanket(_) => TypeSelector::Blanket,
             QueryNode::HarnessConnector(_) => TypeSelector::HarnessConnector,
             QueryNode::SignalHarness(_) => TypeSelector::SignalHarness,
+            QueryNode::SheetEntry(_) => TypeSelector::SheetEntry,
+            QueryNode::ParameterSet(_) => TypeSelector::ParameterSet,
         }
     }
 
@@ -226,8 +226,8 @@ impl QueryNode {
                 let mut children = Vec::new();
                 for child in &s.children {
                     match child {
-                        api::SheetSymbolChild::Entry(_) => {
-                            // SheetEntry is not currently a QueryNode variant
+                        api::SheetSymbolChild::Entry(e) => {
+                            children.push(QueryNode::SheetEntry(e.clone()));
                         }
                         api::SheetSymbolChild::Parameter(p) => {
                             children.push(QueryNode::Parameter(p.clone()));
@@ -235,6 +235,26 @@ impl QueryNode {
                     }
                 }
                 children
+            }
+            QueryNode::HarnessConnector(h) => {
+                let mut children = Vec::new();
+                for child in &h.children {
+                    match child {
+                        api::HarnessChild::Entry(e) => {
+                            children.push(QueryNode::SheetEntry(e.clone()));
+                        }
+                        api::HarnessChild::Parameter(p) => {
+                            children.push(QueryNode::Parameter(p.clone()));
+                        }
+                        api::HarnessChild::ConnectorType(_) => {
+                            // ConnectorType is a string, not a queryable entity
+                        }
+                    }
+                }
+                children
+            }
+            QueryNode::ParameterSet(ps) => {
+                ps.parameters.iter().map(|p| QueryNode::Parameter(p.clone())).collect()
             }
             // Leaf nodes have no children
             _ => Vec::new(),
@@ -279,6 +299,8 @@ impl QueryNode {
             QueryNode::Blanket(b) => get_blanket_field(b, name),
             QueryNode::HarnessConnector(h) => get_harness_connector_field(h, name),
             QueryNode::SignalHarness(s) => get_signal_harness_field(s, name),
+            QueryNode::SheetEntry(e) => get_sheet_entry_field(e, name),
+            QueryNode::ParameterSet(ps) => get_parameter_set_field(ps, name),
         }
     }
 
@@ -312,6 +334,17 @@ impl QueryNode {
         self.get_parameter("Value")
     }
 
+    /// Get the net name associated with this node, if it represents a net-labeling object.
+    pub fn net_name(&self) -> Option<&str> {
+        match self {
+            QueryNode::NetLabel(n) => Some(&n.text),
+            QueryNode::PowerObject(p) => Some(&p.text),
+            QueryNode::Port(p) => Some(&p.name),
+            QueryNode::SheetEntry(e) => Some(&e.name),
+            _ => None,
+        }
+    }
+
     /// Display name for error messages and path building.
     pub fn display_name(&self) -> String {
         match self {
@@ -343,6 +376,8 @@ impl QueryNode {
             QueryNode::Blanket(b) => format!("Blanket '{}'", b.unique_id),
             QueryNode::HarnessConnector(h) => format!("HarnessConnector '{}'", h.unique_id),
             QueryNode::SignalHarness(s) => format!("SignalHarness '{}'", s.unique_id),
+            QueryNode::SheetEntry(e) => format!("SheetEntry '{}'", e.name),
+            QueryNode::ParameterSet(ps) => format!("ParameterSet '{}'", ps.name),
         }
     }
 }
@@ -793,6 +828,35 @@ fn get_signal_harness_field(s: &api::SignalHarness, name: &str) -> QueryValue {
         "unique_id" => QueryValue::String(s.unique_id.clone()),
         "color" => QueryValue::Color(s.color.r(), s.color.g(), s.color.b()),
         "line_width" => QueryValue::String(format!("{:?}", s.line_width)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_sheet_entry_field(e: &api::SheetEntry, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(e.unique_id.clone()),
+        "name" => QueryValue::String(e.name.clone()),
+        "io_type" => QueryValue::String(format!("{:?}", e.io_type)),
+        "side" => QueryValue::String(format!("{:?}", e.side)),
+        "distance_from_top" => QueryValue::Coord(e.distance_from_top.raw()),
+        "style" => QueryValue::String(format!("{:?}", e.style)),
+        "color" => QueryValue::Color(e.color.r(), e.color.g(), e.color.b()),
+        "area_color" => QueryValue::Color(e.area_color.r(), e.area_color.g(), e.area_color.b()),
+        "text_color" => QueryValue::Color(e.text_color.r(), e.text_color.g(), e.text_color.b()),
+        "text_font_id" => QueryValue::Integer(e.text_font_id as i64),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_parameter_set_field(ps: &api::ParameterSet, name: &str) -> QueryValue {
+    match name {
+        "unique_id" => QueryValue::String(ps.unique_id.clone()),
+        "x" => QueryValue::Coord(ps.location.x.raw()),
+        "y" => QueryValue::Coord(ps.location.y.raw()),
+        "color" => QueryValue::Color(ps.color.r(), ps.color.g(), ps.color.b()),
+        "orientation" => QueryValue::String(format!("{:?}", ps.orientation)),
+        "name" => QueryValue::String(ps.name.clone()),
+        "style" => QueryValue::Integer(ps.style as i64),
         _ => QueryValue::Null,
     }
 }

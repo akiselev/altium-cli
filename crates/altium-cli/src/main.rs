@@ -109,9 +109,17 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Show document summary (object counts, net names, hierarchy)
+    Info {
+        /// Path to the document
+        path: PathBuf,
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Query entities in an Altium document using AQL (Altium Query Language)
     Query {
-        /// Path to the document (.SchLib)
+        /// Path to the document (.SchLib, .PcbLib, or .SchDoc)
         path: PathBuf,
         /// AQL query string (e.g., "component > pin:power")
         query: String,
@@ -220,6 +228,12 @@ fn main() -> ExitCode {
         }
         Commands::Dump { document, output } => {
             if let Err(e) = run_dump(&document, output.as_ref()) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Info { path, format } => {
+            if let Err(e) = run_info(&path, &format) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -822,6 +836,236 @@ fn compile_and_resolve(
         .collect();
 
     Ok(CompileResult { model, import_paths })
+}
+
+fn run_info(path: &std::path::Path, format: &str) -> anyhow::Result<()> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    match ext.as_str() {
+        "schdoc" => {
+            let doc = SchDoc::open(path)?;
+            let sheet = doc.sheet()?;
+            run_info_schdoc(path, &sheet, format)
+        }
+        "schlib" => {
+            let lib = SchLib::open(path)?;
+            run_info_schlib(path, &lib, format)
+        }
+        "pcblib" => {
+            let lib = PcbLib::open(path)?;
+            run_info_pcblib(path, &lib, format)
+        }
+        _ => anyhow::bail!(
+            "unsupported file type '.{ext}' for info (supported: .SchDoc, .SchLib, .PcbLib)"
+        ),
+    }
+}
+
+fn run_info_schdoc(
+    path: &std::path::Path,
+    sheet: &altium_format::api::SchDocSheet,
+    format: &str,
+) -> anyhow::Result<()> {
+    use altium_format::api::SheetObject;
+    use std::collections::BTreeSet;
+
+    let mut components = 0u32;
+    let mut wires = 0u32;
+    let mut buses = 0u32;
+    let mut net_labels = 0u32;
+    let mut power_objects = 0u32;
+    let mut ports = 0u32;
+    let mut junctions = 0u32;
+    let mut no_connects = 0u32;
+    let mut bus_entries = 0u32;
+    let mut sheet_symbols = 0u32;
+    let mut notes = 0u32;
+    let mut graphics = 0u32;
+    let mut parameters = 0u32;
+    let mut parameter_sets = 0u32;
+    let mut probes = 0u32;
+    let mut harness_connectors = 0u32;
+    let mut signal_harnesses = 0u32;
+
+    let mut net_names = BTreeSet::new();
+
+    for obj in &sheet.objects {
+        match obj {
+            SheetObject::Component(_) => components += 1,
+            SheetObject::Wire(_) => wires += 1,
+            SheetObject::Bus(_) => buses += 1,
+            SheetObject::NetLabel(n) => {
+                net_labels += 1;
+                net_names.insert(n.text.clone());
+            }
+            SheetObject::PowerObject(p) => {
+                power_objects += 1;
+                net_names.insert(p.text.clone());
+            }
+            SheetObject::Port(_) => ports += 1,
+            SheetObject::Junction(_) => junctions += 1,
+            SheetObject::NoConnect(_) => no_connects += 1,
+            SheetObject::BusEntry(_) => bus_entries += 1,
+            SheetObject::SheetSymbol(_) => sheet_symbols += 1,
+            SheetObject::Note(_) => notes += 1,
+            SheetObject::Graphic(_) => graphics += 1,
+            SheetObject::Parameter(_) => parameters += 1,
+            SheetObject::ParameterSet(_) => parameter_sets += 1,
+            SheetObject::Probe(_) => probes += 1,
+            SheetObject::CompileMask(_) => {}
+            SheetObject::Blanket(_) => {}
+            SheetObject::HarnessConnector(_) => harness_connectors += 1,
+            SheetObject::SignalHarness(_) => signal_harnesses += 1,
+        }
+    }
+
+    if format == "json" {
+        let symbols_json: Vec<serde_json::Value> = sheet.sheet_symbols().iter().map(|s| {
+            serde_json::json!({
+                "file_name": s.file_name,
+                "sheet_name": s.sheet_name,
+            })
+        }).collect();
+
+        let info = serde_json::json!({
+            "document": path.display().to_string(),
+            "type": "Schematic Document",
+            "objects": {
+                "components": components,
+                "wires": wires,
+                "buses": buses,
+                "net_labels": net_labels,
+                "power_objects": power_objects,
+                "ports": ports,
+                "junctions": junctions,
+                "no_connects": no_connects,
+                "bus_entries": bus_entries,
+                "sheet_symbols": sheet_symbols,
+                "notes": notes,
+                "graphics": graphics,
+                "parameters": parameters,
+                "parameter_sets": parameter_sets,
+                "probes": probes,
+                "harness_connectors": harness_connectors,
+                "signal_harnesses": signal_harnesses,
+            },
+            "unique_nets": {
+                "count": net_names.len(),
+                "names": net_names.iter().collect::<Vec<_>>(),
+            },
+            "sheet_hierarchy": symbols_json,
+        });
+        println!("{}", serde_json::to_string_pretty(&info)?);
+    } else {
+        println!("Document: {}", path.display());
+        println!("Type: Schematic Document");
+        println!();
+        println!("Objects:");
+        // Only print non-zero counts to keep output clean
+        let counts: &[(&str, u32)] = &[
+            ("Components", components),
+            ("Wires", wires),
+            ("Buses", buses),
+            ("Net Labels", net_labels),
+            ("Power Objects", power_objects),
+            ("Ports", ports),
+            ("Junctions", junctions),
+            ("No Connects", no_connects),
+            ("Bus Entries", bus_entries),
+            ("Sheet Symbols", sheet_symbols),
+            ("Notes", notes),
+            ("Graphics", graphics),
+            ("Parameters", parameters),
+            ("Parameter Sets", parameter_sets),
+            ("Probes", probes),
+            ("Harness Connectors", harness_connectors),
+            ("Signal Harnesses", signal_harnesses),
+        ];
+        for (label, count) in counts {
+            if *count > 0 {
+                println!("  {label:20} {count:>5}");
+            }
+        }
+
+        if !net_names.is_empty() {
+            println!();
+            println!("Unique Nets: {}", net_names.len());
+            let names_vec: Vec<&String> = net_names.iter().collect();
+            let preview: Vec<&str> = names_vec.iter().take(10).map(|s| s.as_str()).collect();
+            let display = preview.join(", ");
+            if net_names.len() > 10 {
+                println!("  {display}, ...");
+            } else {
+                println!("  {display}");
+            }
+        }
+
+        let symbols = sheet.sheet_symbols();
+        if !symbols.is_empty() {
+            println!();
+            println!("Sheet Hierarchy:");
+            for s in &symbols {
+                println!("  {} ({})", s.file_name, s.sheet_name);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_info_schlib(
+    path: &std::path::Path,
+    lib: &SchLib,
+    format: &str,
+) -> anyhow::Result<()> {
+    let names = lib.component_names();
+    if format == "json" {
+        let info = serde_json::json!({
+            "document": path.display().to_string(),
+            "type": "Schematic Library",
+            "component_count": names.len(),
+            "components": names,
+        });
+        println!("{}", serde_json::to_string_pretty(&info)?);
+    } else {
+        println!("Document: {}", path.display());
+        println!("Type: Schematic Library");
+        println!();
+        println!("Components: {}", names.len());
+        for name in &names {
+            println!("  {name}");
+        }
+    }
+    Ok(())
+}
+
+fn run_info_pcblib(
+    path: &std::path::Path,
+    lib: &PcbLib,
+    format: &str,
+) -> anyhow::Result<()> {
+    let names = lib.footprint_names();
+    if format == "json" {
+        let info = serde_json::json!({
+            "document": path.display().to_string(),
+            "type": "PCB Library",
+            "footprint_count": names.len(),
+            "footprints": names,
+        });
+        println!("{}", serde_json::to_string_pretty(&info)?);
+    } else {
+        println!("Document: {}", path.display());
+        println!("Type: PCB Library");
+        println!();
+        println!("Footprints: {}", names.len());
+        for name in &names {
+            println!("  {name}");
+        }
+    }
+    Ok(())
 }
 
 fn run_query(

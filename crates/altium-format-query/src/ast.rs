@@ -208,12 +208,14 @@ pub enum TypeSelector {
     NoConnect,
     BusEntry,
     SheetSymbol,
+    SheetEntry,
     Note,
     Probe,
     CompileMask,
     Blanket,
     HarnessConnector,
     SignalHarness,
+    ParameterSet,
 }
 
 impl TypeSelector {
@@ -262,6 +264,8 @@ impl TypeSelector {
         ("blanket", TypeSelector::Blanket),
         ("harness_connector", TypeSelector::HarnessConnector),
         ("signal_harness", TypeSelector::SignalHarness),
+        ("sheet_entry", TypeSelector::SheetEntry),
+        ("parameter_set", TypeSelector::ParameterSet),
     ];
 
     /// Try to parse a type selector from a keyword string (case-insensitive).
