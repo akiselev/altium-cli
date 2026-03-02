@@ -315,13 +315,8 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
         let rotation: f64 = params
             .remove_with_default("ROTATION", 0.0)
             .context("Components6 rotation")?;
-        let layer_raw: u8 = params
-            .remove_with_default("LAYER", 1u8)
+        let layer = parse_layer_param(&mut params, V6Layer::TopLayer)
             .context("Components6 layer")?;
-        let layer = match altium_format_types::pcb::V6Layer::try_from(layer_raw) {
-            Ok(v6) => LayerRef::from_v6(v6),
-            Err(_) => LayerRef::from_v6(altium_format_types::pcb::V6Layer::TopLayer),
-        };
 
         let id = designator.clone();
         components.push(PcbDocComponent {
@@ -359,13 +354,8 @@ fn convert_polygons(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<Polygon>> 
         } else {
             None
         };
-        let layer_raw: u8 = params
-            .remove_with_default("LAYER", 1u8)
+        let layer = parse_layer_param(&mut params, V6Layer::TopLayer)
             .context("Polygons6 layer")?;
-        let layer = match altium_format_types::pcb::V6Layer::try_from(layer_raw) {
-            Ok(v6) => LayerRef::from_v6(v6),
-            Err(_) => LayerRef::from_v6(altium_format_types::pcb::V6Layer::TopLayer),
-        };
         let connect_style_raw: u8 = params
             .remove_with_default("CONNECTSTYLE", 1u8)
             .context("Polygons6 connect style")?;
@@ -518,13 +508,8 @@ fn convert_dimensions(doc: &PcbDoc) -> Result<Vec<Dimension>> {
             .remove_with_default("DIMENSIONKIND", 0u8)
             .context("Dimensions6 kind")?;
         let kind = DimensionKind::try_from(kind_raw).unwrap_or(DimensionKind::NoDimension);
-        let layer_raw: u8 = params
-            .remove_with_default("LAYER", 0u8)
+        let layer = parse_layer_param(&mut params, V6Layer::NoLayer)
             .context("Dimensions6 layer")?;
-        let layer = match altium_format_types::pcb::V6Layer::try_from(layer_raw) {
-            Ok(v6) => LayerRef::from_v6(v6),
-            Err(_) => LayerRef::from_v6(altium_format_types::pcb::V6Layer::NoLayer),
-        };
         let text_x: i32 = params
             .remove_with_default("TEXTX", 0)
             .context("Dimensions6 text_x")?;
@@ -795,14 +780,14 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
             settings.signal_layer_count = params
                 .remove_with_default("SIGNALLAYERCOUNT", 2)
                 .context("Board6 signal layer count")?;
-            let snap: i32 = params
-                .remove_with_default("SNAPGRIDSIZE", 100_000)
+            let snap: f64 = params
+                .remove_with_default("SNAPGRIDSIZE", 100_000.0)
                 .context("Board6 snap grid size")?;
-            settings.snap_grid_size = Coord::from_internal(snap);
-            let vis: i32 = params
-                .remove_with_default("VISIBLEGRIDSIZE", 100_000)
+            settings.snap_grid_size = Coord::from_internal(snap.round() as i32);
+            let vis: f64 = params
+                .remove_with_default("VISIBLEGRIDSIZE", 100_000.0)
                 .context("Board6 visible grid size")?;
-            settings.visible_grid_size = Coord::from_internal(vis);
+            settings.visible_grid_size = Coord::from_internal(vis.round() as i32);
             let unit_raw: u8 = params
                 .remove_with_default("DISPLAYUNIT", 1u8)
                 .context("Board6 display unit")?;
@@ -1325,3 +1310,35 @@ fn extract_board_geometry(internal_regions: &[&PcbRegion]) -> BoardGeometry {
 }
 
 // contour_to_pcb_contour is imported from pcb_common
+
+/// Parse a LAYER parameter that may be either a numeric V6 layer ID (e.g. "1")
+/// or a string layer name (e.g. "TopLayer", "MULTILAYER", "TOP").
+/// Falls back to `default` if the key is absent or the name is unrecognized.
+fn parse_layer_param(
+    params: &mut crate::param_collection::ParameterCollection,
+    default: V6Layer,
+) -> Result<LayerRef> {
+    let raw: String = params
+        .remove_with_default("LAYER", String::new())?;
+    if raw.is_empty() {
+        return Ok(LayerRef::from_v6(default));
+    }
+    // Try numeric V6 layer ID first.
+    if let Ok(id) = raw.parse::<u8>() {
+        return Ok(match V6Layer::try_from(id) {
+            Ok(v6) => LayerRef::from_v6(v6),
+            Err(_) => LayerRef::from_v6(default),
+        });
+    }
+    // Try canonical layer name lookup (case-insensitive, e.g. "TopLayer", "MULTILAYER").
+    if let Some(layer) = LayerRef::from_string_name(&raw) {
+        return Ok(layer);
+    }
+    // Try abbreviated names used in some newer Altium files (e.g. "TOP", "BOTTOM").
+    let layer = match raw.to_ascii_uppercase().as_str() {
+        "TOP" => LayerRef::from_v6(V6Layer::TopLayer),
+        "BOTTOM" => LayerRef::from_v6(V6Layer::BottomLayer),
+        _ => LayerRef::from_v6(default),
+    };
+    Ok(layer)
+}
