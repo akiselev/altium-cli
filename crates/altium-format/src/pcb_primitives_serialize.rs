@@ -12,6 +12,18 @@ use crate::pcblib::{
 use crate::pcblib::primitives::component_body::{encode_identifier, format_scientific_float};
 use crate::Result;
 
+/// Converts a `ParameterCollection` to bytes without a leading `|` pipe.
+///
+/// PCB primitive binary records store params as `KEY=VAL|KEY=VAL|\0` (no leading pipe),
+/// unlike schematic text blocks which use `|KEY=VAL|KEY=VAL|\0`.
+fn params_to_pcb_bytes(params: &crate::param_collection::ParameterCollection) -> Vec<u8> {
+    let mut bytes = params.to_bytes();
+    if bytes.first() == Some(&b'|') {
+        bytes.remove(0);
+    }
+    bytes
+}
+
 /// Formats a `Coord` as an Altium mil string, stripping unnecessary trailing zeros.
 ///
 /// Altium writes mil values with minimal precision: `0mil`, `0.5mil`, `47.744mil`.
@@ -414,7 +426,7 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     if !p.layer_stack_id.is_empty() {
         params.insert("LAYERSTACKID", p.layer_stack_id.clone());
     }
-    let pbytes = params.to_bytes();
+    let pbytes = params_to_pcb_bytes(&params);
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
     write_contour(&mut w, &p.outline);
@@ -451,7 +463,9 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     params.insert("TEXTURESIZEX", format_mil(p.texture_size_x));
     params.insert("TEXTURESIZEY", format_mil(p.texture_size_y));
     params.insert("TEXTUREROTATION", format_scientific_float(p.texture_rotation));
-    params.insert("BODYOVERRIDECOLOR", if p.body_override_color { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    if p.body_override_color {
+        params.insert("BODYOVERRIDECOLOR", "TRUE".to_owned());
+    }
     params.insert("MODELID", p.model_guid.clone());
     params.insert("MODEL.CHECKSUM", p.model_checksum.clone());
     params.insert("MODEL.EMBED", if p.model_embed { "TRUE".to_owned() } else { "FALSE".to_owned() });
@@ -464,7 +478,9 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     params.insert("MODEL.3D.ROTZ", format!("{:.3}", p.rotation_z));
     params.insert("MODEL.3D.DZ", format_mil(p.model_3d_dz));
     params.insert("MODEL.MODELTYPE", p.model_type.to_string());
-    params.insert("MODEL.MODELSOURCE", p.model_source.clone());
+    if !p.model_source.is_empty() {
+        params.insert("MODEL.MODELSOURCE", p.model_source.clone());
+    }
     params.insert("MODEL.SNAPCOUNT", p.model_snap_points.len().to_string());
     for (i, (sx, sy, sz)) in p.model_snap_points.iter().enumerate() {
         params.insert(&format!("MODEL.S{}X", i), sx.to_internal().to_string());
@@ -482,7 +498,7 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     if p.model_sphere_radius != Coord::ZERO {
         params.insert("MODEL.SPHERE.RADIUS", format_mil(p.model_sphere_radius));
     }
-    let pbytes = params.to_bytes();
+    let pbytes = params_to_pcb_bytes(&params);
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
     write_contour(&mut w, &p.outline);

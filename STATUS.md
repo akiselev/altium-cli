@@ -28,7 +28,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 | Document   | Ext       | Parse | Serialize | High-Level API | Spec Lang | Query | Render  | CLI validate | CLI save-as | CLI new |
 |------------|-----------|-------|-----------|----------------|-----------|-------|---------|--------------|-------------|---------|
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read, ⚠️ Write | ⚠️ dump only | ❌ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
+| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ⚠️ dump only | ❌ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbDoc** | .PcbDoc   | ✅    | ✅        | ❌ None         | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
 | **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ❌      |
@@ -71,7 +71,7 @@ names/designators, IEEE symbols, line styles.
 
 ---
 
-### SchDoc (.SchDoc) — COMPLETE PARSE/SERIALIZE, LIMITED WRITE API
+### SchDoc (.SchDoc) — COMPLETE PARSE/SERIALIZE/WRITE
 
 **Parsing:** Complete. Reads FileHeader, flat OWNERINDEX-linked record list, Additional
 stream, and embedded OLE objects. Converts flat list to nested tree via `sheet()`.
@@ -86,9 +86,12 @@ records.
 
 **High-Level API:** Full read access — `sheet()` returns `SchDocSheet` with typed
 accessors for all object types (`components()`, `wires()`, `buses()`, `net_labels()`,
-`power_objects()`, `ports()`, `junctions()`, `sheet_symbols()`, etc.). Write is
-**sheet-level only** — must rebuild entire `objects` vec and call `update_sheet()`. No
-granular per-object add/remove.
+`power_objects()`, `ports()`, `junctions()`, `sheet_symbols()`, etc.). Write via
+`update_sheet()` with UniqueId-based field preservation — format-internal fields
+(`index_in_sheet`, `selection_memory`, `style_id`, `graphically_locked`, etc.) are
+preserved across save cycles for all record types via Altium's `UNIQUE_ID` field.
+Convenience mutation methods: `add_object()`, `remove_objects()`, `component_mut()`,
+`add_component_child()`.
 
 **Spec Language:** Dump only (reverse-generate spec from document). Compile/execute not
 implemented — returns error "SchDoc spec compilation is not implemented yet."
@@ -324,33 +327,30 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 
 ### Moderate
 
-3. **SchDoc write API is sheet-level only** — no granular per-object add/remove.
-   Must rebuild entire objects vec for any mutation.
-
-4. **PrjPcb has no public write API** — internal write support exists but isn't
+3. **PrjPcb has no public write API** — internal write support exists but isn't
    surfaced through the API module.
 
-5. **Query only supports SchLib and PcbLib** — SchDoc, PcbDoc entity adapters not
+4. **Query only supports SchLib and PcbLib** — SchDoc, PcbDoc entity adapters not
    implemented.
 
-6. **SchDoc spec compilation not implemented** — dump works but compile/execute returns
+5. **SchDoc spec compilation not implemented** — dump works but compile/execute returns
    error.
 
-7. **PcbDoc rendering not supported** — no SVG/PNG rendering for board designs.
+6. **PcbDoc rendering not supported** — no SVG/PNG rendering for board designs.
 
 ### Minor
 
-8. **PcbDoc validation: 2/96 V6 files still failing** — EmbeddedFonts and
+7. **PcbDoc validation: 2/96 V6 files still failing** — EmbeddedFonts and
    WideStrings edge cases (tracked in PCBDOC-next.md).
 
-9. **PcbDoc V5 format not supported** — 2 test files deferred.
+8. **PcbDoc V5 format not supported** — 2 test files deferred.
 
-10. **SVG clip regions not applied** — PushClip/PopClip recorded but skipped in SVG
+9. **SVG clip regions not applied** — PushClip/PopClip recorded but skipped in SVG
     generation.
 
-11. **`get version` only works for SchLib and PcbLib** — not PcbDoc, SchDoc, PrjPcb.
+10. **`get version` only works for SchLib and PcbLib** — not PcbDoc, SchDoc, PrjPcb.
 
-12. **`apply --report-json` flag accepted but not used** — dead code.
+11. **`apply --report-json` flag accepted but not used** — dead code.
 
 ---
 
