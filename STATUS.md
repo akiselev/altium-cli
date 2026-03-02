@@ -165,7 +165,20 @@ types from the CFB container.
 **DRC support (drc.rs, 122KB):** 39 rule classes and 38 violation classes fully parsed.
 Rules, violations, waived violations, and DRC options all stored.
 
-**Serialization:** Complete roundtrip.
+**Serialization:** Complete roundtrip. 94/96 V6 test files save-as successfully
+(remaining 2 are V5 format files missing `/FileHeaderSix`). Shared primitive
+serializers (Pad, Via, Region, ComponentBody) extracted into
+`pcb_primitives_serialize.rs`; PcbDoc-specific serializers for Arc, Track, Fill,
+Text in `pcbdoc/mod.rs`.
+
+**Roundtrip fidelity:** Semantic CFB diff shows only acceptable differences:
+- **Boolean normalization** — Delphi stores non-zero (0x03, 0x80) for true; we canonicalize to 0x01
+- **Font name buffer padding** — Delphi has uninitialized heap garbage in 64-byte fixed buffers; we write clean zeros
+- **Pad sub4 format upgrade** — 171-byte → 172-byte variant (adds `has_sub4_extension` field)
+- **Via format upgrade** — always writes Section 4/5 (IPC-4761 + template link extension)
+- **Rules6 format upgrade** — tier2 serialization for all rules
+- **Param key ordering** — `ParameterCollection` uses insertion order; Altium may differ
+- **Duplicate param keys** — Board6 LAYER/LOCKED written twice by Altium; ParameterCollection deduplicates
 
 **High-Level API:** None. PcbDoc has no public API types beyond `open()`, `save()`,
 and `validate_invariants()`.
