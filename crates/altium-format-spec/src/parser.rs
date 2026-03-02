@@ -2,12 +2,14 @@ use crate::diagnostic::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
 
 use super::ast::{
     AliasDecl, AnnotationBlockDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem,
-    DocumentBlockDecl, EntityName, ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr, FootprintDecl,
-    FootprintItem, FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
-    MapEntry, MatchParameterDecl, Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl,
-    PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PinDecl, ProjectDecl,
-    ProjectItem, Property, RowDecl, SpecFile, SpecItem, VariantBlockDecl, VariationDecl,
-    is_graphic_type,
+    DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr,
+    FontBlockDecl, FontDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
+    GraphicDecl, GridDecl, ImportDecl, LetBinding, MapEntry, MatchParameterDecl, NetDecl,
+    Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl, PadDecl, ParamVariationDecl,
+    ParameterDecl, PartBlock, PartItem, PinDecl, PowerDecl, ProjectDecl, ProjectItem, Property,
+    RowDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    VariantBlockDecl, VariationDecl,
+    is_graphic_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
 
@@ -220,6 +222,36 @@ impl<'a> SpecParser<'a> {
             return Ok(Spanned::new(SpecItem::Project(decl), start.merge(end)));
         }
 
+        // Handle: sheet { ... } (SchDoc metadata)
+        if self.at(&TokenKind::Sheet) {
+            let decl = self.parse_sheet()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::Sheet(decl), start.merge(end)));
+        }
+
+        // Handle: net NAME { ... }
+        if self.at(&TokenKind::Net) {
+            let decl = self.parse_net()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::Net(decl), start.merge(end)));
+        }
+
+        // Handle: power NAME { ... }
+        if self.at(&TokenKind::Power) {
+            let decl = self.parse_power()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::Power(decl), start.merge(end)));
+        }
+
+        // Handle: parameter NAME { ... } at top level (SchDoc sheet-level parameter)
+        // `parameter` is a keyword, but in SchDoc context it also appears as a
+        // freestanding top-level object (like `wire`, `bus`, etc.).
+        if self.at(&TokenKind::Parameter) {
+            let decl = self.parse_schdoc_object_keyword("parameter")?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::SchDocObject(decl), start.merge(end)));
+        }
+
         // Skip optional `let`
         let had_let = self.eat(&TokenKind::Let);
 
@@ -276,7 +308,16 @@ impl<'a> SpecParser<'a> {
             return Err(self.err("expected identifier after 'let'"));
         }
 
-        Err(self.err("expected import, component, footprint, project, or let binding"))
+        // SchDoc object types and graphics as top-level identifier-dispatched blocks
+        if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            if is_schdoc_object_type(name) || is_graphic_type(name) {
+                let decl = self.parse_schdoc_object()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(SpecItem::SchDocObject(decl), start.merge(end)));
+            }
+        }
+
+        Err(self.err("expected import, component, footprint, project, sheet, net, power, or let binding"))
     }
 
     // ── Import ─────────────────────────────────────────────────────────────
@@ -1180,6 +1221,238 @@ impl<'a> SpecParser<'a> {
         Ok(PadDecl { binding, name, body })
     }
 
+    // ── SchDoc: sheet, net, power, objects ────────────────────────────────
+
+    /// Parse `sheet { ... }` — sheet metadata block (no name).
+    fn parse_sheet(&mut self) -> Result<SheetDecl, ParseError> {
+        self.expect(&TokenKind::Sheet, "expected 'sheet'")?;
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after 'sheet'")?;
+        let mut items = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let item = self.parse_sheet_item()?;
+            items.push(item);
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close sheet block")?;
+        Ok(SheetDecl { body: items })
+    }
+
+    fn parse_sheet_item(&mut self) -> Result<Spanned<SheetItem>, ParseError> {
+        let start = self.current_span();
+
+        // let binding
+        if self.at(&TokenKind::Let) {
+            let binding = self.parse_let_binding()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SheetItem::LetBinding(binding), start.merge(end)));
+        }
+
+        // fonts { ... } sub-block
+        if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            if name == "fonts" {
+                let block = self.parse_font_block()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(SheetItem::FontBlock(block), start.merge(end)));
+            }
+        }
+
+        // property: key: value
+        let prop = self.parse_property()?;
+        let end = self.prev_span();
+        Ok(Spanned::new(SheetItem::Property(prop), start.merge(end)))
+    }
+
+    /// Parse `fonts { font N { ... } ... }`
+    fn parse_font_block(&mut self) -> Result<FontBlockDecl, ParseError> {
+        // consume "fonts" ident
+        self.bump();
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after 'fonts'")?;
+        let mut fonts = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let start = self.current_span();
+            let decl = self.parse_font_decl()?;
+            let end = self.prev_span();
+            fonts.push(Spanned::new(decl, start.merge(end)));
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close fonts block")?;
+        Ok(FontBlockDecl { fonts })
+    }
+
+    /// Parse `font N { name: "...", size: 10 }`
+    fn parse_font_decl(&mut self) -> Result<FontDecl, ParseError> {
+        // expect "font" as ident
+        match self.current_kind().clone() {
+            TokenKind::Ident(ref s) if s == "font" => { self.bump(); }
+            _ => return Err(self.err("expected 'font' keyword")),
+        }
+        let id = self.expect_integer("expected font id number")?;
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(FontDecl { id, body })
+    }
+
+    /// Parse `net NAME { pins: [...] }`
+    fn parse_net(&mut self) -> Result<NetDecl, ParseError> {
+        self.expect(&TokenKind::Net, "expected 'net'")?;
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(NetDecl { name, body })
+    }
+
+    /// Parse `power NAME { style: ..., pins: [...] }`
+    fn parse_power(&mut self) -> Result<PowerDecl, ParseError> {
+        self.expect(&TokenKind::Power, "expected 'power'")?;
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(PowerDecl { name, body })
+    }
+
+    /// Parse a SchDoc object whose type name is a keyword (e.g., `parameter`).
+    ///
+    /// This works identically to `parse_schdoc_object` but accepts the type name
+    /// as a string rather than reading an identifier token — needed because
+    /// `parameter` is a keyword (`TokenKind::Parameter`) rather than a plain ident.
+    fn parse_schdoc_object_keyword(&mut self, type_name: &str) -> Result<SchDocObjectDecl, ParseError> {
+        let type_start = self.current_span();
+        self.bump(); // consume the keyword token
+
+        let has_name = matches!(type_name, "parameter");
+
+        let name = if has_name && !self.at(&TokenKind::LBrace) {
+            Some(self.parse_entity_name()?)
+        } else {
+            None
+        };
+
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after SchDoc object type")?;
+        let mut items = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let item = self.parse_schdoc_object_item()?;
+            items.push(item);
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close SchDoc object")?;
+
+        Ok(SchDocObjectDecl {
+            object_type: Spanned::new(type_name.to_string(), type_start),
+            name,
+            body: items,
+        })
+    }
+
+    /// Parse a SchDoc object block: `wire { ... }`, `net_label NAME { ... }`, etc.
+    fn parse_schdoc_object(&mut self) -> Result<SchDocObjectDecl, ParseError> {
+        let type_start = self.current_span();
+        let object_type = match self.current_kind().clone() {
+            TokenKind::Ident(s) if is_schdoc_object_type(&s) || is_graphic_type(&s) => {
+                self.bump();
+                Spanned::new(s, type_start)
+            }
+            _ => return Err(self.err("expected SchDoc object type identifier")),
+        };
+
+        // Some object types have a name (net_label, power_object, port, sheet_symbol,
+        // parameter_set, probe); others don't (wire, bus, junction, no_connect, etc.)
+        let has_name = matches!(
+            object_type.node.as_str(),
+            "net_label" | "power_object" | "port" | "sheet_symbol" | "parameter_set" | "probe"
+        );
+
+        let name = if has_name && !self.at(&TokenKind::LBrace) {
+            Some(self.parse_entity_name()?)
+        } else {
+            None
+        };
+
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after SchDoc object type")?;
+        let mut items = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let item = self.parse_schdoc_object_item()?;
+            items.push(item);
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "expected '}' to close SchDoc object")?;
+        Ok(SchDocObjectDecl { object_type, name, body: items })
+    }
+
+    fn parse_schdoc_object_item(&mut self) -> Result<Spanned<SchDocObjectItem>, ParseError> {
+        let start = self.current_span();
+
+        // parameter block
+        if self.at(&TokenKind::Parameter) {
+            let decl = self.parse_parameter(None)?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(
+                SchDocObjectItem::Parameter(decl),
+                start.merge(end),
+            ));
+        }
+
+        // let binding
+        if self.at(&TokenKind::Let) {
+            let binding = self.parse_let_binding()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(
+                SchDocObjectItem::LetBinding(binding),
+                start.merge(end),
+            ));
+        }
+
+        if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            // "entry" sub-block (inside sheet_symbol)
+            if name == "entry" {
+                let decl = self.parse_entry()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(
+                    SchDocObjectItem::Entry(decl),
+                    start.merge(end),
+                ));
+            }
+
+            // graphic sub-blocks — but only if NOT followed by ":" (which means property)
+            if is_graphic_type(name) && !self.peek_ahead(1).same_variant(&TokenKind::Colon) {
+                let decl = self.parse_graphic(None)?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(
+                    SchDocObjectItem::Graphic(decl),
+                    start.merge(end),
+                ));
+            }
+        }
+
+        // property: key: value
+        let prop = self.parse_property()?;
+        let end = self.prev_span();
+        Ok(Spanned::new(
+            SchDocObjectItem::Property(prop),
+            start.merge(end),
+        ))
+    }
+
+    /// Parse `entry NAME { ... }` — child of a sheet_symbol
+    fn parse_entry(&mut self) -> Result<EntryDecl, ParseError> {
+        // consume "entry" ident
+        match self.current_kind().clone() {
+            TokenKind::Ident(ref s) if s == "entry" => { self.bump(); }
+            _ => return Err(self.err("expected 'entry'")),
+        }
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(EntryDecl { name, body })
+    }
+
     // ── Graphic declaration ────────────────────────────────────────────────
 
     fn parse_graphic(&mut self, binding: Option<Spanned<String>>) -> Result<GraphicDecl, ParseError> {
@@ -1554,6 +1827,22 @@ impl<'a> SpecParser<'a> {
                     }
                 }
                 Ok(expr)
+            }
+
+            // Keywords that can also appear as identifier values in expressions.
+            // e.g. `electrical: power` where `power` is a PinElectricalType value,
+            //      `style: net` where net could be a valid enum value, etc.
+            TokenKind::Power => {
+                self.bump();
+                Ok(Spanned::new(Expr::Ident("power".to_string()), start))
+            }
+            TokenKind::Net => {
+                self.bump();
+                Ok(Spanned::new(Expr::Ident("net".to_string()), start))
+            }
+            TokenKind::Sheet => {
+                self.bump();
+                Ok(Spanned::new(Expr::Ident("sheet".to_string()), start))
             }
 
             // bare IDENT — let binding ref or enum value, possibly with path tail

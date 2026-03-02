@@ -4,6 +4,10 @@ use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
     PlaneConnectionStyle, RotationBy90,
 };
+use altium_format_types::sch::{
+    HorizontalAlign, LeftRightSide, LineStyle, PenWidth, PortArrowStyle, PortIoType,
+    PowerObjectStyle, TextJustification,
+};
 use altium_format_types::project::{
     ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
     CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
@@ -81,6 +85,234 @@ pub struct FootprintMapSpec {
 pub struct PinPadMap {
     pub pin: String,
     pub pad: String,
+}
+
+// ── SchDoc ──────────────────────────────────────────────────────────────────
+
+pub struct SchDocSpec {
+    pub sheets: Vec<SheetSpec>,
+}
+
+pub struct SheetSpec {
+    // Sheet metadata
+    pub fonts: Vec<FontSpec>,
+    pub custom_width: Option<Coord>,
+    pub custom_height: Option<Coord>,
+    pub snap_grid_on: Option<bool>,
+    pub visible_grid_on: Option<bool>,
+    pub hot_spot_grid_on: Option<bool>,
+    pub show_hidden_pins: Option<bool>,
+    pub border_on: Option<bool>,
+    pub title_block_on: Option<bool>,
+
+    // Placed objects
+    pub components: Vec<SchDocComponentSpec>,
+    pub nets: Vec<NetSpec>,
+    pub powers: Vec<PowerSpec>,
+    pub objects: Vec<SchDocObjectSpec>,
+}
+
+pub struct FontSpec {
+    pub id: i32,
+    pub name: String,
+    pub size: i32,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
+    pub strikeout: Option<bool>,
+    pub rotation: Option<i32>,
+}
+
+pub struct SchDocComponentSpec {
+    pub designator: String,
+    pub symbol: SymbolRef,
+    pub location: CoordPoint,
+    pub orientation: Option<RotationBy90>,
+    pub is_mirrored: Option<bool>,
+    pub description: Option<String>,
+    pub parameters: Vec<ParameterSpec>,
+}
+
+/// How a SchDoc component references its symbol.
+#[derive(Debug, Clone)]
+pub enum SymbolRef {
+    /// `$alias.ComponentName` — references an imported SchLib.
+    Import { alias: String, name: String },
+    /// `lib_reference: "Name"` — direct library reference string.
+    Literal(String),
+}
+
+pub struct NetSpec {
+    pub name: String,
+    pub pins: Vec<PinRef>,
+}
+
+pub struct PowerSpec {
+    pub name: String,
+    pub style: PowerObjectStyle,
+    pub pins: Vec<PinRef>,
+    pub show_net_name: Option<bool>,
+    pub orientation: Option<RotationBy90>,
+}
+
+/// A reference to a specific pin on a placed component: "U1.14".
+#[derive(Debug, Clone)]
+pub struct PinRef {
+    pub component: String,
+    pub pin: String,
+}
+
+/// Low-level SchDoc objects for full dump roundtrip.
+pub enum SchDocObjectSpec {
+    Wire(WireSpec),
+    Bus(BusSpec),
+    NetLabel(NetLabelSpec),
+    PowerObject(PowerObjectSpec),
+    Port(PortSpec),
+    Junction(JunctionSpec),
+    NoConnect(NoConnectSpec),
+    BusEntry(BusEntrySpec),
+    SheetSymbol(SheetSymbolSpec),
+    ParameterSet(ParameterSetSpec),
+    Note(NoteSpec),
+    Probe(ProbeSpec),
+    CompileMask(CompileMaskSpec),
+    Blanket(BlanketSpec),
+    Graphic(GraphicSpec),
+    Parameter(ParameterSpec),
+    HarnessConnector(HarnessConnectorSpec),
+    SignalHarness(SignalHarnessSpec),
+}
+
+pub struct WireSpec {
+    pub vertices: Vec<CoordPoint>,
+    pub color: Option<Color>,
+    pub line_width: Option<PenWidth>,
+    pub line_style: Option<LineStyle>,
+}
+
+pub struct BusSpec {
+    pub vertices: Vec<CoordPoint>,
+    pub color: Option<Color>,
+    pub line_width: Option<PenWidth>,
+}
+
+pub struct NetLabelSpec {
+    pub text: String,
+    pub location: CoordPoint,
+    pub orientation: Option<RotationBy90>,
+    pub justification: Option<TextJustification>,
+    pub font_id: Option<i32>,
+    pub color: Option<Color>,
+    pub is_mirrored: Option<bool>,
+}
+
+pub struct PowerObjectSpec {
+    pub text: String,
+    pub location: CoordPoint,
+    pub orientation: Option<RotationBy90>,
+    pub style: Option<PowerObjectStyle>,
+    pub show_net_name: Option<bool>,
+    pub font_id: Option<i32>,
+    pub color: Option<Color>,
+    pub is_cross_sheet_connector: Option<bool>,
+}
+
+pub struct PortSpec {
+    pub name: String,
+    pub location: CoordPoint,
+    pub io_type: Option<PortIoType>,
+    pub style: Option<PortArrowStyle>,
+    pub width: Option<Coord>,
+    pub height: Option<Coord>,
+    pub color: Option<Color>,
+    pub area_color: Option<Color>,
+    pub text_color: Option<Color>,
+    pub font_id: Option<i32>,
+    pub alignment: Option<HorizontalAlign>,
+}
+
+pub struct JunctionSpec {
+    pub location: CoordPoint,
+    pub color: Option<Color>,
+}
+
+pub struct NoConnectSpec {
+    pub location: CoordPoint,
+    pub color: Option<Color>,
+    pub orientation: Option<RotationBy90>,
+}
+
+pub struct BusEntrySpec {
+    pub location: CoordPoint,
+    pub corner: CoordPoint,
+    pub color: Option<Color>,
+    pub line_width: Option<PenWidth>,
+}
+
+pub struct SheetSymbolSpec {
+    pub sheet_name: String,
+    pub file_name: Option<String>,
+    pub location: CoordPoint,
+    pub x_size: Option<Coord>,
+    pub y_size: Option<Coord>,
+    pub color: Option<Color>,
+    pub area_color: Option<Color>,
+    pub entries: Vec<SheetEntrySpec>,
+}
+
+pub struct SheetEntrySpec {
+    pub name: String,
+    pub io_type: Option<PortIoType>,
+    pub side: Option<LeftRightSide>,
+    pub distance_from_top: Option<Coord>,
+}
+
+pub struct ParameterSetSpec {
+    pub name: String,
+    pub location: Option<CoordPoint>,
+    pub parameters: Vec<ParameterSpec>,
+}
+
+pub struct NoteSpec {
+    pub location: CoordPoint,
+    pub text: String,
+    pub color: Option<Color>,
+    pub area_color: Option<Color>,
+    pub font_id: Option<i32>,
+}
+
+pub struct ProbeSpec {
+    pub name: String,
+    pub location: CoordPoint,
+    pub color: Option<Color>,
+}
+
+pub struct CompileMaskSpec {
+    pub location: CoordPoint,
+    pub corner: CoordPoint,
+    pub color: Option<Color>,
+}
+
+pub struct BlanketSpec {
+    pub location: CoordPoint,
+    pub corner: CoordPoint,
+    pub vertices: Option<Vec<CoordPoint>>,
+    pub color: Option<Color>,
+}
+
+pub struct HarnessConnectorSpec {
+    pub location: CoordPoint,
+    pub x_size: Option<Coord>,
+    pub y_size: Option<Coord>,
+    pub color: Option<Color>,
+    pub area_color: Option<Color>,
+}
+
+pub struct SignalHarnessSpec {
+    pub vertices: Vec<CoordPoint>,
+    pub color: Option<Color>,
+    pub line_width: Option<PenWidth>,
 }
 
 // ── PcbLib ──────────────────────────────────────────────────────────────────
@@ -232,6 +464,7 @@ pub enum SpecDomain {
 
 pub enum SpecModel {
     SchLib(SchLibSpec),
+    SchDoc(SchDocSpec),
     PcbLib(PcbLibSpec),
     PrjPcb(PrjPcbSpec),
 }

@@ -6,8 +6,9 @@ use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
     reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
+    reconcile_schdoc, reconcile_schdoc_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports,
-    apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb,
+    apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -651,6 +652,17 @@ fn plan_for_model(
                 reconcile_prjpcb_empty(spec, library_path, spec_path)
             }
         }
+        altium_format_spec::model::SpecModel::SchDoc(spec) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            if resolved_target.exists() {
+                let doc = SchDoc::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                reconcile_schdoc(spec, &doc, library_path, spec_path)
+                    .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
+            } else {
+                reconcile_schdoc_empty(spec, library_path, spec_path)
+            }
+        }
     };
 
     Ok(eco)
@@ -752,6 +764,23 @@ fn apply_for_model(
             let out_path = output.cloned().unwrap_or(library_path);
 
             apply_spec_prjpcb(spec, &mut doc)
+                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+            doc.save(&out_path)?;
+            println!("Saved: {}", out_path.display());
+        }
+        altium_format_spec::model::SpecModel::SchDoc(spec) => {
+            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
+            let mut doc = if resolved_target.exists() {
+                SchDoc::open(&resolved_target)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+            } else {
+                SchDoc::new_blank_ad26()
+            };
+
+            let out_path = output.cloned().unwrap_or(library_path);
+
+            apply_spec_schdoc(spec, &mut doc)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
             doc.save(&out_path)?;

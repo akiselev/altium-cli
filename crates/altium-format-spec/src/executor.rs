@@ -4,14 +4,15 @@
 //! documents, converting spec model types into API types.
 
 use altium_format::api;
-use altium_format::{AltiumProject, PcbLib, SchLib};
+use altium_format::{AltiumProject, PcbLib, SchDoc, SchLib};
 
 use altium_format_types::color::Color;
 use altium_format_types::coord::{Coord, CoordPoint};
-use altium_format_types::common::RotationBy90;
+use altium_format_types::common::{ComponentKind, RotationBy90};
 use altium_format_types::sch::{
-    IeeeSymbol, LineStyle, PenWidth, ParameterReadOnlyState, ParameterType,
-    PinElectricalType, StdLogicState, TextJustification, LineShape, HorizontalAlign,
+    IeeeSymbol, LeftRightSide, LineStyle, PenWidth, ParameterReadOnlyState, ParameterType,
+    PinElectricalType, PortArrowStyle, PortIoType, PowerObjectStyle, SheetSymbolType,
+    StdLogicState, TextJustification, LineShape, HorizontalAlign,
 };
 
 use altium_format_types::pcb::{LayerRef, PadShape, PcbFlags, RegionKind, V6Layer};
@@ -21,6 +22,7 @@ use crate::model::{
     ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
     PadSpec, ParameterSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec,
     PinSpec, PrjPcbSpec, SchLibSpec,
+    SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -183,6 +185,331 @@ pub fn apply_spec_prjpcb(
 
 fn bool_to_ini(v: bool) -> String {
     if v { "1".into() } else { "0".into() }
+}
+
+// ── SchDoc ────────────────────────────────────────────────────────────────────
+
+/// Apply a SchDocSpec directly to a document.
+///
+/// For each sheet in the spec (currently always one):
+/// 1. Apply sheet metadata (fonts, grid settings, custom size)
+/// 2. Add components (matched by designator, add-or-merge)
+/// 3. Add low-level objects (wires, buses, labels, etc.)
+/// 4. Nets/powers will be implemented later (require pin location resolution)
+pub fn apply_spec_schdoc(
+    spec: &SchDocSpec,
+    doc: &mut SchDoc,
+) -> Result<(), SpecError> {
+    for sheet_spec in &spec.sheets {
+        let mut sheet = doc.sheet()
+            .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+
+        // 1. Sheet metadata
+        apply_sheet_metadata(&mut sheet, sheet_spec);
+
+        // 2. Components
+        for comp_spec in &sheet_spec.components {
+            apply_schdoc_component(&mut sheet, comp_spec)?;
+        }
+
+        // 3. Low-level objects
+        for obj_spec in &sheet_spec.objects {
+            let obj = schdoc_object_from_spec(obj_spec);
+            sheet.add_object(obj);
+        }
+
+        // 4. Nets and powers (wire stub generation)
+        // TODO: requires resolving pin locations from placed components.
+        // For now, nets/powers are a no-op — they'll be implemented when
+        // we add pin location resolution.
+
+        doc.update_sheet(&sheet)
+            .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn apply_sheet_metadata(sheet: &mut api::SchDocSheet, spec: &SheetSpec) {
+    if !spec.fonts.is_empty() {
+        sheet.fonts = spec.fonts.iter().map(|f| api::Font {
+            id: f.id,
+            name: f.name.clone(),
+            size: f.size,
+            bold: f.bold.unwrap_or(false),
+            italic: f.italic.unwrap_or(false),
+            underline: f.underline.unwrap_or(false),
+            strikeout: f.strikeout.unwrap_or(false),
+            rotation: f.rotation.unwrap_or(0),
+        }).collect();
+    }
+    if let Some(w) = spec.custom_width {
+        sheet.use_custom_sheet = true;
+        sheet.custom_width = w;
+    }
+    if let Some(h) = spec.custom_height {
+        sheet.use_custom_sheet = true;
+        sheet.custom_height = h;
+    }
+    if let Some(v) = spec.snap_grid_on { sheet.snap_grid_on = v; }
+    if let Some(v) = spec.visible_grid_on { sheet.visible_grid_on = v; }
+    if let Some(v) = spec.hot_spot_grid_on { sheet.hot_spot_grid_on = v; }
+    if let Some(v) = spec.show_hidden_pins { sheet.show_hidden_pins = v; }
+    if let Some(v) = spec.border_on { sheet.border_on = v; }
+    if let Some(v) = spec.title_block_on { sheet.title_block_on = v; }
+}
+
+fn apply_schdoc_component(
+    sheet: &mut api::SchDocSheet,
+    spec: &SchDocComponentSpec,
+) -> Result<(), SpecError> {
+    if let Some(existing) = sheet.component_mut(&spec.designator) {
+        existing.location = spec.location;
+        if let Some(orient) = spec.orientation {
+            existing.orientation = orient;
+        }
+        if let Some(mirror) = spec.is_mirrored {
+            existing.is_mirrored = mirror;
+        }
+        if let Some(ref desc) = spec.description {
+            existing.description = Some(desc.clone());
+        }
+        match &spec.symbol {
+            SymbolRef::Import { name, .. } => {
+                existing.lib_reference = name.clone();
+            }
+            SymbolRef::Literal(name) => {
+                existing.lib_reference = name.clone();
+            }
+        }
+    } else {
+        let lib_ref = match &spec.symbol {
+            SymbolRef::Import { name, .. } => name.clone(),
+            SymbolRef::Literal(name) => name.clone(),
+        };
+        let comp = api::SchDocComponent {
+            designator: spec.designator.clone(),
+            unique_id: String::new(),
+            lib_reference: lib_ref,
+            source_library_name: String::new(),
+            design_item_id: String::new(),
+            library_path: String::new(),
+            location: spec.location,
+            orientation: spec.orientation.unwrap_or(RotationBy90::Rotate0),
+            is_mirrored: spec.is_mirrored.unwrap_or(false),
+            description: spec.description.clone(),
+            component_kind: ComponentKind::Standard,
+            part_count: 1,
+            current_part_id: 1,
+            display_mode_count: 1,
+            show_hidden_pins: false,
+            children: Vec::new(),
+        };
+        sheet.add_object(api::SheetObject::Component(comp));
+    }
+    Ok(())
+}
+
+fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
+    // Default colors: dark red (128,0,0) = 0x000080 in BGR, dark blue (0,0,128) = 0x800000 in BGR,
+    // dark green (0,100,0) = 0x006400 in BGR, white (255,255,255) = 0xFFFFFF.
+    const DARK_RED: Color = Color::new(0x000080);
+    const DARK_BLUE: Color = Color::new(0x800000);
+    const DARK_GREEN: Color = Color::new(0x006400);
+    const WHITE: Color = Color::WHITE;
+    const YELLOW_NOTE: Color = Color::new(0x00C8FF); // 255,200,0 BGR
+
+    match spec {
+        SchDocObjectSpec::Wire(w) => api::SheetObject::Wire(api::Wire {
+            unique_id: String::new(),
+            vertices: w.vertices.clone(),
+            color: w.color.unwrap_or(DARK_RED),
+            line_width: w.line_width.unwrap_or(PenWidth::Small),
+            line_style: w.line_style.unwrap_or(LineStyle::Solid),
+        }),
+        SchDocObjectSpec::Bus(b) => api::SheetObject::Bus(api::Bus {
+            unique_id: String::new(),
+            vertices: b.vertices.clone(),
+            color: b.color.unwrap_or(DARK_BLUE),
+            line_width: b.line_width.unwrap_or(PenWidth::Small),
+        }),
+        SchDocObjectSpec::NetLabel(n) => api::SheetObject::NetLabel(api::NetLabel {
+            unique_id: String::new(),
+            text: n.text.clone(),
+            location: n.location,
+            orientation: n.orientation.unwrap_or(RotationBy90::Rotate0),
+            justification: n.justification.unwrap_or(TextJustification::BottomLeft),
+            font_id: n.font_id.unwrap_or(1),
+            color: n.color.unwrap_or(DARK_RED),
+            is_mirrored: n.is_mirrored.unwrap_or(false),
+        }),
+        SchDocObjectSpec::PowerObject(p) => api::SheetObject::PowerObject(api::PowerObject {
+            unique_id: String::new(),
+            text: p.text.clone(),
+            location: p.location,
+            orientation: p.orientation.unwrap_or(RotationBy90::Rotate0),
+            style: p.style.unwrap_or(PowerObjectStyle::Bar),
+            show_net_name: p.show_net_name.unwrap_or(true),
+            font_id: p.font_id.unwrap_or(1),
+            color: p.color.unwrap_or(DARK_RED),
+            is_cross_sheet_connector: p.is_cross_sheet_connector.unwrap_or(false),
+        }),
+        SchDocObjectSpec::Port(p) => api::SheetObject::Port(api::Port {
+            unique_id: String::new(),
+            name: p.name.clone(),
+            location: p.location,
+            io_type: p.io_type.unwrap_or(PortIoType::Unspecified),
+            style: p.style.unwrap_or(PortArrowStyle::None),
+            width: p.width.unwrap_or_else(|| Coord::from_mils(100)),
+            height: p.height.unwrap_or_else(|| Coord::from_mils(20)),
+            color: p.color.unwrap_or(DARK_RED),
+            area_color: p.area_color.unwrap_or(WHITE),
+            text_color: p.text_color.unwrap_or(DARK_RED),
+            font_id: p.font_id.unwrap_or(1),
+            alignment: p.alignment.unwrap_or(HorizontalAlign::Left),
+            harness_type: String::new(),
+            border_width: PenWidth::Small,
+            auto_size: false,
+            port_name_is_hidden: false,
+        }),
+        SchDocObjectSpec::Junction(j) => api::SheetObject::Junction(api::Junction {
+            unique_id: String::new(),
+            location: j.location,
+            color: j.color.unwrap_or(DARK_GREEN),
+        }),
+        SchDocObjectSpec::NoConnect(n) => api::SheetObject::NoConnect(api::NoConnect {
+            unique_id: String::new(),
+            location: n.location,
+            color: n.color.unwrap_or(DARK_RED),
+            orientation: n.orientation.unwrap_or(RotationBy90::Rotate0),
+            symbol: String::new(),
+            is_active: true,
+            suppress_all: false,
+        }),
+        SchDocObjectSpec::BusEntry(b) => api::SheetObject::BusEntry(api::BusEntry {
+            unique_id: String::new(),
+            location: b.location,
+            corner: b.corner,
+            color: b.color.unwrap_or(DARK_RED),
+            line_width: b.line_width.unwrap_or(PenWidth::Small),
+        }),
+        SchDocObjectSpec::SheetSymbol(s) => api::SheetObject::SheetSymbol(api::SheetSymbol {
+            unique_id: String::new(),
+            location: s.location,
+            x_size: s.x_size.unwrap_or_else(|| Coord::from_mils(100)),
+            y_size: s.y_size.unwrap_or_else(|| Coord::from_mils(100)),
+            color: s.color.unwrap_or(DARK_RED),
+            area_color: s.area_color.unwrap_or(WHITE),
+            line_width: PenWidth::Small,
+            is_solid: false,
+            symbol_type: SheetSymbolType::Normal,
+            sheet_name: s.sheet_name.clone(),
+            file_name: s.file_name.clone().unwrap_or_default(),
+            children: s.entries.iter().map(|e| {
+                api::SheetSymbolChild::Entry(api::SheetEntry {
+                    unique_id: String::new(),
+                    name: e.name.clone(),
+                    io_type: e.io_type.unwrap_or(PortIoType::Unspecified),
+                    side: e.side.unwrap_or(LeftRightSide::Left),
+                    distance_from_top: e.distance_from_top.unwrap_or(Coord::ZERO),
+                    style: PortArrowStyle::None,
+                    color: DARK_RED,
+                    area_color: WHITE,
+                    text_color: DARK_RED,
+                    text_font_id: 1,
+                })
+            }).collect(),
+        }),
+        SchDocObjectSpec::ParameterSet(p) => api::SheetObject::ParameterSet(api::ParameterSet {
+            unique_id: String::new(),
+            location: p.location.unwrap_or(CoordPoint::default()),
+            color: DARK_RED,
+            orientation: RotationBy90::Rotate0,
+            name: p.name.clone(),
+            style: 0,
+            parameters: p.parameters.iter().map(param_from_spec).collect(),
+        }),
+        SchDocObjectSpec::Note(n) => api::SheetObject::Note(api::Note {
+            unique_id: String::new(),
+            location: n.location,
+            corner: CoordPoint::default(),
+            text: n.text.clone(),
+            author: String::new(),
+            font_id: n.font_id.unwrap_or(1),
+            color: n.color.unwrap_or(DARK_RED),
+            area_color: n.area_color.unwrap_or(YELLOW_NOTE),
+            text_color: Color::BLACK,
+            is_solid: true,
+            show_border: true,
+            alignment: HorizontalAlign::Left,
+            word_wrap: true,
+            clip_to_rect: false,
+            text_margin: Coord::ZERO,
+            collapsed: false,
+        }),
+        SchDocObjectSpec::Probe(p) => api::SheetObject::Probe(api::Probe {
+            unique_id: String::new(),
+            location: p.location,
+            color: p.color.unwrap_or(DARK_RED),
+            orientation: RotationBy90::Rotate0,
+            name: p.name.clone(),
+        }),
+        SchDocObjectSpec::CompileMask(c) => api::SheetObject::CompileMask(api::CompileMask {
+            unique_id: String::new(),
+            location: c.location,
+            corner: c.corner,
+            color: c.color.unwrap_or(DARK_RED),
+            area_color: WHITE,
+            line_width: PenWidth::Small,
+            collapsed: false,
+        }),
+        SchDocObjectSpec::Blanket(b) => api::SheetObject::Blanket(api::Blanket {
+            unique_id: String::new(),
+            location: b.location,
+            corner: b.corner,
+            color: b.color.unwrap_or(DARK_RED),
+            area_color: WHITE,
+            line_style: LineStyle::Solid,
+            line_width: PenWidth::Small,
+            vertices: b.vertices.clone().unwrap_or_default(),
+            collapsed: false,
+        }),
+        SchDocObjectSpec::Graphic(g) => {
+            // Sheet-level graphics default to owner_part_id 0 (not owned by a component part)
+            let obj = graphic_from_spec(g, 0).unwrap_or_else(|| {
+                api::Graphic::Line(api::LineGraphic {
+                    unique_id: g.unique_id.clone(),
+                    owner_part_id: 0,
+                    location: CoordPoint::default(),
+                    corner: CoordPoint::default(),
+                    line_width: PenWidth::default(),
+                    line_style: LineStyle::default(),
+                    color: Color::default(),
+                })
+            });
+            api::SheetObject::Graphic(obj)
+        }
+        SchDocObjectSpec::Parameter(p) => api::SheetObject::Parameter(param_from_spec(p)),
+        SchDocObjectSpec::HarnessConnector(h) => {
+            api::SheetObject::HarnessConnector(api::HarnessConnector {
+                unique_id: String::new(),
+                location: h.location,
+                x_size: h.x_size.unwrap_or_else(|| Coord::from_mils(100)),
+                y_size: h.y_size.unwrap_or_else(|| Coord::from_mils(100)),
+                color: h.color.unwrap_or(DARK_RED),
+                area_color: h.area_color.unwrap_or(WHITE),
+                line_width: PenWidth::Small,
+                children: Vec::new(),
+            })
+        }
+        SchDocObjectSpec::SignalHarness(s) => {
+            api::SheetObject::SignalHarness(api::SignalHarness {
+                unique_id: String::new(),
+                vertices: s.vertices.clone(),
+                color: s.color.unwrap_or(DARK_RED),
+                line_width: s.line_width.unwrap_or(PenWidth::Small),
+            })
+        }
+    }
 }
 
 // ── Component from spec (new components) ──────────────────────────────────────

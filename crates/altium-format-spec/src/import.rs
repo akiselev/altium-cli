@@ -313,6 +313,8 @@ fn file_domain(path: &Path) -> FileDomain {
         FileDomain::PcbLib
     } else if name.ends_with(".prjpcb-spec") {
         FileDomain::PrjPcb
+    } else if name.ends_with(".schdoc-spec") {
+        FileDomain::SchDoc
     } else {
         FileDomain::Unknown
     }
@@ -323,6 +325,7 @@ enum FileDomain {
     SchLib,
     PcbLib,
     PrjPcb,
+    SchDoc,
     Unknown,
 }
 
@@ -338,6 +341,8 @@ fn validate_cross_domain(
         (&from_domain, &to_domain),
         (FileDomain::PcbLib, FileDomain::SchLib)
             | (FileDomain::PrjPcb, FileDomain::PrjPcb)
+            | (FileDomain::SchDoc, FileDomain::PcbLib)
+            | (FileDomain::SchDoc, FileDomain::SchDoc)
     );
     if forbidden {
         return Err(SpecError::new(
@@ -358,6 +363,7 @@ fn validate_cross_domain(
     // PcbLib -> PcbLib: bare or named ✓
     // PrjPcb -> SchLib: reference import ✓
     // PrjPcb -> PcbLib: reference import ✓
+    // SchDoc -> SchLib: named only (for $alias.ComponentName references) ✓
     Ok(())
 }
 

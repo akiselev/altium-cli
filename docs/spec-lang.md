@@ -138,8 +138,8 @@ component R_0603 {
     pin 1 { on: $body.left, at: center, side: outside, electrical: passive, length: 25 }
     pin 2 { on: $body.right, at: center, side: outside, electrical: passive, length: 25 }
 
-    parameter Value { text: "{VALUE}" }
-    parameter MFG { text: "ACME" }
+    parameter Value { value: "{VALUE}" }
+    parameter MFG { value: "ACME" }
 
     alias R0603
     alias RES_0603
@@ -286,13 +286,13 @@ error[E_RELATIVE_TO_ABSOLUTE]: cannot use 'after' with
 ```
 parameter NAME { properties }
 ```
-Identity key: `name`. Fields: `text` (String), `is_hidden` (Bool).
+Identity key: `name`. Fields: `value` (String, also accepted as `text`), `is_hidden` (Bool).
 
-The `text` property is a plain string value. Altium uses `{PARAM_NAME}` syntax
+The `value` property is a plain string value. Altium uses `{PARAM_NAME}` syntax
 within parameter text for dynamic substitution at schematic placement time.
 This is a literal string in the spec — no spec-level interpolation occurs.
 For spec-level interpolation, use a template string:
-`` text: `prefix {$some_expr}` ``.
+`` value: `prefix {$some_expr}` ``.
 
 **Alias:**
 ```
@@ -1715,7 +1715,7 @@ component R {
     body = rectangle { ...two_pin_body }
     pin 1 { ...passive_pin, on: $body.left, at: center }
     pin 2 { ...passive_pin, on: $body.right, at: center }
-    parameter Value { text: "{VALUE}" }
+    parameter Value { value: "{VALUE}" }
     footprint R0805 { map { pin: 1, pad: 1 }, map { pin: 2, pad: 2 } }
 }
 
@@ -1725,7 +1725,7 @@ component C {
     body = rectangle { ...two_pin_body }
     pin 1 { ...passive_pin, on: $body.left, at: center }
     pin 2 { ...passive_pin, on: $body.right, at: center }
-    parameter Value { text: "{VALUE}" }
+    parameter Value { value: "{VALUE}" }
     footprint C0805 { map { pin: 1, pad: 1 }, map { pin: 2, pad: 2 } }
 }
 
@@ -1735,7 +1735,7 @@ component L {
     body = rectangle { ...two_pin_body }
     pin 1 { ...passive_pin, on: $body.left, at: center }
     pin 2 { ...passive_pin, on: $body.right, at: center }
-    parameter Value { text: "{VALUE}" }
+    parameter Value { value: "{VALUE}" }
     footprint L0805 { map { pin: 1, pad: 1 }, map { pin: 2, pad: 2 } }
 }
 ```
@@ -1819,7 +1819,7 @@ component LM358 {
     pin 4 { ...power_pin, hidden_net_name: "GND" }
     pin 8 { ...power_pin, hidden_net_name: "VCC" }
 
-    parameter MFG { text: "Texas Instruments" }
+    parameter MFG { value: "Texas Instruments" }
     alias LM358N
     alias LM358P
 

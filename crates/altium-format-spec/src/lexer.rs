@@ -32,6 +32,9 @@ pub enum TokenKind {
     Component,
     Footprint,
     Project,
+    Sheet,
+    Net,
+    Power,
     Pin,
     Pad,
     Part,
@@ -87,6 +90,10 @@ impl TokenKind {
                 | (As, As)
                 | (Component, Component)
                 | (Footprint, Footprint)
+                | (Project, Project)
+                | (Sheet, Sheet)
+                | (Net, Net)
+                | (Power, Power)
                 | (Pin, Pin)
                 | (Pad, Pad)
                 | (Part, Part)
@@ -311,6 +318,9 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                         "component" => TokenKind::Component,
                         "footprint" => TokenKind::Footprint,
                         "project" => TokenKind::Project,
+                        "sheet" => TokenKind::Sheet,
+                        "net" => TokenKind::Net,
+                        "power" => TokenKind::Power,
                         "pin" => TokenKind::Pin,
                         "pad" => TokenKind::Pad,
                         "part" => TokenKind::Part,

@@ -15,6 +15,11 @@ pub enum SpecItem {
     Component(ComponentDecl),
     Footprint(FootprintDecl),
     Project(ProjectDecl),
+    // SchDoc-specific
+    Sheet(SheetDecl),
+    Net(NetDecl),
+    Power(PowerDecl),
+    SchDocObject(SchDocObjectDecl),
 }
 
 /// import "path" [as alias]
@@ -252,6 +257,77 @@ pub struct ParamVariationDecl {
     pub body: Spanned<Object>,
 }
 
+// ── SchDoc declarations ──────────────────────────────────────────────
+
+/// sheet { ... } — sheet metadata block
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetDecl {
+    pub body: Vec<Spanned<SheetItem>>,
+}
+
+/// Items inside a sheet { } metadata block.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SheetItem {
+    Property(Property),
+    LetBinding(LetBinding),
+    FontBlock(FontBlockDecl),
+}
+
+/// fonts { font 1 { ... } font 2 { ... } }
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontBlockDecl {
+    pub fonts: Vec<Spanned<FontDecl>>,
+}
+
+/// font N { name: "...", size: 10 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontDecl {
+    pub id: Spanned<i32>,
+    pub body: Spanned<Object>,
+}
+
+/// net NAME { pins: [...] }
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// power NAME { style: ..., pins: [...] }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PowerDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
+/// Identifier-dispatched SchDoc object block: wire { ... }, bus { ... }, etc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchDocObjectDecl {
+    pub object_type: Spanned<String>,
+    pub name: Option<Spanned<EntityName>>,
+    pub body: Vec<Spanned<SchDocObjectItem>>,
+}
+
+/// Items inside a SchDoc object block.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchDocObjectItem {
+    Property(Property),
+    LetBinding(LetBinding),
+    /// Nested child block (e.g. `entry DATA { ... }` inside `sheet_symbol`)
+    Entry(EntryDecl),
+    /// Nested parameter block
+    Parameter(ParameterDecl),
+    /// Nested graphic block
+    Graphic(GraphicDecl),
+}
+
+/// entry NAME { ... } — child of a sheet_symbol
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryDecl {
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
+}
+
 /// [binding =] GRAPHIC_TYPE { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphicDecl {
@@ -396,4 +472,28 @@ pub const ALL_GRAPHIC_TYPES: &[&str] = &[
 
 pub fn is_graphic_type(s: &str) -> bool {
     ALL_GRAPHIC_TYPES.contains(&s)
+}
+
+/// SchDoc object type identifiers that are parsed as top-level identifier-dispatched blocks.
+pub const SCHDOC_OBJECT_TYPES: &[&str] = &[
+    "wire",
+    "bus",
+    "net_label",
+    "power_object",
+    "port",
+    "junction",
+    "no_connect",
+    "bus_entry",
+    "sheet_symbol",
+    "parameter_set",
+    "note",
+    "probe",
+    "compile_mask",
+    "blanket",
+    "harness_connector",
+    "signal_harness",
+];
+
+pub fn is_schdoc_object_type(s: &str) -> bool {
+    SCHDOC_OBJECT_TYPES.contains(&s)
 }

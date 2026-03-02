@@ -706,8 +706,8 @@ component "U1" {
 
     rectangle { location: (85mil, 165mil), corner: (115mil, 235mil) }
 
-    parameter Value = "LM358"
-    parameter Comment = "Dual Op-Amp" { is_hidden: true }
+    parameter Value { value: "LM358" }
+    parameter Comment { value: "Dual Op-Amp", is_hidden: true }
 
     footprint "DIP-8" {
         map 1 -> 1

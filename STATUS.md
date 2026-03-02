@@ -28,7 +28,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 | Document   | Ext       | Parse | Serialize | High-Level API | Spec Lang | Query | Render  | CLI validate | CLI save-as | CLI new |
 |------------|-----------|-------|-----------|----------------|-----------|-------|---------|--------------|-------------|---------|
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ⚠️ dump only | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
+| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ✅         | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbDoc** | .PcbDoc   | ✅    | ✅        | ❌ None         | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
 | **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ✅      |
@@ -93,8 +93,12 @@ preserved across save cycles for all record types via Altium's `UNIQUE_ID` field
 Convenience mutation methods: `add_object()`, `remove_objects()`, `component_mut()`,
 `add_component_child()`.
 
-**Spec Language:** Dump only (reverse-generate spec from document). Compile/execute not
-implemented — returns error "SchDoc spec compilation is not implemented yet."
+**Spec Language:** Full support — dump, compile, plan, and apply. Supports sheet metadata
+(fonts, grid, custom size), component placement, all low-level SchDoc objects (wire, bus,
+net_label, power_object, port, junction, no_connect, bus_entry, sheet_symbol, parameter_set,
+note, probe, compile_mask, blanket, harness_connector, signal_harness), graphics (label,
+rectangle, line, etc.), and parameters. High-level `net` and `power` blocks for declarative
+net connectivity. SchDoc specs can import SchLib specs for `$alias.ComponentName` references.
 
 **Query:** Supported. Entity types: schdoc_component, wire, bus, net_label, power_object,
 port, junction, no_connect, bus_entry, sheet_symbol, sheet_entry, note, probe, compile_mask,
@@ -104,7 +108,7 @@ Supports attribute filters, pseudo-classes, and combinators.
 
 **Rendering:** SVG and PNG. Full schematic sheet rendering.
 
-**CLI:** `new schdoc`, `validate`, `save-as`, `render`, `query`, `info`, `dump`.
+**CLI:** `new schdoc`, `validate`, `save-as`, `render`, `query`, `info`, `dump`, `plan`, `apply`.
 
 ---
 
@@ -324,7 +328,7 @@ no PCB layer filtering, no text kerning/shaping.
 Declarative DSL for defining libraries and projects. Complete pipeline:
 lexer → parser → AST → compiler → `SpecModel` → executor/reconciler/dump.
 
-Supports SchLib, PcbLib, and PrjPcb. SchDoc has dump only (no compile/execute).
+Supports SchLib, PcbLib, PrjPcb, and SchDoc (full compile/plan/apply support).
 
 Features: let bindings, arithmetic expressions, dimensional units (`100mil`, `2.54mm`),
 color literals (`#FF0000`), spread operators, template interpolation, row/column/grid
@@ -351,24 +355,21 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 4. **Query does not support PcbDoc** — PcbDoc entity adapter not implemented (no
    high-level API).
 
-5. **SchDoc spec compilation not implemented** — dump works but compile/execute returns
-   error.
-
-6. **PcbDoc rendering not supported** — no SVG/PNG rendering for board designs.
+5. **PcbDoc rendering not supported** — no SVG/PNG rendering for board designs.
 
 ### Minor
 
-7. **PcbDoc validation: 2/96 V6 files still failing** — EmbeddedFonts and
+6. **PcbDoc validation: 2/96 V6 files still failing** — EmbeddedFonts and
    WideStrings edge cases (tracked in PCBDOC-next.md).
 
-8. **PcbDoc V5 format not supported** — 2 test files deferred.
+7. **PcbDoc V5 format not supported** — 2 test files deferred.
 
-9. **SVG clip regions not applied** — PushClip/PopClip recorded but skipped in SVG
+8. **SVG clip regions not applied** — PushClip/PopClip recorded but skipped in SVG
     generation.
 
-10. **`get version` only works for SchLib and PcbLib** — not PcbDoc, SchDoc, PrjPcb.
+9. **`get version` only works for SchLib and PcbLib** — not PcbDoc, SchDoc, PrjPcb.
 
-11. **`apply --report-json` flag accepted but not used** — dead code.
+10. **`apply --report-json` flag accepted but not used** — dead code.
 
 ---
 

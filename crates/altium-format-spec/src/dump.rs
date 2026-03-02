@@ -878,21 +878,12 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
 
 fn dump_parameter(out: &mut String, param: &Parameter, indent: usize) {
     let pad = " ".repeat(indent);
+    out.push_str(&format!("{}parameter {} {{\n", pad, quote_entity_name(&param.name)));
+    out.push_str(&format!("{}    value: {}\n", pad, quote_string(&param.text)));
     if param.is_hidden {
-        out.push_str(&format!(
-            "{}parameter {} = {} {{ is_hidden: true }}\n",
-            pad,
-            quote_entity_name(&param.name),
-            quote_string(&param.text)
-        ));
-    } else {
-        out.push_str(&format!(
-            "{}parameter {} = {}\n",
-            pad,
-            quote_entity_name(&param.name),
-            quote_string(&param.text)
-        ));
+        out.push_str(&format!("{}    is_hidden: true\n", pad));
     }
+    out.push_str(&format!("{}}}\n", pad));
 }
 
 // ── Footprint map ─────────────────────────────────────────────────────────────

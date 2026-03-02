@@ -20,20 +20,29 @@ use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
     PlaneConnectionStyle, RotationBy90,
 };
+use altium_format_types::sch::{
+    HorizontalAlign, LeftRightSide, LineStyle, PenWidth, PortArrowStyle, PortIoType,
+    PowerObjectStyle, TextJustification,
+};
 
 use crate::ast::{
     AliasDecl, ComponentDecl, ComponentItem, FootprintDecl, FootprintItem, FootprintMapDecl,
     FootprintRef, GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock,
-    PartItem, PinDecl, ProjectDecl, ProjectItem, SpecFile, SpecItem,
+    PartItem, PinDecl, ProjectDecl, ProjectItem, SchDocObjectDecl, SchDocObjectItem, SheetDecl,
+    SheetItem, SpecFile, SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
-    AnnotationMatchParamSpec, AnnotationSpec, ClassGenSpec, ComparisonRuleSpec, ComponentSpec,
-    DocumentSpec, ErcLevelOverride, ErcMatrixOverride, FootprintMapSpec, FootprintSpec,
-    GraphicProperties, GraphicSpec, GraphicType, LayerSpec, LibraryUpdateSpec, OutputGroupSpec,
-    OutputSpec, PadSpec, ParamVariationSpec, ParameterSpec, PartSpec, PcbGraphicProperties,
-    PcbGraphicSpec, PcbGraphicType, PinPadMap, PinSpec, PrjPcbSpec, ProjectSpec, SchLibSpec,
-    SpecDomain, SpecModel, VariantSpec, VariationSpec,
+    AnnotationMatchParamSpec, AnnotationSpec, BlanketSpec, BusEntrySpec, BusSpec, ClassGenSpec,
+    ComparisonRuleSpec, CompileMaskSpec, ComponentSpec, DocumentSpec, ErcLevelOverride,
+    ErcMatrixOverride, FontSpec, FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec,
+    GraphicType, HarnessConnectorSpec, JunctionSpec, LayerSpec, LibraryUpdateSpec, NetLabelSpec,
+    NetSpec, NoConnectSpec, NoteSpec, OutputGroupSpec, OutputSpec, PadSpec, ParamVariationSpec,
+    ParameterSetSpec, ParameterSpec, PartSpec, PcbGraphicProperties, PcbGraphicSpec,
+    PcbGraphicType, PinPadMap, PinRef, PinSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec,
+    ProbeSpec, ProjectSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec,
+    SheetEntrySpec, SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel,
+    SymbolRef, VariantSpec, VariationSpec, WireSpec,
 };
 
 use altium_format_types::project::{
@@ -122,12 +131,9 @@ impl SpecCompiler {
                 Ok(SpecModel::PrjPcb(PrjPcbSpec { projects }))
             }
             SpecDomain::SchDoc => {
-                // SchDoc dump is read-only (no spec compilation for SchDoc yet)
+                let spec = self.compile_schdoc(file)?;
                 self.scope.pop();
-                Err(SpecError::no_span(
-                    SpecErrorCode::AltiumFormat,
-                    "SchDoc spec compilation is not implemented yet; use `dump` instead".to_string(),
-                ))
+                Ok(SpecModel::SchDoc(spec))
             }
         }
     }
@@ -241,6 +247,558 @@ impl SpecCompiler {
             graphics,
             parts,
         })
+    }
+
+    // ── SchDoc compilation ──────────────────────────────────────────────────
+
+    fn compile_schdoc(&mut self, file: &SpecFile) -> Result<SchDocSpec, SpecError> {
+        let mut fonts = Vec::new();
+        let mut custom_width = None;
+        let mut custom_height = None;
+        let mut snap_grid_on = None;
+        let mut visible_grid_on = None;
+        let mut hot_spot_grid_on = None;
+        let mut show_hidden_pins = None;
+        let mut border_on = None;
+        let mut title_block_on = None;
+
+        let mut components = Vec::new();
+        let mut nets = Vec::new();
+        let mut powers = Vec::new();
+        let mut objects = Vec::new();
+
+        for item in &file.items {
+            match &item.node {
+                SpecItem::Sheet(sheet_decl) => {
+                    self.compile_sheet_metadata(
+                        sheet_decl, &mut fonts,
+                        &mut custom_width, &mut custom_height,
+                        &mut snap_grid_on, &mut visible_grid_on, &mut hot_spot_grid_on,
+                        &mut show_hidden_pins, &mut border_on, &mut title_block_on,
+                    )?;
+                }
+                SpecItem::Component(comp_decl) => {
+                    components.push(self.compile_schdoc_component(comp_decl)?);
+                }
+                SpecItem::Net(net_decl) => {
+                    nets.push(self.compile_net(net_decl)?);
+                }
+                SpecItem::Power(power_decl) => {
+                    powers.push(self.compile_power(power_decl)?);
+                }
+                SpecItem::SchDocObject(obj_decl) => {
+                    objects.push(self.compile_schdoc_object(obj_decl)?);
+                }
+                SpecItem::Import(_) | SpecItem::LetBinding(_)
+                | SpecItem::Footprint(_) | SpecItem::Project(_) => {
+                    // Imports and let bindings handled above; other domains silently skipped.
+                }
+            }
+        }
+
+        let sheet = SheetSpec {
+            fonts,
+            custom_width,
+            custom_height,
+            snap_grid_on,
+            visible_grid_on,
+            hot_spot_grid_on,
+            show_hidden_pins,
+            border_on,
+            title_block_on,
+            components,
+            nets,
+            powers,
+            objects,
+        };
+
+        Ok(SchDocSpec { sheets: vec![sheet] })
+    }
+
+    fn compile_sheet_metadata(
+        &mut self,
+        decl: &SheetDecl,
+        fonts: &mut Vec<FontSpec>,
+        custom_width: &mut Option<Coord>,
+        custom_height: &mut Option<Coord>,
+        snap_grid_on: &mut Option<bool>,
+        visible_grid_on: &mut Option<bool>,
+        hot_spot_grid_on: &mut Option<bool>,
+        show_hidden_pins: &mut Option<bool>,
+        border_on: &mut Option<bool>,
+        title_block_on: &mut Option<bool>,
+    ) -> Result<(), SpecError> {
+        for item in &decl.body {
+            match &item.node {
+                SheetItem::FontBlock(fb) => {
+                    for font_spanned in &fb.fonts {
+                        fonts.push(self.compile_font(&font_spanned.node)?);
+                    }
+                }
+                SheetItem::Property(prop) => {
+                    let val = eval_expr(&prop.value, &self.scope)?;
+                    match prop.key.node.as_str() {
+                        "custom_width" => *custom_width = Some(value_to_coord(&val, Some(prop.value.span))?),
+                        "custom_height" => *custom_height = Some(value_to_coord(&val, Some(prop.value.span))?),
+                        "snap_grid_on" => *snap_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        "visible_grid_on" => *visible_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        "hot_spot_grid_on" => *hot_spot_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        "show_hidden_pins" => *show_hidden_pins = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        "border_on" => *border_on = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        "title_block_on" => *title_block_on = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        other => {
+                            return Err(SpecError::new(
+                                SpecErrorCode::AltiumFormat,
+                                format!("unknown sheet property '{}'", other),
+                                Some(prop.key.span),
+                            ));
+                        }
+                    }
+                }
+                SheetItem::LetBinding(_) => {
+                    // Let bindings already evaluated at file level.
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_font(&mut self, decl: &crate::ast::FontDecl) -> Result<FontSpec, SpecError> {
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+        let name = get_string_value_key(&props, "name", decl.body.span)?;
+        let size = get_integer_opt(&props, "size").unwrap_or(10);
+        let bold = get_bool_opt(&props, "bold");
+        let italic = get_bool_opt(&props, "italic");
+        let underline = get_bool_opt(&props, "underline");
+        let strikeout = get_bool_opt(&props, "strikeout");
+        let rotation = get_integer_opt(&props, "rotation");
+
+        Ok(FontSpec {
+            id: decl.id.node,
+            name,
+            size,
+            bold,
+            italic,
+            underline,
+            strikeout,
+            rotation,
+        })
+    }
+
+    fn compile_schdoc_component(
+        &mut self,
+        decl: &ComponentDecl,
+    ) -> Result<SchDocComponentSpec, SpecError> {
+        let designator = decl.name.node.as_str();
+
+        self.scope.push();
+
+        // Evaluate component-level let bindings.
+        let comp_lets: Vec<_> = decl.body.iter().filter_map(|item| {
+            match &item.node {
+                ComponentItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
+                _ => None,
+            }
+        }).collect();
+        eval_let_bindings_slice(&comp_lets, &mut self.scope)?;
+
+        let props = collect_object_properties_from_items(
+            decl.body.iter().filter_map(|item| {
+                match &item.node {
+                    ComponentItem::Property(p) => Some(p),
+                    _ => None,
+                }
+            }),
+            &self.scope,
+        )?;
+
+        // Resolve symbol reference: either $alias.Name or lib_reference: "Name"
+        let symbol = if let Some(v) = props.get("symbol") {
+            match v {
+                Value::String(s) => {
+                    // Check if it's a $alias.Name from a DollarIdent expression
+                    SymbolRef::Literal(s.clone())
+                }
+                _ => {
+                    return Err(SpecError::no_span(
+                        SpecErrorCode::TypeMismatch,
+                        "symbol must be a string or $alias.Name reference".to_string(),
+                    ));
+                }
+            }
+        } else if let Some(v) = props.get("lib_reference") {
+            match v {
+                Value::String(s) => SymbolRef::Literal(s.clone()),
+                _ => {
+                    return Err(SpecError::no_span(
+                        SpecErrorCode::TypeMismatch,
+                        "lib_reference must be a string".to_string(),
+                    ));
+                }
+            }
+        } else {
+            // Default: use designator as lib_reference
+            SymbolRef::Literal(designator.clone())
+        };
+
+        let location = if let Some(v) = props.get("at") {
+            value_to_coord_point(v, None)?
+        } else {
+            CoordPoint::zero()
+        };
+        let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
+        let is_mirrored = get_bool_opt(&props, "is_mirrored");
+        let description = get_string_opt(&props, "description");
+
+        // Compile parameters
+        let mut parameters = Vec::new();
+        for item in &decl.body {
+            if let ComponentItem::Parameter(param_decl) = &item.node {
+                parameters.push(self.compile_parameter(param_decl)?);
+            }
+        }
+
+        self.scope.pop();
+
+        Ok(SchDocComponentSpec {
+            designator,
+            symbol,
+            location,
+            orientation,
+            is_mirrored,
+            description,
+            parameters,
+        })
+    }
+
+    fn compile_net(&mut self, decl: &crate::ast::NetDecl) -> Result<NetSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        let pins = self.compile_pin_refs(&props, decl.body.span)?;
+
+        Ok(NetSpec { name, pins })
+    }
+
+    fn compile_power(&mut self, decl: &crate::ast::PowerDecl) -> Result<PowerSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        let style = get_enum_opt(&props, "style", parse_power_object_style)?
+            .unwrap_or(PowerObjectStyle::Bar);
+        let show_net_name = get_bool_opt(&props, "show_net_name");
+        let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
+        let pins = self.compile_pin_refs(&props, decl.body.span)?;
+
+        Ok(PowerSpec { name, style, pins, show_net_name, orientation })
+    }
+
+    /// Parse a `pins: [U1.14, C1.1]` array into PinRef values.
+    fn compile_pin_refs(
+        &self,
+        props: &IndexMap<String, Value>,
+        span: crate::diagnostic::Span,
+    ) -> Result<Vec<PinRef>, SpecError> {
+        let pins_val = props.get("pins").ok_or_else(|| {
+            SpecError::new(SpecErrorCode::TypeMismatch, "'pins' field is required".to_string(), Some(span))
+        })?;
+
+        let arr = match pins_val {
+            Value::Array(a) => a,
+            _ => return Err(SpecError::new(
+                SpecErrorCode::TypeMismatch,
+                "'pins' must be an array".to_string(),
+                Some(span),
+            )),
+        };
+
+        let mut refs = Vec::new();
+        for item in arr {
+            let s = match item {
+                Value::String(s) => s.clone(),
+                _ => return Err(SpecError::no_span(
+                    SpecErrorCode::TypeMismatch,
+                    "pin ref must be a string like \"U1.14\"".to_string(),
+                )),
+            };
+            let (component, pin) = s.split_once('.').ok_or_else(|| {
+                SpecError::no_span(
+                    SpecErrorCode::TypeMismatch,
+                    format!("invalid pin ref '{}': expected COMPONENT.PIN format", s),
+                )
+            })?;
+            refs.push(PinRef {
+                component: component.to_string(),
+                pin: pin.to_string(),
+            });
+        }
+
+        Ok(refs)
+    }
+
+    fn compile_schdoc_object(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        match decl.object_type.node.as_str() {
+            "wire" => self.compile_wire_spec(decl),
+            "bus" => self.compile_bus_spec(decl),
+            "net_label" => self.compile_net_label_spec(decl),
+            "power_object" => self.compile_power_object_spec(decl),
+            "port" => self.compile_port_spec(decl),
+            "junction" => self.compile_junction_spec(decl),
+            "no_connect" => self.compile_no_connect_spec(decl),
+            "bus_entry" => self.compile_bus_entry_spec(decl),
+            "sheet_symbol" => self.compile_sheet_symbol_spec(decl),
+            "parameter_set" => self.compile_parameter_set_spec(decl),
+            "note" => self.compile_note_spec(decl),
+            "probe" => self.compile_probe_spec(decl),
+            "compile_mask" => self.compile_compile_mask_spec(decl),
+            "blanket" => self.compile_blanket_spec(decl),
+            "harness_connector" => self.compile_harness_connector_spec(decl),
+            "signal_harness" => self.compile_signal_harness_spec(decl),
+            "parameter" => self.compile_parameter_object_spec(decl),
+            other => {
+                // Try as a graphic type (label, line, rectangle, etc.)
+                if let Some(graphic_type) = parse_sch_graphic_type(other) {
+                    let props = self.collect_schdoc_object_props(decl)?;
+                    let properties = compile_graphic_properties(&props, decl.object_type.span)?;
+                    let unique_id = self.make_unique_id(None, other);
+                    Ok(SchDocObjectSpec::Graphic(GraphicSpec { unique_id, graphic_type, properties }))
+                } else {
+                    Err(SpecError::new(
+                        SpecErrorCode::AltiumFormat,
+                        format!("unknown SchDoc object type '{}'", other),
+                        Some(decl.object_type.span),
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Collect properties from SchDocObjectDecl body items.
+    fn collect_schdoc_object_props(
+        &self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<IndexMap<String, Value>, SpecError> {
+        let mut props = IndexMap::new();
+        for item in &decl.body {
+            if let SchDocObjectItem::Property(p) = &item.node {
+                let val = eval_expr(&p.value, &self.scope)?;
+                props.insert(p.key.node.clone(), val);
+            }
+        }
+        Ok(props)
+    }
+
+    fn compile_wire_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let vertices = get_coord_point_array(&props, "vertices")?;
+        let color = get_color_opt(&props, "color");
+        let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
+        let line_style = get_enum_opt(&props, "line_style", parse_line_style)?;
+        Ok(SchDocObjectSpec::Wire(WireSpec { vertices, color, line_width, line_style }))
+    }
+
+    fn compile_bus_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let vertices = get_coord_point_array(&props, "vertices")?;
+        let color = get_color_opt(&props, "color");
+        let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
+        Ok(SchDocObjectSpec::Bus(BusSpec { vertices, color, line_width }))
+    }
+
+    fn compile_net_label_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let text = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
+        let justification = get_enum_opt(&props, "justification", parse_text_justification)?;
+        let font_id = get_integer_opt(&props, "font_id");
+        let color = get_color_opt(&props, "color");
+        let is_mirrored = get_bool_opt(&props, "is_mirrored");
+        Ok(SchDocObjectSpec::NetLabel(NetLabelSpec {
+            text, location, orientation, justification, font_id, color, is_mirrored,
+        }))
+    }
+
+    fn compile_power_object_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let text = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
+        let style = get_enum_opt(&props, "style", parse_power_object_style)?;
+        let show_net_name = get_bool_opt(&props, "show_net_name");
+        let font_id = get_integer_opt(&props, "font_id");
+        let color = get_color_opt(&props, "color");
+        let is_cross_sheet_connector = get_bool_opt(&props, "is_cross_sheet_connector");
+        Ok(SchDocObjectSpec::PowerObject(PowerObjectSpec {
+            text, location, orientation, style, show_net_name, font_id, color, is_cross_sheet_connector,
+        }))
+    }
+
+    fn compile_port_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let io_type = get_enum_opt(&props, "io_type", parse_port_io_type)?;
+        let style = get_enum_opt(&props, "style", parse_port_arrow_style)?;
+        let width = get_coord_opt(&props, "width")?;
+        let height = get_coord_opt(&props, "height")?;
+        let color = get_color_opt(&props, "color");
+        let area_color = get_color_opt(&props, "area_color");
+        let text_color = get_color_opt(&props, "text_color");
+        let font_id = get_integer_opt(&props, "font_id");
+        let alignment = get_enum_opt(&props, "alignment", parse_horizontal_align)?;
+        Ok(SchDocObjectSpec::Port(PortSpec {
+            name, location, io_type, style, width, height, color, area_color, text_color, font_id, alignment,
+        }))
+    }
+
+    fn compile_junction_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let color = get_color_opt(&props, "color");
+        Ok(SchDocObjectSpec::Junction(JunctionSpec { location, color }))
+    }
+
+    fn compile_no_connect_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let color = get_color_opt(&props, "color");
+        let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
+        Ok(SchDocObjectSpec::NoConnect(NoConnectSpec { location, color, orientation }))
+    }
+
+    fn compile_bus_entry_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let corner = get_coord_point_required(&props, "corner")?;
+        let color = get_color_opt(&props, "color");
+        let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
+        Ok(SchDocObjectSpec::BusEntry(BusEntrySpec { location, corner, color, line_width }))
+    }
+
+    fn compile_sheet_symbol_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let sheet_name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let file_name = get_string_opt(&props, "file_name");
+        let x_size = get_coord_opt(&props, "x_size")?;
+        let y_size = get_coord_opt(&props, "y_size")?;
+        let color = get_color_opt(&props, "color");
+        let area_color = get_color_opt(&props, "area_color");
+
+        // Compile entry blocks
+        let mut entries = Vec::new();
+        for item in &decl.body {
+            if let SchDocObjectItem::Entry(entry_decl) = &item.node {
+                entries.push(self.compile_sheet_entry(entry_decl)?);
+            }
+        }
+
+        Ok(SchDocObjectSpec::SheetSymbol(SheetSymbolSpec {
+            sheet_name, file_name, location, x_size, y_size, color, area_color, entries,
+        }))
+    }
+
+    fn compile_sheet_entry(&mut self, decl: &crate::ast::EntryDecl) -> Result<SheetEntrySpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+        let io_type = get_enum_opt(&props, "io_type", parse_port_io_type)?;
+        let side = get_enum_opt(&props, "side", parse_left_right_side)?;
+        let distance_from_top = get_coord_opt(&props, "distance")?;
+        Ok(SheetEntrySpec { name, io_type, side, distance_from_top })
+    }
+
+    fn compile_parameter_set_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = if let Some(v) = props.get("at") {
+            Some(value_to_coord_point(v, None)?)
+        } else {
+            None
+        };
+
+        let mut parameters = Vec::new();
+        for item in &decl.body {
+            if let SchDocObjectItem::Parameter(param_decl) = &item.node {
+                parameters.push(self.compile_parameter(param_decl)?);
+            }
+        }
+
+        Ok(SchDocObjectSpec::ParameterSet(ParameterSetSpec { name, location, parameters }))
+    }
+
+    fn compile_note_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let text = get_string_opt(&props, "text").unwrap_or_default();
+        let color = get_color_opt(&props, "color");
+        let area_color = get_color_opt(&props, "area_color");
+        let font_id = get_integer_opt(&props, "font_id");
+        Ok(SchDocObjectSpec::Note(NoteSpec { location, text, color, area_color, font_id }))
+    }
+
+    fn compile_probe_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let color = get_color_opt(&props, "color");
+        Ok(SchDocObjectSpec::Probe(ProbeSpec { name, location, color }))
+    }
+
+    fn compile_compile_mask_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let corner = get_coord_point_required(&props, "corner")?;
+        let color = get_color_opt(&props, "color");
+        Ok(SchDocObjectSpec::CompileMask(CompileMaskSpec { location, corner, color }))
+    }
+
+    fn compile_blanket_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let corner = get_coord_point_required(&props, "corner")?;
+        let vertices = if props.contains_key("vertices") {
+            Some(get_coord_point_array(&props, "vertices")?)
+        } else {
+            None
+        };
+        let color = get_color_opt(&props, "color");
+        Ok(SchDocObjectSpec::Blanket(BlanketSpec { location, corner, vertices, color }))
+    }
+
+    fn compile_harness_connector_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let location = get_coord_point_required(&props, "at")?;
+        let x_size = get_coord_opt(&props, "x_size")?;
+        let y_size = get_coord_opt(&props, "y_size")?;
+        let color = get_color_opt(&props, "color");
+        let area_color = get_color_opt(&props, "area_color");
+        Ok(SchDocObjectSpec::HarnessConnector(HarnessConnectorSpec {
+            location, x_size, y_size, color, area_color,
+        }))
+    }
+
+    fn compile_signal_harness_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let props = self.collect_schdoc_object_props(decl)?;
+        let vertices = get_coord_point_array(&props, "vertices")?;
+        let color = get_color_opt(&props, "color");
+        let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
+        Ok(SchDocObjectSpec::SignalHarness(SignalHarnessSpec { vertices, color, line_width }))
+    }
+
+    fn compile_parameter_object_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+        let props = self.collect_schdoc_object_props(decl)?;
+        let text = get_string_opt(&props, "value").unwrap_or_default();
+        let is_hidden = get_bool_opt(&props, "is_hidden");
+        Ok(SchDocObjectSpec::Parameter(ParameterSpec {
+            name: name.to_string(),
+            text,
+            is_hidden,
+        }))
     }
 
     // ── Part compilation ───────────────────────────────────────────────────
@@ -1310,6 +1868,52 @@ fn value_to_points(
     }
 }
 
+// ── SchDoc-specific helpers ─────────────────────────────────────────────────────
+
+fn value_to_bool(v: &Value, span: Option<crate::diagnostic::Span>) -> Result<bool, SpecError> {
+    match v {
+        Value::Bool(b) => Ok(*b),
+        other => Err(SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            format!("expected bool, got {}", other.kind_name()),
+            span,
+        )),
+    }
+}
+
+fn get_color_opt(props: &IndexMap<String, Value>, key: &str) -> Option<Color> {
+    match props.get(key) {
+        Some(Value::Color(r, g, b)) => Some(Color::from_rgb(*r, *g, *b)),
+        _ => None,
+    }
+}
+
+fn get_coord_point_required(
+    props: &IndexMap<String, Value>,
+    key: &str,
+) -> Result<CoordPoint, SpecError> {
+    match props.get(key) {
+        Some(v) => value_to_coord_point(v, None),
+        None => Err(SpecError::no_span(
+            SpecErrorCode::TypeMismatch,
+            format!("missing required field '{}'", key),
+        )),
+    }
+}
+
+fn get_coord_point_array(
+    props: &IndexMap<String, Value>,
+    key: &str,
+) -> Result<Vec<CoordPoint>, SpecError> {
+    match props.get(key) {
+        Some(v) => value_to_points(v, None),
+        None => Err(SpecError::no_span(
+            SpecErrorCode::TypeMismatch,
+            format!("missing required field '{}'", key),
+        )),
+    }
+}
+
 // ── Enum parsers ───────────────────────────────────────────────────────────────
 
 fn parse_component_kind(s: &str) -> Option<ComponentKind> {
@@ -1379,6 +1983,101 @@ fn parse_plane_connection(s: &str) -> Option<PlaneConnectionStyle> {
         "no_connect" | "noconnect" | "none" => Some(PlaneConnectionStyle::NoConnect),
         "relief" => Some(PlaneConnectionStyle::Relief),
         "direct" => Some(PlaneConnectionStyle::Direct),
+        _ => None,
+    }
+}
+
+fn parse_power_object_style(s: &str) -> Option<PowerObjectStyle> {
+    match s.to_ascii_lowercase().as_str() {
+        "circle" | "0" => Some(PowerObjectStyle::Circle),
+        "arrow" | "1" => Some(PowerObjectStyle::Arrow),
+        "bar" | "2" => Some(PowerObjectStyle::Bar),
+        "wave" | "3" => Some(PowerObjectStyle::Wave),
+        "gnd_power" | "gndpower" | "4" => Some(PowerObjectStyle::GndPower),
+        "gnd_signal" | "gndsignal" | "5" => Some(PowerObjectStyle::GndSignal),
+        "gnd_earth" | "gndearth" | "6" => Some(PowerObjectStyle::GndEarth),
+        "gost_arrow" | "gostarrow" | "7" => Some(PowerObjectStyle::GostArrow),
+        "gost_gnd_power" | "gostgndpower" | "8" => Some(PowerObjectStyle::GostGndPower),
+        "gost_gnd_earth" | "gostgndearth" | "9" => Some(PowerObjectStyle::GostGndEarth),
+        "gost_bar" | "gostbar" | "10" => Some(PowerObjectStyle::GostBar),
+        _ => None,
+    }
+}
+
+fn parse_pen_width(s: &str) -> Option<PenWidth> {
+    match s.to_ascii_lowercase().as_str() {
+        "zero" | "0" => Some(PenWidth::Zero),
+        "small" | "1" => Some(PenWidth::Small),
+        "medium" | "2" => Some(PenWidth::Medium),
+        "large" | "3" => Some(PenWidth::Large),
+        _ => None,
+    }
+}
+
+fn parse_line_style(s: &str) -> Option<LineStyle> {
+    match s.to_ascii_lowercase().as_str() {
+        "solid" | "0" => Some(LineStyle::Solid),
+        "dashed" | "1" => Some(LineStyle::Dashed),
+        "dotted" | "2" => Some(LineStyle::Dotted),
+        "dash_dotted" | "dashdotted" | "3" => Some(LineStyle::DashDotted),
+        _ => None,
+    }
+}
+
+fn parse_text_justification(s: &str) -> Option<TextJustification> {
+    match s.to_ascii_lowercase().as_str() {
+        "bottom_left" | "bottomleft" | "0" => Some(TextJustification::BottomLeft),
+        "bottom_center" | "bottomcenter" | "1" => Some(TextJustification::BottomCenter),
+        "bottom_right" | "bottomright" | "2" => Some(TextJustification::BottomRight),
+        "center_left" | "centerleft" | "3" => Some(TextJustification::CenterLeft),
+        "center" | "4" => Some(TextJustification::Center),
+        "center_right" | "centerright" | "5" => Some(TextJustification::CenterRight),
+        "top_left" | "topleft" | "6" => Some(TextJustification::TopLeft),
+        "top_center" | "topcenter" | "7" => Some(TextJustification::TopCenter),
+        "top_right" | "topright" | "8" => Some(TextJustification::TopRight),
+        _ => None,
+    }
+}
+
+fn parse_port_io_type(s: &str) -> Option<PortIoType> {
+    match s.to_ascii_lowercase().as_str() {
+        "unspecified" | "0" => Some(PortIoType::Unspecified),
+        "output" | "1" => Some(PortIoType::Output),
+        "input" | "2" => Some(PortIoType::Input),
+        "bidirectional" | "bidi" | "3" => Some(PortIoType::Bidirectional),
+        _ => None,
+    }
+}
+
+fn parse_port_arrow_style(s: &str) -> Option<PortArrowStyle> {
+    match s.to_ascii_lowercase().as_str() {
+        "none" | "0" => Some(PortArrowStyle::None),
+        "left" | "1" => Some(PortArrowStyle::Left),
+        "right" | "2" => Some(PortArrowStyle::Right),
+        "left_right" | "leftright" | "3" => Some(PortArrowStyle::LeftRight),
+        "none_vertical" | "nonevertical" | "4" => Some(PortArrowStyle::NoneVertical),
+        "top" | "5" => Some(PortArrowStyle::Top),
+        "bottom" | "6" => Some(PortArrowStyle::Bottom),
+        "top_bottom" | "topbottom" | "7" => Some(PortArrowStyle::TopBottom),
+        _ => None,
+    }
+}
+
+fn parse_horizontal_align(s: &str) -> Option<HorizontalAlign> {
+    match s.to_ascii_lowercase().as_str() {
+        "center" | "0" => Some(HorizontalAlign::Center),
+        "left" | "1" => Some(HorizontalAlign::Left),
+        "right" | "2" => Some(HorizontalAlign::Right),
+        _ => None,
+    }
+}
+
+fn parse_left_right_side(s: &str) -> Option<LeftRightSide> {
+    match s.to_ascii_lowercase().as_str() {
+        "left" | "0" => Some(LeftRightSide::Left),
+        "right" | "1" => Some(LeftRightSide::Right),
+        "top" | "2" => Some(LeftRightSide::Top),
+        "bottom" | "3" => Some(LeftRightSide::Bottom),
         _ => None,
     }
 }

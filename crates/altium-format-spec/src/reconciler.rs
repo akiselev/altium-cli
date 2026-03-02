@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use altium_format::api;
-use altium_format::{PcbLib, SchLib};
+use altium_format::{PcbLib, SchDoc, SchLib};
 
 use crate::eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, PropChange, PropValue, compute_summary,
@@ -16,7 +16,7 @@ use crate::eco::{
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec, PinSpec,
-    PrjPcbSpec, ProjectSpec, SchLibSpec, PcbLibSpec,
+    PrjPcbSpec, ProjectSpec, SchDocSpec, SchDocObjectSpec, SchLibSpec, PcbLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -1103,6 +1103,296 @@ fn format_layer_spec(spec: &LayerSpec) -> String {
         LayerSpec::CopperPosition(n) => format!("copper({n})"),
         LayerSpec::NamedLayer(name) => name.clone(),
     }
+}
+
+// ── SchDoc reconcilers ─────────────────────────────────────────────────────
+
+/// Reconcile a SchDoc spec against an existing SchDoc document.
+///
+/// Compares components by designator, low-level objects by type + position,
+/// and produces an ECO describing what would change.
+pub fn reconcile_schdoc(
+    spec: &SchDocSpec,
+    doc: &SchDoc,
+    library_path: PathBuf,
+    spec_path: PathBuf,
+) -> Result<EngineeringChangeOrder, SpecError> {
+    let sheet = doc.sheet()
+        .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
+
+    let mut changes = Vec::new();
+
+    for sheet_spec in &spec.sheets {
+        // Diff components by designator
+        let existing_map: HashMap<&str, &api::SchDocComponent> = sheet.components()
+            .into_iter()
+            .map(|c| (c.designator.as_str(), c))
+            .collect();
+
+        for comp_spec in &sheet_spec.components {
+            if let Some(existing) = existing_map.get(comp_spec.designator.as_str()) {
+                let mut prop_changes = Vec::new();
+                let new_loc = format!("{}", comp_spec.location);
+                let old_loc = format!("{}", existing.location);
+                if new_loc != old_loc {
+                    prop_changes.push(PropChange {
+                        field: "location".to_string(),
+                        old_value: old_loc,
+                        new_value: new_loc,
+                    });
+                }
+                if prop_changes.is_empty() {
+                    changes.push(EntityChange::Unchanged {
+                        kind: EntityKind::Component,
+                        identity: comp_spec.designator.clone(),
+                    });
+                } else {
+                    changes.push(EntityChange::Update {
+                        kind: EntityKind::Component,
+                        identity: comp_spec.designator.clone(),
+                        prop_changes,
+                        children: vec![],
+                    });
+                }
+            } else {
+                changes.push(schdoc_component_to_add(comp_spec));
+            }
+        }
+
+        // Low-level objects: all are treated as adds (no identity matching)
+        for obj_spec in &sheet_spec.objects {
+            changes.push(schdoc_object_to_add(obj_spec));
+        }
+
+        // Nets and powers
+        for net_spec in &sheet_spec.nets {
+            changes.push(EntityChange::Add {
+                kind: EntityKind::Net,
+                identity: net_spec.name.clone(),
+                props: vec![PropValue {
+                    field: "pins".to_string(),
+                    value: net_spec.pins.iter()
+                        .map(|p| format!("{}.{}", p.component, p.pin))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                }],
+                children: vec![],
+            });
+        }
+        for power_spec in &sheet_spec.powers {
+            changes.push(EntityChange::Add {
+                kind: EntityKind::Power,
+                identity: power_spec.name.clone(),
+                props: vec![PropValue {
+                    field: "pins".to_string(),
+                    value: power_spec.pins.iter()
+                        .map(|p| format!("{}.{}", p.component, p.pin))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                }],
+                children: vec![],
+            });
+        }
+    }
+
+    let summary = compute_summary(&changes);
+    Ok(EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    })
+}
+
+/// Reconcile against an empty SchDoc: every entity in the spec is an Add.
+pub fn reconcile_schdoc_empty(
+    spec: &SchDocSpec,
+    library_path: PathBuf,
+    spec_path: PathBuf,
+) -> EngineeringChangeOrder {
+    let mut changes = Vec::new();
+
+    for sheet_spec in &spec.sheets {
+        for comp_spec in &sheet_spec.components {
+            changes.push(schdoc_component_to_add(comp_spec));
+        }
+        for obj_spec in &sheet_spec.objects {
+            changes.push(schdoc_object_to_add(obj_spec));
+        }
+        for net_spec in &sheet_spec.nets {
+            changes.push(EntityChange::Add {
+                kind: EntityKind::Net,
+                identity: net_spec.name.clone(),
+                props: vec![PropValue {
+                    field: "pins".to_string(),
+                    value: net_spec.pins.iter()
+                        .map(|p| format!("{}.{}", p.component, p.pin))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                }],
+                children: vec![],
+            });
+        }
+        for power_spec in &sheet_spec.powers {
+            changes.push(EntityChange::Add {
+                kind: EntityKind::Power,
+                identity: power_spec.name.clone(),
+                props: vec![PropValue {
+                    field: "pins".to_string(),
+                    value: power_spec.pins.iter()
+                        .map(|p| format!("{}.{}", p.component, p.pin))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                }],
+                children: vec![],
+            });
+        }
+    }
+
+    let summary = compute_summary(&changes);
+    EngineeringChangeOrder {
+        library_path,
+        spec_path,
+        timestamp: SystemTime::now(),
+        summary,
+        changes,
+    }
+}
+
+fn schdoc_component_to_add(spec: &crate::model::SchDocComponentSpec) -> EntityChange {
+    let mut props = vec![
+        PropValue {
+            field: "designator".to_string(),
+            value: spec.designator.clone(),
+        },
+        PropValue {
+            field: "location".to_string(),
+            value: format!("{}", spec.location),
+        },
+    ];
+    match &spec.symbol {
+        crate::model::SymbolRef::Import { alias, name } => {
+            props.push(PropValue {
+                field: "symbol".to_string(),
+                value: format!("${}.{}", alias, name),
+            });
+        }
+        crate::model::SymbolRef::Literal(name) => {
+            props.push(PropValue {
+                field: "lib_reference".to_string(),
+                value: name.clone(),
+            });
+        }
+    }
+    EntityChange::Add {
+        kind: EntityKind::Component,
+        identity: spec.designator.clone(),
+        props,
+        children: vec![],
+    }
+}
+
+fn schdoc_object_to_add(spec: &SchDocObjectSpec) -> EntityChange {
+    let (kind, identity, props) = match spec {
+        SchDocObjectSpec::Wire(w) => (
+            EntityKind::Wire,
+            format!("wire@{}", w.vertices.first().map(|v| format!("{v}")).unwrap_or_default()),
+            vec![PropValue {
+                field: "vertices".to_string(),
+                value: w.vertices.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", "),
+            }],
+        ),
+        SchDocObjectSpec::Bus(b) => (
+            EntityKind::Bus,
+            format!("bus@{}", b.vertices.first().map(|v| format!("{v}")).unwrap_or_default()),
+            vec![PropValue {
+                field: "vertices".to_string(),
+                value: b.vertices.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", "),
+            }],
+        ),
+        SchDocObjectSpec::NetLabel(n) => (
+            EntityKind::NetLabel,
+            n.text.clone(),
+            vec![PropValue { field: "location".to_string(), value: format!("{}", n.location) }],
+        ),
+        SchDocObjectSpec::PowerObject(p) => (
+            EntityKind::PowerObject,
+            p.text.clone(),
+            vec![PropValue { field: "location".to_string(), value: format!("{}", p.location) }],
+        ),
+        SchDocObjectSpec::Port(p) => (
+            EntityKind::Port,
+            p.name.clone(),
+            vec![PropValue { field: "location".to_string(), value: format!("{}", p.location) }],
+        ),
+        SchDocObjectSpec::Junction(j) => (
+            EntityKind::Junction,
+            format!("junction@{}", j.location),
+            vec![],
+        ),
+        SchDocObjectSpec::NoConnect(n) => (
+            EntityKind::NoConnect,
+            format!("no_connect@{}", n.location),
+            vec![],
+        ),
+        SchDocObjectSpec::BusEntry(b) => (
+            EntityKind::BusEntry,
+            format!("bus_entry@{}", b.location),
+            vec![PropValue { field: "corner".to_string(), value: format!("{}", b.corner) }],
+        ),
+        SchDocObjectSpec::SheetSymbol(s) => (
+            EntityKind::SheetSymbol,
+            s.sheet_name.clone(),
+            vec![PropValue { field: "location".to_string(), value: format!("{}", s.location) }],
+        ),
+        SchDocObjectSpec::ParameterSet(p) => (
+            EntityKind::ParameterSet,
+            p.name.clone(),
+            vec![],
+        ),
+        SchDocObjectSpec::Note(n) => (
+            EntityKind::Note,
+            format!("note@{}", n.location),
+            vec![PropValue { field: "text".to_string(), value: n.text.clone() }],
+        ),
+        SchDocObjectSpec::Probe(p) => (
+            EntityKind::Probe,
+            p.name.clone(),
+            vec![PropValue { field: "location".to_string(), value: format!("{}", p.location) }],
+        ),
+        SchDocObjectSpec::CompileMask(c) => (
+            EntityKind::CompileMask,
+            format!("compile_mask@{}", c.location),
+            vec![PropValue { field: "corner".to_string(), value: format!("{}", c.corner) }],
+        ),
+        SchDocObjectSpec::Blanket(b) => (
+            EntityKind::Blanket,
+            format!("blanket@{}", b.location),
+            vec![PropValue { field: "corner".to_string(), value: format!("{}", b.corner) }],
+        ),
+        SchDocObjectSpec::Graphic(g) => (
+            EntityKind::Graphic,
+            g.unique_id.clone(),
+            vec![],
+        ),
+        SchDocObjectSpec::Parameter(p) => (
+            EntityKind::Parameter,
+            p.name.clone(),
+            vec![PropValue { field: "text".to_string(), value: p.text.clone() }],
+        ),
+        SchDocObjectSpec::HarnessConnector(h) => (
+            EntityKind::HarnessConnector,
+            format!("harness@{}", h.location),
+            vec![],
+        ),
+        SchDocObjectSpec::SignalHarness(s) => (
+            EntityKind::SignalHarness,
+            format!("signal_harness@{}", s.vertices.first().map(|v| format!("{v}")).unwrap_or_default()),
+            vec![],
+        ),
+    };
+    EntityChange::Add { kind, identity, props, children: vec![] }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
