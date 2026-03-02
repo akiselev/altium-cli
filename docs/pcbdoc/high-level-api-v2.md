@@ -37,14 +37,37 @@ The current `BoardSettings` has only `signal_layer_count: i32`. Consumers need:
 - `v9_master_stack` / `v8_master_stack` with `style`, `is_flex`
 - Legacy `LAYER{n}` entries with same fields
 
+### Prerequisite: Fix D3 Violation in Internal Types
+
+The internal `PcbStackLayerEntry` (in `board_config.rs`) currently stores thickness
+and dielectric values as `Option<String>` / `String`. This is a **D3 violation** —
+these are structured parameter values, not free-text:
+
+| Field | Current type | Correct type | Format in file |
+|-------|-------------|-------------|----------------|
+| `cop_thick` | `Option<String>` | `Option<Coord>` | MilCoord: `"1.4mil"` |
+| `diel_height` | `Option<String>` | `Option<Coord>` | MilCoord: `"11.8mil"` |
+| `diel_const` | `Option<String>` | `Option<f64>` | Float: `"4.200"` |
+| `coverlay_expansion` | `Option<String>` | `Option<Coord>` | MilCoord: `"0mil"` |
+| `pullback_distance` | `Option<String>` | `Option<Coord>` | MilCoord: `"20mil"` |
+| `diel_material` | `Option<String>` | `Option<String>` | Free-text ✅ correct |
+
+The parsing calls must change from `remove_optional::<String>` to
+`remove_optional::<MilCoord>` (for thicknesses) and a new f64-from-string
+parser (for `DIELCONST`). The serialization calls must use
+`MilCoord::to_param_value()` / `f64` formatting with 3 decimal places.
+
+Same fix needed for `PcbV7LayerEntry` and `PcbLegacyLayerEntry` which have
+the same fields as non-optional `String`.
+
 ### Public API Design
 
 ```rust
 /// Layer stack configuration extracted from Board6.
 ///
 /// Represents the physical stackup of the PCB from top to bottom.
-/// All thicknesses are in the original Altium string format (e.g. "1.350000mil")
-/// to avoid lossy conversion — downstream consumers parse as needed.
+/// Thicknesses are parsed into `Coord` from their MilCoord format (e.g. "1.4mil").
+/// Dielectric constant is parsed into `f64` (dimensionless value).
 #[derive(Debug, Clone)]
 pub struct LayerStack {
     /// Stack style (layer pairs, internal planes, etc.).
@@ -62,6 +85,11 @@ pub struct LayerStack {
 }
 
 /// A single layer in the physical stackup.
+///
+/// Thickness fields use `Coord` (Altium internal units, parsed from MilCoord
+/// format like "1.4mil" via `CoordToMilStr`). The dielectric constant is a
+/// dimensionless `f64` (from the C# `IPCB_DielectricLayer.GetState_DielectricConstant()`
+/// which returns `double`).
 #[derive(Debug, Clone)]
 pub struct StackLayer {
     /// Layer reference (for matching to primitives).
@@ -76,19 +104,22 @@ pub struct StackLayer {
     /// Whether this is an internal plane layer.
     pub is_plane: bool,
 
-    /// Copper thickness (e.g. "1.350000mil").
-    pub copper_thickness: String,
+    /// Copper thickness. Parsed from COPTHICK parameter (MilCoord format, e.g. "1.4mil").
+    pub copper_thickness: Coord,
 
     /// Dielectric type to the NEXT layer below.
     pub dielectric_type: DielectricType,
 
-    /// Dielectric constant to the next layer below.
-    pub dielectric_constant: String,
+    /// Dielectric constant (dimensionless, e.g. 4.2 for FR-4).
+    /// Parsed from DIELCONST parameter (f64 string, e.g. "4.200").
+    pub dielectric_constant: f64,
 
-    /// Dielectric thickness to the next layer below (e.g. "11.800000mil").
-    pub dielectric_height: String,
+    /// Dielectric thickness to the next layer below.
+    /// Parsed from DIELHEIGHT parameter (MilCoord format, e.g. "11.8mil").
+    pub dielectric_height: Coord,
 
-    /// Dielectric material name (e.g. "FR-4").
+    /// Dielectric material name (e.g. "FR-4", "Solder Resist").
+    /// Genuinely free-text — String is correct per D3.
     pub dielectric_material: String,
 
     /// Component placement side (for top/bottom identification).
@@ -144,6 +175,10 @@ pub struct BoardSettings {
 
 ### Spec Language
 
+All thickness values use the spec language's standard Coord dimension syntax
+(e.g., `1.35mil`, `11.8mil`). The dielectric constant is a bare float (dimensionless).
+`dielectric_material` is a genuine free-text string.
+
 ```
 board "MyPCB" {
     signal_layer_count: 4
@@ -190,9 +225,9 @@ board "MyPCB" {
     layer_stack {
         style: "layer_pairs"
 
-        layer "Top Layer"    { copper_thickness: 1.35mil, dielectric: "core" 11.8mil "FR-4" }
-        layer "GND"          { is_plane: true, copper_thickness: 1.35mil, dielectric: "prepreg" 7.5mil "FR-4" }
-        layer "Power"        { is_plane: true, copper_thickness: 1.35mil, dielectric: "core" 11.8mil }
+        layer "Top Layer"    { copper_thickness: 1.35mil, dielectric: "core" 11.8mil "FR-4" er=4.200 }
+        layer "GND"          { is_plane: true, copper_thickness: 1.35mil, dielectric: "prepreg" 7.5mil "FR-4" er=4.200 }
+        layer "Power"        { is_plane: true, copper_thickness: 1.35mil, dielectric: "core" 11.8mil er=4.200 }
         layer "Bottom Layer" { copper_thickness: 1.35mil }
     }
 }
@@ -661,7 +696,7 @@ pub enum RuleParams {
 
     /// Routing topology.
     RoutingTopology {
-        topology: String,  // "shortest", "horizontal", "vertical", "star", "daisy"
+        topology: NetTopology,
     },
 
     /// Any rule kind not yet covered by a dedicated variant.
@@ -690,13 +725,14 @@ pub struct DesignRule {
     pub params: RuleParams,
 
     /// Secondary scope expression (for binary rules like clearance).
+    /// Free-text scope expression string (e.g., "All", "InNetClass('Power')").
     pub scope2: String,
 
     /// Net scope (same net, different nets, any).
-    pub net_scope: String,
+    pub net_scope: NetScope,
 
-    /// Layer scope (same layer, adjacent, any).
-    pub layer_scope: String,
+    /// Layer scope (same layer, adjacent layers).
+    pub layer_scope: RuleLayerKind,
 }
 ```
 
