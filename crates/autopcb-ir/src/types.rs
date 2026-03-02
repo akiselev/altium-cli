@@ -4,6 +4,7 @@ use altium_format_types::CoordPoint;
 
 /// A 2D point in millimeters.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PointMm {
     pub x: f64,
     pub y: f64,
@@ -28,6 +29,7 @@ impl PointMm {
 
 /// Axis-aligned bounding box in millimeters.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct BoundingBoxMm {
     pub min: PointMm,
     pub max: PointMm,
@@ -96,6 +98,7 @@ impl BoundingBoxMm {
 
 /// Which side of the board a component is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum BoardSide {
     Top,
     Bottom,

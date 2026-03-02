@@ -5,6 +5,7 @@ use crate::types::PointMm;
 
 /// A copper pour polygon.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrPolygon {
     pub id: PolygonId,
     pub name: String,

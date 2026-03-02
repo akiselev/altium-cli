@@ -4,6 +4,7 @@ use crate::types::{BoundingBoxMm, PointMm};
 
 /// The physical board shape, in millimeters.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrBoardGeometry {
     /// Tessellated board outline (closed polygon, arcs sampled as line segments).
     pub outline: Vec<PointMm>,
@@ -17,6 +18,7 @@ pub struct IrBoardGeometry {
 
 /// A keepout zone on the board.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrKeepoutZone {
     /// Tessellated outline of the keepout region.
     pub outline: Vec<PointMm>,

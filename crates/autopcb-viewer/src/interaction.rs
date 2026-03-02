@@ -1,6 +1,6 @@
 //! Hit-testing and hover interaction.
 
-use autopcb_ir::{BoardSide, ComponentId, PcbIr, PointMm};
+use autopcb_ir::{BoardSide, ComponentId, NetId, PcbIr, PointMm};
 
 /// Find which component (if any) contains `world_pos` using AABB hit-test.
 pub fn find_component_at(ir: &PcbIr, world_pos: PointMm) -> Option<ComponentId> {
@@ -10,6 +10,15 @@ pub fn find_component_at(ir: &PcbIr, world_pos: PointMm) -> Option<ComponentId> 
         }
     }
     None
+}
+
+/// Collect the unique `NetId`s connected to a given component (via its pads).
+pub fn nets_for_component(ir: &PcbIr, id: ComponentId) -> Vec<NetId> {
+    let comp = &ir.components[id];
+    let mut nets: Vec<NetId> = comp.pads.iter().filter_map(|p| p.net).collect();
+    nets.sort_by_key(|n| n.raw());
+    nets.dedup();
+    nets
 }
 
 /// Build a tooltip string for a hovered component.

@@ -5,6 +5,7 @@ use crate::types::{BoardSide, BoundingBoxMm, PointMm};
 
 /// A placed component on the board.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrComponent {
     pub id: ComponentId,
     pub designator: String,
@@ -25,6 +26,7 @@ pub struct IrComponent {
 
 /// A single pad on a component.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrComponentPad {
     /// Global pad ID (unique across the entire board).
     pub id: PadId,
@@ -46,6 +48,7 @@ pub struct IrComponentPad {
 
 /// Describes the shape of a pad for rendering and clearance purposes.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PadShapeInfo {
     pub kind: PadShapeKind,
     /// X extent in mm.
@@ -58,6 +61,7 @@ pub struct PadShapeInfo {
 
 /// Simplified pad shape classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum PadShapeKind {
     Round,
     Rectangular,

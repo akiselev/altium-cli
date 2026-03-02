@@ -11,6 +11,8 @@ workspace = true
 altium-format = { version = "0.2.0", path = "../altium-format" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 thiserror = "2"
+serde = { version = "1.0", features = ["derive"], optional = true }
 
 [features]
 test-fixtures = []
+serde = ["dep:serde", "altium-format-types/serde"]

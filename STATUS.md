@@ -20,9 +20,9 @@ altium-format-spec     (spec DSL: compiler, executor, reconciler, dump)
      ↓
 altium-cli             (CLI binary: validate, save-as, render, query, plan, apply, dump, inspect, cfb tools)
 
-autopcb-ir             (PCB intermediate representation: mm-based extraction from PcbDocBoard)
+autopcb-ir             (PCB intermediate representation: mm-based extraction from PcbDocBoard; serde JSON export)
      ↓
-autopcb-viewer         (standalone egui binary: visual PCB board viewer with pan/zoom)
+autopcb-viewer         (standalone egui/wgpu binary: 2D + 2.5D PCB viewer with pan/zoom/orbit)
 ```
 
 ---
@@ -469,3 +469,49 @@ Fixed all 15 rule violations identified in `rule-review.md`:
 - **Spec language tests** — parser, lexer, evaluator, compiler, reconciler, dump, import
 - **Derive macro tests** in `derive_tests.rs`
 - Default `cargo test` runs fast unit tests only
+
+---
+
+## Solverang Integration — Phase 0d/0e (2026-03-02)
+
+### autopcb-ir Enhancements
+
+**Serde JSON export** (`serde` feature flag):
+- `altium-format-types`: optional `serde` feature adds `Serialize`/`Deserialize` to `RuleKind`
+- `autopcb-ir`: optional `serde` feature adds `Serialize` to all IR types (`PcbIr`, `IrComponent`,
+  `IrNet`, `IrTrack`, `IrVia`, `IrFill`, `IrPolygon`, `IrDesignRule`, etc.)
+- Handle newtypes (`ComponentId`, `NetId`, etc.) serialize as plain `u32`
+- `IdMap<K,V>` serializes as `Vec<V>`
+
+**CLI `inspect ir-json`**: `altium inspect <file> ir-json` outputs full IR as pretty-printed JSON.
+
+### autopcb-viewer Enhancements
+
+**2D rendering improvements:**
+- **Layer-colored tracks**: tracks colored by layer name (red=Top, blue=Bottom, etc.)
+- **Keepout zones**: semi-transparent red polygons with stroke
+- **Copper pour polygons**: semi-transparent layer-colored fill
+- **Board fills**: layer-colored rectangles
+- **Board cutouts**: punched with background color
+- **Net highlighting**: click net in sidebar to highlight matching copper; non-matching dims to ~40% alpha
+- **Component→net selection**: selecting a component shows its connected nets
+
+**Sidebar enhancements:**
+- Collapsible Components and Nets sections
+- Display toggles for keepouts, fills, polygons
+- 2D/3D view mode toggle
+
+**Keyboard shortcuts:** F (fit to board), N (toggle ratsnest), L (toggle copper layers),
+S (screenshot), Esc (clear selection)
+
+**Screenshot mode:** `autopcb-viewer <file> --screenshot output.png` renders one frame,
+saves PNG, exits. Interactive S key also saves `screenshot.png`.
+
+**2.5D wgpu view:**
+- Extruded board substrate (FR4 green, 1.6mm thick)
+- Copper layers as colored slabs at correct Z positions (top=red, bottom=blue, inner=interpolated)
+- Via boxes spanning full board thickness
+- Component bounding boxes (red=top, blue=bottom)
+- Orbit camera with mouse drag + scroll zoom
+- Lambertian shading in WGSL shader for depth perception
+- Orthographic projection with configurable yaw/pitch/zoom

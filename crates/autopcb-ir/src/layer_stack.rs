@@ -4,6 +4,7 @@ use crate::handles::LayerId;
 
 /// The board's copper layer stack.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrLayerStack {
     /// Copper layers in physical order (top to bottom).
     pub copper_layers: Vec<IrCopperLayer>,
@@ -13,6 +14,7 @@ pub struct IrLayerStack {
 
 /// A single copper layer.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrCopperLayer {
     pub id: LayerId,
     pub name: String,

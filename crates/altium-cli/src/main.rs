@@ -187,6 +187,8 @@ enum InspectSubcommand {
     BoardOutline,
     /// List design rules
     Rules,
+    /// Export the full IR as JSON
+    IrJson,
 }
 
 fn main() -> ExitCode {
@@ -1429,6 +1431,10 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
                 );
             }
             println!("\n{} rules total", ir.rules.len());
+        }
+        InspectSubcommand::IrJson => {
+            let json = serde_json::to_string_pretty(&ir)?;
+            println!("{json}");
         }
     }
 

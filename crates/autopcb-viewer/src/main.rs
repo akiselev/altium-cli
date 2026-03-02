@@ -1,11 +1,12 @@
 //! AutoPCB Viewer — standalone binary for visualising PCB IR data.
 //!
-//! Usage: autopcb-viewer <path-to-pcbdoc>
+//! Usage: autopcb-viewer <path-to-pcbdoc> [--screenshot <output.png>]
 
 mod app;
 mod colors;
 mod interaction;
 mod renderer;
+mod view3d;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -14,13 +15,27 @@ use altium_format::PcbDoc;
 use autopcb_ir::PcbIr;
 
 fn main() -> anyhow::Result<()> {
-    let path = match std::env::args().nth(1) {
+    let mut args = std::env::args().skip(1);
+    let path = match args.next() {
         Some(p) => PathBuf::from(p),
         None => {
-            eprintln!("Usage: autopcb-viewer <path-to-pcbdoc>");
+            eprintln!("Usage: autopcb-viewer <path-to-pcbdoc> [--screenshot <output.png>]");
             std::process::exit(1);
         }
     };
+
+    let mut screenshot_path: Option<PathBuf> = None;
+    while let Some(arg) = args.next() {
+        if arg == "--screenshot" {
+            match args.next() {
+                Some(p) => screenshot_path = Some(PathBuf::from(p)),
+                None => {
+                    eprintln!("--screenshot requires a path argument");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 
     eprintln!("Opening {}...", path.display());
     let doc = PcbDoc::open(&path)?;
@@ -53,13 +68,16 @@ fn main() -> anyhow::Result<()> {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_title(&title),
+        renderer: eframe::Renderer::Wgpu,
+        depth_buffer: 24,
+        multisampling: 0,
         ..Default::default()
     };
 
     eframe::run_native(
         &title,
         options,
-        Box::new(move |_cc| Ok(Box::new(app::ViewerApp::new(app_ir)))),
+        Box::new(move |cc| Ok(Box::new(app::ViewerApp::new(app_ir, screenshot_path, cc)))),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 

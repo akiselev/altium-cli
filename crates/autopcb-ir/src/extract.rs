@@ -20,6 +20,7 @@ use crate::{IrError, Result};
 
 /// The complete intermediate representation of a PcbDoc board.
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PcbIr {
     pub board: IrBoardGeometry,
     pub layer_stack: IrLayerStack,

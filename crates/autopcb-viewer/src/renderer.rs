@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, FontId, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2};
 
-use autopcb_ir::{BoardSide, ComponentId, PcbIr, PointMm};
+use autopcb_ir::{BoardSide, ComponentId, NetId, PcbIr, PointMm};
 
 use crate::colors;
 
@@ -16,6 +16,9 @@ pub struct RenderOptions {
     pub show_vias: bool,
     pub show_ratsnest: bool,
     pub show_designators: bool,
+    pub show_keepouts: bool,
+    pub show_fills: bool,
+    pub show_polygons: bool,
 }
 
 impl Default for RenderOptions {
@@ -28,6 +31,9 @@ impl Default for RenderOptions {
             show_vias: true,
             show_ratsnest: false,
             show_designators: true,
+            show_keepouts: true,
+            show_fills: true,
+            show_polygons: true,
         }
     }
 }
@@ -37,6 +43,21 @@ fn to_pos2(p: &PointMm) -> Pos2 {
     Pos2::new(p.x as f32, -p.y as f32)
 }
 
+/// Apply net-selection alpha to a color: full alpha when net matches (or no net selected),
+/// reduced alpha (~40) when a different net is selected.
+fn net_alpha(color: Color32, track_net: Option<NetId>, selected_net: Option<NetId>) -> Color32 {
+    match selected_net {
+        None => color,
+        Some(sel) => {
+            if track_net == Some(sel) {
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 255)
+            } else {
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 40)
+            }
+        }
+    }
+}
+
 /// Render the entire board using a Painter (obtained from the Scene's inner Ui).
 pub fn render_board(
     painter: &Painter,
@@ -44,6 +65,7 @@ pub fn render_board(
     opts: &RenderOptions,
     selected: Option<ComponentId>,
     hovered: Option<ComponentId>,
+    selected_net: Option<NetId>,
 ) {
     // Board outline
     if opts.show_board_outline && ir.board.outline.len() >= 2 {
@@ -70,13 +92,72 @@ pub fn render_board(
         }
     }
 
+    // Board cutouts: paint over with BACKGROUND to punch holes
+    for cutout in &ir.board.cutouts {
+        if cutout.len() >= 3 {
+            let points: Vec<Pos2> = cutout.iter().map(|p| to_pos2(p)).collect();
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                colors::BACKGROUND,
+                Stroke::NONE,
+            ));
+        }
+    }
+
+    // Keepouts: semi-transparent red with stroke
+    if opts.show_keepouts {
+        for keepout in &ir.board.keepouts {
+            if keepout.outline.len() >= 3 {
+                let points: Vec<Pos2> = keepout.outline.iter().map(|p| to_pos2(p)).collect();
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    colors::KEEPOUT_FILL,
+                    Stroke::new(0.1, colors::KEEPOUT_STROKE),
+                ));
+            }
+        }
+    }
+
+    // Polygons (copper pours): semi-transparent layer-colored fill, drawn before tracks
+    if opts.show_polygons {
+        for (_id, polygon) in ir.polygons.iter() {
+            if polygon.vertices.len() >= 3 {
+                let points: Vec<Pos2> = polygon.vertices.iter().map(|p| to_pos2(p)).collect();
+                let base_alpha = if selected_net.is_some() { 40u8 } else { 80u8 };
+                let fill = colors::layer_color_alpha(&polygon.layer_name, base_alpha);
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    fill,
+                    Stroke::NONE,
+                ));
+            }
+        }
+    }
+
     // Free copper: tracks
     if opts.show_tracks {
         for track in &ir.free_copper.tracks {
+            let base_color = colors::layer_color(&track.layer_name);
+            let color = net_alpha(base_color, track.net, selected_net);
             painter.line_segment(
                 [to_pos2(&track.start), to_pos2(&track.end)],
-                Stroke::new(track.width_mm as f32, colors::TRACK),
+                Stroke::new(track.width_mm as f32, color),
             );
+        }
+    }
+
+    // Free copper: fills (layer-colored rectangles, after tracks)
+    if opts.show_fills {
+        for fill in &ir.free_copper.fills {
+            let p1 = to_pos2(&fill.corner1);
+            let p2 = to_pos2(&fill.corner2);
+            let rect = Rect::from_min_max(
+                Pos2::new(p1.x.min(p2.x), p1.y.min(p2.y)),
+                Pos2::new(p1.x.max(p2.x), p1.y.max(p2.y)),
+            );
+            let base_color = colors::layer_color(&fill.layer_name);
+            let color = net_alpha(base_color, fill.net, selected_net);
+            painter.rect_filled(rect, 0.0, color);
         }
     }
 
@@ -85,7 +166,8 @@ pub fn render_board(
         for via in &ir.free_copper.vias {
             let center = to_pos2(&via.position);
             let radius = (via.diameter_mm / 2.0) as f32;
-            painter.circle(center, radius, colors::VIA, Stroke::NONE);
+            let color = net_alpha(colors::VIA, via.net, selected_net);
+            painter.circle(center, radius, color, Stroke::NONE);
             // Drill hole
             let hole_r = (via.hole_size_mm / 2.0) as f32;
             painter.circle(center, hole_r, colors::BACKGROUND, Stroke::NONE);
@@ -151,11 +233,12 @@ pub fn render_board(
         for (_id, comp) in ir.components.iter() {
             for pad in &comp.pads {
                 let center = to_pos2(&pad.world_position);
-                let color = if pad.is_through_hole {
+                let base_color = if pad.is_through_hole {
                     colors::PAD_TH
                 } else {
                     colors::PAD_SMD
                 };
+                let color = net_alpha(base_color, pad.net, selected_net);
 
                 let half_x = (pad.shape.size_x / 2.0) as f32;
                 let half_y = (pad.shape.size_y / 2.0) as f32;
@@ -184,9 +267,15 @@ pub fn render_board(
 
     // Ratsnest: thin lines between pads of the same net (star topology to centroid)
     if opts.show_ratsnest {
-        for (_id, net) in ir.nets.iter() {
+        for (net_id, net) in ir.nets.iter() {
             if net.pins.len() < 2 {
                 continue;
+            }
+            // When a net is selected, only show the ratsnest for that net
+            if let Some(sel) = selected_net {
+                if net_id != sel {
+                    continue;
+                }
             }
             let cx = net.pins.iter().map(|p| p.position.x).sum::<f64>() / net.pins.len() as f64;
             let cy = net.pins.iter().map(|p| p.position.y).sum::<f64>() / net.pins.len() as f64;

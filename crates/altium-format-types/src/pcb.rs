@@ -1819,6 +1819,7 @@ impl TryFrom<u8> for ComponentPlacementType {
 
 /// Design rule kind. From TRuleKind in altium-types.md and pcb-dotnet-model.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum RuleKind {

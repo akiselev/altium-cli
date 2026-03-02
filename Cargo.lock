@@ -251,6 +251,9 @@ dependencies = [
 [[package]]
 name = "altium-format-types"
 version = "0.2.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "android-activity"
@@ -599,6 +602,7 @@ version = "0.2.0"
 dependencies = [
  "altium-format",
  "altium-format-types",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -609,7 +613,11 @@ dependencies = [
  "altium-format",
  "anyhow",
  "autopcb-ir",
+ "bytemuck",
  "eframe",
+ "egui-wgpu",
+ "image",
+ "wgpu",
 ]
 
 [[package]]
@@ -1185,6 +1193,7 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "parking_lot",
  "percent-encoding",
+ "pollster",
  "profiling",
  "raw-window-handle",
  "static_assertions",
@@ -1192,6 +1201,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "wgpu",
  "windows-sys 0.61.2",
  "winit",
 ]
@@ -2893,6 +2903,12 @@ dependencies = [
  "rustix 1.1.4",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
 name = "portable-atomic"

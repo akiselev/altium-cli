@@ -5,6 +5,7 @@ use crate::types::PointMm;
 
 /// An electrical net connecting pads across the board.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrNet {
     pub id: NetId,
     pub name: String,
@@ -16,6 +17,7 @@ pub struct IrNet {
 
 /// A single pin (pad) within a net.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrNetPin {
     pub pad: PadId,
     pub component: ComponentId,

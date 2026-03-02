@@ -5,6 +5,7 @@ use altium_format_types::pcb::RuleKind;
 
 /// A design rule from the PcbDoc.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrDesignRule {
     pub id: RuleId,
     pub name: String,
@@ -16,6 +17,7 @@ pub struct IrDesignRule {
 
 /// Typed rule parameters (mm values).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum IrRuleParams {
     Clearance {
         gap_mm: f64,

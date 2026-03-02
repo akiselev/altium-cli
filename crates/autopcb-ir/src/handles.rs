@@ -153,6 +153,38 @@ impl<K, V: fmt::Debug> fmt::Debug for IdMap<K, V> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<K, V: serde::Serialize> serde::Serialize for IdMap<K, V> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.entries.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+mod serde_handle_impls {
+    use super::*;
+
+    macro_rules! impl_serialize_handle {
+        ($name:ident) => {
+            impl serde::Serialize for $name {
+                fn serialize<S: serde::Serializer>(
+                    &self,
+                    serializer: S,
+                ) -> Result<S::Ok, S::Error> {
+                    serializer.serialize_u32(self.0)
+                }
+            }
+        };
+    }
+
+    impl_serialize_handle!(ComponentId);
+    impl_serialize_handle!(NetId);
+    impl_serialize_handle!(PadId);
+    impl_serialize_handle!(RuleId);
+    impl_serialize_handle!(PolygonId);
+    impl_serialize_handle!(LayerId);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

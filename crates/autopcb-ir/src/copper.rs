@@ -5,6 +5,7 @@ use crate::types::PointMm;
 
 /// Collection of free-standing copper primitives (not owned by a component).
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FreeCopperGeometry {
     pub tracks: Vec<IrTrack>,
     pub vias: Vec<IrVia>,
@@ -13,6 +14,7 @@ pub struct FreeCopperGeometry {
 
 /// A PCB track segment.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrTrack {
     pub start: PointMm,
     pub end: PointMm,
@@ -23,6 +25,7 @@ pub struct IrTrack {
 
 /// A via (vertical interconnect).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrVia {
     pub position: PointMm,
     pub diameter_mm: f64,
@@ -32,6 +35,7 @@ pub struct IrVia {
 
 /// A solid copper fill (rectangle).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IrFill {
     pub corner1: PointMm,
     pub corner2: PointMm,

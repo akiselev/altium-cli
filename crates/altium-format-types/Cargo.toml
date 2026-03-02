@@ -15,3 +15,7 @@ keywords = ["altium", "eda", "pcb", "schematic", "types"]
 categories = ["data-structures"]
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
