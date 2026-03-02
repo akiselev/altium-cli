@@ -1,6 +1,6 @@
 # Codebase Status Report
 
-Generated: 2026-03-02
+Generated: 2026-03-01
 
 ## Workspace Overview
 
@@ -28,10 +28,10 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 | Document   | Ext       | Parse | Serialize | High-Level API | Spec Lang | Query | Render  | CLI validate | CLI save-as | CLI new |
 |------------|-----------|-------|-----------|----------------|-----------|-------|---------|--------------|-------------|---------|
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ⚠️ dump only | ❌ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
+| **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ⚠️ dump only | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbDoc** | .PcbDoc   | ✅    | ✅        | ❌ None         | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
-| **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ❌      |
+| **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ✅      |
 | **IntLib** | .IntLib   | ❌ Stub | ❌ Stub | ❌ None         | ❌         | ❌     | ❌        | ⚠️ open only | ❌          | ❌      |
 
 ---
@@ -96,11 +96,15 @@ Convenience mutation methods: `add_object()`, `remove_objects()`, `component_mut
 **Spec Language:** Dump only (reverse-generate spec from document). Compile/execute not
 implemented — returns error "SchDoc spec compilation is not implemented yet."
 
-**Query:** Not supported (marked "Future").
+**Query:** Supported. Entity types: schdoc_component, wire, bus, net_label, power_object,
+port, junction, no_connect, bus_entry, sheet_symbol, sheet_entry, note, probe, compile_mask,
+blanket, harness_connector, signal_harness, parameter_set, parameter, graphic (with subtypes).
+Net name queries (`%VCC`) match NetLabel, PowerObject, Port, and SheetEntry objects by name.
+Supports attribute filters, pseudo-classes, and combinators.
 
 **Rendering:** SVG and PNG. Full schematic sheet rendering.
 
-**CLI:** `new schdoc`, `validate`, `save-as`, `render`, `dump`.
+**CLI:** `new schdoc`, `validate`, `save-as`, `render`, `query`, `info`, `dump`.
 
 ---
 
@@ -133,7 +137,8 @@ Note: ComponentBody graphics cannot be *created* via API but are preserved on up
 **Spec Language:** Full support — compile, execute, reconcile, dump. Supports pad
 templates, spread operators, row/column/grid expansion.
 
-**Query:** Not supported (marked "Future").
+**Query:** Supported. Entity types: footprint, pad, track, arc, fill, region, text, via,
+component_body. Supports attribute filters and combinators.
 
 **Rendering:** SVG and PNG. Renders tracks, arcs, vias, pads (round/rect/octagonal/
 rounded-rect), fills, regions, text, component bodies.
@@ -203,7 +208,7 @@ write exists but is not surfaced).
 **Spec Language:** Full support — compile, execute, reconcile, dump. Handles Design
 section properties, ERC matrix overrides, documents, output groups, variants.
 
-**CLI:** `validate`, `save-as`, `plan`, `apply`, `dump`.
+**CLI:** `new prjpcb`, `validate`, `save-as`, `plan`, `apply`, `dump`.
 
 ---
 
@@ -218,14 +223,15 @@ or CLI support beyond a basic `validate` call that just attempts to open.
 
 | Command | SchLib | SchDoc | PcbLib | PcbDoc | PrjPcb | IntLib |
 |---------|--------|--------|--------|--------|--------|--------|
-| `new`          | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `new`          | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | `validate`     | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ open only |
 | `save-as`      | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `get version`  | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `render`       | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `query`        | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `query`        | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `info`         | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | `plan`         | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| `apply`        | ✅ | ✅ | ✅ | ❌ | ✅* | ❌ |
+| `apply`        | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | `dump`         | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | `cfb ls`       | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
 | `cfb dump`     | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
@@ -233,7 +239,6 @@ or CLI support beyond a basic `validate` call that just attempts to open.
 | `cfb diff`     | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
 | `cfb cat`      | ✅ | ✅ | ✅ | ✅ | n/a | ✅ |
 
-\* PrjPcb `apply` requires `--target` (no blank creation).
 
 ### CFB Tools (Low-Level Debugging)
 
@@ -290,7 +295,7 @@ CSS-selector-inspired query language. Supports type selectors, attribute filters
 (`[field=value]`, `[field>value]`, etc.), pseudo-classes (`:power`, `:input`),
 combinators (descendant, child `>`), and logical operators (AND, OR, NOT, UNION).
 
-SchLib and PcbLib are queryable. SchDoc, PcbDoc marked "Future".
+SchLib, PcbLib, and SchDoc are queryable. PcbDoc marked "Future".
 
 ### altium-format-render-svg / render-png
 
@@ -330,8 +335,8 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 3. **PrjPcb has no public write API** — internal write support exists but isn't
    surfaced through the API module.
 
-4. **Query only supports SchLib and PcbLib** — SchDoc, PcbDoc entity adapters not
-   implemented.
+4. **Query does not support PcbDoc** — PcbDoc entity adapter not implemented (no
+   high-level API).
 
 5. **SchDoc spec compilation not implemented** — dump works but compile/execute returns
    error.
