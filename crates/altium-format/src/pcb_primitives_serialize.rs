@@ -498,7 +498,16 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     if p.model_sphere_radius != Coord::ZERO {
         params.insert("MODEL.SPHERE.RADIUS", format_mil(p.model_sphere_radius));
     }
-    let pbytes = params_to_pcb_bytes(&params);
+    let mut pbytes = params_to_pcb_bytes(&params);
+    // Altium's ComponentBody serializer inherits from its Region base class.
+    // Both independently write ARCRESOLUTION, producing a duplicate key in the
+    // param string. ParameterCollection deduplicates, so re-add the second
+    // occurrence before the NUL terminator to match the original byte count.
+    let arc_dup = format!("|ARCRESOLUTION={}", format_mil(p.arc_resolution));
+    if pbytes.last() == Some(&0) {
+        let nul = pbytes.len() - 1;
+        pbytes.splice(nul..nul, arc_dup.bytes());
+    }
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
     write_contour(&mut w, &p.outline);
