@@ -311,7 +311,7 @@ LLM-driven optimization outperforms single-shot approaches.
 ```bash
 # Generate placement spec from PcbDoc (LLM-assisted)
 altium placement generate my-board.PcbDoc
-    --model claude-sonnet-4-20250514       # LLM to use
+    --model claude-sonnet-4-6       # LLM to use
     --design-notes notes.md     # optional design requirements
     --output board-layout.pcbdoc-spec
 
@@ -323,7 +323,7 @@ altium placement solve board-layout.pcbdoc-spec
 
 # Interactive: LLM + solver loop
 altium placement interactive my-board.PcbDoc
-    --model claude-sonnet-4-20250514
+    --model claude-sonnet-4-6
     --max-rounds 5
 ```
 

@@ -150,6 +150,10 @@ pub struct RotationDiscretize {
 }
 
 impl Constraint for RotationDiscretize {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "RotationDiscretize" }
+    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
+    fn param_ids(&self) -> &[ParamId] { &self.params }
     fn equation_count(&self) -> usize { 1 }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -312,12 +316,15 @@ When rotation is fixed, pad world positions are linear in component position:
 ```rust
 pub struct SmoothHPWL {
     id: ConstraintId,
-    // For each pin in the net: (component_x_param, component_y_param, pad_offset_x, pad_offset_y)
+    /// For each pin in the net: (component_x_param, component_y_param, pad_offset_x, pad_offset_y)
     pins: Vec<PinInfo>,
     gamma: f64,
     weight: f64,
     entity_ids: Vec<EntityId>,
     param_ids: Vec<ParamId>,
+    /// Note: Consider using #[auto_jacobian] macro for simpler constraints.
+    /// For SmoothHPWL the hand-coded Jacobian is preferred due to the
+    /// softmax structure, which auto_jacobian may not optimize well.
 }
 
 struct PinInfo {
@@ -329,6 +336,10 @@ struct PinInfo {
 }
 
 impl Constraint for SmoothHPWL {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "SmoothHPWL" }
+    fn entity_ids(&self) -> &[EntityId] { &self.entity_ids }
+    fn param_ids(&self) -> &[ParamId] { &self.param_ids }
     fn equation_count(&self) -> usize { 2 }  // X-span + Y-span
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -420,6 +431,10 @@ struct PinInfoWithRotation {
 }
 
 impl Constraint for SmoothHPWLWithRotation {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "SmoothHPWLWithRotation" }
+    fn entity_ids(&self) -> &[EntityId] { &self.entity_ids }
+    fn param_ids(&self) -> &[ParamId] { &self.param_ids }
     fn equation_count(&self) -> usize { 2 }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -615,7 +630,10 @@ constants.
 ### Step 4: Multi-start
 - Run placement from multiple random initial positions
 - Keep the solution with lowest total HPWL
-- Parallelize using solverang's `ParallelSolver`
+- Parallelize using solverang's `ParallelSolver` (requires `parallel` feature,
+  uses `rayon` internally). `ParallelSolver` decomposes problems into independent
+  clusters; for multi-start, spawn separate `ConstraintSystem` instances per
+  initial condition and solve in parallel via `rayon::par_iter()`.
 
 
 ## 10. Pin Position Aggregation

@@ -124,7 +124,7 @@ this converges faster than conjugate gradient for placement.
 | Formulation | Unconstrained optimization with penalty | Constrained least-squares |
 | Constraints | Penalty functions (soft) | Equality/inequality (hard) |
 | Density | Electrostatic FFT | Not needed at PCB scale |
-| Optimizer | Nesterov gradient descent | Levenberg-Marquardt |
+| Optimizer | Nesterov gradient descent | LMSolver (via AutoSolver) |
 | Variables | Millions (VLSI) | Tens to hundreds (PCB) |
 | GPU | Essential (DREAMPlace) | Not needed at PCB scale |
 
@@ -435,7 +435,7 @@ PCB placement is fundamentally different from VLSI placement:
 ║  • Hard constraints: board containment, clearance, edges, groups║
 ║  • Soft objective: smooth HPWL (LSE, adaptive γ)                ║
 ║  • sin(2θ) = 0 for rotation discretization                     ║
-║  Method: Levenberg-Marquardt (solverang AutoSolver)             ║
+║  Method: solverang ConstraintSystem::solve() (AutoSolver→LM)   ║
 ║  Output: Approximate placement (continuous)                      ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  PHASE 2: Legalization                                           ║

@@ -1,6 +1,6 @@
 # Solverang Integration: PCB Placement, Routing & DRC
 
-Design notes for integrating the [solverang](~/cadatomic/solverang/) geometric constraint
+Design notes for integrating the [solverang](~/git/solverang/) nonlinear constraint
 solver with altium-cli for automated PCB component placement, autorouting, and design
 rule checking.
 
@@ -40,8 +40,11 @@ with dependency graph, from IR crate through GPU acceleration.
 
 ## Key Insight
 
-Solverang is a **least-squares numerical solver** (Newton-Raphson, Levenberg-Marquardt).
-This means we can naturally blend:
+Solverang is a **nonlinear least-squares solver** with multiple backends (Newton-Raphson
+via `Solver`, Levenberg-Marquardt via `LMSolver`, auto-selection via `AutoSolver`,
+fallback via `RobustSolver`). Its v3 `ConstraintSystem` architecture provides entity/
+constraint/param management with generational IDs, automatic cluster decomposition,
+and a 5-phase solve pipeline. This means we can naturally blend:
 
 - **Hard constraints** (clearance, board containment) → residuals that must be zero
 - **Soft objectives** (minimize wire length, thermal grouping) → weighted residuals

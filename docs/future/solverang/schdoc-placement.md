@@ -350,7 +350,8 @@ The solver naturally converges to the nearest grid point.
 ║  • Column X = fixed from layer assignment                        ║
 ║  • Y positions = solvable with spacing + alignment constraints  ║
 ║  • Group clustering, symmetry, custom alignment                  ║
-║  Method: Solverang LM with GridSnap + spacing constraints       ║
+║  Method: Solverang ConstraintSystem (AutoSolver→LM) with       ║
+║          GridSnap + spacing constraints                         ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  PHASE 4: Wire Routing                                           ║
 ║  • Route orthogonal wires between connected pins                ║
@@ -364,7 +365,7 @@ The solver naturally converges to the nearest grid point.
 ║  • Align parallel wires to equal spacing                         ║
 ║  • Center labels on wires                                        ║
 ║  • Adjust component spacing for visual balance                   ║
-║  Method: Solverang refinement + heuristics                       ║
+║  Method: Solverang ConstraintSystem refinement + heuristics      ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 

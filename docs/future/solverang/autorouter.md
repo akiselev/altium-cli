@@ -31,7 +31,7 @@ loops to achieve placement-routing co-optimization.
 |----------|----------------------|---------------------|
 | **Problem type** | Continuous optimization | Discrete graph search |
 | **Variables** | Component (x, y, θ) — floats | Path through grid cells — integers |
-| **Algorithm** | Levenberg-Marquardt, SA | A*, PathFinder, Steiner trees |
+| **Algorithm** | ConstraintSystem (AutoSolver→LM), SA | A*, PathFinder, Steiner trees |
 | **Differentiable?** | Yes (smooth HPWL, clearance) | No (path exists or doesn't) |
 | **Output** | Component positions | Copper traces, vias |
 | **Constraint checking** | Residual norm ≈ 0 | DRC pass/fail per segment |
@@ -456,11 +456,14 @@ them with a diagonal violates clearance (query the R-tree spatial index).
 Treat each trace as a rubber band pinned at its endpoints and pulled tight around
 obstacles. This is where **Solverang can be repurposed**:
 
-1. Represent each trace vertex as a Solverang entity with `[x, y]` params
-2. Fix the two endpoints (pad positions)
+1. Represent each trace vertex as a Solverang `Entity` with `[x, y]` params
+   (allocated via `system.alloc_param(value, vertex_entity_id)`)
+2. Fix the two endpoints via `system.fix_param()` (pad positions)
 3. Add `Clearance` constraints against all nearby obstacles (from R-tree query)
-4. Add a `MinimizeLength` soft objective (sum of segment lengths)
-5. Solve — Solverang pulls the trace tight while maintaining clearance
+4. Add a `MinimizeLength` soft objective (sum of segment lengths, `is_soft() = true`)
+5. `system.solve()` → `SystemResult` — Solverang pulls the trace tight while
+   maintaining clearance. The 5-phase pipeline automatically decomposes
+   independent trace segments into separate clusters for parallel solving.
 
 This naturally handles complex obstacle configurations that heuristic smoothing
 algorithms struggle with.

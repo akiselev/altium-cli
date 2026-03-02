@@ -116,7 +116,9 @@ altium-format-spec (spec compiler uses IR for lookups)
 altium-cli (CLI uses IR for inspect/placement/DRC commands)
 
 External:
-solverang ← depends on altium-format-ir (for PcbIr → solver input)
+solverang ← depends on altium-format-ir (for PcbIr → ConstraintSystem input)
+  Note: solverang's geometry feature is removed; PCB geometry lives in
+  constraint residual functions in solverang-pcb, not in solverang core.
 ```
 
 The IR crate depends on `altium-format` (for extraction) and
@@ -685,31 +687,37 @@ has a thin bridge layer that maps IR types to its own domain.
 ### 7.1 Solverang Bridge (in `solverang-pcb` or `altium-format-spec`)
 
 ```rust
-/// Convert PcbIr into solverang entities + constraints.
+/// Convert PcbIr into solverang ConstraintSystem with entities + constraints.
 pub fn ir_to_solver_input(
     ir: &PcbIr,
     spec: &PlacementSpec,
-) -> Result<SolverInput, SolverBuildError> {
+) -> Result<ConstraintSystem, SolverBuildError> {
     let mut system = ConstraintSystem::new();
 
     // 1. Create a PcbComponent entity per IR component
+    // Each entity's params are allocated via system.alloc_param(value, entity_id)
+    // using generational IDs for safety
     for comp in ir.components.values() {
+        let entity_id = system.alloc_entity_id();
+        let x = system.alloc_param(comp.position.x, entity_id);
+        let y = system.alloc_param(comp.position.y, entity_id);
         let entity = PcbComponent::new(
-            comp.designator.clone(),
-            comp.position.x, comp.position.y,
+            entity_id, x, y,
             comp.local_bounds.half_width(),
             comp.local_bounds.half_height(),
             comp.rotation,
+            comp.designator.clone(),
         );
-        system.add_entity(entity);
+        system.add_entity(Box::new(entity));
     }
 
     // 2. Board containment from ir.board.bounds
     // 3. Pairwise clearance from ir.rules (ComponentClearance)
-    // 4. HPWL objectives from ir.nets (pin world positions)
+    // 4. HPWL objectives from ir.nets (pin world positions) — is_soft() = true
     // 5. User constraints from spec
+    // 6. system.solve() returns SystemResult with per-cluster results
 
-    Ok(SolverInput { system })
+    Ok(system)
 }
 ```
 

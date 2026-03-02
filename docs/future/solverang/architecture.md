@@ -43,11 +43,14 @@
 │    SmoothHPWL per net (soft, weighted)                          │
 │    ThermalGrouping (soft, weighted)                              │
 └──────────────────────────┬──────────────────────────────────────┘
-                           ↓ solve (LM, parallel, sparse)
+                           ↓ ConstraintSystem::solve() → SystemResult
 ┌─────────────────────────────────────────────────────────────────┐
-│  PlacementSolution                                              │
-│  per component: (x, y, rotation)                                │
-│  metrics: total_hpwl, max_violation, iterations, solve_time     │
+│  SystemResult                                                   │
+│  status: Solved | PartiallySolved | DiagnosticFailure           │
+│  clusters: Vec<ClusterResult> (per independent sub-problem)     │
+│  total_iterations, duration                                     │
+│  → Extract final (x, y, rotation) from ParamStore               │
+│  → Compute metrics: total_hpwl, max_violation                   │
 └──────────────────────────┬──────────────────────────────────────┘
                            ↓ emit ECO or apply
 ┌─────────────────────────────────────────────────────────────────┐
@@ -62,12 +65,17 @@
 ## Crate Architecture
 
 ```
-solverang (external, ~/cadatomic/solverang/)
+solverang (external, ~/git/solverang/)
+  ├── Core: Problem trait, LMSolver, AutoSolver, RobustSolver, ParallelSolver, SparseSolver
+  ├── V3 system: ConstraintSystem, Entity/Constraint traits, ParamStore (generational IDs)
+  ├── Plugins: sketch2d, sketch3d, assembly (domain-specific entity+constraint libraries)
+  ├── Pipeline: 5-phase solve (Decompose → Analyze → Reduce → Solve → PostProcess)
+  ├── Macros: #[auto_jacobian] for automatic Jacobian derivation from residual expressions
   └── solverang-pcb (new crate in solverang workspace)
       ├── entities.rs     — PcbComponent, PcbPad, PcbVia, PcbBoardOutline
       ├── constraints.rs  — PCB-specific constraint implementations
       ├── objectives.rs   — HPWL, thermal grouping (soft constraints)
-      ├── builder.rs      — Ergonomic API for building PCB placement problems
+      ├── builder.rs      — Ergonomic API (modeled after Sketch2DBuilder pattern)
       └── drc.rs          — Design rule → constraint mapping
 
 altium-format-spec (this workspace)
@@ -89,8 +97,10 @@ Variables are component positions. The solver iterates from an initial guess
 1. Satisfy all hard constraints (board containment, clearance, user constraints)
 2. Minimize soft objectives (wire length)
 
-**Solver choice**: LevenbergMarquardt (robust to poor initial guesses, handles
-over-determined systems where we have more constraints than variables).
+**Solver choice**: `AutoSolver` (automatically selects `LMSolver` for over-determined
+systems, `Solver` for square systems). LM is robust to poor initial guesses and
+handles over-determined systems where we have more constraints than variables.
+`RobustSolver` tries Newton-Raphson first and falls back to LM on failure.
 
 ### Mode 2: DRC Checking (Verification)
 
@@ -182,8 +192,14 @@ fn extract_placement_data(doc: &PcbDoc) -> PlacementData {
 | Large board (complex product) | 200-500 | ~5000 | <1s |
 | DRC check only | any | any | <1ms (single eval) |
 
-Solverang's parallel decomposition + sparse matrices should handle these
-sizes easily. JIT compilation available for hot paths if needed.
+Solverang's parallel decomposition (`ParallelSolver` via `rayon`) + sparse matrices
+(`SparseSolver` via `faer`) should handle these sizes easily. JIT compilation
+(`jit` feature via Cranelift) is available for hot constraint evaluation if needed.
+
+The 5-phase solve pipeline (Decompose → Analyze → Reduce → Solve → PostProcess)
+automatically decomposes the problem into independent clusters and solves them
+in parallel when possible. `DofAnalysis` provides diagnostic output identifying
+under-constrained or over-constrained entities.
 
 
 ## Dependencies
@@ -191,8 +207,11 @@ sizes easily. JIT compilation available for hot paths if needed.
 ```toml
 # In altium-format-spec/Cargo.toml
 [dependencies]
-solverang = { path = "../../cadatomic/solverang/crates/solverang" }
-# Or: solverang = { version = "0.1", features = ["geometry", "sparse", "parallel"] }
+solverang = { path = "../../solverang/crates/solverang", features = ["sparse", "parallel", "macros"] }
+# Note: "geometry" feature is removed from solverang. PCB-specific geometry
+# (bounding boxes, clearance zones) lives in constraint residual functions,
+# not in solverang's core. The "macros" feature enables #[auto_jacobian] for
+# automatic Jacobian derivation from residual expressions.
 
 # Alternatively, create a bridge crate:
 # altium-placement = { path = "../altium-placement" }
@@ -203,4 +222,5 @@ solver with PCB plugin) or in the altium-cli workspace (Altium-specific placemen
 
 **Recommendation**: `solverang-pcb` in the solverang workspace (reusable for other
 EDA tools), with a thin bridge in `altium-format-spec` that maps Altium types to
-solverang-pcb types.
+solverang-pcb types. The `Sketch2DBuilder` pattern in solverang provides a good
+template for the `PcbPlacementBuilder` API.

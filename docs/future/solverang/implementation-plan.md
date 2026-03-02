@@ -96,7 +96,8 @@ gets rendered immediately.
 
 ## Phase 1: Placement MVP — Solverang-Only Placer
 
-**Goal:** Place components on a board using Solverang's Levenberg-Marquardt solver.
+**Goal:** Place components on a board using Solverang's `ConstraintSystem` (which
+automatically selects LM via `AutoSolver` for over-determined placement problems).
 
 **Depends on:** Phase 0 (IR crate)
 
@@ -104,9 +105,10 @@ gets rendered immediately.
 
 ### 1a: Solver Bridge
 
-- [ ] `ir_to_solver_input()` — convert IR components → Solverang entities
-- [ ] `PcbComponent` entity: `[x, y]` params, fixed rotation/bounding box
-- [ ] `PcbBoardOutline` entity: fixed AABB
+- [ ] `ir_to_solver_input()` — convert IR components → Solverang `ConstraintSystem`
+- [ ] `PcbComponent` entity (impl `Entity` trait): `[x, y]` params via `system.alloc_param()`, fixed rotation/bounding box
+- [ ] `PcbBoardOutline` entity: fixed AABB (all params fixed via `system.fix_param()`)
+- [ ] Pattern after `Sketch2DBuilder`: ergonomic `PcbPlacementBuilder` wrapping `ConstraintSystem`
 
 ### 1b: Hard Constraints
 
@@ -363,7 +365,7 @@ gets rendered immediately.
 | Phase | Name | Key Deliverable | Depends On |
 |-------|------|----------------|------------|
 | **0** | Foundation | IR crate + egui viewer + CLI inspect | PcbDoc parsing (done) |
-| **1** | Placement MVP | Solverang LM placer with hard/soft constraints | 0 |
+| **1** | Placement MVP | Solverang ConstraintSystem placer (AutoSolver) with hard/soft constraints | 0 |
 | **2** | SA Placement | Simulated annealing for discrete moves | 1 |
 | **3** | Full Placement | Pre-processing, refinement, LLM, spec language | 2 |
 | **4** | Single-Net Router | 3D A* through grid with obstacles | 0 |
@@ -422,7 +424,7 @@ The viewer grows alongside the algorithm phases:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `solverang` | — | Levenberg-Marquardt solver |
+| `solverang` | — | Nonlinear solver (LM/NR/Auto), ConstraintSystem, `#[auto_jacobian]` macro |
 | `petgraph` | 0.8 | Netlist graph, MST, connectivity |
 | `pathfinding` | 4.14 | A*, Dijkstra inner-loop routing |
 | `rstar` | 0.12 | R-tree spatial index |
@@ -439,3 +441,16 @@ The viewer grows alongside the algorithm phases:
 | `im` | 15.1 | Persistent data structures (state forking) |
 | `wgpu` | 28.0 | GPU compute shaders |
 | `burn` | 0.21 | Tensor ops + autograd (DREAMPlace-style) |
+
+**Solverang Feature Flags** (for the `solverang` dependency):
+| Feature | Purpose | Needed For |
+|---------|---------|------------|
+| `sparse` | Sparse matrix ops via `faer` | Boards with >100 components |
+| `parallel` | Parallel solving via `rayon` | Multi-start, cluster decomposition |
+| `macros` | `#[auto_jacobian]` proc macro | Simpler constraint implementations |
+| `jit` | Cranelift JIT for hot constraints | Optional performance (Phase 10) |
+
+**Note:** The `geometry` feature has been removed from solverang. PCB-specific
+geometry (bounding boxes, clearance zones, AABB tests) is computed in constraint
+residual functions, not in solverang's core. Solverang's domain-specific plugins
+(sketch2d, sketch3d, assembly) provide examples of this pattern.

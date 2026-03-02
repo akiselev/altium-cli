@@ -4,6 +4,30 @@ Concrete constraint type designs for `solverang-pcb`. Each constraint follows
 the solverang v3 `Constraint` trait pattern: entity IDs, param IDs, residuals,
 and sparse Jacobians.
 
+## Solverang v3 Constraint Trait (Current API)
+
+```rust
+/// Full trait signature — all constraint implementations must provide these.
+pub trait Constraint: Send + Sync {
+    fn id(&self) -> ConstraintId;
+    fn name(&self) -> &str;                                    // human-readable name
+    fn entity_ids(&self) -> &[EntityId];                       // which entities are involved
+    fn param_ids(&self) -> &[ParamId];                         // which params are read
+    fn equation_count(&self) -> usize;                         // number of residual equations
+    fn residuals(&self, store: &ParamStore) -> Vec<f64>;       // F(x) — must equal zero
+    fn jacobian(&self, store: &ParamStore) -> Vec<(usize, ParamId, f64)>;  // sparse (row, param, value)
+    fn weight(&self) -> f64 { 1.0 }                            // for soft constraints
+    fn is_soft(&self) -> bool { false }
+}
+```
+
+Note: `ParamStore::alloc(value, owner: EntityId) -> ParamId` uses generational
+indices for use-after-free safety. Parameters are allocated with an owner entity.
+
+Solverang also provides `#[auto_jacobian]` proc macro for automatic Jacobian
+derivation from residual expressions — useful for simpler constraints where
+hand-coding the Jacobian is tedious.
+
 ## Conventions
 
 - All distances in **mm** (f64) internally — converted from Altium internal units
@@ -12,6 +36,7 @@ and sparse Jacobians.
   gives smooth Jacobians everywhere (no singularity at distance=0)
 - **Slack variable inequalities**: `g(x) ≥ 0` → `g(x) - s² = 0` where `s` is
   an extra solver variable. Solverang's `InequalityConstraint` trait handles this.
+  Also available: `BoundsConstraint` and `ClearanceConstraint` helpers.
 - **Bounding box distance** approximates component shape as axis-aligned rectangle
   (with rotation support via OBB overlap test)
 
@@ -107,6 +132,10 @@ pub struct BoardContainment {
 // r3 = board_max_y - (y + half_h)        ← top edge inside
 
 impl Constraint for BoardContainment {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "BoardContainment" }
+    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
+    fn param_ids(&self) -> &[ParamId] { &self.params }
     fn equation_count(&self) -> usize { 4 }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -201,6 +230,10 @@ disjunctive constraints), use an **elliptical exclusion zone**:
 // (ellipse inscribed in the AABB exclusion zone).
 
 impl Constraint for ComponentClearance {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "ComponentClearance" }
+    fn entity_ids(&self) -> &[EntityId] { &self.entities }
+    fn param_ids(&self) -> &[ParamId] { &self.params }
     fn equation_count(&self) -> usize { 1 }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -262,6 +295,10 @@ pub enum BoardEdge { Top, Bottom, Left, Right }
 // + optional equality for alignment (pins the parallel axis)
 
 impl Constraint for EdgePlacement {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "EdgePlacement" }
+    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
+    fn param_ids(&self) -> &[ParamId] { &self.params }
     fn equation_count(&self) -> usize { 1 }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -430,10 +467,15 @@ pub struct SmoothHPWL {
     pin_ys: Vec<ParamId>,  // y-coordinates
     gamma: f64,             // sharpness (default: 10.0)
     weight: f64,            // soft constraint weight (default: 0.01)
-    // ... entity_ids, param_ids
+    entity_ids: Vec<EntityId>,
+    param_ids: Vec<ParamId>,
 }
 
 impl Constraint for SmoothHPWL {
+    fn id(&self) -> ConstraintId { self.id }
+    fn name(&self) -> &str { "SmoothHPWL" }
+    fn entity_ids(&self) -> &[EntityId] { &self.entity_ids }
+    fn param_ids(&self) -> &[ParamId] { &self.param_ids }
     fn equation_count(&self) -> usize { 2 }  // x-span + y-span
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
@@ -571,8 +613,14 @@ fn generate_constraints(
     pcbdoc: &PcbDoc,
 ) -> ConstraintSystem {
     let mut system = ConstraintSystem::new();
+    // Or with custom config:
+    // let mut system = ConstraintSystem::with_config(SystemConfig {
+    //     lm_config: LMConfig::robust(),
+    //     solver_config: SolverConfig::default(),
+    // });
 
     // 1. Create entities for each component
+    // Each entity's params are allocated via system.alloc_param(value, owner_entity_id)
     let components = create_component_entities(&mut system, placement_model, pcbdoc);
 
     // 2. Board containment (every component)
@@ -619,6 +667,14 @@ fn generate_constraints(
             }
         }
     }
+
+    // 6. Solve — returns SystemResult with per-cluster results
+    // let result = system.solve();
+    // match result.status {
+    //     SystemStatus::Solved => { /* read final values from system.params() */ }
+    //     SystemStatus::PartiallySolved => { /* some clusters didn't converge */ }
+    //     SystemStatus::DiagnosticFailure(issues) => { /* redundant/conflicting constraints */ }
+    // }
 
     system
 }
