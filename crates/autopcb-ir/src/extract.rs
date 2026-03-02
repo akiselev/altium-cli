@@ -149,30 +149,21 @@ fn tessellate_contour(contour: &BoardContour) -> Vec<PointMm> {
 // ---------------------------------------------------------------------------
 
 fn extract_layer_stack(board: &PcbDocBoard) -> IrLayerStack {
+    let stack = &board.settings.layer_stack;
+    let layer_count = stack.layers.len();
     let mut layers = IdMap::<LayerId, IrCopperLayer>::new();
-    for sl in &board.settings.layer_stack.layers {
-        if sl.layer.is_copper() {
-            let is_top = sl
-                .layer
-                .to_v6()
-                .is_some_and(|v6| v6 == V6Layer::TopLayer);
-            let is_bottom = sl
-                .layer
-                .to_v6()
-                .is_some_and(|v6| v6 == V6Layer::BottomLayer);
-            let id = layers.push(IrCopperLayer {
-                id: LayerId::from(0), // placeholder, updated below
-                name: sl.name.clone(),
-                is_top,
-                is_bottom,
-            });
-            layers[id].id = id;
-        }
+    for (i, sl) in stack.layers.iter().enumerate() {
+        let id = layers.push(IrCopperLayer {
+            id: LayerId::from(0),
+            name: sl.name.clone(),
+            is_top: i == 0,
+            is_bottom: i == layer_count - 1,
+        });
+        layers[id].id = id;
     }
-    let count = layers.len();
     IrLayerStack {
         copper_layers: layers.iter().map(|(_, l)| l.clone()).collect(),
-        copper_layer_count: count,
+        copper_layer_count: stack.copper_layer_count,
     }
 }
 
@@ -210,10 +201,9 @@ fn extract_components(
     for comp in &board.components {
         let comp_pos = PointMm::from_coord_point(&comp.location);
         let rotation = comp.rotation;
-        let side = if comp
-            .layer
-            .to_v6()
-            .is_some_and(|v6| v6 == V6Layer::TopLayer)
+        // Determine side: check display name first (V7-safe), fall back to V6
+        let side = if comp.layer.display_name().is_some_and(|n| n.contains("Top"))
+            || comp.layer.to_v6().is_some_and(|v6| v6 == V6Layer::TopLayer)
         {
             BoardSide::Top
         } else {

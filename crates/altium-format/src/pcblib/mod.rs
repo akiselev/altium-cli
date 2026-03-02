@@ -1813,6 +1813,7 @@ mod tests {
                     v9_stack_layers: Vec::new(),
                     v9_cache_layers: Vec::new(),
                     v8_master_stack: None,
+                    v8_substacks: Vec::new(),
                     v8_layers: Vec::new(),
                     v7_layers: Vec::new(),
                     legacy_layers: Vec::new(),

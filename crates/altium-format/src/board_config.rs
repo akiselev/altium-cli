@@ -18,6 +18,7 @@ pub(crate) struct PcbBoardConfig {
     pub(crate) v9_cache_layers: Vec<PcbCacheLayerEntry>,
     // V8
     pub(crate) v8_master_stack: Option<PcbMasterStack>,
+    pub(crate) v8_substacks: Vec<PcbSubStack>,
     pub(crate) v8_layers: Vec<PcbStackLayerEntry>,
     // V7
     pub(crate) v7_layers: Vec<PcbV7LayerEntry>,
@@ -71,6 +72,12 @@ pub(crate) struct PcbSubStack {
     pub(crate) show_top_dielectric: bool,
     pub(crate) show_bottom_dielectric: bool,
     pub(crate) is_flex: bool,
+    /// V8 only: whether this substack is a service layer group.
+    pub(crate) service: Option<bool>,
+    /// V8 only: whether primitives use this substack.
+    pub(crate) used_by_prims: Option<bool>,
+    /// V8 only: substack type (1 = board layer stack).
+    pub(crate) substack_type: Option<i32>,
 }
 
 pub(crate) struct PcbStackLayerEntry {
@@ -343,6 +350,9 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                     show_top_dielectric,
                     show_bottom_dielectric,
                     is_flex,
+                    service: None,
+                    used_by_prims: None,
+                    substack_type: None,
                 });
                 idx += 1;
             }
@@ -454,11 +464,45 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         }
     }
 
-    // 7. Consume any remaining V8 substack keys — error if non-empty
-    let v8_substack_remaining = params.remove_prefixed("LAYERSUBSTACK_V8_");
-    if !v8_substack_remaining.is_empty() {
-        let keys: Vec<String> = v8_substack_remaining.into_keys().collect();
-        return Err(AltiumFormatError::UnknownParams { keys });
+    // 7. V8 substacks (0-based)
+    let mut v8_substacks = Vec::new();
+    let mut idx: u32 = 0;
+    loop {
+        let id_key = format!("LAYERSUBSTACK_V8_{idx}ID");
+        match params.remove_optional::<String>(&id_key)? {
+            None => break,
+            Some(id) => {
+                let name = params
+                    .remove_optional::<String>(&format!("LAYERSUBSTACK_V8_{idx}NAME"))?
+                    .unwrap_or_default();
+                let show_top_dielectric = params
+                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SHOWTOPDIELECTRIC"))?
+                    .unwrap_or_default();
+                let show_bottom_dielectric = params
+                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SHOWBOTTOMDIELECTRIC"))?
+                    .unwrap_or_default();
+                let is_flex = params
+                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}ISFLEX"))?
+                    .unwrap_or_default();
+                let service = params
+                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SERVICE"))?;
+                let used_by_prims = params
+                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}USEDBYPRIMS"))?;
+                let substack_type = params
+                    .remove_optional::<i32>(&format!("LAYERSUBSTACK_V8_{idx}TYPE"))?;
+                v8_substacks.push(PcbSubStack {
+                    id,
+                    name,
+                    show_top_dielectric,
+                    show_bottom_dielectric,
+                    is_flex,
+                    service,
+                    used_by_prims,
+                    substack_type,
+                });
+                idx += 1;
+            }
+        }
     }
 
     // 8. V7 layers (0-based)
@@ -1101,6 +1145,7 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         v9_stack_layers,
         v9_cache_layers,
         v8_master_stack,
+        v8_substacks,
         v8_layers,
         v7_layers,
         legacy_layers,
@@ -1203,6 +1248,24 @@ pub(crate) fn serialize_board_config(
         let prefix = format!("LAYER_V8_{i}");
         params.insert(&format!("{prefix}ID"), layer.id.clone());
         serialize_v8_layer_fields(params, &prefix, layer);
+    }
+
+    // 7b. V8 substacks
+    for (i, ss) in config.v8_substacks.iter().enumerate() {
+        params.insert(&format!("LAYERSUBSTACK_V8_{i}ID"), ss.id.clone());
+        params.insert(&format!("LAYERSUBSTACK_V8_{i}NAME"), ss.name.clone());
+        params.insert(&format!("LAYERSUBSTACK_V8_{i}SHOWTOPDIELECTRIC"), bool_str(ss.show_top_dielectric));
+        params.insert(&format!("LAYERSUBSTACK_V8_{i}SHOWBOTTOMDIELECTRIC"), bool_str(ss.show_bottom_dielectric));
+        params.insert(&format!("LAYERSUBSTACK_V8_{i}ISFLEX"), bool_str(ss.is_flex));
+        if let Some(service) = ss.service {
+            params.insert(&format!("LAYERSUBSTACK_V8_{i}SERVICE"), bool_str(service));
+        }
+        if let Some(used_by_prims) = ss.used_by_prims {
+            params.insert(&format!("LAYERSUBSTACK_V8_{i}USEDBYPRIMS"), bool_str(used_by_prims));
+        }
+        if let Some(substack_type) = ss.substack_type {
+            params.insert(&format!("LAYERSUBSTACK_V8_{i}TYPE"), substack_type.to_string());
+        }
     }
 
     // 8. V7 layers (0-based)

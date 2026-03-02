@@ -27,6 +27,7 @@ use crate::pcbdoc::{
 };
 use crate::pcbdoc::drc::PcbRuleKindData;
 use crate::pcblib::{Contour, PcbComponentBody, PcbPad, PcbRegion, PcbVia};
+use crate::param_value::MilCoord;
 use crate::{Result, ResultExt};
 
 // ── Lookup context ──────────────────────────────────────────────────────────
@@ -306,12 +307,12 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
         let source_lib_reference: String = params
             .remove_with_default("SOURCELIBREFERENCE", String::new())
             .context("Components6 source lib reference")?;
-        let x: i32 = params
-            .remove_with_default("X1", 0)
-            .context("Components6 X1")?;
-        let y: i32 = params
-            .remove_with_default("Y1", 0)
-            .context("Components6 Y1")?;
+        let x: MilCoord = params
+            .remove_with_default("X", MilCoord::default())
+            .context("Components6 X")?;
+        let y: MilCoord = params
+            .remove_with_default("Y", MilCoord::default())
+            .context("Components6 Y")?;
         let rotation: f64 = params
             .remove_with_default("ROTATION", 0.0)
             .context("Components6 rotation")?;
@@ -324,7 +325,7 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
             designator,
             pattern,
             comment,
-            location: CoordPoint::new(Coord::from_internal(x), Coord::from_internal(y)),
+            location: CoordPoint::new(x.0, y.0),
             rotation,
             layer,
             source_library,
@@ -796,9 +797,9 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
             // Parse full board config for layer stack extraction.
             // Re-parse from the original params (the above consumed only a few keys).
             let mut config_params = first.params.clone();
-            if let Ok(config) = crate::board_config::parse_board_config(&mut config_params) {
-                settings.layer_stack = extract_layer_stack(&config);
-            }
+            let config = crate::board_config::parse_board_config(&mut config_params)
+                .context("Board6 layer stack config")?;
+            settings.layer_stack = extract_layer_stack(&config);
         }
     }
 
@@ -988,18 +989,31 @@ fn stack_layer_from_v9_v8(
 }
 
 /// Check if a layer_id corresponds to a copper layer.
-/// Copper layers: 1 (Top), 2-31 (Mid/Internal Plane), 32 (Bottom).
+///
+/// Handles both V6 (family=0, genus=0) and V7/V9 (family=1) layer IDs.
+/// V9 genus encoding: 0=signal copper, 1=internal plane, 3=utility, 4=dielectric.
+/// Copper = signal (genus=0) OR internal plane (genus=1).
 fn is_copper_layer_id(id: i32) -> bool {
-    (1..=32).contains(&id)
+    let v7 = V7Layer::new(id as u32);
+    // V6-compatible IDs (genus=0, family=0): check via V6Layer
+    if let Ok(v6) = v7.to_v6() {
+        return v6.is_copper();
+    }
+    // V9: genus=0 (signal copper) or genus=1 (internal plane) — both are copper
+    matches!(v7.genus(), 0 | 1)
 }
 
 /// Check if a layer_id is an internal plane layer.
-/// Internal plane layers are 33-48 in V6 encoding, but in V7+ the layer_id
-/// uses the V6Layer enum. Internal planes are IDs 39-54 (InternalPlane1..16).
-/// Actually in the Altium numbering, Mid layers 2-31 include both signal and plane.
-/// Internal planes are determined by the V6Layer enum: InternalPlane1 = 39..54.
+///
+/// Handles both V6 (39..=54) and V7/V9 (family=1, genus=1) layer IDs.
 fn is_internal_plane_id(id: i32) -> bool {
-    (39..=54).contains(&id)
+    let v7 = V7Layer::new(id as u32);
+    // V6-compatible IDs: check via V6Layer
+    if let Ok(v6) = v7.to_v6() {
+        return v6.is_internal_plane();
+    }
+    // V9: genus=1 means internal plane layer
+    v7.genus() == 1
 }
 
 fn is_copper_layer_num(num: usize) -> bool {
@@ -1014,9 +1028,11 @@ fn is_internal_plane_num(_num: usize) -> bool {
 }
 
 fn layer_ref_from_id(id: i32) -> LayerRef {
-    match V6Layer::try_from(id as u8) {
-        Ok(v6) => LayerRef::from_v6(v6),
-        Err(_) => LayerRef::from_v6(V6Layer::NoLayer),
+    let v7 = V7Layer::new(id as u32);
+    if let Ok(v6) = v7.to_v6() {
+        LayerRef::from_v6(v6)
+    } else {
+        LayerRef::from_v7(v7)
     }
 }
 

@@ -16,7 +16,7 @@ use altium_format_types::{BarcodeKind, PcbObjectId};
 
 use crate::api::pcbdoc_types::*;
 use crate::param_collection::ParameterCollection;
-use crate::param_value::ToParamValue;
+use crate::param_value::{MilCoord, ToParamValue};
 use crate::pcbdoc::primitives::{
     ParsedPrimitiveRecord, PcbArc, PcbFill, PcbPrimitive, PcbText, PcbTrack,
 };
@@ -249,8 +249,8 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
                 "SOURCELIBREFERENCE",
                 comp.source_lib_reference.clone(),
             );
-            params.insert("X1", comp.location.x.to_param_value());
-            params.insert("Y1", comp.location.y.to_param_value());
+            params.insert("X", MilCoord(comp.location.x).to_param_value());
+            params.insert("Y", MilCoord(comp.location.y).to_param_value());
             params.insert("ROTATION", comp.rotation.to_param_value());
             let layer_v6 = comp.layer.to_v6().unwrap_or(V6Layer::TopLayer);
             params.insert("LAYER", (layer_v6 as u8).to_param_value());
