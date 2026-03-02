@@ -1,0 +1,14 @@
+[package]
+name = "autopcb-viewer"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+
+[lints]
+workspace = true
+
+[dependencies]
+autopcb-ir = { version = "0.2.0", path = "../autopcb-ir" }
+altium-format = { version = "0.2.0", path = "../altium-format" }
+eframe = "0.33"
+anyhow = "1.0"

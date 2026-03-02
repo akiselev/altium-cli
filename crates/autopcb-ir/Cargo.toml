@@ -1,0 +1,16 @@
+[package]
+name = "autopcb-ir"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+
+[lints]
+workspace = true
+
+[dependencies]
+altium-format = { version = "0.2.0", path = "../altium-format" }
+altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+thiserror = "2"
+
+[features]
+test-fixtures = []

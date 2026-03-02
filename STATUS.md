@@ -4,8 +4,8 @@ Generated: 2026-03-02
 
 ## Workspace Overview
 
-9-crate Rust workspace for reading, writing, querying, rendering, and declaratively
-specifying Altium Designer files.
+11-crate Rust workspace for reading, writing, querying, rendering, and declaratively
+specifying Altium Designer files — plus automated PCB placement/routing IR and viewer.
 
 ```
 altium-format-types    (domain types, enums, constants — zero deps)
@@ -18,7 +18,11 @@ altium-format          (core: parsing, serialization, high-level API, rendering 
      └→ altium-format-render-png  (PNG rasterization via resvg)
 altium-format-spec     (spec DSL: compiler, executor, reconciler, dump)
      ↓
-altium-cli             (CLI binary: validate, save-as, render, query, plan, apply, dump, cfb tools)
+altium-cli             (CLI binary: validate, save-as, render, query, plan, apply, dump, inspect, cfb tools)
+
+autopcb-ir             (PCB intermediate representation: mm-based extraction from PcbDocBoard)
+     ↓
+autopcb-viewer         (standalone egui binary: visual PCB board viewer with pan/zoom)
 ```
 
 ---

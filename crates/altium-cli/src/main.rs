@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
+use autopcb_ir::PcbIr;
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
@@ -119,6 +120,13 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Inspect PcbDoc board data via the autopcb IR
+    Inspect {
+        /// Path to the .PcbDoc file
+        path: PathBuf,
+        #[command(subcommand)]
+        sub: InspectSubcommand,
+    },
     /// Query entities in an Altium document using AQL (Altium Query Language)
     Query {
         /// Path to the document (.SchLib, .PcbLib, or .SchDoc)
@@ -165,6 +173,20 @@ enum NewSubcommand {
         /// Output path for the new .PrjPcb
         output: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum InspectSubcommand {
+    /// Show a summary of the board (dimensions, counts)
+    Summary,
+    /// List all components with positions and sides
+    Components,
+    /// List all nets with pin counts
+    Nets,
+    /// Show the board outline points
+    BoardOutline,
+    /// List design rules
+    Rules,
 }
 
 fn main() -> ExitCode {
@@ -241,6 +263,12 @@ fn main() -> ExitCode {
         }
         Commands::Info { path, format } => {
             if let Err(e) = run_info(&path, &format) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Inspect { path, sub } => {
+            if let Err(e) = run_inspect(&path, sub) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -1304,6 +1332,103 @@ fn run_query(
                     println!("  [{type_name}] {}", m.node.display_name());
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result<()> {
+    let doc = PcbDoc::open(path)?;
+    let board = doc.board()?;
+    let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    match sub {
+        InspectSubcommand::Summary => {
+            let b = &ir.board.bounds;
+            println!("Board: {:.2} x {:.2} mm", b.width(), b.height());
+            println!(
+                "  Origin: ({:.2}, {:.2}) mm",
+                b.min.x, b.min.y
+            );
+            println!("  Layers: {} copper", ir.layer_stack.copper_layer_count);
+            println!("  Components: {}", ir.components.len());
+            println!("  Nets: {}", ir.nets.len());
+            println!("  Rules: {}", ir.rules.len());
+            println!("  Polygons: {}", ir.polygons.len());
+            println!(
+                "  Free copper: {} tracks, {} vias, {} fills",
+                ir.free_copper.tracks.len(),
+                ir.free_copper.vias.len(),
+                ir.free_copper.fills.len()
+            );
+        }
+        InspectSubcommand::Components => {
+            println!(
+                "{:<12} {:<20} {:<10} {:>10} {:>10} {:>8} {:>5}",
+                "DESIGNATOR", "PATTERN", "SIDE", "X (mm)", "Y (mm)", "ROT", "PADS"
+            );
+            println!("{}", "-".repeat(79));
+            for (_id, comp) in ir.components.iter() {
+                let side = match comp.side {
+                    autopcb_ir::BoardSide::Top => "Top",
+                    autopcb_ir::BoardSide::Bottom => "Bot",
+                };
+                println!(
+                    "{:<12} {:<20} {:<10} {:>10.2} {:>10.2} {:>8.1} {:>5}",
+                    comp.designator,
+                    comp.pattern,
+                    side,
+                    comp.position.x,
+                    comp.position.y,
+                    comp.rotation,
+                    comp.pads.len()
+                );
+            }
+            println!("\n{} components total", ir.components.len());
+        }
+        InspectSubcommand::Nets => {
+            println!(
+                "{:<30} {:>6} {:>6}",
+                "NET NAME", "PINS", "COMPS"
+            );
+            println!("{}", "-".repeat(44));
+            for (_id, net) in ir.nets.iter() {
+                println!(
+                    "{:<30} {:>6} {:>6}",
+                    net.name, net.pins.len(), net.component_count
+                );
+            }
+            println!("\n{} nets total", ir.nets.len());
+        }
+        InspectSubcommand::BoardOutline => {
+            println!("Board outline ({} points):", ir.board.outline.len());
+            for (i, p) in ir.board.outline.iter().enumerate() {
+                println!("  [{:4}] ({:.4}, {:.4}) mm", i, p.x, p.y);
+            }
+            if !ir.board.cutouts.is_empty() {
+                println!("\n{} cutouts:", ir.board.cutouts.len());
+                for (ci, cutout) in ir.board.cutouts.iter().enumerate() {
+                    println!("  Cutout {} ({} points)", ci, cutout.len());
+                }
+            }
+        }
+        InspectSubcommand::Rules => {
+            println!(
+                "{:<30} {:<25} {:>5} {:>7}",
+                "RULE NAME", "KIND", "PRI", "ENABLED"
+            );
+            println!("{}", "-".repeat(70));
+            for (_id, rule) in ir.rules.iter() {
+                println!(
+                    "{:<30} {:<25} {:>5} {:>7}",
+                    rule.name,
+                    format!("{:?}", rule.kind),
+                    rule.priority,
+                    if rule.enabled { "yes" } else { "no" }
+                );
+            }
+            println!("\n{} rules total", ir.rules.len());
         }
     }
 
