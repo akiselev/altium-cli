@@ -30,7 +30,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 | **SchLib** | .SchLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **SchDoc** | .SchDoc   | ✅    | ✅        | ✅ Read/Write   | ✅         | ✅ | ✅ SVG/PNG | ✅          | ✅          | ✅      |
 | **PcbLib** | .PcbLib   | ✅    | ✅        | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅          | ✅          | ✅      |
-| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ✅ Read-only    | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
+| **PcbDoc** | .PcbDoc   | ✅    | ✅        | ✅ Read/Write   | ❌         | ❌     | ❌        | ✅          | ✅          | ❌      |
 | **PrjPcb** | .PrjPcb   | ✅    | ✅        | ✅ Read-only    | ✅         | ❌     | ❌        | ✅          | ✅          | ✅      |
 | **IntLib** | .IntLib   | ❌ Stub | ❌ Stub | ❌ None         | ❌         | ❌     | ❌        | ⚠️ open only | ❌          | ❌      |
 
@@ -151,7 +151,7 @@ rounded-rect), fills, regions, text, component bodies.
 
 ---
 
-### PcbDoc (.PcbDoc) — COMPLETE PARSE/SERIALIZE, READ-ONLY API
+### PcbDoc (.PcbDoc) — COMPLETE PARSE/SERIALIZE, READ/WRITE API
 
 **Parsing:** Complete. Reads legacy v1 header, v6 file header, and all 18+ section
 types from the CFB container.
@@ -184,17 +184,24 @@ Text in `pcbdoc/mod.rs`.
 - **Param key ordering** — `ParameterCollection` uses insertion order; Altium may differ
 - **Duplicate param keys** — Board6 LAYER/LOCKED written twice by Altium; ParameterCollection deduplicates
 
-**High-Level API:** Read-only — `board()` returns typed `PcbDocBoard` with all
+**High-Level API:** Read/Write — `board()` returns typed `PcbDocBoard` with all
 cross-references resolved (net indices → names, component indices → designators,
-WideStrings6 indices → text strings). Contains `BoardSettings`, typed collections
-for all named entities (`Net`, `PcbDocComponent`, `Polygon`, `NetClass`,
-`DesignRule`, `DifferentialPair`), all 8 primitive types (`Track`, `Arc`, `Via`,
-`Pad`, `Fill`, `Text`, `Region`, `ComponentBody`), plus `Dimension` and `Model3D`.
-Query helpers: `net()`, `component()`, `tracks_for_net()`, `pads_for_net()`,
-`vias_for_net()`, `pads_for_component()`, `tracks_for_component()`,
-`bodies_for_component()`, `rule()`, `rules_for_kind()`. Handles legacy/modern
-section pairs (prefers ShapeBasedRegions6 over Regions6, etc.). Board outline
-auto-extracted from region primitives.
+WideStrings6 indices → text strings). `update_board()` writes a `PcbDocBoard`
+back into internal sections: parameter sections (Nets6, Components6, Polygons6,
+Classes6, DifferentialPairs6, Board6) rebuilt from scratch; primitive sections
+(Tracks6, Arcs6, Vias6, Pads6, Fills6, Texts6, Regions6, ComponentBodies6)
+rebuilt with format-internal field preservation from existing records at same
+index position; WideStrings6 rebuilt with deduplication. Legacy/modern section
+detection (ShapeBasedRegions6 vs Regions6, etc.) for write path. Contains
+`BoardSettings`, typed collections for all named entities (`Net`,
+`PcbDocComponent`, `Polygon`, `NetClass`, `DesignRule`, `DifferentialPair`),
+all 8 primitive types (`Track`, `Arc`, `Via`, `Pad`, `Fill`, `Text`, `Region`,
+`ComponentBody`), plus `Dimension` and `Model3D`. Query helpers: `net()`,
+`component()`, `tracks_for_net()`, `pads_for_net()`, `vias_for_net()`,
+`pads_for_component()`, `tracks_for_component()`, `bodies_for_component()`,
+`rule()`, `rules_for_kind()`. Handles legacy/modern section pairs (prefers
+ShapeBasedRegions6 over Regions6, etc.). Board outline auto-extracted from
+region primitives.
 
 **Spec Language:** Not supported.
 

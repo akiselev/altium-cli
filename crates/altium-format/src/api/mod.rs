@@ -29,6 +29,7 @@ pub(crate) mod pcblib_read;
 pub(crate) mod pcblib_write;
 mod pcbdoc_types;
 pub(crate) mod pcbdoc_read;
+pub(crate) mod pcbdoc_write;
 mod project_types;
 pub(crate) mod project_read;
 pub(crate) mod project_write;

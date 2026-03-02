@@ -230,7 +230,7 @@ pub(crate) struct PcbVia {
     pub(crate) unique_id: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbViaSection2Entry {
     pub(crate) layer: u8,
     pub(crate) diameter: Coord,
@@ -243,7 +243,7 @@ pub(crate) struct PcbViaSection2Entry {
 /// Stride 30 (confirmed layout): layer_id + shape + mode + solder_mask_exp + paste_mask_exp
 ///   + plane_conn_style + relief_entries + reserved + conductor_width + reserved + air_gap + reserved.
 /// Strides 23/24/29 are older versions with fewer fields.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PcbViaPadLayerEntry {
     /// TV7_Layer identifier (u32, e.g. 1=Top, 32=Bottom).
     pub(crate) layer_id: u32,

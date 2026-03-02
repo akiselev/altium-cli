@@ -176,6 +176,15 @@ impl PcbDoc {
         crate::api::pcbdoc_read::board_from_internal(self)
     }
 
+    /// Write a public `PcbDocBoard` back into internal sections.
+    ///
+    /// Parameter sections are rebuilt from scratch; primitive sections
+    /// preserve format-internal fields from existing records at the same
+    /// index position.
+    pub fn update_board(&mut self, board: &crate::api::PcbDocBoard) -> Result<()> {
+        crate::api::pcbdoc_write::board_to_internal(board, self)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let mut doc = TrackedCfbDocument::open(path)?;
