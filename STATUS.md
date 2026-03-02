@@ -390,6 +390,22 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 
 ---
 
+## Code Quality (Rules Review Fix — 2026-03-01)
+
+Fixed all 15 rule violations identified in `rule-review.md`:
+
+- **`Coord::from_mils()` → `Option<Self>`**: Overflow-safe coordinate construction. ~60 call sites updated (small literals use `.expect()`, tests use `.expect()`, CLI uses `?`).
+- **`.unwrap()` → `.expect()` with context**: 4 sites in `param_collection.rs`, `pcbdoc/records.rs`, `pcbdoc/mod.rs` now document their invariants.
+- **Hard-coded constants → named constants**: `254` (record overflow → `INSTRUCTION_EXTRA_OBJECT_INDEX`), `254` (string length → `C_MAX_SHORT_STRING_LENGTH`), `"RECORD"` → `RECORD`, `0x8E` → `C_SCH_SPECIAL_DELIMITER`.
+- **`write_wide_string_fixed()` → `Result<()>`**: `assert!()` replaced with `Err(InvalidParamValue)`, 6 call sites propagate `?`.
+- **`fill_record_fields()` → `Result<()>`**: `unreachable!()` for Sheet/Pin replaced with `Err(NotImplemented)`.
+- **`generate_unique_key()` → `Result<String>`**: `unreachable!()` replaced with `Err(InvalidParamValue)`, cascaded through `build_section_key_for_name()` and `build_section_keys()`.
+- **`mask_expansion_mode_to_str()` → `Result<&str>`**: `unreachable!()` replaced with proper error, cascaded through `serialize_extended_primitive_information()`.
+- **Macro/CornerStyle wildcards**: `unreachable!()` → `panic!()` with debug info (`{other:?}`).
+- **`SchLib::new_blank_ad26()` / `PcbLib::new_blank_ad26()` → `Result<Self>`**: `.expect()` → `.context()?`, all callers updated.
+
+---
+
 ## Test Infrastructure
 
 - **Unit tests** in `#[cfg(test)]` blocks throughout `altium-format`

@@ -451,22 +451,27 @@ impl BinaryWriter {
     /// Writes a string as a fixed-size UTF-16LE buffer (`char_count` WideChars = `char_count * 2` bytes).
     ///
     /// The string is null-terminated and zero-padded to fill the buffer.
-    /// Panics if the string exceeds `char_count - 1` characters.
-    pub(crate) fn write_wide_string_fixed(&mut self, s: &str, char_count: usize) {
+    /// Returns an error if the string exceeds `char_count - 1` characters.
+    pub(crate) fn write_wide_string_fixed(&mut self, s: &str, char_count: usize) -> Result<()> {
         let byte_count = char_count * 2;
         let chars: Vec<u16> = s.encode_utf16().collect();
-        assert!(
-            chars.len() < char_count,
-            "Wide string too long: {} chars (max {})",
-            chars.len(),
-            char_count - 1
-        );
+        if chars.len() >= char_count {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "WideString".to_owned(),
+                detail: format!(
+                    "string too long: {} chars (max {})",
+                    chars.len(),
+                    char_count - 1
+                ),
+            });
+        }
         for &c in &chars {
             self.buf.extend_from_slice(&c.to_le_bytes());
         }
         // Zero-pad remainder (null terminator + padding).
         let written = chars.len() * 2;
         self.buf.resize(self.buf.len() + (byte_count - written), 0);
+        Ok(())
     }
 
     /// Writes all elements of a fixed-size array using the provided closure.

@@ -717,7 +717,7 @@ fn dump_pin(out: &mut String, pin: &Pin, indent: usize) {
         format!("electrical: {}", pin.electrical),
     ];
     // Default pin length in Altium is 25 mils.
-    if pin.length != Coord::from_mils(25) {
+    if pin.length != Coord::from_mils(25).expect("25 mils fits Coord") {
         parts.push(format!("length: {}", pin.length));
     }
     if !pin.name.is_empty() {
@@ -984,14 +984,14 @@ mod tests {
     #[test]
     fn test_coord_display_mm_clean() {
         // 100 mils = 2.54 mm (clean value)
-        let c = Coord::from_mils(100);
+        let c = Coord::from_mils(100).expect("test coord");
         assert_eq!(format!("{}", c), "2.54mm");
     }
 
     #[test]
     fn test_coord_display_mils_fallback() {
         // 1 mil = 0.0254 mm (not clean to 3 decimal places)
-        let c = Coord::from_mils(1);
+        let c = Coord::from_mils(1).expect("test coord");
         assert_eq!(format!("{}", c), "1mil");
     }
 

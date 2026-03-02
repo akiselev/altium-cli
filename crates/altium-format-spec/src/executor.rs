@@ -359,8 +359,8 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
             location: p.location,
             io_type: p.io_type.unwrap_or(PortIoType::Unspecified),
             style: p.style.unwrap_or(PortArrowStyle::None),
-            width: p.width.unwrap_or_else(|| Coord::from_mils(100)),
-            height: p.height.unwrap_or_else(|| Coord::from_mils(20)),
+            width: p.width.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+            height: p.height.unwrap_or_else(|| Coord::from_mils(20).expect("20 mils fits Coord")),
             color: p.color.unwrap_or(DARK_RED),
             area_color: p.area_color.unwrap_or(WHITE),
             text_color: p.text_color.unwrap_or(DARK_RED),
@@ -395,8 +395,8 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
         SchDocObjectSpec::SheetSymbol(s) => api::SheetObject::SheetSymbol(api::SheetSymbol {
             unique_id: String::new(),
             location: s.location,
-            x_size: s.x_size.unwrap_or_else(|| Coord::from_mils(100)),
-            y_size: s.y_size.unwrap_or_else(|| Coord::from_mils(100)),
+            x_size: s.x_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+            y_size: s.y_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
             color: s.color.unwrap_or(DARK_RED),
             area_color: s.area_color.unwrap_or(WHITE),
             line_width: PenWidth::Small,
@@ -493,8 +493,8 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
             api::SheetObject::HarnessConnector(api::HarnessConnector {
                 unique_id: String::new(),
                 location: h.location,
-                x_size: h.x_size.unwrap_or_else(|| Coord::from_mils(100)),
-                y_size: h.y_size.unwrap_or_else(|| Coord::from_mils(100)),
+                x_size: h.x_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+                y_size: h.y_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
                 color: h.color.unwrap_or(DARK_RED),
                 area_color: h.area_color.unwrap_or(WHITE),
                 line_width: PenWidth::Small,
@@ -689,7 +689,7 @@ fn pin_from_spec(spec: &PinSpec) -> api::Pin {
         name: spec.name.clone().unwrap_or_default(),
         electrical: spec.electrical.unwrap_or(PinElectricalType::Passive),
         location: spec.location,
-        length: spec.length.unwrap_or(Coord::from_mils(25)),
+        length: spec.length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord")),
         orientation: spec.orientation,
         is_hidden: spec.is_hidden.unwrap_or(false),
         hidden_net_name: spec.hidden_net_name.clone().unwrap_or_default(),
@@ -957,8 +957,8 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
         unique_id: None,
         location: spec.at,
         shape: spec.shape.unwrap_or(PadShape::Round),
-        x_size: spec.x_size.unwrap_or_else(|| Coord::from_mils(60)),
-        y_size: spec.y_size.unwrap_or_else(|| Coord::from_mils(60)),
+        x_size: spec.x_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
+        y_size: spec.y_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
         rotation: spec.rotation.unwrap_or(0.0),
         hole_size: spec.hole_size.unwrap_or(Coord::ZERO),
         is_plated: spec.is_plated.unwrap_or(true),
@@ -1021,7 +1021,7 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             location: props.at.unwrap_or_default(),
             text: props.text.clone().unwrap_or_default(),
             rotation: props.rotation.unwrap_or(0.0),
-            height: props.width.unwrap_or_else(|| Coord::from_mils(60)),
+            height: props.width.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
             width: Coord::ZERO,
             color: altium_format_types::color::Color::default(),
             font_name: String::new(),
@@ -1032,8 +1032,8 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             layer: LayerRef::from_v6(V6Layer::MultiLayer),
             flags,
             location: props.center.unwrap_or_default(),
-            diameter: props.diameter.unwrap_or_else(|| Coord::from_mils(50)),
-            hole_size: props.hole_size.unwrap_or_else(|| Coord::from_mils(28)),
+            diameter: props.diameter.unwrap_or_else(|| Coord::from_mils(50).expect("50 mils fits Coord")),
+            hole_size: props.hole_size.unwrap_or_else(|| Coord::from_mils(28).expect("28 mils fits Coord")),
             from_layer: LayerRef::from_v6(V6Layer::TopLayer),
             to_layer: LayerRef::from_v6(V6Layer::BottomLayer),
             is_testpoint_top: false,
@@ -1125,8 +1125,8 @@ mod tests {
 
     fn make_coord(x_mils: i32, y_mils: i32) -> CoordPoint {
         CoordPoint {
-            x: Coord::from_mils(x_mils),
-            y: Coord::from_mils(y_mils),
+            x: Coord::from_mils(x_mils).expect("test coord"),
+            y: Coord::from_mils(y_mils).expect("test coord"),
         }
     }
 
@@ -1168,7 +1168,7 @@ mod tests {
     /// Helper: create a blank library and remove the default "Component_1"
     /// that `new_blank_ad26()` creates.
     fn blank_doc() -> SchLib {
-        let mut doc = SchLib::new_blank_ad26();
+        let mut doc = SchLib::new_blank_ad26().expect("blank schlib");
         let _ = doc.remove_component("Component_1");
         doc
     }
@@ -1394,7 +1394,7 @@ mod tests {
     fn make_pad_spec(name: &str) -> PadSpec {
         PadSpec {
             pad_name: name.to_string(),
-            at: CoordPoint { x: Coord::from_mils(0), y: Coord::from_mils(0) },
+            at: CoordPoint { x: Coord::from_mils(0).expect("0 mils fits Coord"), y: Coord::from_mils(0).expect("0 mils fits Coord") },
             shape: None,
             x_size: None,
             y_size: None,
@@ -1430,7 +1430,7 @@ mod tests {
                 make_footprint_spec("R0603", vec![make_pad_spec("1"), make_pad_spec("2")]),
             ],
         };
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
 
         apply_spec_pcblib(&spec, &mut lib).unwrap();
 
@@ -1446,7 +1446,7 @@ mod tests {
         let spec1 = PcbLibSpec {
             footprints: vec![make_footprint_spec("C0805", vec![make_pad_spec("1")])],
         };
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         apply_spec_pcblib(&spec1, &mut lib).unwrap();
 
         let spec2 = PcbLibSpec {

@@ -226,7 +226,10 @@ macro_rules! impl_string_enum_param_value {
                     $(<$t>::$variant => $s,)+
                     // #[non_exhaustive] enums require a wildcard; unreachable at runtime
                     // because we define arms for every variant.
-                    _ => unreachable!("unknown {} variant", stringify!($t)),
+                    other => panic!(
+                        "ToParamValue: unhandled {} variant {other:?} — add a match arm",
+                        stringify!($t),
+                    ),
                 }.to_owned()
             }
         }
@@ -408,7 +411,7 @@ impl ToParamValue for CornerStyle {
             Self::Degree90 => "90-Degree",
             Self::Degree45 => "45-Degree",
             Self::Round => "Rounded",
-            _ => unreachable!("unknown CornerStyle variant"),
+            other => panic!("ToParamValue: unhandled CornerStyle variant {other:?} — add a match arm"),
         }.to_owned()
     }
 }

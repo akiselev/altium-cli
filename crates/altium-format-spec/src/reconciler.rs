@@ -1408,8 +1408,8 @@ mod tests {
 
     fn make_coord(x_mils: i32, y_mils: i32) -> CoordPoint {
         CoordPoint {
-            x: Coord::from_mils(x_mils),
-            y: Coord::from_mils(y_mils),
+            x: Coord::from_mils(x_mils).expect("test coord"),
+            y: Coord::from_mils(y_mils).expect("test coord"),
         }
     }
 
@@ -1449,7 +1449,7 @@ mod tests {
     }
 
     fn blank_doc() -> SchLib {
-        let mut doc = SchLib::new_blank_ad26();
+        let mut doc = SchLib::new_blank_ad26().expect("blank schlib");
         let _ = doc.remove_component("Component_1");
         doc
     }
@@ -1800,14 +1800,14 @@ mod tests {
         PadSpec {
             pad_name: name.to_string(),
             at: CoordPoint {
-                x: Coord::from_mils(x_mils),
-                y: Coord::from_mils(y_mils),
+                x: Coord::from_mils(x_mils).expect("test coord"),
+                y: Coord::from_mils(y_mils).expect("test coord"),
             },
             shape: Some(PadShape::Round),
-            x_size: Some(Coord::from_mils(60)),
-            y_size: Some(Coord::from_mils(60)),
+            x_size: Some(Coord::from_mils(60).expect("60 mils fits Coord")),
+            y_size: Some(Coord::from_mils(60).expect("60 mils fits Coord")),
             rotation: None,
-            hole_size: Some(Coord::from_mils(28)),
+            hole_size: Some(Coord::from_mils(28).expect("28 mils fits Coord")),
             is_plated: Some(true),
             layer: None,
             pad_mode: None,
@@ -1936,7 +1936,7 @@ mod tests {
     use altium_format::PcbLib;
 
     fn blank_pcblib() -> PcbLib {
-        PcbLib::new_blank_ad26()
+        PcbLib::new_blank_ad26().expect("blank pcblib")
     }
 
     #[test]

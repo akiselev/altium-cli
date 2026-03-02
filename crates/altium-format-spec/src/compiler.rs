@@ -2917,7 +2917,7 @@ fn compile_one_pin(
                 .unwrap_or(PlacementSide::Outside);
             let gap = get_coord_opt(&props, "gap")?.map(|c| c.raw()).unwrap_or(0);
             let offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
-            let pin_length = length.unwrap_or(Coord::from_mils(25));
+            let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (location, orientation) = resolve_anchor_placement(
                 &edge, *at_pos, side, Coord::new(gap), pin_length, offset,
             )?;
@@ -2954,7 +2954,7 @@ fn compile_one_pin(
             let side = get_enum_opt(&props, "side", parse_placement_side)?
                 .unwrap_or(PlacementSide::Outside);
             let extra_offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
-            let pin_length = length.unwrap_or(Coord::from_mils(25));
+            let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (mut location, orientation) = resolve_anchor_placement(
                 &edge, at_pos, side, Coord::ZERO, pin_length, extra_offset,
             )?;
@@ -3002,7 +3002,7 @@ fn compile_one_pin(
             let side = get_enum_opt(&props, "side", parse_placement_side)?
                 .unwrap_or(PlacementSide::Outside);
             let extra_offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
-            let pin_length = length.unwrap_or(Coord::from_mils(25));
+            let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (mut location, orientation) = resolve_anchor_placement(
                 &edge, AnchorPosition::Center, side, Coord::ZERO, pin_length, extra_offset,
             )?;
@@ -4251,12 +4251,12 @@ mod tests {
         assert_eq!(fp.pads.len(), 4);
         // Pad 1 at (0, 0), pad 2 at (100mil, 0), pad 3 at (200mil, 0), pad 4 at (300mil, 0)
         assert_eq!(fp.pads[0].pad_name, "1");
-        assert_eq!(fp.pads[0].at.x, Coord::from_mils(0));
+        assert_eq!(fp.pads[0].at.x, Coord::from_mils(0).expect("test coord"));
         assert_eq!(fp.pads[1].pad_name, "2");
-        assert_eq!(fp.pads[1].at.x, Coord::from_mils(100));
+        assert_eq!(fp.pads[1].at.x, Coord::from_mils(100).expect("test coord"));
         assert_eq!(fp.pads[2].pad_name, "3");
         assert_eq!(fp.pads[3].pad_name, "4");
-        assert_eq!(fp.pads[3].at.x, Coord::from_mils(300));
+        assert_eq!(fp.pads[3].at.x, Coord::from_mils(300).expect("test coord"));
     }
 
     #[test]
@@ -4276,9 +4276,9 @@ mod tests {
         let spec = compile_pcblib(src).unwrap();
         let fp = &spec.footprints[0];
         assert_eq!(fp.pads.len(), 3);
-        assert_eq!(fp.pads[0].at.y, Coord::from_mils(100));
-        assert_eq!(fp.pads[1].at.y, Coord::from_mils(50));
-        assert_eq!(fp.pads[2].at.y, Coord::from_mils(0));
+        assert_eq!(fp.pads[0].at.y, Coord::from_mils(100).expect("test coord"));
+        assert_eq!(fp.pads[1].at.y, Coord::from_mils(50).expect("test coord"));
+        assert_eq!(fp.pads[2].at.y, Coord::from_mils(0).expect("test coord"));
     }
 
     #[test]
@@ -4323,13 +4323,13 @@ mod tests {
         assert_eq!(fp.pads.len(), 3);
         // Pad 1: round from template
         assert_eq!(fp.pads[0].shape, Some(PadShape::Round));
-        assert_eq!(fp.pads[0].x_size, Some(Coord::from_mils(50)));
+        assert_eq!(fp.pads[0].x_size, Some(Coord::from_mils(50).expect("test coord")));
         // Pad 2: overridden to rectangular with explicit size
         assert_eq!(fp.pads[1].shape, Some(PadShape::Rectangular));
-        assert_eq!(fp.pads[1].x_size, Some(Coord::from_mils(80)));
-        assert_eq!(fp.pads[1].y_size, Some(Coord::from_mils(30)));
+        assert_eq!(fp.pads[1].x_size, Some(Coord::from_mils(80).expect("test coord")));
+        assert_eq!(fp.pads[1].y_size, Some(Coord::from_mils(30).expect("test coord")));
         // Position from layout, not from explicit pad
-        assert_eq!(fp.pads[1].at.x, Coord::from_mils(100));
+        assert_eq!(fp.pads[1].at.x, Coord::from_mils(100).expect("test coord"));
         // Pad 3: round from template
         assert_eq!(fp.pads[2].shape, Some(PadShape::Round));
     }
@@ -4472,7 +4472,7 @@ mod tests {
         let fp = &spec.footprints[0];
         assert_eq!(fp.pads.len(), 2);
         // cols=2: col 0 offset = (0 - 0.5)*200mil = -100mil, col 1 = +100mil
-        assert_eq!(fp.pads[0].at.x, Coord::from_mils(-100));
-        assert_eq!(fp.pads[1].at.x, Coord::from_mils(100));
+        assert_eq!(fp.pads[0].at.x, Coord::from_mils(-100).expect("test coord"));
+        assert_eq!(fp.pads[1].at.x, Coord::from_mils(100).expect("test coord"));
     }
 }

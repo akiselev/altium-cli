@@ -974,13 +974,13 @@ impl PcbLib {
 
     /// Creates a minimal valid PcbLib for use in tests and as a starting point
     /// for programmatic library construction.
-    pub fn new_blank_ad26() -> Self {
+    pub fn new_blank_ad26() -> crate::Result<Self> {
         let board_config = crate::board_config::parse_board_config(
             &mut crate::param_collection::ParameterCollection::new(),
         )
-        .expect("empty ParameterCollection should produce valid board config defaults");
+        .context("creating default board config for blank PcbLib")?;
 
-        Self {
+        Ok(Self {
             header: PcbFileHeader {
                 version_string: PCB_LIBRARY_BINARY_HEADER_V6.to_owned(),
                 version: 5.01,
@@ -1009,7 +1009,7 @@ impl PcbLib {
             footprints: Vec::new(),
             file_version_info: None,
             source_path: None,
-        }
+        })
     }
 
     /// Find a footprint by display name.
@@ -1326,7 +1326,7 @@ impl PcbLib {
             // ExtendedPrimitiveInformation sidecar: mask expansion settings.
             if !fp.extended_primitive_info.is_empty() {
                 let (header, data) =
-                    sidecar::serialize_extended_primitive_information(&fp.extended_primitive_info);
+                    sidecar::serialize_extended_primitive_information(&fp.extended_primitive_info)?;
                 cfb.create_storage(&format!("{storage}/ExtendedPrimitiveInformation"))?;
                 cfb.write_stream(
                     &format!("{storage}/ExtendedPrimitiveInformation/Header"),
@@ -1626,7 +1626,7 @@ fn serialize_primitive(prim: &PcbPrimitive) -> Result<(PcbObjectId, Vec<Vec<u8>>
         PcbPrimitive::Via(p) => Ok((PcbObjectId::Via, vec![serialize_via(p)])),
         PcbPrimitive::Arc(p) => Ok((PcbObjectId::Arc, vec![serialize_arc(p)])),
         PcbPrimitive::Fill(p) => Ok((PcbObjectId::Fill, vec![serialize_fill(p)])),
-        PcbPrimitive::Text(p) => Ok((PcbObjectId::Text, serialize_text(p))),
+        PcbPrimitive::Text(p) => Ok((PcbObjectId::Text, serialize_text(p)?)),
         PcbPrimitive::Pad(p) => Ok((PcbObjectId::Pad, serialize_pad(p)?)),
         PcbPrimitive::Region(p) => Ok((PcbObjectId::Region, vec![serialize_region(p)])),
         PcbPrimitive::ComponentBody(p) => Ok((PcbObjectId::ComponentBody, vec![serialize_component_body(p)])),
@@ -1685,7 +1685,7 @@ fn serialize_fill(p: &PcbFill) -> Vec<u8> {
     w.finish()
 }
 
-fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
+fn serialize_text(p: &PcbText) -> Result<Vec<Vec<u8>>> {
     let mut w0 = BinaryWriter::new();
     write_primitive_common(&mut w0, &p.common);
     w0.write_coord_point(p.location);
@@ -1699,7 +1699,7 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     w0.write_u8(p.is_italic as u8);
     w0.write_u8(p.is_bold as u8);
     w0.write_u8(0);
-    w0.write_wide_string_fixed(&p.font_name, 32);
+    w0.write_wide_string_fixed(&p.font_name, 32)?;
     w0.write_u8(p.inverted as u8);
     w0.write_coord(p.inverted_tt_text_border);
     w0.write_i32_le(p.wide_string_index);
@@ -1718,7 +1718,7 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     w0.write_u8(p.barcode_show_text as u8);
     w0.write_u8(p.barcode_render_mode as u8);
     w0.write_u8(p.multiline as u8);
-    w0.write_wide_string_fixed(&p.barcode_font_name, 32);
+    w0.write_wide_string_fixed(&p.barcode_font_name, 32)?;
     // AD26 tail fields (bytes 225-251). Always write full 252-byte format
     // (upgrade to latest on save). Use 0/default for any None fields.
     w0.write_u8(p.ttf_inverted_justify.map_or(0, |v| v as u8));
@@ -1736,7 +1736,7 @@ fn serialize_text(p: &PcbText) -> Vec<Vec<u8>> {
     let (s1, _, _) = encoding_rs::WINDOWS_1252.encode(&p.text);
     let mut text_bytes = s1.to_vec();
     text_bytes.push(0); // NUL terminator
-    vec![w0.finish(), text_bytes]
+    Ok(vec![w0.finish(), text_bytes])
 }
 
 fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
@@ -2211,17 +2211,17 @@ mod tests {
             display_name: name.to_owned(),
             description: format!("Test footprint {name}"),
             pattern: name.to_owned(),
-            height: Coord::from_mils(50),
+            height: Coord::from_mils(50).expect("50 mils fits Coord"),
             pads: vec![
                 Pad {
                     pad_name: "1".to_owned(),
                     unique_id: None,
                     location: CoordPoint::new(Coord::ZERO, Coord::ZERO),
                     shape: PadShape::Round,
-                    x_size: Coord::from_mils(60),
-                    y_size: Coord::from_mils(60),
+                    x_size: Coord::from_mils(60).expect("60 mils fits Coord"),
+                    y_size: Coord::from_mils(60).expect("60 mils fits Coord"),
                     rotation: 0.0,
-                    hole_size: Coord::from_mils(30),
+                    hole_size: Coord::from_mils(30).expect("30 mils fits Coord"),
                     is_plated: true,
                     layer: LayerRef::from_v6(V6Layer::MultiLayer),
                     pad_mode: PadStackMode::Simple,
@@ -2238,9 +2238,9 @@ mod tests {
                     unique_id: None,
                     layer: LayerRef::from_v6(V6Layer::TopOverlay),
                     flags: PcbFlags::default(),
-                    start: CoordPoint::new(Coord::from_mils(-50), Coord::from_mils(-50)),
-                    end: CoordPoint::new(Coord::from_mils(50), Coord::from_mils(-50)),
-                    width: Coord::from_mils(10),
+                    start: CoordPoint::new(Coord::from_mils(-50).expect("-50 mils fits Coord"), Coord::from_mils(-50).expect("-50 mils fits Coord")),
+                    end: CoordPoint::new(Coord::from_mils(50).expect("50 mils fits Coord"), Coord::from_mils(-50).expect("-50 mils fits Coord")),
+                    width: Coord::from_mils(10).expect("10 mils fits Coord"),
                 }),
             ],
         }
@@ -2248,7 +2248,7 @@ mod tests {
 
     #[test]
     fn api_new_blank_ad26() {
-        let lib = PcbLib::new_blank_ad26();
+        let lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         assert_eq!(lib.footprint_count(), 0);
         assert!(lib.footprint_names().is_empty());
         lib.validate_invariants().unwrap();
@@ -2256,7 +2256,7 @@ mod tests {
 
     #[test]
     fn api_add_footprint() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         let fp = make_test_footprint("TestFP");
         lib.add_footprint(fp).unwrap();
 
@@ -2273,7 +2273,7 @@ mod tests {
 
     #[test]
     fn api_add_footprint_duplicate_fails() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         lib.add_footprint(make_test_footprint("DupFP")).unwrap();
         let err = lib.add_footprint(make_test_footprint("DupFP")).unwrap_err();
         assert!(err.to_string().contains("already exists"), "error: {err}");
@@ -2281,7 +2281,7 @@ mod tests {
 
     #[test]
     fn api_update_footprint() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         lib.add_footprint(make_test_footprint("UpdateMe")).unwrap();
 
         let mut fp = lib.footprint("UpdateMe").unwrap();
@@ -2290,12 +2290,12 @@ mod tests {
         fp.pads.push(crate::api::Pad {
             pad_name: "2".to_owned(),
             unique_id: None,
-            location: CoordPoint::new(Coord::from_mils(100), Coord::ZERO),
+            location: CoordPoint::new(Coord::from_mils(100).expect("100 mils fits Coord"), Coord::ZERO),
             shape: PadShape::Round,
-            x_size: Coord::from_mils(60),
-            y_size: Coord::from_mils(60),
+            x_size: Coord::from_mils(60).expect("60 mils fits Coord"),
+            y_size: Coord::from_mils(60).expect("60 mils fits Coord"),
             rotation: 0.0,
-            hole_size: Coord::from_mils(30),
+            hole_size: Coord::from_mils(30).expect("30 mils fits Coord"),
             is_plated: true,
             layer: LayerRef::from_v6(V6Layer::MultiLayer),
             pad_mode: PadStackMode::Simple,
@@ -2315,7 +2315,7 @@ mod tests {
 
     #[test]
     fn api_remove_footprint() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         lib.add_footprint(make_test_footprint("RemoveMe")).unwrap();
         assert_eq!(lib.footprint_count(), 1);
 
@@ -2325,14 +2325,14 @@ mod tests {
 
     #[test]
     fn api_remove_not_found() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         let err = lib.remove_footprint("DoesNotExist").unwrap_err();
         assert!(err.to_string().contains("not found"), "error: {err}");
     }
 
     #[test]
     fn api_add_save_reopen() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         lib.add_footprint(make_test_footprint("Roundtrip")).unwrap();
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -2349,7 +2349,7 @@ mod tests {
 
     #[test]
     fn api_footprints_returns_all() {
-        let mut lib = PcbLib::new_blank_ad26();
+        let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         lib.add_footprint(make_test_footprint("A")).unwrap();
         lib.add_footprint(make_test_footprint("B")).unwrap();
         lib.add_footprint(make_test_footprint("C")).unwrap();

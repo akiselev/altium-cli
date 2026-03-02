@@ -424,12 +424,15 @@ pub(crate) fn get_unique_id(primitive: &PcbPrimitive) -> Option<&str> {
 ///
 /// Altium uses "None" for the no-mask case (our parser accepts both "None" and
 /// "NoMask", but Altium files consistently write "None").
-fn mask_expansion_mode_to_str(mode: MaskExpansionMode) -> &'static str {
+fn mask_expansion_mode_to_str(mode: MaskExpansionMode) -> Result<&'static str> {
     match mode {
-        MaskExpansionMode::NoMask => "None",
-        MaskExpansionMode::Rule => "Rule",
-        MaskExpansionMode::Manual => "Manual",
-        _ => unreachable!("unknown MaskExpansionMode variant"),
+        MaskExpansionMode::NoMask => Ok("None"),
+        MaskExpansionMode::Rule => Ok("Rule"),
+        MaskExpansionMode::Manual => Ok("Manual"),
+        other => Err(AltiumFormatError::InvalidParamValue {
+            key: "MaskExpansionMode".to_owned(),
+            detail: format!("unhandled variant {other:?}"),
+        }),
     }
 }
 
@@ -467,7 +470,7 @@ pub(crate) fn serialize_unique_id_primitive_information(
 /// Returns (header_bytes, data_bytes).
 pub(crate) fn serialize_extended_primitive_information(
     entries: &[ExtendedPrimitiveInfoEntry],
-) -> (Vec<u8>, Vec<u8>) {
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut data = Vec::new();
 
     for entry in entries {
@@ -482,7 +485,7 @@ pub(crate) fn serialize_extended_primitive_information(
         }
         params.insert(
             "SOLDERMASKEXPANSIONMODE",
-            mask_expansion_mode_to_str(entry.solder_mask_expansion_mode).to_owned(),
+            mask_expansion_mode_to_str(entry.solder_mask_expansion_mode)?.to_owned(),
         );
         if !entry.solder_mask_expansion_manual.is_empty() {
             params.insert(
@@ -492,7 +495,7 @@ pub(crate) fn serialize_extended_primitive_information(
         }
         params.insert(
             "PASTEMASKEXPANSIONMODE",
-            mask_expansion_mode_to_str(entry.paste_mask_expansion_mode).to_owned(),
+            mask_expansion_mode_to_str(entry.paste_mask_expansion_mode)?.to_owned(),
         );
         if !entry.paste_mask_expansion_manual.is_empty() {
             params.insert(
@@ -505,7 +508,7 @@ pub(crate) fn serialize_extended_primitive_information(
 
     let mut w = BinaryWriter::new();
     w.write_u32_le(entries.len() as u32);
-    (w.finish(), data)
+    Ok((w.finish(), data))
 }
 
 /// Serializes PrimitiveGuids Header and Data streams.

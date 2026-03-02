@@ -49,7 +49,7 @@ use altium_format_types::{
             DES_IMP_COUNT, DES_INTF, INTEGRATED_MODEL, MODEL_ITEM_GUID, MODEL_LOCATION, MODEL_NAME,
             MODEL_REVISION_GUID, MODEL_TYPE, MODEL_VAULT_GUID, USE_COMPONENT_LIBRARY,
         },
-        parsing::C_BASE_UNIT,
+        parsing::{C_BASE_UNIT, C_MAX_SHORT_STRING_LENGTH},
         pin::{
             DEF_VALUE, DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID,
             DESIGNATOR_CUSTOM_POSITION_MARGIN, NAME_CUSTOM_COLOR, NAME_CUSTOM_FONT_ID,
@@ -2494,7 +2494,7 @@ fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
 /// in PinDesc and PinWideText sidecar streams.
 fn write_dynamic_string(w: &mut BinaryWriter, s: &str) {
     let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(s);
-    let truncated = if encoded.len() > 254 { &encoded[..254] } else { &encoded };
+    let truncated = if encoded.len() > C_MAX_SHORT_STRING_LENGTH as usize { &encoded[..C_MAX_SHORT_STRING_LENGTH as usize] } else { &encoded };
     w.write_u8(truncated.len() as u8);
     w.write_bytes(truncated);
 }
@@ -2847,7 +2847,7 @@ pub(crate) fn serialize_record(record: &SchRecord) -> Result<Vec<u8>> {
         _ => {
             let mut params = ParameterCollection::new();
             insert_record_key(&mut params, record_type_for(record));
-            fill_record_fields(record, &mut params);
+            fill_record_fields(record, &mut params)?;
             Ok(write_text_block(&params.to_bytes()))
         }
     }
@@ -2911,10 +2911,10 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
 }
 
 // Fills field parameters into the collection (RECORD key already inserted).
-fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
+fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) -> Result<()> {
     match record {
         SchRecord::Sheet(_) => {
-            unreachable!("SchSheet serialization is not implemented yet")
+            return Err(AltiumFormatError::NotImplemented("SchSheet serialization".into()))
         }
         SchRecord::Template(v) => v.to_params(params),
         SchRecord::Wire(v) => v.to_params(params),
@@ -2965,8 +2965,13 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) {
         SchRecord::HighLevelCodeEntry(v) => v.to_params(params),
         SchRecord::HighLevelCodeName(v) => v.to_params(params),
         SchRecord::HighLevelCodeFileName(v) => v.to_params(params),
-        SchRecord::Pin(_) => unreachable!("Pin handled in serialize_record"),
+        SchRecord::Pin(_) => {
+            return Err(AltiumFormatError::NotImplemented(
+                "Pin serialization via fill_record_fields (use serialize_binary_pin)".into(),
+            ))
+        }
     }
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

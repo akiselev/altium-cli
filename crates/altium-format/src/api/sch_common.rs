@@ -18,6 +18,7 @@ use crate::sch_records::{
 use crate::{AltiumFormatError, Result};
 
 use altium_format_types::sch::{TextHorzAnchor, TextVertAnchor};
+use altium_format_types::constants::record_structure::RECORD;
 
 // ── Read converters ──────────────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ pub(crate) fn process_records(
             }
             other => {
                 return Err(AltiumFormatError::InvalidParamValue {
-                    key: "RECORD".to_owned(),
+                    key: RECORD.to_owned(),
                     detail: format!(
                         "unexpected record type {:?} in component",
                         std::mem::discriminant(other)

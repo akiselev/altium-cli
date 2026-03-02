@@ -1,5 +1,6 @@
 use altium_format_types::SchRecordType;
 use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
+use altium_format_types::constants::parsing::INSTRUCTION_EXTRA_OBJECT_INDEX;
 use altium_format_types::constants::record_structure::UNIQUE_ID;
 use altium_format_types::constants::record_structure::{HEADER, RECORD, RECORD_EX, WEIGHT};
 use altium_format_types::constants::sheet::MINOR_VERSION;
@@ -71,7 +72,7 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
     let mut records = Vec::with_capacity(weight as usize);
 
     if let Some(record_raw) = header_params.remove_optional::<i32>(RECORD)? {
-        let record_type_val = if record_raw == 254 {
+        let record_type_val = if record_raw == INSTRUCTION_EXTRA_OBJECT_INDEX as i32 {
             header_params.remove_required::<i32>(RECORD_EX)?
         } else {
             record_raw
@@ -103,7 +104,7 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
         let record_raw: i32 = params
             .remove_required(RECORD)
             .with_context(|| format!("/FileHeader block #{block_idx} missing RECORD"))?;
-        let record_type_val = if record_raw == 254 {
+        let record_type_val = if record_raw == INSTRUCTION_EXTRA_OBJECT_INDEX as i32 {
             params
                 .remove_required::<i32>(RECORD_EX)
                 .with_context(|| format!("/FileHeader block #{block_idx} missing RECORDEX"))?

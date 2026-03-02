@@ -167,9 +167,9 @@ mod tests {
     fn track_produces_line_call() {
         let track = PcbTrack {
             common: make_common(),
-            start: CoordPoint::new(Coord::from_mils(0), Coord::from_mils(0)),
-            end: CoordPoint::new(Coord::from_mils(100), Coord::from_mils(0)),
-            width: Coord::from_mils(5),
+            start: CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
+            end: CoordPoint::new(Coord::from_mils(100).expect("100 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
+            width: Coord::from_mils(5).expect("5 mils fits Coord"),
             subpoly_index: 0,
             user_routed: false,
             union_index: 0,

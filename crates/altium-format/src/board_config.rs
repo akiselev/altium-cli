@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use altium_format_types::{ComponentPlacementType, DielectricType, LayerStackStyle};
+use altium_format_types::constants::record_structure::RECORD;
 use indexmap::IndexMap;
 
 use crate::param_collection::ParameterCollection;
@@ -262,7 +263,7 @@ pub(crate) struct PcbCfgAll {
 
 pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<PcbBoardConfig> {
     let record = params
-        .remove_optional::<String>("RECORD")?
+        .remove_optional::<String>(RECORD)?
         .unwrap_or_default();
 
     // 1. V9 master stack (probe STYLE as existence check)
@@ -1138,7 +1139,7 @@ pub(crate) fn serialize_board_config(
 
     // 1. RECORD
     if !config.record.is_empty() {
-        params.insert("RECORD", config.record.clone());
+        params.insert(RECORD, config.record.clone());
     }
 
     // 2. V9 master stack

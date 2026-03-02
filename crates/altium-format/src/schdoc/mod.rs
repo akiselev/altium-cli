@@ -19,6 +19,7 @@ use altium_format_types::constants::pin::{
     SWAP_ID_PAIR, SWAP_ID_PART, SWAP_ID_PIN, SYMBOL, SYMBOL_INNER, SYMBOL_INNER_EDGE,
     SYMBOL_LINE_WIDTH, SYMBOL_OUTER, SYMBOL_OUTER_EDGE,
 };
+use altium_format_types::constants::parsing::INSTRUCTION_EXTRA_OBJECT_INDEX;
 use altium_format_types::constants::record_structure::{HEADER, RECORD, RECORD_EX, WEIGHT};
 use altium_format_types::constants::record_structure::{
     OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, UNIQUE_ID,
@@ -123,20 +124,20 @@ impl SchDoc {
             }],
             display_settings: SchDisplaySettings {
                 snap_grid_on: Some(true),
-                snap_grid_size: Some(Coord::from_mils(10)),
+                snap_grid_size: Some(Coord::from_mils(10).expect("10 mils fits Coord")),
                 visible_grid_on: Some(true),
-                visible_grid_size: Some(Coord::from_mils(10)),
+                visible_grid_size: Some(Coord::from_mils(10).expect("10 mils fits Coord")),
                 hot_spot_grid_on: Some(true),
-                hot_spot_grid_size: Some(Coord::from_mils(4)),
+                hot_spot_grid_size: Some(Coord::from_mils(4).expect("4 mils fits Coord")),
                 use_custom_sheet: Some(true),
-                custom_x: Some(Coord::from_mils(1500)),
-                custom_y: Some(Coord::from_mils(950)),
+                custom_x: Some(Coord::from_mils(1500).expect("1500 mils fits Coord")),
+                custom_y: Some(Coord::from_mils(950).expect("950 mils fits Coord")),
                 border_on: Some(true),
                 title_block_on: Some(true),
                 reference_zones_on: Some(true),
                 custom_x_zones: Some(6),
                 custom_y_zones: Some(4),
-                custom_margin_width: Some(Coord::from_mils(20)),
+                custom_margin_width: Some(Coord::from_mils(20).expect("20 mils fits Coord")),
                 sheet_number_space_size: Some(4),
                 display_unit: Some(4),
                 system_font: Some(1),
@@ -816,7 +817,7 @@ fn parse_additional_stream(data: &[u8]) -> Result<Vec<crate::sch_records::SchRec
         let record_raw: i32 = params
             .remove_required(RECORD)
             .with_context(|| format!("/Additional block #{idx} missing RECORD"))?;
-        let record_type_val = if record_raw == 254 {
+        let record_type_val = if record_raw == INSTRUCTION_EXTRA_OBJECT_INDEX as i32 {
             params
                 .remove_required::<i32>(RECORD_EX)
                 .with_context(|| format!("/Additional block #{idx} missing RECORDEX"))?

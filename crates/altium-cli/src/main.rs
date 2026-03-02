@@ -273,7 +273,7 @@ fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
                     std::fs::create_dir_all(parent)?;
                 }
             }
-            let lib = SchLib::new_blank_ad26();
+            let lib = SchLib::new_blank_ad26()?;
             lib.save(output.as_path())?;
             println!("Created {}", output.display());
         }
@@ -283,7 +283,7 @@ fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {
                     std::fs::create_dir_all(parent)?;
                 }
             }
-            let lib = PcbLib::new_blank_ad26();
+            let lib = PcbLib::new_blank_ad26()?;
             lib.save(output.as_path())?;
             println!("Created {}", output.display());
         }
@@ -721,7 +721,7 @@ fn apply_for_model(
                 SchLib::open(&resolved_target)
                     .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
             } else {
-                let mut lib = SchLib::new_blank_ad26();
+                let mut lib = SchLib::new_blank_ad26()?;
                 // Remove the default placeholder component from blank libraries
                 let _ = lib.remove_component("Component_1");
                 lib
@@ -741,7 +741,7 @@ fn apply_for_model(
                 PcbLib::open(&resolved_target)
                     .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
             } else {
-                PcbLib::new_blank_ad26()
+                PcbLib::new_blank_ad26()?
             };
 
             let out_path = output.cloned().unwrap_or(library_path);

@@ -535,9 +535,9 @@ pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6
             });
         }
 
-        let index = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+        let index = u32::from_le_bytes(data[offset..offset + 4].try_into().expect("4-byte slice"));
         let byte_len =
-            u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+            u32::from_le_bytes(data[offset + 4..offset + 8].try_into().expect("4-byte slice")) as usize;
 
         if index != expected_index {
             let sample_len = (data.len() - offset).min(16);

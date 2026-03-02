@@ -5,7 +5,7 @@ use altium_format_types::constants::component::{
     ALIAS_COUNT, ALL_PIN_COUNT, COMP_COUNT, COMP_DESCR, LIB_REF, LIB_REFERENCE, PART_COUNT,
 };
 use altium_format_types::constants::file_headers::SCH_LIBRARY_BINARY_HEADER_V50;
-use altium_format_types::constants::parsing::C_BASE_UNIT;
+use altium_format_types::constants::parsing::{C_BASE_UNIT, C_MAX_SHORT_STRING_LENGTH, C_SCH_SPECIAL_DELIMITER, INSTRUCTION_EXTRA_OBJECT_INDEX};
 use altium_format_types::constants::pin::{
     DEF_VALUE, PAIR_SWAP_ID, PIN_BINARY_CODE, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
     PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY,
@@ -363,7 +363,7 @@ fn dispatch_record(block: &Block) -> Result<SchRecord> {
         BlockFormat::Text => {
             let mut params = ParameterCollection::from_bytes(&block.data)?;
             let record_raw: i32 = params.remove_required(RECORD)?;
-            let record_type_val = if record_raw == 254 {
+            let record_type_val = if record_raw == INSTRUCTION_EXTRA_OBJECT_INDEX as i32 {
                 params.remove_required::<i32>(RECORD_EX)?
             } else {
                 record_raw
@@ -925,8 +925,8 @@ fn write_pin_frac(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
 fn write_pin_desc(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
-        if pin.description.len() > 254 {
-            let overflow = &pin.description[254..];
+        if pin.description.len() > C_MAX_SHORT_STRING_LENGTH as usize {
+            let overflow = &pin.description[C_MAX_SHORT_STRING_LENGTH as usize..];
             let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(overflow);
             let mut w = BinaryWriter::new();
             w.write_i32_le(encoded.len() as i32);
@@ -1010,7 +1010,7 @@ fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinText
 /// - Field exceeds 254 bytes (binary pin length-prefix is u8)
 /// - Field contains non-ANSI characters (> 0x7E, except 0x8E which is the pipe escape)
 fn pin_field_needs_wide_text(value: &str) -> bool {
-    value.len() > 254 || value.chars().any(|c| c as u32 > 0x7E && c as u32 != 0x8E)
+    value.len() > C_MAX_SHORT_STRING_LENGTH as usize || value.chars().any(|c| c as u32 > 0x7E && c != C_SCH_SPECIAL_DELIMITER)
 }
 
 // Returns PinWideText sidecar stream if any pin has fields that need wide text.
@@ -1677,24 +1677,24 @@ fn serialize_additional_data(records: &[SchRecord]) -> Result<Vec<u8>> {
 // default fallback in `resolve_component_key` (which replaces `/` with `_`).
 // Names that only contain `/` from the illegal character set don't need
 // SectionKeys entries because the fallback handles them.
-fn build_section_keys(header: &SchLibHeader) -> HashMap<String, String> {
+fn build_section_keys(header: &SchLibHeader) -> Result<HashMap<String, String>> {
     let mut keys = HashMap::new();
     let mut used_keys = std::collections::HashSet::new();
 
     for comp in &header.components {
-        build_section_key_for_name(&comp.lib_ref, &mut keys, &mut used_keys);
+        build_section_key_for_name(&comp.lib_ref, &mut keys, &mut used_keys)?;
         for alias in &comp.aliases {
-            build_section_key_for_name(alias, &mut keys, &mut used_keys);
+            build_section_key_for_name(alias, &mut keys, &mut used_keys)?;
         }
     }
-    keys
+    Ok(keys)
 }
 
 fn build_section_key_for_name(
     name: &str,
     keys: &mut HashMap<String, String>,
     used_keys: &mut std::collections::HashSet<String>,
-) {
+) -> Result<()> {
     let sanitized = sanitize_cfb_name(name);
     // The default fallback in resolve_component_key replaces '/' with '_'.
     // Only generate a SectionKeys entry when the sanitized name differs from
@@ -1702,12 +1702,13 @@ fn build_section_key_for_name(
     // than '/' or the name exceeds 31 chars.
     let default_fallback = name.replace('/', "_");
     if sanitized != default_fallback || sanitized.len() > 31 {
-        let short_key = generate_unique_key(&sanitized, used_keys);
+        let short_key = generate_unique_key(&sanitized, used_keys)?;
         keys.insert(name.to_owned(), short_key.clone());
         used_keys.insert(short_key);
     } else {
         used_keys.insert(sanitized);
     }
+    Ok(())
 }
 
 fn sanitize_cfb_name(name: &str) -> String {
@@ -1716,16 +1717,16 @@ fn sanitize_cfb_name(name: &str) -> String {
         .collect()
 }
 
-fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>) -> String {
+fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>) -> Result<String> {
     let base = if sanitized.len() > 31 {
         &sanitized[..31]
     } else {
         sanitized
     };
     if !used.contains(base) {
-        return base.to_owned();
+        return Ok(base.to_owned());
     }
-    for suffix in 1.. {
+    for suffix in 1..u64::MAX {
         let suffix_str = suffix.to_string();
         let max_base_len = 31 - suffix_str.len();
         let candidate = format!(
@@ -1734,18 +1735,21 @@ fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>
             suffix_str
         );
         if !used.contains(&candidate) {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    unreachable!()
+    Err(AltiumFormatError::InvalidParamValue {
+        key: "SectionKey".to_owned(),
+        detail: "exhausted all unique key suffixes".to_owned(),
+    })
 }
 
 impl SchLib {
-    pub fn new_blank_ad26() -> Self {
+    pub fn new_blank_ad26() -> crate::Result<Self> {
         let mut params = ParameterCollection::new();
         params.insert(LIB_REFERENCE, "Component_1".to_owned());
         let mut component = parse_component_record(&mut params)
-            .expect("internal default component parse should not fail");
+            .context("creating default component for blank SchLib")?;
         component.lib_reference = "Component_1".to_owned();
         component.part_count = 2;
         component.current_part_id = 1;
@@ -1768,13 +1772,13 @@ impl SchLib {
                 }],
                 display_settings: SchDisplaySettings {
                     snap_grid_on: Some(true),
-                    snap_grid_size: Some(Coord::from_mils(10)),
+                    snap_grid_size: Some(Coord::from_mils(10).expect("10 mils fits Coord")),
                     visible_grid_on: Some(true),
-                    visible_grid_size: Some(Coord::from_mils(10)),
+                    visible_grid_size: Some(Coord::from_mils(10).expect("10 mils fits Coord")),
                     sheet_style: Some(SheetStyle::E),
                     use_custom_sheet: Some(true),
-                    custom_x: Some(Coord::from_mils(18_000)),
-                    custom_y: Some(Coord::from_mils(18_000)),
+                    custom_x: Some(Coord::from_mils(18_000).expect("18000 mils fits Coord")),
+                    custom_y: Some(Coord::from_mils(18_000).expect("18000 mils fits Coord")),
                     border_on: Some(true),
                     reference_zones_on: Some(true),
                     sheet_number_space_size: Some(12),
@@ -1871,7 +1875,7 @@ impl SchLib {
             is_image_parameter: false,
         }));
 
-        lib
+        Ok(lib)
     }
 
     pub(crate) fn component_count(&self) -> usize {
@@ -2007,7 +2011,7 @@ impl SchLib {
 
     /// Serializes this SchLib back to a CFB file at `path`.
     pub fn save(&self, path: impl AsRef<Path>) -> crate::Result<()> {
-        let section_keys = build_section_keys(&self.header);
+        let section_keys = build_section_keys(&self.header)?;
         let mut cfb = CfbDocument::create()?;
 
         // 1. /FileHeader
@@ -2756,7 +2760,7 @@ mod tests {
 
     #[test]
     fn schlib_new_blank_ad26_roundtrip_validates() {
-        let lib = SchLib::new_blank_ad26();
+        let lib = SchLib::new_blank_ad26().expect("blank schlib");
         lib.validate_invariants()
             .expect("new blank schlib should validate");
 
@@ -2985,7 +2989,7 @@ mod tests {
 
     #[test]
     fn api_new_blank_component_roundtrip() {
-        let lib = SchLib::new_blank_ad26();
+        let lib = SchLib::new_blank_ad26().expect("blank schlib");
         let names = lib.component_names();
         assert_eq!(names, vec!["Component_1"]);
 
@@ -3000,7 +3004,7 @@ mod tests {
 
     #[test]
     fn api_components_returns_all() {
-        let lib = SchLib::new_blank_ad26();
+        let lib = SchLib::new_blank_ad26().expect("blank schlib");
         let comps = lib.components().expect("read components");
         assert_eq!(comps.len(), 1);
         assert_eq!(comps[0].lib_reference, "Component_1");
@@ -3008,7 +3012,7 @@ mod tests {
 
     #[test]
     fn api_add_component() {
-        let mut lib = SchLib::new_blank_ad26();
+        let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         let comp = crate::api::Component {
             lib_reference: "MyResistor".to_owned(),
             designator: Some("R?".to_owned()),
@@ -3022,7 +3026,7 @@ mod tests {
                     name: "A".to_owned(),
                     electrical: altium_format_types::PinElectricalType::Passive,
                     location: CoordPoint::zero(),
-                    length: Coord::from_mils(30),
+                    length: Coord::from_mils(30).expect("30 mils fits Coord"),
                     orientation: RotationBy90::Rotate0,
                     is_hidden: false,
                     hidden_net_name: String::new(),
@@ -3090,7 +3094,7 @@ mod tests {
 
     #[test]
     fn api_add_component_duplicate_fails() {
-        let mut lib = SchLib::new_blank_ad26();
+        let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         let comp = crate::api::Component {
             lib_reference: "Component_1".to_owned(),
             designator: None,
@@ -3110,7 +3114,7 @@ mod tests {
 
     #[test]
     fn api_update_component() {
-        let mut lib = SchLib::new_blank_ad26();
+        let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         let mut comp = lib.component("Component_1").expect("read component");
         comp.designator = Some("IC?".to_owned());
         comp.description = Some("Updated".to_owned());
@@ -3123,7 +3127,7 @@ mod tests {
 
     #[test]
     fn api_remove_component() {
-        let mut lib = SchLib::new_blank_ad26();
+        let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         assert_eq!(lib.component_names().len(), 1);
         lib.remove_component("Component_1").expect("remove component");
         assert_eq!(lib.component_names().len(), 0);
@@ -3131,14 +3135,14 @@ mod tests {
 
     #[test]
     fn api_remove_component_not_found() {
-        let mut lib = SchLib::new_blank_ad26();
+        let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         let result = lib.remove_component("DoesNotExist");
         assert!(result.is_err());
     }
 
     #[test]
     fn api_add_save_reopen() {
-        let mut lib = SchLib::new_blank_ad26();
+        let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         let comp = crate::api::Component {
             lib_reference: "TestComp".to_owned(),
             designator: Some("U?".to_owned()),

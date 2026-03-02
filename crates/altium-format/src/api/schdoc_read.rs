@@ -21,6 +21,7 @@ use crate::sch_records::SchRecord;
 use crate::{AltiumFormatError, Result, ResultExt};
 
 use altium_format_types::sch::SheetStyle;
+use altium_format_types::constants::record_structure::RECORD;
 
 /// Convert the flat SchDoc record lists into a structured `SchDocSheet`.
 pub(crate) fn sheet_from_internal(
@@ -29,7 +30,7 @@ pub(crate) fn sheet_from_internal(
 ) -> Result<SchDocSheet> {
     if records.is_empty() {
         return Err(AltiumFormatError::InvalidParamValue {
-            key: "RECORD".to_owned(),
+            key: RECORD.to_owned(),
             detail: "SchDoc has no records".to_owned(),
         });
     }
@@ -42,7 +43,7 @@ pub(crate) fn sheet_from_internal(
         SchRecord::Sheet(s) => s,
         other => {
             return Err(AltiumFormatError::InvalidParamValue {
-                key: "RECORD".to_owned(),
+                key: RECORD.to_owned(),
                 detail: format!(
                     "expected Sheet (RECORD=31) at index 0, found {:?}",
                     std::mem::discriminant(other)
@@ -356,7 +357,7 @@ fn convert_sheet_child(
         other => match graphic_from_record(other) {
             Some(graphic) => Ok(Some(SheetObject::Graphic(graphic))),
             None => Err(AltiumFormatError::InvalidParamValue {
-                key: "RECORD".to_owned(),
+                key: RECORD.to_owned(),
                 detail: format!(
                     "unexpected record type {:?} as sheet child at index {}",
                     std::mem::discriminant(other), idx

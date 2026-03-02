@@ -434,7 +434,7 @@ impl PcbDoc {
                             actual: records.len(),
                         });
                     }
-                    let mut record = records.into_iter().next().unwrap();
+                    let mut record = records.into_iter().next().expect("len == 1 checked above");
                     drc_options = Some(
                         drc::DrcOptions::from_params(&mut record.params).with_context(|| {
                             format!("parsing {storage_path}/Data")
@@ -1011,7 +1011,7 @@ fn serialize_pcbdoc_fill(p: &primitives::PcbFill) -> Vec<u8> {
 
 /// Serialize PcbDoc Text to 2 subrecords: binary data + Windows-1252 text.
 /// Always writes full format (all conditional blocks), upgrading to latest on save.
-fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Vec<Vec<u8>> {
+fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Result<Vec<Vec<u8>>> {
     let mut w = BinaryWriter::new();
     // Base (40 bytes)
     crate::pcb_primitives_serialize::write_primitive_common(&mut w, &p.common);
@@ -1028,7 +1028,7 @@ fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Vec<Vec<u8>> {
     w.write_u8(p.text_kind as u8);
     w.write_bool(p.is_bold);
     w.write_bool(p.is_italic);
-    w.write_wide_string_fixed(&p.font_name, 32);
+    w.write_wide_string_fixed(&p.font_name, 32)?;
     w.write_bool(p.is_inverted);
     w.write_i32_le(p.margin_border_width);
     w.write_i32_le(p.wide_string_index);
@@ -1047,7 +1047,7 @@ fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Vec<Vec<u8>> {
     w.write_u8(p.barcode_kind as u8);
     w.write_u8(p.barcode_render_mode as u8);
     w.write_bool(p.barcode_inverted);
-    w.write_wide_string_fixed(&p.barcode_font_name, 32);
+    w.write_wide_string_fixed(&p.barcode_font_name, 32)?;
     w.write_i32_le(p.barcode_min_pixel_size);
     w.write_bool(p.barcode_show_text);
     // Advance group: only write fields that were present in the original record.
@@ -1087,7 +1087,7 @@ fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Vec<Vec<u8>> {
     text_bytes.push(encoded.len() as u8);
     text_bytes.extend_from_slice(&encoded);
 
-    vec![w.finish(), text_bytes]
+    Ok(vec![w.finish(), text_bytes])
 }
 
 fn serialize_primitive_payload(
@@ -1097,7 +1097,7 @@ fn serialize_primitive_payload(
         primitives::PcbPrimitive::Arc(v) => Ok(vec![serialize_pcbdoc_arc(v)]),
         primitives::PcbPrimitive::Track(v) => Ok(vec![serialize_pcbdoc_track(v)]),
         primitives::PcbPrimitive::Fill(v) => Ok(vec![serialize_pcbdoc_fill(v)]),
-        primitives::PcbPrimitive::Text(v) => Ok(serialize_pcbdoc_text(v)),
+        primitives::PcbPrimitive::Text(v) => serialize_pcbdoc_text(v),
         primitives::PcbPrimitive::Via(v) => {
             Ok(vec![crate::pcb_primitives_serialize::serialize_via(v)])
         }

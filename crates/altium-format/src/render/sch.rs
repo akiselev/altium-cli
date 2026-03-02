@@ -393,8 +393,8 @@ mod tests {
             line_width: PenWidth::Small,
             line_style: altium_format_types::LineStyle::Solid,
             vertices: vec![
-                CoordPoint::new(Coord::from_mils(0), Coord::from_mils(0)),
-                CoordPoint::new(Coord::from_mils(100), Coord::from_mils(0)),
+                CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
+                CoordPoint::new(Coord::from_mils(100).expect("100 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
             ],
             unique_id: String::new(),
             underline_color: Color::BLACK,
@@ -412,7 +412,7 @@ mod tests {
         use crate::sch_records::SchJunction;
         let j = SchJunction {
             base: make_base(),
-            location: CoordPoint::new(Coord::from_mils(0), Coord::from_mils(0)),
+            location: CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
             size: PenWidth::Zero,
             color: Color::BLACK,
             locked: true,
@@ -430,7 +430,7 @@ mod tests {
         use altium_format_types::RotationBy90;
         let n = SchNoConnect {
             base: make_base(),
-            location: CoordPoint::new(Coord::from_mils(0), Coord::from_mils(0)),
+            location: CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
             color: Color::BLACK,
             orientation: RotationBy90::Rotate0,
             symbol: String::new(),

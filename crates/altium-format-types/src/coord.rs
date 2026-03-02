@@ -35,8 +35,8 @@ impl Coord {
     /// Source: Rt_Schematic.Consts.cBaseUnit = 100000.
     pub const DXP_BASE_UNIT: i32 = 100_000;
 
-    pub fn from_mils(mils: i32) -> Self {
-        Self(mils.checked_mul(10_000).expect("Coord::from_mils overflow"))
+    pub fn from_mils(mils: i32) -> Option<Self> {
+        mils.checked_mul(10_000).map(Self)
     }
 
     pub fn from_mils_f64(mils: f64) -> Self {

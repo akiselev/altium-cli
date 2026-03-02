@@ -445,7 +445,7 @@ mod tests {
             name: name.to_string(),
             electrical,
             location: CoordPoint { x: Coord::ZERO, y: Coord::ZERO },
-            length: Coord::from_mils(30),
+            length: Coord::from_mils(30).expect("30 mils fits Coord"),
             orientation: RotationBy90::Rotate0,
             is_hidden: false,
             hidden_net_name: String::new(),

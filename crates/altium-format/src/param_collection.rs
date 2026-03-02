@@ -321,7 +321,7 @@ impl ParameterCollection {
         let found = self.find_key(key).map(|k| k.to_owned());
         match found {
             Some(actual_key) => {
-                let value = self.params.shift_remove(&actual_key).unwrap();
+                let value = self.params.shift_remove(&actual_key).expect("key found by find_key");
                 T::from_param_value(&actual_key, &value)
             }
             None => Err(AltiumFormatError::MissingParam(key.to_owned())),
@@ -333,7 +333,7 @@ impl ParameterCollection {
         let found = self.find_key(key).map(|k| k.to_owned());
         match found {
             Some(actual_key) => {
-                let value = self.params.shift_remove(&actual_key).unwrap();
+                let value = self.params.shift_remove(&actual_key).expect("key found by find_key");
                 T::from_param_value(&actual_key, &value).map(Some)
             }
             None => Ok(None),

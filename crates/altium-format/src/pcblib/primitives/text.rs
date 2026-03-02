@@ -270,7 +270,7 @@ mod tests {
         text_kind: TextKind,
         font_name: &str,
         barcode_font_name: &str,
-    ) -> BinaryWriter {
+    ) -> crate::Result<BinaryWriter> {
         let mut w = BinaryWriter::new();
         write_common_header(&mut w);
         w.write_coord_point(CoordPoint::new(
@@ -287,7 +287,7 @@ mod tests {
         w.write_bool(false); // is_italic
         w.write_bool(true); // is_bold
         w.write_u8(0); // reserved
-        w.write_wide_string_fixed(font_name, FONT_NAME_WCHAR_COUNT); // font_name
+        w.write_wide_string_fixed(font_name, FONT_NAME_WCHAR_COUNT)?; // font_name
         w.write_bool(false); // inverted
         w.write_i32_le(0); // inverted_tt_text_border
         w.write_i32_le(0); // wide_string_index
@@ -306,8 +306,8 @@ mod tests {
         w.write_bool(true); // barcode_show_text
         w.write_u8(1); // barcode_render_mode
         w.write_bool(false); // multiline
-        w.write_wide_string_fixed(barcode_font_name, FONT_NAME_WCHAR_COUNT); // barcode_font_name
-        w
+        w.write_wide_string_fixed(barcode_font_name, FONT_NAME_WCHAR_COUNT)?; // barcode_font_name
+        Ok(w)
     }
 
     fn make_text_subrecords(sub0: Vec<u8>, text: &str) -> [Vec<u8>; 2] {
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn parse_text_225_byte_base() {
-        let w = make_text_sub0_base(TextKind::TrueTypeFont, "Arial", "Arial");
+        let w = make_text_sub0_base(TextKind::TrueTypeFont, "Arial", "Arial").unwrap();
         let sub0 = w.finish();
         assert_eq!(sub0.len(), TEXT_BASE_SIZE);
 
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn parse_text_252_byte_ad26() {
-        let mut w = make_text_sub0_base(TextKind::TrueTypeFont, "Consolas", "Arial");
+        let mut w = make_text_sub0_base(TextKind::TrueTypeFont, "Consolas", "Arial").unwrap();
         // Tail bytes (225-251): 27 bytes of version-dependent fields.
         w.write_bytes(&[1, 6, 0, 3, 1]); // bytes 225-229
         w.write_bytes(&[1, 0]); // bytes 230-231 (advance_snapping + reserved)
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn parse_text_230_byte_format() {
-        let mut w = make_text_sub0_base(TextKind::StrokeFont, "Arial", "Arial");
+        let mut w = make_text_sub0_base(TextKind::StrokeFont, "Arial", "Arial").unwrap();
         w.write_bytes(&[1, 6, 0, 3, 1]); // 5-byte tail
         let sub0 = w.finish();
         assert_eq!(sub0.len(), 230);
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn parse_text_barcode() {
-        let w = make_text_sub0_base(TextKind::Barcode, "Arial", "Code39");
+        let w = make_text_sub0_base(TextKind::Barcode, "Arial", "Code39").unwrap();
         let sub0 = w.finish();
 
         let subs = make_text_subrecords(sub0, "SN12345");
