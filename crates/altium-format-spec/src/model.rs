@@ -1,13 +1,29 @@
 use std::path::PathBuf;
 
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, PadShape, PadStackMode, PinElectricalType,
-    PlaneConnectionStyle, RotationBy90, V6Layer,
+    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
+    PlaneConnectionStyle, RotationBy90,
 };
 use altium_format_types::project::{
     ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
     CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
 };
+
+/// A layer specification in the spec language.
+///
+/// Layers can be specified as:
+/// - A known V6/V7 layer name (resolved at compile time)
+/// - A copper position like `copper(3)` (resolved at execution time against a board stack)
+/// - A custom layer name (resolved at execution time against a board stack)
+#[derive(Debug, Clone)]
+pub enum LayerSpec {
+    /// A fully resolved layer reference (e.g. "TopLayer", "Mechanical1").
+    Resolved(LayerRef),
+    /// The Nth copper layer (1-indexed), resolved against a board's layer stack.
+    CopperPosition(usize),
+    /// A custom layer name, resolved against a board's layer stack.
+    NamedLayer(String),
+}
 
 // ── SchLib ──────────────────────────────────────────────────────────────────
 
@@ -92,7 +108,7 @@ pub struct PadSpec {
     pub rotation: Option<f64>,
     pub hole_size: Option<Coord>,
     pub is_plated: Option<bool>,
-    pub layer: Option<V6Layer>,
+    pub layer: Option<LayerSpec>,
     pub pad_mode: Option<PadStackMode>,
     pub solder_mask_expansion: Option<Coord>,
     pub paste_mask_expansion: Option<Coord>,
@@ -160,7 +176,7 @@ pub struct GraphicProperties {
     pub image_data: Option<Vec<u8>>,
 
     // PCB-specific
-    pub layer: Option<V6Layer>,
+    pub layer: Option<LayerSpec>,
     pub width: Option<Coord>,
     pub closed: Option<bool>,
     pub show_border: Option<bool>,
@@ -187,7 +203,7 @@ pub enum PcbGraphicType {
 }
 
 pub struct PcbGraphicProperties {
-    pub layer: Option<V6Layer>,
+    pub layer: Option<LayerSpec>,
     pub width: Option<Coord>,
     pub from: Option<CoordPoint>,
     pub to: Option<CoordPoint>,

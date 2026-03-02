@@ -15,7 +15,7 @@ use crate::eco::{
 };
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
-    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, PadSpec, PinSpec,
+    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec, PinSpec,
     PrjPcbSpec, ProjectSpec, SchLibSpec, PcbLibSpec,
 };
 
@@ -503,8 +503,8 @@ fn pad_spec_to_add(spec: &PadSpec) -> EntityChange {
     if let Some(is_plated) = spec.is_plated {
         props.push(PropValue { field: "is_plated".to_string(), value: is_plated.to_string() });
     }
-    if let Some(layer) = spec.layer {
-        props.push(PropValue { field: "layer".to_string(), value: format!("{layer:?}") });
+    if let Some(ref layer) = spec.layer {
+        props.push(PropValue { field: "layer".to_string(), value: format_layer_spec(layer) });
     }
     if let Some(rotation) = spec.rotation {
         props.push(PropValue { field: "rotation".to_string(), value: rotation.to_string() });
@@ -618,12 +618,14 @@ fn diff_pcb_pads(spec_pads: &[PadSpec], existing: &[api::Pad], out: &mut Vec<Ent
                         });
                     }
                 }
-                if let Some(layer) = spec_pad.layer {
-                    if layer != existing_pad.layer {
+                if let Some(ref layer) = spec_pad.layer {
+                    let resolved = format_layer_spec(layer);
+                    let existing_str = format!("{}", existing_pad.layer);
+                    if resolved != existing_str {
                         prop_changes.push(PropChange {
                             field: "layer".to_string(),
-                            old_value: format!("{:?}", existing_pad.layer),
-                            new_value: format!("{layer:?}"),
+                            old_value: existing_str,
+                            new_value: resolved,
                         });
                     }
                 }
@@ -1091,6 +1093,15 @@ impl ComponentSpec {
             graphics.extend(part.graphics.iter());
         }
         graphics
+    }
+}
+
+/// Format a `LayerSpec` for display in ECO reports.
+fn format_layer_spec(spec: &LayerSpec) -> String {
+    match spec {
+        LayerSpec::Resolved(lr) => format!("{lr}"),
+        LayerSpec::CopperPosition(n) => format!("copper({n})"),
+        LayerSpec::NamedLayer(name) => name.clone(),
     }
 }
 

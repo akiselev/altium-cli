@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, PadShape, PadStackMode, PinElectricalType,
-    PlaneConnectionStyle, RotationBy90, V6Layer,
+    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
+    PlaneConnectionStyle, RotationBy90,
 };
 
 use crate::ast::{
@@ -30,10 +30,10 @@ use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_
 use crate::model::{
     AnnotationMatchParamSpec, AnnotationSpec, ClassGenSpec, ComparisonRuleSpec, ComponentSpec,
     DocumentSpec, ErcLevelOverride, ErcMatrixOverride, FootprintMapSpec, FootprintSpec,
-    GraphicProperties, GraphicSpec, GraphicType, LibraryUpdateSpec, OutputGroupSpec, OutputSpec,
-    PadSpec, ParamVariationSpec, ParameterSpec, PartSpec, PcbGraphicProperties, PcbGraphicSpec,
-    PcbGraphicType, PinPadMap, PinSpec, PrjPcbSpec, ProjectSpec, SchLibSpec, SpecDomain,
-    SpecModel, VariantSpec, VariationSpec,
+    GraphicProperties, GraphicSpec, GraphicType, LayerSpec, LibraryUpdateSpec, OutputGroupSpec,
+    OutputSpec, PadSpec, ParamVariationSpec, ParameterSpec, PartSpec, PcbGraphicProperties,
+    PcbGraphicSpec, PcbGraphicType, PinPadMap, PinSpec, PrjPcbSpec, ProjectSpec, SchLibSpec,
+    SpecDomain, SpecModel, VariantSpec, VariationSpec,
 };
 
 use altium_format_types::project::{
@@ -552,7 +552,7 @@ impl SpecCompiler {
         let rotation = get_float_opt(&props, "rotation");
         let hole_size = get_coord_opt(&props, "hole_size")?;
         let is_plated = get_bool_opt(&props, "is_plated");
-        let layer = get_enum_opt(&props, "layer", parse_v6_layer)?;
+        let layer = get_enum_opt(&props, "layer", parse_layer_spec)?;
         let pad_mode = get_enum_opt(&props, "pad_mode", parse_pad_stack_mode)?;
         let solder_mask_expansion = get_coord_opt(&props, "solder_mask_expansion")?;
         let paste_mask_expansion = get_coord_opt(&props, "paste_mask_expansion")?;
@@ -1383,8 +1383,26 @@ fn parse_plane_connection(s: &str) -> Option<PlaneConnectionStyle> {
     }
 }
 
-fn parse_v6_layer(s: &str) -> Option<V6Layer> {
-    V6Layer::from_string_name(s)
+fn parse_layer_spec(s: &str) -> Option<LayerSpec> {
+    // Try copper(N) syntax
+    if let Some(n) = parse_copper_position(s) {
+        return Some(LayerSpec::CopperPosition(n));
+    }
+    // Try V6 canonical name
+    if let Some(lr) = LayerRef::from_string_name(s) {
+        return Some(LayerSpec::Resolved(lr));
+    }
+    // Treat as custom stack name (deferred resolution)
+    Some(LayerSpec::NamedLayer(s.to_owned()))
+}
+
+fn parse_copper_position(s: &str) -> Option<usize> {
+    let s = s.trim();
+    if s.starts_with("copper(") && s.ends_with(')') {
+        s[7..s.len() - 1].trim().parse().ok()
+    } else {
+        None
+    }
 }
 
 fn parse_sch_graphic_type(s: &str) -> Option<GraphicType> {
@@ -1466,7 +1484,7 @@ fn compile_graphic_properties(
         .map(|v| value_to_points(v, Some(span)))
         .transpose()?;
 
-    let layer = get_enum_opt(props, "layer", parse_v6_layer)?;
+    let layer = get_enum_opt(props, "layer", parse_layer_spec)?;
 
     // image_data: accept base64 string or null
     let image_data: Option<Vec<u8>> = if let Some(Value::String(s)) = props.get("image_data") {
@@ -1507,7 +1525,7 @@ fn compile_pcb_graphic_properties(
     props: &IndexMap<String, Value>,
     span: crate::diagnostic::Span,
 ) -> Result<PcbGraphicProperties, SpecError> {
-    let layer = get_enum_opt(props, "layer", parse_v6_layer)?;
+    let layer = get_enum_opt(props, "layer", parse_layer_spec)?;
     let width = props.get("width").map(|v| value_to_coord(v, Some(span))).transpose()?;
     let from = props.get("from").map(|v| value_to_coord_point(v, Some(span))).transpose()?;
     let to = props.get("to").map(|v| value_to_coord_point(v, Some(span))).transpose()?;
@@ -2451,7 +2469,7 @@ fn pad_from_template(
     let rotation = get_float_opt(template, "rotation");
     let hole_size = get_coord_opt(template, "hole_size")?;
     let is_plated = get_bool_opt(template, "is_plated");
-    let layer = get_enum_opt(template, "layer", parse_v6_layer)?;
+    let layer = get_enum_opt(template, "layer", parse_layer_spec)?;
     let pad_mode = get_enum_opt(template, "pad_mode", parse_pad_stack_mode)?;
     let solder_mask_expansion = get_coord_opt(template, "solder_mask_expansion")?;
     let paste_mask_expansion = get_coord_opt(template, "paste_mask_expansion")?;
@@ -2508,7 +2526,7 @@ fn merge_pad_override_from_props(
     if let Some(v) = get_bool_opt(explicit, "is_plated") {
         pad.is_plated = Some(v);
     }
-    if let Ok(Some(v)) = get_enum_opt(explicit, "layer", parse_v6_layer) {
+    if let Ok(Some(v)) = get_enum_opt(explicit, "layer", parse_layer_spec) {
         pad.layer = Some(v);
     }
     if let Ok(Some(v)) = get_enum_opt(explicit, "pad_mode", parse_pad_stack_mode) {
@@ -3166,7 +3184,10 @@ mod tests {
         assert_eq!(fp.pads[0].at.y, Coord::ZERO);
         assert_eq!(fp.pads[0].shape, Some(PadShape::Rectangular));
         assert_eq!(fp.pads[0].x_size, Some(Coord::new(600_000)));
-        assert_eq!(fp.pads[0].layer, Some(V6Layer::TopLayer));
+        assert!(matches!(
+            &fp.pads[0].layer,
+            Some(LayerSpec::Resolved(lr)) if lr.display_name() == Some("TopLayer")
+        ));
         assert_eq!(fp.pads[1].pad_name, "2");
         assert_eq!(fp.pads[1].at.x, Coord::new(1_000_000));
     }

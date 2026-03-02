@@ -8,14 +8,14 @@ use crate::pcblib::{
 use crate::util::generate_unique_id;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    BarcodeRenderMode, DaisyChainStyle, MaskExpansionMode, PadStackMode, PcbFlags,
-    PlaneConnectionStyle, TCacheState, TextKind, V6Layer, V7Layer,
+    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionMode, PadStackMode, PcbFlags,
+    PlaneConnectionStyle, TCacheState, TextKind, V6Layer,
 };
 
 /// Build a `PcbPrimitiveCommon` for a library context (no net/polygon/component links).
-fn default_primitive_common(layer: V6Layer, flags: PcbFlags) -> PcbPrimitiveCommon {
+fn default_primitive_common(layer: &LayerRef, flags: PcbFlags) -> PcbPrimitiveCommon {
     PcbPrimitiveCommon {
-        layer,
+        layer: layer.to_v6().unwrap_or(V6Layer::NoLayer),
         flags,
         net_index: 0xFFFF,
         polygon_index: 0xFFFF,
@@ -191,7 +191,7 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
 fn pad_to_internal(pad: &Pad) -> PcbPad {
     let size = CoordPoint::new(pad.x_size, pad.y_size);
     PcbPad {
-        common: default_primitive_common(pad.layer, PcbFlags::default()),
+        common: default_primitive_common(&pad.layer, PcbFlags::default()),
         pad_name: pad.pad_name.clone(),
         unknown_sub1: String::new(),
         unknown_sub2: String::new(),
@@ -254,7 +254,7 @@ fn pad_to_internal(pad: &Pad) -> PcbPad {
 
 fn track_to_internal(g: &TrackGraphic) -> PcbTrack {
     PcbTrack {
-        common: default_primitive_common(g.layer, g.flags),
+        common: default_primitive_common(&g.layer, g.flags),
         start: g.start,
         end: g.end,
         width: g.width,
@@ -262,7 +262,7 @@ fn track_to_internal(g: &TrackGraphic) -> PcbTrack {
         user_routed: false,
         union_index: 0,
         track_kind: 0,
-        layer_enum_index: 0,
+        layer_enum_index: g.layer.v7().raw() as i32,
         keepout_restrictions: 0,
         unique_id: g.unique_id.clone(),
     }
@@ -270,7 +270,7 @@ fn track_to_internal(g: &TrackGraphic) -> PcbTrack {
 
 fn arc_to_internal(g: &PcbArcGraphic) -> PcbArc {
     PcbArc {
-        common: default_primitive_common(g.layer, g.flags),
+        common: default_primitive_common(&g.layer, g.flags),
         center: g.center,
         radius: g.radius,
         start_angle: g.start_angle,
@@ -279,7 +279,7 @@ fn arc_to_internal(g: &PcbArcGraphic) -> PcbArc {
         subpoly_index: 0,
         user_routed: false,
         union_index: 0,
-        v7_layer: V7Layer::default(),
+        v7_layer: g.layer.v7(),
         keepout_restrictions: 0,
         unique_id: g.unique_id.clone(),
     }
@@ -287,13 +287,13 @@ fn arc_to_internal(g: &PcbArcGraphic) -> PcbArc {
 
 fn fill_to_internal(g: &FillGraphic) -> PcbFill {
     PcbFill {
-        common: default_primitive_common(g.layer, g.flags),
+        common: default_primitive_common(&g.layer, g.flags),
         corner1: g.corner1,
         corner2: g.corner2,
         rotation: g.rotation,
         user_routed: false,
         union_index: 0,
-        v7_layer: V7Layer::default(),
+        v7_layer: g.layer.v7(),
         keepout_restrictions: 0,
         unique_id: g.unique_id.clone(),
     }
@@ -301,9 +301,9 @@ fn fill_to_internal(g: &FillGraphic) -> PcbFill {
 
 fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
     PcbRegion {
-        common: default_primitive_common(g.layer, g.flags),
+        common: default_primitive_common(&g.layer, g.flags),
         kind: g.kind,
-        v7_layer: String::new(),
+        v7_layer: g.layer.display_name().unwrap_or("").to_owned(),
         name: String::new(),
         param_kind: 0,
         subpoly_index: 0,
@@ -328,7 +328,7 @@ fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
 
 fn text_to_internal(g: &TextGraphic) -> PcbText {
     PcbText {
-        common: default_primitive_common(g.layer, g.flags),
+        common: default_primitive_common(&g.layer, g.flags),
         location: g.location,
         height: g.height,
         text_kind: TextKind::default(),
@@ -375,12 +375,12 @@ fn text_to_internal(g: &TextGraphic) -> PcbText {
 
 fn via_to_internal(g: &ViaGraphic) -> PcbVia {
     PcbVia {
-        common: default_primitive_common(g.layer, g.flags),
+        common: default_primitive_common(&g.layer, g.flags),
         location: g.location,
         diameter: g.diameter,
         hole_size: g.hole_size,
-        from_layer: g.from_layer,
-        to_layer: g.to_layer,
+        from_layer: g.from_layer.to_v6().unwrap_or(V6Layer::TopLayer),
+        to_layer: g.to_layer.to_v6().unwrap_or(V6Layer::BottomLayer),
         via_properties_version: 0,
         thermal_relief_air_gap: Coord::ZERO,
         thermal_relief_conductor_count: 0,

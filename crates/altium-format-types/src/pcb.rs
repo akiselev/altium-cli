@@ -806,6 +806,129 @@ impl V7Layer {
     }
 }
 
+/// Unified layer reference wrapping a V7 32-bit layer ID with optional display name.
+///
+/// This is the public API layer type. It always carries a `V7Layer` ID (the canonical
+/// representation) and optionally a resolved display name. For V6-compatible layers
+/// (genus=0, family=0), the name is auto-resolved from the V6 string table. For custom
+/// layers (V7 with non-zero genus/family), the name comes from the board's layer stack.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LayerRef {
+    v7: V7Layer,
+    name: Option<String>,
+}
+
+impl LayerRef {
+    /// Create from a V6 layer. The V7 ID is derived and the name is auto-resolved.
+    pub fn from_v6(layer: V6Layer) -> Self {
+        Self {
+            v7: V7Layer::from_v6(layer),
+            name: Some(layer.to_string_name().to_owned()),
+        }
+    }
+
+    /// Create from a V7 layer ID. If V6-compatible, the name is auto-resolved.
+    pub fn from_v7(layer: V7Layer) -> Self {
+        let name = layer
+            .to_v6()
+            .ok()
+            .map(|v6| v6.to_string_name().to_owned());
+        Self { v7: layer, name }
+    }
+
+    /// Create from both V6 and V7 layers. V7 is authoritative for the ID;
+    /// the V6 layer provides the canonical name.
+    pub fn from_v6_and_v7(v6: V6Layer, v7: V7Layer) -> Self {
+        Self {
+            v7,
+            name: Some(v6.to_string_name().to_owned()),
+        }
+    }
+
+    /// Look up a layer by its V6 canonical name string (case-insensitive).
+    pub fn from_string_name(name: &str) -> Option<Self> {
+        V6Layer::from_string_name(name).map(Self::from_v6)
+    }
+
+    /// The underlying V7 layer ID (always available).
+    pub fn v7(&self) -> V7Layer {
+        self.v7
+    }
+
+    /// Convert to V6 layer if this is a legacy-compatible layer.
+    pub fn to_v6(&self) -> Option<V6Layer> {
+        self.v7.to_v6().ok()
+    }
+
+    /// The resolved display name, if available.
+    pub fn display_name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Attach a resolved name from a board layer stack.
+    pub fn with_name(mut self, name: String) -> Self {
+        self.name = Some(name);
+        self
+    }
+
+    /// Signal layers: TopLayer through BottomLayer.
+    pub fn is_signal(&self) -> bool {
+        self.to_v6().map_or(false, |v6| v6.is_signal())
+    }
+
+    /// Copper-carrying layers (signal + MultiLayer + internal planes).
+    pub fn is_copper(&self) -> bool {
+        self.to_v6().map_or(false, |v6| v6.is_copper())
+    }
+
+    /// Mechanical layers 1-16.
+    pub fn is_mechanical(&self) -> bool {
+        self.to_v6().map_or(false, |v6| v6.is_mechanical())
+    }
+
+    /// Overlay (silkscreen) layers.
+    pub fn is_overlay(&self) -> bool {
+        self.to_v6().map_or(false, |v6| v6.is_overlay())
+    }
+
+    /// Solder mask layers.
+    pub fn is_solder_mask(&self) -> bool {
+        self.to_v6().map_or(false, |v6| v6.is_solder_mask())
+    }
+
+    /// Paste mask layers.
+    pub fn is_paste_mask(&self) -> bool {
+        self.to_v6().map_or(false, |v6| v6.is_paste_mask())
+    }
+}
+
+impl Default for LayerRef {
+    fn default() -> Self {
+        Self::from_v6(V6Layer::NoLayer)
+    }
+}
+
+impl std::fmt::Display for LayerRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.name {
+            Some(name) => f.write_str(name),
+            None => write!(f, "V7(0x{:08X})", self.v7.raw()),
+        }
+    }
+}
+
+impl From<V6Layer> for LayerRef {
+    fn from(layer: V6Layer) -> Self {
+        Self::from_v6(layer)
+    }
+}
+
+impl From<V7Layer> for LayerRef {
+    fn from(layer: V7Layer) -> Self {
+        Self::from_v7(layer)
+    }
+}
+
 /// PCB primitive flags bitmask (u16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PcbFlags(u16);

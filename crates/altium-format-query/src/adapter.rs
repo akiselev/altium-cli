@@ -406,7 +406,7 @@ fn get_pad_field(p: &api::Pad, name: &str) -> QueryValue {
         "rotation" => QueryValue::Float(p.rotation),
         "hole_size" => QueryValue::Coord(p.hole_size.raw()),
         "is_plated" => QueryValue::Bool(p.is_plated),
-        "layer" => QueryValue::String(format!("{:?}", p.layer)),
+        "layer" => QueryValue::String(format!("{}", p.layer)),
         "pad_mode" => QueryValue::String(format!("{:?}", p.pad_mode)),
         "solder_mask_expansion" => QueryValue::Coord(p.solder_mask_expansion.raw()),
         "paste_mask_expansion" => QueryValue::Coord(p.paste_mask_expansion.raw()),
@@ -421,12 +421,12 @@ fn get_pad_field(p: &api::Pad, name: &str) -> QueryValue {
 fn get_pcb_graphic_field(g: &api::PcbGraphic, name: &str) -> QueryValue {
     match g {
         api::PcbGraphic::Track(t) => match name {
-            "layer" => QueryValue::String(format!("{:?}", t.layer)),
+            "layer" => QueryValue::String(format!("{}", t.layer)),
             "width" => QueryValue::Coord(t.width.raw()),
             _ => QueryValue::Null,
         },
         api::PcbGraphic::Arc(a) => match name {
-            "layer" => QueryValue::String(format!("{:?}", a.layer)),
+            "layer" => QueryValue::String(format!("{}", a.layer)),
             "x" => QueryValue::Coord(a.center.x.raw()),
             "y" => QueryValue::Coord(a.center.y.raw()),
             "radius" => QueryValue::Coord(a.radius.raw()),
@@ -436,16 +436,16 @@ fn get_pcb_graphic_field(g: &api::PcbGraphic, name: &str) -> QueryValue {
             _ => QueryValue::Null,
         },
         api::PcbGraphic::Fill(f) => match name {
-            "layer" => QueryValue::String(format!("{:?}", f.layer)),
+            "layer" => QueryValue::String(format!("{}", f.layer)),
             "rotation" => QueryValue::Float(f.rotation),
             _ => QueryValue::Null,
         },
         api::PcbGraphic::Region(r) => match name {
-            "layer" => QueryValue::String(format!("{:?}", r.layer)),
+            "layer" => QueryValue::String(format!("{}", r.layer)),
             _ => QueryValue::Null,
         },
         api::PcbGraphic::Text(t) => match name {
-            "layer" => QueryValue::String(format!("{:?}", t.layer)),
+            "layer" => QueryValue::String(format!("{}", t.layer)),
             "text" => QueryValue::String(t.text.clone()),
             "x" => QueryValue::Coord(t.location.x.raw()),
             "y" => QueryValue::Coord(t.location.y.raw()),
@@ -456,17 +456,17 @@ fn get_pcb_graphic_field(g: &api::PcbGraphic, name: &str) -> QueryValue {
             _ => QueryValue::Null,
         },
         api::PcbGraphic::Via(v) => match name {
-            "layer" => QueryValue::String(format!("{:?}", v.layer)),
+            "layer" => QueryValue::String(format!("{}", v.layer)),
             "x" => QueryValue::Coord(v.location.x.raw()),
             "y" => QueryValue::Coord(v.location.y.raw()),
             "diameter" => QueryValue::Coord(v.diameter.raw()),
             "hole_size" => QueryValue::Coord(v.hole_size.raw()),
-            "from_layer" => QueryValue::String(format!("{:?}", v.from_layer)),
-            "to_layer" => QueryValue::String(format!("{:?}", v.to_layer)),
+            "from_layer" => QueryValue::String(format!("{}", v.from_layer)),
+            "to_layer" => QueryValue::String(format!("{}", v.to_layer)),
             _ => QueryValue::Null,
         },
         api::PcbGraphic::ComponentBody(cb) => match name {
-            "layer" => QueryValue::String(format!("{:?}", cb.layer)),
+            "layer" => QueryValue::String(format!("{}", cb.layer)),
             _ => QueryValue::Null,
         },
     }

@@ -41,7 +41,7 @@ pub use pcb::{
     PolySegmentKind, RegionKind,
     BarcodeKind, BarcodeRenderMode, RuleKind, TCacheState, TextAutoposition, ViewableObjectId,
     ViaStructureType, TextKind,
-    V6Layer, V7Layer,
+    LayerRef, V6Layer, V7Layer,
     // DRC enums
     BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, ComponentCollisionCheckMode,
     ConfinementStyle, FanoutDirection, FanoutStyle, NetScope, NetTopology,

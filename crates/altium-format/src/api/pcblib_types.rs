@@ -6,7 +6,7 @@
 
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind, V6Layer,
+    LayerRef, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind,
 };
 use altium_format_types::color::Color;
 
@@ -42,7 +42,7 @@ pub struct Pad {
     pub rotation: f64,
     pub hole_size: Coord,
     pub is_plated: bool,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub pad_mode: PadStackMode,
     pub solder_mask_expansion: Coord,
     pub paste_mask_expansion: Coord,
@@ -88,7 +88,7 @@ impl PcbGraphic {
 #[derive(Debug, Clone)]
 pub struct TrackGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub start: CoordPoint,
     pub end: CoordPoint,
@@ -98,7 +98,7 @@ pub struct TrackGraphic {
 #[derive(Debug, Clone)]
 pub struct PcbArcGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub center: CoordPoint,
     pub radius: Coord,
@@ -110,7 +110,7 @@ pub struct PcbArcGraphic {
 #[derive(Debug, Clone)]
 pub struct FillGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub corner1: CoordPoint,
     pub corner2: CoordPoint,
@@ -120,7 +120,7 @@ pub struct FillGraphic {
 #[derive(Debug, Clone)]
 pub struct RegionGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub kind: RegionKind,
     pub outline: Vec<CoordPoint>,
@@ -130,7 +130,7 @@ pub struct RegionGraphic {
 #[derive(Debug, Clone)]
 pub struct TextGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub location: CoordPoint,
     pub text: String,
@@ -145,13 +145,13 @@ pub struct TextGraphic {
 #[derive(Debug, Clone)]
 pub struct ViaGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub location: CoordPoint,
     pub diameter: Coord,
     pub hole_size: Coord,
-    pub from_layer: V6Layer,
-    pub to_layer: V6Layer,
+    pub from_layer: LayerRef,
+    pub to_layer: LayerRef,
     pub is_testpoint_top: bool,
     pub is_testpoint_bottom: bool,
     pub is_assy_testpoint_top: bool,
@@ -165,7 +165,7 @@ pub struct ViaGraphic {
 #[derive(Debug, Clone)]
 pub struct ComponentBodyGraphic {
     pub unique_id: Option<String>,
-    pub layer: V6Layer,
+    pub layer: LayerRef,
     pub flags: PcbFlags,
     pub standoff_height: Coord,
     pub overall_height: Coord,

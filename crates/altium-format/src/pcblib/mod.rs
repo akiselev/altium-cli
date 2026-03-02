@@ -2290,6 +2290,7 @@ fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use altium_format_types::pcb::LayerRef;
     use altium_format_types::PcbObjectId;
     #[cfg(feature = "proptest")]
     use proptest::prelude::*;
@@ -2509,7 +2510,7 @@ mod tests {
                     rotation: 0.0,
                     hole_size: Coord::from_mils(30),
                     is_plated: true,
-                    layer: V6Layer::MultiLayer,
+                    layer: LayerRef::from_v6(V6Layer::MultiLayer),
                     pad_mode: PadStackMode::Simple,
                     solder_mask_expansion: Coord::ZERO,
                     paste_mask_expansion: Coord::ZERO,
@@ -2522,7 +2523,7 @@ mod tests {
             graphics: vec![
                 PcbGraphic::Track(TrackGraphic {
                     unique_id: None,
-                    layer: V6Layer::TopOverlay,
+                    layer: LayerRef::from_v6(V6Layer::TopOverlay),
                     flags: PcbFlags::default(),
                     start: CoordPoint::new(Coord::from_mils(-50), Coord::from_mils(-50)),
                     end: CoordPoint::new(Coord::from_mils(50), Coord::from_mils(-50)),
@@ -2583,7 +2584,7 @@ mod tests {
             rotation: 0.0,
             hole_size: Coord::from_mils(30),
             is_plated: true,
-            layer: V6Layer::MultiLayer,
+            layer: LayerRef::from_v6(V6Layer::MultiLayer),
             pad_mode: PadStackMode::Simple,
             solder_mask_expansion: Coord::ZERO,
             paste_mask_expansion: Coord::ZERO,

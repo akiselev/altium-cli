@@ -14,11 +14,11 @@ use altium_format_types::sch::{
     PinElectricalType, StdLogicState, TextJustification, LineShape, HorizontalAlign,
 };
 
-use altium_format_types::pcb::{PadShape, PcbFlags, RegionKind, V6Layer};
+use altium_format_types::pcb::{LayerRef, PadShape, PcbFlags, RegionKind, V6Layer};
 
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
-    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType,
+    ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
     PadSpec, ParameterSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec,
     PinSpec, PrjPcbSpec, SchLibSpec,
 };
@@ -601,6 +601,29 @@ fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
     }
 }
 
+/// Resolve a `LayerSpec` to a `LayerRef`. Without a board stack, only `Resolved` and
+/// V6-name `NamedLayer` variants can be resolved; others fall back to a default.
+fn resolve_layer_spec(spec: &LayerSpec) -> LayerRef {
+    match spec {
+        LayerSpec::Resolved(lr) => lr.clone(),
+        LayerSpec::NamedLayer(name) => {
+            LayerRef::from_string_name(name)
+                .unwrap_or_else(|| LayerRef::from_v6(V6Layer::NoLayer).with_name(name.clone()))
+        }
+        LayerSpec::CopperPosition(_) => {
+            // Cannot resolve without a board stack; fall back to MultiLayer
+            LayerRef::from_v6(V6Layer::MultiLayer)
+        }
+    }
+}
+
+fn resolve_layer_spec_opt(spec: &Option<LayerSpec>, default: V6Layer) -> LayerRef {
+    match spec {
+        Some(s) => resolve_layer_spec(s),
+        None => LayerRef::from_v6(default),
+    }
+}
+
 fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
     api::Pad {
         pad_name: spec.pad_name.clone(),
@@ -612,7 +635,7 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
         rotation: spec.rotation.unwrap_or(0.0),
         hole_size: spec.hole_size.unwrap_or(Coord::ZERO),
         is_plated: spec.is_plated.unwrap_or(true),
-        layer: spec.layer.unwrap_or(V6Layer::MultiLayer),
+        layer: resolve_layer_spec_opt(&spec.layer, V6Layer::MultiLayer),
         pad_mode: spec.pad_mode.unwrap_or_default(),
         solder_mask_expansion: spec.solder_mask_expansion.unwrap_or(Coord::ZERO),
         paste_mask_expansion: spec.paste_mask_expansion.unwrap_or(Coord::ZERO),
@@ -625,7 +648,7 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
 
 fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
     let props = &spec.properties;
-    let layer = props.layer.unwrap_or(V6Layer::TopOverlay);
+    let layer = resolve_layer_spec_opt(&props.layer, V6Layer::TopOverlay);
     let flags = PcbFlags::default();
     let width = props.width.unwrap_or(Coord::ZERO);
 
@@ -679,13 +702,13 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
         })),
         PcbGraphicType::Via => Some(api::PcbGraphic::Via(api::ViaGraphic {
             unique_id: Some(spec.unique_id.clone()),
-            layer: V6Layer::MultiLayer,
+            layer: LayerRef::from_v6(V6Layer::MultiLayer),
             flags,
             location: props.center.unwrap_or_default(),
             diameter: props.diameter.unwrap_or_else(|| Coord::from_mils(50)),
             hole_size: props.hole_size.unwrap_or_else(|| Coord::from_mils(28)),
-            from_layer: V6Layer::TopLayer,
-            to_layer: V6Layer::BottomLayer,
+            from_layer: LayerRef::from_v6(V6Layer::TopLayer),
+            to_layer: LayerRef::from_v6(V6Layer::BottomLayer),
             is_testpoint_top: false,
             is_testpoint_bottom: false,
             is_assy_testpoint_top: false,
@@ -752,7 +775,7 @@ fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
     if let Some(r) = spec.rotation { pad.rotation = r; }
     if let Some(h) = spec.hole_size { pad.hole_size = h; }
     if let Some(p) = spec.is_plated { pad.is_plated = p; }
-    if let Some(l) = spec.layer { pad.layer = l; }
+    if let Some(l) = &spec.layer { pad.layer = resolve_layer_spec(l); }
     if let Some(m) = spec.pad_mode { pad.pad_mode = m; }
     if let Some(s) = spec.solder_mask_expansion { pad.solder_mask_expansion = s; }
     if let Some(p) = spec.paste_mask_expansion { pad.paste_mask_expansion = p; }
