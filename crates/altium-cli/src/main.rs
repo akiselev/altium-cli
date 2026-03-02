@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
-    SpecDomain, compile_spec, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
+    SpecDomain, compile_spec, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
     reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
     reconcile_schdoc, reconcile_schdoc_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports,
@@ -794,6 +794,24 @@ fn apply_for_model(
 // ── dump ──────────────────────────────────────────────────────────────────────
 
 fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
+    // Handle PcbDoc separately (not a SpecDomain)
+    let ext = document.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "pcbdoc" {
+        let out_path = output.cloned()
+            .unwrap_or_else(|| document.with_extension("pcbdoc-dump"));
+        let doc = PcbDoc::open(document)
+            .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+        let text = dump_pcbdoc(&doc)
+            .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
+        std::fs::write(&out_path, &text)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+        println!("Dumped: {} -> {}", document.display(), out_path.display());
+        return Ok(());
+    }
+
     let domain = detect_document_domain(document)?;
     let out_path = output.cloned().unwrap_or_else(|| default_spec_for_document(document, &domain));
 
@@ -900,8 +918,13 @@ fn run_info(path: &std::path::Path, format: &str) -> anyhow::Result<()> {
             let lib = PcbLib::open(path)?;
             run_info_pcblib(path, &lib, format)
         }
+        "pcbdoc" => {
+            let doc = PcbDoc::open(path)?;
+            let board = doc.board()?;
+            run_info_pcbdoc(path, &board, format)
+        }
         _ => anyhow::bail!(
-            "unsupported file type '.{ext}' for info (supported: .SchDoc, .SchLib, .PcbLib)"
+            "unsupported file type '.{ext}' for info (supported: .SchDoc, .SchLib, .PcbLib, .PcbDoc)"
         ),
     }
 }
@@ -1109,6 +1132,72 @@ fn run_info_pcblib(
     Ok(())
 }
 
+fn run_info_pcbdoc(
+    path: &std::path::Path,
+    board: &altium_format::api::PcbDocBoard,
+    format: &str,
+) -> anyhow::Result<()> {
+    if format == "json" {
+        let info = serde_json::json!({
+            "document": path.display().to_string(),
+            "type": "PCB Document",
+            "board_name": board.settings.document_name,
+            "signal_layer_count": board.settings.signal_layer_count,
+            "display_unit": format!("{:?}", board.settings.display_unit),
+            "nets": board.nets.len(),
+            "components": board.components.len(),
+            "tracks": board.tracks.len(),
+            "arcs": board.arcs.len(),
+            "vias": board.vias.len(),
+            "pads": board.pads.len(),
+            "fills": board.fills.len(),
+            "texts": board.texts.len(),
+            "regions": board.regions.len(),
+            "component_bodies": board.component_bodies.len(),
+            "polygons": board.polygons.len(),
+            "rules": board.rules.len(),
+            "classes": board.classes.len(),
+            "dimensions": board.dimensions.len(),
+            "differential_pairs": board.differential_pairs.len(),
+            "net_names": board.nets.iter().map(|n| &n.name).collect::<Vec<_>>(),
+            "component_designators": board.components.iter().map(|c| &c.designator).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&info)?);
+    } else {
+        println!("Document: {}", path.display());
+        println!("Type: PCB Document");
+        println!();
+        println!("Board: {}", board.settings.document_name);
+        println!("Signal Layers: {}", board.settings.signal_layer_count);
+        println!("Display Unit: {:?}", board.settings.display_unit);
+        println!();
+
+        let counts: &[(&str, usize)] = &[
+            ("Nets", board.nets.len()),
+            ("Components", board.components.len()),
+            ("Tracks", board.tracks.len()),
+            ("Arcs", board.arcs.len()),
+            ("Vias", board.vias.len()),
+            ("Pads", board.pads.len()),
+            ("Fills", board.fills.len()),
+            ("Texts", board.texts.len()),
+            ("Regions", board.regions.len()),
+            ("Component Bodies", board.component_bodies.len()),
+            ("Polygons", board.polygons.len()),
+            ("Rules", board.rules.len()),
+            ("Classes", board.classes.len()),
+            ("Dimensions", board.dimensions.len()),
+            ("Differential Pairs", board.differential_pairs.len()),
+        ];
+        for (label, count) in counts {
+            if *count > 0 {
+                println!("  {label:<20} {count:>5}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_query(
     path: &std::path::Path,
     query_str: &str,
@@ -1143,9 +1232,14 @@ fn run_query(
             eval_query(&query, &doc)
                 .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
+        "pcbdoc" => {
+            let doc = PcbDoc::open(path)?;
+            eval_query(&query, &doc)
+                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+        }
         _ => {
             anyhow::bail!(
-                "unsupported file type '.{ext}' for query (supported: .SchLib, .PcbLib, .SchDoc)"
+                "unsupported file type '.{ext}' for query (supported: .SchLib, .PcbLib, .SchDoc, .PcbDoc)"
             );
         }
     };

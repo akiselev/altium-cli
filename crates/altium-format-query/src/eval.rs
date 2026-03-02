@@ -344,7 +344,7 @@ fn matches_pseudo_class(node: &QueryNode, pseudo: PseudoClass) -> bool {
                 PseudoClass::HiZ => pin.electrical == PinElectricalType::HiZ,
                 PseudoClass::OpenCollector => pin.electrical == PinElectricalType::OpenCollector,
                 PseudoClass::OpenEmitter => pin.electrical == PinElectricalType::OpenEmitter,
-                PseudoClass::Virtual => false,
+                _ => false,
             }
         }
         QueryNode::Component(c) => match pseudo {
@@ -357,6 +357,74 @@ fn matches_pseudo_class(node: &QueryNode, pseudo: PseudoClass) -> bool {
             }
             _ => false,
         },
+        // PcbDoc layer/pad pseudo-classes
+        QueryNode::PcbDocPad(p) => {
+            use altium_format_types::pcb::V6Layer;
+            use altium_format_types::coord::Coord;
+            match pseudo {
+                PseudoClass::Smd => p.hole_size == Coord::ZERO,
+                PseudoClass::ThroughHole => p.hole_size != Coord::ZERO,
+                PseudoClass::Top => p.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => p.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocTrack(t) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => t.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => t.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocArc(a) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => a.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => a.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocVia(v) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => v.from_layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => v.from_layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocFill(f) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => f.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => f.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocText(t) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => t.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => t.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocRegion(r) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => r.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => r.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
+        QueryNode::PcbDocComponentBody(b) => {
+            use altium_format_types::pcb::V6Layer;
+            match pseudo {
+                PseudoClass::Top => b.layer.to_v6() == Some(V6Layer::TopLayer),
+                PseudoClass::Bottom => b.layer.to_v6() == Some(V6Layer::BottomLayer),
+                _ => false,
+            }
+        }
         _ => false,
     }
 }

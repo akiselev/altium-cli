@@ -291,6 +291,11 @@ impl<'a> Parser<'a> {
                 | "open-collector"
                 | "open-emitter"
                 | "virtual"
+                | "smd"
+                | "through_hole"
+                | "through-hole"
+                | "top"
+                | "bottom"
         )
     }
 
@@ -312,6 +317,10 @@ impl<'a> Parser<'a> {
             "open-collector" => PseudoClass::OpenCollector,
             "open-emitter" => PseudoClass::OpenEmitter,
             "virtual" => PseudoClass::Virtual,
+            "smd" => PseudoClass::Smd,
+            "through_hole" | "through-hole" => PseudoClass::ThroughHole,
+            "top" => PseudoClass::Top,
+            "bottom" => PseudoClass::Bottom,
             _ => {
                 return Err(QueryError::new(
                     QueryErrorCode::UnknownPseudoClass,
@@ -319,7 +328,7 @@ impl<'a> Parser<'a> {
                 )
                 .with_span(span)
                 .with_help(
-                    "known pseudo-classes: :power, :input, :output, :io, :passive, :hiz, :open-collector, :open-emitter, :virtual",
+                    "known pseudo-classes: :power, :input, :output, :io, :passive, :hiz, :open-collector, :open-emitter, :virtual, :smd, :through_hole, :top, :bottom",
                 ));
             }
         };

@@ -4,11 +4,12 @@
 //! Generated output uses absolute placement only (`at: (x, y)`, explicit
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
-use altium_format::{AltiumProject, PcbLib, SchDoc, SchLib};
+use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format::api::{
     Component, Pin, Parameter, FootprintMap, Graphic,
     SheetObject, ComponentChild, SheetSymbolChild,
 };
+use altium_format::api::PcbDocBoard;
 use altium_format_types::coord::Coord;
 use altium_format_types::project::{
     ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle,
@@ -210,6 +211,193 @@ pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatEr
     }
 
     Ok(out)
+}
+
+/// Generate a human-readable dump from a PcbDoc document.
+///
+/// This is informational only (no roundtrip compiler/reconciler).
+pub fn dump_pcbdoc(doc: &PcbDoc) -> Result<String, crate::eval::SpecError> {
+    let board = doc.board()
+        .map_err(|e| crate::eval::SpecError::no_span(
+            crate::eval::SpecErrorCode::AltiumFormat,
+            e.to_string(),
+        ))?;
+    let mut out = String::new();
+    dump_pcbdoc_board(&mut out, &board);
+    Ok(out)
+}
+
+fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
+    // Board settings
+    out.push_str(&format!("board {} {{\n", quote_entity_name(&board.settings.document_name)));
+    out.push_str(&format!("    signal_layer_count: {}\n", board.settings.signal_layer_count));
+    out.push_str(&format!("    snap_grid_size: {}\n", board.settings.snap_grid_size));
+    out.push_str(&format!("    visible_grid_size: {}\n", board.settings.visible_grid_size));
+    out.push_str(&format!("    display_unit: {:?}\n", board.settings.display_unit));
+    out.push_str("}\n\n");
+
+    // Nets
+    for net in &board.nets {
+        out.push_str(&format!(
+            "net {} {{ color: #{:02X}{:02X}{:02X}, visible: {} }}\n",
+            quote_entity_name(&net.name),
+            net.color.r(), net.color.g(), net.color.b(),
+            net.visible
+        ));
+    }
+    if !board.nets.is_empty() { out.push('\n'); }
+
+    // Components
+    for comp in &board.components {
+        out.push_str(&format!(
+            "component {} {{ pattern: {}, at: {}, layer: {}, rotation: {} }}\n",
+            quote_entity_name(&comp.designator),
+            quote_string(&comp.pattern),
+            comp.location,
+            comp.layer,
+            comp.rotation
+        ));
+    }
+    if !board.components.is_empty() { out.push('\n'); }
+
+    // Primitives
+    let has_primitives = !board.tracks.is_empty() || !board.arcs.is_empty()
+        || !board.vias.is_empty() || !board.pads.is_empty()
+        || !board.fills.is_empty() || !board.texts.is_empty()
+        || !board.regions.is_empty() || !board.component_bodies.is_empty();
+
+    for track in &board.tracks {
+        let mut props = vec![
+            format!("layer: {}", track.layer),
+        ];
+        if let Some(net) = &track.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        props.push(format!("from: {}", track.start));
+        props.push(format!("to: {}", track.end));
+        props.push(format!("width: {}", track.width));
+        out.push_str(&format!("track {{ {} }}\n", props.join(", ")));
+    }
+
+    for arc in &board.arcs {
+        let mut props = vec![
+            format!("layer: {}", arc.layer),
+        ];
+        if let Some(net) = &arc.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        props.push(format!("center: {}", arc.center));
+        props.push(format!("radius: {}", arc.radius));
+        props.push(format!("start_angle: {}", arc.start_angle));
+        props.push(format!("end_angle: {}", arc.end_angle));
+        props.push(format!("width: {}", arc.width));
+        out.push_str(&format!("arc {{ {} }}\n", props.join(", ")));
+    }
+
+    for via in &board.vias {
+        let mut props = Vec::new();
+        if let Some(net) = &via.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        props.push(format!("at: {}", via.location));
+        props.push(format!("diameter: {}", via.diameter));
+        props.push(format!("hole_size: {}", via.hole_size));
+        props.push(format!("from_layer: {}", via.from_layer));
+        props.push(format!("to_layer: {}", via.to_layer));
+        out.push_str(&format!("via {{ {} }}\n", props.join(", ")));
+    }
+
+    for pad in &board.pads {
+        let mut props = Vec::new();
+        if let Some(net) = &pad.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        if let Some(comp) = &pad.component { props.push(format!("component: {}", quote_entity_name(comp))); }
+        props.push(format!("at: {}", pad.location));
+        props.push(format!("layer: {}", pad.layer));
+        props.push(format!("shape: {:?}", pad.shape));
+        props.push(format!("x_size: {}", pad.x_size));
+        props.push(format!("y_size: {}", pad.y_size));
+        out.push_str(&format!("pad {} {{ {} }}\n", quote_entity_name(&pad.pad_name), props.join(", ")));
+    }
+
+    for fill in &board.fills {
+        let mut props = vec![format!("layer: {}", fill.layer)];
+        if let Some(net) = &fill.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        props.push(format!("corner1: {}", fill.corner1));
+        props.push(format!("corner2: {}", fill.corner2));
+        props.push(format!("rotation: {}", fill.rotation));
+        out.push_str(&format!("fill {{ {} }}\n", props.join(", ")));
+    }
+
+    for text in &board.texts {
+        let mut props = vec![format!("layer: {}", text.layer)];
+        props.push(format!("at: {}", text.location));
+        props.push(format!("text: {}", quote_string(&text.text)));
+        props.push(format!("height: {}", text.height));
+        out.push_str(&format!("text {{ {} }}\n", props.join(", ")));
+    }
+
+    for region in &board.regions {
+        let mut props = vec![format!("layer: {}", region.layer)];
+        if let Some(net) = &region.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        props.push(format!("kind: {:?}", region.kind));
+        out.push_str(&format!("region {{ {} }}\n", props.join(", ")));
+    }
+
+    for body in &board.component_bodies {
+        let mut props = vec![format!("layer: {}", body.layer)];
+        if let Some(comp) = &body.component { props.push(format!("component: {}", quote_entity_name(comp))); }
+        if !body.model_name.is_empty() { props.push(format!("model: {}", quote_string(&body.model_name))); }
+        out.push_str(&format!("component_body {{ {} }}\n", props.join(", ")));
+    }
+
+    if has_primitives { out.push('\n'); }
+
+    // Polygons
+    for poly in &board.polygons {
+        let mut props = Vec::new();
+        if let Some(net) = &poly.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        props.push(format!("layer: {}", poly.layer));
+        props.push(format!("connect_style: {:?}", poly.connect_style));
+        props.push(format!("pour_order: {}", poly.pour_order));
+        out.push_str(&format!("polygon {} {{ {} }}\n", quote_entity_name(&poly.name), props.join(", ")));
+    }
+    if !board.polygons.is_empty() { out.push('\n'); }
+
+    // Design rules
+    for rule in &board.rules {
+        out.push_str(&format!(
+            "rule {} {{ kind: {:?}, enabled: {}, priority: {} }}\n",
+            quote_entity_name(&rule.name),
+            rule.kind,
+            rule.enabled,
+            rule.priority
+        ));
+    }
+    if !board.rules.is_empty() { out.push('\n'); }
+
+    // Net/component classes
+    for class in &board.classes {
+        out.push_str(&format!(
+            "class {} {{ kind: {:?} }}\n",
+            quote_entity_name(&class.name),
+            class.kind
+        ));
+    }
+    if !board.classes.is_empty() { out.push('\n'); }
+
+    // Dimensions
+    for dim in &board.dimensions {
+        out.push_str(&format!(
+            "dimension {{ kind: {:?}, layer: {} }}\n",
+            dim.kind,
+            dim.layer
+        ));
+    }
+    if !board.dimensions.is_empty() { out.push('\n'); }
+
+    // Differential pairs
+    for dp in &board.differential_pairs {
+        out.push_str(&format!(
+            "differential_pair {} {{ positive_net: {}, negative_net: {} }}\n",
+            quote_entity_name(&dp.name),
+            quote_entity_name(&dp.positive_net),
+            quote_entity_name(&dp.negative_net)
+        ));
+    }
 }
 
 fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {

@@ -1,4 +1,5 @@
 use altium_format::api;
+use altium_format::PcbDoc;
 use altium_format::PcbLib;
 use altium_format::SchDoc;
 use altium_format::SchLib;
@@ -40,6 +41,22 @@ pub enum QueryNode {
     SignalHarness(api::SignalHarness),
     SheetEntry(api::SheetEntry),
     ParameterSet(api::ParameterSet),
+    // PcbDoc types
+    PcbDocTrack(api::Track),
+    PcbDocArc(api::Arc),
+    PcbDocVia(api::Via),
+    PcbDocPad(api::PcbDocPad),
+    PcbDocFill(api::Fill),
+    PcbDocText(api::PcbDocText),
+    PcbDocRegion(api::Region),
+    PcbDocComponentBody(api::ComponentBody),
+    PcbDocNet(api::Net),
+    PcbDocComponent(api::PcbDocComponent),
+    PcbDocPolygon(api::Polygon),
+    PcbDocRule(api::DesignRule),
+    PcbDocClass(api::NetClass),
+    PcbDocDimension(api::Dimension),
+    PcbDocDifferentialPair(api::DifferentialPair),
 }
 
 /// A matched result from query evaluation.
@@ -115,6 +132,34 @@ impl Queryable for SchDoc {
     }
 }
 
+impl Queryable for PcbDoc {
+    fn root_nodes(&self) -> Result<Vec<QueryNode>, QueryError> {
+        let board = self.board().map_err(|e| {
+            QueryError::new(
+                QueryErrorCode::DocumentError,
+                format!("failed to read PCB board: {e}"),
+            )
+        })?;
+        let mut nodes = Vec::new();
+        for n in board.nets { nodes.push(QueryNode::PcbDocNet(n)); }
+        for c in board.components { nodes.push(QueryNode::PcbDocComponent(c)); }
+        for t in board.tracks { nodes.push(QueryNode::PcbDocTrack(t)); }
+        for a in board.arcs { nodes.push(QueryNode::PcbDocArc(a)); }
+        for v in board.vias { nodes.push(QueryNode::PcbDocVia(v)); }
+        for p in board.pads { nodes.push(QueryNode::PcbDocPad(p)); }
+        for f in board.fills { nodes.push(QueryNode::PcbDocFill(f)); }
+        for t in board.texts { nodes.push(QueryNode::PcbDocText(t)); }
+        for r in board.regions { nodes.push(QueryNode::PcbDocRegion(r)); }
+        for b in board.component_bodies { nodes.push(QueryNode::PcbDocComponentBody(b)); }
+        for p in board.polygons { nodes.push(QueryNode::PcbDocPolygon(p)); }
+        for r in board.rules { nodes.push(QueryNode::PcbDocRule(r)); }
+        for c in board.classes { nodes.push(QueryNode::PcbDocClass(c)); }
+        for d in board.dimensions { nodes.push(QueryNode::PcbDocDimension(d)); }
+        for dp in board.differential_pairs { nodes.push(QueryNode::PcbDocDifferentialPair(dp)); }
+        Ok(nodes)
+    }
+}
+
 impl QueryNode {
     /// What type selector matches this node?
     pub fn type_selector(&self) -> TypeSelector {
@@ -146,6 +191,23 @@ impl QueryNode {
             QueryNode::SignalHarness(_) => TypeSelector::SignalHarness,
             QueryNode::SheetEntry(_) => TypeSelector::SheetEntry,
             QueryNode::ParameterSet(_) => TypeSelector::ParameterSet,
+            // PcbDoc types - primitives reuse PcbLib selectors
+            QueryNode::PcbDocTrack(_) => TypeSelector::Track,
+            QueryNode::PcbDocArc(_) => TypeSelector::PcbArc,
+            QueryNode::PcbDocVia(_) => TypeSelector::Via,
+            QueryNode::PcbDocPad(_) => TypeSelector::Pad,
+            QueryNode::PcbDocFill(_) => TypeSelector::Fill,
+            QueryNode::PcbDocText(_) => TypeSelector::Text,
+            QueryNode::PcbDocRegion(_) => TypeSelector::Region,
+            QueryNode::PcbDocComponentBody(_) => TypeSelector::ComponentBody,
+            // PcbDoc named collections
+            QueryNode::PcbDocNet(_) => TypeSelector::PcbDocNet,
+            QueryNode::PcbDocComponent(_) => TypeSelector::PcbDocComponent,
+            QueryNode::PcbDocPolygon(_) => TypeSelector::PcbDocPolygon,
+            QueryNode::PcbDocRule(_) => TypeSelector::PcbDocRule,
+            QueryNode::PcbDocClass(_) => TypeSelector::PcbDocClass,
+            QueryNode::PcbDocDimension(_) => TypeSelector::PcbDocDimension,
+            QueryNode::PcbDocDifferentialPair(_) => TypeSelector::PcbDocDifferentialPair,
         }
     }
 
@@ -164,6 +226,7 @@ impl QueryNode {
             QueryNode::Component(c) => Some(&c.lib_reference),
             QueryNode::Footprint(f) => Some(&f.display_name),
             QueryNode::SchDocComponent(c) => Some(&c.lib_reference),
+            QueryNode::PcbDocComponent(c) => Some(&c.source_lib_reference),
             _ => None,
         }
     }
@@ -176,6 +239,8 @@ impl QueryNode {
             QueryNode::Pad(p) => Some(&p.pad_name),
             QueryNode::SchDocComponent(c) => Some(&c.designator),
             QueryNode::NetLabel(n) => Some(&n.text),
+            QueryNode::PcbDocPad(p) => Some(&p.pad_name),
+            QueryNode::PcbDocComponent(c) => Some(&c.designator),
             _ => None,
         }
     }
@@ -301,6 +366,22 @@ impl QueryNode {
             QueryNode::SignalHarness(s) => get_signal_harness_field(s, name),
             QueryNode::SheetEntry(e) => get_sheet_entry_field(e, name),
             QueryNode::ParameterSet(ps) => get_parameter_set_field(ps, name),
+            // PcbDoc types
+            QueryNode::PcbDocTrack(t) => get_pcbdoc_track_field(t, name),
+            QueryNode::PcbDocArc(a) => get_pcbdoc_arc_field(a, name),
+            QueryNode::PcbDocVia(v) => get_pcbdoc_via_field(v, name),
+            QueryNode::PcbDocPad(p) => get_pcbdoc_pad_field(p, name),
+            QueryNode::PcbDocFill(f) => get_pcbdoc_fill_field(f, name),
+            QueryNode::PcbDocText(t) => get_pcbdoc_text_field(t, name),
+            QueryNode::PcbDocRegion(r) => get_pcbdoc_region_field(r, name),
+            QueryNode::PcbDocComponentBody(b) => get_pcbdoc_component_body_field(b, name),
+            QueryNode::PcbDocNet(n) => get_pcbdoc_net_field(n, name),
+            QueryNode::PcbDocComponent(c) => get_pcbdoc_component_field(c, name),
+            QueryNode::PcbDocPolygon(p) => get_pcbdoc_polygon_field(p, name),
+            QueryNode::PcbDocRule(r) => get_pcbdoc_rule_field(r, name),
+            QueryNode::PcbDocClass(cl) => get_pcbdoc_class_field(cl, name),
+            QueryNode::PcbDocDimension(d) => get_pcbdoc_dimension_field(d, name),
+            QueryNode::PcbDocDifferentialPair(dp) => get_pcbdoc_diff_pair_field(dp, name),
         }
     }
 
@@ -341,6 +422,14 @@ impl QueryNode {
             QueryNode::PowerObject(p) => Some(&p.text),
             QueryNode::Port(p) => Some(&p.name),
             QueryNode::SheetEntry(e) => Some(&e.name),
+            QueryNode::PcbDocNet(n) => Some(&n.name),
+            QueryNode::PcbDocTrack(t) => t.net.as_deref(),
+            QueryNode::PcbDocArc(a) => a.net.as_deref(),
+            QueryNode::PcbDocVia(v) => v.net.as_deref(),
+            QueryNode::PcbDocPad(p) => p.net.as_deref(),
+            QueryNode::PcbDocFill(f) => f.net.as_deref(),
+            QueryNode::PcbDocRegion(r) => r.net.as_deref(),
+            QueryNode::PcbDocPolygon(p) => p.net.as_deref(),
             _ => None,
         }
     }
@@ -378,6 +467,22 @@ impl QueryNode {
             QueryNode::SignalHarness(s) => format!("SignalHarness '{}'", s.unique_id),
             QueryNode::SheetEntry(e) => format!("SheetEntry '{}'", e.name),
             QueryNode::ParameterSet(ps) => format!("ParameterSet '{}'", ps.name),
+            // PcbDoc types
+            QueryNode::PcbDocTrack(t) => format!("Track '{}'", t.id),
+            QueryNode::PcbDocArc(a) => format!("Arc '{}'", a.id),
+            QueryNode::PcbDocVia(v) => format!("Via '{}'", v.id),
+            QueryNode::PcbDocPad(p) => format!("Pad '{}'", p.pad_name),
+            QueryNode::PcbDocFill(f) => format!("Fill '{}'", f.id),
+            QueryNode::PcbDocText(t) => format!("Text '{}'", t.text),
+            QueryNode::PcbDocRegion(r) => format!("Region '{}'", r.id),
+            QueryNode::PcbDocComponentBody(b) => format!("ComponentBody '{}'", b.id),
+            QueryNode::PcbDocNet(n) => format!("Net '{}'", n.name),
+            QueryNode::PcbDocComponent(c) => format!("Component '{}'", c.designator),
+            QueryNode::PcbDocPolygon(p) => format!("Polygon '{}'", p.name),
+            QueryNode::PcbDocRule(r) => format!("Rule '{}'", r.name),
+            QueryNode::PcbDocClass(c) => format!("Class '{}'", c.name),
+            QueryNode::PcbDocDimension(d) => format!("Dimension '{}'", d.id),
+            QueryNode::PcbDocDifferentialPair(dp) => format!("DifferentialPair '{}'", dp.name),
         }
     }
 }
@@ -858,6 +963,220 @@ fn get_parameter_set_field(ps: &api::ParameterSet, name: &str) -> QueryValue {
         "name" => QueryValue::String(ps.name.clone()),
         "style" => QueryValue::Integer(ps.style as i64),
         _ => QueryValue::Null,
+    }
+}
+
+// ── PcbDoc field extraction ──────────────────────────────────────────────────
+
+fn get_pcbdoc_track_field(t: &api::Track, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(t.id.clone()),
+        "layer" => QueryValue::String(format!("{}", t.layer)),
+        "net" => opt_string(&t.net),
+        "component" => opt_string(&t.component),
+        "width" => QueryValue::Coord(t.width.raw()),
+        "start_x" => QueryValue::Coord(t.start.x.raw()),
+        "start_y" => QueryValue::Coord(t.start.y.raw()),
+        "end_x" => QueryValue::Coord(t.end.x.raw()),
+        "end_y" => QueryValue::Coord(t.end.y.raw()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_arc_field(a: &api::Arc, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(a.id.clone()),
+        "layer" => QueryValue::String(format!("{}", a.layer)),
+        "net" => opt_string(&a.net),
+        "component" => opt_string(&a.component),
+        "center_x" | "x" => QueryValue::Coord(a.center.x.raw()),
+        "center_y" | "y" => QueryValue::Coord(a.center.y.raw()),
+        "radius" => QueryValue::Coord(a.radius.raw()),
+        "start_angle" => QueryValue::Float(a.start_angle),
+        "end_angle" => QueryValue::Float(a.end_angle),
+        "width" => QueryValue::Coord(a.width.raw()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_via_field(v: &api::Via, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(v.id.clone()),
+        "net" => opt_string(&v.net),
+        "component" => opt_string(&v.component),
+        "x" => QueryValue::Coord(v.location.x.raw()),
+        "y" => QueryValue::Coord(v.location.y.raw()),
+        "diameter" => QueryValue::Coord(v.diameter.raw()),
+        "hole_size" => QueryValue::Coord(v.hole_size.raw()),
+        "from_layer" => QueryValue::String(format!("{}", v.from_layer)),
+        "to_layer" => QueryValue::String(format!("{}", v.to_layer)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_pad_field(p: &api::PcbDocPad, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(p.id.clone()),
+        "pad_name" | "designator" => QueryValue::String(p.pad_name.clone()),
+        "layer" => QueryValue::String(format!("{}", p.layer)),
+        "net" => opt_string(&p.net),
+        "component" => opt_string(&p.component),
+        "x" => QueryValue::Coord(p.location.x.raw()),
+        "y" => QueryValue::Coord(p.location.y.raw()),
+        "shape" => QueryValue::String(format!("{:?}", p.shape)),
+        "x_size" => QueryValue::Coord(p.x_size.raw()),
+        "y_size" => QueryValue::Coord(p.y_size.raw()),
+        "rotation" => QueryValue::Float(p.rotation),
+        "hole_size" => QueryValue::Coord(p.hole_size.raw()),
+        "is_plated" => QueryValue::Bool(p.is_plated),
+        "pad_mode" => QueryValue::String(format!("{:?}", p.pad_mode)),
+        "solder_mask_expansion" => QueryValue::Coord(p.solder_mask_expansion.raw()),
+        "paste_mask_expansion" => QueryValue::Coord(p.paste_mask_expansion.raw()),
+        "plane_connection" => QueryValue::String(format!("{:?}", p.plane_connection)),
+        "relief_conductor_width" => QueryValue::Coord(p.relief_conductor_width.raw()),
+        "relief_entries" => QueryValue::Integer(p.relief_entries as i64),
+        "relief_air_gap" => QueryValue::Coord(p.relief_air_gap.raw()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_fill_field(f: &api::Fill, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(f.id.clone()),
+        "layer" => QueryValue::String(format!("{}", f.layer)),
+        "net" => opt_string(&f.net),
+        "component" => opt_string(&f.component),
+        "rotation" => QueryValue::Float(f.rotation),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_text_field(t: &api::PcbDocText, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(t.id.clone()),
+        "layer" => QueryValue::String(format!("{}", t.layer)),
+        "component" => opt_string(&t.component),
+        "text" => QueryValue::String(t.text.clone()),
+        "x" => QueryValue::Coord(t.location.x.raw()),
+        "y" => QueryValue::Coord(t.location.y.raw()),
+        "height" => QueryValue::Coord(t.height.raw()),
+        "width" => QueryValue::Coord(t.width.raw()),
+        "rotation" => QueryValue::Float(t.rotation),
+        "is_mirrored" => QueryValue::Bool(t.is_mirrored),
+        "is_designator" => QueryValue::Bool(t.is_designator),
+        "is_comment" => QueryValue::Bool(t.is_comment),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_region_field(r: &api::Region, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(r.id.clone()),
+        "layer" => QueryValue::String(format!("{}", r.layer)),
+        "net" => opt_string(&r.net),
+        "component" => opt_string(&r.component),
+        "kind" => QueryValue::String(format!("{:?}", r.kind)),
+        "is_board_cutout" => QueryValue::Bool(r.is_board_cutout),
+        "is_keepout" => QueryValue::Bool(r.is_keepout),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_component_body_field(b: &api::ComponentBody, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(b.id.clone()),
+        "layer" => QueryValue::String(format!("{}", b.layer)),
+        "component" => opt_string(&b.component),
+        "model_name" => QueryValue::String(b.model_name.clone()),
+        "standoff_height" => QueryValue::Coord(b.standoff_height.raw()),
+        "overall_height" => QueryValue::Coord(b.overall_height.raw()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_net_field(n: &api::Net, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(n.id.clone()),
+        "name" => QueryValue::String(n.name.clone()),
+        "color" => QueryValue::Color(n.color.r(), n.color.g(), n.color.b()),
+        "visible" => QueryValue::Bool(n.visible),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_component_field(c: &api::PcbDocComponent, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(c.id.clone()),
+        "designator" => QueryValue::String(c.designator.clone()),
+        "pattern" => QueryValue::String(c.pattern.clone()),
+        "comment" => QueryValue::String(c.comment.clone()),
+        "x" => QueryValue::Coord(c.location.x.raw()),
+        "y" => QueryValue::Coord(c.location.y.raw()),
+        "rotation" => QueryValue::Float(c.rotation),
+        "layer" => QueryValue::String(format!("{}", c.layer)),
+        "source_library" => QueryValue::String(c.source_library.clone()),
+        "source_lib_reference" => QueryValue::String(c.source_lib_reference.clone()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_polygon_field(p: &api::Polygon, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(p.id.clone()),
+        "name" => QueryValue::String(p.name.clone()),
+        "net" => opt_string(&p.net),
+        "layer" => QueryValue::String(format!("{}", p.layer)),
+        "connect_style" => QueryValue::String(format!("{:?}", p.connect_style)),
+        "pour_order" => QueryValue::Integer(p.pour_order as i64),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_rule_field(r: &api::DesignRule, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(r.id.clone()),
+        "name" => QueryValue::String(r.name.clone()),
+        "kind" => QueryValue::String(format!("{:?}", r.kind)),
+        "enabled" => QueryValue::Bool(r.enabled),
+        "priority" => QueryValue::Integer(r.priority as i64),
+        "scope" => QueryValue::String(r.scope.clone()),
+        "comment" => QueryValue::String(r.comment.clone()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_class_field(c: &api::NetClass, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(c.id.clone()),
+        "name" => QueryValue::String(c.name.clone()),
+        "kind" => QueryValue::String(format!("{:?}", c.kind)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_dimension_field(d: &api::Dimension, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(d.id.clone()),
+        "kind" => QueryValue::String(format!("{:?}", d.kind)),
+        "layer" => QueryValue::String(format!("{}", d.layer)),
+        _ => QueryValue::Null,
+    }
+}
+
+fn get_pcbdoc_diff_pair_field(dp: &api::DifferentialPair, name: &str) -> QueryValue {
+    match name {
+        "id" => QueryValue::String(dp.id.clone()),
+        "name" => QueryValue::String(dp.name.clone()),
+        "positive_net" => QueryValue::String(dp.positive_net.clone()),
+        "negative_net" => QueryValue::String(dp.negative_net.clone()),
+        _ => QueryValue::Null,
+    }
+}
+
+fn opt_string(s: &Option<String>) -> QueryValue {
+    match s {
+        Some(v) => QueryValue::String(v.clone()),
+        None => QueryValue::Null,
     }
 }
 

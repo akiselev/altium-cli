@@ -162,6 +162,12 @@ pub enum PseudoClass {
 
     // Component state
     Virtual,
+
+    // PCB physical/layer pseudo-classes
+    Smd,
+    ThroughHole,
+    Top,
+    Bottom,
 }
 
 /// Known type selectors mapping to high-level API types.
@@ -216,6 +222,15 @@ pub enum TypeSelector {
     HarnessConnector,
     SignalHarness,
     ParameterSet,
+
+    // PcbDoc types (named collections only — primitives reuse PcbLib selectors)
+    PcbDocNet,
+    PcbDocComponent,
+    PcbDocPolygon,
+    PcbDocRule,
+    PcbDocClass,
+    PcbDocDimension,
+    PcbDocDifferentialPair,
 }
 
 impl TypeSelector {
@@ -266,6 +281,14 @@ impl TypeSelector {
         ("signal_harness", TypeSelector::SignalHarness),
         ("sheet_entry", TypeSelector::SheetEntry),
         ("parameter_set", TypeSelector::ParameterSet),
+        // PcbDoc types
+        ("pcbdoc_net", TypeSelector::PcbDocNet),
+        ("pcbdoc_component", TypeSelector::PcbDocComponent),
+        ("pcbdoc_polygon", TypeSelector::PcbDocPolygon),
+        ("pcbdoc_rule", TypeSelector::PcbDocRule),
+        ("pcbdoc_class", TypeSelector::PcbDocClass),
+        ("pcbdoc_dimension", TypeSelector::PcbDocDimension),
+        ("pcbdoc_differential_pair", TypeSelector::PcbDocDifferentialPair),
     ];
 
     /// Try to parse a type selector from a keyword string (case-insensitive).

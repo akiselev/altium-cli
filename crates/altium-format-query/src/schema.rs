@@ -133,6 +133,14 @@ fn type_name(ts: TypeSelector) -> &'static str {
         TypeSelector::SignalHarness => "signal_harness",
         TypeSelector::SheetEntry => "sheet_entry",
         TypeSelector::ParameterSet => "parameter_set",
+        // PcbDoc types
+        TypeSelector::PcbDocNet => "pcbdoc_net",
+        TypeSelector::PcbDocComponent => "pcbdoc_component",
+        TypeSelector::PcbDocPolygon => "pcbdoc_polygon",
+        TypeSelector::PcbDocRule => "pcbdoc_rule",
+        TypeSelector::PcbDocClass => "pcbdoc_class",
+        TypeSelector::PcbDocDimension => "pcbdoc_dimension",
+        TypeSelector::PcbDocDifferentialPair => "pcbdoc_differential_pair",
     }
 }
 
@@ -184,6 +192,14 @@ pub fn fields_for_type(ts: TypeSelector) -> &'static [FieldDef] {
         TypeSelector::SignalHarness => SIGNAL_HARNESS_FIELDS,
         TypeSelector::SheetEntry => SHEET_ENTRY_FIELDS,
         TypeSelector::ParameterSet => PARAMETER_SET_FIELDS,
+        // PcbDoc types — reuse existing field defs where applicable
+        TypeSelector::PcbDocNet => &[],
+        TypeSelector::PcbDocComponent => &[],
+        TypeSelector::PcbDocPolygon => &[],
+        TypeSelector::PcbDocRule => &[],
+        TypeSelector::PcbDocClass => &[],
+        TypeSelector::PcbDocDimension => &[],
+        TypeSelector::PcbDocDifferentialPair => &[],
     }
 }
 
