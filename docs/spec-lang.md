@@ -1,7 +1,7 @@
 # Altium Spec Language Specification
 
 Version: 0.3
-File extensions: `.schlib-spec`, `.pcblib-spec`
+File extensions: `.schlib-spec`, `.pcblib-spec`, `.schdoc-spec`, `.prjpcb-spec`, `.pcbdoc-spec`
 
 ## 1. Overview
 
@@ -40,6 +40,9 @@ file twice is a no-op.
 |-----------|--------|-------------|
 | `.schlib-spec` | SchLib | `.schlib` (same base name) |
 | `.pcblib-spec` | PcbLib | `.pcblib` (same base name) |
+| `.schdoc-spec` | SchDoc | `.schdoc` (same base name) |
+| `.prjpcb-spec` | PrjPcb | `.prjpcb` (same base name) |
+| `.pcbdoc-spec` | PcbDoc | `.pcbdoc` (same base name) |
 
 Default output: `foo.schlib-spec` → `foo.SchLib`. Override with `--output`.
 
@@ -656,6 +659,195 @@ Notes:
   `region` (not a native PCB primitive type)
 
 
+## 5b. Board Declaration (PcbDoc) — PLANNED
+
+> **Status**: Planned. Requires PcbDoc high-level API (see `docs/pcbdoc/high-level-api.md`).
+
+### 5b.1 Overview
+
+PcbDoc specs describe the desired state of a PCB board design. Unlike library specs
+(SchLib/PcbLib) which manage named collections, board specs manage a flat set of
+interconnected objects: nets, placed components, routed primitives, and design rules.
+
+PcbDoc specs typically import a SchDoc spec (for schematic cross-references) and
+PcbLib specs (for footprint definitions), mirroring Altium's design flow: the
+schematic defines the netlist, the PCB libraries define footprints, and the board
+places and routes everything.
+
+```
+import "hydro.schdoc-spec" as sch
+import "hydro-passives.pcblib-spec" as passives
+
+board "HydroController" {
+    signal_layer_count: 4
+    snap_grid: 25mil
+
+    // Nets (matched to schematic by name)
+    net GND { }
+    net VCC3P3 { }
+
+    // Components reference footprints via import (like SchDoc references symbols)
+    component U1 {
+        footprint: $passives.QFP48
+        at: (1000mil, 1000mil)
+        layer: top
+    }
+
+    component R1 {
+        footprint: $passives.R_0603
+        at: (500mil, 800mil)
+        layer: top
+    }
+
+    // Primitives with optional block-level names for stable identity
+    track main_bus {
+        start: (0, 0)
+        end: (100mil, 0)
+        width: 10mil
+        layer: top
+        net: VCC3P3
+    }
+
+    via {
+        location: (100mil, 0)
+        hole_size: 12mil
+        diameter: 24mil
+        net: VCC3P3
+    }
+
+    // Named primitives can be referenced with $
+    track power_return {
+        start: $main_bus.end
+        end: (200mil, 0)
+        width: 10mil
+        layer: top
+        net: VCC3P3
+    }
+
+    // Quoted string names for special characters
+    let usb_dp = track "USB D+" {
+        start: (300mil, 0)
+        end: (400mil, 0)
+        width: 5mil
+        layer: top
+    }
+
+    // Polygon copper pour
+    polygon gnd_pour {
+        net: GND
+        layer: inner1
+        vertices: [(0, 0), (5000mil, 0), (5000mil, 4000mil), (0, 4000mil)]
+    }
+
+    // Design rules
+    rule "Min Clearance" {
+        kind: clearance
+        value: 6mil
+    }
+
+    rule "Min Width" {
+        kind: width
+        min: 5mil
+        preferred: 10mil
+    }
+}
+```
+
+### 5b.2 Block-Level Names and IDs
+
+All PcbDoc blocks accept an optional name at the block level, following the
+standard `entity_name` grammar (§4.1):
+
+```
+TYPE [NAME] { properties }
+```
+
+Names can be unquoted identifiers, integers, or quoted strings:
+
+```
+track main_bus { ... }             // unquoted identifier, id = "main_bus"
+track "USB D+" { ... }            // quoted string, id = "USB D+"
+via 1 { ... }                     // integer name, id = "1"
+via { ... }                       // anonymous, id auto-generated as "via_N"
+```
+
+Named objects can be referenced using `$name`:
+
+```
+track power_rail {
+    start: $main_bus.end           // reference by $ prefix
+    end: (200mil, 0)
+}
+```
+
+If the name is a quoted string that isn't a valid `$` identifier, use a `let`
+binding to create a referenceable alias:
+
+```
+let usb_dp = track "USB D+" { ... }
+track "USB D-" {
+    start: $usb_dp.end
+}
+```
+
+See `docs/pcbdoc/high-level-api.md` §"Stable Human-Readable IDs" for the full ID
+generation and reconciler matching strategy.
+
+### 5b.3 Component Placement
+
+Components in a PcbDoc spec are **placed instances** — they reference a footprint
+defined in an imported PcbLib spec (analogous to how SchDoc components reference
+symbols from SchLib):
+
+```
+import "footprints.pcblib-spec" as fp
+
+component U1 {
+    footprint: $fp.QFP48          // reference to imported footprint
+    at: (1000mil, 1000mil)
+    layer: top
+    rotation: 90
+}
+
+// Or with a direct library reference string (for existing boards)
+component R1 {
+    lib_reference: "R_0603_SMD"
+    at: (500mil, 800mil)
+    layer: top
+}
+```
+
+Identity key: **designator** (the name after `component`).
+
+### 5b.4 Named Collections
+
+Named collections use their natural keys:
+
+| Block type | Identity key | Example |
+|-----------|-------------|---------|
+| `net` | Net name | `net GND { }` |
+| `component` | Designator | `component U1 { ... }` |
+| `rule` | Rule name | `rule "Min Width" { ... }` |
+| `class` | Class name | `class "High Speed" { ... }` |
+| `polygon` | Block-level name | `polygon gnd_pour { ... }` |
+
+### 5b.5 Primitive Blocks
+
+| Block type | PcbDoc section | Key fields |
+|-----------|----------------|------------|
+| `track` | Tracks6 | start, end, width, layer, net |
+| `arc` | Arcs6 | center, radius, start_angle, end_angle, width, layer |
+| `via` | Vias6 | location, diameter, hole_size, from_layer, to_layer, net |
+| `pad` | Pads6 | pad_name, location, shape, x_size, y_size, layer, net |
+| `fill` | Fills6 | corner1, corner2, rotation, layer, net |
+| `text` | Texts6 | location, text, height, layer, font_name |
+| `region` | Regions6 | outline, layer, kind, net |
+| `component_body` | ComponentBodies6 | outline, model_name, standoff_height |
+
+All primitive blocks accept an optional block-level name for stable identity (§5b.2).
+Primitives without names get auto-generated IDs based on their type and position.
+
+
 ## 6. Import System
 
 Spec files can import other spec files to:
@@ -1179,6 +1371,11 @@ are lazy. The full cycle path is reported.
 | Footprint | PcbLib | `display_name` | Name after `footprint` |
 | Pad | PcbLib | `pad_name` (scoped) | Name after `pad` |
 | PCB graphic | PcbLib | unique_id via sidecar | Binding name → see unique_id table below |
+| Track/Arc/Via/... | PcbDoc | `id` field | Block-level name or auto-generated (see below) |
+| Net | PcbDoc | `name` | Name after `net` |
+| Component | PcbDoc | `designator` | Name after `component` |
+| Polygon | PcbDoc | `id` field | Block-level name or auto-generated |
+| Rule | PcbDoc | `name` | Name after `rule` |
 
 In a multi-part component, each `part N { ... }` block defines a separate
 scope. Pins in different parts MAY have the same designator — they are
@@ -1186,7 +1383,7 @@ distinct entities with different `owner_part_id` values. Pins declared at
 component level (outside any `part` block) have `owner_part_id = 0` (shared
 across all parts).
 
-**unique_id scheme:**
+**unique_id scheme (SchLib/PcbLib graphics):**
 
 | Context | unique_id format |
 |---------|-----------------|
@@ -1198,6 +1395,24 @@ across all parts).
 **Warning**: Unnamed graphics have no stable identity. The reconciler will
 delete-and-re-add them on any spec change. Use binding names for all graphics
 that need stable identity across edits.
+
+**PcbDoc primitive ID scheme:**
+
+PcbDoc primitives (track, arc, via, pad, fill, text, region, component_body)
+use a simpler ID scheme based on block-level names:
+
+| Context | ID format | Example |
+|---------|-----------|---------|
+| Named block | `{name}` (the block-level name) | `track main_bus { ... }` → id = `"main_bus"` |
+| Quoted name | `{string}` | `track "USB D+" { ... }` → id = `"USB D+"` |
+| Anonymous block | `{type}_{counter}` (positional) | `track { ... }` → id = `"track_0"` |
+| File-derived | `{type}_{section_index}` | Reading Tracks6[5] → id = `"track_5"` |
+
+The positional counter advances for ALL objects of a type including named ones,
+ensuring that adding/removing a name doesn't shift other auto-generated IDs.
+
+**PcbDoc named collections** (net, component, polygon, rule, class) use their
+natural keys as IDs (net name, designator, rule name, etc.).
 
 **Uniqueness constraints** (enforced at parse time):
 - No duplicate identity keys within their scope
@@ -1870,13 +2085,16 @@ altium apply my-library.schlib-spec  # creates/updates my-library.SchLib with al
 
 - **No imperative verbs.** Specs declare, they don't command.
 - **No selectors.** Specs don't query — they declare.
-- **No SchDoc/PcbDoc support.** Placed instances have harder identity problems.
 - **No purge/delete semantics.** Additive only.
 - **No control flow.** No if/else, no loops.
 - **No functions.** No sin(), sqrt(), min(). Complex geometry pre-computed by agent.
 - **No anchor inference in dump.** Dump generates absolute coordinates.
 - **No Coord arithmetic.** No `point + point`. Compose via `(x_expr, y_expr)`.
 - **No array spread.** `[...a, ...b]` is not supported.
+
+**Note**: SchDoc and PrjPcb spec support has been implemented since the initial
+version of this document. PcbDoc spec support is planned (see
+`docs/pcbdoc/high-level-api.md` for the API design and ID strategy).
 
 ### Resolved Questions
 
