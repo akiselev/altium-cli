@@ -1257,33 +1257,357 @@ pub(crate) struct PcbViolationBase {
     pub involved_prim_count: u32,
 }
 
+/// Fields shared by two-point violations (PRIM2 + LOCATION1/2).
+/// All fields are optional because older format files may omit them.
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct TwoPointViolationData {
+    #[param(key = "PRIM2ID", optional)]
+    pub prim2_id: Option<String>,
+    #[param(key = "PRIM2INDEX", optional)]
+    pub prim2_index: Option<u32>,
+    #[param(key = "LOCATION1.X", optional)]
+    pub location1_x: Option<MilCoord>,
+    #[param(key = "LOCATION1.Y", optional)]
+    pub location1_y: Option<MilCoord>,
+    #[param(key = "LOCATION2.X", optional)]
+    pub location2_x: Option<MilCoord>,
+    #[param(key = "LOCATION2.Y", optional)]
+    pub location2_y: Option<MilCoord>,
+    /// Present in TClearanceViolation records for drill/hole clearance violations.
+    #[param(key = "ISHOLECLEARANCEVIOLATION", optional)]
+    pub is_hole_clearance_violation: Option<bool>,
+    /// 3D position components used by TComponentClearanceViolation.
+    #[param(key = "P1.X", optional)]
+    pub p1_x: Option<MilCoord>,
+    #[param(key = "P1.Y", optional)]
+    pub p1_y: Option<MilCoord>,
+    #[param(key = "P1.Z", optional)]
+    pub p1_z: Option<MilCoord>,
+    #[param(key = "P2.X", optional)]
+    pub p2_x: Option<MilCoord>,
+    #[param(key = "P2.Y", optional)]
+    pub p2_y: Option<MilCoord>,
+    #[param(key = "P2.Z", optional)]
+    pub p2_z: Option<MilCoord>,
+}
+
+/// Fields for BoardOutlineClearanceViolation (two-point + PRIMID1/PRIMID2).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct BoardOutlineClearanceViolationData {
+    #[param(key = "PRIM2ID", optional)]
+    pub prim2_id: Option<String>,
+    #[param(key = "PRIM2INDEX", optional)]
+    pub prim2_index: Option<u32>,
+    #[param(key = "LOCATION1.X", optional)]
+    pub location1_x: Option<MilCoord>,
+    #[param(key = "LOCATION1.Y", optional)]
+    pub location1_y: Option<MilCoord>,
+    #[param(key = "LOCATION2.X", optional)]
+    pub location2_x: Option<MilCoord>,
+    #[param(key = "LOCATION2.Y", optional)]
+    pub location2_y: Option<MilCoord>,
+    #[param(key = "PRIMID1", optional)]
+    pub primid1: Option<String>,
+    #[param(key = "PRIMID2", optional)]
+    pub primid2: Option<String>,
+}
+
+/// Fields for NetAntennaeViolation (single-point + circle radius).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct NetAntennaeViolationData {
+    #[param(key = "LOCATION.X")]
+    pub location_x: MilCoord,
+    #[param(key = "LOCATION.Y")]
+    pub location_y: MilCoord,
+    #[param(key = "CIRCLERADIUS")]
+    pub circle_radius: MilCoord,
+}
+
+/// Fields for DisconnectedSubnetsViolation (FX/FY pattern).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct DisconnectedSubnetsViolationData {
+    #[param(key = "PRIM2ID", optional)]
+    pub prim2_id: Option<String>,
+    #[param(key = "PRIM2INDEX", optional)]
+    pub prim2_index: Option<u32>,
+    #[param(key = "FX1", optional)]
+    pub fx1: Option<MilCoord>,
+    #[param(key = "FY1", optional)]
+    pub fy1: Option<MilCoord>,
+    #[param(key = "FX2", optional)]
+    pub fx2: Option<MilCoord>,
+    #[param(key = "FY2", optional)]
+    pub fy2: Option<MilCoord>,
+}
+
+/// Fields for MatchedNetLengthsViolation (optional PRIM2 pair).
+#[derive(FromParams, ToParams, Debug)]
+pub(crate) struct MatchedNetLengthsViolationData {
+    #[param(key = "PRIM2ID", optional)]
+    pub prim2_id: Option<String>,
+    #[param(key = "PRIM2INDEX", optional)]
+    pub prim2_index: Option<u32>,
+}
+
+/// A single contour in a DiffPairs violation polygon.
+#[derive(Debug)]
+pub(crate) struct DiffPairsViolationContour {
+    pub vertices: Vec<(f64, f64)>,
+}
+
+/// A single layer entry in a DiffPairs violation.
+#[derive(Debug)]
+pub(crate) struct DiffPairsViolationLayer {
+    pub layer_name: String,
+    pub contours: Vec<DiffPairsViolationContour>,
+}
+
+/// Fields for DiffPairsViolation (nested polygon data per layer).
+#[derive(Debug)]
+pub(crate) struct DiffPairsViolationData {
+    pub layers: Vec<DiffPairsViolationLayer>,
+}
+
+impl DiffPairsViolationData {
+    pub(crate) fn from_params(params: &mut ParameterCollection) -> Result<Self> {
+        let layer_count: usize = params.remove_required("LAYERCOUNT")?;
+        let mut layers = Vec::with_capacity(layer_count);
+        for n in 1..=layer_count {
+            let layer_name: String = params.remove_required(&format!("LAYER{n}"))?;
+            let contour_count: usize =
+                params.remove_required(&format!("POLY{n}.CONTOURCOUNT"))?;
+            let mut contours = Vec::with_capacity(contour_count);
+            for c in 0..contour_count {
+                let vtx_count: usize =
+                    params.remove_required(&format!("POLY{n}.CONTOUR{c}.VTXCOUNT"))?;
+                let mut vertices = Vec::with_capacity(vtx_count);
+                for v in 0..vtx_count {
+                    let vx: f64 =
+                        params.remove_required(&format!("POLY{n}.CONTOUR{c}.VX{v}"))?;
+                    let vy: f64 =
+                        params.remove_required(&format!("POLY{n}.CONTOUR{c}.VY{v}"))?;
+                    vertices.push((vx, vy));
+                }
+                contours.push(DiffPairsViolationContour { vertices });
+            }
+            layers.push(DiffPairsViolationLayer {
+                layer_name,
+                contours,
+            });
+        }
+        Ok(Self { layers })
+    }
+}
+
 /// A typed violation record. The variant is determined by the CFB storage name.
 #[derive(Debug)]
 pub(crate) enum PcbViolation {
-    /// Generic violation: base fields + any remaining params stored as raw strings.
-    /// Used as initial implementation for all violation types until they can be
-    /// individually verified against fixture data.
-    Generic(GenericViolationData),
-}
-
-#[derive(Debug)]
-pub(crate) struct GenericViolationData {
-    pub base: PcbViolationBase,
-    pub extra_params: Vec<(String, String)>,
+    AcuteAngle { base: PcbViolationBase, data: TwoPointViolationData },
+    BackDrill { base: PcbViolationBase, data: TwoPointViolationData },
+    BoardOutlineClearance { base: PcbViolationBase, data: BoardOutlineClearanceViolationData },
+    Clearance { base: PcbViolationBase, data: TwoPointViolationData },
+    ComponentClearance { base: PcbViolationBase, data: TwoPointViolationData },
+    Creepage { base: PcbViolationBase, data: TwoPointViolationData },
+    DiffPairs { base: PcbViolationBase, data: DiffPairsViolationData },
+    DisconnectedSubnets { base: PcbViolationBase, data: DisconnectedSubnetsViolationData },
+    HoleToHole { base: PcbViolationBase, data: TwoPointViolationData },
+    MatchedNetLengths { base: PcbViolationBase, data: MatchedNetLengthsViolationData },
+    MaximumViaCount { base: PcbViolationBase, data: TwoPointViolationData },
+    MaxMinComponentHeight { base: PcbViolationBase, data: TwoPointViolationData },
+    MaxMinLength { base: PcbViolationBase, data: TwoPointViolationData },
+    MaxMinPadSlotWidth { base: PcbViolationBase, data: TwoPointViolationData },
+    MaxMinViaHoleSize { base: PcbViolationBase, data: TwoPointViolationData },
+    MinimumAnnularRing { base: PcbViolationBase, data: TwoPointViolationData },
+    MinSolderMaskSliver { base: PcbViolationBase, data: TwoPointViolationData },
+    MinWidth { base: PcbViolationBase, data: TwoPointViolationData },
+    ModifiedPolygon { base: PcbViolationBase, data: TwoPointViolationData },
+    NetAntennae { base: PcbViolationBase, data: NetAntennaeViolationData },
+    PadUnderSmd { base: PcbViolationBase, data: TwoPointViolationData },
+    ParallelSegment { base: PcbViolationBase, data: TwoPointViolationData },
+    ReturnPath { base: PcbViolationBase, data: TwoPointViolationData },
+    RoutingNeckDown { base: PcbViolationBase, data: TwoPointViolationData },
+    RoutingViaStyle { base: PcbViolationBase, data: TwoPointViolationData },
+    ShortCircuit { base: PcbViolationBase, data: TwoPointViolationData },
+    SilkToBoardRegionClearance { base: PcbViolationBase, data: TwoPointViolationData },
+    SilkToSilkClearance { base: PcbViolationBase, data: TwoPointViolationData },
+    SilkToSolderMaskClearance { base: PcbViolationBase, data: TwoPointViolationData },
+    SmdNeckDown { base: PcbViolationBase, data: TwoPointViolationData },
+    SmdPadEntry { base: PcbViolationBase, data: TwoPointViolationData },
+    SmdToCorner { base: PcbViolationBase, data: TwoPointViolationData },
+    TestPoint { base: PcbViolationBase, data: TwoPointViolationData },
+    UnconnectedPin { base: PcbViolationBase, data: TwoPointViolationData },
+    ViaUnderSmd { base: PcbViolationBase, data: TwoPointViolationData },
+    WirebondLength { base: PcbViolationBase, data: TwoPointViolationData },
+    WirebondWireToWire { base: PcbViolationBase, data: TwoPointViolationData },
+    ZAxisClearance { base: PcbViolationBase, data: TwoPointViolationData },
 }
 
 pub(crate) fn parse_violation(
-    _kind: ParamSectionKind,
+    kind: ParamSectionKind,
     params: &mut ParameterCollection,
 ) -> Result<PcbViolation> {
     let base = PcbViolationBase::from_params(params)?;
-    // Collect any remaining params into a flat list.
-    // Phase 2 will replace this with per-violation-type typed structs.
-    let extra_params = params.drain_remaining();
-    Ok(PcbViolation::Generic(GenericViolationData {
-        base,
-        extra_params,
-    }))
+    let violation = match kind {
+        ParamSectionKind::TAcuteAngleViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::AcuteAngle { base, data }
+        }
+        ParamSectionKind::TBackDrillViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::BackDrill { base, data }
+        }
+        ParamSectionKind::TBoardOutlineClearanceViolation => {
+            let data = BoardOutlineClearanceViolationData::from_params(params)?;
+            PcbViolation::BoardOutlineClearance { base, data }
+        }
+        ParamSectionKind::TClearanceViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::Clearance { base, data }
+        }
+        ParamSectionKind::TComponentClearanceViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ComponentClearance { base, data }
+        }
+        ParamSectionKind::TCreepageViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::Creepage { base, data }
+        }
+        ParamSectionKind::TDiffPairsViolation => {
+            let data = DiffPairsViolationData::from_params(params)?;
+            PcbViolation::DiffPairs { base, data }
+        }
+        ParamSectionKind::TDisconnectedSubnetsViolation => {
+            let data = DisconnectedSubnetsViolationData::from_params(params)?;
+            PcbViolation::DisconnectedSubnets { base, data }
+        }
+        ParamSectionKind::THoleToHoleViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::HoleToHole { base, data }
+        }
+        ParamSectionKind::TMatchedNetLengthsViolation => {
+            let data = MatchedNetLengthsViolationData::from_params(params)?;
+            PcbViolation::MatchedNetLengths { base, data }
+        }
+        ParamSectionKind::TMaximumViaCountViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MaximumViaCount { base, data }
+        }
+        ParamSectionKind::TMaxMinComponentHeightViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MaxMinComponentHeight { base, data }
+        }
+        ParamSectionKind::TMaxMinLengthViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MaxMinLength { base, data }
+        }
+        ParamSectionKind::TMaxMinPadSlotWidthViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MaxMinPadSlotWidth { base, data }
+        }
+        ParamSectionKind::TMaxMinViaHoleSizeViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MaxMinViaHoleSize { base, data }
+        }
+        ParamSectionKind::TMinimumAnnularRingViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MinimumAnnularRing { base, data }
+        }
+        ParamSectionKind::TMinSolderMaskSliverViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MinSolderMaskSliver { base, data }
+        }
+        ParamSectionKind::TMinWidthViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::MinWidth { base, data }
+        }
+        ParamSectionKind::TModifiedPolygonViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ModifiedPolygon { base, data }
+        }
+        ParamSectionKind::TNetAntennaeViolation => {
+            let data = NetAntennaeViolationData::from_params(params)?;
+            PcbViolation::NetAntennae { base, data }
+        }
+        ParamSectionKind::TPadUnderSMDViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::PadUnderSmd { base, data }
+        }
+        ParamSectionKind::TParallelSegmentViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ParallelSegment { base, data }
+        }
+        ParamSectionKind::TReturnPathViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ReturnPath { base, data }
+        }
+        ParamSectionKind::TRoutingNeckDownViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::RoutingNeckDown { base, data }
+        }
+        ParamSectionKind::TRoutingViaStyleViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::RoutingViaStyle { base, data }
+        }
+        ParamSectionKind::TShortCircuitViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ShortCircuit { base, data }
+        }
+        ParamSectionKind::TSilkToBoardRegionClearanceViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::SilkToBoardRegionClearance { base, data }
+        }
+        ParamSectionKind::TSilkToSilkClearanceViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::SilkToSilkClearance { base, data }
+        }
+        ParamSectionKind::TSilkToSolderMaskClearanceViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::SilkToSolderMaskClearance { base, data }
+        }
+        ParamSectionKind::TSMDNeckDownViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::SmdNeckDown { base, data }
+        }
+        ParamSectionKind::TSMDPADEntryViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::SmdPadEntry { base, data }
+        }
+        ParamSectionKind::TSMDToCornerViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::SmdToCorner { base, data }
+        }
+        ParamSectionKind::TTestPointViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::TestPoint { base, data }
+        }
+        ParamSectionKind::TUnconnectedPinViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::UnconnectedPin { base, data }
+        }
+        ParamSectionKind::TViaUnderSMDViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ViaUnderSmd { base, data }
+        }
+        ParamSectionKind::TWirebondLengthViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::WirebondLength { base, data }
+        }
+        ParamSectionKind::TWirebondWireToWireViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::WirebondWireToWire { base, data }
+        }
+        ParamSectionKind::TZAxisClearanceViolation => {
+            let data = TwoPointViolationData::from_params(params)?;
+            PcbViolation::ZAxisClearance { base, data }
+        }
+        _ => {
+            return Err(AltiumFormatError::NotImplemented(format!(
+                "unexpected violation kind: {kind:?}"
+            )))
+        }
+    };
+    params.assert_exhausted()?;
+    Ok(violation)
 }
 
 // ── Waived violations ───────────────────────────────────────────────────────
@@ -1317,25 +1641,336 @@ pub(crate) struct WaivedViolation {
 // ── DRC Options ─────────────────────────────────────────────────────────────
 
 /// Design Rule Checker Options (single record from DesignRuleCheckerOptions6/Data).
-/// This struct captures only the known fields; remaining params are drained.
-#[derive(Debug)]
+#[derive(FromParams, ToParams, Debug)]
 pub(crate) struct DrcOptions {
+    #[param(key = "RECORD", default = "DesignRuleCheckerOptions".to_string())]
     pub record: String,
-    pub extra_params: Vec<(String, String)>,
+    #[param(key = "DOMAKEDRCFILE", default = true)]
+    pub do_make_drc_file: bool,
+    #[param(key = "DOMAKEDRCERRORLIST", default = true)]
+    pub do_make_drc_error_list: bool,
+    #[param(key = "DOSUBNETDETAILS", default = true)]
+    pub do_subnet_details: bool,
+    #[param(key = "REPORTFILENAME", default = String::new())]
+    pub report_filename: String,
+    #[param(key = "EXTERNALNETLISTFILENAME", default = String::new())]
+    pub external_netlist_filename: String,
+    #[param(key = "CHECKEXTERNALNETLIST", default = false)]
+    pub check_external_netlist: bool,
+    #[param(key = "MAXVIOLATIONCOUNT", default = 500u32)]
+    pub max_violation_count: u32,
+    #[param(key = "REPORTDRILLEDSMTPADS", default = true)]
+    pub report_drilled_smt_pads: bool,
+    #[param(key = "REPORTINVALIDMULTILAYERPADS", default = true)]
+    pub report_invalid_multilayer_pads: bool,
+    /// Comma-separated list of rule kind indices to check in batch DRC.
+    #[param(key = "RULESETTOCHECK", default = String::new())]
+    pub rule_set_to_check: String,
+    /// Comma-separated list of rule kind indices to check in online DRC.
+    #[param(key = "ONLINERULESETTOCHECK", default = String::new())]
+    pub online_rule_set_to_check: String,
+    #[param(key = "INTERNALPLANEWARNINGS", default = true)]
+    pub internal_plane_warnings: bool,
+    #[param(key = "VERIFYSHORTINGCOPPER", default = true)]
+    pub verify_shorting_copper: bool,
+    #[param(key = "REPORTBROKENPLANES", default = true)]
+    pub report_broken_planes: bool,
+    #[param(key = "REPORTDEADCOPPER", default = true)]
+    pub report_dead_copper: bool,
+    #[param(key = "DEADCOPPERMINAREA", default = String::new())]
+    pub dead_copper_min_area: String,
+    #[param(key = "REPORTSTARVEDTHERMALS", default = true)]
+    pub report_starved_thermals: bool,
+    #[param(key = "MINSTARVEDCOPPERPERCENT", default = 50u32)]
+    pub min_starved_copper_percent: u32,
+    #[param(key = "REPORTSTRADLINGHOLES", default = false)]
+    pub report_straddling_holes: bool,
+    #[param(key = "REPORTHOLESINVOIDS", default = false)]
+    pub report_holes_in_voids: bool,
 }
 
-impl DrcOptions {
-    pub(crate) fn from_params(params: &mut ParameterCollection) -> Result<Self> {
-        let record: String = params.remove_with_default(
-            "RECORD",
-            "DesignRuleCheckerOptions".to_string(),
-        )?;
-        // DRC options has many boolean flags and list params.
-        // Drain remaining for now — Phase 3 will fully type them.
-        let extra_params = params.drain_remaining();
-        Ok(Self {
-            record,
-            extra_params,
-        })
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::param_value::FromParamValue;
+    use altium_format_types::Coord;
+
+    /// Helper: create a ParameterCollection from |KEY=VALUE| formatted string.
+    fn params_from_str(s: &str) -> ParameterCollection {
+        ParameterCollection::from_str(s).unwrap()
+    }
+
+    // ── MilCoord roundtrip ──────────────────────────────────────────────────
+
+    #[test]
+    fn milcoord_roundtrip_integer() {
+        let mc = MilCoord::from_param_value("X", "7mil").unwrap();
+        assert_eq!(mc.to_param_value(), "7mil");
+    }
+
+    #[test]
+    fn milcoord_roundtrip_decimal() {
+        let mc = MilCoord::from_param_value("X", "3.5mil").unwrap();
+        assert_eq!(mc.to_param_value(), "3.5mil");
+    }
+
+    #[test]
+    fn milcoord_roundtrip_zero() {
+        let mc = MilCoord::from_param_value("X", "0mil").unwrap();
+        assert_eq!(mc.to_param_value(), "0mil");
+    }
+
+    #[test]
+    fn milcoord_comma_decimal_separator() {
+        // Altium sometimes uses comma as decimal separator
+        let mc = MilCoord::from_param_value("X", "3,5mil").unwrap();
+        assert_eq!(mc.0, Coord::from_mils_f64(3.5));
+    }
+
+    // ── ClearanceMatrix roundtrip ───────────────────────────────────────────
+
+    #[test]
+    fn clearance_matrix_roundtrip() {
+        use crate::param_value::ClearanceMatrix;
+        // Values are raw i32 internal coord units (10000 units = 1 mil)
+        let input = "ClearanceObj_Track-ClearanceObj_SMDPad:100000;ClearanceObj_Via-ClearanceObj_Track:80000";
+        let cm = ClearanceMatrix::from_param_value("MATRIX", input).unwrap();
+        let output = cm.to_param_value();
+        // Parse the output back to verify roundtrip
+        let cm2 = ClearanceMatrix::from_param_value("MATRIX", &output).unwrap();
+        assert_eq!(cm, cm2);
+    }
+
+    // ── String enum roundtrip ───────────────────────────────────────────────
+
+    #[test]
+    fn rule_kind_roundtrip() {
+        use crate::param_value::FromParamValue;
+        let rk = RuleKind::from_param_value("RULEKIND", "Clearance").unwrap();
+        assert_eq!(rk, RuleKind::Clearance);
+        assert_eq!(rk.to_param_value(), "Clearance");
+    }
+
+    #[test]
+    fn rule_kind_broken_nets_alias() {
+        // BrokenNets serializes as "UnRoutedNet" in Altium
+        let rk = RuleKind::from_param_value("RULEKIND", "UnRoutedNet").unwrap();
+        assert_eq!(rk, RuleKind::BrokenNets);
+    }
+
+    #[test]
+    fn net_scope_roundtrip() {
+        let ns = NetScope::from_param_value("NETSCOPE", "DifferentNets").unwrap();
+        assert_eq!(ns, NetScope::DifferentNetsOnly);
+        assert_eq!(ns.to_param_value(), "DifferentNets");
+    }
+
+    // ── Rule parsing ────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_simple_clearance_rule() {
+        let s = "|SELECTION=FALSE|LAYER=|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEKIND=Clearance|NETSCOPE=DifferentNets\
+                  |LAYERKIND=SameLayer|NAME=Clearance1\
+                  |COMMENT=|UNIQUEID=QZHEQKDM|DEFINEDBYLOGICALDOCUMENT=FALSE\
+                  |SCOPE1EXPRESSION=All|SCOPE2EXPRESSION=All\
+                  |ENABLED=TRUE|PRIORITY=1\
+                  |GAP=10mil";
+        let mut params = params_from_str(s);
+        let rule = parse_rule(0, &mut params).unwrap();
+        assert_eq!(rule.base.rule_kind, RuleKind::Clearance);
+        assert_eq!(rule.base.name, "Clearance1");
+        assert!(rule.base.enabled);
+        match &rule.kind_data {
+            PcbRuleKindData::Clearance(data) => {
+                assert_eq!(data.gap, MilCoord(Coord::from_mils_f64(10.0)));
+            }
+            _ => panic!("expected Clearance variant"),
+        }
+    }
+
+    #[test]
+    fn parse_width_rule_basic() {
+        let s = "|SELECTION=FALSE|LAYER=|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEKIND=Width|NETSCOPE=AnyNet\
+                  |LAYERKIND=SameLayer|NAME=Width1\
+                  |COMMENT=|UNIQUEID=ABCDEF01|DEFINEDBYLOGICALDOCUMENT=FALSE\
+                  |SCOPE1EXPRESSION=All|SCOPE2EXPRESSION=All\
+                  |ENABLED=TRUE|PRIORITY=1\
+                  |MINLIMIT=6mil|MAXLIMIT=10mil|PREFEREDWIDTH=8mil";
+        let mut params = params_from_str(s);
+        let rule = parse_rule(0, &mut params).unwrap();
+        match &rule.kind_data {
+            PcbRuleKindData::Width(data) => {
+                assert_eq!(data.min_limit, MilCoord(Coord::from_mils_f64(6.0)));
+                assert_eq!(data.max_limit, MilCoord(Coord::from_mils_f64(10.0)));
+                assert_eq!(data.preferred_width, MilCoord(Coord::from_mils_f64(8.0)));
+            }
+            _ => panic!("expected Width variant"),
+        }
+    }
+
+    // ── Violation parsing ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_clearance_violation() {
+        let s = "|SELECTION=FALSE|LAYER=BOTTOM|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEINDEX=38|PRIM1ID=Track|PRIM1INDEX=100\
+                  |PRIM2ID=Pad|PRIM2INDEX=200\
+                  |DESCRIPTION=test|INVOLVEDPRIMCOUNT=0\
+                  |LOCATION1.X=100mil|LOCATION1.Y=200mil\
+                  |LOCATION2.X=300mil|LOCATION2.Y=400mil";
+        let mut params = params_from_str(s);
+        let v = parse_violation(ParamSectionKind::TClearanceViolation, &mut params).unwrap();
+        match &v {
+            PcbViolation::Clearance { base, data } => {
+                assert_eq!(base.prim1_id, "Track");
+                assert_eq!(base.prim1_index, 100);
+                assert_eq!(data.prim2_id.as_deref(), Some("Pad"));
+                assert_eq!(data.prim2_index, Some(200));
+                assert!(data.location1_x.is_some());
+            }
+            _ => panic!("expected Clearance variant"),
+        }
+    }
+
+    #[test]
+    fn parse_net_antennae_violation() {
+        let s = "|SELECTION=FALSE|LAYER=MULTILAYER|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEINDEX=3|PRIM1ID=Via|PRIM1INDEX=13\
+                  |DESCRIPTION=|INVOLVEDPRIMCOUNT=0\
+                  |LOCATION.X=157.4803mil|LOCATION.Y=157.4803mil\
+                  |CIRCLERADIUS=105.4252mil";
+        let mut params = params_from_str(s);
+        let v = parse_violation(ParamSectionKind::TNetAntennaeViolation, &mut params).unwrap();
+        match &v {
+            PcbViolation::NetAntennae { base, data } => {
+                assert_eq!(base.prim1_id, "Via");
+                assert_eq!(data.circle_radius, MilCoord(Coord::from_mils_f64(105.4252)));
+            }
+            _ => panic!("expected NetAntennae variant"),
+        }
+    }
+
+    #[test]
+    fn parse_base_only_violation() {
+        let s = "|SELECTION=FALSE|LAYER=BOTTOM|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEINDEX=6|PRIM1ID=Component|PRIM1INDEX=560\
+                  |DESCRIPTION=Actual Height = 8.8mm|INVOLVEDPRIMCOUNT=0";
+        let mut params = params_from_str(s);
+        let v = parse_violation(
+            ParamSectionKind::TMaxMinComponentHeightViolation,
+            &mut params,
+        )
+        .unwrap();
+        match &v {
+            PcbViolation::MaxMinComponentHeight { base, .. } => {
+                assert_eq!(base.prim1_id, "Component");
+                assert_eq!(base.description, "Actual Height = 8.8mm");
+            }
+            _ => panic!("expected MaxMinComponentHeight variant"),
+        }
+    }
+
+    #[test]
+    fn parse_disconnected_subnets_violation() {
+        let s = "|SELECTION=FALSE|LAYER=BOTTOM|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEINDEX=56|PRIM1ID=Pad|PRIM1INDEX=1034\
+                  |PRIM2ID=Pad|PRIM2INDEX=1032\
+                  |DESCRIPTION=|INVOLVEDPRIMCOUNT=0\
+                  |FX1=3550.5807mil|FY1=1520mil|FX2=3550.5807mil|FY2=1713.307mil";
+        let mut params = params_from_str(s);
+        let v = parse_violation(
+            ParamSectionKind::TDisconnectedSubnetsViolation,
+            &mut params,
+        )
+        .unwrap();
+        match &v {
+            PcbViolation::DisconnectedSubnets { base, data } => {
+                assert_eq!(base.prim1_id, "Pad");
+                assert!(data.fx1.is_some());
+                assert!(data.fy2.is_some());
+            }
+            _ => panic!("expected DisconnectedSubnets variant"),
+        }
+    }
+
+    // ── Waived violation parsing ────────────────────────────────────────────
+
+    #[test]
+    fn parse_waived_violation() {
+        let s = "|RULEINDEX=13|PRIM1KIND=DifferentialPair|PRIM1INDEX=63\
+                  |CREATEDAT=2020-09-04T13:11:48.000Z\
+                  |AUTHORID=74F33633-A57B-4253-AAC0-B6C1D3748DA6\
+                  |AUTHORTITLE=Test User|SOURCE=Portal\
+                  |COMMENT=To connector";
+        let mut params = params_from_str(s);
+        let wv = WaivedViolation::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+        assert_eq!(wv.rule_index, 13);
+        assert_eq!(wv.prim1_kind, "DifferentialPair");
+        assert_eq!(wv.comment, "To connector");
+        assert!(wv.prim2_kind.is_none());
+    }
+
+    // ── DRC Options parsing ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_drc_options() {
+        let s = "|RECORD=DesignRuleCheckerOptions\
+                  |DOMAKEDRCFILE=TRUE|DOMAKEDRCERRORLIST=TRUE\
+                  |DOSUBNETDETAILS=TRUE|REPORTFILENAME=\
+                  |EXTERNALNETLISTFILENAME=|CHECKEXTERNALNETLIST=FALSE\
+                  |MAXVIOLATIONCOUNT=500|REPORTDRILLEDSMTPADS=TRUE\
+                  |REPORTINVALIDMULTILAYERPADS=TRUE\
+                  |RULESETTOCHECK=0,1,2,3,4,5\
+                  |ONLINERULESETTOCHECK=0,1,2,3\
+                  |INTERNALPLANEWARNINGS=TRUE|VERIFYSHORTINGCOPPER=TRUE\
+                  |REPORTBROKENPLANES=TRUE|REPORTDEADCOPPER=TRUE\
+                  |DEADCOPPERMINAREA=10000000000.000000\
+                  |REPORTSTARVEDTHERMALS=TRUE|MINSTARVEDCOPPERPERCENT=50\
+                  |REPORTSTRADLINGHOLES=FALSE|REPORTHOLESINVOIDS=FALSE";
+        let mut params = params_from_str(s);
+        let opts = DrcOptions::from_params(&mut params).unwrap();
+        params.assert_exhausted().unwrap();
+        assert!(opts.do_make_drc_file);
+        assert_eq!(opts.max_violation_count, 500);
+        assert_eq!(opts.rule_set_to_check, "0,1,2,3,4,5");
+        assert!(!opts.report_straddling_holes);
+    }
+
+    // ── DiffPairs violation (complex polygon) ───────────────────────────────
+
+    #[test]
+    fn parse_diff_pairs_violation() {
+        let s = "|SELECTION=FALSE|LAYER=TOP|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+                  |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0\
+                  |RULEINDEX=5|PRIM1ID=DifferentialPair|PRIM1INDEX=10\
+                  |DESCRIPTION=test|INVOLVEDPRIMCOUNT=0\
+                  |LAYERCOUNT=1|LAYER1=TOP\
+                  |POLY1.CONTOURCOUNT=1\
+                  |POLY1.CONTOUR0.VTXCOUNT=3\
+                  |POLY1.CONTOUR0.VX0=100.000000|POLY1.CONTOUR0.VY0=200.000000\
+                  |POLY1.CONTOUR0.VX1=300.000000|POLY1.CONTOUR0.VY1=400.000000\
+                  |POLY1.CONTOUR0.VX2=500.000000|POLY1.CONTOUR0.VY2=600.000000";
+        let mut params = params_from_str(s);
+        let v = parse_violation(ParamSectionKind::TDiffPairsViolation, &mut params).unwrap();
+        match &v {
+            PcbViolation::DiffPairs { data, .. } => {
+                assert_eq!(data.layers.len(), 1);
+                assert_eq!(data.layers[0].layer_name, "TOP");
+                assert_eq!(data.layers[0].contours.len(), 1);
+                assert_eq!(data.layers[0].contours[0].vertices.len(), 3);
+                assert_eq!(data.layers[0].contours[0].vertices[0], (100.0, 200.0));
+                assert_eq!(data.layers[0].contours[0].vertices[2], (500.0, 600.0));
+            }
+            _ => panic!("expected DiffPairs variant"),
+        }
     }
 }

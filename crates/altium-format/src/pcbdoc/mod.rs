@@ -438,6 +438,7 @@ impl PcbDoc {
                             format!("parsing {storage_path}/Data")
                         })?,
                     );
+                    record.params.assert_exhausted()?;
                 } else {
                     sections
                         .push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
