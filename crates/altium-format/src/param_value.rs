@@ -50,9 +50,9 @@ impl FromParamValue for bool {
 impl ToParamValue for bool {
     fn to_param_value(&self) -> String {
         if *self {
-            "T".to_owned()
+            "TRUE".to_owned()
         } else {
-            "F".to_owned()
+            "FALSE".to_owned()
         }
     }
 }
@@ -97,7 +97,7 @@ impl FromParamValue for f64 {
 
 impl ToParamValue for f64 {
     fn to_param_value(&self) -> String {
-        self.to_string()
+        format!("{self:.6}")
     }
 }
 

@@ -317,12 +317,16 @@ fn save_as(input: &PathBuf, output: &PathBuf) -> anyhow::Result<()> {
             let doc = PcbLib::open(input)?;
             doc.save(output.as_path())?;
         }
+        "pcbdoc" => {
+            let doc = PcbDoc::open(input)?;
+            doc.save(output.as_path())?;
+        }
         "prjpcb" => {
             let doc = AltiumProject::open(input)?;
             doc.save(output.as_path())?;
         }
         _ => anyhow::bail!(
-            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib, .pcblib, .prjpcb)"
+            "save-as not yet supported for .{ext} files (supported: .schdoc, .schlib, .pcbdoc, .pcblib, .prjpcb)"
         ),
     }
 

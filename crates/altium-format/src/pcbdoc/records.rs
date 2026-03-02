@@ -38,6 +38,23 @@ impl PrimitiveSectionKind {
             _ => None,
         }
     }
+
+    pub(crate) fn to_storage_name(self) -> &'static str {
+        match self {
+            Self::Arcs6 => "Arcs6",
+            Self::Pads6 => "Pads6",
+            Self::Vias6 => "Vias6",
+            Self::Tracks6 => "Tracks6",
+            Self::Texts6 => "Texts6",
+            Self::Fills6 => "Fills6",
+            Self::Regions6 => "Regions6",
+            Self::ShapeBasedRegions6 => "ShapeBasedRegions6",
+            Self::ComponentBodies6 => "ComponentBodies6",
+            Self::ShapeBasedComponentBodies6 => "ShapeBasedComponentBodies6",
+            Self::BoardRegions => "BoardRegions",
+            Self::Texts => "Texts",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -195,6 +212,86 @@ impl ParamSectionKind {
         }
     }
 
+    /// Returns the CFB storage name for this section kind.
+    /// Note: CFB V3 truncates storage names to 31 chars, so some violation
+    /// names are truncated (matching the from_storage_name parser).
+    pub(crate) fn to_storage_name(self) -> &'static str {
+        match self {
+            Self::Board6 => "Board6",
+            Self::Nets6 => "Nets6",
+            Self::Components6 => "Components6",
+            Self::Polygons6 => "Polygons6",
+            Self::Classes6 => "Classes6",
+            Self::DifferentialPairs6 => "DifferentialPairs6",
+            Self::FromTos6 => "FromTos6",
+            Self::EmbeddedBoards6 => "EmbeddedBoards6",
+            Self::Embeddeds6 => "Embeddeds6",
+            Self::UniqueIdPrimitiveInformation => "UniqueIDPrimitiveInformation",
+            Self::ExtendedPrimitiveInformation => "ExtendedPrimitiveInformation",
+            Self::PadViaLibrary => "PadViaLibrary",
+            Self::PadViaLibraryCache => "PadViaLibraryCache",
+            Self::PadViaLibraryLinks => "PadViaLibraryLinks",
+            Self::PinPairsSection => "PinPairsSection",
+            Self::SignalClasses => "SignalClasses",
+            Self::SmartUnions => "SmartUnions",
+            Self::WaivedViolations => "WaivedViolations",
+            Self::AdvancedPlacerOptions6 => "Advanced Placer Options6",
+            Self::AdvancedRouterOptions6 => "Advanced Router Options6",
+            Self::DesignRuleCheckerOptions6 => "Design Rule Checker Options6",
+            Self::PinSwapOptions6 => "Pin Swap Options6",
+            Self::FileVersionInfo => "FileVersionInfo",
+            Self::LayerKindMapping => "LayerKindMapping",
+            Self::ModelsNoEmbed => "ModelsNoEmbed",
+            Self::Textures => "Textures",
+            Self::CustomShapes => "CustomShapes",
+            // DRC violations — CFB V3 truncates to 31 chars
+            Self::TAcuteAngleViolation => "TAcuteAngleViolation",
+            Self::TBackDrillViolation => "TBackDrillViolation",
+            Self::TBoardOutlineClearanceViolation => "TBoardOutlineClearanceViolation",
+            Self::TClearanceViolation => "TClearanceViolation",
+            Self::TComponentClearanceViolation => "TComponentClearanceViolation",
+            Self::TCreepageViolation => "TCreepageViolation",
+            Self::TDiffPairsViolation => "TDiffPairsViolation",
+            Self::TDisconnectedSubnetsViolation => "TDisconnectedSubnetsViolation",
+            Self::THoleToHoleViolation => "THoleToHoleViolation",
+            Self::TMatchedNetLengthsViolation => "TMatchedNetLengthsViolation",
+            Self::TMaximumViaCountViolation => "TMaximumViaCountViolation",
+            Self::TMaxMinComponentHeightViolation => "TMaxMinComponentHeightViolation",
+            Self::TMaxMinLengthViolation => "TMaxMinLengthViolation",
+            Self::TMaxMinPadSlotWidthViolation => "TMaxMinPadSlotWidthViolation",
+            Self::TMaxMinViaHoleSizeViolation => "TMaxMinViaHoleSizeViolation",
+            Self::TMinimumAnnularRingViolation => "TMinimumAnnularRingViolation",
+            Self::TMinSolderMaskSliverViolation => "TMinSolderMaskSliverViolation",
+            Self::TMinWidthViolation => "TMinWidthViolation",
+            Self::TModifiedPolygonViolation => "TModifiedPolygonViolation",
+            Self::TNetAntennaeViolation => "TNetAntennaeViolation",
+            Self::TPadUnderSMDViolation => "TPadUnderSMDViolation",
+            Self::TParallelSegmentViolation => "TParallelSegmentViolation",
+            Self::TReturnPathViolation => "TReturnPathViolation",
+            Self::TRoutingNeckDownViolation => "TRoutingNeckDownViolation",
+            Self::TRoutingViaStyleViolation => "TRoutingViaStyleViolation",
+            Self::TShortCircuitViolation => "TShortCircuitViolation",
+            // Truncated to 31 chars by CFB V3
+            Self::TSilkToBoardRegionClearanceViolation => "TSilkToBoardRegionClearanceViol",
+            Self::TSilkToSilkClearanceViolation => "TSilkToSilkClearanceViolation",
+            // Truncated to 31 chars by CFB V3
+            Self::TSilkToSolderMaskClearanceViolation => "TSilkToSolderMaskClearanceViola",
+            Self::TSMDNeckDownViolation => "TSMDNeckDownViolation",
+            Self::TSMDPADEntryViolation => "TSMDPADEntryViolation",
+            Self::TSMDToCornerViolation => "TSMDToCornerViolation",
+            Self::TTestPointViolation => "TTestPointViolation",
+            Self::TUnconnectedPinViolation => "TUnconnectedPinViolation",
+            Self::TViaUnderSMDViolation => "TViaUnderSMDViolation",
+            Self::TWirebondLengthViolation => "TWirebondLengthViolation",
+            Self::TWirebondWireToWireViolation => "TWirebondWireToWireViolation",
+            Self::TZAxisClearanceViolation => "TZAxisClearanceViolation",
+            Self::CustomMaskShapes => "CustomMaskShapes",
+            Self::CornerRadiusChamfer => "CornerRadiusChamfer",
+            Self::ViaStructures => "ViaStructures",
+            Self::ViaStructureManager => "ViaStructureManager",
+        }
+    }
+
     /// Returns true if this section kind is a DRC violation storage.
     pub(crate) fn is_violation(&self) -> bool {
         matches!(
@@ -253,6 +350,12 @@ impl BinaryLenSectionKind {
             _ => None,
         }
     }
+
+    pub(crate) fn to_storage_name(self) -> &'static str {
+        match self {
+            Self::Connections6 => "Connections6",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +374,15 @@ impl PrefixedParamSectionKind {
             "Dimensions6" => Some(Self::Dimensions6),
             "Coordinates6" => Some(Self::Coordinates6),
             _ => None,
+        }
+    }
+
+    pub(crate) fn to_storage_name(self) -> &'static str {
+        match self {
+            Self::Rules6 => "Rules6",
+            Self::NewRules6 => "NewRules6",
+            Self::Dimensions6 => "Dimensions6",
+            Self::Coordinates6 => "Coordinates6",
         }
     }
 }

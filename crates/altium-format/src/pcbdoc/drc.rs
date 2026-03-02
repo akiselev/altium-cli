@@ -20,6 +20,7 @@ use crate::{AltiumFormatError, Result};
 /// Common fields shared by ALL rule records.
 /// Parsed from the |KEY=VALUE| param record in Rules6/Data.
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct PcbRuleBase {
     #[param(key = "SELECTION", default = false)]
     pub selection: bool,
@@ -153,15 +154,21 @@ impl EmptyRuleData {
     pub(crate) fn from_params(_params: &mut ParameterCollection) -> Result<Self> {
         Ok(Self)
     }
+
+    pub(crate) fn to_params(&self, _params: &mut ParameterCollection) {
+        // No kind-specific parameters for empty rules.
+    }
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct BrokenNetsRuleData {
     #[param(key = "CHECKBADCONNECTIONS", default = false)]
     pub check_bad_connections: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SmdEntryRuleData {
     #[param(key = "SIDE", default = false)]
     pub side: bool,
@@ -172,24 +179,28 @@ pub(crate) struct SmdEntryRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct UnpouredPolygonRuleData {
     #[param(key = "ALLOWUNPOURED", default = false)]
     pub allow_unpoured: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SmdToPlaneRuleData {
     #[param(key = "DISTANCE", default = MilCoord::default())]
     pub distance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SmdNeckDownRuleData {
     #[param(key = "PERCENT", default = 0f64)]
     pub percent: f64,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ReturnPathRuleData {
     #[param(key = "IMPEDANCEPROFILEID", default = String::new())]
     pub impedance_profile_id: String,
@@ -200,6 +211,7 @@ pub(crate) struct ReturnPathRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ClearanceRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -222,6 +234,7 @@ pub(crate) struct ClearanceRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ParallelSegmentRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -345,9 +358,69 @@ impl WidthRuleData {
             substack_overrides,
         })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("MINLIMIT", self.min_limit.to_param_value());
+        params.insert("MAXLIMIT", self.max_limit.to_param_value());
+        params.insert("PREFEREDWIDTH", self.preferred_width.to_param_value());
+
+        for ov in &self.per_layer {
+            if let Some(v) = &ov.min_width {
+                params.insert(&format!("{}_MINWIDTH", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.max_width {
+                params.insert(&format!("{}_MAXWIDTH", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.pref_width {
+                params.insert(&format!("{}_PREFWIDTH", ov.prefix), v.to_param_value());
+            }
+        }
+
+        params.insert("CHECKCONNECTEDCOPPER", self.check_connected_copper.to_param_value());
+
+        if let Some(v) = self.impedance_driven {
+            params.insert("IMPEDANCEDRIVEN", v.to_param_value());
+        }
+        if let Some(v) = self.min_imp {
+            params.insert("MINIMP", v.to_param_value());
+        }
+        if let Some(v) = self.max_imp {
+            params.insert("MAXIMP", v.to_param_value());
+        }
+        if let Some(v) = self.fav_imp {
+            params.insert("FAVIMP", v.to_param_value());
+        }
+        if let Some(v) = self.impedance_profile_driven {
+            params.insert("IMPEDANCEPROFILEDRIVEN", v.to_param_value());
+        }
+        if let Some(v) = &self.impedance_profile_id {
+            params.insert("IMPEDANCEPROFILEID", v.to_param_value());
+        }
+        if let Some(v) = self.impedance_profile_value {
+            params.insert("IMPEDANCEPROFILEVALUE", v.to_param_value());
+        }
+
+        for (n, ss) in self.substack_overrides.iter().enumerate() {
+            let n1 = n + 1;
+            params.insert(&format!("SUBSTACK{n1}"), ss.substack_id.to_param_value());
+            let guid_upper = ss.substack_id.to_ascii_uppercase();
+            for (prefix, min_w, max_w, pref_w) in &ss.layer_overrides {
+                if let Some(v) = min_w {
+                    params.insert(&format!("{prefix}_{guid_upper}_MINWIDTH"), v.to_param_value());
+                }
+                if let Some(v) = max_w {
+                    params.insert(&format!("{prefix}_{guid_upper}_MAXWIDTH"), v.to_param_value());
+                }
+                if let Some(v) = pref_w {
+                    params.insert(&format!("{prefix}_{guid_upper}_PREFWIDTH"), v.to_param_value());
+                }
+            }
+        }
+    }
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct LengthRuleData {
     #[param(key = "MINLIMIT", default = MilCoord::default())]
     pub min_limit: MilCoord,
@@ -362,6 +435,7 @@ pub(crate) struct LengthRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MatchedLengthsRuleData {
     #[param(key = "TOLERANCE", default = MilCoord::default())]
     pub tolerance: MilCoord,
@@ -376,6 +450,7 @@ pub(crate) struct MatchedLengthsRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct DaisyChainStubLengthRuleData {
     #[param(key = "MAXLIMIT", default = MilCoord::default())]
     pub max_limit: MilCoord,
@@ -441,15 +516,42 @@ impl PowerPlaneConnectStyleRuleData {
             type_overrides,
         })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        if let Some(v) = &self.connect_style {
+            params.insert("PLANECONNECTSTYLE", v.to_param_value());
+        }
+        if let Some(v) = &self.relief_expansion {
+            params.insert("RELIEFEXPANSION", v.to_param_value());
+        }
+        if let Some(v) = self.relief_entries {
+            params.insert("RELIEFENTRIES", v.to_param_value());
+        }
+        if let Some(v) = &self.relief_conductor_width {
+            params.insert("RELIEFCONDUCTORWIDTH", v.to_param_value());
+        }
+        if let Some(v) = &self.relief_air_gap {
+            params.insert("RELIEFAIRGAP", v.to_param_value());
+        }
+        for ov in &self.type_overrides {
+            params.insert(&format!("{}.PLANECONNECTSTYLE", ov.prefix), ov.connect_style.to_param_value());
+            params.insert(&format!("{}.RELIEFEXPANSION", ov.prefix), ov.relief_expansion.to_param_value());
+            params.insert(&format!("{}.RELIEFENTRIES", ov.prefix), ov.relief_entries.to_param_value());
+            params.insert(&format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix), ov.relief_conductor_width.to_param_value());
+            params.insert(&format!("{}.RELIEFAIRGAP", ov.prefix), ov.relief_air_gap.to_param_value());
+        }
+    }
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct RoutingTopologyRuleData {
     #[param(key = "TOPOLOGY")]
     pub topology: NetTopology,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct RoutingPriorityRuleData {
     #[param(key = "ROUTINGPRIORITY", default = 0i32)]
     pub routing_priority: i32,
@@ -474,6 +576,12 @@ impl RoutingLayersRuleData {
         }
         Ok(Self { layer_flags })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        for (prefix, val) in &self.layer_flags {
+            params.insert(&format!("{prefix}_V5"), val.to_param_value());
+        }
+    }
 }
 
 fn routing_layer_prefixes() -> Vec<String> {
@@ -486,6 +594,7 @@ fn routing_layer_prefixes() -> Vec<String> {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct RoutingCornerStyleRuleData {
     #[param(key = "CORNERSTYLE")]
     pub corner_style: CornerStyle,
@@ -550,15 +659,33 @@ impl RoutingViaStyleRuleData {
             via_templates,
         })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("MINHOLEWIDTH", self.min_hole_width.to_param_value());
+        params.insert("MAXHOLEWIDTH", self.max_hole_width.to_param_value());
+        params.insert("HOLEWIDTH", self.preferred_hole_width.to_param_value());
+        params.insert("MINWIDTH", self.min_width.to_param_value());
+        params.insert("MAXWIDTH", self.max_width.to_param_value());
+        params.insert("WIDTH", self.preferred_width.to_param_value());
+        params.insert("VIASTYLE", self.via_style.to_param_value());
+        params.insert("USEVIATEMPLATES", self.use_via_templates.to_param_value());
+        for (n, t) in self.via_templates.iter().enumerate() {
+            let n1 = n + 1;
+            params.insert(&format!("VIATEMPLATEGUID#{n1}"), t.guid.to_param_value());
+            params.insert(&format!("VIATEMPLATENAME#{n1}"), t.name.to_param_value());
+        }
+    }
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct PowerPlaneClearanceRuleData {
     #[param(key = "CLEARANCE", default = MilCoord::default())]
     pub clearance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SolderMaskExpansionRuleData {
     #[param(key = "EXPANSION", default = MilCoord::default())]
     pub expansion: MilCoord,
@@ -571,6 +698,7 @@ pub(crate) struct SolderMaskExpansionRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct PasteMaskExpansionRuleData {
     #[param(key = "EXPANSION", default = MilCoord::default())]
     pub expansion: MilCoord,
@@ -583,24 +711,28 @@ pub(crate) struct PasteMaskExpansionRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ShortCircuitRuleData {
     #[param(key = "ALLOWED", default = false)]
     pub allowed: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ViasUnderSmdRuleData {
     #[param(key = "ALLOWED", default = true)]
     pub allowed: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MaximumViaCountRuleData {
     #[param(key = "MAXVIACOUNT", default = 10u32)]
     pub max_via_count: u32,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MinimumAnnularRingRuleData {
     #[param(key = "MINIMUMRING", default = MilCoord::default())]
     pub min_limit: MilCoord,
@@ -678,6 +810,31 @@ impl PolygonConnectStyleRuleData {
             pad_type_overrides,
         })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        if let Some(v) = &self.connect_style {
+            params.insert("CONNECTSTYLE", v.to_param_value());
+        }
+        if let Some(v) = &self.relief_conductor_width {
+            params.insert("RELIEFCONDUCTORWIDTH", v.to_param_value());
+        }
+        if let Some(v) = self.relief_entries {
+            params.insert("RELIEFENTRIES", v.to_param_value());
+        }
+        if let Some(v) = &self.polygon_relief_angle {
+            params.insert("POLYGONRELIEFANGLE", v.to_param_value());
+        }
+        if let Some(v) = &self.air_gap_width {
+            params.insert("AIRGAPWIDTH", v.to_param_value());
+        }
+        for ov in &self.pad_type_overrides {
+            params.insert(&format!("{}.CONNECTSTYLE", ov.prefix), ov.connect_style.to_param_value());
+            params.insert(&format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix), ov.relief_conductor_width.to_param_value());
+            params.insert(&format!("{}.RELIEFENTRIES", ov.prefix), ov.relief_entries.to_param_value());
+            params.insert(&format!("{}.POLYGONRELIEFANGLE", ov.prefix), ov.polygon_relief_angle.to_param_value());
+            params.insert(&format!("{}.AIRGAPWIDTH", ov.prefix), ov.air_gap_width.to_param_value());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -694,6 +851,11 @@ impl AcuteAngleRuleData {
             minimum,
             check_tracks_only,
         })
+    }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("MINIMUM", self.minimum.to_param_value());
+        params.insert("CHECKTRACKSONLY", self.check_tracks_only.to_param_value());
     }
 }
 
@@ -750,15 +912,33 @@ impl ConfinementConstraintRuleData {
             vertices,
         })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("CONFINEMENTSTYLE", self.confinement_style.to_param_value());
+        params.insert("LOCKCOMPONENTS", self.lock_components.to_param_value());
+        params.insert("FORMATCOPY", self.format_copy.to_param_value());
+        for (n, v) in self.vertices.iter().enumerate() {
+            params.insert(&format!("KIND{n}"), v.kind.to_param_value());
+            params.insert(&format!("VX{n}"), v.vx.to_param_value());
+            params.insert(&format!("VY{n}"), v.vy.to_param_value());
+            params.insert(&format!("CX{n}"), v.cx.to_param_value());
+            params.insert(&format!("CY{n}"), v.cy.to_param_value());
+            params.insert(&format!("SA{n}"), v.sa.to_param_value());
+            params.insert(&format!("EA{n}"), v.ea.to_param_value());
+            params.insert(&format!("R{n}"), v.r.to_param_value());
+        }
+    }
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SmdToCornerRuleData {
     #[param(key = "DISTANCE", default = MilCoord::default())]
     pub distance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ComponentClearanceRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -773,6 +953,7 @@ pub(crate) struct ComponentClearanceRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SignalStimulusRuleData {
     #[param(key = "STIMULUSTYPE", default = 0u32)]
     pub stimulus_type: u32,
@@ -781,6 +962,7 @@ pub(crate) struct SignalStimulusRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct OvershootUndershootRuleData {
     #[param(key = "MAXOVERSHOOT", default = 0f64)]
     pub max_overshoot: f64,
@@ -791,6 +973,7 @@ pub(crate) struct OvershootUndershootRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MaxMinImpedanceRuleData {
     #[param(key = "MINIMUM", default = 0f64)]
     pub min_impedance: f64,
@@ -799,6 +982,7 @@ pub(crate) struct MaxMinImpedanceRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SignalValueRuleData {
     #[param(key = "MINVALUE", default = 0f64)]
     pub min_value: f64,
@@ -807,6 +991,7 @@ pub(crate) struct SignalValueRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct FlightTimeRuleData {
     #[param(key = "MINVALUE", default = 0f64)]
     pub min_value: f64,
@@ -815,12 +1000,14 @@ pub(crate) struct FlightTimeRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SlopeRuleData {
     #[param(key = "MAXSLOPE", default = 0f64)]
     pub max_slope: f64,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MaxMinHoleSizeRuleData {
     #[param(key = "ABSOLUTEVALUES", default = true)]
     pub absolute_values: bool,
@@ -835,6 +1022,7 @@ pub(crate) struct MaxMinHoleSizeRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct TestpointStyleRuleData {
     #[param(key = "SIDE", default = 0u32)]
     pub side: u32,
@@ -867,6 +1055,7 @@ pub(crate) struct TestpointStyleRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct TestpointUsageRuleData {
     #[param(key = "VALID", default = 0u32)]
     pub valid: u32,
@@ -875,12 +1064,14 @@ pub(crate) struct TestpointUsageRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct LayerPairRuleData {
     #[param(key = "ENFORCE", default = true)]
     pub enforce: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct FanoutControlRuleData {
     #[param(key = "BGADIR", default = BgaFanoutDirection::Out)]
     pub bga_dir: BgaFanoutDirection,
@@ -895,6 +1086,7 @@ pub(crate) struct FanoutControlRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MaxMinHeightRuleData {
     #[param(key = "MINHEIGHT", default = MilCoord::default())]
     pub min_height: MilCoord,
@@ -1033,6 +1225,70 @@ impl DiffPairsRoutingRuleData {
             substack_overrides,
         })
     }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("MINLIMIT", self.min_limit.to_param_value());
+        params.insert("MAXLIMIT", self.max_limit.to_param_value());
+        params.insert("MOSTFREQGAP", self.most_freq_gap.to_param_value());
+        params.insert("MAXUNCOUPLEDLENGTH", self.max_uncoupled_length.to_param_value());
+
+        for ov in &self.per_layer {
+            if let Some(v) = &ov.min_width {
+                params.insert(&format!("{}_MINWIDTH", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.max_width {
+                params.insert(&format!("{}_MAXWIDTH", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.pref_width {
+                params.insert(&format!("{}_PREFWIDTH", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.min_gap {
+                params.insert(&format!("{}_MINGAP", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.max_gap {
+                params.insert(&format!("{}_MAXGAP", ov.prefix), v.to_param_value());
+            }
+            if let Some(v) = &ov.pref_gap {
+                params.insert(&format!("{}_PREFGAP", ov.prefix), v.to_param_value());
+            }
+        }
+
+        if let Some(v) = self.impedance_profile_driven {
+            params.insert("IMPEDANCEPROFILEDRIVEN", v.to_param_value());
+        }
+        if let Some(v) = &self.impedance_profile_id {
+            params.insert("IMPEDANCEPROFILEID", v.to_param_value());
+        }
+        if let Some(v) = self.impedance_profile_value {
+            params.insert("IMPEDANCEPROFILEVALUE", v.to_param_value());
+        }
+
+        for (n, ss) in self.substack_overrides.iter().enumerate() {
+            let n1 = n + 1;
+            params.insert(&format!("SUBSTACK{n1}"), ss.substack_id.to_param_value());
+            let guid_upper = ss.substack_id.to_ascii_uppercase();
+            for (prefix, min_w, max_w, pref_w, min_g, max_g, pref_g) in &ss.layer_overrides {
+                if let Some(v) = min_w {
+                    params.insert(&format!("{prefix}_{guid_upper}_MINWIDTH"), v.to_param_value());
+                }
+                if let Some(v) = max_w {
+                    params.insert(&format!("{prefix}_{guid_upper}_MAXWIDTH"), v.to_param_value());
+                }
+                if let Some(v) = pref_w {
+                    params.insert(&format!("{prefix}_{guid_upper}_PREFWIDTH"), v.to_param_value());
+                }
+                if let Some(v) = min_g {
+                    params.insert(&format!("{prefix}_{guid_upper}_MINGAP"), v.to_param_value());
+                }
+                if let Some(v) = max_g {
+                    params.insert(&format!("{prefix}_{guid_upper}_MAXGAP"), v.to_param_value());
+                }
+                if let Some(v) = pref_g {
+                    params.insert(&format!("{prefix}_{guid_upper}_PREFGAP"), v.to_param_value());
+                }
+            }
+        }
+    }
 }
 
 fn signal_layer_prefixes() -> Vec<String> {
@@ -1045,6 +1301,7 @@ fn signal_layer_prefixes() -> Vec<String> {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct HoleToHoleClearanceRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -1053,12 +1310,14 @@ pub(crate) struct HoleToHoleClearanceRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct MinimumSolderMaskSliverRuleData {
     #[param(key = "MINSOLDERMASKWIDTH", default = MilCoord::default())]
     pub min_solder_mask_width: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SilkToSolderMaskClearanceRuleData {
     #[param(key = "MINSILKSCREENTOMASKGAP", default = MilCoord::default())]
     pub min_silkscreen_to_mask_gap: MilCoord,
@@ -1067,12 +1326,14 @@ pub(crate) struct SilkToSolderMaskClearanceRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SilkToSilkClearanceRuleData {
     #[param(key = "SILKTOSILKCLEARANCE", default = MilCoord::default())]
     pub silk_to_silk_clearance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct NetAntennaeRuleData {
     #[param(key = "NETANTENNAETOLERANCE", default = MilCoord::default())]
     pub net_antennae_tolerance: MilCoord,
@@ -1080,6 +1341,7 @@ pub(crate) struct NetAntennaeRuleData {
 
 /// BoardOutlineClearance reuses the same structure as Clearance.
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct BoardOutlineClearanceRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -1092,12 +1354,14 @@ pub(crate) struct BoardOutlineClearanceRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct BackDrillingRuleData {
     #[param(key = "BACKDRILLINGDEPTH", default = MilCoord::default())]
     pub backdrill_depth: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct CreepageRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -1110,12 +1374,14 @@ pub(crate) struct CreepageRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct RoutingNeckDownRuleData {
     #[param(key = "NECKDOWNPERCENTAGE", default = 0f64)]
     pub neck_down_percentage: f64,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct WireBondingRuleData {
     #[param(key = "MINLIMIT", default = MilCoord::default())]
     pub min_limit: MilCoord,
@@ -1124,12 +1390,14 @@ pub(crate) struct WireBondingRuleData {
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct SupplyNetsRuleData {
     #[param(key = "VOLTAGE", default = 0f64)]
     pub voltage: f64,
 }
 
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct ZAxisClearanceRuleData {
     #[param(key = "GAP", default = MilCoord::default())]
     pub gap: MilCoord,
@@ -1229,21 +1497,26 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
 // ── Violation types ─────────────────────────────────────────────────────────
 
 /// Common fields shared by ALL violation records.
+///
+/// Most fields use `tier2` (always write) because Altium writes them even at default values.
+/// Most fields use `tier2` (always write) because Altium writes them even at default values.
+/// `INVOLVEDPRIMCOUNT` uses T1 (skip when 0) because most violation types omit it when zero;
+/// only a few types (DiffPairs, some Clearance) redundantly include it.
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct PcbViolationBase {
-    #[param(key = "SELECTION", default = false)]
+    #[param(tier2, key = "SELECTION", default = false)]
     pub selection: bool,
-    #[param(key = "LAYER", default = String::new())]
+    #[param(tier2, key = "LAYER", default = String::new())]
     pub layer: String,
-    #[param(key = "LOCKED", default = false)]
+    #[param(tier2, key = "LOCKED", default = false)]
     pub locked: bool,
-    #[param(key = "POLYGONOUTLINE", default = false)]
+    #[param(tier2, key = "POLYGONOUTLINE", default = false)]
     pub polygon_outline: bool,
-    #[param(key = "USERROUTED", default = true)]
+    #[param(tier2, key = "USERROUTED", default = true)]
     pub user_routed: bool,
-    #[param(key = "KEEPOUT", default = false)]
+    #[param(tier2, key = "KEEPOUT", default = false)]
     pub keepout: bool,
-    #[param(key = "UNIONINDEX", default = 0u32)]
+    #[param(tier2, key = "UNIONINDEX", default = 0u32)]
     pub union_index: u32,
     #[param(key = "RULEINDEX")]
     pub rule_index: u32,
@@ -1251,7 +1524,7 @@ pub(crate) struct PcbViolationBase {
     pub prim1_id: String,
     #[param(key = "PRIM1INDEX")]
     pub prim1_index: u32,
-    #[param(key = "DESCRIPTION", default = String::new())]
+    #[param(tier2, key = "DESCRIPTION", default = String::new())]
     pub description: String,
     #[param(key = "INVOLVEDPRIMCOUNT", default = 0u32)]
     pub involved_prim_count: u32,
@@ -1396,6 +1669,25 @@ impl DiffPairsViolationData {
             });
         }
         Ok(Self { layers })
+    }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("LAYERCOUNT", self.layers.len().to_param_value());
+        for (n, layer) in self.layers.iter().enumerate() {
+            let n1 = n + 1;
+            params.insert(&format!("LAYER{n1}"), layer.layer_name.to_param_value());
+            params.insert(&format!("POLY{n1}.CONTOURCOUNT"), layer.contours.len().to_param_value());
+            for (c, contour) in layer.contours.iter().enumerate() {
+                params.insert(
+                    &format!("POLY{n1}.CONTOUR{c}.VTXCOUNT"),
+                    contour.vertices.len().to_param_value(),
+                );
+                for (v, (vx, vy)) in contour.vertices.iter().enumerate() {
+                    params.insert(&format!("POLY{n1}.CONTOUR{c}.VX{v}"), vx.to_param_value());
+                    params.insert(&format!("POLY{n1}.CONTOUR{c}.VY{v}"), vy.to_param_value());
+                }
+            }
+        }
     }
 }
 
@@ -1642,6 +1934,7 @@ pub(crate) struct WaivedViolation {
 
 /// Design Rule Checker Options (single record from DesignRuleCheckerOptions6/Data).
 #[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
 pub(crate) struct DrcOptions {
     #[param(key = "RECORD", default = "DesignRuleCheckerOptions".to_string())]
     pub record: String,
@@ -1687,6 +1980,268 @@ pub(crate) struct DrcOptions {
     pub report_straddling_holes: bool,
     #[param(key = "REPORTHOLESINVOIDS", default = false)]
     pub report_holes_in_voids: bool,
+}
+
+// ── Serialization dispatch ──────────────────────────────────────────────────
+
+/// Serialize a `PcbRule` back to a `PrefixedParamRecord`.
+pub(crate) fn serialize_rule(rule: &PcbRule) -> Result<super::records::PrefixedParamRecord> {
+    let mut params = ParameterCollection::new();
+    rule.base.to_params(&mut params);
+    serialize_rule_kind_data(&rule.kind_data, &mut params);
+    Ok(super::records::PrefixedParamRecord {
+        prefix: rule.prefix,
+        params,
+    })
+}
+
+fn serialize_rule_kind_data(kind_data: &PcbRuleKindData, params: &mut ParameterCollection) {
+    match kind_data {
+        PcbRuleKindData::Clearance(d) => d.to_params(params),
+        PcbRuleKindData::ParallelSegment(d) => d.to_params(params),
+        PcbRuleKindData::Width(d) => d.to_params(params),
+        PcbRuleKindData::Length(d) => d.to_params(params),
+        PcbRuleKindData::MatchedLengths(d) => d.to_params(params),
+        PcbRuleKindData::DaisyChainStubLength(d) => d.to_params(params),
+        PcbRuleKindData::PowerPlaneConnectStyle(d) => d.to_params(params),
+        PcbRuleKindData::RoutingTopology(d) => d.to_params(params),
+        PcbRuleKindData::RoutingPriority(d) => d.to_params(params),
+        PcbRuleKindData::RoutingLayers(d) => d.to_params(params),
+        PcbRuleKindData::RoutingCornerStyle(d) => d.to_params(params),
+        PcbRuleKindData::RoutingViaStyle(d) => d.to_params(params),
+        PcbRuleKindData::PowerPlaneClearance(d) => d.to_params(params),
+        PcbRuleKindData::SolderMaskExpansion(d) => d.to_params(params),
+        PcbRuleKindData::PasteMaskExpansion(d) => d.to_params(params),
+        PcbRuleKindData::ShortCircuit(d) => d.to_params(params),
+        PcbRuleKindData::BrokenNets(d) => d.to_params(params),
+        PcbRuleKindData::ViasUnderSmd(d) => d.to_params(params),
+        PcbRuleKindData::MaximumViaCount(d) => d.to_params(params),
+        PcbRuleKindData::MinimumAnnularRing(d) => d.to_params(params),
+        PcbRuleKindData::PolygonConnectStyle(d) => d.to_params(params),
+        PcbRuleKindData::AcuteAngle(d) => d.to_params(params),
+        PcbRuleKindData::ConfinementConstraint(d) => d.to_params(params),
+        PcbRuleKindData::SmdToCorner(d) => d.to_params(params),
+        PcbRuleKindData::ComponentClearance(d) => d.to_params(params),
+        PcbRuleKindData::ComponentRotations(d) => d.to_params(params),
+        PcbRuleKindData::PermittedLayers(d) => d.to_params(params),
+        PcbRuleKindData::NetsToIgnore(d) => d.to_params(params),
+        PcbRuleKindData::SignalStimulus(d) => d.to_params(params),
+        PcbRuleKindData::OvershootFallingEdge(d) => d.to_params(params),
+        PcbRuleKindData::OvershootRisingEdge(d) => d.to_params(params),
+        PcbRuleKindData::UndershootFallingEdge(d) => d.to_params(params),
+        PcbRuleKindData::UndershootRisingEdge(d) => d.to_params(params),
+        PcbRuleKindData::MaxMinImpedance(d) => d.to_params(params),
+        PcbRuleKindData::SignalTopValue(d) => d.to_params(params),
+        PcbRuleKindData::SignalBaseValue(d) => d.to_params(params),
+        PcbRuleKindData::FlightTimeRisingEdge(d) => d.to_params(params),
+        PcbRuleKindData::FlightTimeFallingEdge(d) => d.to_params(params),
+        PcbRuleKindData::LayerStack(d) => d.to_params(params),
+        PcbRuleKindData::MaxSlopeRisingEdge(d) => d.to_params(params),
+        PcbRuleKindData::MaxSlopeFallingEdge(d) => d.to_params(params),
+        PcbRuleKindData::SupplyNets(d) => d.to_params(params),
+        PcbRuleKindData::MaxMinHoleSize(d) => d.to_params(params),
+        PcbRuleKindData::FabricationTestpointStyle(d) => d.to_params(params),
+        PcbRuleKindData::FabricationTestpointUsage(d) => d.to_params(params),
+        PcbRuleKindData::UnconnectedPin(d) => d.to_params(params),
+        PcbRuleKindData::SmdToPlane(d) => d.to_params(params),
+        PcbRuleKindData::SmdNeckDown(d) => d.to_params(params),
+        PcbRuleKindData::LayerPair(d) => d.to_params(params),
+        PcbRuleKindData::FanoutControl(d) => d.to_params(params),
+        PcbRuleKindData::MaxMinHeight(d) => d.to_params(params),
+        PcbRuleKindData::DifferentialPairsRouting(d) => d.to_params(params),
+        PcbRuleKindData::HoleToHoleClearance(d) => d.to_params(params),
+        PcbRuleKindData::MinimumSolderMaskSliver(d) => d.to_params(params),
+        PcbRuleKindData::SilkToSolderMaskClearance(d) => d.to_params(params),
+        PcbRuleKindData::SilkToSilkClearance(d) => d.to_params(params),
+        PcbRuleKindData::NetAntennae(d) => d.to_params(params),
+        PcbRuleKindData::AssyTestPointStyle(d) => d.to_params(params),
+        PcbRuleKindData::AssyTestPointUsage(d) => d.to_params(params),
+        PcbRuleKindData::SilkToBoardRegionClearance(d) => d.to_params(params),
+        PcbRuleKindData::SmdEntry(d) => d.to_params(params),
+        PcbRuleKindData::None(d) => d.to_params(params),
+        PcbRuleKindData::UnpouredPolygon(d) => d.to_params(params),
+        PcbRuleKindData::BoardOutlineClearance(d) => d.to_params(params),
+        PcbRuleKindData::BackDrilling(d) => d.to_params(params),
+        PcbRuleKindData::Creepage(d) => d.to_params(params),
+        PcbRuleKindData::ReturnPath(d) => d.to_params(params),
+        PcbRuleKindData::RoutingNeckDown(d) => d.to_params(params),
+        PcbRuleKindData::WireBonding(d) => d.to_params(params),
+        PcbRuleKindData::ZAxisClearance(d) => d.to_params(params),
+    }
+}
+
+/// Serialize a `PcbViolation` back to a `StandardParamRecord`.
+pub(crate) fn serialize_violation(violation: &PcbViolation) -> super::records::StandardParamRecord {
+    let mut params = ParameterCollection::new();
+    match violation {
+        PcbViolation::AcuteAngle { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::BackDrill { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::BoardOutlineClearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::Clearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ComponentClearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::Creepage { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::DiffPairs { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::DisconnectedSubnets { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::HoleToHole { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MatchedNetLengths { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MaximumViaCount { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MaxMinComponentHeight { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MaxMinLength { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MaxMinPadSlotWidth { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MaxMinViaHoleSize { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MinimumAnnularRing { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MinSolderMaskSliver { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::MinWidth { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ModifiedPolygon { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::NetAntennae { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::PadUnderSmd { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ParallelSegment { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ReturnPath { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::RoutingNeckDown { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::RoutingViaStyle { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ShortCircuit { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::SilkToBoardRegionClearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::SilkToSilkClearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::SilkToSolderMaskClearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::SmdNeckDown { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::SmdPadEntry { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::SmdToCorner { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::TestPoint { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::UnconnectedPin { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ViaUnderSmd { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::WirebondLength { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::WirebondWireToWire { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+        PcbViolation::ZAxisClearance { base, data } => {
+            base.to_params(&mut params);
+            data.to_params(&mut params);
+        }
+    }
+    super::records::StandardParamRecord { params }
+}
+
+/// Serialize a `WaivedViolation` back to a `StandardParamRecord`.
+pub(crate) fn serialize_waived_violation(wv: &WaivedViolation) -> super::records::StandardParamRecord {
+    let mut params = ParameterCollection::new();
+    wv.to_params(&mut params);
+    super::records::StandardParamRecord { params }
+}
+
+/// Serialize `DrcOptions` back to a `StandardParamRecord`.
+pub(crate) fn serialize_drc_options(opts: &DrcOptions) -> super::records::StandardParamRecord {
+    let mut params = ParameterCollection::new();
+    opts.to_params(&mut params);
+    super::records::StandardParamRecord { params }
 }
 
 #[cfg(test)]

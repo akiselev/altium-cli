@@ -57,6 +57,8 @@ fn expand_from_params(input: DeriveInput) -> syn::Result<TokenStream2> {
 /// Uses the same `#[param(...)]` attributes as `FromParams`. Serialization tier:
 /// - T1 (default): skip parameter when value equals type default (0, false, "")
 /// - T2 (`tier2` flag): always write parameter regardless of value
+///
+/// Struct-level `#[param(tier2)]` forces all fields to T2 (always write).
 #[proc_macro_derive(ToParams, attributes(param))]
 pub fn derive_to_params(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -69,6 +71,19 @@ pub fn derive_to_params(input: TokenStream) -> TokenStream {
 fn expand_to_params(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let vis = &input.vis;
+
+    // Check for struct-level #[param(tier2)] — forces all fields to T2 (always write).
+    let struct_tier2 = input.attrs.iter().any(|attr| {
+        if !attr.path().is_ident("param") {
+            return false;
+        }
+        attr.parse_args_with(|input: ParseStream| {
+            let ident: Ident = input.parse()?;
+            Ok(ident == "tier2")
+        })
+        .unwrap_or(false)
+    });
+
     let fields = get_named_fields(&input)?;
 
     let mut stmts = Vec::new();
@@ -88,7 +103,7 @@ fn expand_to_params(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .filter(|f| f != "tier2" && f != "skip_default")
                     .collect();
                 let strategy = build_strategy(filtered_flags, named)?;
-                Ok((strategy, is_tier2, is_skip_default))
+                Ok((strategy, is_tier2 || struct_tier2, is_skip_default))
             })?;
 
         stmts.push(strategy.to_serialize_tokens(field_name, &field.ty, tier2, skip_default));

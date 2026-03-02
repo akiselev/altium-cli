@@ -67,6 +67,7 @@ pub(crate) struct PadViaLibrarySectionData {
 }
 
 pub(crate) struct LayerKindMappingSectionData {
+    pub(crate) header_value: u32,
     pub(crate) mapping: PcbLayerKindMapping,
 }
 
@@ -274,12 +275,13 @@ impl PcbDoc {
 
             if storage_name == "LayerKindMapping" {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
+                let header_value = parse_pcb_section_header(&header_data)?;
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
                 let mapping = parse_layer_kind_mapping(&header_data, &data)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::LayerKindMapping(
-                    LayerKindMappingSectionData { mapping },
+                    LayerKindMappingSectionData { header_value, mapping },
                 ));
                 continue;
             }
@@ -569,11 +571,79 @@ impl PcbDoc {
     }
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
-        let _ = path.as_ref();
-        Err(AltiumFormatError::InvalidParamValue {
-            key: "PcbDoc.save".to_owned(),
-            detail: "full PcbDoc reserialization is required; source-backed/raw passthrough save is disabled".to_owned(),
-        })
+        let mut cfb = CfbDocument::create()?;
+
+        // 1. Write /FileHeader (legacy UTF-16LE header)
+        cfb.write_stream(
+            &format!("/{FILE_HEADER}"),
+            &serialize_pcb_legacy_header(&self.legacy_header),
+        )?;
+
+        // 2. Write /FileHeaderSix (pascal-block header)
+        cfb.write_stream(
+            "/FileHeaderSix",
+            &serialize_pcb_file_header_bytes(&self.header)?,
+        )?;
+
+        // 3. Write all parsed sections
+        for section in &self.sections {
+            write_section(&mut cfb, section)?;
+        }
+
+        // 4. Write DRC rules → Rules6 section
+        if !self.rules.is_empty() {
+            let mut rule_records = Vec::with_capacity(self.rules.len());
+            for (i, rule) in self.rules.iter().enumerate() {
+                let record = drc::serialize_rule(rule)
+                    .with_context(|| format!("serializing rule #{i}"))?;
+                rule_records.push(record);
+            }
+            write_prefixed_param_section(
+                &mut cfb,
+                records::PrefixedParamSectionKind::Rules6.to_storage_name(),
+                &rule_records,
+            )?;
+        }
+
+        // 5. Write DRC violations → per-kind sections
+        for (kind, violations) in &self.violations {
+            let violation_records: Vec<_> = violations
+                .iter()
+                .map(|v| drc::serialize_violation(v))
+                .collect();
+            write_standard_param_section(
+                &mut cfb,
+                kind.to_storage_name(),
+                &violation_records,
+            )?;
+        }
+
+        // 6. Write waived violations (always, even when empty)
+        {
+            let waived_records: Vec<_> = self
+                .waived_violations
+                .iter()
+                .map(|wv| drc::serialize_waived_violation(wv))
+                .collect();
+            write_standard_param_section(
+                &mut cfb,
+                records::ParamSectionKind::WaivedViolations.to_storage_name(),
+                &waived_records,
+            )?;
+        }
+
+        // 7. Write DRC options
+        if let Some(opts) = &self.drc_options {
+            let record = drc::serialize_drc_options(opts);
+            write_standard_param_section(
+                &mut cfb,
+                records::ParamSectionKind::DesignRuleCheckerOptions6.to_storage_name(),
+                &[record],
+            )?;
+        }
+
+        // 8. Save to file
+        cfb.save_to_file(path.as_ref())
     }
 
     fn primitive_section(&self, kind: records::PrimitiveSectionKind) -> Option<&[primitives::ParsedPrimitiveRecord]> {
@@ -829,6 +899,30 @@ fn section_identity(section: &PcbDocSection) -> String {
     }
 }
 
+/// Serialize PcbDoc legacy /FileHeader: u32 char_count + UTF-16LE payload.
+fn serialize_pcb_legacy_header(header: &str) -> Vec<u8> {
+    let utf16: Vec<u16> = header.encode_utf16().collect();
+    let mut w = BinaryWriter::new();
+    w.write_u32_le(utf16.len() as u32);
+    for c in &utf16 {
+        w.write_bytes(&c.to_le_bytes());
+    }
+    w.finish()
+}
+
+/// Serialize PcbDoc /FileHeaderSix: pascal-block with version string + f64 version + optional unique_id.
+fn serialize_pcb_file_header_bytes(header: &PcbFileHeader) -> Result<Vec<u8>> {
+    let mut w = BinaryWriter::new();
+    w.write_u32_le(header.version_string.len() as u32);
+    w.write_pascal_string(&header.version_string)?;
+    w.write_f64_le(header.version);
+    if let Some(uid) = &header.unique_id {
+        w.write_u32_le(uid.len() as u32);
+        w.write_pascal_string(uid)?;
+    }
+    Ok(w.finish())
+}
+
 fn write_primitive_section(
     cfb: &mut CfbDocument,
     name: &str,
@@ -842,48 +936,632 @@ fn write_primitive_section(
     header.write_u32_le(records.len() as u32);
     let mut data = BinaryWriter::new();
     for record in records {
-        let payload = serialize_primitive_payload(record)?;
+        let subrecords = serialize_primitive_payload(record)?;
         data.write_u8(record.object_id as u8);
-        data.write_u32_le(payload.len() as u32);
-        data.write_bytes(&payload);
+        for sub in &subrecords {
+            data.write_u32_le(sub.len() as u32);
+            data.write_bytes(sub);
+        }
     }
     cfb.write_stream(&format!("{storage}/Header"), &header.finish())?;
     cfb.write_stream(&format!("{storage}/Data"), &data.finish())?;
     Ok(())
 }
 
-fn serialize_common_header(w: &mut BinaryWriter, common: &primitives::PcbPrimitiveCommon) {
-    w.write_u8(common.layer as u8);
-    w.write_u16_le(common.flags.raw());
-    w.write_u16_le(common.net_index);
-    w.write_u16_le(common.polygon_index);
-    w.write_u16_le(common.component_index);
-    w.write_u16_le(common.coordinate_index);
-    w.write_u16_le(common.dimension_index);
+fn serialize_pcbdoc_arc(p: &primitives::PcbArc) -> Vec<u8> {
+    let mut w = BinaryWriter::new();
+    crate::pcb_primitives_serialize::write_primitive_common(&mut w, &p.common);
+    w.write_coord_point(p.center);
+    w.write_coord(p.radius);
+    w.write_f64_le(p.start_angle);
+    w.write_f64_le(p.end_angle);
+    w.write_coord(p.width);
+    w.write_u16_le(p.subpoly_index);
+    w.write_u8(if p.user_routed { 1 } else { 0 });
+    w.write_i32_le(p.union_index);
+    w.write_u32_le(p.layer_enum_index.raw());
+    if let Some(k) = p.keepout_restrictions {
+        w.write_i32_le(k);
+    }
+    w.finish()
 }
 
-fn serialize_primitive_payload(record: &primitives::ParsedPrimitiveRecord) -> Result<Vec<u8>> {
+fn serialize_pcbdoc_track(p: &primitives::PcbTrack) -> Vec<u8> {
+    let mut w = BinaryWriter::new();
+    crate::pcb_primitives_serialize::write_primitive_common(&mut w, &p.common);
+    w.write_coord_point(p.start);
+    w.write_coord_point(p.end);
+    w.write_coord(p.width);
+    w.write_u16_le(p.subpoly_index);
+    w.write_u8(if p.user_routed { 1 } else { 0 });
+    w.write_i32_le(p.union_index);
+    w.write_u8(p.track_kind);
+    w.write_u32_le(p.layer_enum_index.raw());
+    if let Some(k) = p.keepout_restrictions {
+        w.write_i32_le(k);
+    }
+    w.finish()
+}
+
+fn serialize_pcbdoc_fill(p: &primitives::PcbFill) -> Vec<u8> {
+    let mut w = BinaryWriter::new();
+    crate::pcb_primitives_serialize::write_primitive_common(&mut w, &p.common);
+    w.write_coord_point(p.corner_1);
+    w.write_coord_point(p.corner_2);
+    w.write_f64_le(p.rotation);
+    if let Some(v) = p.user_routed {
+        w.write_u8(v as u8);
+    }
+    if let Some(v) = p.union_index {
+        w.write_i32_le(v);
+    }
+    if let Some(v) = p.layer_enum_index {
+        w.write_u32_le(v.raw());
+    }
+    if let Some(v) = p.keepout_restrictions {
+        w.write_i32_le(v);
+    }
+    w.finish()
+}
+
+/// Serialize PcbDoc Text to 2 subrecords: binary data + Windows-1252 text.
+/// Always writes full format (all conditional blocks), upgrading to latest on save.
+fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Vec<Vec<u8>> {
+    let mut w = BinaryWriter::new();
+    // Base (40 bytes)
+    crate::pcb_primitives_serialize::write_primitive_common(&mut w, &p.common);
+    w.write_coord_point(p.location);
+    w.write_coord(p.height);
+    w.write_u16_le(p.stroke_font_type);
+    w.write_f64_le(p.rotation);
+    w.write_bool(p.is_mirrored);
+    w.write_coord(p.stroke_width);
+    // Block 1 (97 bytes)
+    w.write_bool(p.is_comment);
+    w.write_bool(p.is_designator);
+    w.write_bool(p.user_routed);
+    w.write_u8(p.text_kind as u8);
+    w.write_bool(p.is_bold);
+    w.write_bool(p.is_italic);
+    w.write_wide_string_fixed(&p.font_name, 32);
+    w.write_bool(p.is_inverted);
+    w.write_i32_le(p.margin_border_width);
+    w.write_i32_le(p.wide_string_index);
+    w.write_i32_le(p.union_index);
+    w.write_bool(p.is_inverted_rect);
+    w.write_i32_le(p.textbox_rect_width);
+    w.write_i32_le(p.textbox_rect_height);
+    w.write_u8(p.textbox_rect_justification);
+    w.write_i32_le(p.text_offset_width);
+    // Block 2 (92 bytes)
+    w.write_i32_le(p.unk_vec_x);
+    w.write_i32_le(p.unk_vec_y);
+    w.write_i32_le(p.barcode_margin_x);
+    w.write_i32_le(p.barcode_margin_y);
+    w.write_i32_le(p.barcode_min_width);
+    w.write_u8(p.barcode_kind as u8);
+    w.write_u8(p.barcode_render_mode as u8);
+    w.write_bool(p.barcode_inverted);
+    w.write_wide_string_fixed(&p.barcode_font_name, 32);
+    w.write_i32_le(p.barcode_min_pixel_size);
+    w.write_bool(p.barcode_show_text);
+    // Advance group (22 bytes)
+    w.write_u8(p.advance_snapping.unwrap_or(0));
+    w.write_u8(p.advance_mode.unwrap_or(0));
+    w.write_i32_le(p.advance_justification_x.unwrap_or(0));
+    w.write_i32_le(p.advance_justification_y.unwrap_or(0));
+    w.write_i32_le(p.use_text_alignment_by_snap.unwrap_or(0));
+    w.write_i32_le(p.snap_point_x.unwrap_or(0));
+    w.write_i32_le(p.snap_point_y.unwrap_or(0));
+    // V7 layer block (21 bytes)
+    w.write_bool(p.has_v7_layer_data);
+    w.write_i32_le(p.layer_enum_index);
+    w.write_i32_le(p.sentinel_1);
+    w.write_i32_le(p.sentinel_2);
+    w.write_i32_le(p.trailing_flag_1);
+    w.write_i32_le(p.trailing_flag_2);
+    // Trailing (1 byte)
+    w.write_bool(p.trailing_is_justification_valid.unwrap_or(false));
+
+    // Subrecord 2: Windows-1252 encoded text + NUL terminator
+    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&p.text);
+    let mut text_bytes = encoded.to_vec();
+    text_bytes.push(0);
+
+    vec![w.finish(), text_bytes]
+}
+
+fn serialize_primitive_payload(
+    record: &primitives::ParsedPrimitiveRecord,
+) -> Result<Vec<Vec<u8>>> {
     match &record.primitive {
-        primitives::PcbPrimitive::Track(v) => {
-            let mut w = BinaryWriter::new();
-            serialize_common_header(&mut w, &v.common);
-            w.write_coord_point(v.start);
-            w.write_coord_point(v.end);
-            w.write_coord(v.width);
-            w.write_u16_le(v.subpoly_index);
-            w.write_u8(if v.user_routed { 1 } else { 0 });
-            w.write_i32_le(v.union_index);
-            w.write_u8(v.track_kind);
-            w.write_u32_le(v.layer_enum_index.raw());
-            if let Some(k) = v.keepout_restrictions {
-                w.write_i32_le(k);
-            }
-            Ok(w.finish())
+        primitives::PcbPrimitive::Arc(v) => Ok(vec![serialize_pcbdoc_arc(v)]),
+        primitives::PcbPrimitive::Track(v) => Ok(vec![serialize_pcbdoc_track(v)]),
+        primitives::PcbPrimitive::Fill(v) => Ok(vec![serialize_pcbdoc_fill(v)]),
+        primitives::PcbPrimitive::Text(v) => Ok(serialize_pcbdoc_text(v)),
+        primitives::PcbPrimitive::Via(v) => {
+            Ok(vec![crate::pcb_primitives_serialize::serialize_via(v)])
         }
-        _ => Err(AltiumFormatError::InvalidParamValue {
-            key: "PcbDoc.save".to_owned(),
-            detail: "unsupported primitive for PcbDoc serialization".to_owned(),
-        }),
+        primitives::PcbPrimitive::Pad(v) => crate::pcb_primitives_serialize::serialize_pad(v),
+        primitives::PcbPrimitive::Region(v) => {
+            Ok(vec![crate::pcb_primitives_serialize::serialize_region(v)])
+        }
+        primitives::PcbPrimitive::ComponentBody(v) => {
+            Ok(vec![crate::pcb_primitives_serialize::serialize_component_body(v)])
+        }
+    }
+}
+
+// ─── Section Writers ───────────────────────────────────────────────────────
+
+/// Creates a storage with Header + Data streams.
+fn write_section_with_header_data(
+    cfb: &mut CfbDocument,
+    name: &str,
+    header_bytes: &[u8],
+    data_bytes: &[u8],
+) -> Result<()> {
+    let storage = format!("/{name}");
+    if !cfb.exists(&storage) {
+        cfb.create_storage(&storage)?;
+    }
+    cfb.write_stream(&format!("{storage}/Header"), header_bytes)?;
+    cfb.write_stream(&format!("{storage}/Data"), data_bytes)?;
+    Ok(())
+}
+
+/// Creates an empty section: Header=[u32 0] + empty Data stream.
+fn write_empty_section(cfb: &mut CfbDocument, name: &str) -> Result<()> {
+    write_section_with_header_data(cfb, name, &0u32.to_le_bytes(), &[])
+}
+
+/// Writes a standard param section: Header=[u32 count], Data=[u32 len][params.to_bytes()]×N.
+fn write_standard_param_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[records::StandardParamRecord],
+) -> Result<()> {
+    let header = (records.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for record in records {
+        let param_bytes = record.params.to_bytes();
+        data.write_u32_le(param_bytes.len() as u32);
+        data.write_bytes(&param_bytes);
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes a prefixed param section: Header=[u32 count],
+/// Data=[u16 prefix][u32 len][params.to_bytes()]×N.
+fn write_prefixed_param_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[records::PrefixedParamRecord],
+) -> Result<()> {
+    let header = (records.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for record in records {
+        let param_bytes = record.params.to_bytes();
+        data.write_u16_le(record.prefix);
+        data.write_u32_le(param_bytes.len() as u32);
+        data.write_bytes(&param_bytes);
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes Connections6 binary section: Header=[u32 count],
+/// Data=[u32 len=43][43-byte payload]×N.
+fn write_binary_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[records::BinaryLenRecord],
+) -> Result<()> {
+    let header = (records.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for record in records {
+        let mut payload = BinaryWriter::new();
+        payload.write_u8(record.common.layer as u8);
+        payload.write_u16_le(record.common.flags);
+        payload.write_i16_le(record.common.net_index);
+        payload.write_i16_le(record.common.unknown_1);
+        payload.write_i16_le(record.common.component_index);
+        payload.write_i16_le(record.common.polygon_index);
+        payload.write_i16_le(record.common.unknown_2);
+        payload.write_coord_point(record.from);
+        payload.write_coord_point(record.to);
+        payload.write_u8(record.from_layer as u8);
+        payload.write_u8(record.to_layer as u8);
+        payload.write_i32_le(record.connection_layer_enum);
+        payload.write_i32_le(record.from_layer_enum);
+        payload.write_i32_le(record.to_layer_enum);
+        let bytes = payload.finish();
+        data.write_u32_le(bytes.len() as u32);
+        data.write_bytes(&bytes);
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes WideStrings6 section: Header=[u32 count],
+/// Data=[u32 index][u32 byte_len][UTF-16LE]×N (sentinel for empty strings).
+fn write_wide_strings6_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[records::WideString6Record],
+) -> Result<()> {
+    use altium_format_types::constants::parsing::WIDE_STRING6_EMPTY_SENTINEL;
+
+    let header = (records.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for record in records {
+        data.write_u32_le(record.index);
+        if record.text.is_empty() {
+            data.write_u32_le(WIDE_STRING6_EMPTY_SENTINEL);
+        } else {
+            let utf16: Vec<u16> = record.text.encode_utf16().chain(std::iter::once(0)).collect();
+            let byte_len = utf16.len() * 2;
+            data.write_u32_le(byte_len as u32);
+            for c in &utf16 {
+                data.write_bytes(&c.to_le_bytes());
+            }
+        }
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes UnionNames section: Header=[u32 format_version],
+/// Data=u32(count) + [u32 union_idx][u32 byte_len][UTF-16LE\0]×N.
+fn write_union_names_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &UnionNamesSectionData,
+) -> Result<()> {
+    let header = section.format_version.to_le_bytes();
+    let mut data = BinaryWriter::new();
+    data.write_u32_le(section.records.len() as u32);
+    for record in &section.records {
+        data.write_u32_le(record.union_index);
+        let utf16: Vec<u16> = record.name.encode_utf16().chain(std::iter::once(0)).collect();
+        let byte_len = utf16.len() * 2;
+        data.write_u32_le(byte_len as u32);
+        for c in &utf16 {
+            data.write_bytes(&c.to_le_bytes());
+        }
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes UnionRelations section: Header=[u32 count],
+/// Data=[i32 parent][i32 child]×N.
+fn write_union_relations_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[records::UnionRelationRecord],
+) -> Result<()> {
+    let header = (records.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for record in records {
+        data.write_i32_le(record.parent_id);
+        data.write_i32_le(record.child_id);
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes SharedUnions section using the shared serializer.
+fn write_shared_unions_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    entries: &[crate::shared_union::SharedUnionEntry],
+) -> Result<()> {
+    let header = (entries.len() as u32).to_le_bytes();
+    let data = crate::shared_union::serialize_shared_union_stream(entries);
+    write_section_with_header_data(cfb, name, &header, &data)
+}
+
+/// Writes UnionFeatures section: Header=[u32 count],
+/// Data=[u32 index][u32 len][params.to_bytes()]×N.
+fn write_union_features_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[records::IndexedParamRecord],
+) -> Result<()> {
+    let header = (records.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for record in records {
+        let param_bytes = record.params.to_bytes();
+        data.write_u32_le(record.index);
+        data.write_u32_le(param_bytes.len() as u32);
+        data.write_bytes(&param_bytes);
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes PrimitiveParameters section: Header=[u32 group_count],
+/// Data=repeating [u32 len][header_params_with_COUNT]([u32 len][param_block])×COUNT.
+fn write_primitive_parameters_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    groups: &[records::PrimitiveParameterGroup],
+) -> Result<()> {
+    let header = (groups.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for group in groups {
+        // Re-insert COUNT that was removed during parsing
+        let mut header_params = group.component_header.clone();
+        header_params.insert("COUNT", group.parameters.len().to_string());
+        let header_bytes = header_params.to_bytes();
+        data.write_u32_le(header_bytes.len() as u32);
+        data.write_bytes(&header_bytes);
+        for param in &group.parameters {
+            let param_bytes = param.to_bytes();
+            data.write_u32_le(param_bytes.len() as u32);
+            data.write_bytes(&param_bytes);
+        }
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes SharedUnionParam section: Header=[u32 group_count],
+/// Data=repeating [u32 len][header_with_HIDDENPRIMITIVESCOUNT]([u32 len][detail])×N.
+fn write_shared_union_param_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    groups: &[records::SharedUnionParamGroup],
+) -> Result<()> {
+    let header = (groups.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for group in groups {
+        // Re-insert HIDDENPRIMITIVESCOUNT that was removed during parsing
+        let mut header_params = group.header.clone();
+        if !group.hidden_primitives.is_empty() {
+            header_params.insert(
+                "HIDDENPRIMITIVESCOUNT",
+                group.hidden_primitives.len().to_string(),
+            );
+        }
+        let header_bytes = header_params.to_bytes();
+        data.write_u32_le(header_bytes.len() as u32);
+        data.write_bytes(&header_bytes);
+        for detail in &group.hidden_primitives {
+            let detail_bytes = detail.to_bytes();
+            data.write_u32_le(detail_bytes.len() as u32);
+            data.write_bytes(&detail_bytes);
+        }
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes ConstraintManager section: Header=[u32 value],
+/// Data=text block containing UTF-16LE encoded base64(zlib(XML)).
+fn write_constraint_manager_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &ConstraintManagerSectionData,
+) -> Result<()> {
+    use base64::Engine;
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let header = section.header_value.to_le_bytes();
+
+    // XML → zlib compress → base64 encode → UTF-16LE → block
+    // Note: even empty XML goes through this path to produce the correct
+    // base64(zlib("")) representation (e.g. "eNoDAAAAAAAAE=") matching Altium.
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(section.xml.as_bytes()).map_err(|e| {
+        AltiumFormatError::DecompressionError(format!("zlib compress failed: {e}"))
+    })?;
+    let compressed = encoder.finish().map_err(|e| {
+        AltiumFormatError::DecompressionError(format!("zlib compress finish failed: {e}"))
+    })?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&compressed);
+    // Encode as UTF-16LE with NUL terminator
+    let utf16: Vec<u16> = b64.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut utf16_bytes = Vec::with_capacity(utf16.len() * 2);
+    for c in &utf16 {
+        utf16_bytes.extend_from_slice(&c.to_le_bytes());
+    }
+    let data = crate::block_stream::write_text_block(&utf16_bytes);
+    write_section_with_header_data(cfb, name, &header, &data)
+}
+
+/// Writes PrimitiveGuids section: Header=[u32 count],
+/// Data=count × 24-byte records {i32 obj_id, i32 index, [u8;16] guid}.
+fn write_primitive_guids_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    entries: &[crate::pcblib::sidecar::PrimitiveGuidEntryPcbDoc],
+) -> Result<()> {
+    let header = (entries.len() as u32).to_le_bytes();
+    let mut data = BinaryWriter::new();
+    for entry in entries {
+        data.write_i32_le(entry.object_id_raw);
+        data.write_i32_le(entry.index_for_save);
+        data.write_bytes(&entry.guid);
+    }
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes DrillManager section: Header=[u32 0],
+/// Data=i32(-1) + u32(count) + records + u32(0) trailing.
+fn write_drill_manager_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    records: &[DrillManagerRecord],
+) -> Result<()> {
+    let header = 0u32.to_le_bytes();
+    let mut data = BinaryWriter::new();
+    data.write_i32_le(-1); // sentinel
+    data.write_u32_le(records.len() as u32);
+    for record in records {
+        let param_bytes = record.params.to_bytes();
+        data.write_u32_le(param_bytes.len() as u32);
+        data.write_bytes(&param_bytes);
+        data.write_u32_le(record.pad_indices.len() as u32);
+        for &idx in &record.pad_indices {
+            data.write_u32_le(idx);
+        }
+        data.write_u32_le(record.via_indices.len() as u32);
+        for &idx in &record.via_indices {
+            data.write_u32_le(idx);
+        }
+    }
+    data.write_u32_le(0); // trailing
+    write_section_with_header_data(cfb, name, &header, &data.finish())
+}
+
+/// Writes LettersGeometry section: 3 streams (Header, PrimIndexes, Data).
+fn write_letters_geometry_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &LettersGeometrySectionData,
+) -> Result<()> {
+    let storage = format!("/{name}");
+    if !cfb.exists(&storage) {
+        cfb.create_storage(&storage)?;
+    }
+    cfb.write_stream(
+        &format!("{storage}/Header"),
+        &section.header_count.to_le_bytes(),
+    )?;
+    cfb.write_stream(&format!("{storage}/PrimIndexes"), &section.prim_indexes)?;
+    cfb.write_stream(&format!("{storage}/Data"), &section.data)?;
+    Ok(())
+}
+
+/// Writes Models section: metadata in Header+Data, plus numbered blob streams.
+fn write_models_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &ModelsSectionData,
+) -> Result<()> {
+    use crate::pcblib::serialize_model_entries_data;
+
+    let storage = format!("/{name}");
+    if !cfb.exists(&storage) {
+        cfb.create_storage(&storage)?;
+    }
+
+    let header = (section.metadata.len() as u32).to_le_bytes();
+    let data = if section.metadata.is_empty() {
+        Vec::new()
+    } else {
+        serialize_model_entries_data(&section.metadata)
+    };
+    cfb.write_stream(&format!("{storage}/Header"), &header)?;
+    cfb.write_stream(&format!("{storage}/Data"), &data)?;
+
+    for (blob_name, blob_data) in &section.blobs {
+        cfb.write_stream(&format!("{storage}/{blob_name}"), blob_data)?;
+    }
+    Ok(())
+}
+
+/// Writes EmbeddedFonts6 section.
+///
+/// PcbDoc stores the entry count in the separate Header stream, while
+/// `serialize_embedded_fonts` (from PcbLib) includes it as a u32 prefix.
+/// We strip the 4-byte prefix to avoid double-counting.
+fn write_embedded_fonts_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &EmbeddedFontsSectionData,
+) -> Result<()> {
+    use crate::pcblib::serialize_embedded_fonts;
+    let header = section.header_count.to_le_bytes();
+    let data = if section.entries.is_empty() {
+        Vec::new()
+    } else {
+        let full = serialize_embedded_fonts(&section.entries);
+        // Strip the leading u32 count prefix — PcbDoc stores count in Header
+        full[4..].to_vec()
+    };
+    write_section_with_header_data(cfb, name, &header, &data)
+}
+
+/// Writes PadViaLibrary section using the PcbLib serializer.
+fn write_pad_via_library_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &PadViaLibrarySectionData,
+) -> Result<()> {
+    use crate::pcblib::serialize_pad_via_library;
+    match &section.config {
+        Some(cfg) => {
+            let header = (cfg.templates.len() as u32).to_le_bytes();
+            let data = serialize_pad_via_library(cfg);
+            write_section_with_header_data(cfb, name, &header, &data)
+        }
+        None => write_empty_section(cfb, name),
+    }
+}
+
+/// Writes LayerKindMapping section using the PcbLib serializer.
+fn write_layer_kind_mapping_section(
+    cfb: &mut CfbDocument,
+    name: &str,
+    section: &LayerKindMappingSectionData,
+) -> Result<()> {
+    use crate::pcblib::serialize_layer_kind_mapping;
+    let header = section.header_value.to_le_bytes();
+    let data = serialize_layer_kind_mapping(&section.mapping);
+    write_section_with_header_data(cfb, name, &header, &data)
+}
+
+/// Writes a single PcbDocSection to the CFB document.
+fn write_section(cfb: &mut CfbDocument, section: &PcbDocSection) -> Result<()> {
+    match section {
+        PcbDocSection::Primitive(s) => {
+            write_primitive_section(cfb, s.kind.to_storage_name(), &s.records)
+        }
+        PcbDocSection::Parameter(s) => {
+            write_standard_param_section(cfb, s.kind.to_storage_name(), &s.records)
+        }
+        PcbDocSection::Binary(s) => {
+            write_binary_section(cfb, s.kind.to_storage_name(), &s.records)
+        }
+        PcbDocSection::UnionNames(s) => write_union_names_section(cfb, "UnionNames", s),
+        PcbDocSection::SharedUnions(s) => {
+            write_shared_unions_section(cfb, "SharedUnions", &s.entries)
+        }
+        PcbDocSection::UnionRelations(s) => {
+            write_union_relations_section(cfb, "UnionRelations", &s.records)
+        }
+        PcbDocSection::PrefixedParameter(s) => {
+            write_prefixed_param_section(cfb, s.kind.to_storage_name(), &s.records)
+        }
+        PcbDocSection::WideStrings(s) => {
+            write_wide_strings6_section(cfb, "WideStrings6", &s.entries)
+        }
+        PcbDocSection::Models(s) => write_models_section(cfb, "Models", s),
+        PcbDocSection::EmbeddedFonts(s) => write_embedded_fonts_section(cfb, "EmbeddedFonts6", s),
+        PcbDocSection::PadViaLibrary(s) => {
+            write_pad_via_library_section(cfb, &s.section_name, s)
+        }
+        PcbDocSection::LayerKindMapping(s) => {
+            write_layer_kind_mapping_section(cfb, "LayerKindMapping", s)
+        }
+        PcbDocSection::PrimitiveParameters(s) => {
+            write_primitive_parameters_section(cfb, "PrimitiveParameters", &s.groups)
+        }
+        PcbDocSection::UnionFeatures(s) => {
+            write_union_features_section(cfb, "UnionFeatures", &s.records)
+        }
+        PcbDocSection::SharedUnionParam(s) => {
+            write_shared_union_param_section(cfb, "SharedUnion", &s.groups)
+        }
+        PcbDocSection::ConstraintManager(s) => {
+            write_constraint_manager_section(cfb, "ConstraintManager", s)
+        }
+        PcbDocSection::PrimitiveGuids(s) => {
+            write_primitive_guids_section(cfb, "PrimitiveGuids", &s.entries)
+        }
+        PcbDocSection::DrillManager(s) => {
+            write_drill_manager_section(cfb, "DrillManager", &s.records)
+        }
+        PcbDocSection::LettersGeometry(s) => {
+            write_letters_geometry_section(cfb, "LettersGeometry", s)
+        }
     }
 }
 

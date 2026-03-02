@@ -17,6 +17,8 @@ mod param_value;
 #[allow(dead_code)]
 mod pcb_binary_stream;
 #[allow(dead_code)]
+mod pcb_primitives_serialize;
+#[allow(dead_code)]
 mod pcb_file_header;
 #[allow(dead_code)]
 mod prefixed_param_stream;
