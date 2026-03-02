@@ -119,11 +119,9 @@ pub(crate) fn serialize_via(p: &PcbVia) -> Vec<u8> {
         }
     }
 
-    // Template link block (size-prefixed)
+    // Template link block (size-prefixed, always latest ext_size=45)
     if let Some(version) = p.template_link_version {
-        // Determine ext_size: 41 (core) + 1 (flags) + 3 (trailing) = 45
-        let ext_size: u32 = if p.template_link_flags.is_some() { 45 } else { 41 };
-        w.write_u32_le(ext_size);
+        w.write_u32_le(45); // latest format: core(41) + flags(1) + trailing(3)
         w.write_u8(version);
         w.write_bytes(&p.template_link_library_id.unwrap_or([0u8; 16]));
         w.write_bytes(&p.template_link_template_id.unwrap_or([0u8; 16]));
@@ -138,73 +136,69 @@ pub(crate) fn serialize_via(p: &PcbVia) -> Vec<u8> {
                 .map(|c| c.to_internal())
                 .unwrap_or(i32::MAX),
         );
-        if let Some(flags) = p.template_link_flags {
-            w.write_u8(flags);
-            w.write_bytes(&[0u8; 3]); // trailing RevisionID (always zeros)
-        }
+        w.write_u8(p.template_link_flags.unwrap_or(0));
+        w.write_bytes(&[0u8; 3]); // trailing RevisionID (always zeros)
     }
 
-    // Section 4: Per-layer pad stack entries
-    if !p.pad_layer_entries.is_empty() || p.template_link_version.is_some() {
-        w.write_u32_le(p.pad_layer_entries.len() as u32);
-        let stride = if p.pad_layer_entries.is_empty() {
-            0u32
-        } else if p.pad_layer_stride > 0 {
-            p.pad_layer_stride
-        } else {
-            30 // default to latest stride
-        };
-        w.write_u32_le(stride);
-        for entry in &p.pad_layer_entries {
-            w.write_u32_le(entry.layer_id);
-            w.write_u8(entry.shape as u8);
-            w.write_u8(entry.mode as u8);
-            w.write_coord(entry.solder_mask_expansion);
-            match stride {
-                30 => {
-                    w.write_coord(entry.paste_mask_expansion.unwrap_or(Coord::ZERO));
-                    w.write_u8(entry.plane_connection_style as u8);
-                    w.write_i16_le(entry.relief_entries as i16);
-                    w.write_u16_le(0); // reserved_17
-                    w.write_coord(entry.relief_conductor_width.unwrap_or(Coord::ZERO));
-                    w.write_u8(0); // reserved_23
-                    w.write_coord(entry.relief_air_gap.unwrap_or(Coord::ZERO));
-                    w.write_u16_le(0); // reserved_28
+    // Section 4: Per-layer pad stack entries (always written in latest format).
+    // Uses stride 30 (latest) for new entries, preserves original stride for roundtrip.
+    w.write_u32_le(p.pad_layer_entries.len() as u32);
+    let stride = if p.pad_layer_entries.is_empty() {
+        0u32
+    } else if p.pad_layer_stride > 0 {
+        p.pad_layer_stride
+    } else {
+        30 // default to latest stride
+    };
+    w.write_u32_le(stride);
+    for entry in &p.pad_layer_entries {
+        w.write_u32_le(entry.layer_id);
+        w.write_u8(entry.shape as u8);
+        w.write_u8(entry.mode as u8);
+        w.write_coord(entry.solder_mask_expansion);
+        match stride {
+            30 => {
+                w.write_coord(entry.paste_mask_expansion.unwrap_or(Coord::ZERO));
+                w.write_u8(entry.plane_connection_style as u8);
+                w.write_i16_le(entry.relief_entries as i16);
+                w.write_u16_le(0); // reserved_17
+                w.write_coord(entry.relief_conductor_width.unwrap_or(Coord::ZERO));
+                w.write_u8(0); // reserved_23
+                w.write_coord(entry.relief_air_gap.unwrap_or(Coord::ZERO));
+                w.write_u16_le(0); // reserved_28
+            }
+            29 => {
+                w.write_coord(entry.relief_conductor_width.unwrap_or(Coord::ZERO));
+                w.write_u8(entry.plane_connection_style as u8);
+                w.write_i16_le(entry.relief_entries as i16);
+                w.write_u16_le(0); // reserved_17
+                w.write_i32_le(0); // reserved_i32
+                w.write_u8(0); // reserved_23
+                w.write_coord(entry.relief_air_gap.unwrap_or(Coord::ZERO));
+                w.write_u8(0); // reserved_28
+            }
+            23 | 24 => {
+                w.write_coord(entry.relief_conductor_width.unwrap_or(Coord::ZERO));
+                w.write_u8(entry.plane_connection_style as u8);
+                w.write_i32_le(entry.relief_entries);
+                let trailing_len = (stride - 19) as usize;
+                for i in 0..trailing_len {
+                    w.write_u8(((entry.trailing_flags >> (i * 8)) & 0xFF) as u8);
                 }
-                29 => {
-                    w.write_coord(entry.relief_conductor_width.unwrap_or(Coord::ZERO));
-                    w.write_u8(entry.plane_connection_style as u8);
-                    w.write_i16_le(entry.relief_entries as i16);
-                    w.write_u16_le(0); // reserved_17
-                    w.write_i32_le(0); // reserved_i32
-                    w.write_u8(0); // reserved_23
-                    w.write_coord(entry.relief_air_gap.unwrap_or(Coord::ZERO));
-                    w.write_u8(0); // reserved_28
-                }
-                23 | 24 => {
-                    w.write_coord(entry.relief_conductor_width.unwrap_or(Coord::ZERO));
-                    w.write_u8(entry.plane_connection_style as u8);
-                    w.write_i32_le(entry.relief_entries);
-                    let trailing_len = (stride - 19) as usize;
-                    for i in 0..trailing_len {
-                        w.write_u8(((entry.trailing_flags >> (i * 8)) & 0xFF) as u8);
-                    }
-                }
-                _ => {
-                    // stride=0 means no entries, already handled by empty check
-                }
+            }
+            _ => {
+                // stride=0 means no entries, already handled by empty check
             }
         }
     }
 
-    // Section 5: IPC-4761 / via structure
+    // Section 5: IPC-4761 / via structure (always written in latest format).
     if let Some(angle) = p.counter_hole_angle {
         w.write_u32_le(9); // section5_size
         w.write_f64_le(angle);
         w.write_u8(p.via_structure_type.unwrap_or(ViaStructureType::None) as u8);
-    } else if p.template_link_version.is_some() {
-        // Write the 4-byte placeholder form when template link is present
-        // but no counter_hole_angle was parsed
+    } else {
+        // Placeholder form: 4-byte size + 4 zero bytes
         w.write_u32_le(4);
         w.write_u32_le(0);
     }

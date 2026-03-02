@@ -210,8 +210,8 @@ pub(crate) struct PcbVia {
     pub(crate) paste_mask_override: bool,
     pub(crate) solder_mask_expansion_linked: bool,
     pub(crate) solder_mask_expansion_back: Coord,
-    // Via template link extended block (after section2, 46-byte trailing data).
-    // Present in AD26 files from ~2019+. Format: u8 version + GUID[16] + GUID[16] + i32 HolePosTol + i32 HoleNegTol + u8 flags.
+    // Via template link extended block (after section2).
+    // Present in AD26 files from ~2019+. Format: u8 version + GUID[16] + GUID[16] + i32 HolePosTol + i32 HoleNegTol + optional flags/trailing.
     pub(crate) template_link_version: Option<u8>,
     pub(crate) template_link_library_id: Option<[u8; 16]>,
     pub(crate) template_link_template_id: Option<[u8; 16]>,

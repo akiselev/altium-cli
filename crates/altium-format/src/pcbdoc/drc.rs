@@ -1514,8 +1514,8 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
 ///
 /// Most fields use `tier2` (always write) because Altium writes them even at default values.
 /// Most fields use `tier2` (always write) because Altium writes them even at default values.
-/// `INVOLVEDPRIMCOUNT` uses T1 (skip when 0) because most violation types omit it when zero;
-/// only a few types (DiffPairs, some Clearance) redundantly include it.
+/// `INVOLVEDPRIMCOUNT` uses tier2 (always write) because Altium always includes it,
+/// even when zero.
 #[derive(FromParams, ToParams, Debug)]
 pub(crate) struct PcbViolationBase {
     #[param(tier2, key = "SELECTION", default = false)]
@@ -1540,7 +1540,7 @@ pub(crate) struct PcbViolationBase {
     pub prim1_index: u32,
     #[param(tier2, key = "DESCRIPTION", default = String::new())]
     pub description: String,
-    #[param(key = "INVOLVEDPRIMCOUNT", default = 0u32)]
+    #[param(tier2, key = "INVOLVEDPRIMCOUNT", default = 0u32)]
     pub involved_prim_count: u32,
 }
 

@@ -207,6 +207,39 @@ impl SchDocSheet {
             _ => None,
         }).collect()
     }
+
+    // ── Mutation methods ──────────────────────────────────────
+
+    /// Add a sheet-level object.
+    pub fn add_object(&mut self, obj: SheetObject) {
+        self.objects.push(obj);
+    }
+
+    /// Remove all objects matching a predicate.
+    pub fn remove_objects(&mut self, mut f: impl FnMut(&SheetObject) -> bool) {
+        self.objects.retain(|o| !f(o));
+    }
+
+    /// Find a placed component by designator (mutable).
+    pub fn component_mut(&mut self, designator: &str) -> Option<&mut SchDocComponent> {
+        self.objects.iter_mut().find_map(|o| match o {
+            SheetObject::Component(c) if c.designator == designator => Some(c),
+            _ => None,
+        })
+    }
+
+    /// Add a child to a placed component identified by designator.
+    ///
+    /// Returns `true` if the component was found and the child was added,
+    /// `false` if no component with that designator exists.
+    pub fn add_component_child(&mut self, designator: &str, child: ComponentChild) -> bool {
+        if let Some(comp) = self.component_mut(designator) {
+            comp.children.push(child);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 // ── SheetObject ──────────────────────────────────────────────────────────────

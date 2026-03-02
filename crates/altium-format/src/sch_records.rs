@@ -2213,6 +2213,244 @@ pub(crate) enum SchRecord {
     HighLevelCodeFileName(SchSheetFileName),
 }
 
+impl SchRecord {
+    /// Get a reference to the unique_id field, if the variant has one.
+    ///
+    /// Returns `None` for variants without a unique_id: Sheet, Template,
+    /// Symbol, Pie, ImplementationList, MapDefiner, ParameterList.
+    pub(crate) fn unique_id(&self) -> Option<&str> {
+        match self {
+            // Variants WITHOUT unique_id
+            Self::Sheet(_)
+            | Self::Template(_)
+            | Self::Symbol(_)
+            | Self::Pie(_)
+            | Self::ImplementationList(_)
+            | Self::MapDefiner(_)
+            | Self::ParameterList(_) => None,
+
+            // Variants with unique_id on a named field
+            Self::Wire(v) => Some(&v.unique_id),
+            Self::Bus(v) => Some(&v.unique_id),
+            Self::NetLabel(v) => Some(&v.unique_id),
+            Self::PowerObject(v) => Some(&v.unique_id),
+            Self::Port(v) => Some(&v.unique_id),
+            Self::NoConnect(v) => Some(&v.unique_id),
+            Self::Junction(v) => Some(&v.unique_id),
+            Self::SheetName(v) => Some(&v.unique_id),
+            Self::SheetFileName(v) => Some(&v.unique_id),
+            Self::SheetSymbol(v) => Some(&v.unique_id),
+            Self::SheetEntry(v) => Some(&v.unique_id),
+            Self::BusEntry(v) => Some(&v.unique_id),
+            Self::ParameterSet(v) => Some(&v.unique_id),
+            Self::Note(v) => Some(&v.unique_id),
+            Self::Probe(v) => Some(&v.unique_id),
+            Self::CompileMask(v) => Some(&v.unique_id),
+            Self::Blanket(v) => Some(&v.unique_id),
+            Self::Component(v) => Some(&v.unique_id),
+            Self::Pin(v) => Some(&v.unique_id),
+            Self::Line(v) => Some(&v.unique_id),
+            Self::Rectangle(v) => Some(&v.unique_id),
+            Self::RoundRectangle(v) => Some(&v.unique_id),
+            Self::Arc(v) => Some(&v.unique_id),
+            Self::EllipticalArc(v) => Some(&v.unique_id),
+            Self::Ellipse(v) => Some(&v.unique_id),
+            Self::Polyline(v) => Some(&v.unique_id),
+            Self::Polygon(v) => Some(&v.unique_id),
+            Self::Bezier(v) => Some(&v.unique_id),
+            Self::Image(v) => Some(&v.unique_id),
+            Self::Label(v) => Some(&v.unique_id),
+            Self::Hyperlink(v) => Some(&v.unique_id),
+            Self::Designator(v) => Some(&v.unique_id),
+            Self::Parameter(v) => Some(&v.unique_id),
+            Self::TextFrame(v) => Some(&v.unique_id),
+            Self::Implementation(v) => Some(&v.unique_id),
+            Self::ImplementationMap(v) => Some(&v.unique_id),
+            Self::HarnessConnector(v) => Some(&v.unique_id),
+            Self::HarnessEntry(v) => Some(&v.unique_id),
+            Self::HarnessConnectorType(v) => Some(&v.unique_id),
+            Self::SignalHarness(v) => Some(&v.unique_id),
+            Self::HighLevelCodeSymbol(v) => Some(&v.unique_id),
+            Self::HighLevelCodeEntry(v) => Some(&v.unique_id),
+            Self::HighLevelCodeName(v) => Some(&v.unique_id),
+            Self::HighLevelCodeFileName(v) => Some(&v.unique_id),
+        }
+    }
+
+    /// Get a mutable reference to the unique_id field, if the variant has one.
+    pub(crate) fn unique_id_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Sheet(_)
+            | Self::Template(_)
+            | Self::Symbol(_)
+            | Self::Pie(_)
+            | Self::ImplementationList(_)
+            | Self::MapDefiner(_)
+            | Self::ParameterList(_) => None,
+
+            Self::Wire(v) => Some(&mut v.unique_id),
+            Self::Bus(v) => Some(&mut v.unique_id),
+            Self::NetLabel(v) => Some(&mut v.unique_id),
+            Self::PowerObject(v) => Some(&mut v.unique_id),
+            Self::Port(v) => Some(&mut v.unique_id),
+            Self::NoConnect(v) => Some(&mut v.unique_id),
+            Self::Junction(v) => Some(&mut v.unique_id),
+            Self::SheetName(v) => Some(&mut v.unique_id),
+            Self::SheetFileName(v) => Some(&mut v.unique_id),
+            Self::SheetSymbol(v) => Some(&mut v.unique_id),
+            Self::SheetEntry(v) => Some(&mut v.unique_id),
+            Self::BusEntry(v) => Some(&mut v.unique_id),
+            Self::ParameterSet(v) => Some(&mut v.unique_id),
+            Self::Note(v) => Some(&mut v.unique_id),
+            Self::Probe(v) => Some(&mut v.unique_id),
+            Self::CompileMask(v) => Some(&mut v.unique_id),
+            Self::Blanket(v) => Some(&mut v.unique_id),
+            Self::Component(v) => Some(&mut v.unique_id),
+            Self::Pin(v) => Some(&mut v.unique_id),
+            Self::Line(v) => Some(&mut v.unique_id),
+            Self::Rectangle(v) => Some(&mut v.unique_id),
+            Self::RoundRectangle(v) => Some(&mut v.unique_id),
+            Self::Arc(v) => Some(&mut v.unique_id),
+            Self::EllipticalArc(v) => Some(&mut v.unique_id),
+            Self::Ellipse(v) => Some(&mut v.unique_id),
+            Self::Polyline(v) => Some(&mut v.unique_id),
+            Self::Polygon(v) => Some(&mut v.unique_id),
+            Self::Bezier(v) => Some(&mut v.unique_id),
+            Self::Image(v) => Some(&mut v.unique_id),
+            Self::Label(v) => Some(&mut v.unique_id),
+            Self::Hyperlink(v) => Some(&mut v.unique_id),
+            Self::Designator(v) => Some(&mut v.unique_id),
+            Self::Parameter(v) => Some(&mut v.unique_id),
+            Self::TextFrame(v) => Some(&mut v.unique_id),
+            Self::Implementation(v) => Some(&mut v.unique_id),
+            Self::ImplementationMap(v) => Some(&mut v.unique_id),
+            Self::HarnessConnector(v) => Some(&mut v.unique_id),
+            Self::HarnessEntry(v) => Some(&mut v.unique_id),
+            Self::HarnessConnectorType(v) => Some(&mut v.unique_id),
+            Self::SignalHarness(v) => Some(&mut v.unique_id),
+            Self::HighLevelCodeSymbol(v) => Some(&mut v.unique_id),
+            Self::HighLevelCodeEntry(v) => Some(&mut v.unique_id),
+            Self::HighLevelCodeName(v) => Some(&mut v.unique_id),
+            Self::HighLevelCodeFileName(v) => Some(&mut v.unique_id),
+        }
+    }
+
+    /// Get a reference to the base fields.
+    ///
+    /// Component and Pin have their own ownership fields rather than a nested
+    /// `SchPrimitiveBase`, so this returns `None` for them.
+    pub(crate) fn base(&self) -> Option<&SchPrimitiveBase> {
+        match self {
+            Self::Component(_) | Self::Pin(_) => None,
+            Self::Sheet(v) => Some(&v.base),
+            Self::Template(v) => Some(&v.base),
+            Self::Wire(v) => Some(&v.base),
+            Self::Bus(v) => Some(&v.base),
+            Self::NetLabel(v) => Some(&v.base),
+            Self::PowerObject(v) => Some(&v.base),
+            Self::Port(v) => Some(&v.base),
+            Self::NoConnect(v) => Some(&v.base),
+            Self::Junction(v) => Some(&v.base),
+            Self::SheetName(v) => Some(&v.base),
+            Self::SheetFileName(v) => Some(&v.base),
+            Self::SheetSymbol(v) => Some(&v.base),
+            Self::SheetEntry(v) => Some(&v.base),
+            Self::BusEntry(v) => Some(&v.base),
+            Self::ParameterSet(v) => Some(&v.base),
+            Self::Note(v) => Some(&v.base),
+            Self::Probe(v) => Some(&v.base),
+            Self::CompileMask(v) => Some(&v.base),
+            Self::Blanket(v) => Some(&v.base),
+            Self::Symbol(v) => Some(&v.base),
+            Self::Line(v) => Some(&v.base),
+            Self::Rectangle(v) => Some(&v.base),
+            Self::RoundRectangle(v) => Some(&v.base),
+            Self::Arc(v) => Some(&v.base),
+            Self::EllipticalArc(v) => Some(&v.base),
+            Self::Ellipse(v) => Some(&v.base),
+            Self::Pie(v) => Some(&v.base),
+            Self::Polyline(v) => Some(&v.base),
+            Self::Polygon(v) => Some(&v.base),
+            Self::Bezier(v) => Some(&v.base),
+            Self::Image(v) => Some(&v.base),
+            Self::Label(v) => Some(&v.base),
+            Self::Hyperlink(v) => Some(&v.base),
+            Self::Designator(v) => Some(&v.base),
+            Self::Parameter(v) => Some(&v.base),
+            Self::TextFrame(v) => Some(&v.base),
+            Self::ImplementationList(v) => Some(&v.base),
+            Self::Implementation(v) => Some(&v.base),
+            Self::ImplementationMap(v) => Some(&v.base),
+            Self::MapDefiner(v) => Some(&v.base),
+            Self::ParameterList(v) => Some(&v.base),
+            Self::HarnessConnector(v) => Some(&v.base),
+            Self::HarnessEntry(v) => Some(&v.base),
+            Self::HarnessConnectorType(v) => Some(&v.base),
+            Self::SignalHarness(v) => Some(&v.base),
+            Self::HighLevelCodeSymbol(v) => Some(&v.base),
+            Self::HighLevelCodeEntry(v) => Some(&v.base),
+            Self::HighLevelCodeName(v) => Some(&v.base),
+            Self::HighLevelCodeFileName(v) => Some(&v.base),
+        }
+    }
+
+    /// Get a mutable reference to the base fields.
+    pub(crate) fn base_mut(&mut self) -> Option<&mut SchPrimitiveBase> {
+        match self {
+            Self::Component(_) | Self::Pin(_) => None,
+            Self::Sheet(v) => Some(&mut v.base),
+            Self::Template(v) => Some(&mut v.base),
+            Self::Wire(v) => Some(&mut v.base),
+            Self::Bus(v) => Some(&mut v.base),
+            Self::NetLabel(v) => Some(&mut v.base),
+            Self::PowerObject(v) => Some(&mut v.base),
+            Self::Port(v) => Some(&mut v.base),
+            Self::NoConnect(v) => Some(&mut v.base),
+            Self::Junction(v) => Some(&mut v.base),
+            Self::SheetName(v) => Some(&mut v.base),
+            Self::SheetFileName(v) => Some(&mut v.base),
+            Self::SheetSymbol(v) => Some(&mut v.base),
+            Self::SheetEntry(v) => Some(&mut v.base),
+            Self::BusEntry(v) => Some(&mut v.base),
+            Self::ParameterSet(v) => Some(&mut v.base),
+            Self::Note(v) => Some(&mut v.base),
+            Self::Probe(v) => Some(&mut v.base),
+            Self::CompileMask(v) => Some(&mut v.base),
+            Self::Blanket(v) => Some(&mut v.base),
+            Self::Symbol(v) => Some(&mut v.base),
+            Self::Line(v) => Some(&mut v.base),
+            Self::Rectangle(v) => Some(&mut v.base),
+            Self::RoundRectangle(v) => Some(&mut v.base),
+            Self::Arc(v) => Some(&mut v.base),
+            Self::EllipticalArc(v) => Some(&mut v.base),
+            Self::Ellipse(v) => Some(&mut v.base),
+            Self::Pie(v) => Some(&mut v.base),
+            Self::Polyline(v) => Some(&mut v.base),
+            Self::Polygon(v) => Some(&mut v.base),
+            Self::Bezier(v) => Some(&mut v.base),
+            Self::Image(v) => Some(&mut v.base),
+            Self::Label(v) => Some(&mut v.base),
+            Self::Hyperlink(v) => Some(&mut v.base),
+            Self::Designator(v) => Some(&mut v.base),
+            Self::Parameter(v) => Some(&mut v.base),
+            Self::TextFrame(v) => Some(&mut v.base),
+            Self::ImplementationList(v) => Some(&mut v.base),
+            Self::Implementation(v) => Some(&mut v.base),
+            Self::ImplementationMap(v) => Some(&mut v.base),
+            Self::MapDefiner(v) => Some(&mut v.base),
+            Self::ParameterList(v) => Some(&mut v.base),
+            Self::HarnessConnector(v) => Some(&mut v.base),
+            Self::HarnessEntry(v) => Some(&mut v.base),
+            Self::HarnessConnectorType(v) => Some(&mut v.base),
+            Self::SignalHarness(v) => Some(&mut v.base),
+            Self::HighLevelCodeSymbol(v) => Some(&mut v.base),
+            Self::HighLevelCodeEntry(v) => Some(&mut v.base),
+            Self::HighLevelCodeName(v) => Some(&mut v.base),
+            Self::HighLevelCodeFileName(v) => Some(&mut v.base),
+        }
+    }
+}
+
 // ── SchLibComponent ───────────────────────────────────────────────────────────
 
 /// A single component entry in a SchLib file, holding its component record and

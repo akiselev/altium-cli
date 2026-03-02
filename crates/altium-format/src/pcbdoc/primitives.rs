@@ -91,7 +91,8 @@ pub(crate) struct PcbText {
     pub(crate) barcode_font_name: String,
     pub(crate) barcode_min_pixel_size: i32,
     pub(crate) barcode_show_text: bool,
-    pub(crate) has_v7_layer_data: bool,
+    /// None = V7 layer block not present in record, Some(v) = block present with this value.
+    pub(crate) has_v7_layer_data: Option<bool>,
     pub(crate) layer_enum_index: i32,
     pub(crate) sentinel_1: i32,
     pub(crate) sentinel_2: i32,
@@ -412,7 +413,7 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
     let mut barcode_font_name = String::new();
     let mut barcode_min_pixel_size = 0;
     let mut barcode_show_text = false;
-    let mut has_v7_layer_data = false;
+    let mut has_v7_layer_data: Option<bool> = None;
     let mut layer_enum_index = 0;
     let mut sentinel_1 = 0;
     let mut sentinel_2 = 0;
@@ -478,7 +479,7 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
     }
 
     if reader.remaining() >= 22 {
-        has_v7_layer_data = reader.read_bool()?;
+        has_v7_layer_data = Some(reader.read_bool()?);
         layer_enum_index = reader.read_i32_le()?;
         sentinel_1 = reader.read_i32_le()?;
         sentinel_2 = reader.read_i32_le()?;
@@ -491,8 +492,25 @@ fn parse_text_subrecords(subrecord_1: &[u8], subrecord_2: &[u8]) -> Result<PcbTe
     }
 
     reader.assert_exhausted()?;
-    let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(subrecord_2);
-    let text = decoded.trim_end_matches('\0').to_owned();
+    // Subrecord 2 is a pascal string: u8 length prefix + Windows-1252 text bytes.
+    let text = if subrecord_2.is_empty() {
+        String::new()
+    } else {
+        let pascal_len = subrecord_2[0] as usize;
+        let text_bytes = &subrecord_2[1..];
+        if text_bytes.len() != pascal_len {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "Text subrecord 2 pascal length".to_owned(),
+                detail: format!(
+                    "pascal prefix says {} but {} bytes follow",
+                    pascal_len,
+                    text_bytes.len()
+                ),
+            });
+        }
+        let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(text_bytes);
+        decoded.into_owned()
+    };
 
     Ok(PcbText {
         common,

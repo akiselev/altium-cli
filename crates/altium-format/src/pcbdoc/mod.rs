@@ -576,7 +576,7 @@ impl PcbDoc {
         // 1. Write /FileHeader (legacy UTF-16LE header)
         cfb.write_stream(
             &format!("/{FILE_HEADER}"),
-            &serialize_pcb_legacy_header(&self.legacy_header),
+            &serialize_pcb_legacy_header(&self.legacy_header, self.header.version_string.len()),
         )?;
 
         // 2. Write /FileHeaderSix (pascal-block header)
@@ -900,10 +900,15 @@ fn section_identity(section: &PcbDocSection) -> String {
 }
 
 /// Serialize PcbDoc legacy /FileHeader: u32 char_count + UTF-16LE payload.
-fn serialize_pcb_legacy_header(header: &str) -> Vec<u8> {
+///
+/// The char_count field stores the length of the full version string (e.g., 19 for
+/// "PCB 5.0 Binary File"), even though the UTF-16LE payload in the stream is truncated
+/// to only 10 code units. This is a known Altium quirk observed consistently across
+/// all PcbDoc files.
+fn serialize_pcb_legacy_header(header: &str, version_string_len: usize) -> Vec<u8> {
     let utf16: Vec<u16> = header.encode_utf16().collect();
     let mut w = BinaryWriter::new();
-    w.write_u32_le(utf16.len() as u32);
+    w.write_u32_le(version_string_len as u32);
     for c in &utf16 {
         w.write_bytes(&c.to_le_bytes());
     }
@@ -1045,28 +1050,42 @@ fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Vec<Vec<u8>> {
     w.write_wide_string_fixed(&p.barcode_font_name, 32);
     w.write_i32_le(p.barcode_min_pixel_size);
     w.write_bool(p.barcode_show_text);
-    // Advance group (22 bytes)
-    w.write_u8(p.advance_snapping.unwrap_or(0));
-    w.write_u8(p.advance_mode.unwrap_or(0));
-    w.write_i32_le(p.advance_justification_x.unwrap_or(0));
-    w.write_i32_le(p.advance_justification_y.unwrap_or(0));
-    w.write_i32_le(p.use_text_alignment_by_snap.unwrap_or(0));
-    w.write_i32_le(p.snap_point_x.unwrap_or(0));
-    w.write_i32_le(p.snap_point_y.unwrap_or(0));
-    // V7 layer block (21 bytes)
-    w.write_bool(p.has_v7_layer_data);
-    w.write_i32_le(p.layer_enum_index);
-    w.write_i32_le(p.sentinel_1);
-    w.write_i32_le(p.sentinel_2);
-    w.write_i32_le(p.trailing_flag_1);
-    w.write_i32_le(p.trailing_flag_2);
+    // Advance group: only write fields that were present in the original record.
+    // The parser reads these conditionally based on remaining bytes.
+    if let Some(snapping) = p.advance_snapping {
+        w.write_u8(snapping);
+        w.write_u8(p.advance_mode.unwrap_or(0));
+        if let Some(jx) = p.advance_justification_x {
+            w.write_i32_le(jx);
+            w.write_i32_le(p.advance_justification_y.unwrap_or(0));
+            if let Some(align) = p.use_text_alignment_by_snap {
+                w.write_i32_le(align);
+                if let Some(sx) = p.snap_point_x {
+                    w.write_i32_le(sx);
+                    w.write_i32_le(p.snap_point_y.unwrap_or(0));
+                }
+            }
+        }
+    }
+    // V7 layer block (21 bytes): only write if present in original
+    if let Some(has_v7) = p.has_v7_layer_data {
+        w.write_bool(has_v7);
+        w.write_i32_le(p.layer_enum_index);
+        w.write_i32_le(p.sentinel_1);
+        w.write_i32_le(p.sentinel_2);
+        w.write_i32_le(p.trailing_flag_1);
+        w.write_i32_le(p.trailing_flag_2);
+    }
     // Trailing (1 byte)
-    w.write_bool(p.trailing_is_justification_valid.unwrap_or(false));
+    if let Some(valid) = p.trailing_is_justification_valid {
+        w.write_bool(valid);
+    }
 
-    // Subrecord 2: Windows-1252 encoded text + NUL terminator
+    // Subrecord 2: pascal string (u8 length prefix + Windows-1252 encoded text)
     let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&p.text);
-    let mut text_bytes = encoded.to_vec();
-    text_bytes.push(0);
+    let mut text_bytes = Vec::with_capacity(1 + encoded.len());
+    text_bytes.push(encoded.len() as u8);
+    text_bytes.extend_from_slice(&encoded);
 
     vec![w.finish(), text_bytes]
 }
