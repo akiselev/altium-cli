@@ -4,6 +4,10 @@ Unified roadmap for the entire Solverang integration, from foundational infrastr
 through placement, autorouting, and co-optimization. Each phase builds on the previous
 one — the dependency chain is strict.
 
+Status key:
+- `[x]` implemented in the current codebase
+- `[ ]` planned / not implemented yet
+
 ## Dependency Graph
 
 ```
@@ -42,55 +46,56 @@ it, nothing else can start. The viewer provides instant visual regression testin
 if extraction is wrong, you *see* it. Building them together means every new IR type
 gets rendered immediately.
 
-### 0a: `altium-format-ir` Crate Scaffold
+### 0a: `autopcb-ir` Crate Scaffold
 
-- [ ] Create `crates/altium-format-ir/` with `Cargo.toml`
-- [ ] Add to workspace members, depends on `altium-format`
-- [ ] Typed handles: `ComponentId`, `NetId`, `PadId`, `RuleId`, `LayerId`
-- [ ] `IdMap<K, V>` container (typed handle → value lookup)
-- [ ] Coordinate conversion: `Coord` → `f64` mm at extraction boundary
+- [x] Create `crates/autopcb-ir/` with `Cargo.toml`
+- [x] Add to workspace members, depends on `altium-format`
+- [x] Typed handles: `ComponentId`, `NetId`, `PadId`, `RuleId`, `LayerId`
+- [x] `IdMap<K, V>` container (typed handle → value lookup)
+- [x] Coordinate conversion: `Coord` → `f64` mm at extraction boundary
 
 ### 0b: PCB IR Core Types
 
-- [ ] `PcbIr` top-level struct (components, nets, outline, rules, layer stack)
-- [ ] `BoardGeometry` — outline polygon (mm, CCW), bounds AABB, cutouts
-- [ ] `IrComponent` — designator, footprint name, position (mm), rotation, side,
+- [x] `PcbIr` top-level struct (components, nets, outline, rules, layer stack)
+- [x] `BoardGeometry` — tessellated outline/cutouts (mm), bounds AABB, keepouts
+- [x] `IrComponent` — designator, footprint name, position (mm), rotation, side,
       local/world bounding box, pads
-- [ ] `IrComponentPad` — pad ID, name, local/world position, net, shape, layers,
+- [x] `IrComponentPad` — pad ID, name, local/world position, net, shape,
       through-hole flag, hole size
-- [ ] `IrNet` — name, connected pins (`Vec<PinRef { component, pad }>`), net class
-- [ ] `IrDesignRule` — name, kind, priority, enabled, parameters, scopes
-- [ ] `LayerStack` — ordered copper layers, thickness, drill pairs
-- [ ] `PcbIr::extract(doc: &PcbDocBoard) -> Result<PcbIr>`
+- [x] `IrNet` — name, connected pins (`Vec<IrNetPin { component, pad, position }>`),
+      component count
+- [x] `IrDesignRule` — name, kind, priority, enabled, typed parameters (partial coverage)
+- [x] `LayerStack` — ordered copper layers (name/top/bottom flags, count)
+- [x] `PcbIr::extract(doc: &PcbDocBoard) -> Result<PcbIr>`
 - [ ] Unit tests against fixture PcbDoc files (108 available in `data/pcbdoc/`)
 
 ### 0c: egui Viewer MVP
 
-- [ ] New binary crate `crates/altium-viewer/` or subcommand `altium view <file>`
-- [ ] Depends on `eframe = "0.33"`, `altium-format-ir`
-- [ ] `egui::Scene` container with scroll-to-zoom, drag-to-pan
-- [ ] Render board outline (polygon)
-- [ ] Render components (bounding box rectangles, designator labels)
-- [ ] Render pads (small rectangles/circles at world positions)
-- [ ] Hover tooltip: component designator, footprint, position, pad info
-- [ ] Side panel: component list, layer toggles
+- [x] New binary crate `crates/autopcb-viewer/` (standalone viewer)
+- [x] Depends on `eframe = "0.33"`, `autopcb-ir`
+- [x] `egui::Scene` container with scroll-to-zoom, drag-to-pan
+- [x] Render board outline (polygon)
+- [x] Render components (bounding box rectangles, designator labels)
+- [x] Render pads (small rectangles/circles at world positions)
+- [x] Hover tooltip: component designator, footprint, position, pad info
+- [x] Side panel: component/net list and display toggles
 
 ### 0d: CLI `inspect` Commands
 
-- [ ] `altium inspect <file> --components` — table of designator, footprint, position (mm)
-- [ ] `altium inspect <file> --nets` — netlist with pin connections
-- [ ] `altium inspect <file> --board-outline` — dimensions, area
-- [ ] `altium inspect <file> --rules` — design rules summary
-- [ ] `altium inspect <file> --ir-json` — full IR as JSON (for LLM consumption)
+- [x] `altium inspect <file> components` — table of designator, footprint, position (mm)
+- [x] `altium inspect <file> nets` — netlist with pin counts
+- [x] `altium inspect <file> board-outline` — outline points + cutout summary
+- [x] `altium inspect <file> rules` — design rules summary
+- [x] `altium inspect <file> ir-json` — full IR as JSON (for LLM consumption)
 
 ### 0e: Viewer Enhancements (build alongside Phase 1)
 
-- [ ] Ratsnest rendering (straight lines between connected pads, per net)
-- [ ] Net highlighting (click net in side panel → highlight all pads/connections)
-- [ ] Color-coded layers (top=red, bottom=blue, inner=green/yellow)
-- [ ] Board keepout regions
-- [ ] Component selection → show all connected nets
-- [ ] Keyboard shortcuts: `F` = fit to board, `N` = toggle nets, `L` = toggle layers
+- [x] Ratsnest rendering (straight lines between connected pads, per net)
+- [x] Net highlighting (click net in side panel → highlight all pads/connections)
+- [x] Color-coded layers (top=red, bottom=blue, inner=green/yellow)
+- [x] Board keepout regions
+- [x] Component selection → show all connected nets
+- [x] Keyboard shortcuts: `F` = fit to board, `N` = toggle nets, `L` = toggle layers
 
 ---
 
@@ -113,7 +118,7 @@ automatically selects LM via `AutoSolver` for over-determined placement problems
 ### 1b: Hard Constraints
 
 - [ ] `BoardContainment` — 4 inequalities per component (left/right/top/bottom inside)
-- [ ] `ComponentClearance` — elliptical exclusion zone, O(N²) pairs (spatial pruning later)
+- [ ] `ComponentClearance` — smooth overlap guidance + exact non-overlap legalization, O(N²) pairs (spatial pruning later)
 - [ ] `BoardEdgeClearance` — board containment with gap
 - [ ] `FixedPosition` — 2 equalities (pin component at exact coordinates)
 
@@ -320,7 +325,7 @@ automatically selects LM via `AutoSolver` for over-determined placement problems
 - [ ] Phase 1 rules: Clearance (0), ComponentClearance (24), BoardOutlineClearance (63)
 - [ ] Phase 2 rules: Width (2), HoleToHoleClearance (52), MinimumAnnularRing (19)
 - [ ] Phase 3 rules: SolderMaskExpansion (13), PasteMaskExpansion (14), MaxMinHoleSize (42)
-- [ ] Phase 4 rules: DiffPairsRouting (44), MatchedLengths (4), Length (3)
+- [ ] Phase 4 rules: DiffPairsRouting (51), MatchedLengths (4), Length (3)
 
 ### 8c: Reporting
 

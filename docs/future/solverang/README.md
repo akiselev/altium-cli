@@ -9,6 +9,15 @@ rule checking.
 **Start here:** [implementation-plan.md](implementation-plan.md) — unified 11-phase roadmap
 with dependency graph, from IR crate through GPU acceleration.
 
+## Status Note
+
+These documents are a hybrid:
+- a **wishlist / research notebook** (algorithm options and future ideas), and
+- a **first-pass implementation plan**.
+
+Where current code differs from an older checklist, treat the codebase as source of
+truth and update plan checkboxes accordingly.
+
 ## Design Documents
 
 ### Foundation
@@ -82,6 +91,6 @@ User adjusts constraints → solver re-solves in real-time (~5ms for typical boa
 ## Prerequisites
 
 - PcbDoc read support: **exists** (all sections parse)
-- PcbDoc write support: **does not exist** (blocked on full reserialization)
+- PcbDoc write support: **exists** (high-level board read/write API available)
 - Solverang PCB constraints: **need to be built**
-- Spec language PcbDoc support: **need to be built**
+- Spec language PcbDoc support: **exists** (compile/plan/apply/dump supported)

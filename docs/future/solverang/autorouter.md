@@ -642,13 +642,13 @@ routing-critical:
 | **DaisyChainStubLength** | 5 | Max stub length for daisy-chain nets |
 | **PowerPlaneClearance** | 12 | Clearance in power planes |
 | **MinimumAnnularRing** | 19 | Via annular ring → min via size |
-| **RoutingViaStyle** | 20 | Allowed via sizes and drill diameters |
-| **RoutingTopology** | 40 | Star, daisy-chain, min-spanning-tree |
-| **RoutingPriority** | 41 | Net routing order |
+| **RoutingViaStyle** | 11 | Allowed via sizes and drill diameters |
+| **RoutingTopology** | 7 | Star, daisy-chain, min-spanning-tree |
+| **RoutingPriority** | 8 | Net routing order |
 | **MaxMinHoleSize** | 42 | Via drill size limits |
-| **RoutingLayers** | 43 | Which layers a net may use |
-| **RoutingCornerStyle** | 56 | 90°, 45°, or rounded corners |
-| **DiffPairsRouting** | 44 | Gap, width, length matching |
+| **RoutingLayers** | 9 | Which layers a net may use |
+| **RoutingCornerStyle** | 10 | 90°, 45°, or rounded corners |
+| **DiffPairsRouting** | 51 | Gap, width, length matching |
 
 ### Rule Application in the Router
 

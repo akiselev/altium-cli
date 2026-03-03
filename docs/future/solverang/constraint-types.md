@@ -216,8 +216,20 @@ pub struct ComponentClearance {
 // See objectives.rs for the actual formulation.
 ```
 
-**Recommended formulation**: Rather than exact AABB distance (which requires
-disjunctive constraints), use an **elliptical exclusion zone**:
+**Important**: An ellipse-based exclusion residual is a **smooth heuristic**, not an
+exact non-overlap proof for rectangles. It can admit some AABB-overlap cases.
+
+Use it only as a soft guide during global optimization; enforce legality with an
+exact rectangle overlap test in legalization/SA hard-reject steps.
+
+Exact legality check for axis-aligned boxes:
+```
+overlap_x = |dx| < (hw_A + hw_B + gap)
+overlap_y = |dy| < (hh_A + hh_B + gap)
+illegal = overlap_x && overlap_y
+```
+
+Smooth heuristic residual (optional soft term):
 
 ```rust
 // Elliptical exclusion: the center-to-center vector must lie outside
@@ -226,8 +238,7 @@ disjunctive constraints), use an **elliptical exclusion zone**:
 // r = 1 - (dx/combined_hw)² - (dy/combined_hh)²    [≤ 0]
 // Equivalently: (dx/combined_hw)² + (dy/combined_hh)² - 1 ≥ 0
 //
-// This is smooth, differentiable, and slightly conservative
-// (ellipse inscribed in the AABB exclusion zone).
+// This is smooth and differentiable, but not equivalent to AABB non-overlap.
 
 impl Constraint for ComponentClearance {
     fn id(&self) -> ConstraintId { self.id }

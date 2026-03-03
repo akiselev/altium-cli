@@ -119,6 +119,10 @@ jacobian = 2·cos(2θ)    (w.r.t. θ)
 
 The solver naturally converges to the nearest 90° angle.
 
+Practical caveat: at `θ = 45° + k·90°`, residual is non-zero but the Jacobian is zero,
+which can stall gradient-based steps. Treat this as an experimental relaxation, not the
+default production path.
+
 **Entity with 3 parameters**:
 ```rust
 pub struct PcbComponentContinuous {
@@ -228,6 +232,9 @@ Phase 3 (optional): Local improvement
 - The sin(2θ)=0 constraint ensures θ converges to a cardinal angle
 - Phase 2's fixed-θ solve is fast (2N variables, all linear pad offsets)
 - Phase 3 is optional polish, ~2-4 extra solves per component
+
+**Default implementation order**: ship fixed-rotation + discrete rotation search first;
+add continuous-θ relaxation only as an optional advanced mode.
 
 **Expected performance** (50 components, 200 nets):
 - Phase 1: 150 variables, ~1000 constraints → ~50ms
