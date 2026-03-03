@@ -1,13 +1,13 @@
 mod tabs;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use efame::egui::{self, ColorImage, Event, Key, UserData, ViewportCommand};
+use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
 
 use self::tabs::{TabProviderRegistry, TabRenderer};
 use crate::canvas::{Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView};
@@ -17,24 +17,43 @@ use crate::commands::{
 };
 use crate::ipc::IpcRequest;
 use crate::layout::{BottomTab, ShellLayoutState};
+use crate::ui::icons::{IconId, icon, icon_button};
+use crate::ui::tabstrip::render_tabstrip;
+use crate::ui::theme::{ThemeTokens, apply_theme, vscode_dark_tokens};
 use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, SelectionKind, WorkbenchModel};
 
 const STORAGE_LAYOUT_KEY: &str = "shell.layout.v1";
 const STORAGE_PANELS_KEY: &str = "shell.panels.v1";
+const STORAGE_CHROME_KEY: &str = "shell.chrome.v2";
 const STORAGE_SHORTCUTS_KEY: &str = "shell.shortcuts.v1";
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+enum ActivityView {
+    Explorer,
+    Search,
+    SourceControl,
+    Run,
+    Extensions,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PanelVisibilityState {
+    show_activity_bar: bool,
     show_primary_sidebar: bool,
     show_bottom_panel: bool,
+    show_status_bar: bool,
+    activity_view: ActivityView,
     bottom_tab: BottomTab,
 }
 
 impl Default for PanelVisibilityState {
     fn default() -> Self {
         Self {
+            show_activity_bar: true,
             show_primary_sidebar: true,
             show_bottom_panel: true,
+            show_status_bar: true,
+            activity_view: ActivityView::Explorer,
             bottom_tab: BottomTab::Output,
         }
     }
@@ -63,6 +82,7 @@ pub struct ShellApp {
     screenshot_requested: bool,
     tab_registry: TabProviderRegistry,
     tab_renderers: BTreeMap<DocumentId, Box<dyn TabRenderer>>,
+    theme: ThemeTokens,
     canvas2d: Pcb2dCanvas,
     canvas3d: Pcb3dCanvas,
 }
@@ -82,6 +102,9 @@ impl ShellApp {
                 layout = saved;
             }
             if let Some(saved) = efame::get_value(storage, STORAGE_PANELS_KEY) {
+                panel_visibility = saved;
+            }
+            if let Some(saved) = efame::get_value(storage, STORAGE_CHROME_KEY) {
                 panel_visibility = saved;
             }
         }
@@ -120,6 +143,7 @@ impl ShellApp {
             screenshot_requested: false,
             tab_registry: TabProviderRegistry::new_m1(),
             tab_renderers: BTreeMap::new(),
+            theme: vscode_dark_tokens(),
             canvas2d: Pcb2dCanvas::default(),
             canvas3d: Pcb3dCanvas,
         }
@@ -184,6 +208,39 @@ impl ShellApp {
 
     fn execute_io_command(&mut self, id: &str, arg: Option<String>) -> bool {
         match id {
+            "view.toggle_activity_bar" => {
+                self.panel_visibility.show_activity_bar = !self.panel_visibility.show_activity_bar;
+                true
+            }
+            "view.toggle_status_bar" => {
+                self.panel_visibility.show_status_bar = !self.panel_visibility.show_status_bar;
+                true
+            }
+            "panel.show.explorer" => {
+                self.panel_visibility.show_primary_sidebar = true;
+                self.panel_visibility.activity_view = ActivityView::Explorer;
+                true
+            }
+            "panel.show.search" => {
+                self.panel_visibility.show_primary_sidebar = true;
+                self.panel_visibility.activity_view = ActivityView::Search;
+                true
+            }
+            "panel.show.source_control" => {
+                self.panel_visibility.show_primary_sidebar = true;
+                self.panel_visibility.activity_view = ActivityView::SourceControl;
+                true
+            }
+            "panel.show.run" => {
+                self.panel_visibility.show_primary_sidebar = true;
+                self.panel_visibility.activity_view = ActivityView::Run;
+                true
+            }
+            "panel.show.extensions" => {
+                self.panel_visibility.show_primary_sidebar = true;
+                self.panel_visibility.activity_view = ActivityView::Extensions;
+                true
+            }
             "workspace.open" | "file.open_folder" => {
                 let root = arg
                     .map(PathBuf::from)
@@ -643,44 +700,94 @@ impl ShellApp {
         self.show_command_palette = open;
     }
 
-    fn render_menu(&mut self, ctx: &egui::Context) {
-        let mut categories = BTreeSet::new();
+    fn render_title_menu_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("title_menu")
+            .exact_height(28.0)
+            .frame(egui::Frame::new().fill(self.theme.titlebar_bg))
+            .show(ctx, |ui| {
+                ui.visuals_mut().override_text_color = Some(self.theme.text_primary);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("AutoPCB").strong().size(12.0));
+                    ui.separator();
+                    self.render_menu_bar_buttons(ui);
+                });
+            });
+    }
+
+    fn render_menu_bar_buttons(&mut self, ui: &mut egui::Ui) {
+        let ordered = [
+            "File",
+            "Edit",
+            "Selection",
+            "View",
+            "Go",
+            "Run",
+            "Terminal",
+            "Help",
+            "App",
+            "Workspace",
+            "Navigate",
+            "PCB",
+            "Panel",
+            "History",
+            "Editor",
+        ];
+        let mut by_category: BTreeMap<&str, Vec<_>> = BTreeMap::new();
         for cmd in self.commands.exposed() {
-            categories.insert(cmd.category);
+            by_category.entry(cmd.category).or_default().push(cmd);
         }
 
-        egui::TopBottomPanel::top("top_menu").show(ctx, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                for category in categories.iter().copied() {
-                    let commands: Vec<_> = self
-                        .commands
-                        .exposed()
-                        .filter(|c| c.category == category)
-                        .collect();
-                    if commands.is_empty() {
-                        continue;
+        for category in ordered {
+            let Some(commands) = by_category.get(category) else {
+                continue;
+            };
+            ui.menu_button(category, |ui| {
+                for cmd in commands {
+                    let shortcut = self
+                        .shortcut_bindings
+                        .get(cmd.id)
+                        .map(|s| s.display())
+                        .unwrap_or_default();
+                    let label = if shortcut.is_empty() {
+                        cmd.title.to_owned()
+                    } else {
+                        format!("{}\t{}", cmd.title, shortcut)
+                    };
+                    if ui.button(label).clicked() {
+                        self.queue(cmd.id, None);
+                        ui.close();
                     }
-                    ui.menu_button(category, |ui| {
-                        for cmd in commands {
-                            let shortcut = self
-                                .shortcut_bindings
-                                .get(cmd.id)
-                                .map(|s| s.display())
-                                .unwrap_or_default();
-                            let label = if shortcut.is_empty() {
-                                cmd.title.to_owned()
-                            } else {
-                                format!("{}\t{}", cmd.title, shortcut)
-                            };
-                            if ui.button(label).clicked() {
-                                self.queue(cmd.id, None);
-                                ui.close();
-                            }
-                        }
-                    });
                 }
             });
-        });
+        }
+    }
+
+    fn render_activity_bar(&mut self, ctx: &egui::Context) {
+        if !self.panel_visibility.show_activity_bar {
+            return;
+        }
+        egui::SidePanel::left("activity_bar")
+            .exact_width(42.0)
+            .frame(egui::Frame::new().fill(self.theme.activitybar_bg))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(4.0);
+                    self.activity_button(ui, IconId::Explorer, ActivityView::Explorer);
+                    self.activity_button(ui, IconId::Search, ActivityView::Search);
+                    self.activity_button(ui, IconId::SourceControl, ActivityView::SourceControl);
+                    self.activity_button(ui, IconId::Run, ActivityView::Run);
+                    self.activity_button(ui, IconId::Extensions, ActivityView::Extensions);
+                });
+            });
+    }
+
+    fn activity_button(&mut self, ui: &mut egui::Ui, icon_id: IconId, view: ActivityView) {
+        let selected = self.panel_visibility.activity_view == view;
+        let resp = icon_button(ui, icon_id, selected, self.theme.text_primary, 28.0);
+        if resp.clicked() {
+            self.panel_visibility.activity_view = view;
+            self.panel_visibility.show_primary_sidebar = true;
+        }
     }
 
     fn render_sidebar(&mut self, ctx: &egui::Context) {
@@ -690,61 +797,77 @@ impl ShellApp {
 
         egui::SidePanel::left("primary_sidebar")
             .resizable(true)
-            .default_width(260.0)
-            .show(ctx, |ui| {
-                ui.heading("Explorer");
-                ui.separator();
-                self.render_workspace_files(ui);
-                ui.separator();
-
-                let Some(board) = self.model.active_board() else {
-                    ui.label("No active board document");
-                    return;
-                };
-                let ir = &board.ir;
-
-                let components: Vec<String> = ir
-                    .components
-                    .iter()
-                    .map(|(_, comp)| comp.designator.clone())
-                    .collect();
-                let nets: Vec<(String, usize)> = ir
-                    .nets
-                    .iter()
-                    .map(|(_, net)| (net.name.clone(), net.pins.len()))
-                    .collect();
-
-                ui.collapsing("Components", |ui| {
-                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-                        for designator in &components {
-                            let selected = matches!(
-                                &self.model.selection.primary,
-                                SelectionKind::Component(d) if d == designator
-                            );
-                            if ui.selectable_label(selected, designator).clicked() {
-                                self.queue("crossprobe.select_component", Some(designator.clone()));
-                            }
-                        }
-                    });
-                });
-
-                ui.collapsing("Nets", |ui| {
-                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-                        for (name, pins_len) in &nets {
-                            let selected = matches!(
-                                &self.model.selection.primary,
-                                SelectionKind::Net(n) if n == name
-                            );
-                            if ui
-                                .selectable_label(selected, format!("{} ({})", name, pins_len))
-                                .clicked()
-                            {
-                                self.queue("crossprobe.select_net", Some(name.clone()));
-                            }
-                        }
-                    });
-                });
+            .default_width(280.0)
+            .frame(egui::Frame::new().fill(self.theme.sidebar_bg))
+            .show(ctx, |ui| match self.panel_visibility.activity_view {
+                ActivityView::Explorer => self.render_explorer_sidebar(ui),
+                ActivityView::Search => self.render_placeholder_sidebar(ui, "SEARCH", "Workspace text search is planned."),
+                ActivityView::SourceControl => {
+                    self.render_placeholder_sidebar(ui, "SOURCE CONTROL", "Source-control integration is planned.")
+                }
+                ActivityView::Run => self.render_placeholder_sidebar(ui, "RUN", "Automation run tasks will live here."),
+                ActivityView::Extensions => {
+                    self.render_placeholder_sidebar(ui, "EXTENSIONS", "Plugin/extension management is planned.")
+                }
             });
+    }
+
+    fn render_explorer_sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("EXPLORER").small().color(self.theme.text_muted));
+        ui.separator();
+        self.render_workspace_files(ui);
+        ui.separator();
+
+        let Some(board) = self.model.active_board() else {
+            ui.label(RichText::new("No active board document").color(self.theme.text_muted));
+            return;
+        };
+        let ir = &board.ir;
+
+        let components: Vec<String> = ir
+            .components
+            .iter()
+            .map(|(_, comp)| comp.designator.clone())
+            .collect();
+        let nets: Vec<(String, usize)> = ir
+            .nets
+            .iter()
+            .map(|(_, net)| (net.name.clone(), net.pins.len()))
+            .collect();
+
+        ui.collapsing("Components", |ui| {
+            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                for designator in &components {
+                    let selected = matches!(
+                        &self.model.selection.primary,
+                        SelectionKind::Component(d) if d == designator
+                    );
+                    if ui.selectable_label(selected, designator).clicked() {
+                        self.queue("crossprobe.select_component", Some(designator.clone()));
+                    }
+                }
+            });
+        });
+
+        ui.collapsing("Nets", |ui| {
+            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                for (name, pins_len) in &nets {
+                    let selected = matches!(&self.model.selection.primary, SelectionKind::Net(n) if n == name);
+                    if ui
+                        .selectable_label(selected, format!("{} ({})", name, pins_len))
+                        .clicked()
+                    {
+                        self.queue("crossprobe.select_net", Some(name.clone()));
+                    }
+                }
+            });
+        });
+    }
+
+    fn render_placeholder_sidebar(&mut self, ui: &mut egui::Ui, heading: &str, text: &str) {
+        ui.label(RichText::new(heading).small().color(self.theme.text_muted));
+        ui.separator();
+        ui.label(RichText::new(text).color(self.theme.text_disabled));
     }
 
     fn render_workspace_files(&mut self, ui: &mut egui::Ui) {
@@ -759,7 +882,7 @@ impl ShellApp {
                 return;
             };
 
-            ui.small(root.display().to_string());
+            ui.small(RichText::new(root.display().to_string()).color(self.theme.text_muted));
             ui.separator();
             egui::ScrollArea::vertical()
                 .max_height(220.0)
@@ -797,8 +920,11 @@ impl ShellApp {
             }
 
             if path.is_dir() {
-                ui.collapsing(format!("{name}/"), |ui| {
-                    self.render_dir_tree(ui, &path, depth + 1);
+                ui.horizontal(|ui| {
+                    icon(ui, IconId::Folder, self.theme.text_muted, 12.0);
+                    ui.collapsing(format!("{name}/"), |ui| {
+                        self.render_dir_tree(ui, &path, depth + 1);
+                    });
                 });
                 continue;
             }
@@ -807,9 +933,21 @@ impl ShellApp {
                 .model
                 .find_document_by_path(&path)
                 .is_some_and(|id| self.model.active_editor_tab == Some(id));
-            if ui.selectable_label(is_open, &name).clicked() {
-                self.queue("file.open", Some(path.display().to_string()));
-            }
+            ui.horizontal(|ui| {
+                let icon_id = if name.to_ascii_lowercase().ends_with(".pcbdoc") {
+                    IconId::PcbDoc
+                } else if name.to_ascii_lowercase().ends_with(".spec")
+                    || name.to_ascii_lowercase().ends_with(".pcbdoc-spec")
+                {
+                    IconId::Spec
+                } else {
+                    IconId::File
+                };
+                icon(ui, icon_id, self.theme.text_muted, 12.0);
+                if ui.selectable_label(is_open, &name).clicked() {
+                    self.queue("file.open", Some(path.display().to_string()));
+                }
+            });
         }
     }
 
@@ -821,6 +959,7 @@ impl ShellApp {
         egui::TopBottomPanel::bottom("bottom_panel")
             .resizable(true)
             .default_height(180.0)
+            .frame(egui::Frame::new().fill(self.theme.panel_bg))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui
@@ -847,7 +986,7 @@ impl ShellApp {
                 match self.panel_visibility.bottom_tab {
                     BottomTab::Problems => {
                         if self.model.problems.is_empty() {
-                            ui.label("No problems");
+                            ui.label(RichText::new("No problems").color(self.theme.text_muted));
                         }
                         for line in &self.model.problems {
                             ui.label(line);
@@ -862,7 +1001,7 @@ impl ShellApp {
                     }
                     BottomTab::Jobs => {
                         if self.model.jobs.is_empty() {
-                            ui.label("No jobs");
+                            ui.label(RichText::new("No jobs").color(self.theme.text_muted));
                         }
                         for line in &self.model.jobs {
                             ui.label(line);
@@ -873,32 +1012,9 @@ impl ShellApp {
     }
 
     fn render_document_tabs(&mut self, ui: &mut egui::Ui) {
-        let tabs: Vec<_> = self
-            .model
-            .documents_in_tab_order()
-            .map(|doc| (doc.id, doc.title.clone(), doc.dirty))
-            .collect();
-
-        ui.horizontal_wrapped(|ui| {
-            for (id, title, dirty) in tabs {
-                ui.group(|ui| {
-                    ui.horizontal(|ui| {
-                        let mut label = title;
-                        if dirty {
-                            label.push('*');
-                        }
-                        let selected = self.model.active_editor_tab == Some(id);
-                        if ui.selectable_label(selected, label).clicked() {
-                            self.queue("editor.activate_document", Some(id.0.to_string()));
-                        }
-                        if ui.small_button("x").clicked() {
-                            self.queue("editor.close_document", Some(id.0.to_string()));
-                        }
-                    });
-                });
-            }
-        });
-        ui.separator();
+        for (id, arg) in render_tabstrip(ui, &self.model, &self.theme) {
+            self.queue(&id, arg);
+        }
     }
 
     pub(super) fn render_keybindings_editor(&mut self, ui: &mut egui::Ui) {
@@ -1062,9 +1178,14 @@ impl ShellApp {
     }
 
     fn render_status_bar(&mut self, ctx: &egui::Context) {
+        if !self.panel_visibility.show_status_bar {
+            return;
+        }
         egui::TopBottomPanel::bottom("status_bar")
             .exact_height(24.0)
+            .frame(egui::Frame::new().fill(self.theme.statusbar_bg))
             .show(ctx, |ui| {
+                ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
                 let selection = selection_label(&self.model.selection.primary);
                 let active_doc = self
                     .model
@@ -1092,7 +1213,7 @@ impl ShellApp {
                 ui.horizontal(|ui| {
                     ui.label(active_doc);
                     ui.separator();
-                    ui.label(active_path);
+                    ui.label(RichText::new(active_path).small());
                     ui.separator();
                     ui.label(board_info);
                     ui.separator();
@@ -1124,6 +1245,7 @@ impl efame::App for ShellApp {
     fn save(&mut self, storage: &mut dyn efame::Storage) {
         efame::set_value(storage, STORAGE_LAYOUT_KEY, &self.layout);
         efame::set_value(storage, STORAGE_PANELS_KEY, &self.panel_visibility);
+        efame::set_value(storage, STORAGE_CHROME_KEY, &self.panel_visibility);
 
         let persisted = ShortcutOverrides {
             by_command: self
@@ -1136,17 +1258,21 @@ impl efame::App for ShellApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
+        apply_theme(ctx, &self.theme);
         self.process_ipc();
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
         self.process_queue(ctx, frame);
         self.prune_tab_renderers();
 
-        self.render_menu(ctx);
+        self.render_title_menu_bar(ctx);
+        self.render_activity_bar(ctx);
         self.render_sidebar(ctx);
         self.render_bottom_panel(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(self.theme.editor_bg))
+            .show(ctx, |ui| {
             let fit_requested = self.layout.request_fit;
             self.layout.request_fit = false;
 

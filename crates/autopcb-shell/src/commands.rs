@@ -255,6 +255,24 @@ impl CommandRegistry {
                 Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)),
             ),
             meta(
+                "view.toggle_activity_bar",
+                "View: Toggle Activity Bar",
+                "View",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "view.toggle_status_bar",
+                "View: Toggle Status Bar",
+                "View",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
                 "view.toggle_bottom_panel",
                 "View: Toggle Bottom Panel",
                 "View",
@@ -280,6 +298,42 @@ impl CommandRegistry {
                 true,
                 UndoPolicy::Local,
                 None,
+            ),
+            meta(
+                "panel.show.search",
+                "Panel: Show Search",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)),
+            ),
+            meta(
+                "panel.show.source_control",
+                "Panel: Show Source Control",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "panel.show.run",
+                "Panel: Show Run",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "panel.show.extensions",
+                "Panel: Show Extensions",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::X)),
             ),
             meta(
                 "panel.show.problems",
@@ -513,6 +567,7 @@ pub fn dispatch(
             *set_primary_sidebar = !*set_primary_sidebar;
             DispatchOutcome::Noop
         }
+        "view.toggle_activity_bar" | "view.toggle_status_bar" => DispatchOutcome::Noop,
         "view.toggle_bottom_panel" => {
             *set_bottom_panel = !*set_bottom_panel;
             DispatchOutcome::Noop
@@ -522,6 +577,10 @@ pub fn dispatch(
             DispatchOutcome::Noop
         }
         "panel.show.explorer" => {
+            *set_primary_sidebar = true;
+            DispatchOutcome::Noop
+        }
+        "panel.show.search" | "panel.show.source_control" | "panel.show.run" | "panel.show.extensions" => {
             *set_primary_sidebar = true;
             DispatchOutcome::Noop
         }

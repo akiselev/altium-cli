@@ -4,6 +4,7 @@ mod commands;
 mod ipc;
 mod jobs;
 mod layout;
+mod ui;
 mod workbench;
 
 use std::path::PathBuf;
