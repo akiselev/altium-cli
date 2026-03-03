@@ -515,3 +515,35 @@ saves PNG, exits. Interactive S key also saves `screenshot.png`.
 - Orbit camera with mouse drag + scroll zoom
 - Lambertian shading in WGSL shader for depth perception
 - Orthographic projection with configurable yaw/pitch/zoom
+
+---
+
+## AutoPCB Shell — IDE Entry Point (2026-03-03)
+
+### Milestone 1: Shell Foundation
+
+- [x] Create `crates/autopcb-shell` binary and workspace wiring
+- [x] Implement shell frame with `egui_tiles` dock layout
+- [x] Persist layout/panel state with versioned `eframe` storage keys
+- [x] Implement strict command bus + command palette
+- [x] Route all M1 user actions through command dispatch
+- [x] Add first-class `SelectionState` in Workbench model
+- [x] Wire Explorer -> Selection -> PCB pane highlight flow
+- [x] Add GPU-ready `PcbCanvasView` abstraction
+- [x] Add M1 shortcut map and context-key enable checks
+- [x] Add M1 tests and manual smoke validation notes
+
+Manual smoke notes:
+- `autopcb-shell <path-to-pcbdoc>` launches IDE shell with sidebar, docked editor tabs, bottom panel, and status bar.
+- Command palette opens via `Ctrl/Cmd+Shift+P` and routes commands through registry/dispatcher.
+- Explorer component/net selection updates shared selection model and highlights corresponding entities in PCB 2D view.
+- Layout and panel visibility persist across restarts via eframe storage keys `shell.layout.v1` and `shell.panels.v1`.
+
+### Milestone 2+: Planned
+
+- [ ] Full command catalog implementation from `docs/gui/commands.md`
+- [ ] Command-based undo/redo with inverse model operations
+- [ ] File-watcher external change detection + reconciliation flows
+- [ ] Job system integration for placement/routing/DRC background execution
+- [ ] 3D `PaintCallback` render path migration from placeholder to full scene renderer
+- [ ] Spec editor with diagnostics, plan/apply previews, and cross-navigation
