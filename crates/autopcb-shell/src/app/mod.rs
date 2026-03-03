@@ -1,6 +1,8 @@
 mod tabs;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use efame::egui::{self, Event, Key};
@@ -49,6 +51,7 @@ pub struct ShellApp {
     show_command_palette: bool,
     palette_filter: String,
     palette_selected: usize,
+    explorer_filter: String,
     keybindings_filter: String,
     keybindings_capture_for: Option<String>,
     shortcut_bindings: BTreeMap<String, ShortcutDef>,
@@ -101,6 +104,7 @@ impl ShellApp {
             show_command_palette: false,
             palette_filter: String::new(),
             palette_selected: 0,
+            explorer_filter: String::new(),
             keybindings_filter: String::new(),
             keybindings_capture_for: None,
             shortcut_bindings,
@@ -149,6 +153,10 @@ impl ShellApp {
             return;
         }
 
+        if self.execute_io_command(id, arg.clone()) {
+            return;
+        }
+
         match dispatch(
             &meta.id,
             arg,
@@ -164,10 +172,230 @@ impl ShellApp {
         }
     }
 
+    fn execute_io_command(&mut self, id: &str, arg: Option<String>) -> bool {
+        match id {
+            "workspace.open" | "file.open_folder" => {
+                let root = arg
+                    .map(PathBuf::from)
+                    .or_else(|| self.model.workspace_root.clone())
+                    .or_else(|| std::env::current_dir().ok());
+                let Some(root) = root else {
+                    self.model.problems.push("Unable to resolve workspace root".to_owned());
+                    return true;
+                };
+                self.model.set_workspace_root(root.clone());
+                self.model
+                    .output_lines
+                    .push(format!("Workspace opened: {}", root.display()));
+                true
+            }
+            "workspace.close" => {
+                self.model.clear_workspace();
+                self.tab_renderers.clear();
+                self.model.output_lines.push("Workspace closed".to_owned());
+                true
+            }
+            "file.new_spec" => {
+                self.model
+                    .open_spec_document(None, "// New spec document\n".to_owned());
+                true
+            }
+            "file.open" => {
+                if let Some(path) = arg.map(PathBuf::from) {
+                    self.open_document_path(path);
+                } else {
+                    self.model.output_lines.push(
+                        "Use Explorer or pass a path to File: Open from command palette".to_owned(),
+                    );
+                }
+                true
+            }
+            "file.save" => {
+                self.save_active_document();
+                true
+            }
+            "file.save_all" => {
+                self.save_all_documents();
+                true
+            }
+            "file.revert" => {
+                self.revert_active_document();
+                true
+            }
+            "view.split_editor_right" | "view.split_editor_down" => {
+                self.model.output_lines.push(
+                    "Split editor groups are not wired yet; tab commands are fully active".to_owned(),
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn open_document_path(&mut self, path: PathBuf) {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_default();
+
+        match ext.as_str() {
+            "pcbdoc" => {
+                match altium_format::PcbDoc::open(&path).and_then(|doc| doc.board()) {
+                    Ok(board) => match autopcb_ir::PcbIr::extract(&board) {
+                        Ok(ir) => {
+                            self.model.open_board_document(path.clone(), ir);
+                            self.model
+                                .output_lines
+                                .push(format!("Opened board: {}", path.display()));
+                        }
+                        Err(err) => self
+                            .model
+                            .problems
+                            .push(format!("Failed to extract board {}: {err}", path.display())),
+                    },
+                    Err(err) => self
+                        .model
+                        .problems
+                        .push(format!("Failed to open board {}: {err}", path.display())),
+                };
+            }
+            "spec" | "pcbdoc-spec" => match fs::read_to_string(&path) {
+                Ok(text) => {
+                    self.model.open_spec_document(Some(path.clone()), text);
+                    self.model
+                        .output_lines
+                        .push(format!("Opened spec: {}", path.display()));
+                }
+                Err(err) => self
+                    .model
+                    .problems
+                    .push(format!("Failed to open spec {}: {err}", path.display())),
+            },
+            _ => {
+                self.model.problems.push(format!(
+                    "Unsupported file type for open: {}",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    fn save_active_document(&mut self) {
+        let Some(id) = self.model.active_document_id() else {
+            return;
+        };
+        self.save_document(id);
+    }
+
+    fn save_all_documents(&mut self) {
+        let ids = self.model.open_editor_tabs.clone();
+        for id in ids {
+            self.save_document(id);
+        }
+    }
+
+    fn save_document(&mut self, id: DocumentId) {
+        let Some(doc) = self.model.documents.get(&id) else {
+            return;
+        };
+
+        let (path, text) = match &doc.kind {
+            DocumentKind::Spec(spec) => {
+                let target = spec.path.clone().or_else(|| {
+                    let base = self
+                        .model
+                        .workspace_root
+                        .clone()
+                        .or_else(|| std::env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    Some(base.join(format!("untitled-{}.pcbdoc-spec", id.0)))
+                });
+                (target, spec.text.clone())
+            }
+            _ => return,
+        };
+
+        let Some(path) = path else {
+            return;
+        };
+
+        match fs::write(&path, text) {
+            Ok(_) => {
+                if let Some(doc) = self.model.documents.get_mut(&id) {
+                    if let DocumentKind::Spec(spec) = &mut doc.kind {
+                        spec.path = Some(path.clone());
+                    }
+                    doc.path = Some(path.clone());
+                    doc.title = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("spec")
+                        .to_owned();
+                    doc.dirty = false;
+                }
+                self.model
+                    .output_lines
+                    .push(format!("Saved: {}", path.display()));
+            }
+            Err(err) => self
+                .model
+                .problems
+                .push(format!("Failed to save {}: {err}", path.display())),
+        }
+    }
+
+    fn revert_active_document(&mut self) {
+        let Some(id) = self.model.active_document_id() else {
+            return;
+        };
+
+        let Some(doc) = self.model.documents.get(&id) else {
+            return;
+        };
+        let Some(path) = doc.path.clone() else {
+            self.model
+                .output_lines
+                .push("Cannot revert unsaved document".to_owned());
+            return;
+        };
+
+        if !matches!(doc.kind, DocumentKind::Spec(_)) {
+            self.model
+                .output_lines
+                .push("Revert currently supports spec documents".to_owned());
+            return;
+        }
+
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                if let Some(doc) = self.model.documents.get_mut(&id) {
+                    if let DocumentKind::Spec(spec) = &mut doc.kind {
+                        spec.text = text;
+                    }
+                    doc.dirty = false;
+                }
+                self.model
+                    .output_lines
+                    .push(format!("Reverted: {}", path.display()));
+            }
+            Err(err) => self
+                .model
+                .problems
+                .push(format!("Failed to revert {}: {err}", path.display())),
+        }
+    }
+
     fn process_queue(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
         while let Some((id, arg)) = self.queued.pop_front() {
             self.execute_command(&id, arg, ctx, frame);
         }
+    }
+
+    fn prune_tab_renderers(&mut self) {
+        self.tab_renderers.retain(|id, _| {
+            self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
+        });
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -403,6 +631,8 @@ impl ShellApp {
             .show(ctx, |ui| {
                 ui.heading("Explorer");
                 ui.separator();
+                self.render_workspace_files(ui);
+                ui.separator();
 
                 let Some(board) = self.model.active_board() else {
                     ui.label("No active board document");
@@ -452,6 +682,72 @@ impl ShellApp {
                     });
                 });
             });
+    }
+
+    fn render_workspace_files(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Workspace Files", |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Filter:");
+                ui.text_edit_singleline(&mut self.explorer_filter);
+            });
+
+            let Some(root) = self.model.workspace_root.clone() else {
+                ui.label("No workspace open");
+                return;
+            };
+
+            ui.small(root.display().to_string());
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .max_height(220.0)
+                .show(ui, |ui| self.render_dir_tree(ui, &root, 0));
+        });
+    }
+
+    fn render_dir_tree(&mut self, ui: &mut egui::Ui, dir: &Path, depth: usize) {
+        if depth > 4 {
+            return;
+        }
+
+        let mut entries = match fs::read_dir(dir) {
+            Ok(read_dir) => read_dir.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+        entries.sort_by_key(|e| e.path());
+
+        let filter = self.explorer_filter.to_ascii_lowercase();
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+
+            let passes_filter = filter.is_empty()
+                || name.to_ascii_lowercase().contains(&filter)
+                || path
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains(&filter);
+            if !passes_filter {
+                continue;
+            }
+
+            if path.is_dir() {
+                ui.collapsing(format!("{name}/"), |ui| {
+                    self.render_dir_tree(ui, &path, depth + 1);
+                });
+                continue;
+            }
+
+            let is_open = self
+                .model
+                .find_document_by_path(&path)
+                .is_some_and(|id| self.model.active_editor_tab == Some(id));
+            if ui.selectable_label(is_open, &name).clicked() {
+                self.queue("file.open", Some(path.display().to_string()));
+            }
+        }
     }
 
     fn render_bottom_panel(&mut self, ctx: &egui::Context) {
@@ -522,14 +818,21 @@ impl ShellApp {
 
         ui.horizontal_wrapped(|ui| {
             for (id, title, dirty) in tabs {
-                let mut label = title;
-                if dirty {
-                    label.push('*');
-                }
-                let selected = self.model.active_editor_tab == Some(id);
-                if ui.selectable_label(selected, label).clicked() {
-                    self.queue("editor.activate_document", Some(id.0.to_string()));
-                }
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        let mut label = title;
+                        if dirty {
+                            label.push('*');
+                        }
+                        let selected = self.model.active_editor_tab == Some(id);
+                        if ui.selectable_label(selected, label).clicked() {
+                            self.queue("editor.activate_document", Some(id.0.to_string()));
+                        }
+                        if ui.small_button("x").clicked() {
+                            self.queue("editor.close_document", Some(id.0.to_string()));
+                        }
+                    });
+                });
             }
         });
         ui.separator();
@@ -660,9 +963,7 @@ impl ShellApp {
         };
 
         if edited {
-            if let Some(doc) = self.model.documents.get_mut(&document_id) {
-                doc.dirty = true;
-            }
+            self.model.mark_document_dirty(document_id, true);
         }
     }
 
@@ -775,6 +1076,7 @@ impl efame::App for ShellApp {
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
         self.process_queue(ctx, frame);
+        self.prune_tab_renderers();
 
         self.render_menu(ctx);
         self.render_sidebar(ctx);

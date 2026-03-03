@@ -93,6 +93,105 @@ impl CommandRegistry {
                 Some(ShortcutDef::new(Modifiers::COMMAND, Key::Comma)),
             ),
             meta(
+                "workspace.open",
+                "Workspace: Open Folder",
+                "Workspace",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "workspace.close",
+                "Workspace: Close",
+                "Workspace",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "file.new_spec",
+                "File: New Spec",
+                "File",
+                "",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::N)),
+            ),
+            meta(
+                "file.open",
+                "File: Open",
+                "File",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::O)),
+            ),
+            meta(
+                "file.open_folder",
+                "File: Open Folder",
+                "File",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "file.save",
+                "File: Save",
+                "File",
+                "workspace.open",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::S)),
+            ),
+            meta(
+                "file.save_all",
+                "File: Save All",
+                "File",
+                "workspace.open",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)),
+            ),
+            meta(
+                "file.revert",
+                "File: Revert",
+                "File",
+                "workspace.open",
+                true,
+                UndoPolicy::Model,
+                None,
+            ),
+            meta(
+                "file.close",
+                "File: Close",
+                "File",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::W)),
+            ),
+            meta(
+                "file.close_all",
+                "File: Close All",
+                "File",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "file.close_others",
+                "File: Close Others",
+                "File",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
                 "workbench.command_palette",
                 "Show Command Palette",
                 "Navigate",
@@ -109,6 +208,42 @@ impl CommandRegistry {
                 true,
                 UndoPolicy::None,
                 Some(ShortcutDef::new(Modifiers::COMMAND, Key::P)),
+            ),
+            meta(
+                "view.next_editor_tab",
+                "View: Next Editor Tab",
+                "View",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::PageDown)),
+            ),
+            meta(
+                "view.previous_editor_tab",
+                "View: Previous Editor Tab",
+                "View",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::PageUp)),
+            ),
+            meta(
+                "view.split_editor_right",
+                "View: Split Editor Right",
+                "View",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::Backslash)),
+            ),
+            meta(
+                "view.split_editor_down",
+                "View: Split Editor Down",
+                "View",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
             ),
             meta(
                 "view.toggle_primary_sidebar",
@@ -174,6 +309,15 @@ impl CommandRegistry {
                 None,
             ),
             meta(
+                "editor.reopen_closed",
+                "Editor: Reopen Closed Editor",
+                "Editor",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)),
+            ),
+            meta(
                 "editor.activate_document",
                 "Editor: Activate Document",
                 "Editor",
@@ -181,6 +325,33 @@ impl CommandRegistry {
                 false,
                 UndoPolicy::Local,
                 None,
+            ),
+            meta(
+                "editor.close_document",
+                "Editor: Close Document",
+                "Editor",
+                "workspace.open",
+                false,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "history.undo",
+                "History: Undo",
+                "History",
+                "",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::Z)),
+            ),
+            meta(
+                "history.redo",
+                "History: Redo",
+                "History",
+                "",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)),
             ),
             meta(
                 "pcb.view.2d",
@@ -329,6 +500,15 @@ pub fn dispatch(
             *show_palette = true;
             DispatchOutcome::Noop
         }
+        "view.next_editor_tab" => {
+            model.activate_next_tab();
+            DispatchOutcome::Noop
+        }
+        "view.previous_editor_tab" => {
+            model.activate_previous_tab();
+            DispatchOutcome::Noop
+        }
+        "view.split_editor_right" | "view.split_editor_down" => DispatchOutcome::Noop,
         "view.toggle_primary_sidebar" => {
             *set_primary_sidebar = !*set_primary_sidebar;
             DispatchOutcome::Noop
@@ -366,6 +546,29 @@ pub fn dispatch(
             }
             DispatchOutcome::Noop
         }
+        "editor.close_document" => {
+            if let Some(id) = arg.and_then(|s| s.parse::<u64>().ok()) {
+                let _ = model.close_document(crate::workbench::DocumentId(id));
+            }
+            DispatchOutcome::Noop
+        }
+        "editor.reopen_closed" => {
+            let _ = model.reopen_last_closed_document();
+            DispatchOutcome::Noop
+        }
+        "file.close" => {
+            let _ = model.close_active_document();
+            DispatchOutcome::Noop
+        }
+        "file.close_others" => {
+            model.close_other_documents();
+            DispatchOutcome::Noop
+        }
+        "file.close_all" => {
+            while model.close_active_document() {}
+            DispatchOutcome::Noop
+        }
+        "history.undo" | "history.redo" => DispatchOutcome::Noop,
         "pcb.view.2d" => {
             if let Some(board) = model.active_board_mut() {
                 board.view_mode = BoardViewMode::TwoD;

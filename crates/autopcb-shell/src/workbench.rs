@@ -91,6 +91,7 @@ pub struct WorkbenchModel {
     pub documents: BTreeMap<DocumentId, Document>,
     pub open_editor_tabs: Vec<DocumentId>,
     pub active_editor_tab: Option<DocumentId>,
+    pub recently_closed_tabs: Vec<DocumentId>,
     pub selection: SelectionState,
     pub output_lines: Vec<String>,
     pub problems: Vec<String>,
@@ -107,6 +108,7 @@ impl WorkbenchModel {
             documents: BTreeMap::new(),
             open_editor_tabs: Vec::new(),
             active_editor_tab: None,
+            recently_closed_tabs: Vec::new(),
             selection: SelectionState::default(),
             output_lines: vec!["autopcb-shell initialized".to_owned()],
             problems: Vec::new(),
@@ -123,7 +125,19 @@ impl WorkbenchModel {
     }
 
     pub fn has_workspace(&self) -> bool {
-        self.workspace_root.is_some() || !self.documents.is_empty()
+        self.workspace_root.is_some() || !self.open_editor_tabs.is_empty()
+    }
+
+    pub fn set_workspace_root(&mut self, root: PathBuf) {
+        self.workspace_root = Some(root);
+    }
+
+    pub fn clear_workspace(&mut self) {
+        self.workspace_root = None;
+        self.documents.clear();
+        self.open_editor_tabs.clear();
+        self.active_editor_tab = None;
+        self.recently_closed_tabs.clear();
     }
 
     pub fn selection_exists(&self) -> bool {
@@ -137,6 +151,11 @@ impl WorkbenchModel {
     }
 
     pub fn open_board_document(&mut self, path: PathBuf, ir: PcbIr) -> DocumentId {
+        if let Some(existing) = self.find_document_by_path(&path) {
+            self.set_active_tab(existing);
+            return existing;
+        }
+
         let id = self.alloc_document_id();
         let title = filename_or_fallback(&path, "board");
         let doc = Document {
@@ -156,6 +175,13 @@ impl WorkbenchModel {
     }
 
     pub fn open_spec_document(&mut self, path: Option<PathBuf>, text: String) -> DocumentId {
+        if let Some(existing_path) = path.as_ref() {
+            if let Some(existing) = self.find_document_by_path(existing_path) {
+                self.set_active_tab(existing);
+                return existing;
+            }
+        }
+
         let id = self.alloc_document_id();
         let title = path
             .as_ref()
@@ -175,9 +201,105 @@ impl WorkbenchModel {
     }
 
     pub fn set_active_tab(&mut self, id: DocumentId) {
-        if self.documents.contains_key(&id) {
+        if self.documents.contains_key(&id) && self.open_editor_tabs.contains(&id) {
             self.active_editor_tab = Some(id);
         }
+    }
+
+    pub fn activate_next_tab(&mut self) {
+        if self.open_editor_tabs.is_empty() {
+            self.active_editor_tab = None;
+            return;
+        }
+        let current_idx = self
+            .active_editor_tab
+            .and_then(|id| self.open_editor_tabs.iter().position(|x| *x == id))
+            .unwrap_or(0);
+        let next_idx = (current_idx + 1) % self.open_editor_tabs.len();
+        self.active_editor_tab = Some(self.open_editor_tabs[next_idx]);
+    }
+
+    pub fn activate_previous_tab(&mut self) {
+        if self.open_editor_tabs.is_empty() {
+            self.active_editor_tab = None;
+            return;
+        }
+        let current_idx = self
+            .active_editor_tab
+            .and_then(|id| self.open_editor_tabs.iter().position(|x| *x == id))
+            .unwrap_or(0);
+        let prev_idx = if current_idx == 0 {
+            self.open_editor_tabs.len() - 1
+        } else {
+            current_idx - 1
+        };
+        self.active_editor_tab = Some(self.open_editor_tabs[prev_idx]);
+    }
+
+    pub fn close_document(&mut self, id: DocumentId) -> bool {
+        let Some(index) = self.open_editor_tabs.iter().position(|x| *x == id) else {
+            return false;
+        };
+
+        self.open_editor_tabs.remove(index);
+        self.recently_closed_tabs.push(id);
+
+        if self.active_editor_tab == Some(id) {
+            self.active_editor_tab = if self.open_editor_tabs.is_empty() {
+                None
+            } else if index == 0 {
+                Some(self.open_editor_tabs[0])
+            } else {
+                Some(self.open_editor_tabs[index - 1])
+            };
+        }
+        true
+    }
+
+    pub fn close_active_document(&mut self) -> bool {
+        let Some(id) = self.active_editor_tab else {
+            return false;
+        };
+        self.close_document(id)
+    }
+
+    pub fn close_other_documents(&mut self) {
+        let Some(active) = self.active_editor_tab else {
+            return;
+        };
+        for id in self.open_editor_tabs.clone() {
+            if id != active {
+                let _ = self.close_document(id);
+            }
+        }
+    }
+
+    pub fn reopen_last_closed_document(&mut self) -> bool {
+        while let Some(id) = self.recently_closed_tabs.pop() {
+            if self.documents.contains_key(&id) && !self.open_editor_tabs.contains(&id) {
+                self.open_editor_tabs.push(id);
+                self.active_editor_tab = Some(id);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn mark_document_dirty(&mut self, id: DocumentId, dirty: bool) {
+        if let Some(doc) = self.documents.get_mut(&id) {
+            doc.dirty = dirty;
+        }
+    }
+
+    pub fn find_document_by_path(&self, path: &Path) -> Option<DocumentId> {
+        self.documents
+            .values()
+            .find(|d| d.path.as_deref().is_some_and(|p| p == path))
+            .map(|d| d.id)
+    }
+
+    pub fn active_document_id(&self) -> Option<DocumentId> {
+        self.active_editor_tab
     }
 
     pub fn open_or_activate_keybindings_document(&mut self) -> DocumentId {
@@ -280,5 +402,30 @@ mod tests {
         let spec_id = model.open_spec_document(None, "x".to_owned());
         assert_eq!(model.open_editor_tabs, vec![spec_id]);
         assert_eq!(model.active_editor_tab, Some(spec_id));
+    }
+
+    #[test]
+    fn close_and_reopen_document() {
+        let mut model = WorkbenchModel::new(None, None);
+        let first = model.open_spec_document(None, "a".to_owned());
+        let second = model.open_spec_document(None, "b".to_owned());
+        assert_eq!(model.active_editor_tab, Some(second));
+
+        assert!(model.close_document(second));
+        assert_eq!(model.active_editor_tab, Some(first));
+        assert!(model.reopen_last_closed_document());
+        assert_eq!(model.active_editor_tab, Some(second));
+    }
+
+    #[test]
+    fn tab_navigation_wraps() {
+        let mut model = WorkbenchModel::new(None, None);
+        let first = model.open_spec_document(None, "a".to_owned());
+        let second = model.open_spec_document(None, "b".to_owned());
+        model.set_active_tab(first);
+        model.activate_previous_tab();
+        assert_eq!(model.active_editor_tab, Some(second));
+        model.activate_next_tab();
+        assert_eq!(model.active_editor_tab, Some(first));
     }
 }
