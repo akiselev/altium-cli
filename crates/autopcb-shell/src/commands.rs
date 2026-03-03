@@ -1,14 +1,49 @@
 use std::collections::BTreeMap;
 
+use efame::egui::{Key, Modifiers};
 use serde::{Deserialize, Serialize};
 
-use crate::workbench::{SelectionKind, WorkbenchModel};
+use crate::workbench::{BoardViewMode, SelectionKind, WorkbenchModel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UndoPolicy {
     None,
     Local,
     Model,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShortcutDef {
+    pub modifiers: Modifiers,
+    pub key: Key,
+}
+
+impl ShortcutDef {
+    pub const fn new(modifiers: Modifiers, key: Key) -> Self {
+        Self { modifiers, key }
+    }
+
+    pub fn as_keyboard_shortcut(&self) -> efame::egui::KeyboardShortcut {
+        efame::egui::KeyboardShortcut::new(self.modifiers, self.key)
+    }
+
+    pub fn display(&self) -> String {
+        let mut parts = Vec::new();
+        if self.modifiers.command {
+            parts.push("Cmd/Ctrl");
+        }
+        if self.modifiers.ctrl {
+            parts.push("Ctrl");
+        }
+        if self.modifiers.alt {
+            parts.push("Alt");
+        }
+        if self.modifiers.shift {
+            parts.push("Shift");
+        }
+        parts.push(key_to_string(self.key));
+        parts.join("+")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +54,7 @@ pub struct CommandMeta {
     pub when: &'static str,
     pub exposed: bool,
     pub undo_policy: UndoPolicy,
+    pub default_shortcut: Option<ShortcutDef>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -38,7 +74,24 @@ impl CommandRegistry {
     pub fn new_m1() -> Self {
         let mut reg = Self::default();
         for m in [
-            meta("app.quit", "App: Quit", "App", "", true, UndoPolicy::None),
+            meta(
+                "app.quit",
+                "App: Quit",
+                "App",
+                "",
+                true,
+                UndoPolicy::None,
+                None,
+            ),
+            meta(
+                "app.open_keybindings",
+                "App: Open Keyboard Shortcuts",
+                "App",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::Comma)),
+            ),
             meta(
                 "workbench.command_palette",
                 "Show Command Palette",
@@ -46,21 +99,143 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::None,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P)),
             ),
-            meta("navigate.quick_open", "Quick Open", "Navigate", "", true, UndoPolicy::None),
-            meta("view.toggle_primary_sidebar", "View: Toggle Primary Sidebar", "View", "", true, UndoPolicy::Local),
-            meta("view.toggle_bottom_panel", "View: Toggle Bottom Panel", "View", "", true, UndoPolicy::Local),
-            meta("view.reset_layout", "View: Reset Layout", "View", "", true, UndoPolicy::Local),
-            meta("panel.show.explorer", "Panel: Show Explorer", "Panel", "", true, UndoPolicy::Local),
-            meta("panel.show.problems", "Panel: Show Problems", "Panel", "", true, UndoPolicy::Local),
-            meta("panel.show.output", "Panel: Show Output", "Panel", "", true, UndoPolicy::Local),
-            meta("panel.show.jobs", "Panel: Show Jobs", "Panel", "", true, UndoPolicy::Local),
-            meta("pcb.view.2d", "PCB: 2D View", "PCB", "workspace.open", true, UndoPolicy::Local),
-            meta("pcb.view.3d", "PCB: 3D View", "PCB", "workspace.open", true, UndoPolicy::Local),
-            meta("pcb.zoom.fit", "PCB: Fit to Board", "PCB", "workspace.open", true, UndoPolicy::Local),
-            meta("selection.clear", "Selection: Clear", "Selection", "selection.exists", true, UndoPolicy::Model),
-            meta("crossprobe.select_component", "Crossprobe: Select Component", "Crossprobe", "workspace.open", false, UndoPolicy::Model),
-            meta("crossprobe.select_net", "Crossprobe: Select Net", "Crossprobe", "workspace.open", false, UndoPolicy::Model),
+            meta(
+                "navigate.quick_open",
+                "Quick Open",
+                "Navigate",
+                "",
+                true,
+                UndoPolicy::None,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::P)),
+            ),
+            meta(
+                "view.toggle_primary_sidebar",
+                "View: Toggle Primary Sidebar",
+                "View",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)),
+            ),
+            meta(
+                "view.toggle_bottom_panel",
+                "View: Toggle Bottom Panel",
+                "View",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::J)),
+            ),
+            meta(
+                "view.reset_layout",
+                "View: Reset Layout",
+                "View",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "panel.show.explorer",
+                "Panel: Show Explorer",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "panel.show.problems",
+                "Panel: Show Problems",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)),
+            ),
+            meta(
+                "panel.show.output",
+                "Panel: Show Output",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "panel.show.jobs",
+                "Panel: Show Jobs",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "editor.activate_document",
+                "Editor: Activate Document",
+                "Editor",
+                "workspace.open",
+                false,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "pcb.view.2d",
+                "PCB: 2D View",
+                "PCB",
+                "workspace.open",
+                true,
+                UndoPolicy::Model,
+                None,
+            ),
+            meta(
+                "pcb.view.3d",
+                "PCB: 3D View",
+                "PCB",
+                "workspace.open",
+                true,
+                UndoPolicy::Model,
+                None,
+            ),
+            meta(
+                "pcb.zoom.fit",
+                "PCB: Fit to Board",
+                "PCB",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::NONE, Key::F)),
+            ),
+            meta(
+                "selection.clear",
+                "Selection: Clear",
+                "Selection",
+                "selection.exists",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::NONE, Key::Escape)),
+            ),
+            meta(
+                "crossprobe.select_component",
+                "Crossprobe: Select Component",
+                "Crossprobe",
+                "workspace.open",
+                false,
+                UndoPolicy::Model,
+                None,
+            ),
+            meta(
+                "crossprobe.select_net",
+                "Crossprobe: Select Net",
+                "Crossprobe",
+                "workspace.open",
+                false,
+                UndoPolicy::Model,
+                None,
+            ),
         ] {
             reg.by_id.insert(m.id, m);
         }
@@ -79,11 +254,17 @@ impl CommandRegistry {
         self.by_id.get(id).copied()
     }
 
+    pub fn default_shortcut(&self, id: &str) -> Option<ShortcutDef> {
+        self.get(id).and_then(|m| m.default_shortcut)
+    }
+
     pub fn is_enabled(&self, meta: CommandMeta, ctx: &CommandContext) -> bool {
         match meta.when {
             "" => true,
             "workspace.open" => ctx.workspace_open,
             "selection.exists" => ctx.selection_exists,
+            "editor.pcb2d.focused" => ctx.editor_pcb2d_focused,
+            "editor.pcb3d.focused" => ctx.editor_pcb3d_focused,
             _ => true,
         }
     }
@@ -96,6 +277,7 @@ const fn meta(
     when: &'static str,
     exposed: bool,
     undo_policy: UndoPolicy,
+    default_shortcut: Option<ShortcutDef>,
 ) -> CommandMeta {
     CommandMeta {
         id,
@@ -104,6 +286,7 @@ const fn meta(
         when,
         exposed,
         undo_policy,
+        default_shortcut,
     }
 }
 
@@ -115,7 +298,7 @@ pub enum DispatchOutcome {
 
 pub fn build_context(model: &WorkbenchModel, focus_2d: bool, focus_3d: bool) -> CommandContext {
     CommandContext {
-        workspace_open: model.ir.is_some(),
+        workspace_open: model.has_workspace(),
         selection_exists: model.selection_exists(),
         editor_pcb2d_focused: focus_2d,
         editor_pcb3d_focused: focus_3d,
@@ -134,6 +317,10 @@ pub fn dispatch(
 ) -> DispatchOutcome {
     match id {
         "app.quit" => DispatchOutcome::RequestQuit,
+        "app.open_keybindings" => {
+            model.open_or_activate_keybindings_document();
+            DispatchOutcome::Noop
+        }
         "workbench.command_palette" => {
             *show_palette = true;
             DispatchOutcome::Noop
@@ -173,12 +360,22 @@ pub fn dispatch(
             *set_bottom_tab = crate::layout::BottomTab::Jobs;
             DispatchOutcome::Noop
         }
+        "editor.activate_document" => {
+            if let Some(id) = arg.and_then(|s| s.parse::<u64>().ok()) {
+                model.set_active_tab(crate::workbench::DocumentId(id));
+            }
+            DispatchOutcome::Noop
+        }
         "pcb.view.2d" => {
-            layout.activate_pcb2d();
+            if let Some(board) = model.active_board_mut() {
+                board.view_mode = BoardViewMode::TwoD;
+            }
             DispatchOutcome::Noop
         }
         "pcb.view.3d" => {
-            layout.activate_pcb3d();
+            if let Some(board) = model.active_board_mut() {
+                board.view_mode = BoardViewMode::ThreeD;
+            }
             DispatchOutcome::Noop
         }
         "pcb.zoom.fit" => {
@@ -215,6 +412,206 @@ pub fn selection_label(kind: &SelectionKind) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredModifiers {
+    pub command: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredShortcut {
+    pub modifiers: StoredModifiers,
+    pub key: String,
+}
+
+pub fn shortcut_to_stored(sc: ShortcutDef) -> StoredShortcut {
+    StoredShortcut {
+        modifiers: StoredModifiers {
+            command: sc.modifiers.command,
+            ctrl: sc.modifiers.ctrl,
+            alt: sc.modifiers.alt,
+            shift: sc.modifiers.shift,
+        },
+        key: key_to_string(sc.key).to_owned(),
+    }
+}
+
+pub fn shortcut_from_stored(sc: &StoredShortcut) -> Option<ShortcutDef> {
+    let key = key_from_string(&sc.key)?;
+    Some(ShortcutDef {
+        modifiers: Modifiers {
+            alt: sc.modifiers.alt,
+            ctrl: sc.modifiers.ctrl,
+            shift: sc.modifiers.shift,
+            mac_cmd: false,
+            command: sc.modifiers.command,
+        },
+        key,
+    })
+}
+
+pub fn key_to_string(key: Key) -> &'static str {
+    match key {
+        Key::ArrowDown => "ArrowDown",
+        Key::ArrowLeft => "ArrowLeft",
+        Key::ArrowRight => "ArrowRight",
+        Key::ArrowUp => "ArrowUp",
+        Key::Escape => "Escape",
+        Key::Tab => "Tab",
+        Key::Backspace => "Backspace",
+        Key::Enter => "Enter",
+        Key::Space => "Space",
+        Key::Insert => "Insert",
+        Key::Delete => "Delete",
+        Key::Home => "Home",
+        Key::End => "End",
+        Key::PageUp => "PageUp",
+        Key::PageDown => "PageDown",
+        Key::Minus => "Minus",
+        Key::Plus => "Plus",
+        Key::Num0 => "Num0",
+        Key::Num1 => "Num1",
+        Key::Num2 => "Num2",
+        Key::Num3 => "Num3",
+        Key::Num4 => "Num4",
+        Key::Num5 => "Num5",
+        Key::Num6 => "Num6",
+        Key::Num7 => "Num7",
+        Key::Num8 => "Num8",
+        Key::Num9 => "Num9",
+        Key::A => "A",
+        Key::B => "B",
+        Key::C => "C",
+        Key::D => "D",
+        Key::E => "E",
+        Key::F => "F",
+        Key::G => "G",
+        Key::H => "H",
+        Key::I => "I",
+        Key::J => "J",
+        Key::K => "K",
+        Key::L => "L",
+        Key::M => "M",
+        Key::N => "N",
+        Key::O => "O",
+        Key::P => "P",
+        Key::Q => "Q",
+        Key::R => "R",
+        Key::S => "S",
+        Key::T => "T",
+        Key::U => "U",
+        Key::V => "V",
+        Key::W => "W",
+        Key::X => "X",
+        Key::Y => "Y",
+        Key::Z => "Z",
+        Key::F1 => "F1",
+        Key::F2 => "F2",
+        Key::F3 => "F3",
+        Key::F4 => "F4",
+        Key::F5 => "F5",
+        Key::F6 => "F6",
+        Key::F7 => "F7",
+        Key::F8 => "F8",
+        Key::F9 => "F9",
+        Key::F10 => "F10",
+        Key::F11 => "F11",
+        Key::F12 => "F12",
+        Key::Comma => "Comma",
+        Key::Period => "Period",
+        Key::OpenBracket => "OpenBracket",
+        Key::CloseBracket => "CloseBracket",
+        Key::Backslash => "Backslash",
+        Key::Slash => "Slash",
+        Key::Semicolon => "Semicolon",
+        Key::Quote => "Quote",
+        Key::Backtick => "Backtick",
+        _ => "Unknown",
+    }
+}
+
+pub fn key_from_string(s: &str) -> Option<Key> {
+    Some(match s {
+        "ArrowDown" => Key::ArrowDown,
+        "ArrowLeft" => Key::ArrowLeft,
+        "ArrowRight" => Key::ArrowRight,
+        "ArrowUp" => Key::ArrowUp,
+        "Escape" => Key::Escape,
+        "Tab" => Key::Tab,
+        "Backspace" => Key::Backspace,
+        "Enter" => Key::Enter,
+        "Space" => Key::Space,
+        "Insert" => Key::Insert,
+        "Delete" => Key::Delete,
+        "Home" => Key::Home,
+        "End" => Key::End,
+        "PageUp" => Key::PageUp,
+        "PageDown" => Key::PageDown,
+        "Minus" => Key::Minus,
+        "Plus" => Key::Plus,
+        "Num0" => Key::Num0,
+        "Num1" => Key::Num1,
+        "Num2" => Key::Num2,
+        "Num3" => Key::Num3,
+        "Num4" => Key::Num4,
+        "Num5" => Key::Num5,
+        "Num6" => Key::Num6,
+        "Num7" => Key::Num7,
+        "Num8" => Key::Num8,
+        "Num9" => Key::Num9,
+        "A" => Key::A,
+        "B" => Key::B,
+        "C" => Key::C,
+        "D" => Key::D,
+        "E" => Key::E,
+        "F" => Key::F,
+        "G" => Key::G,
+        "H" => Key::H,
+        "I" => Key::I,
+        "J" => Key::J,
+        "K" => Key::K,
+        "L" => Key::L,
+        "M" => Key::M,
+        "N" => Key::N,
+        "O" => Key::O,
+        "P" => Key::P,
+        "Q" => Key::Q,
+        "R" => Key::R,
+        "S" => Key::S,
+        "T" => Key::T,
+        "U" => Key::U,
+        "V" => Key::V,
+        "W" => Key::W,
+        "X" => Key::X,
+        "Y" => Key::Y,
+        "Z" => Key::Z,
+        "F1" => Key::F1,
+        "F2" => Key::F2,
+        "F3" => Key::F3,
+        "F4" => Key::F4,
+        "F5" => Key::F5,
+        "F6" => Key::F6,
+        "F7" => Key::F7,
+        "F8" => Key::F8,
+        "F9" => Key::F9,
+        "F10" => Key::F10,
+        "F11" => Key::F11,
+        "F12" => Key::F12,
+        "Comma" => Key::Comma,
+        "Period" => Key::Period,
+        "OpenBracket" => Key::OpenBracket,
+        "CloseBracket" => Key::CloseBracket,
+        "Backslash" => Key::Backslash,
+        "Slash" => Key::Slash,
+        "Semicolon" => Key::Semicolon,
+        "Quote" => Key::Quote,
+        "Backtick" => Key::Backtick,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +637,28 @@ mod tests {
         };
         let m = reg.get("pcb.view.2d").expect("missing command");
         assert!(!reg.is_enabled(m, &ctx));
+    }
+
+    #[test]
+    fn dispatch_crossprobe_component_sets_selection() {
+        let mut model = WorkbenchModel::new(None, None);
+        let mut side = true;
+        let mut bottom = true;
+        let mut tab = crate::layout::BottomTab::Output;
+        let mut layout = crate::layout::ShellLayoutState::default();
+        let mut palette = false;
+
+        let _ = dispatch(
+            "crossprobe.select_component",
+            Some("U7".to_owned()),
+            &mut model,
+            &mut side,
+            &mut bottom,
+            &mut tab,
+            &mut layout,
+            &mut palette,
+        );
+
+        assert!(matches!(model.selection.primary, SelectionKind::Component(ref d) if d == "U7"));
     }
 }

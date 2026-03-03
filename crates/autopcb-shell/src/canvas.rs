@@ -1,9 +1,11 @@
 use efame::egui::{self, Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2};
 
-use crate::workbench::{SelectionKind, WorkbenchModel};
+use autopcb_ir::PcbIr;
+
+use crate::workbench::SelectionKind;
 
 pub trait PcbCanvasView {
-    fn ui(&mut self, ui: &mut egui::Ui, model: &WorkbenchModel, fit_requested: bool);
+    fn ui(&mut self, ui: &mut egui::Ui, ir: &PcbIr, selection: &SelectionKind, fit_requested: bool);
 }
 
 #[derive(Debug, Default)]
@@ -12,25 +14,14 @@ pub struct Pcb2dCanvas {
 }
 
 impl Pcb2dCanvas {
-    fn init_rect_if_needed(&mut self, model: &WorkbenchModel) {
+    fn init_rect_if_needed(&mut self, ir: &PcbIr) {
         if self.scene_rect.is_some() {
             return;
         }
-        let Some(ir) = model.ir.as_ref() else {
-            return;
-        };
-        let b = &ir.board.bounds;
-        let margin = 5.0_f32;
-        self.scene_rect = Some(Rect::from_min_max(
-            egui::pos2(b.min.x as f32 - margin, -(b.max.y as f32) - margin),
-            egui::pos2(b.max.x as f32 + margin, -(b.min.y as f32) + margin),
-        ));
+        self.fit(ir);
     }
 
-    fn fit(&mut self, model: &WorkbenchModel) {
-        let Some(ir) = model.ir.as_ref() else {
-            return;
-        };
+    fn fit(&mut self, ir: &PcbIr) {
         let b = &ir.board.bounds;
         let margin = 5.0_f32;
         self.scene_rect = Some(Rect::from_min_max(
@@ -41,28 +32,21 @@ impl Pcb2dCanvas {
 }
 
 impl PcbCanvasView for Pcb2dCanvas {
-    fn ui(&mut self, ui: &mut egui::Ui, model: &WorkbenchModel, fit_requested: bool) {
-        self.init_rect_if_needed(model);
+    fn ui(&mut self, ui: &mut egui::Ui, ir: &PcbIr, selection: &SelectionKind, fit_requested: bool) {
+        self.init_rect_if_needed(ir);
         if fit_requested {
-            self.fit(model);
+            self.fit(ir);
         }
 
-        let Some(_ir) = model.ir.as_ref() else {
-            ui.centered_and_justified(|ui| {
-                ui.label("No board loaded");
-            });
-            return;
-        };
-
-        let mut rect = self.scene_rect.unwrap_or_else(|| {
-            Rect::from_min_max(egui::pos2(-50.0, -50.0), egui::pos2(50.0, 50.0))
-        });
+        let mut rect = self
+            .scene_rect
+            .unwrap_or_else(|| Rect::from_min_max(egui::pos2(-50.0, -50.0), egui::pos2(50.0, 50.0)));
 
         egui::Scene::new()
             .zoom_range(0.001..=f32::INFINITY)
             .show(ui, &mut rect, |ui| {
                 let painter = ui.painter();
-                render_board(painter, model);
+                render_board(painter, ir, selection);
             });
         self.scene_rect = Some(rect);
     }
@@ -72,8 +56,7 @@ impl PcbCanvasView for Pcb2dCanvas {
 pub struct Pcb3dCanvas;
 
 impl PcbCanvasView for Pcb3dCanvas {
-    fn ui(&mut self, ui: &mut egui::Ui, model: &WorkbenchModel, _fit_requested: bool) {
-        let _ = model;
+    fn ui(&mut self, ui: &mut egui::Ui, _ir: &PcbIr, _selection: &SelectionKind, _fit_requested: bool) {
         ui.centered_and_justified(|ui| {
             ui.label("3D canvas placeholder (PaintCallback-ready boundary)");
         });
@@ -84,11 +67,7 @@ fn to_pos2(x_mm: f64, y_mm: f64) -> Pos2 {
     Pos2::new(x_mm as f32, -(y_mm as f32))
 }
 
-fn render_board(p: &Painter, model: &WorkbenchModel) {
-    let Some(ir) = model.ir.as_ref() else {
-        return;
-    };
-
+fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
     if ir.board.outline.len() >= 3 {
         let points: Vec<Pos2> = ir.board.outline.iter().map(|pt| to_pos2(pt.x, pt.y)).collect();
         p.add(egui::Shape::convex_polygon(
@@ -98,11 +77,11 @@ fn render_board(p: &Painter, model: &WorkbenchModel) {
         ));
     }
 
-    let selected_comp = match &model.selection.primary {
+    let selected_comp = match selection {
         SelectionKind::Component(d) => Some(d.as_str()),
         _ => None,
     };
-    let selected_net = match &model.selection.primary {
+    let selected_net = match selection {
         SelectionKind::Net(n) => Some(n.as_str()),
         _ => None,
     };
