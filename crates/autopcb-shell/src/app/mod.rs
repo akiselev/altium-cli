@@ -4,8 +4,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
-use efame::egui::{self, Event, Key};
+use efame::egui::{self, ColorImage, Event, Key, UserData, ViewportCommand};
 
 use self::tabs::{TabProviderRegistry, TabRenderer};
 use crate::canvas::{Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView};
@@ -13,6 +15,7 @@ use crate::commands::{
     build_context, dispatch, selection_label, shortcut_from_stored, shortcut_to_stored,
     CommandRegistry, DispatchOutcome, ShortcutDef, StoredShortcut,
 };
+use crate::ipc::IpcRequest;
 use crate::layout::{BottomTab, ShellLayoutState};
 use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, SelectionKind, WorkbenchModel};
 
@@ -55,6 +58,9 @@ pub struct ShellApp {
     keybindings_filter: String,
     keybindings_capture_for: Option<String>,
     shortcut_bindings: BTreeMap<String, ShortcutDef>,
+    ipc_rx: Option<Receiver<IpcRequest>>,
+    screenshot_path: Option<PathBuf>,
+    screenshot_requested: bool,
     tab_registry: TabProviderRegistry,
     tab_renderers: BTreeMap<DocumentId, Box<dyn TabRenderer>>,
     canvas2d: Pcb2dCanvas,
@@ -66,6 +72,7 @@ impl ShellApp {
         cc: &efame::CreationContext<'_>,
         board_path: Option<PathBuf>,
         initial_ir: Option<autopcb_ir::PcbIr>,
+        ipc_rx: Option<Receiver<IpcRequest>>,
     ) -> Self {
         let mut layout = ShellLayoutState::default();
         let mut panel_visibility = PanelVisibilityState::default();
@@ -108,6 +115,9 @@ impl ShellApp {
             keybindings_filter: String::new(),
             keybindings_capture_for: None,
             shortcut_bindings,
+            ipc_rx,
+            screenshot_path: None,
+            screenshot_requested: false,
             tab_registry: TabProviderRegistry::new_m1(),
             tab_renderers: BTreeMap::new(),
             canvas2d: Pcb2dCanvas::default(),
@@ -396,6 +406,59 @@ impl ShellApp {
         self.tab_renderers.retain(|id, _| {
             self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
         });
+    }
+
+    fn process_ipc(&mut self) {
+        let mut drained = Vec::new();
+        if let Some(rx) = &self.ipc_rx {
+            while let Ok(req) = rx.try_recv() {
+                drained.push(req);
+            }
+        }
+        for req in drained {
+            match req {
+                IpcRequest::Ping => self.model.output_lines.push("IPC ping".to_owned()),
+                IpcRequest::Command { id, arg } => self.queue(&id, arg),
+                IpcRequest::OpenFile { path } => self.queue("file.open", Some(path)),
+                IpcRequest::Screenshot { path } => {
+                    self.screenshot_path = Some(PathBuf::from(path));
+                }
+            }
+        }
+    }
+
+    fn handle_screenshot_flow(&mut self, ctx: &egui::Context) {
+        if self.screenshot_path.is_some() && !self.screenshot_requested {
+            ctx.send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
+            self.screenshot_requested = true;
+        }
+
+        let screenshot_event = ctx.input(|i| {
+            i.raw.events.iter().find_map(|e| {
+                if let Event::Screenshot { image, .. } = e {
+                    Some(image.clone())
+                } else {
+                    None
+                }
+            })
+        });
+
+        if let Some(image) = screenshot_event {
+            let target = self
+                .screenshot_path
+                .take()
+                .unwrap_or_else(|| PathBuf::from("screenshot.png"));
+            if let Err(err) = save_screenshot_png(&image, &target) {
+                self.model
+                    .problems
+                    .push(format!("Failed to save screenshot {}: {err}", target.display()));
+            } else {
+                self.model
+                    .output_lines
+                    .push(format!("Screenshot saved to {}", target.display()));
+            }
+            self.screenshot_requested = false;
+        }
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1073,6 +1136,7 @@ impl efame::App for ShellApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
+        self.process_ipc();
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
         self.process_queue(ctx, frame);
@@ -1092,11 +1156,30 @@ impl efame::App for ShellApp {
 
         self.render_status_bar(ctx);
         self.show_palette_window(ctx);
+        self.handle_screenshot_flow(ctx);
 
         if ctx.input(|i| i.raw.events.iter().any(|e| matches!(e, Event::Key { key: Key::Escape, pressed: true, .. })))
             && self.show_command_palette
         {
             self.show_command_palette = false;
         }
+
+        // Keep a light polling cadence so IPC commands are handled even when the UI is idle.
+        if self.ipc_rx.is_some() || self.screenshot_requested || self.screenshot_path.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
     }
+}
+
+fn save_screenshot_png(image: &ColorImage, path: &Path) -> anyhow::Result<()> {
+    let [width, height] = image.size;
+    let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
+    image::save_buffer(
+        path,
+        &rgba,
+        width as u32,
+        height as u32,
+        image::ColorType::Rgba8,
+    )?;
+    Ok(())
 }
