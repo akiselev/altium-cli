@@ -7,9 +7,10 @@ use super::ast::{
     FootprintItem, FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
     MapEntry, MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl,
     OutputGroupBlockDecl, PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem,
-    PcbDocPrimitiveDecl, PinDecl, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property,
-    RowDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile,
-    SpecItem, VariantBlockDecl, VariationDecl,
+    PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
+    PlacementItem, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property, RowDecl, RuleDecl,
+    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    VariantBlockDecl, VariationDecl,
     is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
@@ -323,6 +324,15 @@ impl<'a> SpecParser<'a> {
             return Err(self.err("expected identifier after 'let'"));
         }
 
+        // placement { ... } top-level block.
+        if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            if name == "placement" {
+                let decl = self.parse_placement()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(SpecItem::Placement(decl), start.merge(end)));
+            }
+        }
+
         // PcbDoc block types (polygon, rule, class, differential_pair) — checked before
         // SchDoc types to avoid conflicts (polygon exists in both).
         if let TokenKind::Ident(ref name) = self.current_kind().clone() {
@@ -345,7 +355,7 @@ impl<'a> SpecParser<'a> {
             }
         }
 
-        Err(self.err("expected import, component, footprint, project, sheet, net, power, board, or let binding"))
+        Err(self.err("expected import, component, footprint, project, sheet, net, power, board, placement, or let binding"))
     }
 
     // ── Import ─────────────────────────────────────────────────────────────
@@ -1276,6 +1286,133 @@ impl<'a> SpecParser<'a> {
         Ok(items)
     }
 
+    /// Parse `placement { ... }` top-level block.
+    fn parse_placement(&mut self) -> Result<PlacementDecl, ParseError> {
+        match self.current_kind() {
+            TokenKind::Ident(s) if s == "placement" => {
+                self.bump();
+            }
+            _ => return Err(self.err("expected 'placement'")),
+        }
+        self.skip_newlines();
+        self.expect(&TokenKind::LBrace, "expected '{' after 'placement'")?;
+        let mut body = Vec::new();
+        self.skip_separators();
+
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let start = self.current_span();
+
+            if self.at(&TokenKind::Let) {
+                let b = self.parse_let_binding()?;
+                let end = self.prev_span();
+                body.push(Spanned::new(PlacementItem::LetBinding(b), start.merge(end)));
+                self.skip_separators();
+                continue;
+            }
+
+            if let TokenKind::Ident(kind) = self.current_kind().clone() {
+                match kind.as_str() {
+                    "place" => {
+                        let place = self.parse_placement_place()?;
+                        let end = self.prev_span();
+                        body.push(Spanned::new(PlacementItem::Place(place), start.merge(end)));
+                        self.skip_separators();
+                        continue;
+                    }
+                    "left_of" | "right_of" | "above" | "below" => {
+                        let c = self.parse_placement_directional_constraint()?;
+                        let end = self.prev_span();
+                        body.push(Spanned::new(PlacementItem::Constraint(c), start.merge(end)));
+                        self.skip_separators();
+                        continue;
+                    }
+                    "optimize" => {
+                        self.bump();
+                        self.skip_newlines();
+                        let obj = self.parse_object()?;
+                        let end = self.prev_span();
+                        body.push(Spanned::new(PlacementItem::Optimize(obj), start.merge(end)));
+                        self.skip_separators();
+                        continue;
+                    }
+                    "clearance" => {
+                        self.bump();
+                        self.skip_newlines();
+                        let obj = self.parse_object()?;
+                        let end = self.prev_span();
+                        body.push(Spanned::new(PlacementItem::Clearance(obj), start.merge(end)));
+                        self.skip_separators();
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            let prop = self.parse_property()?;
+            let end = self.prev_span();
+            body.push(Spanned::new(PlacementItem::Property(prop), start.merge(end)));
+            self.skip_separators();
+        }
+
+        self.expect(&TokenKind::RBrace, "expected '}' to close placement block")?;
+        Ok(PlacementDecl { body })
+    }
+
+    fn parse_placement_place(&mut self) -> Result<PlaceDecl, ParseError> {
+        match self.current_kind() {
+            TokenKind::Ident(s) if s == "place" => {
+                self.bump();
+            }
+            _ => return Err(self.err("expected 'place'")),
+        }
+        self.skip_newlines();
+
+        let mut designators = Vec::new();
+        loop {
+            let name = self.parse_entity_name()?;
+            designators.push(name);
+            self.skip_newlines();
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            self.skip_newlines();
+        }
+
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(PlaceDecl { designators, body })
+    }
+
+    fn parse_placement_directional_constraint(&mut self) -> Result<PlacementConstraintDecl, ParseError> {
+        let kind = match self.current_kind().clone() {
+            TokenKind::Ident(s) => {
+                self.bump();
+                s
+            }
+            _ => return Err(self.err("expected directional placement constraint")),
+        };
+        self.skip_newlines();
+        let a = self.parse_dollar_path_reference()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::Comma, "expected ',' between placement references")?;
+        self.skip_newlines();
+        let b = self.parse_dollar_path_reference()?;
+        self.skip_newlines();
+        let body = if self.at(&TokenKind::LBrace) {
+            Some(self.parse_object()?)
+        } else {
+            None
+        };
+
+        Ok(match kind.as_str() {
+            "left_of" => PlacementConstraintDecl::LeftOf { a, b, body },
+            "right_of" => PlacementConstraintDecl::RightOf { a, b, body },
+            "above" => PlacementConstraintDecl::Above { a, b, body },
+            "below" => PlacementConstraintDecl::Below { a, b, body },
+            _ => return Err(self.err("unsupported directional placement constraint")),
+        })
+    }
+
     /// Parse a PcbDoc primitive from an identifier token: `track { ... }`, `arc { ... }`, etc.
     fn parse_pcbdoc_primitive(&mut self) -> Result<PcbDocPrimitiveDecl, ParseError> {
         let type_start = self.current_span();
@@ -1758,6 +1895,21 @@ impl<'a> SpecParser<'a> {
     }
 
     // ── Dollar path ────────────────────────────────────────────────────────
+
+    fn parse_dollar_path_reference(&mut self) -> Result<Spanned<super::ast::DollarPath>, ParseError> {
+        let start = self.current_span();
+        let (root, root_span) = match self.current_kind().clone() {
+            TokenKind::DollarIdent(s) => {
+                let span = self.current_span();
+                self.bump();
+                (s, span)
+            }
+            _ => return Err(self.err("expected '$name' reference")),
+        };
+        let path = self.parse_dollar_path_tail(root, root_span)?;
+        let end = self.prev_span();
+        Ok(Spanned::new(path, start.merge(end)))
+    }
 
     fn parse_dollar_path_tail(
         &mut self,

@@ -1,6 +1,6 @@
 //! AutoPCB Viewer — standalone binary for visualising PCB IR data.
 //!
-//! Usage: autopcb-viewer <path-to-pcbdoc> [--screenshot <output.png>]
+//! Usage: autopcb-viewer <path-to-pcbdoc> [--screenshot <output.png>] [--playback <iterations.json>]
 
 mod app;
 mod colors;
@@ -13,24 +13,34 @@ use std::sync::{Arc, Mutex};
 
 use altium_format::PcbDoc;
 use autopcb_ir::PcbIr;
+use autopcb_placement::PlacementIterationSnapshot;
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let path = match args.next() {
         Some(p) => PathBuf::from(p),
         None => {
-            eprintln!("Usage: autopcb-viewer <path-to-pcbdoc> [--screenshot <output.png>]");
+            eprintln!("Usage: autopcb-viewer <path-to-pcbdoc> [--screenshot <output.png>] [--playback <iterations.json>]");
             std::process::exit(1);
         }
     };
 
     let mut screenshot_path: Option<PathBuf> = None;
+    let mut playback_path: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         if arg == "--screenshot" {
             match args.next() {
                 Some(p) => screenshot_path = Some(PathBuf::from(p)),
                 None => {
                     eprintln!("--screenshot requires a path argument");
+                    std::process::exit(1);
+                }
+            }
+        } else if arg == "--playback" {
+            match args.next() {
+                Some(p) => playback_path = Some(PathBuf::from(p)),
+                None => {
+                    eprintln!("--playback requires a path argument");
                     std::process::exit(1);
                 }
             }
@@ -63,6 +73,16 @@ fn main() -> anyhow::Result<()> {
 
     let ir = Arc::new(Mutex::new(ir));
     let app_ir = Arc::clone(&ir);
+    let playback: Option<Vec<PlacementIterationSnapshot>> = if let Some(path) = playback_path {
+        let source = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+        Some(
+            serde_json::from_str(&source)
+                .map_err(|e| anyhow::anyhow!("failed to parse playback {}: {e}", path.display()))?,
+        )
+    } else {
+        None
+    };
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -77,7 +97,7 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         &title,
         options,
-        Box::new(move |cc| Ok(Box::new(app::ViewerApp::new(app_ir, screenshot_path, cc)))),
+        Box::new(move |cc| Ok(Box::new(app::ViewerApp::new(app_ir, screenshot_path, playback.clone(), cc)))),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 

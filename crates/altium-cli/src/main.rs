@@ -3,9 +3,14 @@ use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use autopcb_ir::PcbIr;
+use autopcb_placement::{
+    Direction, PlacementConfig, PlacementEdge, RectRegion, UserConstraint,
+    named_region_from_board, solve_placement,
+};
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
     SpecDomain, compile_spec, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
+    PlacementConstraintSpec, PlacementPlaceSpec,
     reconcile_pcbdoc, reconcile_pcbdoc_empty,
     reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
     reconcile_schdoc, reconcile_schdoc_empty,
@@ -140,6 +145,11 @@ enum Commands {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Placement solver commands for .pcbdoc-spec files
+    Placement {
+        #[command(subcommand)]
+        sub: PlacementSubcommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -189,6 +199,30 @@ enum InspectSubcommand {
     Rules,
     /// Export the full IR as JSON
     IrJson,
+}
+
+#[derive(Subcommand)]
+enum PlacementSubcommand {
+    /// Solve placement constraints from a .pcbdoc-spec against a target .PcbDoc
+    Solve {
+        /// Path to .pcbdoc-spec source file
+        spec_file: PathBuf,
+        /// Target .PcbDoc
+        #[arg(long)]
+        target: PathBuf,
+        /// Emit JSON report
+        #[arg(long, default_value_t = false)]
+        json: bool,
+        /// Write iteration snapshots for autopcb-viewer playback
+        #[arg(long)]
+        iterations_out: Option<PathBuf>,
+        #[arg(long, default_value_t = 2.0)]
+        gamma_start: f64,
+        #[arg(long, default_value_t = 10.0)]
+        gamma_end: f64,
+        #[arg(long, default_value_t = 250)]
+        max_iters: usize,
+    },
 }
 
 fn main() -> ExitCode {
@@ -277,6 +311,12 @@ fn main() -> ExitCode {
         }
         Commands::Query { path, query, format, limit } => {
             if let Err(e) = run_query(&path, &query, &format, limit) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Placement { sub } => {
+            if let Err(e) = run_placement(sub) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -1439,4 +1479,206 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
     }
 
     Ok(())
+}
+
+fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
+    match sub {
+        PlacementSubcommand::Solve {
+            spec_file,
+            target,
+            json,
+            iterations_out,
+            gamma_start,
+            gamma_end,
+            max_iters,
+        } => {
+            let source = std::fs::read_to_string(&spec_file)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
+            let compiled = compile_and_resolve(&source, &spec_file, &SpecDomain::PcbDoc)?;
+            let spec = match compiled.model {
+                altium_format_spec::model::SpecModel::PcbDoc(spec) => spec,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "expected PcbDoc model for {}",
+                        spec_file.display()
+                    ));
+                }
+            };
+
+            let placement = spec.placement.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "spec {} has no placement {{ ... }} block",
+                    spec_file.display()
+                )
+            })?;
+
+            let doc = PcbDoc::open(&target)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
+            let board = doc.board()?;
+            let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let mut cfg = PlacementConfig {
+                gamma_start,
+                gamma_end,
+                max_iters,
+                ..PlacementConfig::default()
+            };
+            if let Some(all) = placement.clearance.all {
+                cfg.default_clearance_mm = all.to_mms();
+            }
+            if let Some(edge) = placement.clearance.edge {
+                cfg.board_edge_clearance_mm = edge.to_mms();
+            }
+            for rule in &spec.placement_rules {
+                if let (Some(kind), Some(gap)) = (&rule.kind, rule.gap) {
+                    match kind.as_str() {
+                        "component_clearance" => cfg.default_clearance_mm = gap.to_mms(),
+                        "board_outline_clearance" => cfg.board_edge_clearance_mm = gap.to_mms(),
+                        _ => {}
+                    }
+                }
+            }
+            cfg.ratsnest_weight = placement.optimize.ratsnest_weight;
+
+            let user_constraints = build_user_constraints(&ir, &placement.places, &placement.constraints)?;
+            let result = solve_placement(&ir, &user_constraints, &cfg)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            if let Some(path) = iterations_out {
+                let payload = serde_json::to_string_pretty(&result.snapshots)?;
+                std::fs::write(&path, payload)
+                    .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("PLACEMENT REPORT");
+                println!("  status: {}", result.status);
+                println!("  iterations: {}", result.total_iterations);
+                println!("  duration: {} ms", result.duration_ms);
+                println!("  hpwl estimate: {:.3} mm", result.hpwl_estimate_mm);
+                println!("  overlap violations: {}", result.overlap_violations);
+                println!("  components: {}", result.components.len());
+                println!();
+                for c in &result.components {
+                    println!(
+                        "  {:<12} ({:>9.3}, {:>9.3}) rot {:>6.1}",
+                        c.designator, c.x_mm, c.y_mm, c.rotation_deg
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_user_constraints(
+    ir: &PcbIr,
+    places: &[PlacementPlaceSpec],
+    constraints: &[PlacementConstraintSpec],
+) -> anyhow::Result<Vec<UserConstraint>> {
+    let mut out = Vec::new();
+
+    for place in places {
+        for d in &place.designators {
+            if let Some(edge) = &place.edge {
+                let edge = parse_edge(edge).ok_or_else(|| {
+                    anyhow::anyhow!("invalid edge value '{edge}' for place {d}")
+                })?;
+                out.push(UserConstraint::EdgePlacement {
+                    designator: d.clone(),
+                    edge,
+                    inset_mm: place.inset.map(|v| v.to_mms()).unwrap_or(0.0),
+                });
+            }
+
+            if let (Some(near), Some(max_dist)) = (&place.near, place.max_distance) {
+                out.push(UserConstraint::Near {
+                    a: d.clone(),
+                    b: near.clone(),
+                    max_distance_mm: max_dist.to_mms(),
+                });
+            }
+
+            if let Some(region) = &place.region_name {
+                if let Some(rr) = named_region_from_board(ir, region) {
+                    out.push(UserConstraint::RegionContainment {
+                        designator: d.clone(),
+                        region: rr,
+                    });
+                }
+            }
+
+            if let Some((from, to)) = place.region_rect {
+                out.push(UserConstraint::RegionContainment {
+                    designator: d.clone(),
+                    region: RectRegion {
+                        min_x: from.x.to_mms(),
+                        min_y: from.y.to_mms(),
+                        max_x: to.x.to_mms(),
+                        max_y: to.y.to_mms(),
+                    },
+                });
+            }
+
+            if place.fixed {
+                if let Some(at) = place.at {
+                    out.push(UserConstraint::FixedPosition {
+                        designator: d.clone(),
+                        x_mm: at.x.to_mms(),
+                        y_mm: at.y.to_mms(),
+                    });
+                }
+            } else if let Some(at) = place.at {
+                out.push(UserConstraint::FixedPosition {
+                    designator: d.clone(),
+                    x_mm: at.x.to_mms(),
+                    y_mm: at.y.to_mms(),
+                });
+            }
+        }
+    }
+
+    for c in constraints {
+        match c {
+            PlacementConstraintSpec::LeftOf { a, b, gap } => out.push(UserConstraint::Directional {
+                a: a.clone(),
+                b: b.clone(),
+                direction: Direction::LeftOf,
+                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
+            }),
+            PlacementConstraintSpec::RightOf { a, b, gap } => out.push(UserConstraint::Directional {
+                a: a.clone(),
+                b: b.clone(),
+                direction: Direction::RightOf,
+                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
+            }),
+            PlacementConstraintSpec::Above { a, b, gap } => out.push(UserConstraint::Directional {
+                a: a.clone(),
+                b: b.clone(),
+                direction: Direction::Above,
+                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
+            }),
+            PlacementConstraintSpec::Below { a, b, gap } => out.push(UserConstraint::Directional {
+                a: a.clone(),
+                b: b.clone(),
+                direction: Direction::Below,
+                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
+            }),
+        }
+    }
+
+    Ok(out)
+}
+
+fn parse_edge(s: &str) -> Option<PlacementEdge> {
+    match s {
+        "top" => Some(PlacementEdge::Top),
+        "bottom" => Some(PlacementEdge::Bottom),
+        "left" => Some(PlacementEdge::Left),
+        "right" => Some(PlacementEdge::Right),
+        _ => None,
+    }
 }

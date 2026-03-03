@@ -475,6 +475,8 @@ pub enum SpecModel {
 
 pub struct PcbDocSpec {
     pub boards: Vec<BoardSpec>,
+    pub placement: Option<PlacementSpec>,
+    pub placement_rules: Vec<PlacementRuleSpec>,
 }
 
 pub struct BoardSpec {
@@ -550,6 +552,51 @@ pub struct PcbDocDifferentialPairSpec {
     pub name: String,
     pub positive_net: Option<String>,
     pub negative_net: Option<String>,
+}
+
+pub struct PlacementSpec {
+    pub target: Option<String>,
+    pub places: Vec<PlacementPlaceSpec>,
+    pub constraints: Vec<PlacementConstraintSpec>,
+    pub optimize: PlacementOptimizeSpec,
+    pub clearance: PlacementClearanceSpec,
+}
+
+pub struct PlacementPlaceSpec {
+    pub designators: Vec<String>,
+    pub region_name: Option<String>,
+    pub region_rect: Option<(CoordPoint, CoordPoint)>,
+    pub edge: Option<String>,
+    pub inset: Option<Coord>,
+    pub near: Option<String>,
+    pub max_distance: Option<Coord>,
+    pub rotation_options: Vec<i32>,
+    pub fixed: bool,
+    pub at: Option<CoordPoint>,
+    pub side: Option<String>,
+}
+
+pub enum PlacementConstraintSpec {
+    LeftOf { a: String, b: String, gap: Option<Coord> },
+    RightOf { a: String, b: String, gap: Option<Coord> },
+    Above { a: String, b: String, gap: Option<Coord> },
+    Below { a: String, b: String, gap: Option<Coord> },
+}
+
+pub struct PlacementOptimizeSpec {
+    pub ratsnest: bool,
+    pub ratsnest_weight: f64,
+}
+
+pub struct PlacementClearanceSpec {
+    pub all: Option<Coord>,
+    pub edge: Option<Coord>,
+}
+
+pub struct PlacementRuleSpec {
+    pub name: String,
+    pub kind: Option<String>,
+    pub gap: Option<Coord>,
 }
 
 // ── PrjPcb ──────────────────────────────────────────────────────────────────

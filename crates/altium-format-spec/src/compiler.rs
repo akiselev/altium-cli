@@ -29,8 +29,9 @@ use crate::ast::{
     AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem,
     DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
     GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
-    PcbDocPrimitiveDecl, PinDecl, PolygonDecl, ProjectDecl, ProjectItem, RuleDecl,
-    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl, PlacementItem,
+    PolygonDecl, ProjectDecl, ProjectItem, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl,
+    SheetItem, SpecFile, SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
@@ -42,10 +43,11 @@ use crate::model::{
     PadSpec, ParamVariationSpec, ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec,
     PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec,
     PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec,
-    PcbGraphicType, PinPadMap, PinRef, PinSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec,
-    ProbeSpec, ProjectSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec,
-    SheetEntrySpec, SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel,
-    SymbolRef, VariantSpec, VariationSpec, WireSpec,
+    PcbGraphicType, PinPadMap, PinRef, PinSpec, PlacementClearanceSpec, PlacementConstraintSpec,
+    PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec, PortSpec,
+    PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec, SchDocComponentSpec,
+    SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec,
+    SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, VariantSpec, VariationSpec, WireSpec,
 };
 
 use altium_format_types::project::{
@@ -300,7 +302,7 @@ impl SpecCompiler {
                 SpecItem::Import(_) | SpecItem::LetBinding(_)
                 | SpecItem::Footprint(_) | SpecItem::Project(_)
                 | SpecItem::Board(_) | SpecItem::PcbDocPrimitive(_)
-                | SpecItem::Polygon(_) | SpecItem::Rule(_)
+                | SpecItem::Placement(_) | SpecItem::Polygon(_) | SpecItem::Rule(_)
                 | SpecItem::Class(_) | SpecItem::DifferentialPair(_) => {
                     // Imports and let bindings handled above; other domains silently skipped.
                 }
@@ -1216,6 +1218,8 @@ impl SpecCompiler {
         let mut primitives_by_type: IndexMap<String, Vec<PcbDocPrimitiveSpec>> = IndexMap::new();
         let mut polygons = Vec::new();
         let mut rules = Vec::new();
+        let mut placement_rules = Vec::new();
+        let mut placement: Option<PlacementSpec> = None;
         let mut classes = Vec::new();
         let mut differential_pairs = Vec::new();
 
@@ -1241,6 +1245,10 @@ impl SpecCompiler {
                 }
                 SpecItem::Rule(decl) => {
                     rules.push(self.compile_pcbdoc_rule(decl)?);
+                    placement_rules.push(self.compile_placement_rule(decl)?);
+                }
+                SpecItem::Placement(decl) => {
+                    placement = Some(self.compile_placement_decl(decl)?);
                 }
                 SpecItem::Class(decl) => {
                     classes.push(self.compile_pcbdoc_class(decl)?);
@@ -1277,7 +1285,11 @@ impl SpecCompiler {
             differential_pairs,
         };
 
-        Ok(PcbDocSpec { boards: vec![board] })
+        Ok(PcbDocSpec {
+            boards: vec![board],
+            placement,
+            placement_rules,
+        })
     }
 
     fn compile_board_settings(
@@ -1454,6 +1466,308 @@ impl SpecCompiler {
             positive_net: get_string_opt(&props, "positive_net"),
             negative_net: get_string_opt(&props, "negative_net"),
         })
+    }
+
+    fn compile_placement_rule(&mut self, decl: &RuleDecl) -> Result<PlacementRuleSpec, SpecError> {
+        let name = decl.name.node.as_str();
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+        Ok(PlacementRuleSpec {
+            name,
+            kind: get_string_opt(&props, "kind"),
+            gap: get_coord_opt(&props, "gap")?,
+        })
+    }
+
+    fn compile_placement_decl(&mut self, decl: &PlacementDecl) -> Result<PlacementSpec, SpecError> {
+        // placement-level lets
+        self.scope.push();
+        let placement_lets: Vec<_> = decl.body.iter().filter_map(|item| {
+            match &item.node {
+                PlacementItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
+                _ => None,
+            }
+        }).collect();
+        eval_let_bindings_slice(&placement_lets, &mut self.scope)?;
+
+        let mut target = None;
+        let mut places = Vec::new();
+        let mut constraints = Vec::new();
+        let mut optimize = PlacementOptimizeSpec {
+            ratsnest: true,
+            ratsnest_weight: 1.0,
+        };
+        let mut clearance = PlacementClearanceSpec {
+            all: None,
+            edge: None,
+        };
+
+        for item in &decl.body {
+            match &item.node {
+                PlacementItem::Property(p) => {
+                    if p.key.node == "target" {
+                        target = Some(self.expr_to_string(&p.value.node, p.value.span)?);
+                    }
+                }
+                PlacementItem::Place(place) => places.push(self.compile_placement_place(place)?),
+                PlacementItem::Constraint(c) => {
+                    if let Some(cspec) = self.compile_placement_constraint(c)? {
+                        constraints.push(cspec);
+                    }
+                }
+                PlacementItem::Optimize(obj) => {
+                    let props = self.object_expr_map(&obj.node)?;
+                    if let Some(v) = props.get("ratsnest") {
+                        optimize.ratsnest = self.expr_to_bool(v.0, v.1)?;
+                    }
+                    if let Some(v) = props.get("ratsnest_weight") {
+                        optimize.ratsnest_weight = self.expr_to_f64(v.0, v.1)?;
+                    }
+                }
+                PlacementItem::Clearance(obj) => {
+                    let props = self.object_expr_map(&obj.node)?;
+                    if let Some(v) = props.get("all") {
+                        clearance.all = Some(self.expr_to_coord(v.0, v.1)?);
+                    }
+                    if let Some(v) = props.get("edge") {
+                        clearance.edge = Some(self.expr_to_coord(v.0, v.1)?);
+                    }
+                }
+                PlacementItem::LetBinding(_) => {}
+            }
+        }
+
+        self.scope.pop();
+
+        Ok(PlacementSpec {
+            target,
+            places,
+            constraints,
+            optimize,
+            clearance,
+        })
+    }
+
+    fn compile_placement_place(&mut self, decl: &PlaceDecl) -> Result<PlacementPlaceSpec, SpecError> {
+        let designators = decl
+            .designators
+            .iter()
+            .map(|d| d.node.as_str())
+            .collect();
+        let props = self.object_expr_map(&decl.body.node)?;
+
+        let mut region_name = None;
+        let mut region_rect = None;
+        if let Some((expr, span)) = props.get("region") {
+            match expr {
+                crate::ast::Expr::Ident(s) | crate::ast::Expr::String(s) => {
+                    region_name = Some(s.clone());
+                }
+                crate::ast::Expr::Object(obj) => {
+                    let region_props = self.object_expr_map(obj)?;
+                    if let (Some(from), Some(to)) = (region_props.get("from"), region_props.get("to")) {
+                        region_rect = Some((
+                            self.expr_to_coord_point(from.0, from.1)?,
+                            self.expr_to_coord_point(to.0, to.1)?,
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(SpecError::at(
+                        SpecErrorCode::TypeMismatch,
+                        "region must be an identifier/string or rectangle object",
+                        *span,
+                    ));
+                }
+            }
+        }
+
+        let edge = match props.get("edge") {
+            Some((expr, span)) => Some(self.expr_to_string(expr, *span)?),
+            None => None,
+        };
+        let inset = match props.get("inset") {
+            Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
+            None => None,
+        };
+        let near = match props.get("near") {
+            Some((expr, _span)) => Some(self.expr_to_component_ref(expr)?),
+            None => None,
+        };
+        let max_distance = match props.get("max_distance") {
+            Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
+            None => None,
+        };
+        let rotation_options = match props.get("rotation") {
+            Some((crate::ast::Expr::Array(items), _)) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.expr_to_i32(&item.node, item.span)?);
+                }
+                out
+            }
+            Some((expr, span)) => vec![self.expr_to_i32(expr, *span)?],
+            None => Vec::new(),
+        };
+        let fixed = match props.get("fixed") {
+            Some((expr, span)) => self.expr_to_bool(expr, *span)?,
+            None => false,
+        };
+        let at = match props.get("at") {
+            Some((expr, span)) => Some(self.expr_to_coord_point(expr, *span)?),
+            None => None,
+        };
+        let side = match props.get("side") {
+            Some((expr, span)) => Some(self.expr_to_string(expr, *span)?),
+            None => None,
+        };
+
+        Ok(PlacementPlaceSpec {
+            designators,
+            region_name,
+            region_rect,
+            edge,
+            inset,
+            near,
+            max_distance,
+            rotation_options,
+            fixed,
+            at,
+            side,
+        })
+    }
+
+    fn compile_placement_constraint(
+        &mut self,
+        decl: &PlacementConstraintDecl,
+    ) -> Result<Option<PlacementConstraintSpec>, SpecError> {
+        let gap_from_obj = |obj: &Option<Spanned<Object>>| -> Result<Option<Coord>, SpecError> {
+            if let Some(o) = obj {
+                let props = self.object_expr_map(&o.node)?;
+                if let Some((expr, span)) = props.get("gap") {
+                    return Ok(Some(self.expr_to_coord(expr, *span)?));
+                }
+            }
+            Ok(None)
+        };
+
+        match decl {
+            PlacementConstraintDecl::LeftOf { a, b, body } => Ok(Some(PlacementConstraintSpec::LeftOf {
+                a: a.node.root.node.clone(),
+                b: b.node.root.node.clone(),
+                gap: gap_from_obj(body)?,
+            })),
+            PlacementConstraintDecl::RightOf { a, b, body } => Ok(Some(PlacementConstraintSpec::RightOf {
+                a: a.node.root.node.clone(),
+                b: b.node.root.node.clone(),
+                gap: gap_from_obj(body)?,
+            })),
+            PlacementConstraintDecl::Above { a, b, body } => Ok(Some(PlacementConstraintSpec::Above {
+                a: a.node.root.node.clone(),
+                b: b.node.root.node.clone(),
+                gap: gap_from_obj(body)?,
+            })),
+            PlacementConstraintDecl::Below { a, b, body } => Ok(Some(PlacementConstraintSpec::Below {
+                a: a.node.root.node.clone(),
+                b: b.node.root.node.clone(),
+                gap: gap_from_obj(body)?,
+            })),
+        }
+    }
+
+    fn object_expr_map<'a>(
+        &self,
+        obj: &'a Object,
+    ) -> Result<IndexMap<String, (&'a crate::ast::Expr, crate::diagnostic::Span)>, SpecError> {
+        let mut map = IndexMap::new();
+        for item in &obj.items {
+            match &item.node {
+                ObjectItem::Property(p) => {
+                    map.insert(p.key.node.clone(), (&p.value.node, p.value.span));
+                }
+                ObjectItem::LetBinding(_) | ObjectItem::Spread(_) => {
+                    return Err(SpecError::at(
+                        SpecErrorCode::TypeMismatch,
+                        "placement objects currently support only plain properties",
+                        item.span,
+                    ));
+                }
+            }
+        }
+        Ok(map)
+    }
+
+    fn expr_to_string(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<String, SpecError> {
+        match expr {
+            crate::ast::Expr::String(s) | crate::ast::Expr::Ident(s) => Ok(s.clone()),
+            crate::ast::Expr::Integer(i) => Ok(i.to_string()),
+            _ => Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                "expected string-like value",
+                span,
+            )),
+        }
+    }
+
+    fn expr_to_component_ref(&self, expr: &crate::ast::Expr) -> Result<String, SpecError> {
+        match expr {
+            crate::ast::Expr::DollarIdent(s) => Ok(s.clone()),
+            crate::ast::Expr::Path(base, _field) => match &base.node {
+                crate::ast::Expr::DollarIdent(s) => Ok(s.clone()),
+                _ => Err(SpecError::no_span(
+                    SpecErrorCode::TypeMismatch,
+                    "expected '$Designator' component reference",
+                )),
+            },
+            _ => Err(SpecError::no_span(
+                SpecErrorCode::TypeMismatch,
+                "expected '$Designator' component reference",
+            )),
+        }
+    }
+
+    fn expr_to_bool(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<bool, SpecError> {
+        let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
+        value_to_bool(&val, Some(span))
+    }
+
+    fn expr_to_i32(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<i32, SpecError> {
+        let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
+        match val {
+            Value::Integer(i) => Ok(i),
+            Value::Float(f) => Ok(f as i32),
+            _ => Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                "expected integer",
+                span,
+            )),
+        }
+    }
+
+    fn expr_to_f64(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<f64, SpecError> {
+        let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
+        match val {
+            Value::Integer(i) => Ok(i as f64),
+            Value::Float(f) => Ok(f),
+            _ => Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                "expected numeric value",
+                span,
+            )),
+        }
+    }
+
+    fn expr_to_coord(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<Coord, SpecError> {
+        let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
+        value_to_coord(&val, Some(span))
+    }
+
+    fn expr_to_coord_point(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<CoordPoint, SpecError> {
+        let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
+        value_to_coord_point(&val, Some(span))
     }
 
     // ── Project compilation (PrjPcb) ──────────────────────────────────────

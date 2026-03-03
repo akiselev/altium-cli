@@ -2,10 +2,12 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use eframe::egui::{self, ColorImage, Event, Rect, UserData, ViewportCommand};
 
 use autopcb_ir::{BoardSide, ComponentId, NetId, PcbIr, PointMm};
+use autopcb_placement::PlacementIterationSnapshot;
 
 use crate::colors;
 use crate::interaction;
@@ -38,12 +40,17 @@ pub struct ViewerApp {
     /// Reserved for future use (cursor tracking for orbit).
     #[allow(dead_code)]
     drag_last: Option<egui::Pos2>,
+    playback: Option<Vec<PlacementIterationSnapshot>>,
+    playback_index: usize,
+    playback_playing: bool,
+    playback_last_tick: Instant,
 }
 
 impl ViewerApp {
     pub fn new(
         ir: Arc<Mutex<PcbIr>>,
         screenshot_path: Option<PathBuf>,
+        playback: Option<Vec<PlacementIterationSnapshot>>,
         cc: &eframe::CreationContext<'_>,
     ) -> Self {
         // Initialize scene_rect from the board bounds
@@ -98,6 +105,76 @@ impl ViewerApp {
             view_mode: ViewMode::TopDown2D,
             camera,
             drag_last: None,
+            playback,
+            playback_index: 0,
+            playback_playing: false,
+            playback_last_tick: Instant::now(),
+        }
+    }
+
+    fn apply_snapshot_to_ir(ir: &mut PcbIr, snap: &PlacementIterationSnapshot) {
+        for state in &snap.components {
+            for (_id, comp) in ir.components.iter_mut() {
+                if comp.designator != state.designator {
+                    continue;
+                }
+
+                comp.position = PointMm::new(state.x_mm, state.y_mm);
+                comp.rotation = state.rotation_deg;
+
+                let theta = state.rotation_deg.to_radians();
+                let (sin_t, cos_t) = theta.sin_cos();
+                for pad in &mut comp.pads {
+                    let lx = pad.local_position.x;
+                    let ly = pad.local_position.y;
+                    pad.world_position = PointMm::new(
+                        state.x_mm + lx * cos_t - ly * sin_t,
+                        state.y_mm + lx * sin_t + ly * cos_t,
+                    );
+                }
+
+                let lb = comp.local_bounds;
+                let corners = [
+                    PointMm::new(lb.min.x, lb.min.y),
+                    PointMm::new(lb.min.x, lb.max.y),
+                    PointMm::new(lb.max.x, lb.min.y),
+                    PointMm::new(lb.max.x, lb.max.y),
+                ];
+                let mut world_pts = Vec::with_capacity(4);
+                for c in corners {
+                    world_pts.push(PointMm::new(
+                        state.x_mm + c.x * cos_t - c.y * sin_t,
+                        state.y_mm + c.x * sin_t + c.y * cos_t,
+                    ));
+                }
+                if let Some(bb) = autopcb_ir::BoundingBoxMm::from_points(&world_pts) {
+                    comp.world_bounds = bb;
+                }
+            }
+        }
+    }
+
+    fn advance_playback(&mut self) {
+        let Some(playback) = self.playback.as_ref() else {
+            return;
+        };
+        if playback.is_empty() {
+            return;
+        }
+        let len = playback.len();
+        let idx = self.playback_index.min(len - 1);
+
+        {
+            let mut ir = self.ir.lock().unwrap();
+            Self::apply_snapshot_to_ir(&mut ir, &playback[idx]);
+        }
+
+        if self.playback_playing {
+            let now = Instant::now();
+            if now.duration_since(self.playback_last_tick).as_millis() >= 250 {
+                self.playback_last_tick = now;
+                self.playback_index = (self.playback_index + 1).min(len - 1);
+            }
         }
     }
 }
@@ -124,6 +201,8 @@ fn save_screenshot_png(image: &ColorImage, path: &Path) {
 
 impl eframe::App for ViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.advance_playback();
+
         // Screenshot mode: request on first frame, save on receipt, then close.
         if self.screenshot_path.is_some() && !self.screenshot_requested {
             ctx.send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
@@ -212,6 +291,34 @@ impl eframe::App for ViewerApp {
                     ir.layer_stack.copper_layer_count
                 ));
                 ui.separator();
+
+                if let Some(playback) = self.playback.as_ref() {
+                    if !playback.is_empty() {
+                        ui.heading("Playback");
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(if self.playback_playing { "Pause" } else { "Play" })
+                                .clicked()
+                            {
+                                self.playback_playing = !self.playback_playing;
+                                self.playback_last_tick = Instant::now();
+                            }
+                            if ui.button("Reset").clicked() {
+                                self.playback_playing = false;
+                                self.playback_index = 0;
+                            }
+                        });
+
+                        let max_idx = playback.len().saturating_sub(1);
+                        ui.add(egui::Slider::new(&mut self.playback_index, 0..=max_idx).text("frame"));
+                        let idx = self.playback_index.min(max_idx);
+                        ui.label(format!("Phase: {}", playback[idx].phase));
+                        if let Some(note) = &playback[idx].note {
+                            ui.label(note);
+                        }
+                        ui.separator();
+                    }
+                }
 
                 // View mode toggle
                 ui.heading("View");

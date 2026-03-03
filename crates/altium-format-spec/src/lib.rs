@@ -28,6 +28,7 @@ pub use eco::{
 pub use model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec,
     GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec, PcbGraphicProperties,
-    PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinPadMap, PinSpec, PrjPcbSpec, ProjectSpec,
-    SchDocSpec, SchLibSpec, SpecDomain, SpecModel,
+    PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinPadMap, PinSpec, PlacementClearanceSpec,
+    PlacementConstraintSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec,
+    PlacementSpec, PrjPcbSpec, ProjectSpec, SchDocSpec, SchLibSpec, SpecDomain, SpecModel,
 };

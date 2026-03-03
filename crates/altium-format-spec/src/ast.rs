@@ -22,6 +22,7 @@ pub enum SpecItem {
     SchDocObject(SchDocObjectDecl),
     // PcbDoc-specific
     Board(BoardDecl),
+    Placement(PlacementDecl),
     PcbDocPrimitive(PcbDocPrimitiveDecl),
     Polygon(PolygonDecl),
     Rule(RuleDecl),
@@ -385,6 +386,53 @@ pub struct ClassDecl {
 pub struct DifferentialPairDecl {
     pub name: Spanned<EntityName>,
     pub body: Spanned<Object>,
+}
+
+/// placement { ... } top-level block for placement solver directives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacementDecl {
+    pub body: Vec<Spanned<PlacementItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlacementItem {
+    Property(Property),
+    LetBinding(LetBinding),
+    Place(PlaceDecl),
+    Constraint(PlacementConstraintDecl),
+    Optimize(Spanned<Object>),
+    Clearance(Spanned<Object>),
+}
+
+/// place U1, U2 { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceDecl {
+    pub designators: Vec<Spanned<EntityName>>,
+    pub body: Spanned<Object>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlacementConstraintDecl {
+    LeftOf {
+        a: Spanned<DollarPath>,
+        b: Spanned<DollarPath>,
+        body: Option<Spanned<Object>>,
+    },
+    RightOf {
+        a: Spanned<DollarPath>,
+        b: Spanned<DollarPath>,
+        body: Option<Spanned<Object>>,
+    },
+    Above {
+        a: Spanned<DollarPath>,
+        b: Spanned<DollarPath>,
+        body: Option<Spanned<Object>>,
+    },
+    Below {
+        a: Spanned<DollarPath>,
+        b: Spanned<DollarPath>,
+        body: Option<Spanned<Object>>,
+    },
 }
 
 /// [binding =] GRAPHIC_TYPE { ... }
