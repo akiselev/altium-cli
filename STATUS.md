@@ -534,10 +534,40 @@ saves PNG, exits. Interactive S key also saves `screenshot.png`.
 - [x] Add M1 tests and manual smoke validation notes
 
 Manual smoke notes:
-- `autopcb-shell <path-to-pcbdoc>` launches IDE shell with sidebar, docked editor tabs, bottom panel, and status bar.
+- `autopcb-shell <path-to-pcbdoc>` launches IDE shell with sidebar, multi-document editor tabs, bottom panel, and status bar.
 - Command palette opens via `Ctrl/Cmd+Shift+P` and routes commands through registry/dispatcher.
 - Explorer component/net selection updates shared selection model and highlights corresponding entities in PCB 2D view.
 - Layout and panel visibility persist across restarts via eframe storage keys `shell.layout.v1` and `shell.panels.v1`.
+
+Phase 1 hardening (production-readiness):
+- [x] Replace single-document model with multi-document workbench data model
+- [x] Add typed document identities (`DocumentId`) and tab ordering (`open_editor_tabs`)
+- [x] Add active tab semantics (`active_editor_tab`) and command-driven tab activation
+- [x] Support mixed document kinds (`Board`, `Spec`) in one editor surface
+- [x] Add per-board document view mode (`2D` / `3D`) without global singleton state
+- [x] Enforce command enable checks before dispatch (disabled/unknown commands surfaced in output/problems)
+- [x] Add keyboard-navigable command palette (filter + up/down + enter)
+- [x] Replace hardcoded shortcut handling with command-metadata/default keymap routing
+- [x] Add shortcut override persistence (`shell.shortcuts.v1`) and conflict detection
+- [x] Add keyboard-shortcuts GUI editor for all registered commands (set/clear/reset + capture mode)
+- [x] Replace document-type `match` rendering with provider/factory tab architecture
+- [x] Add stable document kind IDs (`document.board`, `document.spec`, `document.keybindings`)
+- [x] Add `TabProviderRegistry` and per-document renderer instantiation
+- [x] Migrate Board, Spec, and Keyboard Shortcuts tabs to provider-based renderers
+- [x] Expand shell tests for dispatch, layout, and tab/document behavior
+
+Phase 1 implementation extension (command/workspace/tab UX):
+- [x] Expand command catalog with core `workspace.*`, `file.*`, `view.*`, `editor.*`, `history.*`
+- [x] Implement document lifecycle primitives (new/open/save/save-all/revert/close/close-others/reopen-closed)
+- [x] Add command-driven tab operations (activate/next/previous/close + close buttons in tab strip)
+- [x] Add filesystem-backed explorer in primary sidebar (filter + open file into tab)
+- [~] Register split-editor commands in command system (currently scaffolded; split groups not yet wired to multi-pane UI)
+
+Phase 1 automation/control plane:
+- [x] Add singleton IPC server for GUI control (`autopcb-shell.sock`)
+- [x] Add CLI control commands (`start`, `ping`, `cmd`, `open`, `screenshot`)
+- [x] Route IPC requests through existing command bus (`cmd`) and file-open flow
+- [x] Add full-window screenshot capture in shell via `ViewportCommand::Screenshot`
 
 ### Milestone 2+: Planned
 
