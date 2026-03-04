@@ -2,27 +2,34 @@ use efame::egui::{self, RichText};
 
 use super::super::ShellApp;
 use crate::layout::BottomTab;
+use crate::pipeline::{Intent, JobsIntent, PanelIntent};
 
 impl ShellApp {
     pub(crate) fn render_bottom_panel_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui
-                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Problems, "Problems")
+                .selectable_label(
+                    self.panel_visibility.bottom_tab == BottomTab::Problems,
+                    "Problems",
+                )
                 .clicked()
             {
-                self.queue("panel.show.problems", None);
+                self.queue_intent(Intent::Panel(PanelIntent::ShowProblems));
             }
             if ui
-                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Output, "Output")
+                .selectable_label(
+                    self.panel_visibility.bottom_tab == BottomTab::Output,
+                    "Output",
+                )
                 .clicked()
             {
-                self.queue("panel.show.output", None);
+                self.queue_intent(Intent::Panel(PanelIntent::ShowOutput));
             }
             if ui
                 .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Jobs, "Jobs")
                 .clicked()
             {
-                self.queue("panel.show.jobs", None);
+                self.queue_intent(Intent::Panel(PanelIntent::ShowJobs));
             }
         });
         ui.separator();
@@ -51,11 +58,15 @@ impl ShellApp {
 
     fn render_jobs_tab_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Background Jobs").small().color(self.theme.text_muted));
+            ui.label(
+                RichText::new("Background Jobs")
+                    .small()
+                    .color(self.theme.text_muted),
+            );
             ui.separator();
             ui.label(format!("Active: {}", self.jobs.active_jobs()));
             if ui.button("Cancel Active").clicked() {
-                self.queue("jobs.cancel_active", None);
+                self.queue_intent(Intent::Jobs(JobsIntent::CancelActive));
             }
             if ui.button("Clear Log").clicked() {
                 self.model.jobs.clear();

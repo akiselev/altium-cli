@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use efame::egui;
 
-use crate::workbench::{DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SPEC, DocumentId};
+use crate::workbench::{
+    DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SPEC, DocumentId,
+};
 
 use super::ShellApp;
 
@@ -30,7 +32,9 @@ impl TabProviderRegistry {
 
         registry.register(DOCUMENT_KIND_BOARD, || Box::new(BoardTabRenderer));
         registry.register(DOCUMENT_KIND_SPEC, || Box::new(SpecTabRenderer));
-        registry.register(DOCUMENT_KIND_KEYBINDINGS, || Box::new(KeybindingsTabRenderer));
+        registry.register(DOCUMENT_KIND_KEYBINDINGS, || {
+            Box::new(KeybindingsTabRenderer)
+        });
         registry
     }
 

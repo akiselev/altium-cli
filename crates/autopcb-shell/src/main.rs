@@ -4,6 +4,7 @@ mod commands;
 mod ipc;
 mod jobs;
 mod layout;
+mod pipeline;
 mod project_graph;
 mod ui;
 mod workbench;
@@ -35,28 +36,17 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Run the GUI in foreground (singleton server-enabled).
-    Gui {
-        board: Option<PathBuf>,
-    },
+    Gui { board: Option<PathBuf> },
     /// Start GUI singleton in the background.
-    Start {
-        board: Option<PathBuf>,
-    },
+    Start { board: Option<PathBuf> },
     /// Stop the running GUI singleton.
     Stop,
     /// Restart GUI singleton (stop if running, then start).
-    Restart {
-        board: Option<PathBuf>,
-    },
+    Restart { board: Option<PathBuf> },
     /// Send a command id + optional arg to the running GUI.
-    Cmd {
-        id: String,
-        arg: Option<String>,
-    },
+    Cmd { id: String, arg: Option<String> },
     /// Open a file in the running GUI.
-    Open {
-        path: PathBuf,
-    },
+    Open { path: PathBuf },
     /// Request a full-window screenshot from the running GUI.
     Screenshot {
         path: PathBuf,
@@ -75,6 +65,13 @@ enum Commands {
 }
 
 fn main() -> anyhow::Result<()> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+
     let cli = Cli::parse();
     let socket = cli.socket.unwrap_or_else(default_socket_path);
 
@@ -83,16 +80,13 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Start { board }) => start_background(board, &socket),
         Some(Commands::Stop) => stop_background(&socket),
         Some(Commands::Restart { board }) => restart_background(board, &socket),
-        Some(Commands::Cmd { id, arg }) => send_control(
+        Some(Commands::Cmd { id, arg }) => send_control(&socket, IpcRequest::Command { id, arg }),
+        Some(Commands::Open { path }) => send_control(
             &socket,
-            IpcRequest::Command {
-                id,
-                arg,
+            IpcRequest::OpenFile {
+                path: path.display().to_string(),
             },
         ),
-        Some(Commands::Open { path }) => {
-            send_control(&socket, IpcRequest::OpenFile { path: path.display().to_string() })
-        }
         Some(Commands::Screenshot { path, timeout_secs }) => {
             request_screenshot(&socket, path, Duration::from_secs(timeout_secs))
         }

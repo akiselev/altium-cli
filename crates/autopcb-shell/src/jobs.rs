@@ -6,11 +6,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use altium_format::{AltiumProject, PcbDoc, SchDoc};
+use altium_format_spec::parser::parse_spec;
 use altium_format_spec::{
     SpecDomain, SpecModel, apply_spec_pcbdoc, apply_spec_prjpcb, apply_spec_schdoc, compile_spec,
     reconcile_pcbdoc, reconcile_prjpcb, reconcile_schdoc,
 };
-use altium_format_spec::parser::parse_spec;
 use autopcb_ir::PcbIr;
 
 use crate::project_graph::{ProjectGraphDelta, build_project_graph};
@@ -105,10 +105,7 @@ pub enum JobArtifact {
     Diagnostics(Vec<DiagnosticItem>),
     Eco(altium_format_spec::EngineeringChangeOrder),
     ProjectGraphDelta(ProjectGraphDelta),
-    BoardIr {
-        path: PathBuf,
-        ir: PcbIr,
-    },
+    BoardIr { path: PathBuf, ir: PcbIr },
     SchematicIndex(SchematicIndex),
 }
 
@@ -212,9 +209,7 @@ impl JobManager {
         let mut out = Vec::new();
         while let Ok(ev) = self.rx.try_recv() {
             match &ev {
-                JobEvent::Completed(id, _)
-                | JobEvent::Failed(id, _)
-                | JobEvent::Cancelled(id) => {
+                JobEvent::Completed(id, _) | JobEvent::Failed(id, _) | JobEvent::Cancelled(id) => {
                     self.in_flight.remove(id);
                 }
                 _ => {}
@@ -261,17 +256,30 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
 
     let result = match req.payload {
         JobPayload::ParseProject { prjpcb_path } => (|| -> Result<String, String> {
-            report_progress("parse_project", Some(0.1), format!("Loading {}", prjpcb_path.display()), &tx);
+            report_progress(
+                "parse_project",
+                Some(0.1),
+                format!("Loading {}", prjpcb_path.display()),
+                &tx,
+            );
             let delta = build_project_graph(&prjpcb_path).map_err(|e| e.to_string())?;
             if cancel.is_cancelled() {
                 send_cancelled(id, &tx);
                 return Ok("Cancelled".to_owned());
             }
-            let _ = tx.send(JobEvent::Artifact(id, JobArtifact::ProjectGraphDelta(delta)));
+            let _ = tx.send(JobEvent::Artifact(
+                id,
+                JobArtifact::ProjectGraphDelta(delta),
+            ));
             Ok("Project graph parsed".to_owned())
         })(),
         JobPayload::SyncBoardIr { pcbdoc_path } => (|| -> Result<String, String> {
-            report_progress("sync_board_ir", Some(0.2), format!("Parsing {}", pcbdoc_path.display()), &tx);
+            report_progress(
+                "sync_board_ir",
+                Some(0.2),
+                format!("Parsing {}", pcbdoc_path.display()),
+                &tx,
+            );
             let doc = PcbDoc::open(&pcbdoc_path).map_err(|e| e.to_string())?;
             let board = doc.board().map_err(|e| e.to_string())?;
             if cancel.is_cancelled() {
@@ -289,7 +297,12 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
             Ok("Board IR refreshed".to_owned())
         })(),
         JobPayload::SyncSchematicIr { schdoc_path } => (|| -> Result<String, String> {
-            report_progress("sync_sch_ir", Some(0.2), format!("Parsing {}", schdoc_path.display()), &tx);
+            report_progress(
+                "sync_sch_ir",
+                Some(0.2),
+                format!("Parsing {}", schdoc_path.display()),
+                &tx,
+            );
             let doc = SchDoc::open(&schdoc_path).map_err(|e| e.to_string())?;
             let sheet = doc.sheet().map_err(|e| e.to_string())?;
             let index = SchematicIndex {
@@ -310,15 +323,7 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
             target_path,
             domain,
             dry_run,
-        } => run_spec_apply(
-            id,
-            &spec_path,
-            &target_path,
-            domain,
-            dry_run,
-            &tx,
-            &cancel,
-        ),
+        } => run_spec_apply(id, &spec_path, &target_path, domain, dry_run, &tx, &cancel),
     };
 
     match result {
@@ -359,25 +364,37 @@ fn run_spec_plan(
     match model {
         SpecModel::PcbDoc(spec) => {
             let doc = PcbDoc::open(target_path).map_err(|e| e.to_string())?;
-            let eco =
-                reconcile_pcbdoc(&spec, &doc, target_path.to_path_buf(), spec_path.to_path_buf())
-                    .map_err(|e| e.to_string())?;
+            let eco = reconcile_pcbdoc(
+                &spec,
+                &doc,
+                target_path.to_path_buf(),
+                spec_path.to_path_buf(),
+            )
+            .map_err(|e| e.to_string())?;
             let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
             Ok("Planned PcbDoc changes".to_owned())
         }
         SpecModel::SchDoc(spec) => {
             let doc = SchDoc::open(target_path).map_err(|e| e.to_string())?;
-            let eco =
-                reconcile_schdoc(&spec, &doc, target_path.to_path_buf(), spec_path.to_path_buf())
-                    .map_err(|e| e.to_string())?;
+            let eco = reconcile_schdoc(
+                &spec,
+                &doc,
+                target_path.to_path_buf(),
+                spec_path.to_path_buf(),
+            )
+            .map_err(|e| e.to_string())?;
             let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
             Ok("Planned SchDoc changes".to_owned())
         }
         SpecModel::PrjPcb(spec) => {
             let doc = AltiumProject::open(target_path).map_err(|e| e.to_string())?;
-            let eco =
-                reconcile_prjpcb(&spec, &doc, target_path.to_path_buf(), spec_path.to_path_buf())
-                    .map_err(|e| e.to_string())?;
+            let eco = reconcile_prjpcb(
+                &spec,
+                &doc,
+                target_path.to_path_buf(),
+                spec_path.to_path_buf(),
+            )
+            .map_err(|e| e.to_string())?;
             let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
             Ok("Planned PrjPcb changes".to_owned())
         }

@@ -32,15 +32,21 @@ impl Pcb2dCanvas {
 }
 
 impl PcbCanvasView for Pcb2dCanvas {
-    fn ui(&mut self, ui: &mut egui::Ui, ir: &PcbIr, selection: &SelectionKind, fit_requested: bool) {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        ir: &PcbIr,
+        selection: &SelectionKind,
+        fit_requested: bool,
+    ) {
         self.init_rect_if_needed(ir);
         if fit_requested {
             self.fit(ir);
         }
 
-        let mut rect = self
-            .scene_rect
-            .unwrap_or_else(|| Rect::from_min_max(egui::pos2(-50.0, -50.0), egui::pos2(50.0, 50.0)));
+        let mut rect = self.scene_rect.unwrap_or_else(|| {
+            Rect::from_min_max(egui::pos2(-50.0, -50.0), egui::pos2(50.0, 50.0))
+        });
 
         egui::Scene::new()
             .zoom_range(0.001..=f32::INFINITY)
@@ -56,7 +62,13 @@ impl PcbCanvasView for Pcb2dCanvas {
 pub struct Pcb3dCanvas;
 
 impl PcbCanvasView for Pcb3dCanvas {
-    fn ui(&mut self, ui: &mut egui::Ui, _ir: &PcbIr, _selection: &SelectionKind, _fit_requested: bool) {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ir: &PcbIr,
+        _selection: &SelectionKind,
+        _fit_requested: bool,
+    ) {
         ui.centered_and_justified(|ui| {
             ui.label("3D canvas placeholder (PaintCallback-ready boundary)");
         });
@@ -69,7 +81,12 @@ fn to_pos2(x_mm: f64, y_mm: f64) -> Pos2 {
 
 fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
     if ir.board.outline.len() >= 3 {
-        let points: Vec<Pos2> = ir.board.outline.iter().map(|pt| to_pos2(pt.x, pt.y)).collect();
+        let points: Vec<Pos2> = ir
+            .board
+            .outline
+            .iter()
+            .map(|pt| to_pos2(pt.x, pt.y))
+            .collect();
         p.add(egui::Shape::convex_polygon(
             points,
             Color32::from_rgb(18, 44, 31),
@@ -139,7 +156,8 @@ fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
                     p.circle(center, half_x.max(half_y), color, Stroke::NONE);
                 }
                 _ => {
-                    let rect = Rect::from_center_size(center, Vec2::new(half_x * 2.0, half_y * 2.0));
+                    let rect =
+                        Rect::from_center_size(center, Vec2::new(half_x * 2.0, half_y * 2.0));
                     p.rect_filled(rect, 0.0, color);
                 }
             }

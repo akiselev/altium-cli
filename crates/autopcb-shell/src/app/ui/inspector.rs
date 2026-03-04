@@ -22,7 +22,11 @@ impl ShellApp {
     }
 
     fn render_inspector_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("INSPECTOR").small().color(self.theme.text_muted));
+        ui.label(
+            RichText::new("INSPECTOR")
+                .small()
+                .color(self.theme.text_muted),
+        );
         ui.separator();
         let selection = self.model.selection.primary.clone();
         match selection {
@@ -30,7 +34,9 @@ impl ShellApp {
                 ui,
                 "No selection. Pick a component or net from explorer/canvas.",
             ),
-            SelectionKind::Component(designator) => self.render_component_inspector(ui, &designator),
+            SelectionKind::Component(designator) => {
+                self.render_component_inspector(ui, &designator)
+            }
             SelectionKind::Net(name) => self.render_net_inspector(ui, &name),
             SelectionKind::Pad { component, pad } => {
                 ui.heading("Pad");
@@ -54,7 +60,8 @@ impl ShellApp {
                             ));
                         } else {
                             ui.label(
-                                RichText::new("Pad not found in current IR").color(self.theme.text_muted),
+                                RichText::new("Pad not found in current IR")
+                                    .color(self.theme.text_muted),
                             );
                         }
                     }
@@ -63,7 +70,9 @@ impl ShellApp {
             SelectionKind::Rule(rule) => {
                 ui.heading("Rule");
                 ui.label(format!("Name: {rule}"));
-                ui.label(RichText::new("Rule details panel is planned.").color(self.theme.text_muted));
+                ui.label(
+                    RichText::new("Rule details panel is planned.").color(self.theme.text_muted),
+                );
             }
         }
     }
@@ -79,7 +88,10 @@ impl ShellApp {
             .iter()
             .find_map(|(_, c)| (c.designator == designator).then_some(c));
         let Some(comp) = comp else {
-            self.render_empty_inspector(ui, "Selected component is not present in current IR snapshot.");
+            self.render_empty_inspector(
+                ui,
+                "Selected component is not present in current IR snapshot.",
+            );
             return;
         };
 

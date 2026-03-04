@@ -14,12 +14,17 @@ use egui_tiles::{Behavior, TileId, UiResponse};
 use self::tabs::{TabProviderRegistry, TabRenderer};
 use crate::canvas::{Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView};
 use crate::commands::{
-    build_context, dispatch, selection_label, shortcut_from_stored, shortcut_to_stored,
-    CommandRegistry, DispatchOutcome, ShortcutDef, StoredShortcut,
+    CommandRegistry, ShortcutDef, StoredShortcut, build_context, selection_label,
+    shortcut_from_stored, shortcut_to_stored,
 };
 use crate::ipc::{IpcRequest, UiTestOp};
 use crate::jobs::{JobArtifact, JobEvent, JobKind, JobManager, JobPayload, JobRequest, JobTrigger};
 use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
+use crate::pipeline::{
+    ActivityViewIntent, Command, CommandTransaction, Effect, HistoryIntent, Intent, ResolveContext,
+    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, TracingTelemetry,
+    intent_from_command_id, resolve_intent,
+};
 use crate::project_graph::{ParseState, WorkspaceModel};
 use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{ThemeTokens, apply_theme, vscode_dark_tokens};
@@ -121,8 +126,9 @@ pub struct ShellApp {
     layout: ShellLayoutState,
     panel_visibility: PanelVisibilityState,
     commands: CommandRegistry,
-    queued: VecDeque<(String, Option<String>)>,
+    intent_queue: VecDeque<Intent>,
     show_command_palette: bool,
+    palette_focus_pending: bool,
     palette_filter: String,
     palette_selected: usize,
     explorer_filter: String,
@@ -146,6 +152,15 @@ pub struct ShellApp {
     last_drag_end_y: f32,
     canvas2d: Pcb2dCanvas,
     canvas3d: Pcb3dCanvas,
+    undo_stack: Vec<UndoEntry>,
+    redo_stack: Vec<UndoEntry>,
+    telemetry: TracingTelemetry,
+}
+
+#[derive(Debug, Clone)]
+struct UndoEntry {
+    forward: CommandTransaction,
+    inverse: CommandTransaction,
 }
 
 impl ShellApp {
@@ -181,7 +196,8 @@ impl ShellApp {
         let mut shortcut_bindings = default_shortcuts(&commands);
 
         if let Some(storage) = cc.storage {
-            if let Some(saved) = efame::get_value::<ShortcutOverrides>(storage, STORAGE_SHORTCUTS_KEY)
+            if let Some(saved) =
+                efame::get_value::<ShortcutOverrides>(storage, STORAGE_SHORTCUTS_KEY)
             {
                 for (id, sc) in saved.by_command {
                     if commands.get(&id).is_some() {
@@ -198,8 +214,9 @@ impl ShellApp {
             layout,
             panel_visibility,
             commands,
-            queued: VecDeque::new(),
+            intent_queue: VecDeque::new(),
             show_command_palette: false,
+            palette_focus_pending: false,
             palette_filter: String::new(),
             palette_selected: 0,
             explorer_filter: String::new(),
@@ -223,11 +240,24 @@ impl ShellApp {
             last_drag_end_y: 0.0,
             canvas2d: Pcb2dCanvas::default(),
             canvas3d: Pcb3dCanvas,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            telemetry: TracingTelemetry,
         }
     }
 
-    fn queue(&mut self, id: &str, arg: Option<String>) {
-        self.queued.push_back((id.to_owned(), arg));
+    pub(crate) fn queue_intent(&mut self, intent: Intent) {
+        self.intent_queue.push_back(intent);
+    }
+
+    pub(crate) fn queue_command_id(&mut self, id: &str, arg: Option<String>) {
+        match intent_from_command_id(id, arg) {
+            Ok(intent) => self.queue_intent(intent),
+            Err(err) => self
+                .model
+                .problems
+                .push(format!("Invalid command request for '{id}': {err:?}")),
+        }
     }
 
     fn command_context(&self) -> crate::commands::CommandContext {
@@ -242,121 +272,279 @@ impl ShellApp {
         build_context(&self.model, focus_2d, focus_3d)
     }
 
-    fn execute_command(
-        &mut self,
-        id: &str,
-        arg: Option<String>,
-        ctx: &egui::Context,
-        _frame: &mut efame::Frame,
-    ) {
-        let Some(meta) = self.commands.get(id) else {
-            self.model
-                .problems
-                .push(format!("Unknown command requested: {id}"));
-            return;
-        };
-
-        let cmd_ctx = self.command_context();
-        if !self.commands.is_enabled(meta, &cmd_ctx) {
-            self.model
-                .output_lines
-                .push(format!("Command disabled in current context: {}", meta.id));
-            return;
-        }
-
-        if id == "view.reset_layout" {
-            self.editor_split = EditorSplitState::default();
-        }
-
-        if self.execute_io_command(id, arg.clone()) {
-            return;
-        }
-
-        match dispatch(
-            &meta.id,
-            arg,
-            &mut self.model,
-            &mut self.panel_visibility.show_primary_sidebar,
-            &mut self.panel_visibility.show_bottom_panel,
-            &mut self.panel_visibility.bottom_tab,
-            &mut self.layout,
-            &mut self.show_command_palette,
-        ) {
-            DispatchOutcome::Noop => {}
-            DispatchOutcome::RequestQuit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+    fn resolve_context(&self) -> ResolveContext {
+        ResolveContext {
+            workspace_open: self.model.has_workspace(),
+            selection_exists: self.model.selection_exists(),
+            show_primary_sidebar: self.panel_visibility.show_primary_sidebar,
+            show_secondary_sidebar: self.panel_visibility.show_secondary_sidebar,
+            show_bottom_panel: self.panel_visibility.show_bottom_panel,
+            show_activity_bar: self.panel_visibility.show_activity_bar,
+            show_status_bar: self.panel_visibility.show_status_bar,
         }
     }
 
-    fn execute_io_command(&mut self, id: &str, arg: Option<String>) -> bool {
-        match id {
-            "view.toggle_activity_bar" => {
-                self.panel_visibility.show_activity_bar = !self.panel_visibility.show_activity_bar;
-                true
+    fn apply_effect(&mut self, effect: Effect, ctx: &egui::Context) {
+        match effect {
+            Effect::RequestQuit => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            "view.toggle_status_bar" => {
-                self.panel_visibility.show_status_bar = !self.panel_visibility.show_status_bar;
-                true
+        }
+    }
+
+    fn apply_transaction(
+        &mut self,
+        tx: CommandTransaction,
+        ctx: &egui::Context,
+        allow_history_push: bool,
+    ) {
+        let mut inverse = Vec::new();
+        for command in &tx.commands {
+            self.telemetry.command_executed(command);
+            let (inv, effects) = self.apply_command(command.clone());
+            if let Some(inv) = inv {
+                inverse.push(inv);
             }
-            "view.toggle_secondary_sidebar" => {
-                self.panel_visibility.show_secondary_sidebar =
-                    !self.panel_visibility.show_secondary_sidebar;
-                true
+            for effect in effects {
+                self.apply_effect(effect, ctx);
             }
-            "panel.show.explorer" => {
-                self.panel_visibility.show_primary_sidebar = true;
-                self.panel_visibility.activity_view = ActivityView::Explorer;
-                true
+        }
+
+        if allow_history_push && !inverse.is_empty() {
+            inverse.reverse();
+            let inverse_tx = CommandTransaction {
+                source_intent: tx.source_intent.clone(),
+                commands: inverse,
+            };
+            self.telemetry.undo_pushed(inverse_tx.commands.len());
+            self.undo_stack.push(UndoEntry {
+                forward: tx,
+                inverse: inverse_tx,
+            });
+            self.redo_stack.clear();
+        }
+    }
+
+    fn execute_history_intent(&mut self, history: HistoryIntent, ctx: &egui::Context) {
+        match history {
+            HistoryIntent::Undo => {
+                let Some(entry) = self.undo_stack.pop() else {
+                    self.model.output_lines.push("Nothing to undo".to_owned());
+                    return;
+                };
+                let inverse_tx = entry.inverse.clone();
+                self.apply_transaction(inverse_tx, ctx, false);
+                self.redo_stack.push(entry);
             }
-            "panel.show.search" => {
-                self.panel_visibility.show_primary_sidebar = true;
-                self.panel_visibility.activity_view = ActivityView::Search;
-                true
+            HistoryIntent::Redo => {
+                let Some(entry) = self.redo_stack.pop() else {
+                    self.model.output_lines.push("Nothing to redo".to_owned());
+                    return;
+                };
+                let forward_tx = entry.forward.clone();
+                self.apply_transaction(forward_tx, ctx, false);
+                self.undo_stack.push(entry);
             }
-            "panel.show.source_control" => {
-                self.panel_visibility.show_primary_sidebar = true;
-                self.panel_visibility.activity_view = ActivityView::SourceControl;
-                true
+        }
+    }
+
+    fn process_intent(&mut self, intent: Intent, ctx: &egui::Context) {
+        self.telemetry.intent_received(&intent);
+
+        if let Intent::History(history) = &intent {
+            self.execute_history_intent(history.clone(), ctx);
+            return;
+        }
+
+        let original_intent = intent.clone();
+        match resolve_intent(intent, self.resolve_context()) {
+            ResolveResult::Accepted { transaction } => {
+                self.telemetry.commands_resolved(&transaction);
+                self.apply_transaction(transaction, ctx, true);
             }
-            "panel.show.run" => {
-                self.panel_visibility.show_primary_sidebar = true;
-                self.panel_visibility.activity_view = ActivityView::Run;
-                true
+            ResolveResult::Rejected { code, message } => {
+                self.telemetry
+                    .intent_rejected(&original_intent, &code, &message);
+                self.model.problems.push(message);
             }
-            "panel.show.extensions" => {
-                self.panel_visibility.show_primary_sidebar = true;
-                self.panel_visibility.activity_view = ActivityView::Extensions;
-                true
+        }
+    }
+
+    fn apply_command(&mut self, command: Command) -> (Option<Command>, Vec<Effect>) {
+        match command {
+            Command::OpenKeybindings => {
+                self.model.open_or_activate_keybindings_document();
+                (None, Vec::new())
             }
-            "panel.show.inspector" => {
-                self.panel_visibility.show_secondary_sidebar = true;
-                self.panel_visibility.secondary_sidebar_tab = SecondarySidebarTab::Inspector;
-                true
+            Command::SetCommandPaletteVisible(value) => {
+                let prev = self.show_command_palette;
+                self.show_command_palette = value;
+                if value && !prev {
+                    self.palette_focus_pending = true;
+                }
+                if !value {
+                    self.palette_focus_pending = false;
+                }
+                (Some(Command::SetCommandPaletteVisible(prev)), Vec::new())
             }
-            "workspace.open" | "file.open_folder" => {
-                let root = arg
-                    .map(PathBuf::from)
+            Command::SetPrimarySidebarVisible(value) => {
+                let prev = self.panel_visibility.show_primary_sidebar;
+                self.panel_visibility.show_primary_sidebar = value;
+                (Some(Command::SetPrimarySidebarVisible(prev)), Vec::new())
+            }
+            Command::SetSecondarySidebarVisible(value) => {
+                let prev = self.panel_visibility.show_secondary_sidebar;
+                self.panel_visibility.show_secondary_sidebar = value;
+                (Some(Command::SetSecondarySidebarVisible(prev)), Vec::new())
+            }
+            Command::SetSecondarySidebarTab(tab) => {
+                let prev = self.panel_visibility.secondary_sidebar_tab;
+                self.panel_visibility.secondary_sidebar_tab = match tab {
+                    SecondarySidebarTabIntent::Inspector => SecondarySidebarTab::Inspector,
+                };
+                (
+                    Some(Command::SetSecondarySidebarTab(match prev {
+                        SecondarySidebarTab::Inspector => SecondarySidebarTabIntent::Inspector,
+                    })),
+                    Vec::new(),
+                )
+            }
+            Command::SetActivityView(view) => {
+                let prev = self.panel_visibility.activity_view;
+                self.panel_visibility.activity_view = match view {
+                    ActivityViewIntent::Explorer => ActivityView::Explorer,
+                    ActivityViewIntent::Search => ActivityView::Search,
+                    ActivityViewIntent::SourceControl => ActivityView::SourceControl,
+                    ActivityViewIntent::Run => ActivityView::Run,
+                    ActivityViewIntent::Extensions => ActivityView::Extensions,
+                };
+                let inv = match prev {
+                    ActivityView::Explorer => ActivityViewIntent::Explorer,
+                    ActivityView::Search => ActivityViewIntent::Search,
+                    ActivityView::SourceControl => ActivityViewIntent::SourceControl,
+                    ActivityView::Run => ActivityViewIntent::Run,
+                    ActivityView::Extensions => ActivityViewIntent::Extensions,
+                };
+                (Some(Command::SetActivityView(inv)), Vec::new())
+            }
+            Command::SetBottomPanelVisible(value) => {
+                let prev = self.panel_visibility.show_bottom_panel;
+                self.panel_visibility.show_bottom_panel = value;
+                (Some(Command::SetBottomPanelVisible(prev)), Vec::new())
+            }
+            Command::SetBottomTab(tab) => {
+                let prev = self.panel_visibility.bottom_tab;
+                self.panel_visibility.bottom_tab = tab;
+                (Some(Command::SetBottomTab(prev)), Vec::new())
+            }
+            Command::SetActivityBarVisible(value) => {
+                let prev = self.panel_visibility.show_activity_bar;
+                self.panel_visibility.show_activity_bar = value;
+                (Some(Command::SetActivityBarVisible(prev)), Vec::new())
+            }
+            Command::SetStatusBarVisible(value) => {
+                let prev = self.panel_visibility.show_status_bar;
+                self.panel_visibility.show_status_bar = value;
+                (Some(Command::SetStatusBarVisible(prev)), Vec::new())
+            }
+            Command::ActivateNextEditorTab => {
+                let prev = self.model.active_document_id();
+                self.model.activate_next_tab();
+                (
+                    prev.map(|id| Command::EditorActivateDocument { id }),
+                    Vec::new(),
+                )
+            }
+            Command::ActivatePreviousEditorTab => {
+                let prev = self.model.active_document_id();
+                self.model.activate_previous_tab();
+                (
+                    prev.map(|id| Command::EditorActivateDocument { id }),
+                    Vec::new(),
+                )
+            }
+            Command::SetEditorSplitRight => {
+                self.editor_split.is_split = true;
+                self.editor_split.split_vertical = true;
+                if self.editor_split.secondary_active_tab.is_none() {
+                    self.editor_split.secondary_active_tab = self.model.active_document_id();
+                }
+                self.model
+                    .output_lines
+                    .push("Split editor: right".to_owned());
+                (None, Vec::new())
+            }
+            Command::SetEditorSplitDown => {
+                self.editor_split.is_split = true;
+                self.editor_split.split_vertical = false;
+                if self.editor_split.secondary_active_tab.is_none() {
+                    self.editor_split.secondary_active_tab = self.model.active_document_id();
+                }
+                self.model
+                    .output_lines
+                    .push("Split editor: down".to_owned());
+                (None, Vec::new())
+            }
+            Command::ResetLayout => {
+                self.layout = ShellLayoutState::default();
+                self.editor_split = EditorSplitState::default();
+                (None, Vec::new())
+            }
+            Command::EditorReopenClosed => {
+                let _ = self.model.reopen_last_closed_document();
+                (None, Vec::new())
+            }
+            Command::EditorActivateDocument { id } => {
+                let prev = self.model.active_document_id();
+                self.model.set_active_tab(id);
+                (
+                    prev.map(|id| Command::EditorActivateDocument { id }),
+                    Vec::new(),
+                )
+            }
+            Command::EditorCloseDocument { id } => {
+                let _ = self.model.close_document(id);
+                if self.editor_split.secondary_active_tab == Some(id) {
+                    self.editor_split.secondary_active_tab = self.model.active_editor_tab;
+                }
+                (None, Vec::new())
+            }
+            Command::FileClose => {
+                let _ = self.model.close_active_document();
+                (None, Vec::new())
+            }
+            Command::FileCloseAll => {
+                while self.model.close_active_document() {}
+                (None, Vec::new())
+            }
+            Command::FileCloseOthers => {
+                self.model.close_other_documents();
+                (None, Vec::new())
+            }
+            Command::WorkspaceOpen { root } => {
+                let root = root
                     .or_else(|| self.model.workspace_root.clone())
                     .or_else(|| std::env::current_dir().ok());
                 let Some(root) = root else {
-                    self.model.problems.push("Unable to resolve workspace root".to_owned());
-                    return true;
+                    self.model
+                        .problems
+                        .push("Unable to resolve workspace root".to_owned());
+                    return (None, Vec::new());
                 };
                 self.model.set_workspace_root(root.clone());
                 self.model
                     .output_lines
                     .push(format!("Workspace opened: {}", root.display()));
-                true
+                (None, Vec::new())
             }
-            "workspace.open_project" => {
-                let path = arg
-                    .map(PathBuf::from)
-                    .or_else(|| self.find_project_in_workspace_root());
+            Command::WorkspaceOpenProject { path } => {
+                let path = path.or_else(|| self.find_project_in_workspace_root());
                 let Some(prjpcb) = path else {
                     self.model.problems.push(
                         "workspace.open_project requires a .PrjPcb path (or one in workspace root)"
                             .to_owned(),
                     );
-                    return true;
+                    return (None, Vec::new());
                 };
                 self.submit_job(JobPayload::ParseProject {
                     prjpcb_path: prjpcb.clone(),
@@ -364,9 +552,9 @@ impl ShellApp {
                 self.model
                     .output_lines
                     .push(format!("Queued project parse: {}", prjpcb.display()));
-                true
+                (None, Vec::new())
             }
-            "workspace.reload_project" => {
+            Command::WorkspaceReloadProject => {
                 let prjpcb = self
                     .model
                     .active_workspace
@@ -379,54 +567,54 @@ impl ShellApp {
                         .problems
                         .push("No active project workspace to reload".to_owned());
                 }
-                true
+                (None, Vec::new())
             }
-            "workspace.sync_ir" => {
+            Command::WorkspaceSyncIr => {
                 self.queue_project_sync_jobs();
-                true
+                (None, Vec::new())
             }
-            "workspace.close" => {
+            Command::WorkspaceClose => {
                 self.model.clear_workspace();
                 self.tab_renderers.clear();
                 self.model.output_lines.push("Workspace closed".to_owned());
-                true
+                (None, Vec::new())
             }
-            "file.new_spec" => {
+            Command::FileNewSpec => {
                 self.model
                     .open_spec_document(None, "// New spec document\n".to_owned());
-                true
+                (None, Vec::new())
             }
-            "file.open" => {
-                if let Some(path) = arg.map(PathBuf::from) {
+            Command::FileOpen { path } => {
+                if let Some(path) = path {
                     self.open_document_path(path);
                 } else {
                     self.model.output_lines.push(
                         "Use Explorer or pass a path to File: Open from command palette".to_owned(),
                     );
                 }
-                true
+                (None, Vec::new())
             }
-            "file.save" => {
+            Command::FileSave => {
                 self.save_active_document();
-                true
+                (None, Vec::new())
             }
-            "file.save_all" => {
+            Command::FileSaveAll => {
                 self.save_all_documents();
-                true
+                (None, Vec::new())
             }
-            "file.revert" => {
+            Command::FileRevert => {
                 self.revert_active_document();
-                true
+                (None, Vec::new())
             }
-            "spec.plan" => {
+            Command::SpecPlan => {
                 self.submit_active_spec_job(true);
-                true
+                (None, Vec::new())
             }
-            "spec.apply" => {
+            Command::SpecApply => {
                 self.submit_active_spec_job(false);
-                true
+                (None, Vec::new())
             }
-            "jobs.cancel_active" => {
+            Command::JobsCancelActive => {
                 if let Some(id) = self.jobs.cancel_first_active() {
                     self.model
                         .output_lines
@@ -434,39 +622,37 @@ impl ShellApp {
                 } else {
                     self.model.output_lines.push("No active jobs".to_owned());
                 }
-                true
+                (None, Vec::new())
             }
-            "view.split_editor_right" => {
-                self.editor_split.is_split = true;
-                self.editor_split.split_vertical = true;
-                if self.editor_split.secondary_active_tab.is_none() {
-                    self.editor_split.secondary_active_tab = self.model.active_document_id();
+            Command::PcbSetViewMode(mode) => {
+                let prev = self.model.active_board().map(|b| b.view_mode);
+                if let Some(board) = self.model.active_board_mut() {
+                    board.view_mode = mode;
                 }
-                self.model.output_lines.push("Split editor: right".to_owned());
-                true
+                (prev.map(Command::PcbSetViewMode), Vec::new())
             }
-            "view.split_editor_down" => {
-                self.editor_split.is_split = true;
-                self.editor_split.split_vertical = false;
-                if self.editor_split.secondary_active_tab.is_none() {
-                    self.editor_split.secondary_active_tab = self.model.active_document_id();
-                }
-                self.model.output_lines.push("Split editor: down".to_owned());
-                true
+            Command::PcbZoomFit => {
+                self.layout.request_fit = true;
+                (None, Vec::new())
             }
-            "help.about" => {
-                self.model
-                    .output_lines
-                    .push("AutoPCB Shell - IDE shell for PCB/spec automation".to_owned());
-                true
+            Command::SetSelection(selection) => {
+                let prev = self.model.selection.primary.clone();
+                self.model.selection.primary = selection;
+                (Some(Command::SetSelection(prev)), Vec::new())
             }
-            "run.start_last" => {
+            Command::RunStartLast => {
                 self.model
                     .output_lines
                     .push("No runnable task configured yet.".to_owned());
-                true
+                (None, Vec::new())
             }
-            _ => false,
+            Command::HelpAbout => {
+                self.model
+                    .output_lines
+                    .push("AutoPCB Shell - IDE shell for PCB/spec automation".to_owned());
+                (None, Vec::new())
+            }
+            Command::EmitEffect(effect) => (None, vec![effect]),
         }
     }
 
@@ -481,7 +667,12 @@ impl ShellApp {
         let req = JobRequest {
             id: self.jobs.allocate_id(),
             kind,
-            workspace_id: self.model.active_workspace.as_ref().map(|w| w.id).unwrap_or(0),
+            workspace_id: self
+                .model
+                .active_workspace
+                .as_ref()
+                .map(|w| w.id)
+                .unwrap_or(0),
             doc_targets: Vec::new(),
             payload,
             requested_by: JobTrigger::Command,
@@ -526,14 +717,10 @@ impl ShellApp {
             .collect();
 
         for path in board_paths {
-            self.submit_job(JobPayload::SyncBoardIr {
-                pcbdoc_path: path,
-            });
+            self.submit_job(JobPayload::SyncBoardIr { pcbdoc_path: path });
         }
         for path in sch_paths {
-            self.submit_job(JobPayload::SyncSchematicIr {
-                schdoc_path: path,
-            });
+            self.submit_job(JobPayload::SyncSchematicIr { schdoc_path: path });
         }
     }
 
@@ -555,9 +742,10 @@ impl ShellApp {
             return;
         };
         let Some((domain, target)) = self.resolve_spec_target(&spec_path) else {
-            self.model
-                .problems
-                .push(format!("Unable to resolve target for spec {}", spec_path.display()));
+            self.model.problems.push(format!(
+                "Unable to resolve target for spec {}",
+                spec_path.display()
+            ));
             return;
         };
         let payload = if dry_run {
@@ -578,7 +766,10 @@ impl ShellApp {
     }
 
     fn resolve_spec_target(&self, spec_path: &Path) -> Option<(SpecDomain, PathBuf)> {
-        let file = spec_path.file_name()?.to_string_lossy().to_ascii_lowercase();
+        let file = spec_path
+            .file_name()?
+            .to_string_lossy()
+            .to_ascii_lowercase();
         let workspace = self.model.active_workspace.as_ref();
         if file.ends_with(".pcbdoc-spec") {
             let target = workspace?.project.board_docs.first()?.path.clone();
@@ -624,20 +815,24 @@ impl ShellApp {
                 };
             }
             "prjpcb" => {
-                self.queue("workspace.open_project", Some(path.display().to_string()));
+                self.queue_intent(Intent::Workspace(
+                    crate::pipeline::WorkspaceIntent::OpenProject { path: Some(path) },
+                ));
             }
-            "spec" | "pcbdoc-spec" | "schdoc-spec" | "prjpcb-spec" => match fs::read_to_string(&path) {
-                Ok(text) => {
-                    self.model.open_spec_document(Some(path.clone()), text);
-                    self.model
-                        .output_lines
-                        .push(format!("Opened spec: {}", path.display()));
+            "spec" | "pcbdoc-spec" | "schdoc-spec" | "prjpcb-spec" => {
+                match fs::read_to_string(&path) {
+                    Ok(text) => {
+                        self.model.open_spec_document(Some(path.clone()), text);
+                        self.model
+                            .output_lines
+                            .push(format!("Opened spec: {}", path.display()));
+                    }
+                    Err(err) => self
+                        .model
+                        .problems
+                        .push(format!("Failed to open spec {}: {err}", path.display())),
                 }
-                Err(err) => self
-                    .model
-                    .problems
-                    .push(format!("Failed to open spec {}: {err}", path.display())),
-            },
+            }
             _ => {
                 self.model.problems.push(format!(
                     "Unsupported file type for open: {}",
@@ -752,9 +947,9 @@ impl ShellApp {
         }
     }
 
-    fn process_queue(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
-        while let Some((id, arg)) = self.queued.pop_front() {
-            self.execute_command(&id, arg, ctx, frame);
+    fn process_queue(&mut self, ctx: &egui::Context) {
+        while let Some(intent) = self.intent_queue.pop_front() {
+            self.process_intent(intent, ctx);
         }
     }
 
@@ -762,7 +957,9 @@ impl ShellApp {
         for ev in self.jobs.poll_events() {
             match ev {
                 JobEvent::Queued(id, kind) => {
-                    self.model.jobs.push(format!("queued #{}: {:?}", id.0, kind));
+                    self.model
+                        .jobs
+                        .push(format!("queued #{}: {:?}", id.0, kind));
                 }
                 JobEvent::Started(id) => {
                     self.model.jobs.push(format!("started #{}", id.0));
@@ -836,10 +1033,9 @@ impl ShellApp {
                     }
                     JobArtifact::Diagnostics(diags) => {
                         for d in diags {
-                            self.model.problems.push(format!(
-                                "[{}:{}] {}",
-                                d.severity, d.source, d.message
-                            ));
+                            self.model
+                                .problems
+                                .push(format!("[{}:{}] {}", d.severity, d.source, d.message));
                         }
                     }
                 },
@@ -891,10 +1087,10 @@ impl ShellApp {
         for req in drained {
             match req {
                 IpcRequest::Ping => self.model.output_lines.push("IPC ping".to_owned()),
-                IpcRequest::Command { id, arg } => self.queue(&id, arg),
-                IpcRequest::OpenFile { path } => self.queue("file.open", Some(path)),
+                IpcRequest::Command { id, arg } => self.queue_command_id(&id, arg),
+                IpcRequest::OpenFile { path } => self.queue_command_id("file.open", Some(path)),
                 IpcRequest::OpenProject { prjpcb_path } => {
-                    self.queue("workspace.open_project", Some(prjpcb_path));
+                    self.queue_command_id("workspace.open_project", Some(prjpcb_path));
                 }
                 IpcRequest::RunJob { kind, args } => {
                     let payload = match kind.as_str() {
@@ -906,7 +1102,7 @@ impl ShellApp {
                         _ => None,
                     };
                     if let Some(cmd) = payload {
-                        self.queue(&cmd, None);
+                        self.queue_command_id(&cmd, None);
                     } else {
                         self.model.problems.push(format!(
                             "Unsupported IPC job request: kind={} args={}",
@@ -937,8 +1133,9 @@ impl ShellApp {
                     UiTestOp::DragBottomPanel { delta, steps } => {
                         let steps = steps.max(2);
                         let screen = ctx.content_rect();
-                        let splitter_y =
-                            screen.bottom() - self.last_status_bar_height - self.last_bottom_panel_height;
+                        let splitter_y = screen.bottom()
+                            - self.last_status_bar_height
+                            - self.last_bottom_panel_height;
                         let x = screen.center().x;
                         let start = egui::pos2(x, splitter_y + 2.0);
                         let end = egui::pos2(x, splitter_y + delta);
@@ -1009,7 +1206,9 @@ impl ShellApp {
 
         if completed {
             self.active_drag_script = None;
-            self.model.output_lines.push("UI test drag completed".to_owned());
+            self.model
+                .output_lines
+                .push("UI test drag completed".to_owned());
         }
     }
 
@@ -1035,9 +1234,10 @@ impl ShellApp {
                 .take()
                 .unwrap_or_else(|| PathBuf::from("screenshot.png"));
             if let Err(err) = save_screenshot_png(&image, &target) {
-                self.model
-                    .problems
-                    .push(format!("Failed to save screenshot {}: {err}", target.display()));
+                self.model.problems.push(format!(
+                    "Failed to save screenshot {}: {err}",
+                    target.display()
+                ));
             } else {
                 self.model
                     .output_lines
@@ -1081,7 +1281,7 @@ impl ShellApp {
         }
 
         for id in triggered {
-            self.queue(&id, None);
+            self.queue_command_id(&id, None);
         }
     }
 
@@ -1152,9 +1352,10 @@ impl ShellApp {
         }
 
         self.shortcut_bindings.insert(command_id.clone(), candidate);
-        self.model
-            .output_lines
-            .push(format!("Shortcut updated: {command_id} -> {}", candidate.display()));
+        self.model.output_lines.push(format!(
+            "Shortcut updated: {command_id} -> {}",
+            candidate.display()
+        ));
         self.keybindings_capture_for = None;
     }
 
@@ -1212,7 +1413,7 @@ impl ShellApp {
                         format!("{}\t{}", cmd.title, shortcut)
                     };
                     if ui.button(label).clicked() {
-                        self.queue(cmd.id, None);
+                        self.queue_command_id(cmd.id, None);
                         ui.close();
                     }
                 }
@@ -1225,10 +1426,14 @@ impl ShellApp {
         for action in actions {
             match action {
                 TabAction::Activate(id) => {
-                    self.queue("editor.activate_document", Some(id.0.to_string()));
+                    self.queue_intent(Intent::Editor(
+                        crate::pipeline::EditorIntent::ActivateDocument { id },
+                    ));
                 }
                 TabAction::Close(id) => {
-                    self.queue("editor.close_document", Some(id.0.to_string()));
+                    self.queue_intent(Intent::Editor(
+                        crate::pipeline::EditorIntent::CloseDocument { id },
+                    ));
                     if self.editor_split.secondary_active_tab == Some(id) {
                         self.editor_split.secondary_active_tab = self.model.active_editor_tab;
                     }
@@ -1244,7 +1449,9 @@ impl ShellApp {
             match action {
                 TabAction::Activate(id) => self.editor_split.secondary_active_tab = Some(id),
                 TabAction::Close(id) => {
-                    self.queue("editor.close_document", Some(id.0.to_string()));
+                    self.queue_intent(Intent::Editor(
+                        crate::pipeline::EditorIntent::CloseDocument { id },
+                    ));
                     if self.editor_split.secondary_active_tab == Some(id) {
                         self.editor_split.secondary_active_tab = self.model.active_editor_tab;
                     }
@@ -1338,13 +1545,13 @@ impl ShellApp {
                 .selectable_label(mode == BoardViewMode::TwoD, "2D")
                 .clicked()
             {
-                self.queue("pcb.view.2d", None);
+                self.queue_intent(Intent::Pcb(crate::pipeline::PcbIntent::SetView2d));
             }
             if ui
                 .selectable_label(mode == BoardViewMode::ThreeD, "3D")
                 .clicked()
             {
-                self.queue("pcb.view.3d", None);
+                self.queue_intent(Intent::Pcb(crate::pipeline::PcbIntent::SetView3d));
             }
         });
         ui.separator();
@@ -1413,7 +1620,12 @@ impl ShellApp {
         }
     }
 
-    fn render_document_by_id(&mut self, ui: &mut egui::Ui, document_id: DocumentId, fit_requested: bool) {
+    fn render_document_by_id(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        fit_requested: bool,
+    ) {
         let Some(mut renderer) = self.tab_renderer_for_document(document_id) else {
             ui.label("No tab provider registered for this document type");
             return;
@@ -1611,14 +1823,14 @@ impl efame::App for ShellApp {
         efame::set_value(storage, STORAGE_SHORTCUTS_KEY, &persisted);
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut efame::Frame) {
         apply_theme(ctx, &self.theme);
         self.process_ipc();
         self.process_job_events();
         self.apply_ui_test_ops(ctx);
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
-        self.process_queue(ctx, frame);
+        self.process_queue(ctx);
         self.prune_tab_renderers();
 
         self.render_title_menu_bar(ctx);
@@ -1632,31 +1844,42 @@ impl efame::App for ShellApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(self.theme.editor_bg))
             .show(ctx, |ui| {
-            self.last_central_height = ui.max_rect().height();
-            let fit_requested = self.layout.request_fit;
-            self.layout.request_fit = false;
-            if self.panel_visibility.show_bottom_panel {
-                let app_ptr: *mut ShellApp = self;
-                let tree = &mut self.layout.editor_tree;
-                let mut behavior = EditorTreeBehavior {
-                    app: app_ptr,
-                    fit_requested,
-                };
-                tree.ui(&mut behavior, ui);
-            } else {
-                self.last_bottom_panel_height = 0.0;
-                self.render_editor_workspace(ui, fit_requested);
-            }
-        });
+                self.last_central_height = ui.max_rect().height();
+                let fit_requested = self.layout.request_fit;
+                self.layout.request_fit = false;
+                if self.panel_visibility.show_bottom_panel {
+                    let app_ptr: *mut ShellApp = self;
+                    let tree = &mut self.layout.editor_tree;
+                    let mut behavior = EditorTreeBehavior {
+                        app: app_ptr,
+                        fit_requested,
+                    };
+                    tree.ui(&mut behavior, ui);
+                } else {
+                    self.last_bottom_panel_height = 0.0;
+                    self.render_editor_workspace(ui, fit_requested);
+                }
+            });
 
         self.show_palette_window(ctx);
         self.handle_screenshot_flow(ctx);
         self.write_layout_probe();
 
-        if ctx.input(|i| i.raw.events.iter().any(|e| matches!(e, Event::Key { key: Key::Escape, pressed: true, .. })))
-            && self.show_command_palette
+        if ctx.input(|i| {
+            i.raw.events.iter().any(|e| {
+                matches!(
+                    e,
+                    Event::Key {
+                        key: Key::Escape,
+                        pressed: true,
+                        ..
+                    }
+                )
+            })
+        }) && self.show_command_palette
         {
             self.show_command_palette = false;
+            self.palette_focus_pending = false;
         }
 
         // Keep a light polling cadence so IPC commands are handled even when the UI is idle.

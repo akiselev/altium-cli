@@ -28,7 +28,8 @@ impl ShellApp {
         let resp = icon_button(ui, icon_id, selected, self.theme.text_primary, 28.0);
         if resp.clicked() {
             if selected {
-                self.panel_visibility.show_primary_sidebar = !self.panel_visibility.show_primary_sidebar;
+                self.panel_visibility.show_primary_sidebar =
+                    !self.panel_visibility.show_primary_sidebar;
             } else {
                 self.panel_visibility.activity_view = view;
                 self.panel_visibility.show_primary_sidebar = true;

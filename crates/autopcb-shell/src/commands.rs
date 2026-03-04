@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use efame::egui::{Key, Modifiers};
 use serde::{Deserialize, Serialize};
 
-use crate::workbench::{BoardViewMode, SelectionKind, WorkbenchModel};
+use crate::workbench::{SelectionKind, WorkbenchModel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UndoPolicy {
@@ -180,7 +180,10 @@ impl CommandRegistry {
                 "workspace.open",
                 true,
                 UndoPolicy::Model,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::S,
+                )),
             ),
             meta(
                 "file.revert",
@@ -234,7 +237,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Model,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::Z,
+                )),
             ),
             meta(
                 "workbench.command_palette",
@@ -243,7 +249,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::None,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::P,
+                )),
             ),
             meta(
                 "navigate.quick_open",
@@ -306,7 +315,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Local,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::E,
+                )),
             ),
             meta(
                 "view.toggle_activity_bar",
@@ -369,7 +381,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Local,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::F,
+                )),
             ),
             meta(
                 "panel.show.source_control",
@@ -396,7 +411,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Local,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::X)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::X,
+                )),
             ),
             meta(
                 "panel.show.inspector",
@@ -423,7 +441,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Local,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::M,
+                )),
             ),
             meta(
                 "panel.show.output",
@@ -477,7 +498,10 @@ impl CommandRegistry {
                 "workspace.open",
                 true,
                 UndoPolicy::Local,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::T,
+                )),
             ),
             meta(
                 "editor.activate_document",
@@ -513,7 +537,10 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Model,
-                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)),
+                Some(ShortcutDef::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::Z,
+                )),
             ),
             meta(
                 "pcb.view.2d",
@@ -641,173 +668,12 @@ const fn meta(
     }
 }
 
-#[derive(Debug)]
-pub enum DispatchOutcome {
-    Noop,
-    RequestQuit,
-}
-
 pub fn build_context(model: &WorkbenchModel, focus_2d: bool, focus_3d: bool) -> CommandContext {
     CommandContext {
         workspace_open: model.has_workspace(),
         selection_exists: model.selection_exists(),
         editor_pcb2d_focused: focus_2d,
         editor_pcb3d_focused: focus_3d,
-    }
-}
-
-pub fn dispatch(
-    id: &str,
-    arg: Option<String>,
-    model: &mut WorkbenchModel,
-    set_primary_sidebar: &mut bool,
-    set_bottom_panel: &mut bool,
-    set_bottom_tab: &mut crate::layout::BottomTab,
-    layout: &mut crate::layout::ShellLayoutState,
-    show_palette: &mut bool,
-) -> DispatchOutcome {
-    match id {
-        "app.quit" => DispatchOutcome::RequestQuit,
-        "app.open_keybindings" => {
-            model.open_or_activate_keybindings_document();
-            DispatchOutcome::Noop
-        }
-        "workbench.command_palette" => {
-            *show_palette = true;
-            DispatchOutcome::Noop
-        }
-        "navigate.quick_open" => {
-            *show_palette = true;
-            DispatchOutcome::Noop
-        }
-        "go.quick_open" => {
-            *show_palette = true;
-            DispatchOutcome::Noop
-        }
-        "edit.undo" => DispatchOutcome::Noop,
-        "edit.redo" => DispatchOutcome::Noop,
-        "run.start_last" => DispatchOutcome::Noop,
-        "terminal.toggle" => {
-            *set_bottom_panel = !*set_bottom_panel;
-            DispatchOutcome::Noop
-        }
-        "help.about" => DispatchOutcome::Noop,
-        "view.next_editor_tab" => {
-            model.activate_next_tab();
-            DispatchOutcome::Noop
-        }
-        "view.previous_editor_tab" => {
-            model.activate_previous_tab();
-            DispatchOutcome::Noop
-        }
-        "view.split_editor_right" | "view.split_editor_down" => DispatchOutcome::Noop,
-        "view.toggle_primary_sidebar" => {
-            *set_primary_sidebar = !*set_primary_sidebar;
-            DispatchOutcome::Noop
-        }
-        "view.toggle_activity_bar" | "view.toggle_status_bar" | "view.toggle_secondary_sidebar" => {
-            DispatchOutcome::Noop
-        }
-        "view.toggle_bottom_panel" => {
-            *set_bottom_panel = !*set_bottom_panel;
-            DispatchOutcome::Noop
-        }
-        "view.reset_layout" => {
-            *layout = crate::layout::ShellLayoutState::default();
-            DispatchOutcome::Noop
-        }
-        "panel.show.explorer" => {
-            *set_primary_sidebar = true;
-            DispatchOutcome::Noop
-        }
-        "panel.show.search" | "panel.show.source_control" | "panel.show.run" | "panel.show.extensions" => {
-            *set_primary_sidebar = true;
-            DispatchOutcome::Noop
-        }
-        "panel.show.inspector" => DispatchOutcome::Noop,
-        "panel.show.problems" => {
-            *set_bottom_panel = true;
-            *set_bottom_tab = crate::layout::BottomTab::Problems;
-            DispatchOutcome::Noop
-        }
-        "panel.show.output" => {
-            *set_bottom_panel = true;
-            *set_bottom_tab = crate::layout::BottomTab::Output;
-            DispatchOutcome::Noop
-        }
-        "panel.show.jobs" => {
-            *set_bottom_panel = true;
-            *set_bottom_tab = crate::layout::BottomTab::Jobs;
-            DispatchOutcome::Noop
-        }
-        "workspace.open_project"
-        | "workspace.reload_project"
-        | "workspace.sync_ir"
-        | "jobs.cancel_active"
-        | "spec.plan"
-        | "spec.apply" => DispatchOutcome::Noop,
-        "editor.activate_document" => {
-            if let Some(id) = arg.and_then(|s| s.parse::<u64>().ok()) {
-                model.set_active_tab(crate::workbench::DocumentId(id));
-            }
-            DispatchOutcome::Noop
-        }
-        "editor.close_document" => {
-            if let Some(id) = arg.and_then(|s| s.parse::<u64>().ok()) {
-                let _ = model.close_document(crate::workbench::DocumentId(id));
-            }
-            DispatchOutcome::Noop
-        }
-        "editor.reopen_closed" => {
-            let _ = model.reopen_last_closed_document();
-            DispatchOutcome::Noop
-        }
-        "file.close" => {
-            let _ = model.close_active_document();
-            DispatchOutcome::Noop
-        }
-        "file.close_others" => {
-            model.close_other_documents();
-            DispatchOutcome::Noop
-        }
-        "file.close_all" => {
-            while model.close_active_document() {}
-            DispatchOutcome::Noop
-        }
-        "history.undo" | "history.redo" => DispatchOutcome::Noop,
-        "pcb.view.2d" => {
-            if let Some(board) = model.active_board_mut() {
-                board.view_mode = BoardViewMode::TwoD;
-            }
-            DispatchOutcome::Noop
-        }
-        "pcb.view.3d" => {
-            if let Some(board) = model.active_board_mut() {
-                board.view_mode = BoardViewMode::ThreeD;
-            }
-            DispatchOutcome::Noop
-        }
-        "pcb.zoom.fit" => {
-            layout.request_fit = true;
-            DispatchOutcome::Noop
-        }
-        "selection.clear" => {
-            model.clear_selection();
-            DispatchOutcome::Noop
-        }
-        "crossprobe.select_component" => {
-            if let Some(des) = arg {
-                model.select_component(des);
-            }
-            DispatchOutcome::Noop
-        }
-        "crossprobe.select_net" => {
-            if let Some(net) = arg {
-                model.select_net(net);
-            }
-            DispatchOutcome::Noop
-        }
-        _ => DispatchOutcome::Noop,
     }
 }
 
@@ -1046,29 +912,6 @@ mod tests {
         };
         let m = reg.get("pcb.view.2d").expect("missing command");
         assert!(!reg.is_enabled(m, &ctx));
-    }
-
-    #[test]
-    fn dispatch_crossprobe_component_sets_selection() {
-        let mut model = WorkbenchModel::new(None, None);
-        let mut side = true;
-        let mut bottom = true;
-        let mut tab = crate::layout::BottomTab::Output;
-        let mut layout = crate::layout::ShellLayoutState::default();
-        let mut palette = false;
-
-        let _ = dispatch(
-            "crossprobe.select_component",
-            Some("U7".to_owned()),
-            &mut model,
-            &mut side,
-            &mut bottom,
-            &mut tab,
-            &mut layout,
-            &mut palette,
-        );
-
-        assert!(matches!(model.selection.primary, SelectionKind::Component(ref d) if d == "U7"));
     }
 
     #[test]

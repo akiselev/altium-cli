@@ -339,7 +339,8 @@ impl WorkbenchModel {
     }
 
     pub fn active_document(&self) -> Option<&Document> {
-        self.active_editor_tab.and_then(|id| self.documents.get(&id))
+        self.active_editor_tab
+            .and_then(|id| self.documents.get(&id))
     }
 
     pub fn active_document_mut(&mut self) -> Option<&mut Document> {

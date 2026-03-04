@@ -1,4 +1,5 @@
 use efame::egui::{self, Color32, CornerRadius, Stroke, Vec2};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct ThemeTokens {
@@ -17,6 +18,7 @@ pub struct ThemeTokens {
     pub tab_active_bg: Color32,
     pub tab_inactive_bg: Color32,
     pub tab_hover_bg: Color32,
+    pub font_scale: f32,
 }
 
 pub fn vscode_dark_tokens() -> ThemeTokens {
@@ -36,6 +38,7 @@ pub fn vscode_dark_tokens() -> ThemeTokens {
         tab_active_bg: Color32::from_rgb(30, 30, 30),
         tab_inactive_bg: Color32::from_rgb(45, 45, 45),
         tab_hover_bg: Color32::from_rgb(55, 55, 55),
+        font_scale: 1.0,
     }
 }
 
@@ -65,5 +68,31 @@ pub fn apply_theme(ctx: &egui::Context, t: &ThemeTokens) {
     style.visuals.widgets.inactive.corner_radius = CornerRadius::same(0);
     style.visuals.widgets.hovered.corner_radius = CornerRadius::same(0);
     style.visuals.widgets.active.corner_radius = CornerRadius::same(0);
+
+    // Keep text sizing in theme so runtime theme/font scaling can be applied without restarts.
+    let scale = t.font_scale.clamp(0.8, 1.75);
+    style.text_styles = BTreeMap::from([
+        (
+            egui::TextStyle::Small,
+            egui::FontId::new(11.0 * scale, egui::FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Body,
+            egui::FontId::new(13.5 * scale, egui::FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Button,
+            egui::FontId::new(13.0 * scale, egui::FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Monospace,
+            egui::FontId::new(12.5 * scale, egui::FontFamily::Monospace),
+        ),
+        (
+            egui::TextStyle::Heading,
+            egui::FontId::new(18.0 * scale, egui::FontFamily::Proportional),
+        ),
+    ]);
+
     ctx.set_style(style);
 }

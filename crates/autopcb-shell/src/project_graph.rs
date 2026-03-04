@@ -83,7 +83,11 @@ impl std::fmt::Display for ProjectGraphError {
             Self::MissingBoard => write!(f, "project has no PcbDoc reference"),
             Self::MissingSchematics => write!(f, "project has no SchDoc references"),
             Self::MissingSchematic(p) => {
-                write!(f, "project references missing schematic file: {}", p.display())
+                write!(
+                    f,
+                    "project references missing schematic file: {}",
+                    p.display()
+                )
             }
             Self::MissingBoardFile(p) => {
                 write!(f, "project references missing board file: {}", p.display())

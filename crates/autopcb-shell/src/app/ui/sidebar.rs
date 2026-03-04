@@ -4,8 +4,9 @@ use std::path::Path;
 use efame::egui::{self, RichText};
 
 use super::super::{ActivityView, ShellApp};
-use crate::workbench::SelectionKind;
+use crate::pipeline::{CrossprobeIntent, FileIntent, Intent};
 use crate::ui::icons::{IconId, icon};
+use crate::workbench::SelectionKind;
 
 impl ShellApp {
     pub(crate) fn render_sidebar(&mut self, ctx: &egui::Context) {
@@ -43,7 +44,11 @@ impl ShellApp {
     }
 
     fn render_explorer_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("EXPLORER").small().color(self.theme.text_muted));
+        ui.label(
+            RichText::new("EXPLORER")
+                .small()
+                .color(self.theme.text_muted),
+        );
         ui.separator();
         self.render_workspace_files(ui);
         ui.separator();
@@ -66,17 +71,23 @@ impl ShellApp {
             .collect();
 
         ui.collapsing("Components", |ui| {
-            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                for designator in &components {
-                    let selected = matches!(
-                        &self.model.selection.primary,
-                        SelectionKind::Component(d) if d == designator
-                    );
-                    if ui.selectable_label(selected, designator).clicked() {
-                        self.queue("crossprobe.select_component", Some(designator.clone()));
+            egui::ScrollArea::vertical()
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    for designator in &components {
+                        let selected = matches!(
+                            &self.model.selection.primary,
+                            SelectionKind::Component(d) if d == designator
+                        );
+                        if ui.selectable_label(selected, designator).clicked() {
+                            self.queue_intent(Intent::Crossprobe(
+                                CrossprobeIntent::SelectComponent {
+                                    designator: designator.clone(),
+                                },
+                            ));
+                        }
                     }
-                }
-            });
+                });
         });
 
         ui.collapsing("Nets", |ui| {
@@ -87,7 +98,9 @@ impl ShellApp {
                         .selectable_label(selected, format!("{} ({})", name, pins_len))
                         .clicked()
                     {
-                        self.queue("crossprobe.select_net", Some(name.clone()));
+                        self.queue_intent(Intent::Crossprobe(CrossprobeIntent::SelectNet {
+                            net_name: name.clone(),
+                        }));
                     }
                 }
             });
@@ -175,7 +188,9 @@ impl ShellApp {
                 };
                 icon(ui, icon_id, self.theme.text_muted, 12.0);
                 if ui.selectable_label(is_open, &name).clicked() {
-                    self.queue("file.open", Some(path.display().to_string()));
+                    self.queue_intent(Intent::File(FileIntent::Open {
+                        path: Some(path.clone()),
+                    }));
                 }
             });
         }
