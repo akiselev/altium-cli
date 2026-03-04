@@ -192,6 +192,24 @@ impl CommandRegistry {
                 None,
             ),
             meta(
+                "edit.undo",
+                "Edit: Undo",
+                "Edit",
+                "",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::Z)),
+            ),
+            meta(
+                "edit.redo",
+                "Edit: Redo",
+                "Edit",
+                "",
+                true,
+                UndoPolicy::Model,
+                Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)),
+            ),
+            meta(
                 "workbench.command_palette",
                 "Show Command Palette",
                 "Navigate",
@@ -204,6 +222,15 @@ impl CommandRegistry {
                 "navigate.quick_open",
                 "Quick Open",
                 "Navigate",
+                "",
+                true,
+                UndoPolicy::None,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::P)),
+            ),
+            meta(
+                "go.quick_open",
+                "Go: Quick Open",
+                "Go",
                 "",
                 true,
                 UndoPolicy::None,
@@ -336,6 +363,15 @@ impl CommandRegistry {
                 Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::X)),
             ),
             meta(
+                "run.start_last",
+                "Run: Start Last Task",
+                "Run",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
                 "panel.show.problems",
                 "Panel: Show Problems",
                 "Panel",
@@ -360,6 +396,24 @@ impl CommandRegistry {
                 "",
                 true,
                 UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "terminal.toggle",
+                "Terminal: Toggle Panel",
+                "Terminal",
+                "",
+                true,
+                UndoPolicy::Local,
+                Some(ShortcutDef::new(Modifiers::COMMAND, Key::Backtick)),
+            ),
+            meta(
+                "help.about",
+                "Help: About AutoPCB Shell",
+                "Help",
+                "",
+                true,
+                UndoPolicy::None,
                 None,
             ),
             meta(
@@ -554,6 +608,18 @@ pub fn dispatch(
             *show_palette = true;
             DispatchOutcome::Noop
         }
+        "go.quick_open" => {
+            *show_palette = true;
+            DispatchOutcome::Noop
+        }
+        "edit.undo" => DispatchOutcome::Noop,
+        "edit.redo" => DispatchOutcome::Noop,
+        "run.start_last" => DispatchOutcome::Noop,
+        "terminal.toggle" => {
+            *set_bottom_panel = !*set_bottom_panel;
+            DispatchOutcome::Noop
+        }
+        "help.about" => DispatchOutcome::Noop,
         "view.next_editor_tab" => {
             model.activate_next_tab();
             DispatchOutcome::Noop

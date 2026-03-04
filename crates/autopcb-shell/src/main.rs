@@ -16,7 +16,7 @@ use autopcb_ir::PcbIr;
 use clap::{Parser, Subcommand};
 
 use app::ShellApp;
-use ipc::{IpcRequest, ServerStart, default_socket_path, send_request, start_server};
+use ipc::{IpcRequest, ServerStart, UiTestOp, default_socket_path, send_request, start_server};
 
 #[derive(Debug, Parser)]
 #[command(name = "autopcb-shell")]
@@ -56,6 +56,13 @@ enum Commands {
         #[arg(long, default_value_t = 20)]
         timeout_secs: u64,
     },
+    /// Inject a synthetic drag gesture on the editor/bottom-panel splitter.
+    DragBottom {
+        /// Positive drags downward (smaller bottom panel), negative upward (bigger panel).
+        delta: f32,
+        #[arg(long, default_value_t = 12)]
+        steps: u32,
+    },
     /// Test whether a GUI instance is running.
     Ping,
 }
@@ -80,6 +87,12 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Screenshot { path, timeout_secs }) => {
             request_screenshot(&socket, path, Duration::from_secs(timeout_secs))
         }
+        Some(Commands::DragBottom { delta, steps }) => send_control(
+            &socket,
+            IpcRequest::UiTest {
+                op: UiTestOp::DragBottomPanel { delta, steps },
+            },
+        ),
         Some(Commands::Ping) => send_control(&socket, IpcRequest::Ping),
         None => run_gui(cli.board, &socket),
     }

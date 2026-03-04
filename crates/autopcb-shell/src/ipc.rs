@@ -14,6 +14,13 @@ pub enum IpcRequest {
     Command { id: String, arg: Option<String> },
     OpenFile { path: String },
     Screenshot { path: String },
+    UiTest { op: UiTestOp },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum UiTestOp {
+    DragBottomPanel { delta: f32, steps: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,4 +128,3 @@ pub fn send_request(socket_path: &Path, request: &IpcRequest) -> anyhow::Result<
     let parsed: IpcResponse = serde_json::from_str(&response)?;
     Ok(parsed)
 }
-

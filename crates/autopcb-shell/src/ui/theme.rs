@@ -7,7 +7,6 @@ pub struct ThemeTokens {
     pub activitybar_bg: Color32,
     pub sidebar_bg: Color32,
     pub editor_bg: Color32,
-    pub panel_bg: Color32,
     pub statusbar_bg: Color32,
     pub text_primary: Color32,
     pub text_muted: Color32,
@@ -27,7 +26,6 @@ pub fn vscode_dark_tokens() -> ThemeTokens {
         activitybar_bg: Color32::from_rgb(51, 51, 51),
         sidebar_bg: Color32::from_rgb(37, 37, 38),
         editor_bg: Color32::from_rgb(30, 30, 30),
-        panel_bg: Color32::from_rgb(30, 30, 30),
         statusbar_bg: Color32::from_rgb(0, 122, 204),
         text_primary: Color32::from_rgb(204, 204, 204),
         text_muted: Color32::from_rgb(140, 140, 140),
@@ -69,4 +67,3 @@ pub fn apply_theme(ctx: &egui::Context, t: &ThemeTokens) {
     style.visuals.widgets.active.corner_radius = CornerRadius::same(0);
     ctx.set_style(style);
 }
-

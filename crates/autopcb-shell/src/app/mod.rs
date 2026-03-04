@@ -8,6 +8,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
+use egui_tiles::{Behavior, TileId, UiResponse};
 
 use self::tabs::{TabProviderRegistry, TabRenderer};
 use crate::canvas::{Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView};
@@ -15,10 +16,10 @@ use crate::commands::{
     build_context, dispatch, selection_label, shortcut_from_stored, shortcut_to_stored,
     CommandRegistry, DispatchOutcome, ShortcutDef, StoredShortcut,
 };
-use crate::ipc::IpcRequest;
-use crate::layout::{BottomTab, ShellLayoutState};
+use crate::ipc::{IpcRequest, UiTestOp};
+use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
 use crate::ui::icons::{IconId, icon, icon_button};
-use crate::ui::tabstrip::render_tabstrip;
+use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{ThemeTokens, apply_theme, vscode_dark_tokens};
 use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, SelectionKind, WorkbenchModel};
 
@@ -26,6 +27,14 @@ const STORAGE_LAYOUT_KEY: &str = "shell.layout.v1";
 const STORAGE_PANELS_KEY: &str = "shell.panels.v1";
 const STORAGE_CHROME_KEY: &str = "shell.chrome.v2";
 const STORAGE_SHORTCUTS_KEY: &str = "shell.shortcuts.v1";
+const STORAGE_EDITOR_SPLIT_KEY: &str = "shell.editor_split.v1";
+const LAYOUT_PROBE_PATH: &str = "/tmp/autopcb-shell-layout.json";
+
+#[cfg(test)]
+fn clamp_bottom_panel_height(current: f32, drag_delta_y: f32, viewport_h: f32) -> f32 {
+    let max_h = (viewport_h - 120.0).max(80.0);
+    (current - drag_delta_y).clamp(80.0, max_h)
+}
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 enum ActivityView {
@@ -41,6 +50,7 @@ struct PanelVisibilityState {
     show_activity_bar: bool,
     show_primary_sidebar: bool,
     show_bottom_panel: bool,
+    bottom_panel_height: f32,
     show_status_bar: bool,
     activity_view: ActivityView,
     bottom_tab: BottomTab,
@@ -52,11 +62,38 @@ impl Default for PanelVisibilityState {
             show_activity_bar: true,
             show_primary_sidebar: true,
             show_bottom_panel: true,
+            bottom_panel_height: 180.0,
             show_status_bar: true,
             activity_view: ActivityView::Explorer,
             bottom_tab: BottomTab::Output,
         }
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct EditorSplitState {
+    is_split: bool,
+    split_vertical: bool,
+    secondary_active_tab: Option<DocumentId>,
+}
+
+impl Default for EditorSplitState {
+    fn default() -> Self {
+        Self {
+            is_split: false,
+            split_vertical: true,
+            secondary_active_tab: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DragScript {
+    start: egui::Pos2,
+    end: egui::Pos2,
+    steps: u32,
+    current_step: u32,
+    phase: u8,
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -80,9 +117,17 @@ pub struct ShellApp {
     ipc_rx: Option<Receiver<IpcRequest>>,
     screenshot_path: Option<PathBuf>,
     screenshot_requested: bool,
+    pending_ui_test_ops: VecDeque<UiTestOp>,
+    active_drag_script: Option<DragScript>,
     tab_registry: TabProviderRegistry,
     tab_renderers: BTreeMap<DocumentId, Box<dyn TabRenderer>>,
     theme: ThemeTokens,
+    editor_split: EditorSplitState,
+    last_bottom_panel_height: f32,
+    last_status_bar_height: f32,
+    last_central_height: f32,
+    last_drag_start_y: f32,
+    last_drag_end_y: f32,
     canvas2d: Pcb2dCanvas,
     canvas3d: Pcb3dCanvas,
 }
@@ -106,6 +151,12 @@ impl ShellApp {
             }
             if let Some(saved) = efame::get_value(storage, STORAGE_CHROME_KEY) {
                 panel_visibility = saved;
+            }
+        }
+        let mut editor_split = EditorSplitState::default();
+        if let Some(storage) = cc.storage {
+            if let Some(saved) = efame::get_value(storage, STORAGE_EDITOR_SPLIT_KEY) {
+                editor_split = saved;
             }
         }
 
@@ -141,9 +192,17 @@ impl ShellApp {
             ipc_rx,
             screenshot_path: None,
             screenshot_requested: false,
+            pending_ui_test_ops: VecDeque::new(),
+            active_drag_script: None,
             tab_registry: TabProviderRegistry::new_m1(),
             tab_renderers: BTreeMap::new(),
             theme: vscode_dark_tokens(),
+            editor_split,
+            last_bottom_panel_height: 0.0,
+            last_status_bar_height: 24.0,
+            last_central_height: 0.0,
+            last_drag_start_y: 0.0,
+            last_drag_end_y: 0.0,
             canvas2d: Pcb2dCanvas::default(),
             canvas3d: Pcb3dCanvas,
         }
@@ -185,6 +244,10 @@ impl ShellApp {
                 .output_lines
                 .push(format!("Command disabled in current context: {}", meta.id));
             return;
+        }
+
+        if id == "view.reset_layout" {
+            self.editor_split = EditorSplitState::default();
         }
 
         if self.execute_io_command(id, arg.clone()) {
@@ -289,10 +352,34 @@ impl ShellApp {
                 self.revert_active_document();
                 true
             }
-            "view.split_editor_right" | "view.split_editor_down" => {
-                self.model.output_lines.push(
-                    "Split editor groups are not wired yet; tab commands are fully active".to_owned(),
-                );
+            "view.split_editor_right" => {
+                self.editor_split.is_split = true;
+                self.editor_split.split_vertical = true;
+                if self.editor_split.secondary_active_tab.is_none() {
+                    self.editor_split.secondary_active_tab = self.model.active_document_id();
+                }
+                self.model.output_lines.push("Split editor: right".to_owned());
+                true
+            }
+            "view.split_editor_down" => {
+                self.editor_split.is_split = true;
+                self.editor_split.split_vertical = false;
+                if self.editor_split.secondary_active_tab.is_none() {
+                    self.editor_split.secondary_active_tab = self.model.active_document_id();
+                }
+                self.model.output_lines.push("Split editor: down".to_owned());
+                true
+            }
+            "help.about" => {
+                self.model
+                    .output_lines
+                    .push("AutoPCB Shell - IDE shell for PCB/spec automation".to_owned());
+                true
+            }
+            "run.start_last" => {
+                self.model
+                    .output_lines
+                    .push("No runnable task configured yet.".to_owned());
                 true
             }
             _ => false,
@@ -463,6 +550,15 @@ impl ShellApp {
         self.tab_renderers.retain(|id, _| {
             self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
         });
+        if let Some(id) = self.editor_split.secondary_active_tab {
+            if !self.model.open_editor_tabs.contains(&id) {
+                self.editor_split.secondary_active_tab = self.model.active_document_id();
+            }
+        }
+        if self.model.open_editor_tabs.is_empty() {
+            self.editor_split.is_split = false;
+            self.editor_split.secondary_active_tab = None;
+        }
     }
 
     fn process_ipc(&mut self) {
@@ -480,7 +576,91 @@ impl ShellApp {
                 IpcRequest::Screenshot { path } => {
                     self.screenshot_path = Some(PathBuf::from(path));
                 }
+                IpcRequest::UiTest { op } => self.pending_ui_test_ops.push_back(op),
             }
+        }
+    }
+
+    fn apply_ui_test_ops(&mut self, ctx: &egui::Context) {
+        if self.active_drag_script.is_none() {
+            while let Some(op) = self.pending_ui_test_ops.pop_front() {
+                match op {
+                    UiTestOp::DragBottomPanel { delta, steps } => {
+                        let steps = steps.max(2);
+                        let screen = ctx.content_rect();
+                        let splitter_y =
+                            screen.bottom() - self.last_status_bar_height - self.last_bottom_panel_height;
+                        let x = screen.center().x;
+                        let start = egui::pos2(x, splitter_y + 2.0);
+                        let end = egui::pos2(x, splitter_y + delta);
+                        self.last_drag_start_y = start.y;
+                        self.last_drag_end_y = end.y;
+                        self.active_drag_script = Some(DragScript {
+                            start,
+                            end,
+                            steps,
+                            current_step: 0,
+                            phase: 0,
+                        });
+                        self.model.output_lines.push(format!(
+                            "UI test drag queued: start_y={:.1} end_y={:.1} delta={:.1}",
+                            start.y, end.y, delta
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+
+        let Some(script) = self.active_drag_script.as_mut() else {
+            return;
+        };
+
+        let mut completed = false;
+        ctx.input_mut(|i| match script.phase {
+            0 => {
+                i.raw.events.push(Event::PointerMoved(script.start));
+                script.phase = 1;
+            }
+            1 => {
+                i.raw.events.push(Event::PointerButton {
+                    pos: script.start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                script.phase = 2;
+            }
+            2 => {
+                if script.current_step < script.steps {
+                    script.current_step += 1;
+                    let t = script.current_step as f32 / script.steps as f32;
+                    let pos = egui::pos2(
+                        script.start.x + (script.end.x - script.start.x) * t,
+                        script.start.y + (script.end.y - script.start.y) * t,
+                    );
+                    i.raw.events.push(Event::PointerMoved(pos));
+                } else {
+                    script.phase = 3;
+                }
+            }
+            3 => {
+                i.raw.events.push(Event::PointerButton {
+                    pos: script.end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                script.phase = 4;
+            }
+            _ => {
+                completed = true;
+            }
+        });
+
+        if completed {
+            self.active_drag_script = None;
+            self.model.output_lines.push("UI test drag completed".to_owned());
         }
     }
 
@@ -951,69 +1131,86 @@ impl ShellApp {
         }
     }
 
-    fn render_bottom_panel(&mut self, ctx: &egui::Context) {
-        if !self.panel_visibility.show_bottom_panel {
-            return;
-        }
+    fn render_bottom_panel_contents(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Problems, "Problems")
+                .clicked()
+            {
+                self.queue("panel.show.problems", None);
+            }
+            if ui
+                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Output, "Output")
+                .clicked()
+            {
+                self.queue("panel.show.output", None);
+            }
+            if ui
+                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Jobs, "Jobs")
+                .clicked()
+            {
+                self.queue("panel.show.jobs", None);
+            }
+        });
+        ui.separator();
 
-        egui::TopBottomPanel::bottom("bottom_panel")
-            .resizable(true)
-            .default_height(180.0)
-            .frame(egui::Frame::new().fill(self.theme.panel_bg))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Problems, "Problems")
-                        .clicked()
-                    {
-                        self.queue("panel.show.problems", None);
-                    }
-                    if ui
-                        .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Output, "Output")
-                        .clicked()
-                    {
-                        self.queue("panel.show.output", None);
-                    }
-                    if ui
-                        .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Jobs, "Jobs")
-                        .clicked()
-                    {
-                        self.queue("panel.show.jobs", None);
+        match self.panel_visibility.bottom_tab {
+            BottomTab::Problems => {
+                if self.model.problems.is_empty() {
+                    ui.label(RichText::new("No problems").color(self.theme.text_muted));
+                }
+                for line in &self.model.problems {
+                    ui.label(line);
+                }
+            }
+            BottomTab::Output => {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for line in &self.model.output_lines {
+                        ui.monospace(line);
                     }
                 });
-                ui.separator();
-
-                match self.panel_visibility.bottom_tab {
-                    BottomTab::Problems => {
-                        if self.model.problems.is_empty() {
-                            ui.label(RichText::new("No problems").color(self.theme.text_muted));
-                        }
-                        for line in &self.model.problems {
-                            ui.label(line);
-                        }
-                    }
-                    BottomTab::Output => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for line in &self.model.output_lines {
-                                ui.monospace(line);
-                            }
-                        });
-                    }
-                    BottomTab::Jobs => {
-                        if self.model.jobs.is_empty() {
-                            ui.label(RichText::new("No jobs").color(self.theme.text_muted));
-                        }
-                        for line in &self.model.jobs {
-                            ui.label(line);
-                        }
-                    }
+            }
+            BottomTab::Jobs => {
+                if self.model.jobs.is_empty() {
+                    ui.label(RichText::new("No jobs").color(self.theme.text_muted));
                 }
-            });
+                for line in &self.model.jobs {
+                    ui.label(line);
+                }
+            }
+        }
     }
 
     fn render_document_tabs(&mut self, ui: &mut egui::Ui) {
-        for (id, arg) in render_tabstrip(ui, &self.model, &self.theme) {
-            self.queue(&id, arg);
+        let actions = render_tabstrip(ui, &self.model, &self.theme, self.model.active_editor_tab);
+        for action in actions {
+            match action {
+                TabAction::Activate(id) => {
+                    self.queue("editor.activate_document", Some(id.0.to_string()));
+                }
+                TabAction::Close(id) => {
+                    self.queue("editor.close_document", Some(id.0.to_string()));
+                    if self.editor_split.secondary_active_tab == Some(id) {
+                        self.editor_split.secondary_active_tab = self.model.active_editor_tab;
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_secondary_document_tabs(&mut self, ui: &mut egui::Ui) {
+        let active = self.editor_split.secondary_active_tab;
+        let actions = render_tabstrip(ui, &self.model, &self.theme, active);
+        for action in actions {
+            match action {
+                TabAction::Activate(id) => self.editor_split.secondary_active_tab = Some(id),
+                TabAction::Close(id) => {
+                    self.queue("editor.close_document", Some(id.0.to_string()));
+                    if self.editor_split.secondary_active_tab == Some(id) {
+                        self.editor_split.secondary_active_tab = self.model.active_editor_tab;
+                    }
+                }
+            }
         }
     }
 
@@ -1177,11 +1374,70 @@ impl ShellApp {
         }
     }
 
+    fn render_document_by_id(&mut self, ui: &mut egui::Ui, document_id: DocumentId, fit_requested: bool) {
+        let Some(mut renderer) = self.tab_renderer_for_document(document_id) else {
+            ui.label("No tab provider registered for this document type");
+            return;
+        };
+        renderer.render(self, ui, document_id, fit_requested);
+        if self.model.documents.contains_key(&document_id) {
+            self.tab_renderers.insert(document_id, renderer);
+        }
+    }
+
+    fn render_editor_workspace(&mut self, ui: &mut egui::Ui, fit_requested: bool) {
+        if self.editor_split.is_split {
+            if self.editor_split.secondary_active_tab.is_none() {
+                self.editor_split.secondary_active_tab = self.model.active_document_id();
+            }
+            if self.editor_split.split_vertical {
+                ui.columns(2, |cols| {
+                    self.render_document_tabs(&mut cols[0]);
+                    self.render_active_document(&mut cols[0], fit_requested);
+
+                    self.render_secondary_document_tabs(&mut cols[1]);
+                    if let Some(id) = self.editor_split.secondary_active_tab {
+                        self.render_document_by_id(&mut cols[1], id, fit_requested);
+                    } else {
+                        cols[1].centered_and_justified(|ui| ui.label("No document open"));
+                    }
+                });
+            } else {
+                ui.vertical(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), ui.available_height() * 0.5),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            self.render_document_tabs(ui);
+                            self.render_active_document(ui, fit_requested);
+                        },
+                    );
+                    ui.separator();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            self.render_secondary_document_tabs(ui);
+                            if let Some(id) = self.editor_split.secondary_active_tab {
+                                self.render_document_by_id(ui, id, fit_requested);
+                            } else {
+                                ui.centered_and_justified(|ui| ui.label("No document open"));
+                            }
+                        },
+                    );
+                });
+            }
+        } else {
+            self.render_document_tabs(ui);
+            self.render_active_document(ui, fit_requested);
+        }
+    }
+
     fn render_status_bar(&mut self, ctx: &egui::Context) {
         if !self.panel_visibility.show_status_bar {
             return;
         }
-        egui::TopBottomPanel::bottom("status_bar")
+        egui::TopBottomPanel::bottom("status_bar_v2")
             .exact_height(24.0)
             .frame(egui::Frame::new().fill(self.theme.statusbar_bg))
             .show(ctx, |ui| {
@@ -1220,6 +1476,22 @@ impl ShellApp {
                     ui.label(format!("Selection: {selection}"));
                 });
             });
+        self.last_status_bar_height = 24.0;
+    }
+
+    fn write_layout_probe(&self) {
+        let payload = serde_json::json!({
+            "bottom_panel_visible": self.panel_visibility.show_bottom_panel,
+            "bottom_panel_height": self.last_bottom_panel_height,
+            "status_bar_visible": self.panel_visibility.show_status_bar,
+            "status_bar_height": self.last_status_bar_height,
+            "central_height": self.last_central_height,
+            "split_enabled": self.editor_split.is_split,
+            "split_vertical": self.editor_split.split_vertical,
+            "last_drag_start_y": self.last_drag_start_y,
+            "last_drag_end_y": self.last_drag_end_y,
+        });
+        let _ = std::fs::write(LAYOUT_PROBE_PATH, payload.to_string());
     }
 }
 
@@ -1241,11 +1513,52 @@ fn find_conflict(
         .map(|(id, _)| id.clone())
 }
 
+struct EditorTreeBehavior {
+    app: *mut ShellApp,
+    fit_requested: bool,
+}
+
+impl EditorTreeBehavior {
+    fn app_mut(&mut self) -> &mut ShellApp {
+        // SAFETY: used synchronously during one `Tree::ui` call on the UI thread.
+        unsafe { &mut *self.app }
+    }
+}
+
+impl Behavior<EditorPane> for EditorTreeBehavior {
+    fn tab_title_for_pane(&mut self, pane: &EditorPane) -> egui::WidgetText {
+        match pane {
+            EditorPane::Workbench => "Editor".into(),
+            EditorPane::BottomPanel => "Panel".into(),
+        }
+    }
+
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tile_id: TileId,
+        pane: &mut EditorPane,
+    ) -> UiResponse {
+        match pane {
+            EditorPane::Workbench => {
+                let fit_requested = self.fit_requested;
+                self.app_mut().render_editor_workspace(ui, fit_requested);
+            }
+            EditorPane::BottomPanel => {
+                self.app_mut().render_bottom_panel_contents(ui);
+                self.app_mut().last_bottom_panel_height = ui.max_rect().height();
+            }
+        }
+        UiResponse::None
+    }
+}
+
 impl efame::App for ShellApp {
     fn save(&mut self, storage: &mut dyn efame::Storage) {
         efame::set_value(storage, STORAGE_LAYOUT_KEY, &self.layout);
         efame::set_value(storage, STORAGE_PANELS_KEY, &self.panel_visibility);
         efame::set_value(storage, STORAGE_CHROME_KEY, &self.panel_visibility);
+        efame::set_value(storage, STORAGE_EDITOR_SPLIT_KEY, &self.editor_split);
 
         let persisted = ShortcutOverrides {
             by_command: self
@@ -1260,6 +1573,7 @@ impl efame::App for ShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
         apply_theme(ctx, &self.theme);
         self.process_ipc();
+        self.apply_ui_test_ops(ctx);
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
         self.process_queue(ctx, frame);
@@ -1268,21 +1582,33 @@ impl efame::App for ShellApp {
         self.render_title_menu_bar(ctx);
         self.render_activity_bar(ctx);
         self.render_sidebar(ctx);
-        self.render_bottom_panel(ctx);
+        // Render status bar first so it occupies the true bottom edge.
+        // The resizable bottom panel is then laid out above it.
+        self.render_status_bar(ctx);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(self.theme.editor_bg))
             .show(ctx, |ui| {
+            self.last_central_height = ui.max_rect().height();
             let fit_requested = self.layout.request_fit;
             self.layout.request_fit = false;
-
-            self.render_document_tabs(ui);
-            self.render_active_document(ui, fit_requested);
+            if self.panel_visibility.show_bottom_panel {
+                let app_ptr: *mut ShellApp = self;
+                let tree = &mut self.layout.editor_tree;
+                let mut behavior = EditorTreeBehavior {
+                    app: app_ptr,
+                    fit_requested,
+                };
+                tree.ui(&mut behavior, ui);
+            } else {
+                self.last_bottom_panel_height = 0.0;
+                self.render_editor_workspace(ui, fit_requested);
+            }
         });
 
-        self.render_status_bar(ctx);
         self.show_palette_window(ctx);
         self.handle_screenshot_flow(ctx);
+        self.write_layout_probe();
 
         if ctx.input(|i| i.raw.events.iter().any(|e| matches!(e, Event::Key { key: Key::Escape, pressed: true, .. })))
             && self.show_command_palette
@@ -1291,9 +1617,43 @@ impl efame::App for ShellApp {
         }
 
         // Keep a light polling cadence so IPC commands are handled even when the UI is idle.
-        if self.ipc_rx.is_some() || self.screenshot_requested || self.screenshot_path.is_some() {
+        if self.ipc_rx.is_some()
+            || self.screenshot_requested
+            || self.screenshot_path.is_some()
+            || self.active_drag_script.is_some()
+        {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_bottom_panel_height;
+
+    #[test]
+    fn bottom_panel_drag_up_increases_height() {
+        let h = clamp_bottom_panel_height(180.0, -40.0, 900.0);
+        assert!(h > 180.0);
+    }
+
+    #[test]
+    fn bottom_panel_drag_down_decreases_height() {
+        let h = clamp_bottom_panel_height(220.0, 40.0, 900.0);
+        assert!(h < 220.0);
+    }
+
+    #[test]
+    fn bottom_panel_respects_min_height() {
+        let h = clamp_bottom_panel_height(100.0, 400.0, 900.0);
+        assert_eq!(h, 80.0);
+    }
+
+    #[test]
+    fn bottom_panel_respects_max_height() {
+        let max = (900.0_f32 - 120.0).max(80.0);
+        let h = clamp_bottom_panel_height(300.0, -1000.0, 900.0);
+        assert_eq!(h, max);
     }
 }
 
