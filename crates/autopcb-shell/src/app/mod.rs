@@ -22,14 +22,13 @@ use crate::jobs::{JobArtifact, JobEvent, JobKind, JobManager, JobPayload, JobReq
 use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
 use crate::pipeline::{
     ActivityViewIntent, Command, CommandTransaction, Effect, HistoryIntent, Intent, ResolveContext,
-    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, ThemeIntent, TracingTelemetry,
+    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, TracingTelemetry,
     intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
 use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{
-    ThemeId, ThemePrefs, ThemeTokens, apply_theme, next_theme, previous_theme, theme_name,
-    theme_profiles, theme_tokens_by_id,
+    ThemeId, ThemePrefs, ThemeTokens, apply_theme, next_theme, previous_theme, theme_tokens_by_id,
 };
 use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, WorkbenchModel};
 
@@ -60,6 +59,12 @@ enum ActivityView {
 enum SecondarySidebarTab {
     #[default]
     Inspector,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaletteMode {
+    Command,
+    Theme,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -132,6 +137,7 @@ pub struct ShellApp {
     commands: CommandRegistry,
     intent_queue: VecDeque<Intent>,
     show_command_palette: bool,
+    palette_mode: PaletteMode,
     palette_focus_pending: bool,
     palette_filter: String,
     palette_selected: usize,
@@ -161,8 +167,6 @@ pub struct ShellApp {
     telemetry: TracingTelemetry,
     theme_prefs: ThemePrefs,
     theme_preview: Option<ThemeId>,
-    theme_filter: String,
-    theme_selected: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +232,7 @@ impl ShellApp {
             commands,
             intent_queue: VecDeque::new(),
             show_command_palette: false,
+            palette_mode: PaletteMode::Command,
             palette_focus_pending: false,
             palette_filter: String::new(),
             palette_selected: 0,
@@ -261,8 +266,6 @@ impl ShellApp {
             telemetry: TracingTelemetry,
             theme_prefs,
             theme_preview: None,
-            theme_filter: String::new(),
-            theme_selected: 0,
         }
     }
 
@@ -407,17 +410,28 @@ impl ShellApp {
                 (None, Vec::new())
             }
             Command::ThemeOpenManagerTab => {
-                self.model.open_or_activate_theme_manager_document();
+                self.palette_mode = PaletteMode::Theme;
+                self.show_command_palette = true;
+                self.palette_focus_pending = true;
+                self.palette_filter.clear();
+                self.palette_selected = 0;
                 (None, Vec::new())
             }
             Command::SetCommandPaletteVisible(value) => {
                 let prev = self.show_command_palette;
                 self.show_command_palette = value;
+                if value {
+                    self.palette_mode = PaletteMode::Command;
+                    self.palette_filter.clear();
+                    self.palette_selected = 0;
+                }
                 if value && !prev {
                     self.palette_focus_pending = true;
                 }
                 if !value {
                     self.palette_focus_pending = false;
+                    self.theme_preview = None;
+                    self.refresh_theme_tokens();
                 }
                 (Some(Command::SetCommandPaletteVisible(prev)), Vec::new())
             }
@@ -1582,92 +1596,6 @@ impl ShellApp {
         });
     }
 
-    pub(super) fn render_theme_manager(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Theme Manager");
-        ui.horizontal(|ui| {
-            ui.label("Active:");
-            ui.monospace(theme_name(self.theme_prefs.active_theme));
-            if let Some(preview) = self.theme_preview {
-                ui.separator();
-                ui.label("Preview:");
-                ui.monospace(theme_name(preview));
-            }
-        });
-        ui.separator();
-
-        ui.horizontal(|ui| {
-            ui.label("Filter:");
-            ui.text_edit_singleline(&mut self.theme_filter);
-        });
-
-        let filter = self.theme_filter.to_ascii_lowercase();
-        let profiles = theme_profiles();
-        let visible: Vec<_> = profiles
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| filter.is_empty() || p.name.to_ascii_lowercase().contains(&filter))
-            .collect();
-
-        if !visible.is_empty() {
-            self.theme_selected = self.theme_selected.min(visible.len() - 1);
-        } else {
-            self.theme_selected = 0;
-        }
-
-        ui.add_space(6.0);
-        egui::ScrollArea::vertical()
-            .max_height(220.0)
-            .show(ui, |ui| {
-                for (idx, profile_idx_and_profile) in visible.iter().enumerate() {
-                    let (_, profile) = profile_idx_and_profile;
-                    let selected = idx == self.theme_selected;
-                    let current = self.theme_prefs.active_theme == profile.id;
-                    let label = if current {
-                        format!("{} (current)", profile.name)
-                    } else {
-                        profile.name.to_owned()
-                    };
-                    let resp = ui.selectable_label(selected, label);
-                    if resp.hovered() {
-                        self.theme_preview = Some(profile.id);
-                        self.refresh_theme_tokens();
-                    }
-                    if resp.clicked() {
-                        self.theme_selected = idx;
-                    }
-                }
-            });
-
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("Apply Selected").clicked() {
-                if let Some((_, profile)) = visible.get(self.theme_selected) {
-                    self.queue_intent(Intent::Theme(ThemeIntent::SetTheme { id: profile.id }));
-                }
-            }
-            if ui.button("Clear Preview").clicked() {
-                self.theme_preview = None;
-                self.refresh_theme_tokens();
-            }
-            if ui.button("Next Theme").clicked() {
-                self.queue_intent(Intent::Theme(ThemeIntent::NextTheme));
-            }
-            if ui.button("Previous Theme").clicked() {
-                self.queue_intent(Intent::Theme(ThemeIntent::PreviousTheme));
-            }
-        });
-
-        ui.add_space(8.0);
-        let mut scale = self.theme_prefs.ui_scale;
-        let slider = egui::Slider::new(&mut scale, 0.8..=1.75).text("UI Scale");
-        if ui.add(slider).changed() {
-            self.queue_intent(Intent::Theme(ThemeIntent::SetUiScale { scale }));
-        }
-        if ui.button("Reset Scale").clicked() {
-            self.queue_intent(Intent::Theme(ThemeIntent::SetUiScale { scale: 1.0 }));
-        }
-    }
-
     pub(super) fn render_board_document(
         &mut self,
         ui: &mut egui::Ui,
@@ -2029,6 +1957,8 @@ impl efame::App for ShellApp {
         {
             self.show_command_palette = false;
             self.palette_focus_pending = false;
+            self.theme_preview = None;
+            self.refresh_theme_tokens();
         }
 
         // Keep a light polling cadence so IPC commands are handled even when the UI is idle.

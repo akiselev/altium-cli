@@ -48,7 +48,6 @@ pub fn render_tabstrip(
                                 DocumentKind::Board(_) => IconId::PcbDoc,
                                 DocumentKind::Spec(_) => IconId::Spec,
                                 DocumentKind::Keybindings => IconId::Gear,
-                                DocumentKind::ThemeManager => IconId::Gear,
                             };
                             icon(ui, icon_id, tokens.text_muted, 14.0);
                             if dirty {

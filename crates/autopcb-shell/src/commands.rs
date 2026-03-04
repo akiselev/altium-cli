@@ -493,7 +493,7 @@ impl CommandRegistry {
             ),
             meta(
                 "theme.open_manager",
-                "Theme: Open Theme Manager",
+                "Theme: Select Color Theme",
                 "Theme",
                 "",
                 true,
