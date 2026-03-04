@@ -47,6 +47,9 @@ pub fn render_tabstrip(
                             let icon_id = match kind {
                                 DocumentKind::Board(_) => IconId::PcbDoc,
                                 DocumentKind::Spec(_) => IconId::Spec,
+                                DocumentKind::SchDocPreview(_)
+                                | DocumentKind::SchLibGallery(_)
+                                | DocumentKind::SchLibComponent(_) => IconId::Spec,
                                 DocumentKind::Keybindings => IconId::Gear,
                             };
                             icon(ui, icon_id, tokens.text_muted, 14.0);

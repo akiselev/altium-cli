@@ -234,6 +234,8 @@ fn discover_specs(root: &Path) -> Vec<SpecNode> {
                 "pcbdoc"
             } else if name.ends_with(".schdoc-spec") {
                 "schdoc"
+            } else if name.ends_with(".schlib-spec") {
+                "schlib"
             } else if name.ends_with(".prjpcb-spec") {
                 "prjpcb"
             } else {

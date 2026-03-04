@@ -9,6 +9,9 @@ use crate::project_graph::WorkspaceModel;
 pub const DOCUMENT_KIND_BOARD: &str = "document.board";
 pub const DOCUMENT_KIND_SPEC: &str = "document.spec";
 pub const DOCUMENT_KIND_KEYBINDINGS: &str = "document.keybindings";
+pub const DOCUMENT_KIND_SCHDOC_PREVIEW: &str = "document.schdoc_preview";
+pub const DOCUMENT_KIND_SCHLIB_GALLERY: &str = "document.schlib_gallery";
+pub const DOCUMENT_KIND_SCHLIB_COMPONENT: &str = "document.schlib_component";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DocumentId(pub u64);
@@ -31,10 +34,32 @@ pub struct SpecDocument {
     pub text: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SchDocPreviewDocument {
+    pub source_path: PathBuf,
+    pub source_spec_document: Option<DocumentId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SchLibGalleryDocument {
+    pub source_path: PathBuf,
+    pub source_spec_document: Option<DocumentId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SchLibComponentDocument {
+    pub source_path: PathBuf,
+    pub source_spec_document: Option<DocumentId>,
+    pub component_name: String,
+}
+
 #[derive(Debug)]
 pub enum DocumentKind {
     Board(BoardDocument),
     Spec(SpecDocument),
+    SchDocPreview(SchDocPreviewDocument),
+    SchLibGallery(SchLibGalleryDocument),
+    SchLibComponent(SchLibComponentDocument),
     Keybindings,
 }
 
@@ -43,6 +68,9 @@ impl DocumentKind {
         match self {
             DocumentKind::Board(_) => DOCUMENT_KIND_BOARD,
             DocumentKind::Spec(_) => DOCUMENT_KIND_SPEC,
+            DocumentKind::SchDocPreview(_) => DOCUMENT_KIND_SCHDOC_PREVIEW,
+            DocumentKind::SchLibGallery(_) => DOCUMENT_KIND_SCHLIB_GALLERY,
+            DocumentKind::SchLibComponent(_) => DOCUMENT_KIND_SCHLIB_COMPONENT,
             DocumentKind::Keybindings => DOCUMENT_KIND_KEYBINDINGS,
         }
     }
@@ -205,6 +233,113 @@ impl WorkbenchModel {
             path: path.clone(),
             dirty: false,
             kind: DocumentKind::Spec(SpecDocument { path, text }),
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
+    pub fn open_schdoc_preview_document(
+        &mut self,
+        source_path: PathBuf,
+        source_spec_document: Option<DocumentId>,
+    ) -> DocumentId {
+        if let Some(existing) = self.documents.values().find_map(|d| match &d.kind {
+            DocumentKind::SchDocPreview(preview) if preview.source_path == source_path => {
+                Some(d.id)
+            }
+            _ => None,
+        }) {
+            self.set_active_tab(existing);
+            return existing;
+        }
+
+        let id = self.alloc_document_id();
+        let title = format!("{} (preview)", filename_or_fallback(&source_path, "schdoc"));
+        let doc = Document {
+            id,
+            title,
+            path: None,
+            dirty: false,
+            kind: DocumentKind::SchDocPreview(SchDocPreviewDocument {
+                source_path,
+                source_spec_document,
+            }),
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
+    pub fn open_schlib_gallery_document(
+        &mut self,
+        source_path: PathBuf,
+        source_spec_document: Option<DocumentId>,
+    ) -> DocumentId {
+        if let Some(existing) = self.documents.values().find_map(|d| match &d.kind {
+            DocumentKind::SchLibGallery(gallery) if gallery.source_path == source_path => {
+                Some(d.id)
+            }
+            _ => None,
+        }) {
+            self.set_active_tab(existing);
+            return existing;
+        }
+
+        let id = self.alloc_document_id();
+        let title = format!("{} (gallery)", filename_or_fallback(&source_path, "schlib"));
+        let doc = Document {
+            id,
+            title,
+            path: None,
+            dirty: false,
+            kind: DocumentKind::SchLibGallery(SchLibGalleryDocument {
+                source_path,
+                source_spec_document,
+            }),
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
+    pub fn open_schlib_component_document(
+        &mut self,
+        source_path: PathBuf,
+        source_spec_document: Option<DocumentId>,
+        component_name: String,
+    ) -> DocumentId {
+        if let Some(existing) = self.documents.values().find_map(|d| match &d.kind {
+            DocumentKind::SchLibComponent(comp)
+                if comp.source_path == source_path && comp.component_name == component_name =>
+            {
+                Some(d.id)
+            }
+            _ => None,
+        }) {
+            self.set_active_tab(existing);
+            return existing;
+        }
+
+        let id = self.alloc_document_id();
+        let title = format!(
+            "{} · {}",
+            filename_or_fallback(&source_path, "schlib"),
+            component_name
+        );
+        let doc = Document {
+            id,
+            title,
+            path: None,
+            dirty: false,
+            kind: DocumentKind::SchLibComponent(SchLibComponentDocument {
+                source_path,
+                source_spec_document,
+                component_name,
+            }),
         };
         self.documents.insert(id, doc);
         self.open_editor_tabs.push(id);

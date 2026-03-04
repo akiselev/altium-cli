@@ -3,11 +3,16 @@ mod ui;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use altium_format_spec::SpecDomain;
+use altium_format_render_png::{DEFAULT_SCALE, render_schdoc_png, render_schlib_component_png};
+use altium_format_spec::parser::parse_spec;
+use altium_format_spec::{
+    SpecDomain, SpecModel, apply_spec_schdoc, apply_spec_schlib, compile_spec,
+};
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
 use egui_tiles::{Behavior, TileId, UiResponse};
 
@@ -168,6 +173,7 @@ pub struct ShellApp {
     canvas3d: Pcb3dCanvas,
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
+    preview_cache: PreviewTextureCache,
     telemetry: TracingTelemetry,
     theme_prefs: ThemePrefs,
     theme_preview: Option<ThemeId>,
@@ -180,6 +186,18 @@ pub struct ShellApp {
 struct UndoEntry {
     forward: CommandTransaction,
     inverse: CommandTransaction,
+}
+
+#[derive(Default)]
+struct PreviewTextureCache {
+    by_key: BTreeMap<String, PreviewTextureEntry>,
+}
+
+struct PreviewTextureEntry {
+    text_hash: u64,
+    image_hash: u64,
+    texture: Option<egui::TextureHandle>,
+    error: Option<String>,
 }
 
 impl ShellApp {
@@ -237,6 +255,7 @@ impl ShellApp {
             canvas3d: Pcb3dCanvas,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            preview_cache: PreviewTextureCache::default(),
             telemetry: TracingTelemetry,
             theme_prefs,
             theme_preview: None,
@@ -294,6 +313,9 @@ impl ShellApp {
                         .map(SessionTabRef::UntitledSpecId)
                 }
             }
+            DocumentKind::SchDocPreview(_)
+            | DocumentKind::SchLibGallery(_)
+            | DocumentKind::SchLibComponent(_) => None,
             DocumentKind::Keybindings => Some(SessionTabRef::Keybindings),
         }
     }
@@ -332,6 +354,9 @@ impl ShellApp {
                         dirty: doc.dirty,
                     });
                 }
+                DocumentKind::SchDocPreview(_)
+                | DocumentKind::SchLibGallery(_)
+                | DocumentKind::SchLibComponent(_) => {}
                 DocumentKind::Keybindings => {
                     documents.push(SessionDocumentState::Keybindings);
                 }
@@ -1151,16 +1176,26 @@ impl ShellApp {
             .to_string_lossy()
             .to_ascii_lowercase();
         let workspace = self.model.active_workspace.as_ref();
+        if file.ends_with(".schlib-spec") {
+            let target = default_output_for_spec(spec_path, SpecDomain::SchLib);
+            return Some((SpecDomain::SchLib, target));
+        }
         if file.ends_with(".pcbdoc-spec") {
-            let target = workspace?.project.board_docs.first()?.path.clone();
+            let target = workspace
+                .and_then(|w| w.project.board_docs.first().map(|b| b.path.clone()))
+                .unwrap_or_else(|| default_output_for_spec(spec_path, SpecDomain::PcbDoc));
             return Some((SpecDomain::PcbDoc, target));
         }
         if file.ends_with(".schdoc-spec") {
-            let target = workspace?.project.schematic_docs.first()?.path.clone();
+            let target = workspace
+                .and_then(|w| w.project.schematic_docs.first().map(|s| s.path.clone()))
+                .unwrap_or_else(|| default_output_for_spec(spec_path, SpecDomain::SchDoc));
             return Some((SpecDomain::SchDoc, target));
         }
         if file.ends_with(".prjpcb-spec") {
-            let target = workspace?.project.prjpcb_path.clone();
+            let target = workspace
+                .map(|w| w.project.prjpcb_path.clone())
+                .unwrap_or_else(|| default_output_for_spec(spec_path, SpecDomain::PrjPcb));
             return Some((SpecDomain::PrjPcb, target));
         }
         None
@@ -1199,10 +1234,26 @@ impl ShellApp {
                     crate::pipeline::WorkspaceIntent::OpenProject { path: Some(path) },
                 ));
             }
-            "spec" | "pcbdoc-spec" | "schdoc-spec" | "prjpcb-spec" => {
+            "spec" | "pcbdoc-spec" | "schdoc-spec" | "prjpcb-spec" | "schlib-spec" => {
                 match fs::read_to_string(&path) {
                     Ok(text) => {
-                        self.model.open_spec_document(Some(path.clone()), text);
+                        let source_doc = self.model.open_spec_document(Some(path.clone()), text);
+                        let ext = path
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .map(|s| s.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        match ext.as_str() {
+                            "schlib-spec" => {
+                                self.model
+                                    .open_schlib_gallery_document(path.clone(), Some(source_doc));
+                            }
+                            "schdoc-spec" => {
+                                self.model
+                                    .open_schdoc_preview_document(path.clone(), Some(source_doc));
+                            }
+                            _ => {}
+                        }
                         self.model
                             .output_lines
                             .push(format!("Opened spec: {}", path.display()));
@@ -2033,6 +2084,281 @@ impl ShellApp {
         }
     }
 
+    pub(super) fn render_schdoc_preview_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+    ) {
+        let (source_path, source_spec_document) = match self.model.documents.get(&document_id) {
+            Some(doc) => match &doc.kind {
+                DocumentKind::SchDocPreview(preview) => {
+                    (preview.source_path.clone(), preview.source_spec_document)
+                }
+                _ => {
+                    ui.label("SchDoc preview unavailable");
+                    return;
+                }
+            },
+            None => {
+                ui.label("SchDoc preview unavailable");
+                return;
+            }
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(format!("Source: {}", source_path.display()));
+            if ui.button("Edit spec").clicked() {
+                self.activate_source_spec_document(source_path.clone(), source_spec_document);
+            }
+        });
+        ui.separator();
+
+        let source_text = match self.source_spec_text(source_path.as_path(), source_spec_document) {
+            Ok(text) => text,
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, err);
+                return;
+            }
+        };
+
+        let png = match render_schdoc_spec_png(&source_text) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, err);
+                return;
+            }
+        };
+
+        let key = format!("schdoc-preview:{}", source_path.display());
+        self.render_png_preview(ui, &key, &source_text, &png);
+    }
+
+    pub(super) fn render_schlib_gallery_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+    ) {
+        let (source_path, source_spec_document) = match self.model.documents.get(&document_id) {
+            Some(doc) => match &doc.kind {
+                DocumentKind::SchLibGallery(gallery) => {
+                    (gallery.source_path.clone(), gallery.source_spec_document)
+                }
+                _ => {
+                    ui.label("SchLib gallery unavailable");
+                    return;
+                }
+            },
+            None => {
+                ui.label("SchLib gallery unavailable");
+                return;
+            }
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(format!("Source: {}", source_path.display()));
+            if ui.button("Edit spec").clicked() {
+                self.activate_source_spec_document(source_path.clone(), source_spec_document);
+            }
+        });
+        ui.separator();
+
+        let source_text = match self.source_spec_text(source_path.as_path(), source_spec_document) {
+            Ok(text) => text,
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, err);
+                return;
+            }
+        };
+
+        let lib = match build_schlib_from_spec_source(&source_text) {
+            Ok(lib) => lib,
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, err);
+                return;
+            }
+        };
+        let mut component_names = lib.component_names();
+        component_names.sort();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for component_name in component_names {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong(&component_name);
+                        if ui.button("Open component tab").clicked() {
+                            self.model.open_schlib_component_document(
+                                source_path.clone(),
+                                source_spec_document,
+                                component_name.clone(),
+                            );
+                            self.mark_session_dirty();
+                        }
+                    });
+                    match render_schlib_component_png(&lib, &component_name, DEFAULT_SCALE * 0.5) {
+                        Ok(png) => {
+                            let key = format!(
+                                "schlib-gallery:{}:{}",
+                                source_path.display(),
+                                component_name
+                            );
+                            self.render_png_preview(ui, &key, &source_text, &png);
+                        }
+                        Err(err) => {
+                            ui.colored_label(
+                                self.theme.text_disabled,
+                                format!("render failed: {err}"),
+                            );
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+            }
+        });
+    }
+
+    pub(super) fn render_schlib_component_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+    ) {
+        let (source_path, source_spec_document, component_name) =
+            match self.model.documents.get(&document_id) {
+                Some(doc) => match &doc.kind {
+                    DocumentKind::SchLibComponent(component) => (
+                        component.source_path.clone(),
+                        component.source_spec_document,
+                        component.component_name.clone(),
+                    ),
+                    _ => {
+                        ui.label("SchLib component preview unavailable");
+                        return;
+                    }
+                },
+                None => {
+                    ui.label("SchLib component preview unavailable");
+                    return;
+                }
+            };
+
+        ui.horizontal(|ui| {
+            ui.strong(&component_name);
+            if ui.button("Edit spec").clicked() {
+                self.activate_source_spec_document(source_path.clone(), source_spec_document);
+            }
+        });
+        ui.separator();
+
+        let source_text = match self.source_spec_text(source_path.as_path(), source_spec_document) {
+            Ok(text) => text,
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, err);
+                return;
+            }
+        };
+        let lib = match build_schlib_from_spec_source(&source_text) {
+            Ok(lib) => lib,
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, err);
+                return;
+            }
+        };
+        match render_schlib_component_png(&lib, &component_name, DEFAULT_SCALE * 0.75) {
+            Ok(png) => {
+                let key = format!(
+                    "schlib-component:{}:{}",
+                    source_path.display(),
+                    component_name
+                );
+                self.render_png_preview(ui, &key, &source_text, &png);
+            }
+            Err(err) => {
+                ui.colored_label(self.theme.text_disabled, format!("render failed: {err}"));
+            }
+        }
+    }
+
+    fn source_spec_text(
+        &self,
+        source_path: &Path,
+        source_spec_document: Option<DocumentId>,
+    ) -> Result<String, String> {
+        if let Some(doc_id) = source_spec_document
+            && let Some(doc) = self.model.documents.get(&doc_id)
+            && let DocumentKind::Spec(spec) = &doc.kind
+        {
+            return Ok(spec.text.clone());
+        }
+        fs::read_to_string(source_path)
+            .map_err(|e| format!("failed to read {}: {e}", source_path.display()))
+    }
+
+    fn activate_source_spec_document(
+        &mut self,
+        source_path: PathBuf,
+        source_spec_document: Option<DocumentId>,
+    ) {
+        if let Some(doc_id) = source_spec_document
+            && self.model.documents.contains_key(&doc_id)
+        {
+            self.model.set_active_tab(doc_id);
+            return;
+        }
+        if let Ok(text) = fs::read_to_string(&source_path) {
+            self.model.open_spec_document(Some(source_path), text);
+        }
+    }
+
+    fn render_png_preview(&mut self, ui: &mut egui::Ui, cache_key: &str, source: &str, png: &[u8]) {
+        let source_hash = hash_bytes(source.as_bytes());
+        let image_hash = hash_bytes(png);
+        let cache = self
+            .preview_cache
+            .by_key
+            .entry(cache_key.to_owned())
+            .or_insert_with(|| PreviewTextureEntry {
+                text_hash: 0,
+                image_hash: 0,
+                texture: None,
+                error: None,
+            });
+
+        if cache.texture.is_none()
+            || cache.text_hash != source_hash
+            || cache.image_hash != image_hash
+        {
+            match png_to_color_image(png) {
+                Ok(img) => {
+                    let texture = ui.ctx().load_texture(
+                        cache_key.to_owned(),
+                        img,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    cache.texture = Some(texture);
+                    cache.text_hash = source_hash;
+                    cache.image_hash = image_hash;
+                    cache.error = None;
+                }
+                Err(err) => {
+                    cache.texture = None;
+                    cache.error = Some(err);
+                }
+            }
+        }
+
+        if let Some(texture) = &cache.texture {
+            let size = texture.size_vec2();
+            ui.image((texture.id(), size));
+        } else {
+            ui.colored_label(
+                self.theme.text_disabled,
+                cache
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "preview unavailable".to_owned()),
+            );
+        }
+    }
+
     fn tab_renderer_for_document(
         &mut self,
         document_id: DocumentId,
@@ -2323,6 +2649,59 @@ impl efame::App for ShellApp {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
     }
+}
+
+fn hash_bytes(input: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn png_to_color_image(bytes: &[u8]) -> Result<ColorImage, String> {
+    let decoded = image::load_from_memory(bytes)
+        .map_err(|e| format!("failed to decode preview image: {e}"))?
+        .to_rgba8();
+    let size = [decoded.width() as usize, decoded.height() as usize];
+    let flat = decoded.as_flat_samples();
+    Ok(ColorImage::from_rgba_unmultiplied(size, flat.as_slice()))
+}
+
+fn build_schlib_from_spec_source(source_text: &str) -> Result<altium_format::SchLib, String> {
+    let ast = parse_spec(source_text).map_err(|e| e.to_string())?;
+    let model = compile_spec(&ast, SpecDomain::SchLib).map_err(|e| e.to_string())?;
+    let SpecModel::SchLib(spec) = model else {
+        return Err("spec did not compile as SchLib".to_owned());
+    };
+    let mut lib = altium_format::SchLib::new_blank_ad26().map_err(|e| e.to_string())?;
+    let _ = lib.remove_component("Component_1");
+    apply_spec_schlib(&spec, &mut lib).map_err(|e| e.to_string())?;
+    Ok(lib)
+}
+
+fn render_schdoc_spec_png(source_text: &str) -> Result<Vec<u8>, String> {
+    let ast = parse_spec(source_text).map_err(|e| e.to_string())?;
+    let model = compile_spec(&ast, SpecDomain::SchDoc).map_err(|e| e.to_string())?;
+    let SpecModel::SchDoc(spec) = model else {
+        return Err("spec did not compile as SchDoc".to_owned());
+    };
+    let mut doc = altium_format::SchDoc::new_blank_ad26();
+    apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
+    render_schdoc_png(&doc, DEFAULT_SCALE * 0.5).map_err(|e| e.to_string())
+}
+
+fn default_output_for_spec(spec_file: &Path, domain: SpecDomain) -> PathBuf {
+    let stem = spec_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let ext = match domain {
+        SpecDomain::SchLib => "SchLib",
+        SpecDomain::SchDoc => "SchDoc",
+        SpecDomain::PcbLib => "PcbLib",
+        SpecDomain::PrjPcb => "PrjPcb",
+        SpecDomain::PcbDoc => "PcbDoc",
+    };
+    spec_file.with_file_name(format!("{stem}.{ext}"))
 }
 
 #[cfg(test)]

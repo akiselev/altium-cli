@@ -185,6 +185,9 @@ impl ShellApp {
                     IconId::PcbDoc
                 } else if name.to_ascii_lowercase().ends_with(".spec")
                     || name.to_ascii_lowercase().ends_with(".pcbdoc-spec")
+                    || name.to_ascii_lowercase().ends_with(".schdoc-spec")
+                    || name.to_ascii_lowercase().ends_with(".schlib-spec")
+                    || name.to_ascii_lowercase().ends_with(".prjpcb-spec")
                 {
                     IconId::Spec
                 } else {

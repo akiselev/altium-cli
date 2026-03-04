@@ -12,6 +12,7 @@ autopcb-ir = { version = "0.2.0", path = "../autopcb-ir" }
 autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
 altium-format = { version = "0.2.0", path = "../altium-format" }
 altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
+altium-format-render-png = { version = "0.2.0", path = "../altium-format-render-png" }
 efame = { package = "eframe", version = "0.33", features = ["wgpu", "persistence"] }
 egui_tiles = { version = "0.14", features = ["serde"] }
 anyhow = "1.0"

@@ -457,7 +457,6 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
             | Intent::File(FileIntent::Revert)
             | Intent::Jobs(JobsIntent::CancelActive)
             | Intent::Pcb(_)
-            | Intent::Spec(_)
             | Intent::Editor(_)
             | Intent::File(FileIntent::Close)
             | Intent::File(FileIntent::CloseAll)

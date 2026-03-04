@@ -5,11 +5,12 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use altium_format::{AltiumProject, PcbDoc, SchDoc};
+use altium_format::{AltiumProject, PcbDoc, SchDoc, SchLib};
 use altium_format_spec::parser::parse_spec;
 use altium_format_spec::{
-    SpecDomain, SpecModel, apply_spec_pcbdoc, apply_spec_prjpcb, apply_spec_schdoc, compile_spec,
-    reconcile_pcbdoc, reconcile_prjpcb, reconcile_schdoc,
+    SpecDomain, SpecModel, apply_spec_pcbdoc, apply_spec_prjpcb, apply_spec_schdoc,
+    apply_spec_schlib, compile_spec, reconcile_pcbdoc, reconcile_prjpcb, reconcile_schdoc,
+    reconcile_schdoc_empty, reconcile_schlib, reconcile_schlib_empty,
 };
 use autopcb_ir::PcbIr;
 
@@ -362,6 +363,22 @@ fn run_spec_plan(
     }
 
     match model {
+        SpecModel::SchLib(spec) => {
+            let eco = if target_path.exists() {
+                let doc = SchLib::open(target_path).map_err(|e| e.to_string())?;
+                reconcile_schlib(
+                    &spec,
+                    &doc,
+                    target_path.to_path_buf(),
+                    spec_path.to_path_buf(),
+                )
+                .map_err(|e| e.to_string())?
+            } else {
+                reconcile_schlib_empty(&spec, target_path.to_path_buf(), spec_path.to_path_buf())
+            };
+            let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
+            Ok("Planned SchLib changes".to_owned())
+        }
         SpecModel::PcbDoc(spec) => {
             let doc = PcbDoc::open(target_path).map_err(|e| e.to_string())?;
             let eco = reconcile_pcbdoc(
@@ -375,14 +392,18 @@ fn run_spec_plan(
             Ok("Planned PcbDoc changes".to_owned())
         }
         SpecModel::SchDoc(spec) => {
-            let doc = SchDoc::open(target_path).map_err(|e| e.to_string())?;
-            let eco = reconcile_schdoc(
-                &spec,
-                &doc,
-                target_path.to_path_buf(),
-                spec_path.to_path_buf(),
-            )
-            .map_err(|e| e.to_string())?;
+            let eco = if target_path.exists() {
+                let doc = SchDoc::open(target_path).map_err(|e| e.to_string())?;
+                reconcile_schdoc(
+                    &spec,
+                    &doc,
+                    target_path.to_path_buf(),
+                    spec_path.to_path_buf(),
+                )
+                .map_err(|e| e.to_string())?
+            } else {
+                reconcile_schdoc_empty(&spec, target_path.to_path_buf(), spec_path.to_path_buf())
+            };
             let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
             Ok("Planned SchDoc changes".to_owned())
         }
@@ -398,7 +419,7 @@ fn run_spec_plan(
             let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
             Ok("Planned PrjPcb changes".to_owned())
         }
-        _ => Err("only PcbDoc/SchDoc/PrjPcb specs are supported in shell jobs".to_owned()),
+        _ => Err("only SchLib/PcbDoc/SchDoc/PrjPcb specs are supported in shell jobs".to_owned()),
     }
 }
 
@@ -425,6 +446,18 @@ fn run_spec_apply(
     }
 
     match model {
+        SpecModel::SchLib(spec) => {
+            let mut doc = if target_path.exists() {
+                SchLib::open(target_path).map_err(|e| e.to_string())?
+            } else {
+                let mut lib = SchLib::new_blank_ad26().map_err(|e| e.to_string())?;
+                let _ = lib.remove_component("Component_1");
+                lib
+            };
+            apply_spec_schlib(&spec, &mut doc).map_err(|e| e.to_string())?;
+            doc.save(target_path).map_err(|e| e.to_string())?;
+            Ok("Applied SchLib spec".to_owned())
+        }
         SpecModel::PcbDoc(spec) => {
             let mut doc = PcbDoc::open(target_path).map_err(|e| e.to_string())?;
             apply_spec_pcbdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
@@ -433,17 +466,25 @@ fn run_spec_apply(
             Ok("Applied PcbDoc spec".to_owned())
         }
         SpecModel::SchDoc(spec) => {
-            let mut doc = SchDoc::open(target_path).map_err(|e| e.to_string())?;
+            let mut doc = if target_path.exists() {
+                SchDoc::open(target_path).map_err(|e| e.to_string())?
+            } else {
+                SchDoc::new_blank_ad26()
+            };
             apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
             doc.save(target_path).map_err(|e| e.to_string())?;
             Ok("Applied SchDoc spec".to_owned())
         }
         SpecModel::PrjPcb(spec) => {
-            let mut doc = AltiumProject::open(target_path).map_err(|e| e.to_string())?;
+            let mut doc = if target_path.exists() {
+                AltiumProject::open(target_path).map_err(|e| e.to_string())?
+            } else {
+                AltiumProject::new_blank_ad26()
+            };
             apply_spec_prjpcb(&spec, &mut doc).map_err(|e| e.to_string())?;
             doc.save(target_path).map_err(|e| e.to_string())?;
             Ok("Applied PrjPcb spec".to_owned())
         }
-        _ => Err("only PcbDoc/SchDoc/PrjPcb specs are supported in shell jobs".to_owned()),
+        _ => Err("only SchLib/PcbDoc/SchDoc/PrjPcb specs are supported in shell jobs".to_owned()),
     }
 }

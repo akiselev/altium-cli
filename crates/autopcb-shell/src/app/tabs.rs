@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use efame::egui;
 
 use crate::workbench::{
-    DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SPEC, DocumentId,
+    DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SCHDOC_PREVIEW,
+    DOCUMENT_KIND_SCHLIB_COMPONENT, DOCUMENT_KIND_SCHLIB_GALLERY, DOCUMENT_KIND_SPEC, DocumentId,
 };
 
 use super::ShellApp;
@@ -32,6 +33,15 @@ impl TabProviderRegistry {
 
         registry.register(DOCUMENT_KIND_BOARD, || Box::new(BoardTabRenderer));
         registry.register(DOCUMENT_KIND_SPEC, || Box::new(SpecTabRenderer));
+        registry.register(DOCUMENT_KIND_SCHDOC_PREVIEW, || {
+            Box::new(SchDocPreviewTabRenderer)
+        });
+        registry.register(DOCUMENT_KIND_SCHLIB_GALLERY, || {
+            Box::new(SchLibGalleryTabRenderer)
+        });
+        registry.register(DOCUMENT_KIND_SCHLIB_COMPONENT, || {
+            Box::new(SchLibComponentTabRenderer)
+        });
         registry.register(DOCUMENT_KIND_KEYBINDINGS, || {
             Box::new(KeybindingsTabRenderer)
         });
@@ -49,6 +59,9 @@ impl TabProviderRegistry {
 
 struct BoardTabRenderer;
 struct SpecTabRenderer;
+struct SchDocPreviewTabRenderer;
+struct SchLibGalleryTabRenderer;
+struct SchLibComponentTabRenderer;
 struct KeybindingsTabRenderer;
 
 impl TabRenderer for BoardTabRenderer {
@@ -75,6 +88,42 @@ impl TabRenderer for SpecTabRenderer {
     }
 }
 
+impl TabRenderer for SchDocPreviewTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_schdoc_preview_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for SchLibGalleryTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_schlib_gallery_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for SchLibComponentTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_schlib_component_document(ui, document_id);
+    }
+}
+
 impl TabRenderer for KeybindingsTabRenderer {
     fn render(
         &mut self,
@@ -96,6 +145,13 @@ mod tests {
         let registry = TabProviderRegistry::new_m1();
         assert!(registry.instantiate(DOCUMENT_KIND_BOARD).is_some());
         assert!(registry.instantiate(DOCUMENT_KIND_SPEC).is_some());
+        assert!(registry.instantiate(DOCUMENT_KIND_SCHDOC_PREVIEW).is_some());
+        assert!(registry.instantiate(DOCUMENT_KIND_SCHLIB_GALLERY).is_some());
+        assert!(
+            registry
+                .instantiate(DOCUMENT_KIND_SCHLIB_COMPONENT)
+                .is_some()
+        );
         assert!(registry.instantiate(DOCUMENT_KIND_KEYBINDINGS).is_some());
     }
 }
