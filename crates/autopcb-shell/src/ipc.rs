@@ -35,6 +35,12 @@ pub enum IpcRequest {
     UiTest {
         op: UiTestOp,
     },
+    SessionSaveNow,
+    SessionRestoreLatest,
+    SessionRestorePath {
+        path: String,
+    },
+    SessionGetPath,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

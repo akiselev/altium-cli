@@ -139,6 +139,12 @@ pub enum TerminalIntent {
     Toggle,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionIntent {
+    SaveNow,
+    RestoreLatest,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ThemeIntent {
     OpenManager,
@@ -166,6 +172,7 @@ pub enum Intent {
     Run(RunIntent),
     Help(HelpIntent),
     Terminal(TerminalIntent),
+    Session(SessionIntent),
     Theme(ThemeIntent),
 }
 
@@ -260,6 +267,8 @@ pub enum Command {
 
     RunStartLast,
     HelpAbout,
+    SessionSaveNow,
+    SessionRestoreLatest,
     ThemeOpenManagerTab,
     ThemeCycleNext,
     ThemeCyclePrevious,
@@ -359,6 +368,8 @@ pub fn intent_from_command_id(id: &str, arg: Option<String>) -> Result<Intent, I
         "run.start_last" => Ok(Intent::Run(RunIntent::StartLast)),
         "jobs.cancel_active" => Ok(Intent::Jobs(JobsIntent::CancelActive)),
         "terminal.toggle" => Ok(Intent::Terminal(TerminalIntent::Toggle)),
+        "session.save_now" => Ok(Intent::Session(SessionIntent::SaveNow)),
+        "session.restore_last" => Ok(Intent::Session(SessionIntent::RestoreLatest)),
         "help.about" => Ok(Intent::Help(HelpIntent::About)),
         "theme.open_manager" => Ok(Intent::Theme(ThemeIntent::OpenManager)),
         "theme.next" => Ok(Intent::Theme(ThemeIntent::NextTheme)),
@@ -592,6 +603,8 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
         Intent::Terminal(TerminalIntent::Toggle) => {
             vec![C::SetBottomPanelVisible(!ctx.show_bottom_panel)]
         }
+        Intent::Session(SessionIntent::SaveNow) => vec![C::SessionSaveNow],
+        Intent::Session(SessionIntent::RestoreLatest) => vec![C::SessionRestoreLatest],
         Intent::Theme(ThemeIntent::OpenManager) => vec![C::ThemeOpenManagerTab],
         Intent::Theme(ThemeIntent::NextTheme) => vec![C::ThemeCycleNext],
         Intent::Theme(ThemeIntent::PreviousTheme) => vec![C::ThemeCyclePrevious],

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use altium_format_spec::SpecDomain;
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
@@ -26,6 +26,11 @@ use crate::pipeline::{
     intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
+use crate::session::{FileSessionStore, RestoreMode, SessionSnapshotV1, SessionTabRef};
+use crate::session::{
+    SessionDocumentState, SessionPrefsState, SessionSelectionState, SessionStore, SessionTabState,
+    SessionUiState, SessionWorkspaceState, now_unix_ms, shortcut_overrides_from_stored,
+};
 use crate::ui::chrome::{show_central_panel, show_top_bar};
 use crate::ui::section::empty_state;
 use crate::ui::segmented::{SegmentItem, segmented_bar};
@@ -36,13 +41,8 @@ use crate::ui::theme::{
 };
 use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, WorkbenchModel};
 
-const STORAGE_LAYOUT_KEY: &str = "shell.layout.v1";
-const STORAGE_PANELS_KEY: &str = "shell.panels.v1";
-const STORAGE_CHROME_KEY: &str = "shell.chrome.v2";
-const STORAGE_SHORTCUTS_KEY: &str = "shell.shortcuts.v1";
-const STORAGE_EDITOR_SPLIT_KEY: &str = "shell.editor_split.v1";
-const STORAGE_THEME_KEY: &str = "shell.theme.v1";
 const LAYOUT_PROBE_PATH: &str = "/tmp/autopcb-shell-layout.json";
+const SESSION_AUTOSAVE_DEBOUNCE_MS: u64 = 800;
 
 #[cfg(test)]
 fn clamp_bottom_panel_height(current: f32, drag_delta_y: f32, viewport_h: f32) -> f32 {
@@ -51,7 +51,7 @@ fn clamp_bottom_panel_height(current: f32, drag_delta_y: f32, viewport_h: f32) -
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-enum ActivityView {
+pub(crate) enum ActivityView {
     Explorer,
     Search,
     SourceControl,
@@ -60,12 +60,12 @@ enum ActivityView {
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
-enum SecondarySidebarTab {
+pub(crate) enum SecondarySidebarTab {
     #[default]
     Inspector,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub(crate) enum PaletteMode {
     Command,
     Theme,
@@ -73,7 +73,7 @@ pub(crate) enum PaletteMode {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-struct PanelVisibilityState {
+pub(crate) struct PanelVisibilityState {
     show_activity_bar: bool,
     show_primary_sidebar: bool,
     show_secondary_sidebar: bool,
@@ -104,7 +104,7 @@ impl Default for PanelVisibilityState {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct EditorSplitState {
+pub(crate) struct EditorSplitState {
     is_split: bool,
     split_vertical: bool,
     secondary_active_tab: Option<DocumentId>,
@@ -130,8 +130,8 @@ struct DragScript {
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
-struct ShortcutOverrides {
-    by_command: BTreeMap<String, StoredShortcut>,
+pub(crate) struct ShortcutOverrides {
+    pub(crate) by_command: BTreeMap<String, StoredShortcut>,
 }
 
 pub struct ShellApp {
@@ -171,6 +171,9 @@ pub struct ShellApp {
     telemetry: TracingTelemetry,
     theme_prefs: ThemePrefs,
     theme_preview: Option<ThemeId>,
+    session_store: FileSessionStore,
+    session_dirty: bool,
+    last_session_save: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -181,55 +184,22 @@ struct UndoEntry {
 
 impl ShellApp {
     pub fn new(
-        cc: &efame::CreationContext<'_>,
+        _cc: &efame::CreationContext<'_>,
         board_path: Option<PathBuf>,
         initial_ir: Option<autopcb_ir::PcbIr>,
         ipc_rx: Option<Receiver<IpcRequest>>,
+        session_store: FileSessionStore,
+        restore_mode: RestoreMode,
     ) -> Self {
         let mut layout = ShellLayoutState::default();
-        let mut panel_visibility = PanelVisibilityState::default();
-
-        if let Some(storage) = cc.storage {
-            if let Some(saved) = efame::get_value(storage, STORAGE_LAYOUT_KEY) {
-                layout = saved;
-            }
-            if let Some(saved) = efame::get_value(storage, STORAGE_PANELS_KEY) {
-                panel_visibility = saved;
-            }
-            if let Some(saved) = efame::get_value(storage, STORAGE_CHROME_KEY) {
-                panel_visibility = saved;
-            }
-        }
+        let panel_visibility = PanelVisibilityState::default();
         layout.ensure_required_panes();
-        let mut editor_split = EditorSplitState::default();
-        let mut theme_prefs = ThemePrefs::default();
-        if let Some(storage) = cc.storage {
-            if let Some(saved) = efame::get_value(storage, STORAGE_EDITOR_SPLIT_KEY) {
-                editor_split = saved;
-            }
-            if let Some(saved) = efame::get_value(storage, STORAGE_THEME_KEY) {
-                theme_prefs = saved;
-            }
-        }
+        let editor_split = EditorSplitState::default();
+        let theme_prefs = ThemePrefs::default();
 
         let commands = CommandRegistry::new_m1();
-        let mut shortcut_bindings = default_shortcuts(&commands);
-
-        if let Some(storage) = cc.storage {
-            if let Some(saved) =
-                efame::get_value::<ShortcutOverrides>(storage, STORAGE_SHORTCUTS_KEY)
-            {
-                for (id, sc) in saved.by_command {
-                    if commands.get(&id).is_some() {
-                        if let Some(parsed) = shortcut_from_stored(&sc) {
-                            shortcut_bindings.insert(id, parsed);
-                        }
-                    }
-                }
-            }
-        }
-
-        Self {
+        let shortcut_bindings = default_shortcuts(&commands);
+        let mut app = Self {
             model: WorkbenchModel::new(board_path, initial_ir),
             layout,
             panel_visibility,
@@ -270,6 +240,290 @@ impl ShellApp {
             telemetry: TracingTelemetry,
             theme_prefs,
             theme_preview: None,
+            session_store,
+            session_dirty: false,
+            last_session_save: Instant::now(),
+        };
+        app.refresh_theme_tokens();
+        app.restore_mode(restore_mode);
+        app
+    }
+
+    fn restore_mode(&mut self, restore_mode: RestoreMode) {
+        let loaded = match restore_mode {
+            RestoreMode::None => return,
+            RestoreMode::Auto => self.session_store.load_latest(),
+            RestoreMode::Path(path) => FileSessionStore::new(path).load_latest(),
+        };
+        match loaded {
+            Ok(Some(snapshot)) => {
+                if let Err(err) = self.apply_snapshot(snapshot) {
+                    self.model
+                        .problems
+                        .push(format!("Failed to restore session: {err}"));
+                } else {
+                    self.model.output_lines.push(format!(
+                        "Session restored: {}",
+                        self.session_store.snapshot_path().display()
+                    ));
+                }
+            }
+            Ok(None) => {}
+            Err(err) => self
+                .model
+                .problems
+                .push(format!("Failed to load session snapshot: {err}")),
+        }
+    }
+
+    fn session_tab_ref_for_document(
+        &self,
+        id: DocumentId,
+        untitled_by_id: &BTreeMap<DocumentId, String>,
+    ) -> Option<SessionTabRef> {
+        let doc = self.model.documents.get(&id)?;
+        match &doc.kind {
+            DocumentKind::Board(_) => doc.path.clone().map(SessionTabRef::BoardPath),
+            DocumentKind::Spec(_) => {
+                if let Some(path) = &doc.path {
+                    Some(SessionTabRef::SpecPath(path.clone()))
+                } else {
+                    untitled_by_id
+                        .get(&id)
+                        .cloned()
+                        .map(SessionTabRef::UntitledSpecId)
+                }
+            }
+            DocumentKind::Keybindings => Some(SessionTabRef::Keybindings),
+        }
+    }
+
+    fn build_snapshot(&self) -> SessionSnapshotV1 {
+        let mut untitled_by_id: BTreeMap<DocumentId, String> = BTreeMap::new();
+        for id in &self.model.open_editor_tabs {
+            if let Some(doc) = self.model.documents.get(id)
+                && matches!(doc.kind, DocumentKind::Spec(_))
+                && doc.path.is_none()
+            {
+                untitled_by_id.insert(*id, format!("untitled-{}", id.0));
+            }
+        }
+
+        let mut documents = Vec::new();
+        for doc in self.model.documents_in_tab_order() {
+            match &doc.kind {
+                DocumentKind::Board(board) => {
+                    if let Some(path) = &doc.path {
+                        documents.push(SessionDocumentState::Board {
+                            path: path.clone(),
+                            view_mode: board.view_mode,
+                        });
+                    }
+                }
+                DocumentKind::Spec(spec) => {
+                    documents.push(SessionDocumentState::Spec {
+                        path: spec.path.clone(),
+                        untitled_id: if spec.path.is_none() {
+                            untitled_by_id.get(&doc.id).cloned()
+                        } else {
+                            None
+                        },
+                        text: spec.text.clone(),
+                        dirty: doc.dirty,
+                    });
+                }
+                DocumentKind::Keybindings => {
+                    documents.push(SessionDocumentState::Keybindings);
+                }
+            }
+        }
+
+        let open_tabs = self
+            .model
+            .open_editor_tabs
+            .iter()
+            .filter_map(|id| self.session_tab_ref_for_document(*id, &untitled_by_id))
+            .collect();
+        let active_tab = self
+            .model
+            .active_editor_tab
+            .and_then(|id| self.session_tab_ref_for_document(id, &untitled_by_id));
+        let secondary_active_tab = self
+            .editor_split
+            .secondary_active_tab
+            .and_then(|id| self.session_tab_ref_for_document(id, &untitled_by_id));
+        let recently_closed_tabs = self
+            .model
+            .recently_closed_tabs
+            .iter()
+            .filter_map(|id| self.session_tab_ref_for_document(*id, &untitled_by_id))
+            .collect();
+
+        let shortcut_overrides = shortcut_overrides_from_stored(
+            self.shortcut_bindings
+                .iter()
+                .map(|(k, v)| (k.clone(), shortcut_to_stored(*v))),
+        );
+
+        SessionSnapshotV1 {
+            schema_version: crate::session::SESSION_SCHEMA_VERSION,
+            saved_at_unix_ms: now_unix_ms(),
+            ui: SessionUiState {
+                panel_visibility: self.panel_visibility.clone(),
+                layout: self.layout.clone(),
+                editor_split: self.editor_split.clone(),
+                palette_mode: self.palette_mode,
+                palette_filter: self.palette_filter.clone(),
+                palette_selected: self.palette_selected,
+            },
+            workspace: SessionWorkspaceState {
+                workspace_root: self.model.workspace_root.clone(),
+                active_project_path: self
+                    .model
+                    .active_workspace
+                    .as_ref()
+                    .map(|w| w.project.prjpcb_path.clone()),
+            },
+            tabs: SessionTabState {
+                open_tabs,
+                active_tab,
+                secondary_active_tab,
+                recently_closed_tabs,
+            },
+            documents,
+            selection: SessionSelectionState {
+                selection: self.model.selection.clone(),
+            },
+            prefs: SessionPrefsState {
+                theme: self.theme_prefs.clone(),
+                shortcut_overrides,
+            },
+        }
+    }
+
+    fn apply_snapshot(&mut self, snapshot: SessionSnapshotV1) -> anyhow::Result<()> {
+        self.panel_visibility = snapshot.ui.panel_visibility;
+        self.layout = snapshot.ui.layout;
+        self.layout.ensure_required_panes();
+        self.editor_split = snapshot.ui.editor_split;
+        self.palette_mode = snapshot.ui.palette_mode;
+        self.palette_filter = snapshot.ui.palette_filter;
+        self.palette_selected = snapshot.ui.palette_selected;
+
+        self.theme_prefs = snapshot.prefs.theme;
+        self.refresh_theme_tokens();
+
+        self.shortcut_bindings = default_shortcuts(&self.commands);
+        for (id, sc) in snapshot.prefs.shortcut_overrides.by_command {
+            if self.commands.get(&id).is_some()
+                && let Some(parsed) = shortcut_from_stored(&sc)
+            {
+                self.shortcut_bindings.insert(id, parsed);
+            }
+        }
+
+        self.model.clear_workspace();
+        if let Some(root) = snapshot.workspace.workspace_root {
+            self.model.set_workspace_root(root);
+        }
+
+        let mut tab_map: BTreeMap<SessionTabRef, DocumentId> = BTreeMap::new();
+        for doc in snapshot.documents {
+            match doc {
+                SessionDocumentState::Board { path, view_mode } => {
+                    let before = self.model.active_document_id();
+                    self.open_document_path(path.clone());
+                    let id = self.model.active_document_id().or(before).ok_or_else(|| {
+                        anyhow::anyhow!("failed opening board {}", path.display())
+                    })?;
+                    if let Some(doc) = self.model.documents.get_mut(&id)
+                        && let DocumentKind::Board(board) = &mut doc.kind
+                    {
+                        board.view_mode = view_mode;
+                    }
+                    tab_map.insert(SessionTabRef::BoardPath(path), id);
+                }
+                SessionDocumentState::Spec {
+                    path,
+                    untitled_id,
+                    text,
+                    dirty,
+                } => {
+                    let contents = if let Some(path) = &path {
+                        fs::read_to_string(path).unwrap_or(text)
+                    } else {
+                        text
+                    };
+                    let id = self.model.open_spec_document(path.clone(), contents);
+                    self.model.mark_document_dirty(id, dirty);
+                    if let Some(path) = path {
+                        tab_map.insert(SessionTabRef::SpecPath(path), id);
+                    } else if let Some(uid) = untitled_id {
+                        tab_map.insert(SessionTabRef::UntitledSpecId(uid), id);
+                    }
+                }
+                SessionDocumentState::Keybindings => {
+                    let id = self.model.open_or_activate_keybindings_document();
+                    tab_map.insert(SessionTabRef::Keybindings, id);
+                }
+            }
+        }
+
+        self.model.open_editor_tabs = snapshot
+            .tabs
+            .open_tabs
+            .into_iter()
+            .filter_map(|t| tab_map.get(&t).copied())
+            .collect();
+        self.model.active_editor_tab = snapshot
+            .tabs
+            .active_tab
+            .and_then(|t| tab_map.get(&t).copied());
+        self.editor_split.secondary_active_tab = snapshot
+            .tabs
+            .secondary_active_tab
+            .and_then(|t| tab_map.get(&t).copied());
+        self.model.recently_closed_tabs = snapshot
+            .tabs
+            .recently_closed_tabs
+            .into_iter()
+            .filter_map(|t| tab_map.get(&t).copied())
+            .collect();
+
+        self.model.selection = snapshot.selection.selection;
+        if let Some(prjpcb) = snapshot.workspace.active_project_path {
+            self.queue_command_id("workspace.open_project", Some(prjpcb.display().to_string()));
+        }
+
+        self.prune_tab_renderers();
+        self.session_dirty = false;
+        self.last_session_save = Instant::now();
+        Ok(())
+    }
+
+    fn save_session_now(&mut self) -> anyhow::Result<()> {
+        let snapshot = self.build_snapshot();
+        self.session_store.save_atomic(&snapshot)?;
+        self.session_dirty = false;
+        self.last_session_save = Instant::now();
+        Ok(())
+    }
+
+    fn mark_session_dirty(&mut self) {
+        self.session_dirty = true;
+    }
+
+    fn maybe_autosave_session(&mut self) {
+        if !self.session_dirty {
+            return;
+        }
+        if self.last_session_save.elapsed() < Duration::from_millis(SESSION_AUTOSAVE_DEBOUNCE_MS) {
+            return;
+        }
+        if let Err(err) = self.save_session_now() {
+            self.model
+                .problems
+                .push(format!("Session autosave failed: {err}"));
         }
     }
 
@@ -324,6 +578,11 @@ impl ShellApp {
     fn apply_effect(&mut self, effect: Effect, ctx: &egui::Context) {
         match effect {
             Effect::RequestQuit => {
+                if let Err(err) = self.save_session_now() {
+                    self.model
+                        .problems
+                        .push(format!("Session save before quit failed: {err}"));
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -335,6 +594,7 @@ impl ShellApp {
         ctx: &egui::Context,
         allow_history_push: bool,
     ) {
+        let had_commands = !tx.commands.is_empty();
         let mut inverse = Vec::new();
         for command in &tx.commands {
             self.telemetry.command_executed(command);
@@ -359,6 +619,9 @@ impl ShellApp {
                 inverse: inverse_tx,
             });
             self.redo_stack.clear();
+        }
+        if had_commands {
+            self.mark_session_dirty();
         }
     }
 
@@ -704,6 +967,44 @@ impl ShellApp {
                     .push("AutoPCB Shell - IDE shell for PCB/spec automation".to_owned());
                 (None, Vec::new())
             }
+            Command::SessionSaveNow => {
+                if let Err(err) = self.save_session_now() {
+                    self.model
+                        .problems
+                        .push(format!("Session save failed: {err}"));
+                } else {
+                    self.model.output_lines.push(format!(
+                        "session saved: {}",
+                        self.session_store.snapshot_path().display()
+                    ));
+                }
+                (None, Vec::new())
+            }
+            Command::SessionRestoreLatest => {
+                match self.session_store.load_latest() {
+                    Ok(Some(snapshot)) => {
+                        if let Err(err) = self.apply_snapshot(snapshot) {
+                            self.model
+                                .problems
+                                .push(format!("Session restore failed: {err}"));
+                        } else {
+                            self.model.output_lines.push(format!(
+                                "session restored: {}",
+                                self.session_store.snapshot_path().display()
+                            ));
+                        }
+                    }
+                    Ok(None) => self
+                        .model
+                        .output_lines
+                        .push("No session snapshot found".to_owned()),
+                    Err(err) => self
+                        .model
+                        .problems
+                        .push(format!("Session restore failed: {err}")),
+                }
+                (None, Vec::new())
+            }
             Command::ThemeCycleNext => {
                 let prev = self.theme_prefs.active_theme;
                 self.theme_prefs.active_theme = next_theme(prev);
@@ -1033,7 +1334,9 @@ impl ShellApp {
     }
 
     fn process_job_events(&mut self) {
+        let mut changed = false;
         for ev in self.jobs.poll_events() {
+            changed = true;
             match ev {
                 JobEvent::Queued(id, kind) => {
                     self.model
@@ -1139,6 +1442,9 @@ impl ShellApp {
                 }
             }
         }
+        if changed {
+            self.mark_session_dirty();
+        }
     }
 
     fn prune_tab_renderers(&mut self) {
@@ -1201,6 +1507,63 @@ impl ShellApp {
                     self.screenshot_path = Some(PathBuf::from(path));
                 }
                 IpcRequest::UiTest { op } => self.pending_ui_test_ops.push_back(op),
+                IpcRequest::SessionSaveNow => {
+                    if let Err(err) = self.save_session_now() {
+                        self.model
+                            .problems
+                            .push(format!("IPC session save failed: {err}"));
+                    } else {
+                        self.model.output_lines.push(format!(
+                            "session saved: {}",
+                            self.session_store.snapshot_path().display()
+                        ));
+                    }
+                }
+                IpcRequest::SessionRestoreLatest => match self.session_store.load_latest() {
+                    Ok(Some(snapshot)) => {
+                        if let Err(err) = self.apply_snapshot(snapshot) {
+                            self.model
+                                .problems
+                                .push(format!("IPC session restore failed: {err}"));
+                        } else {
+                            self.model.output_lines.push(format!(
+                                "session restored: {}",
+                                self.session_store.snapshot_path().display()
+                            ));
+                        }
+                    }
+                    Ok(None) => self
+                        .model
+                        .output_lines
+                        .push("No session snapshot found".to_owned()),
+                    Err(err) => self
+                        .model
+                        .problems
+                        .push(format!("IPC session restore failed: {err}")),
+                },
+                IpcRequest::SessionRestorePath { path } => {
+                    match FileSessionStore::new(PathBuf::from(path)).load_latest() {
+                        Ok(Some(snapshot)) => {
+                            if let Err(err) = self.apply_snapshot(snapshot) {
+                                self.model
+                                    .problems
+                                    .push(format!("IPC session restore failed: {err}"));
+                            }
+                        }
+                        Ok(None) => self
+                            .model
+                            .output_lines
+                            .push("Session snapshot path not found".to_owned()),
+                        Err(err) => self
+                            .model
+                            .problems
+                            .push(format!("IPC session restore failed: {err}")),
+                    }
+                }
+                IpcRequest::SessionGetPath => self.model.output_lines.push(format!(
+                    "session path: {}",
+                    self.session_store.snapshot_path().display()
+                )),
             }
         }
     }
@@ -1461,6 +1824,7 @@ impl ShellApp {
             "Run",
             "Terminal",
             "Help",
+            "Session",
             "App",
             "Workspace",
             "Navigate",
@@ -1665,6 +2029,7 @@ impl ShellApp {
 
         if edited {
             self.model.mark_document_dirty(document_id, true);
+            self.mark_session_dirty();
         }
     }
 
@@ -1879,21 +2244,12 @@ impl Behavior<EditorPane> for EditorTreeBehavior {
 }
 
 impl efame::App for ShellApp {
-    fn save(&mut self, storage: &mut dyn efame::Storage) {
-        efame::set_value(storage, STORAGE_LAYOUT_KEY, &self.layout);
-        efame::set_value(storage, STORAGE_PANELS_KEY, &self.panel_visibility);
-        efame::set_value(storage, STORAGE_CHROME_KEY, &self.panel_visibility);
-        efame::set_value(storage, STORAGE_EDITOR_SPLIT_KEY, &self.editor_split);
-
-        let persisted = ShortcutOverrides {
-            by_command: self
-                .shortcut_bindings
-                .iter()
-                .map(|(k, v)| (k.clone(), shortcut_to_stored(*v)))
-                .collect(),
-        };
-        efame::set_value(storage, STORAGE_SHORTCUTS_KEY, &persisted);
-        efame::set_value(storage, STORAGE_THEME_KEY, &self.theme_prefs);
+    fn save(&mut self, _storage: &mut dyn efame::Storage) {
+        if let Err(err) = self.save_session_now() {
+            self.model
+                .problems
+                .push(format!("Session save failed: {err}"));
+        }
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut efame::Frame) {
@@ -1935,6 +2291,7 @@ impl efame::App for ShellApp {
 
         self.show_palette_window(ctx);
         self.handle_screenshot_flow(ctx);
+        self.maybe_autosave_session();
         self.write_layout_probe();
 
         if ctx.input(|i| {

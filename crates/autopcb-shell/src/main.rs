@@ -6,6 +6,7 @@ mod jobs;
 mod layout;
 mod pipeline;
 mod project_graph;
+mod session;
 mod ui;
 mod workbench;
 
@@ -19,6 +20,7 @@ use clap::{Parser, Subcommand};
 
 use app::ShellApp;
 use ipc::{IpcRequest, ServerStart, UiTestOp, default_socket_path, send_request, start_server};
+use session::{FileSessionStore, RestoreMode, default_session_path};
 
 #[derive(Debug, Parser)]
 #[command(name = "autopcb-shell")]
@@ -31,6 +33,12 @@ struct Cli {
 
     #[arg(long)]
     socket: Option<PathBuf>,
+
+    #[arg(long, global = true)]
+    session: Option<PathBuf>,
+
+    #[arg(long, global = true, default_value_t = false)]
+    no_restore: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -62,6 +70,15 @@ enum Commands {
     },
     /// Test whether a GUI instance is running.
     Ping,
+    /// Persist a session snapshot immediately in the running GUI.
+    SessionSave,
+    /// Restore session from latest snapshot in the running GUI.
+    SessionRestore {
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+    /// Print configured session snapshot path.
+    SessionPath,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -74,12 +91,18 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     let socket = cli.socket.unwrap_or_else(default_socket_path);
+    let session_path = cli.session.unwrap_or_else(default_session_path);
+    let restore_enabled = !cli.no_restore;
 
     match cli.command {
-        Some(Commands::Gui { board }) => run_gui(board, &socket),
-        Some(Commands::Start { board }) => start_background(board, &socket),
+        Some(Commands::Gui { board }) => run_gui(board, &socket, &session_path, restore_enabled),
+        Some(Commands::Start { board }) => {
+            start_background(board, &socket, &session_path, restore_enabled)
+        }
         Some(Commands::Stop) => stop_background(&socket),
-        Some(Commands::Restart { board }) => restart_background(board, &socket),
+        Some(Commands::Restart { board }) => {
+            restart_background(board, &socket, &session_path, restore_enabled)
+        }
         Some(Commands::Cmd { id, arg }) => send_control(&socket, IpcRequest::Command { id, arg }),
         Some(Commands::Open { path }) => send_control(
             &socket,
@@ -97,11 +120,34 @@ fn main() -> anyhow::Result<()> {
             },
         ),
         Some(Commands::Ping) => send_control(&socket, IpcRequest::Ping),
-        None => run_gui(cli.board, &socket),
+        Some(Commands::SessionSave) => send_control(&socket, IpcRequest::SessionSaveNow),
+        Some(Commands::SessionRestore { path }) => {
+            if let Some(path) = path {
+                send_control(
+                    &socket,
+                    IpcRequest::SessionRestorePath {
+                        path: path.display().to_string(),
+                    },
+                )
+            } else {
+                send_control(&socket, IpcRequest::SessionRestoreLatest)
+            }
+        }
+        Some(Commands::SessionPath) => {
+            eprintln!("{}", session_path.display());
+            Ok(())
+        }
+        None => run_gui(cli.board, &socket, &session_path, restore_enabled),
     }
 }
 
-fn run_gui(board_path: Option<PathBuf>, socket_path: &std::path::Path) -> anyhow::Result<()> {
+fn run_gui(
+    board_path: Option<PathBuf>,
+    socket_path: &std::path::Path,
+    session_path: &std::path::Path,
+    restore_enabled: bool,
+) -> anyhow::Result<()> {
+    let session_path = session_path.to_path_buf();
     let initial_ir = load_initial_ir(board_path.as_ref())?;
     let server = start_server(socket_path)?;
 
@@ -136,7 +182,20 @@ fn run_gui(board_path: Option<PathBuf>, socket_path: &std::path::Path) -> anyhow
     efame::run_native(
         title,
         options,
-        Box::new(move |cc| Ok(Box::new(ShellApp::new(cc, board_path, initial_ir, ipc_rx)))),
+        Box::new(move |cc| {
+            Ok(Box::new(ShellApp::new(
+                cc,
+                board_path,
+                initial_ir,
+                ipc_rx,
+                FileSessionStore::new(session_path),
+                if restore_enabled {
+                    RestoreMode::Auto
+                } else {
+                    RestoreMode::None
+                },
+            )))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
@@ -153,7 +212,12 @@ fn load_initial_ir(board_path: Option<&PathBuf>) -> anyhow::Result<Option<PcbIr>
     Ok(Some(ir))
 }
 
-fn start_background(board: Option<PathBuf>, socket_path: &std::path::Path) -> anyhow::Result<()> {
+fn start_background(
+    board: Option<PathBuf>,
+    socket_path: &std::path::Path,
+    session_path: &std::path::Path,
+    restore_enabled: bool,
+) -> anyhow::Result<()> {
     if send_request(socket_path, &IpcRequest::Ping).is_ok() {
         eprintln!("autopcb-shell already running");
         return Ok(());
@@ -164,9 +228,14 @@ fn start_background(board: Option<PathBuf>, socket_path: &std::path::Path) -> an
     cmd.arg("gui")
         .arg("--socket")
         .arg(socket_path)
+        .arg("--session")
+        .arg(session_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if !restore_enabled {
+        cmd.arg("--no-restore");
+    }
     if let Some(board) = board {
         cmd.arg(board);
     }
@@ -206,9 +275,15 @@ fn stop_background(socket_path: &std::path::Path) -> anyhow::Result<()> {
     Err(anyhow::anyhow!("autopcb-shell did not stop in time"))
 }
 
-fn restart_background(board: Option<PathBuf>, socket_path: &std::path::Path) -> anyhow::Result<()> {
+fn restart_background(
+    board: Option<PathBuf>,
+    socket_path: &std::path::Path,
+    session_path: &std::path::Path,
+    restore_enabled: bool,
+) -> anyhow::Result<()> {
+    let _ = send_request(socket_path, &IpcRequest::SessionSaveNow);
     let _ = stop_background(socket_path);
-    start_background(board, socket_path)
+    start_background(board, socket_path, session_path, restore_enabled)
 }
 
 fn send_control(socket_path: &std::path::Path, req: IpcRequest) -> anyhow::Result<()> {
