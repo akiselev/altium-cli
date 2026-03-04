@@ -1,12 +1,13 @@
 mod tabs;
+mod ui;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
+use altium_format_spec::SpecDomain;
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
 use egui_tiles::{Behavior, TileId, UiResponse};
 
@@ -17,11 +18,12 @@ use crate::commands::{
     CommandRegistry, DispatchOutcome, ShortcutDef, StoredShortcut,
 };
 use crate::ipc::{IpcRequest, UiTestOp};
+use crate::jobs::{JobArtifact, JobEvent, JobKind, JobManager, JobPayload, JobRequest, JobTrigger};
 use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
-use crate::ui::icons::{IconId, icon, icon_button};
+use crate::project_graph::{ParseState, WorkspaceModel};
 use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{ThemeTokens, apply_theme, vscode_dark_tokens};
-use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, SelectionKind, WorkbenchModel};
+use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, WorkbenchModel};
 
 const STORAGE_LAYOUT_KEY: &str = "shell.layout.v1";
 const STORAGE_PANELS_KEY: &str = "shell.panels.v1";
@@ -45,10 +47,20 @@ enum ActivityView {
     Extensions,
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+enum SecondarySidebarTab {
+    #[default]
+    Inspector,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 struct PanelVisibilityState {
     show_activity_bar: bool,
     show_primary_sidebar: bool,
+    show_secondary_sidebar: bool,
+    secondary_sidebar_width: f32,
+    secondary_sidebar_tab: SecondarySidebarTab,
     show_bottom_panel: bool,
     bottom_panel_height: f32,
     show_status_bar: bool,
@@ -61,6 +73,9 @@ impl Default for PanelVisibilityState {
         Self {
             show_activity_bar: true,
             show_primary_sidebar: true,
+            show_secondary_sidebar: true,
+            secondary_sidebar_width: 300.0,
+            secondary_sidebar_tab: SecondarySidebarTab::Inspector,
             show_bottom_panel: true,
             bottom_panel_height: 180.0,
             show_status_bar: true,
@@ -115,6 +130,7 @@ pub struct ShellApp {
     keybindings_capture_for: Option<String>,
     shortcut_bindings: BTreeMap<String, ShortcutDef>,
     ipc_rx: Option<Receiver<IpcRequest>>,
+    jobs: JobManager,
     screenshot_path: Option<PathBuf>,
     screenshot_requested: bool,
     pending_ui_test_ops: VecDeque<UiTestOp>,
@@ -191,6 +207,7 @@ impl ShellApp {
             keybindings_capture_for: None,
             shortcut_bindings,
             ipc_rx,
+            jobs: JobManager::new(),
             screenshot_path: None,
             screenshot_requested: false,
             pending_ui_test_ops: VecDeque::new(),
@@ -280,6 +297,11 @@ impl ShellApp {
                 self.panel_visibility.show_status_bar = !self.panel_visibility.show_status_bar;
                 true
             }
+            "view.toggle_secondary_sidebar" => {
+                self.panel_visibility.show_secondary_sidebar =
+                    !self.panel_visibility.show_secondary_sidebar;
+                true
+            }
             "panel.show.explorer" => {
                 self.panel_visibility.show_primary_sidebar = true;
                 self.panel_visibility.activity_view = ActivityView::Explorer;
@@ -305,6 +327,11 @@ impl ShellApp {
                 self.panel_visibility.activity_view = ActivityView::Extensions;
                 true
             }
+            "panel.show.inspector" => {
+                self.panel_visibility.show_secondary_sidebar = true;
+                self.panel_visibility.secondary_sidebar_tab = SecondarySidebarTab::Inspector;
+                true
+            }
             "workspace.open" | "file.open_folder" => {
                 let root = arg
                     .map(PathBuf::from)
@@ -318,6 +345,44 @@ impl ShellApp {
                 self.model
                     .output_lines
                     .push(format!("Workspace opened: {}", root.display()));
+                true
+            }
+            "workspace.open_project" => {
+                let path = arg
+                    .map(PathBuf::from)
+                    .or_else(|| self.find_project_in_workspace_root());
+                let Some(prjpcb) = path else {
+                    self.model.problems.push(
+                        "workspace.open_project requires a .PrjPcb path (or one in workspace root)"
+                            .to_owned(),
+                    );
+                    return true;
+                };
+                self.submit_job(JobPayload::ParseProject {
+                    prjpcb_path: prjpcb.clone(),
+                });
+                self.model
+                    .output_lines
+                    .push(format!("Queued project parse: {}", prjpcb.display()));
+                true
+            }
+            "workspace.reload_project" => {
+                let prjpcb = self
+                    .model
+                    .active_workspace
+                    .as_ref()
+                    .map(|w| w.project.prjpcb_path.clone());
+                if let Some(prjpcb_path) = prjpcb {
+                    self.submit_job(JobPayload::ParseProject { prjpcb_path });
+                } else {
+                    self.model
+                        .problems
+                        .push("No active project workspace to reload".to_owned());
+                }
+                true
+            }
+            "workspace.sync_ir" => {
+                self.queue_project_sync_jobs();
                 true
             }
             "workspace.close" => {
@@ -351,6 +416,24 @@ impl ShellApp {
             }
             "file.revert" => {
                 self.revert_active_document();
+                true
+            }
+            "spec.plan" => {
+                self.submit_active_spec_job(true);
+                true
+            }
+            "spec.apply" => {
+                self.submit_active_spec_job(false);
+                true
+            }
+            "jobs.cancel_active" => {
+                if let Some(id) = self.jobs.cancel_first_active() {
+                    self.model
+                        .output_lines
+                        .push(format!("Requested cancellation for job {}", id.0));
+                } else {
+                    self.model.output_lines.push("No active jobs".to_owned());
+                }
                 true
             }
             "view.split_editor_right" => {
@@ -387,6 +470,131 @@ impl ShellApp {
         }
     }
 
+    fn submit_job(&mut self, payload: JobPayload) {
+        let kind = match &payload {
+            JobPayload::ParseProject { .. } => JobKind::ParseProject,
+            JobPayload::SyncBoardIr { .. } => JobKind::SyncBoardIr,
+            JobPayload::SyncSchematicIr { .. } => JobKind::SyncSchematicIr,
+            JobPayload::SpecPlan { .. } => JobKind::SpecPlan,
+            JobPayload::SpecApply { .. } => JobKind::SpecApply,
+        };
+        let req = JobRequest {
+            id: self.jobs.allocate_id(),
+            kind,
+            workspace_id: self.model.active_workspace.as_ref().map(|w| w.id).unwrap_or(0),
+            doc_targets: Vec::new(),
+            payload,
+            requested_by: JobTrigger::Command,
+        };
+        let _ = self.jobs.submit(req);
+    }
+
+    fn find_project_in_workspace_root(&self) -> Option<PathBuf> {
+        let root = self.model.workspace_root.as_ref()?;
+        let entries = fs::read_dir(root).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_prjpcb = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case("prjpcb"));
+            if is_prjpcb {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    fn queue_project_sync_jobs(&mut self) {
+        let Some(workspace) = self.model.active_workspace.as_ref() else {
+            self.model
+                .problems
+                .push("No active project workspace to sync".to_owned());
+            return;
+        };
+        let board_paths: Vec<PathBuf> = workspace
+            .project
+            .board_docs
+            .iter()
+            .map(|b| b.path.clone())
+            .collect();
+        let sch_paths: Vec<PathBuf> = workspace
+            .project
+            .schematic_docs
+            .iter()
+            .map(|s| s.path.clone())
+            .collect();
+
+        for path in board_paths {
+            self.submit_job(JobPayload::SyncBoardIr {
+                pcbdoc_path: path,
+            });
+        }
+        for path in sch_paths {
+            self.submit_job(JobPayload::SyncSchematicIr {
+                schdoc_path: path,
+            });
+        }
+    }
+
+    fn submit_active_spec_job(&mut self, dry_run: bool) {
+        let Some(doc) = self.model.active_document() else {
+            self.model.problems.push("No active document".to_owned());
+            return;
+        };
+        let DocumentKind::Spec(spec) = &doc.kind else {
+            self.model
+                .problems
+                .push("Active document is not a spec".to_owned());
+            return;
+        };
+        let Some(spec_path) = spec.path.clone() else {
+            self.model
+                .problems
+                .push("Save spec before running plan/apply".to_owned());
+            return;
+        };
+        let Some((domain, target)) = self.resolve_spec_target(&spec_path) else {
+            self.model
+                .problems
+                .push(format!("Unable to resolve target for spec {}", spec_path.display()));
+            return;
+        };
+        let payload = if dry_run {
+            JobPayload::SpecPlan {
+                spec_path,
+                target_path: target,
+                domain,
+            }
+        } else {
+            JobPayload::SpecApply {
+                spec_path,
+                target_path: target,
+                domain,
+                dry_run: false,
+            }
+        };
+        self.submit_job(payload);
+    }
+
+    fn resolve_spec_target(&self, spec_path: &Path) -> Option<(SpecDomain, PathBuf)> {
+        let file = spec_path.file_name()?.to_string_lossy().to_ascii_lowercase();
+        let workspace = self.model.active_workspace.as_ref();
+        if file.ends_with(".pcbdoc-spec") {
+            let target = workspace?.project.board_docs.first()?.path.clone();
+            return Some((SpecDomain::PcbDoc, target));
+        }
+        if file.ends_with(".schdoc-spec") {
+            let target = workspace?.project.schematic_docs.first()?.path.clone();
+            return Some((SpecDomain::SchDoc, target));
+        }
+        if file.ends_with(".prjpcb-spec") {
+            let target = workspace?.project.prjpcb_path.clone();
+            return Some((SpecDomain::PrjPcb, target));
+        }
+        None
+    }
+
     fn open_document_path(&mut self, path: PathBuf) {
         let ext = path
             .extension()
@@ -415,7 +623,10 @@ impl ShellApp {
                         .push(format!("Failed to open board {}: {err}", path.display())),
                 };
             }
-            "spec" | "pcbdoc-spec" => match fs::read_to_string(&path) {
+            "prjpcb" => {
+                self.queue("workspace.open_project", Some(path.display().to_string()));
+            }
+            "spec" | "pcbdoc-spec" | "schdoc-spec" | "prjpcb-spec" => match fs::read_to_string(&path) {
                 Ok(text) => {
                     self.model.open_spec_document(Some(path.clone()), text);
                     self.model
@@ -547,6 +758,114 @@ impl ShellApp {
         }
     }
 
+    fn process_job_events(&mut self) {
+        for ev in self.jobs.poll_events() {
+            match ev {
+                JobEvent::Queued(id, kind) => {
+                    self.model.jobs.push(format!("queued #{}: {:?}", id.0, kind));
+                }
+                JobEvent::Started(id) => {
+                    self.model.jobs.push(format!("started #{}", id.0));
+                }
+                JobEvent::Progress(id, p) => {
+                    let pct = p
+                        .percent
+                        .map(|v| format!(" {:.0}%", v * 100.0))
+                        .unwrap_or_default();
+                    self.model.jobs.push(format!(
+                        "progress #{} [{}{}] {}",
+                        id.0, p.stage, pct, p.message
+                    ));
+                }
+                JobEvent::Artifact(id, artifact) => match artifact {
+                    JobArtifact::ProjectGraphDelta(delta) => {
+                        let root = delta
+                            .graph
+                            .prjpcb_path
+                            .parent()
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| PathBuf::from("."));
+                        let workspace = WorkspaceModel {
+                            id: 1,
+                            root,
+                            project: delta.graph,
+                            opened_at: std::time::SystemTime::now(),
+                            last_sync: None,
+                        };
+                        self.model.set_active_workspace(workspace);
+                        self.model
+                            .output_lines
+                            .push(format!("Loaded project graph from job #{}", id.0));
+                        self.queue_project_sync_jobs();
+                    }
+                    JobArtifact::BoardIr { path, ir } => {
+                        let _ = self.model.open_board_document(path.clone(), ir);
+                        if let Some(ws) = self.model.active_workspace.as_mut() {
+                            for board in &mut ws.project.board_docs {
+                                if board.path == path {
+                                    board.parse_state = ParseState::Fresh;
+                                    board.ir_state = ParseState::Fresh;
+                                }
+                            }
+                            ws.last_sync = Some(std::time::SystemTime::now());
+                        }
+                    }
+                    JobArtifact::SchematicIndex(index) => {
+                        if let Some(ws) = self.model.active_workspace.as_mut() {
+                            for sch in &mut ws.project.schematic_docs {
+                                if sch.path == index.path {
+                                    sch.parse_state = ParseState::Fresh;
+                                    sch.index_state = ParseState::Fresh;
+                                }
+                            }
+                            ws.last_sync = Some(std::time::SystemTime::now());
+                        }
+                        self.model.output_lines.push(format!(
+                            "Schematic indexed: {} (components={}, net_labels={})",
+                            index.path.display(),
+                            index.component_count,
+                            index.net_label_count
+                        ));
+                    }
+                    JobArtifact::Eco(eco) => {
+                        self.model.output_lines.push(format!(
+                            "Plan generated: {} changes (job #{})",
+                            eco.changes.len(),
+                            id.0
+                        ));
+                    }
+                    JobArtifact::Diagnostics(diags) => {
+                        for d in diags {
+                            self.model.problems.push(format!(
+                                "[{}:{}] {}",
+                                d.severity, d.source, d.message
+                            ));
+                        }
+                    }
+                },
+                JobEvent::Completed(id, summary) => {
+                    self.model.jobs.push(format!(
+                        "completed #{} in {}ms: {}",
+                        id.0, summary.duration_ms, summary.message
+                    ));
+                }
+                JobEvent::Failed(id, failure) => {
+                    self.model.jobs.push(format!(
+                        "failed #{} [{}]: {}",
+                        id.0, failure.stage, failure.message
+                    ));
+                    self.model.problems.push(format!(
+                        "Job #{} failed at {}: {}",
+                        id.0, failure.stage, failure.message
+                    ));
+                }
+                JobEvent::Cancelled(id) => {
+                    self.model.jobs.push(format!("cancelled #{}", id.0));
+                }
+            }
+        }
+    }
+
     fn prune_tab_renderers(&mut self) {
         self.tab_renderers.retain(|id, _| {
             self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
@@ -574,6 +893,35 @@ impl ShellApp {
                 IpcRequest::Ping => self.model.output_lines.push("IPC ping".to_owned()),
                 IpcRequest::Command { id, arg } => self.queue(&id, arg),
                 IpcRequest::OpenFile { path } => self.queue("file.open", Some(path)),
+                IpcRequest::OpenProject { prjpcb_path } => {
+                    self.queue("workspace.open_project", Some(prjpcb_path));
+                }
+                IpcRequest::RunJob { kind, args } => {
+                    let payload = match kind.as_str() {
+                        "sync_ir" => self
+                            .model
+                            .active_workspace
+                            .as_ref()
+                            .map(|_| "workspace.sync_ir".to_owned()),
+                        _ => None,
+                    };
+                    if let Some(cmd) = payload {
+                        self.queue(&cmd, None);
+                    } else {
+                        self.model.problems.push(format!(
+                            "Unsupported IPC job request: kind={} args={}",
+                            kind, args
+                        ));
+                    }
+                }
+                IpcRequest::CancelJob { id } => {
+                    let _ = self.jobs.cancel(crate::jobs::JobId(id));
+                }
+                IpcRequest::ListJobs => {
+                    self.model
+                        .output_lines
+                        .push(format!("Active jobs: {}", self.jobs.active_jobs()));
+                }
                 IpcRequest::Screenshot { path } => {
                     self.screenshot_path = Some(PathBuf::from(path));
                 }
@@ -810,77 +1158,6 @@ impl ShellApp {
         self.keybindings_capture_for = None;
     }
 
-    fn show_palette_window(&mut self, ctx: &egui::Context) {
-        if !self.show_command_palette {
-            return;
-        }
-
-        let cmd_ctx = self.command_context();
-        let mut open = self.show_command_palette;
-        egui::Window::new("Command Palette")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(520.0)
-            .show(ctx, |ui| {
-                let resp = ui.text_edit_singleline(&mut self.palette_filter);
-                if resp.changed() {
-                    self.palette_selected = 0;
-                }
-                ui.separator();
-                let filter = self.palette_filter.to_lowercase();
-
-                let commands: Vec<_> = self
-                    .commands
-                    .exposed()
-                    .filter(|m| self.commands.is_enabled(*m, &cmd_ctx))
-                    .filter(|m| {
-                        filter.is_empty()
-                            || m.title.to_lowercase().contains(&filter)
-                            || m.id.contains(&filter)
-                    })
-                    .collect();
-
-                if !commands.is_empty() {
-                    self.palette_selected = self.palette_selected.min(commands.len() - 1);
-                } else {
-                    self.palette_selected = 0;
-                }
-
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) && !commands.is_empty() {
-                    self.palette_selected = (self.palette_selected + 1) % commands.len();
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !commands.is_empty() {
-                    self.palette_selected = if self.palette_selected == 0 {
-                        commands.len() - 1
-                    } else {
-                        self.palette_selected - 1
-                    };
-                }
-
-                let mut clicked: Option<&'static str> = None;
-                for (idx, meta) in commands.iter().enumerate() {
-                    let selected = idx == self.palette_selected;
-                    if ui
-                        .selectable_label(selected, format!("{} ({})", meta.title, meta.id))
-                        .clicked()
-                    {
-                        clicked = Some(meta.id);
-                    }
-                }
-
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !commands.is_empty() {
-                    clicked = Some(commands[self.palette_selected].id);
-                }
-
-                if let Some(id) = clicked {
-                    self.queue(id, None);
-                    self.show_command_palette = false;
-                }
-            });
-        self.show_command_palette = open;
-    }
-
     fn render_title_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("title_menu")
             .exact_height(28.0)
@@ -940,249 +1217,6 @@ impl ShellApp {
                     }
                 }
             });
-        }
-    }
-
-    fn render_activity_bar(&mut self, ctx: &egui::Context) {
-        if !self.panel_visibility.show_activity_bar {
-            return;
-        }
-        egui::SidePanel::left("activity_bar")
-            .exact_width(42.0)
-            .frame(egui::Frame::new().fill(self.theme.activitybar_bg))
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(4.0);
-                    self.activity_button(ui, IconId::Explorer, ActivityView::Explorer);
-                    self.activity_button(ui, IconId::Search, ActivityView::Search);
-                    self.activity_button(ui, IconId::SourceControl, ActivityView::SourceControl);
-                    self.activity_button(ui, IconId::Run, ActivityView::Run);
-                    self.activity_button(ui, IconId::Extensions, ActivityView::Extensions);
-                });
-            });
-    }
-
-    fn activity_button(&mut self, ui: &mut egui::Ui, icon_id: IconId, view: ActivityView) {
-        let selected = self.panel_visibility.activity_view == view;
-        let resp = icon_button(ui, icon_id, selected, self.theme.text_primary, 28.0);
-        if resp.clicked() {
-            if selected {
-                self.panel_visibility.show_primary_sidebar = !self.panel_visibility.show_primary_sidebar;
-            } else {
-                self.panel_visibility.activity_view = view;
-                self.panel_visibility.show_primary_sidebar = true;
-            }
-        }
-    }
-
-    fn render_sidebar(&mut self, ctx: &egui::Context) {
-        if !self.panel_visibility.show_primary_sidebar {
-            return;
-        }
-
-        egui::SidePanel::left("primary_sidebar")
-            .resizable(true)
-            .default_width(280.0)
-            .frame(egui::Frame::new().fill(self.theme.sidebar_bg))
-            .show(ctx, |ui| match self.panel_visibility.activity_view {
-                ActivityView::Explorer => self.render_explorer_sidebar(ui),
-                ActivityView::Search => self.render_placeholder_sidebar(ui, "SEARCH", "Workspace text search is planned."),
-                ActivityView::SourceControl => {
-                    self.render_placeholder_sidebar(ui, "SOURCE CONTROL", "Source-control integration is planned.")
-                }
-                ActivityView::Run => self.render_placeholder_sidebar(ui, "RUN", "Automation run tasks will live here."),
-                ActivityView::Extensions => {
-                    self.render_placeholder_sidebar(ui, "EXTENSIONS", "Plugin/extension management is planned.")
-                }
-            });
-    }
-
-    fn render_explorer_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("EXPLORER").small().color(self.theme.text_muted));
-        ui.separator();
-        self.render_workspace_files(ui);
-        ui.separator();
-
-        let Some(board) = self.model.active_board() else {
-            ui.label(RichText::new("No active board document").color(self.theme.text_muted));
-            return;
-        };
-        let ir = &board.ir;
-
-        let components: Vec<String> = ir
-            .components
-            .iter()
-            .map(|(_, comp)| comp.designator.clone())
-            .collect();
-        let nets: Vec<(String, usize)> = ir
-            .nets
-            .iter()
-            .map(|(_, net)| (net.name.clone(), net.pins.len()))
-            .collect();
-
-        ui.collapsing("Components", |ui| {
-            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                for designator in &components {
-                    let selected = matches!(
-                        &self.model.selection.primary,
-                        SelectionKind::Component(d) if d == designator
-                    );
-                    if ui.selectable_label(selected, designator).clicked() {
-                        self.queue("crossprobe.select_component", Some(designator.clone()));
-                    }
-                }
-            });
-        });
-
-        ui.collapsing("Nets", |ui| {
-            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                for (name, pins_len) in &nets {
-                    let selected = matches!(&self.model.selection.primary, SelectionKind::Net(n) if n == name);
-                    if ui
-                        .selectable_label(selected, format!("{} ({})", name, pins_len))
-                        .clicked()
-                    {
-                        self.queue("crossprobe.select_net", Some(name.clone()));
-                    }
-                }
-            });
-        });
-    }
-
-    fn render_placeholder_sidebar(&mut self, ui: &mut egui::Ui, heading: &str, text: &str) {
-        ui.label(RichText::new(heading).small().color(self.theme.text_muted));
-        ui.separator();
-        ui.label(RichText::new(text).color(self.theme.text_disabled));
-    }
-
-    fn render_workspace_files(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("Workspace Files", |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Filter:");
-                ui.text_edit_singleline(&mut self.explorer_filter);
-            });
-
-            let Some(root) = self.model.workspace_root.clone() else {
-                ui.label("No workspace open");
-                return;
-            };
-
-            ui.small(RichText::new(root.display().to_string()).color(self.theme.text_muted));
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(220.0)
-                .show(ui, |ui| self.render_dir_tree(ui, &root, 0));
-        });
-    }
-
-    fn render_dir_tree(&mut self, ui: &mut egui::Ui, dir: &Path, depth: usize) {
-        if depth > 4 {
-            return;
-        }
-
-        let mut entries = match fs::read_dir(dir) {
-            Ok(read_dir) => read_dir.filter_map(Result::ok).collect::<Vec<_>>(),
-            Err(_) => return,
-        };
-        entries.sort_by_key(|e| e.path());
-
-        let filter = self.explorer_filter.to_ascii_lowercase();
-        for entry in entries {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-
-            let passes_filter = filter.is_empty()
-                || name.to_ascii_lowercase().contains(&filter)
-                || path
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .contains(&filter);
-            if !passes_filter {
-                continue;
-            }
-
-            if path.is_dir() {
-                ui.horizontal(|ui| {
-                    icon(ui, IconId::Folder, self.theme.text_muted, 12.0);
-                    ui.collapsing(format!("{name}/"), |ui| {
-                        self.render_dir_tree(ui, &path, depth + 1);
-                    });
-                });
-                continue;
-            }
-
-            let is_open = self
-                .model
-                .find_document_by_path(&path)
-                .is_some_and(|id| self.model.active_editor_tab == Some(id));
-            ui.horizontal(|ui| {
-                let icon_id = if name.to_ascii_lowercase().ends_with(".pcbdoc") {
-                    IconId::PcbDoc
-                } else if name.to_ascii_lowercase().ends_with(".spec")
-                    || name.to_ascii_lowercase().ends_with(".pcbdoc-spec")
-                {
-                    IconId::Spec
-                } else {
-                    IconId::File
-                };
-                icon(ui, icon_id, self.theme.text_muted, 12.0);
-                if ui.selectable_label(is_open, &name).clicked() {
-                    self.queue("file.open", Some(path.display().to_string()));
-                }
-            });
-        }
-    }
-
-    fn render_bottom_panel_contents(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Problems, "Problems")
-                .clicked()
-            {
-                self.queue("panel.show.problems", None);
-            }
-            if ui
-                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Output, "Output")
-                .clicked()
-            {
-                self.queue("panel.show.output", None);
-            }
-            if ui
-                .selectable_label(self.panel_visibility.bottom_tab == BottomTab::Jobs, "Jobs")
-                .clicked()
-            {
-                self.queue("panel.show.jobs", None);
-            }
-        });
-        ui.separator();
-
-        match self.panel_visibility.bottom_tab {
-            BottomTab::Problems => {
-                if self.model.problems.is_empty() {
-                    ui.label(RichText::new("No problems").color(self.theme.text_muted));
-                }
-                for line in &self.model.problems {
-                    ui.label(line);
-                }
-            }
-            BottomTab::Output => {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for line in &self.model.output_lines {
-                        ui.monospace(line);
-                    }
-                });
-            }
-            BottomTab::Jobs => {
-                if self.model.jobs.is_empty() {
-                    ui.label(RichText::new("No jobs").color(self.theme.text_muted));
-                }
-                for line in &self.model.jobs {
-                    ui.label(line);
-                }
-            }
         }
     }
 
@@ -1490,6 +1524,8 @@ impl ShellApp {
             "bottom_panel_height": self.last_bottom_panel_height,
             "status_bar_visible": self.panel_visibility.show_status_bar,
             "status_bar_height": self.last_status_bar_height,
+            "secondary_sidebar_visible": self.panel_visibility.show_secondary_sidebar,
+            "secondary_sidebar_width": self.panel_visibility.secondary_sidebar_width,
             "central_height": self.last_central_height,
             "split_enabled": self.editor_split.is_split,
             "split_vertical": self.editor_split.split_vertical,
@@ -1578,6 +1614,7 @@ impl efame::App for ShellApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut efame::Frame) {
         apply_theme(ctx, &self.theme);
         self.process_ipc();
+        self.process_job_events();
         self.apply_ui_test_ops(ctx);
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
@@ -1590,6 +1627,7 @@ impl efame::App for ShellApp {
         self.render_status_bar(ctx);
         self.render_activity_bar(ctx);
         self.render_sidebar(ctx);
+        self.render_secondary_sidebar(ctx);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(self.theme.editor_bg))
@@ -1623,6 +1661,7 @@ impl efame::App for ShellApp {
 
         // Keep a light polling cadence so IPC commands are handled even when the UI is idle.
         if self.ipc_rx.is_some()
+            || self.jobs.active_jobs() > 0
             || self.screenshot_requested
             || self.screenshot_path.is_some()
             || self.active_drag_script.is_some()
@@ -1634,7 +1673,7 @@ impl efame::App for ShellApp {
 
 #[cfg(test)]
 mod tests {
-    use super::clamp_bottom_panel_height;
+    use super::{PanelVisibilityState, SecondarySidebarTab, clamp_bottom_panel_height};
 
     #[test]
     fn bottom_panel_drag_up_increases_height() {
@@ -1659,6 +1698,13 @@ mod tests {
         let max = (900.0_f32 - 120.0).max(80.0);
         let h = clamp_bottom_panel_height(300.0, -1000.0, 900.0);
         assert_eq!(h, max);
+    }
+
+    #[test]
+    fn secondary_sidebar_defaults_to_visible_inspector() {
+        let panels = PanelVisibilityState::default();
+        assert!(panels.show_secondary_sidebar);
+        assert_eq!(panels.secondary_sidebar_tab, SecondarySidebarTab::Inspector);
     }
 }
 

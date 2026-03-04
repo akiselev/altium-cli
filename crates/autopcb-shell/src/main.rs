@@ -4,6 +4,7 @@ mod commands;
 mod ipc;
 mod jobs;
 mod layout;
+mod project_graph;
 mod ui;
 mod workbench;
 

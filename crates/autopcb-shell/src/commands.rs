@@ -102,6 +102,33 @@ impl CommandRegistry {
                 None,
             ),
             meta(
+                "workspace.open_project",
+                "Workspace: Open Project (.PrjPcb)",
+                "Workspace",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "workspace.reload_project",
+                "Workspace: Reload Project",
+                "Workspace",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "workspace.sync_ir",
+                "Workspace: Sync IR",
+                "Workspace",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
                 "workspace.close",
                 "Workspace: Close",
                 "Workspace",
@@ -300,6 +327,15 @@ impl CommandRegistry {
                 None,
             ),
             meta(
+                "view.toggle_secondary_sidebar",
+                "View: Toggle Secondary Sidebar",
+                "View",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
                 "view.toggle_bottom_panel",
                 "View: Toggle Bottom Panel",
                 "View",
@@ -363,6 +399,15 @@ impl CommandRegistry {
                 Some(ShortcutDef::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::X)),
             ),
             meta(
+                "panel.show.inspector",
+                "Panel: Show Inspector",
+                "Panel",
+                "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
                 "run.start_last",
                 "Run: Start Last Task",
                 "Run",
@@ -394,6 +439,15 @@ impl CommandRegistry {
                 "Panel: Show Jobs",
                 "Panel",
                 "",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "jobs.cancel_active",
+                "Jobs: Cancel Active",
+                "Jobs",
+                "workspace.open",
                 true,
                 UndoPolicy::Local,
                 None,
@@ -496,6 +550,24 @@ impl CommandRegistry {
                 true,
                 UndoPolicy::Model,
                 Some(ShortcutDef::new(Modifiers::NONE, Key::Escape)),
+            ),
+            meta(
+                "spec.plan",
+                "Spec: Plan",
+                "Spec",
+                "workspace.open",
+                true,
+                UndoPolicy::Local,
+                None,
+            ),
+            meta(
+                "spec.apply",
+                "Spec: Apply",
+                "Spec",
+                "workspace.open",
+                true,
+                UndoPolicy::Model,
+                None,
             ),
             meta(
                 "crossprobe.select_component",
@@ -633,7 +705,9 @@ pub fn dispatch(
             *set_primary_sidebar = !*set_primary_sidebar;
             DispatchOutcome::Noop
         }
-        "view.toggle_activity_bar" | "view.toggle_status_bar" => DispatchOutcome::Noop,
+        "view.toggle_activity_bar" | "view.toggle_status_bar" | "view.toggle_secondary_sidebar" => {
+            DispatchOutcome::Noop
+        }
         "view.toggle_bottom_panel" => {
             *set_bottom_panel = !*set_bottom_panel;
             DispatchOutcome::Noop
@@ -650,6 +724,7 @@ pub fn dispatch(
             *set_primary_sidebar = true;
             DispatchOutcome::Noop
         }
+        "panel.show.inspector" => DispatchOutcome::Noop,
         "panel.show.problems" => {
             *set_bottom_panel = true;
             *set_bottom_tab = crate::layout::BottomTab::Problems;
@@ -665,6 +740,12 @@ pub fn dispatch(
             *set_bottom_tab = crate::layout::BottomTab::Jobs;
             DispatchOutcome::Noop
         }
+        "workspace.open_project"
+        | "workspace.reload_project"
+        | "workspace.sync_ir"
+        | "jobs.cancel_active"
+        | "spec.plan"
+        | "spec.apply" => DispatchOutcome::Noop,
         "editor.activate_document" => {
             if let Some(id) = arg.and_then(|s| s.parse::<u64>().ok()) {
                 model.set_active_tab(crate::workbench::DocumentId(id));
@@ -988,5 +1069,12 @@ mod tests {
         );
 
         assert!(matches!(model.selection.primary, SelectionKind::Component(ref d) if d == "U7"));
+    }
+
+    #[test]
+    fn registry_contains_secondary_sidebar_commands() {
+        let reg = CommandRegistry::new_m1();
+        assert!(reg.get("view.toggle_secondary_sidebar").is_some());
+        assert!(reg.get("panel.show.inspector").is_some());
     }
 }

@@ -681,6 +681,7 @@ name = "autopcb-shell"
 version = "0.2.0"
 dependencies = [
  "altium-format",
+ "altium-format-spec",
  "anyhow",
  "autopcb-ir",
  "autopcb-placement",

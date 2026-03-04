@@ -13,6 +13,10 @@ pub enum IpcRequest {
     Ping,
     Command { id: String, arg: Option<String> },
     OpenFile { path: String },
+    OpenProject { prjpcb_path: String },
+    RunJob { kind: String, args: serde_json::Value },
+    CancelJob { id: u64 },
+    ListJobs,
     Screenshot { path: String },
     UiTest { op: UiTestOp },
 }

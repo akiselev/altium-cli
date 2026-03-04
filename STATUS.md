@@ -569,6 +569,17 @@ Phase 1 automation/control plane:
 - [x] Route IPC requests through existing command bus (`cmd`) and file-open flow
 - [x] Add full-window screenshot capture in shell via `ViewportCommand::Screenshot`
 
+Phase 1 UI parity pass (VSCode Dark shell chrome):
+- [x] Add tokenized theme module (`ui/theme.rs`) and apply it globally each frame
+- [x] Add custom title/menu bar rendering and VSCode-like ordered menu groups
+- [x] Add Activity Bar with icon buttons and active-view switching state
+- [x] Add icon-rendering module (`ui/icons.rs`) and wire icons into activity bar/explorer/tabs
+- [x] Add dedicated tabstrip renderer (`ui/tabstrip.rs`) with icon + dirty marker + close affordance
+- [x] Restyle sidebar/bottom panel/status bar toward VSCode dark hierarchy (including blue status bar)
+- [x] Extend command registry for activity/status toggles and sidebar panel view commands
+- [x] Implement functional split editor groups (right/down) with independent secondary active tab
+- [x] Expand top-level menu coverage with `Edit` / `Go` / `Run` / `Terminal` / `Help` command entries
+
 ### Milestone 2+: Planned
 
 - [ ] Full command catalog implementation from `docs/gui/commands.md`

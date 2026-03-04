@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use autopcb_ir::PcbIr;
 use serde::{Deserialize, Serialize};
 
+use crate::project_graph::WorkspaceModel;
+
 pub const DOCUMENT_KIND_BOARD: &str = "document.board";
 pub const DOCUMENT_KIND_SPEC: &str = "document.spec";
 pub const DOCUMENT_KIND_KEYBINDINGS: &str = "document.keybindings";
@@ -88,6 +90,7 @@ impl Default for SelectionState {
 #[derive(Debug)]
 pub struct WorkbenchModel {
     pub workspace_root: Option<PathBuf>,
+    pub active_workspace: Option<WorkspaceModel>,
     pub documents: BTreeMap<DocumentId, Document>,
     pub open_editor_tabs: Vec<DocumentId>,
     pub active_editor_tab: Option<DocumentId>,
@@ -105,6 +108,7 @@ impl WorkbenchModel {
             workspace_root: board_path
                 .as_ref()
                 .and_then(|p| p.parent().map(|x| x.to_path_buf())),
+            active_workspace: None,
             documents: BTreeMap::new(),
             open_editor_tabs: Vec::new(),
             active_editor_tab: None,
@@ -125,15 +129,23 @@ impl WorkbenchModel {
     }
 
     pub fn has_workspace(&self) -> bool {
-        self.workspace_root.is_some() || !self.open_editor_tabs.is_empty()
+        self.active_workspace.is_some()
+            || self.workspace_root.is_some()
+            || !self.open_editor_tabs.is_empty()
     }
 
     pub fn set_workspace_root(&mut self, root: PathBuf) {
         self.workspace_root = Some(root);
     }
 
+    pub fn set_active_workspace(&mut self, workspace: WorkspaceModel) {
+        self.workspace_root = Some(workspace.root.clone());
+        self.active_workspace = Some(workspace);
+    }
+
     pub fn clear_workspace(&mut self) {
         self.workspace_root = None;
+        self.active_workspace = None;
         self.documents.clear();
         self.open_editor_tabs.clear();
         self.active_editor_tab = None;
