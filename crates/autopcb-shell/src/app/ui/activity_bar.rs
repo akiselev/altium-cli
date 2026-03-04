@@ -1,6 +1,7 @@
 use efame::egui;
 
 use super::super::{ActivityView, ShellApp};
+use crate::ui::chrome::show_left_panel_with_fill;
 use crate::ui::icons::{IconId, icon_button};
 
 impl ShellApp {
@@ -8,10 +9,13 @@ impl ShellApp {
         if !self.panel_visibility.show_activity_bar {
             return;
         }
-        egui::SidePanel::left("activity_bar")
-            .exact_width(42.0)
-            .frame(egui::Frame::new().fill(self.theme.activitybar_bg))
-            .show(ctx, |ui| {
+        show_left_panel_with_fill(
+            ctx,
+            "activity_bar",
+            42.0,
+            false,
+            self.theme.activitybar_bg,
+            |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(4.0);
                     self.activity_button(ui, IconId::Explorer, ActivityView::Explorer);
@@ -20,7 +24,8 @@ impl ShellApp {
                     self.activity_button(ui, IconId::Run, ActivityView::Run);
                     self.activity_button(ui, IconId::Extensions, ActivityView::Extensions);
                 });
-            });
+            },
+        );
     }
 
     fn activity_button(&mut self, ui: &mut egui::Ui, icon_id: IconId, view: ActivityView) {

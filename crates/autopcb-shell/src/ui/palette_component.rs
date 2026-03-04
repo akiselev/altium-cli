@@ -1,5 +1,6 @@
 use efame::egui::{self, Color32};
 
+use crate::ui::list::{FilteredListState, ListRow, filtered_list};
 use crate::ui::theme::ThemeTokens;
 
 #[derive(Debug, Clone)]
@@ -28,28 +29,27 @@ pub fn show_palette_overlay(
     focus_pending: &mut bool,
     items: &[PaletteItem],
 ) -> PaletteResult {
-    if !items.is_empty() {
-        *selected = (*selected).min(items.len() - 1);
-    } else {
-        *selected = 0;
-    }
-
-    if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && !items.is_empty() {
-        *selected = (*selected + 1) % items.len();
-    }
-    if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !items.is_empty() {
-        *selected = if *selected == 0 {
-            items.len() - 1
-        } else {
-            *selected - 1
-        };
-    }
-
     let width = (ctx.content_rect().width() * 0.52).clamp(560.0, 860.0);
     let max_list_h = (ctx.content_rect().height() * 0.58).max(240.0);
-
-    let mut submitted_index = None;
-    let mut hovered_index = None;
+    let mut state = FilteredListState {
+        filter: std::mem::take(filter),
+        selected: *selected,
+        focus_pending: *focus_pending,
+    };
+    let mut submitted_index: Option<usize> = None;
+    let mut hovered_index: Option<usize> = None;
+    let mut active_index: Option<usize> = None;
+    let list_rows: Vec<ListRow<usize>> = items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| ListRow {
+            value: idx,
+            title: item.title.clone(),
+            subtitle: Some(item.subtitle.clone()),
+            icon: None,
+            swatch: item.swatch,
+        })
+        .collect();
 
     egui::Area::new(egui::Id::new(overlay_id))
         .order(egui::Order::Foreground)
@@ -78,113 +78,29 @@ pub fn show_palette_overlay(
                         .corner_radius(egui::CornerRadius::same(4))
                         .inner_margin(egui::Margin::symmetric(8, 6));
                     input_frame.show(ui, |ui| {
-                        let input_id = ui.make_persistent_id(input_id);
-                        let edit = egui::TextEdit::singleline(filter)
-                            .hint_text(hint)
-                            .id(input_id);
-                        let resp = ui.add(edit);
-                        if *focus_pending {
-                            resp.request_focus();
-                            if resp.has_focus() {
-                                *focus_pending = false;
-                            }
-                        }
-                        if resp.changed() {
-                            *selected = 0;
-                        }
+                        let result = filtered_list(
+                            ui,
+                            ctx,
+                            input_id,
+                            hint,
+                            tokens,
+                            &mut state,
+                            &list_rows,
+                            Some(max_list_h),
+                        );
+                        submitted_index = result.submitted;
+                        hovered_index = result.hovered;
+                        active_index = result.active;
                     });
-
-                    ui.add_space(6.0);
-
-                    egui::ScrollArea::vertical()
-                        .max_height(max_list_h)
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            if items.is_empty() {
-                                ui.colored_label(tokens.text_muted, "No matching items");
-                                return;
-                            }
-
-                            for (idx, item) in items.iter().enumerate() {
-                                let is_selected = idx == *selected;
-                                let row_frame = egui::Frame::new()
-                                    .fill(if is_selected {
-                                        tokens.accent_blue.gamma_multiply(0.32)
-                                    } else {
-                                        tokens.window_bg
-                                    })
-                                    .stroke(egui::Stroke::new(
-                                        1.0,
-                                        if is_selected {
-                                            tokens.border_focus
-                                        } else {
-                                            tokens.border_default.gamma_multiply(0.55)
-                                        },
-                                    ))
-                                    .corner_radius(egui::CornerRadius::same(4))
-                                    .inner_margin(egui::Margin::symmetric(8, 6));
-
-                                let row = row_frame.show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        if let Some(swatch) = item.swatch {
-                                            let (r, _) = ui.allocate_exact_size(
-                                                egui::vec2(14.0, 14.0),
-                                                egui::Sense::hover(),
-                                            );
-                                            ui.painter().rect_filled(
-                                                r,
-                                                egui::CornerRadius::same(2),
-                                                swatch,
-                                            );
-                                            ui.add_space(6.0);
-                                        }
-                                        ui.vertical(|ui| {
-                                            let title = if is_selected {
-                                                egui::RichText::new(&item.title)
-                                                    .strong()
-                                                    .color(egui::Color32::WHITE)
-                                            } else {
-                                                egui::RichText::new(&item.title)
-                                                    .strong()
-                                                    .color(tokens.text_primary)
-                                            };
-                                            ui.label(title);
-                                            let subtitle = if is_selected {
-                                                egui::RichText::new(&item.subtitle)
-                                                    .small()
-                                                    .color(egui::Color32::from_gray(220))
-                                            } else {
-                                                egui::RichText::new(&item.subtitle)
-                                                    .small()
-                                                    .color(tokens.text_muted)
-                                            };
-                                            ui.label(subtitle);
-                                        });
-                                    });
-                                });
-
-                                let resp = row.response.interact(egui::Sense::click());
-                                if resp.clicked() {
-                                    submitted_index = Some(idx);
-                                }
-                                if resp.hovered() {
-                                    *selected = idx;
-                                    hovered_index = Some(idx);
-                                }
-                                ui.add_space(4.0);
-                            }
-                        });
                 });
         });
-
-    if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !items.is_empty() {
-        submitted_index = Some(*selected);
-    }
+    *filter = state.filter;
+    *selected = state.selected;
+    *focus_pending = state.focus_pending;
 
     PaletteResult {
         submitted_index,
         hovered_index,
-        active_index: (!items.is_empty()).then_some(*selected),
+        active_index,
     }
 }

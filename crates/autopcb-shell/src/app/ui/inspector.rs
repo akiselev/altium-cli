@@ -1,6 +1,8 @@
-use efame::egui::{self, RichText};
+use efame::egui;
 
 use super::super::{SecondarySidebarTab, ShellApp};
+use crate::ui::chrome::show_right_panel;
+use crate::ui::section::{SectionPanel, empty_state};
 use crate::workbench::SelectionKind;
 
 impl ShellApp {
@@ -8,73 +10,65 @@ impl ShellApp {
         if !self.panel_visibility.show_secondary_sidebar {
             return;
         }
+        let theme = self.theme.clone();
+        let width = self.panel_visibility.secondary_sidebar_width;
 
-        egui::SidePanel::right("secondary_sidebar")
-            .resizable(true)
-            .default_width(self.panel_visibility.secondary_sidebar_width)
-            .frame(egui::Frame::new().fill(self.theme.sidebar_bg))
-            .show(ctx, |ui| {
-                self.panel_visibility.secondary_sidebar_width = ui.max_rect().width();
-                match self.panel_visibility.secondary_sidebar_tab {
-                    SecondarySidebarTab::Inspector => self.render_inspector_panel(ui),
-                }
-            });
+        show_right_panel(ctx, "secondary_sidebar", width, true, &theme, |ui| {
+            self.panel_visibility.secondary_sidebar_width = ui.max_rect().width();
+            match self.panel_visibility.secondary_sidebar_tab {
+                SecondarySidebarTab::Inspector => self.render_inspector_panel(ui),
+            }
+        });
     }
 
     fn render_inspector_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            RichText::new("INSPECTOR")
-                .small()
-                .color(self.theme.text_muted),
-        );
-        ui.separator();
-        let selection = self.model.selection.primary.clone();
-        match selection {
-            SelectionKind::None => self.render_empty_inspector(
-                ui,
-                "No selection. Pick a component or net from explorer/canvas.",
-            ),
-            SelectionKind::Component(designator) => {
-                self.render_component_inspector(ui, &designator)
-            }
-            SelectionKind::Net(name) => self.render_net_inspector(ui, &name),
-            SelectionKind::Pad { component, pad } => {
-                ui.heading("Pad");
-                ui.label(format!("Component: {component}"));
-                ui.label(format!("Pad: {pad}"));
-                if let Some(board) = self.model.active_board() {
-                    let comp = board
-                        .ir
-                        .components
-                        .iter()
-                        .find_map(|(_, c)| (c.designator == *component).then_some(c));
-                    if let Some(c) = comp {
-                        let pad_obj = c.pads.iter().find(|p| p.name == *pad);
-                        if let Some(pad) = pad_obj {
-                            ui.separator();
-                            ui.label(format!("Through-hole: {}", pad.is_through_hole));
-                            ui.label(format!("Hole (mm): {:.3}", pad.hole_size_mm));
-                            ui.label(format!(
-                                "World pos: ({:.3}, {:.3})",
-                                pad.world_position.x, pad.world_position.y
-                            ));
+        let theme = self.theme.clone();
+        SectionPanel::new("INSPECTOR").show(ui, &theme, |ui| {
+            let selection = self.model.selection.primary.clone();
+            match selection {
+                SelectionKind::None => self.render_empty_inspector(
+                    ui,
+                    "No selection. Pick a component or net from explorer/canvas.",
+                ),
+                SelectionKind::Component(designator) => {
+                    self.render_component_inspector(ui, &designator)
+                }
+                SelectionKind::Net(name) => self.render_net_inspector(ui, &name),
+                SelectionKind::Pad { component, pad } => {
+                    ui.heading("Pad");
+                    ui.label(format!("Component: {component}"));
+                    ui.label(format!("Pad: {pad}"));
+                    if let Some(board) = self.model.active_board() {
+                        let comp = board
+                            .ir
+                            .components
+                            .iter()
+                            .find_map(|(_, c)| (c.designator == *component).then_some(c));
+                        if let Some(c) = comp {
+                            let pad_obj = c.pads.iter().find(|p| p.name == *pad);
+                            if let Some(pad) = pad_obj {
+                                ui.separator();
+                                ui.label(format!("Through-hole: {}", pad.is_through_hole));
+                                ui.label(format!("Hole (mm): {:.3}", pad.hole_size_mm));
+                                ui.label(format!(
+                                    "World pos: ({:.3}, {:.3})",
+                                    pad.world_position.x, pad.world_position.y
+                                ));
+                            } else {
+                                empty_state(ui, &self.theme, "Pad not found in current IR");
+                            }
                         } else {
-                            ui.label(
-                                RichText::new("Pad not found in current IR")
-                                    .color(self.theme.text_muted),
-                            );
+                            empty_state(ui, &self.theme, "Pad not found in current IR");
                         }
                     }
                 }
+                SelectionKind::Rule(rule) => {
+                    ui.heading("Rule");
+                    ui.label(format!("Name: {rule}"));
+                    empty_state(ui, &self.theme, "Rule details panel is planned.");
+                }
             }
-            SelectionKind::Rule(rule) => {
-                ui.heading("Rule");
-                ui.label(format!("Name: {rule}"));
-                ui.label(
-                    RichText::new("Rule details panel is planned.").color(self.theme.text_muted),
-                );
-            }
-        }
+        });
     }
 
     fn render_component_inspector(&mut self, ui: &mut egui::Ui, designator: &str) {
@@ -130,6 +124,6 @@ impl ShellApp {
     }
 
     fn render_empty_inspector(&mut self, ui: &mut egui::Ui, message: &str) {
-        ui.label(RichText::new(message).color(self.theme.text_muted));
+        empty_state(ui, &self.theme, message);
     }
 }

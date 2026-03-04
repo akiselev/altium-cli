@@ -26,6 +26,10 @@ use crate::pipeline::{
     intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
+use crate::ui::chrome::{show_central_panel, show_top_bar};
+use crate::ui::section::empty_state;
+use crate::ui::segmented::{SegmentItem, segmented_bar};
+use crate::ui::status_bar::{StatusItem, show_status_bar};
 use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{
     ThemeId, ThemePrefs, ThemeTokens, apply_theme, next_theme, previous_theme, theme_tokens_by_id,
@@ -1435,17 +1439,16 @@ impl ShellApp {
     }
 
     fn render_title_menu_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("title_menu")
-            .exact_height(28.0)
-            .frame(egui::Frame::new().fill(self.theme.titlebar_bg))
-            .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(self.theme.text_primary);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("AutoPCB").strong().size(12.0));
-                    ui.separator();
-                    self.render_menu_bar_buttons(ui);
-                });
+        let theme = self.theme.clone();
+        let text_primary = theme.text_primary;
+        show_top_bar(ctx, "title_menu", 28.0, &theme, |ui| {
+            ui.visuals_mut().override_text_color = Some(text_primary);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("AutoPCB").strong().size(12.0));
+                ui.separator();
+                self.render_menu_bar_buttons(ui);
             });
+        });
     }
 
     fn render_menu_bar_buttons(&mut self, ui: &mut egui::Ui) {
@@ -1616,20 +1619,20 @@ impl ShellApp {
             return;
         };
 
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(mode == BoardViewMode::TwoD, "2D")
-                .clicked()
-            {
-                self.queue_intent(Intent::Pcb(crate::pipeline::PcbIntent::SetView2d));
+        let modes = [
+            SegmentItem::new(BoardViewMode::TwoD, "2D"),
+            SegmentItem::new(BoardViewMode::ThreeD, "3D"),
+        ];
+        if let Some(changed) = segmented_bar(ui, &self.theme, mode, &modes) {
+            match changed {
+                BoardViewMode::TwoD => {
+                    self.queue_intent(Intent::Pcb(crate::pipeline::PcbIntent::SetView2d))
+                }
+                BoardViewMode::ThreeD => {
+                    self.queue_intent(Intent::Pcb(crate::pipeline::PcbIntent::SetView3d))
+                }
             }
-            if ui
-                .selectable_label(mode == BoardViewMode::ThreeD, "3D")
-                .clicked()
-            {
-                self.queue_intent(Intent::Pcb(crate::pipeline::PcbIntent::SetView3d));
-            }
-        });
+        }
         ui.separator();
 
         let selection = self.model.selection.primary.clone();
@@ -1679,9 +1682,7 @@ impl ShellApp {
     fn render_active_document(&mut self, ui: &mut egui::Ui, fit_requested: bool) {
         let active_id = self.model.active_editor_tab;
         let Some(active_id) = active_id else {
-            ui.centered_and_justified(|ui| {
-                ui.label("No document open");
-            });
+            ui.centered_and_justified(|ui| empty_state(ui, &self.theme, "No document open"));
             return;
         };
 
@@ -1726,7 +1727,9 @@ impl ShellApp {
                     if let Some(id) = self.editor_split.secondary_active_tab {
                         self.render_document_by_id(&mut cols[1], id, fit_requested);
                     } else {
-                        cols[1].centered_and_justified(|ui| ui.label("No document open"));
+                        cols[1].centered_and_justified(|ui| {
+                            empty_state(ui, &self.theme, "No document open")
+                        });
                     }
                 });
             } else {
@@ -1748,7 +1751,9 @@ impl ShellApp {
                             if let Some(id) = self.editor_split.secondary_active_tab {
                                 self.render_document_by_id(ui, id, fit_requested);
                             } else {
-                                ui.centered_and_justified(|ui| ui.label("No document open"));
+                                ui.centered_and_justified(|ui| {
+                                    empty_state(ui, &self.theme, "No document open")
+                                });
                             }
                         },
                     );
@@ -1764,45 +1769,36 @@ impl ShellApp {
         if !self.panel_visibility.show_status_bar {
             return;
         }
-        egui::TopBottomPanel::bottom("status_bar_v2")
-            .exact_height(24.0)
-            .frame(egui::Frame::new().fill(self.theme.statusbar_bg))
-            .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
-                let selection = selection_label(&self.model.selection.primary);
-                let active_doc = self
-                    .model
-                    .active_document()
-                    .map(|d| d.title.clone())
-                    .unwrap_or_else(|| "No doc".to_owned());
-                let active_path = self
-                    .model
-                    .active_document()
-                    .and_then(|d| d.path.as_ref())
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<unsaved>".to_owned());
-                let board_info = self
-                    .model
-                    .active_board()
-                    .map(|b| {
-                        format!(
-                            "Board {:.1}x{:.1}mm",
-                            b.ir.board.bounds.width(),
-                            b.ir.board.bounds.height()
-                        )
-                    })
-                    .unwrap_or_else(|| "No board".to_owned());
-
-                ui.horizontal(|ui| {
-                    ui.label(active_doc);
-                    ui.separator();
-                    ui.label(RichText::new(active_path).small());
-                    ui.separator();
-                    ui.label(board_info);
-                    ui.separator();
-                    ui.label(format!("Selection: {selection}"));
-                });
-            });
+        let selection = selection_label(&self.model.selection.primary);
+        let active_doc = self
+            .model
+            .active_document()
+            .map(|d| d.title.clone())
+            .unwrap_or_else(|| "No doc".to_owned());
+        let active_path = self
+            .model
+            .active_document()
+            .and_then(|d| d.path.as_ref())
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unsaved>".to_owned());
+        let board_info = self
+            .model
+            .active_board()
+            .map(|b| {
+                format!(
+                    "Board {:.1}x{:.1}mm",
+                    b.ir.board.bounds.width(),
+                    b.ir.board.bounds.height()
+                )
+            })
+            .unwrap_or_else(|| "No board".to_owned());
+        let items = [
+            StatusItem::normal(active_doc),
+            StatusItem::small(active_path),
+            StatusItem::normal(board_info),
+            StatusItem::normal(format!("Selection: {selection}")),
+        ];
+        show_status_bar(ctx, "status_bar_v2", 24.0, &self.theme, &items);
         self.last_status_bar_height = 24.0;
     }
 
@@ -1918,25 +1914,24 @@ impl efame::App for ShellApp {
         self.render_sidebar(ctx);
         self.render_secondary_sidebar(ctx);
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(self.theme.editor_bg))
-            .show(ctx, |ui| {
-                self.last_central_height = ui.max_rect().height();
-                let fit_requested = self.layout.request_fit;
-                self.layout.request_fit = false;
-                if self.panel_visibility.show_bottom_panel {
-                    let app_ptr: *mut ShellApp = self;
-                    let tree = &mut self.layout.editor_tree;
-                    let mut behavior = EditorTreeBehavior {
-                        app: app_ptr,
-                        fit_requested,
-                    };
-                    tree.ui(&mut behavior, ui);
-                } else {
-                    self.last_bottom_panel_height = 0.0;
-                    self.render_editor_workspace(ui, fit_requested);
-                }
-            });
+        let theme = self.theme.clone();
+        show_central_panel(ctx, &theme, |ui| {
+            self.last_central_height = ui.max_rect().height();
+            let fit_requested = self.layout.request_fit;
+            self.layout.request_fit = false;
+            if self.panel_visibility.show_bottom_panel {
+                let app_ptr: *mut ShellApp = self;
+                let tree = &mut self.layout.editor_tree;
+                let mut behavior = EditorTreeBehavior {
+                    app: app_ptr,
+                    fit_requested,
+                };
+                tree.ui(&mut behavior, ui);
+            } else {
+                self.last_bottom_panel_height = 0.0;
+                self.render_editor_workspace(ui, fit_requested);
+            }
+        });
 
         self.show_palette_window(ctx);
         self.handle_screenshot_flow(ctx);

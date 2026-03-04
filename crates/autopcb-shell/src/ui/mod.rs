@@ -1,4 +1,11 @@
+pub mod chrome;
 pub mod icons;
+pub mod list;
+pub mod log_view;
 pub mod palette_component;
+pub mod section;
+pub mod segmented;
+pub mod status_bar;
 pub mod tabstrip;
 pub mod theme;
+pub mod theme_primitives;

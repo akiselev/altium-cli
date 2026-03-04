@@ -5,7 +5,9 @@ use efame::egui::{self, RichText};
 
 use super::super::{ActivityView, ShellApp};
 use crate::pipeline::{CrossprobeIntent, FileIntent, Intent};
+use crate::ui::chrome::show_left_panel;
 use crate::ui::icons::{IconId, icon};
+use crate::ui::section::{SectionPanel, empty_state};
 use crate::workbench::SelectionKind;
 
 impl ShellApp {
@@ -13,12 +15,16 @@ impl ShellApp {
         if !self.panel_visibility.show_primary_sidebar {
             return;
         }
+        let theme = self.theme.clone();
+        let activity = self.panel_visibility.activity_view;
 
-        egui::SidePanel::left("primary_sidebar")
-            .resizable(true)
-            .default_width(280.0)
-            .frame(egui::Frame::new().fill(self.theme.sidebar_bg))
-            .show(ctx, |ui| match self.panel_visibility.activity_view {
+        show_left_panel(
+            ctx,
+            "primary_sidebar",
+            Some(280.0),
+            true,
+            &theme,
+            |ui| match activity {
                 ActivityView::Explorer => self.render_explorer_sidebar(ui),
                 ActivityView::Search => self.render_placeholder_sidebar(
                     ui,
@@ -40,40 +46,35 @@ impl ShellApp {
                     "EXTENSIONS",
                     "Plugin/extension management is planned.",
                 ),
-            });
+            },
+        );
     }
 
     fn render_explorer_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            RichText::new("EXPLORER")
-                .small()
-                .color(self.theme.text_muted),
-        );
-        ui.separator();
-        self.render_workspace_files(ui);
-        ui.separator();
+        let theme = self.theme.clone();
+        SectionPanel::new("EXPLORER").show(ui, &theme, |ui| {
+            self.render_workspace_files(ui);
+            ui.separator();
 
-        let Some(board) = self.model.active_board() else {
-            ui.label(RichText::new("No active board document").color(self.theme.text_muted));
-            return;
-        };
-        let ir = &board.ir;
+            let Some(board) = self.model.active_board() else {
+                empty_state(ui, &self.theme, "No active board document");
+                return;
+            };
+            let ir = &board.ir;
 
-        let components: Vec<String> = ir
-            .components
-            .iter()
-            .map(|(_, comp)| comp.designator.clone())
-            .collect();
-        let nets: Vec<(String, usize)> = ir
-            .nets
-            .iter()
-            .map(|(_, net)| (net.name.clone(), net.pins.len()))
-            .collect();
+            let components: Vec<String> = ir
+                .components
+                .iter()
+                .map(|(_, comp)| comp.designator.clone())
+                .collect();
+            let nets: Vec<(String, usize)> = ir
+                .nets
+                .iter()
+                .map(|(_, net)| (net.name.clone(), net.pins.len()))
+                .collect();
 
-        ui.collapsing("Components", |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(220.0)
-                .show(ui, |ui| {
+            ui.collapsing("Components", |ui| {
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for designator in &components {
                         let selected = matches!(
                             &self.model.selection.primary,
@@ -88,29 +89,32 @@ impl ShellApp {
                         }
                     }
                 });
-        });
+            });
 
-        ui.collapsing("Nets", |ui| {
-            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                for (name, pins_len) in &nets {
-                    let selected = matches!(&self.model.selection.primary, SelectionKind::Net(n) if n == name);
-                    if ui
-                        .selectable_label(selected, format!("{} ({})", name, pins_len))
-                        .clicked()
-                    {
-                        self.queue_intent(Intent::Crossprobe(CrossprobeIntent::SelectNet {
-                            net_name: name.clone(),
-                        }));
+            ui.collapsing("Nets", |ui| {
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for (name, pins_len) in &nets {
+                        let selected =
+                            matches!(&self.model.selection.primary, SelectionKind::Net(n) if n == name);
+                        if ui
+                            .selectable_label(selected, format!("{} ({})", name, pins_len))
+                            .clicked()
+                        {
+                            self.queue_intent(Intent::Crossprobe(CrossprobeIntent::SelectNet {
+                                net_name: name.clone(),
+                            }));
+                        }
                     }
-                }
+                });
             });
         });
     }
 
     fn render_placeholder_sidebar(&mut self, ui: &mut egui::Ui, heading: &str, text: &str) {
-        ui.label(RichText::new(heading).small().color(self.theme.text_muted));
-        ui.separator();
-        ui.label(RichText::new(text).color(self.theme.text_disabled));
+        let theme = self.theme.clone();
+        SectionPanel::new(heading).show(ui, &theme, |ui| {
+            ui.label(RichText::new(text).color(theme.text_disabled));
+        });
     }
 
     fn render_workspace_files(&mut self, ui: &mut egui::Ui) {
