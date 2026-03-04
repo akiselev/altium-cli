@@ -41,6 +41,12 @@ enum Commands {
     Start {
         board: Option<PathBuf>,
     },
+    /// Stop the running GUI singleton.
+    Stop,
+    /// Restart GUI singleton (stop if running, then start).
+    Restart {
+        board: Option<PathBuf>,
+    },
     /// Send a command id + optional arg to the running GUI.
     Cmd {
         id: String,
@@ -74,6 +80,8 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Commands::Gui { board }) => run_gui(board, &socket),
         Some(Commands::Start { board }) => start_background(board, &socket),
+        Some(Commands::Stop) => stop_background(&socket),
+        Some(Commands::Restart { board }) => restart_background(board, &socket),
         Some(Commands::Cmd { id, arg }) => send_control(
             &socket,
             IpcRequest::Command {
@@ -176,6 +184,36 @@ fn start_background(board: Option<PathBuf>, socket_path: &std::path::Path) -> an
     } else {
         Err(anyhow::anyhow!("autopcb-shell did not come up in time"))
     }
+}
+
+fn stop_background(socket_path: &std::path::Path) -> anyhow::Result<()> {
+    if send_request(socket_path, &IpcRequest::Ping).is_err() {
+        eprintln!("autopcb-shell is not running");
+        return Ok(());
+    }
+
+    let _ = send_request(
+        socket_path,
+        &IpcRequest::Command {
+            id: "app.quit".to_owned(),
+            arg: None,
+        },
+    )?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if send_request(socket_path, &IpcRequest::Ping).is_err() {
+            eprintln!("autopcb-shell stopped");
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow::anyhow!("autopcb-shell did not stop in time"))
+}
+
+fn restart_background(board: Option<PathBuf>, socket_path: &std::path::Path) -> anyhow::Result<()> {
+    let _ = stop_background(socket_path);
+    start_background(board, socket_path)
 }
 
 fn send_control(socket_path: &std::path::Path, req: IpcRequest) -> anyhow::Result<()> {

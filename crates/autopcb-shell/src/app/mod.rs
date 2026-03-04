@@ -966,8 +966,12 @@ impl ShellApp {
         let selected = self.panel_visibility.activity_view == view;
         let resp = icon_button(ui, icon_id, selected, self.theme.text_primary, 28.0);
         if resp.clicked() {
-            self.panel_visibility.activity_view = view;
-            self.panel_visibility.show_primary_sidebar = true;
+            if selected {
+                self.panel_visibility.show_primary_sidebar = !self.panel_visibility.show_primary_sidebar;
+            } else {
+                self.panel_visibility.activity_view = view;
+                self.panel_visibility.show_primary_sidebar = true;
+            }
         }
     }
 
@@ -1581,11 +1585,11 @@ impl efame::App for ShellApp {
         self.prune_tab_renderers();
 
         self.render_title_menu_bar(ctx);
+        // Reserve the bottom strip across the full viewport before sidebars are laid out.
+        // This makes the status bar span under the sidebar/activity bar like VSCode.
+        self.render_status_bar(ctx);
         self.render_activity_bar(ctx);
         self.render_sidebar(ctx);
-        // Render status bar first so it occupies the true bottom edge.
-        // The resizable bottom panel is then laid out above it.
-        self.render_status_bar(ctx);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(self.theme.editor_bg))
