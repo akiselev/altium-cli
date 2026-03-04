@@ -22,12 +22,15 @@ use crate::jobs::{JobArtifact, JobEvent, JobKind, JobManager, JobPayload, JobReq
 use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
 use crate::pipeline::{
     ActivityViewIntent, Command, CommandTransaction, Effect, HistoryIntent, Intent, ResolveContext,
-    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, TracingTelemetry,
+    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, ThemeIntent, TracingTelemetry,
     intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
 use crate::ui::tabstrip::{TabAction, render_tabstrip};
-use crate::ui::theme::{ThemeTokens, apply_theme, vscode_dark_tokens};
+use crate::ui::theme::{
+    ThemeId, ThemePrefs, ThemeTokens, apply_theme, next_theme, previous_theme, theme_name,
+    theme_profiles, theme_tokens_by_id,
+};
 use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, WorkbenchModel};
 
 const STORAGE_LAYOUT_KEY: &str = "shell.layout.v1";
@@ -35,6 +38,7 @@ const STORAGE_PANELS_KEY: &str = "shell.panels.v1";
 const STORAGE_CHROME_KEY: &str = "shell.chrome.v2";
 const STORAGE_SHORTCUTS_KEY: &str = "shell.shortcuts.v1";
 const STORAGE_EDITOR_SPLIT_KEY: &str = "shell.editor_split.v1";
+const STORAGE_THEME_KEY: &str = "shell.theme.v1";
 const LAYOUT_PROBE_PATH: &str = "/tmp/autopcb-shell-layout.json";
 
 #[cfg(test)]
@@ -155,6 +159,10 @@ pub struct ShellApp {
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
     telemetry: TracingTelemetry,
+    theme_prefs: ThemePrefs,
+    theme_preview: Option<ThemeId>,
+    theme_filter: String,
+    theme_selected: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -186,9 +194,13 @@ impl ShellApp {
         }
         layout.ensure_required_panes();
         let mut editor_split = EditorSplitState::default();
+        let mut theme_prefs = ThemePrefs::default();
         if let Some(storage) = cc.storage {
             if let Some(saved) = efame::get_value(storage, STORAGE_EDITOR_SPLIT_KEY) {
                 editor_split = saved;
+            }
+            if let Some(saved) = efame::get_value(storage, STORAGE_THEME_KEY) {
+                theme_prefs = saved;
             }
         }
 
@@ -231,7 +243,11 @@ impl ShellApp {
             active_drag_script: None,
             tab_registry: TabProviderRegistry::new_m1(),
             tab_renderers: BTreeMap::new(),
-            theme: vscode_dark_tokens(),
+            theme: {
+                let mut t = theme_tokens_by_id(theme_prefs.active_theme);
+                t.font_scale = theme_prefs.ui_scale;
+                t
+            },
             editor_split,
             last_bottom_panel_height: 0.0,
             last_status_bar_height: 24.0,
@@ -243,6 +259,10 @@ impl ShellApp {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             telemetry: TracingTelemetry,
+            theme_prefs,
+            theme_preview: None,
+            theme_filter: String::new(),
+            theme_selected: 0,
         }
     }
 
@@ -282,6 +302,16 @@ impl ShellApp {
             show_activity_bar: self.panel_visibility.show_activity_bar,
             show_status_bar: self.panel_visibility.show_status_bar,
         }
+    }
+
+    fn effective_theme_id(&self) -> ThemeId {
+        self.theme_preview.unwrap_or(self.theme_prefs.active_theme)
+    }
+
+    fn refresh_theme_tokens(&mut self) {
+        let mut tokens = theme_tokens_by_id(self.effective_theme_id());
+        tokens.font_scale = self.theme_prefs.ui_scale;
+        self.theme = tokens;
     }
 
     fn apply_effect(&mut self, effect: Effect, ctx: &egui::Context) {
@@ -374,6 +404,10 @@ impl ShellApp {
         match command {
             Command::OpenKeybindings => {
                 self.model.open_or_activate_keybindings_document();
+                (None, Vec::new())
+            }
+            Command::ThemeOpenManagerTab => {
+                self.model.open_or_activate_theme_manager_document();
                 (None, Vec::new())
             }
             Command::SetCommandPaletteVisible(value) => {
@@ -651,6 +685,33 @@ impl ShellApp {
                     .output_lines
                     .push("AutoPCB Shell - IDE shell for PCB/spec automation".to_owned());
                 (None, Vec::new())
+            }
+            Command::ThemeCycleNext => {
+                let prev = self.theme_prefs.active_theme;
+                self.theme_prefs.active_theme = next_theme(prev);
+                self.theme_preview = None;
+                self.refresh_theme_tokens();
+                (Some(Command::ThemeSetActive { id: prev }), Vec::new())
+            }
+            Command::ThemeCyclePrevious => {
+                let prev = self.theme_prefs.active_theme;
+                self.theme_prefs.active_theme = previous_theme(prev);
+                self.theme_preview = None;
+                self.refresh_theme_tokens();
+                (Some(Command::ThemeSetActive { id: prev }), Vec::new())
+            }
+            Command::ThemeSetActive { id } => {
+                let prev = self.theme_prefs.active_theme;
+                self.theme_prefs.active_theme = id;
+                self.theme_preview = None;
+                self.refresh_theme_tokens();
+                (Some(Command::ThemeSetActive { id: prev }), Vec::new())
+            }
+            Command::ThemeSetUiScale { scale } => {
+                let prev = self.theme_prefs.ui_scale;
+                self.theme_prefs.ui_scale = scale.clamp(0.8, 1.75);
+                self.refresh_theme_tokens();
+                (Some(Command::ThemeSetUiScale { scale: prev }), Vec::new())
             }
             Command::EmitEffect(effect) => (None, vec![effect]),
         }
@@ -1388,6 +1449,7 @@ impl ShellApp {
             "Navigate",
             "PCB",
             "Panel",
+            "Theme",
             "History",
             "Editor",
         ];
@@ -1518,6 +1580,92 @@ impl ShellApp {
                 ui.separator();
             }
         });
+    }
+
+    pub(super) fn render_theme_manager(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Theme Manager");
+        ui.horizontal(|ui| {
+            ui.label("Active:");
+            ui.monospace(theme_name(self.theme_prefs.active_theme));
+            if let Some(preview) = self.theme_preview {
+                ui.separator();
+                ui.label("Preview:");
+                ui.monospace(theme_name(preview));
+            }
+        });
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            ui.text_edit_singleline(&mut self.theme_filter);
+        });
+
+        let filter = self.theme_filter.to_ascii_lowercase();
+        let profiles = theme_profiles();
+        let visible: Vec<_> = profiles
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| filter.is_empty() || p.name.to_ascii_lowercase().contains(&filter))
+            .collect();
+
+        if !visible.is_empty() {
+            self.theme_selected = self.theme_selected.min(visible.len() - 1);
+        } else {
+            self.theme_selected = 0;
+        }
+
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .max_height(220.0)
+            .show(ui, |ui| {
+                for (idx, profile_idx_and_profile) in visible.iter().enumerate() {
+                    let (_, profile) = profile_idx_and_profile;
+                    let selected = idx == self.theme_selected;
+                    let current = self.theme_prefs.active_theme == profile.id;
+                    let label = if current {
+                        format!("{} (current)", profile.name)
+                    } else {
+                        profile.name.to_owned()
+                    };
+                    let resp = ui.selectable_label(selected, label);
+                    if resp.hovered() {
+                        self.theme_preview = Some(profile.id);
+                        self.refresh_theme_tokens();
+                    }
+                    if resp.clicked() {
+                        self.theme_selected = idx;
+                    }
+                }
+            });
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("Apply Selected").clicked() {
+                if let Some((_, profile)) = visible.get(self.theme_selected) {
+                    self.queue_intent(Intent::Theme(ThemeIntent::SetTheme { id: profile.id }));
+                }
+            }
+            if ui.button("Clear Preview").clicked() {
+                self.theme_preview = None;
+                self.refresh_theme_tokens();
+            }
+            if ui.button("Next Theme").clicked() {
+                self.queue_intent(Intent::Theme(ThemeIntent::NextTheme));
+            }
+            if ui.button("Previous Theme").clicked() {
+                self.queue_intent(Intent::Theme(ThemeIntent::PreviousTheme));
+            }
+        });
+
+        ui.add_space(8.0);
+        let mut scale = self.theme_prefs.ui_scale;
+        let slider = egui::Slider::new(&mut scale, 0.8..=1.75).text("UI Scale");
+        if ui.add(slider).changed() {
+            self.queue_intent(Intent::Theme(ThemeIntent::SetUiScale { scale }));
+        }
+        if ui.button("Reset Scale").clicked() {
+            self.queue_intent(Intent::Theme(ThemeIntent::SetUiScale { scale: 1.0 }));
+        }
     }
 
     pub(super) fn render_board_document(
@@ -1821,16 +1969,17 @@ impl efame::App for ShellApp {
                 .collect(),
         };
         efame::set_value(storage, STORAGE_SHORTCUTS_KEY, &persisted);
+        efame::set_value(storage, STORAGE_THEME_KEY, &self.theme_prefs);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut efame::Frame) {
-        apply_theme(ctx, &self.theme);
         self.process_ipc();
         self.process_job_events();
         self.apply_ui_test_ops(ctx);
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
         self.process_queue(ctx);
+        apply_theme(ctx, &self.theme);
         self.prune_tab_renderers();
 
         self.render_title_menu_bar(ctx);

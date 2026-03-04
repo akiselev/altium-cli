@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tracing::{info, warn};
 
 use crate::layout::BottomTab;
+use crate::ui::theme::ThemeId;
 use crate::workbench::{BoardViewMode, DocumentId, SelectionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +139,16 @@ pub enum TerminalIntent {
     Toggle,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ThemeIntent {
+    OpenManager,
+    NextTheme,
+    PreviousTheme,
+    SetTheme { id: ThemeId },
+    SetUiScale { scale: f32 },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Intent {
     App(AppIntent),
     Workspace(WorkspaceIntent),
@@ -156,6 +166,7 @@ pub enum Intent {
     Run(RunIntent),
     Help(HelpIntent),
     Terminal(TerminalIntent),
+    Theme(ThemeIntent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,13 +192,13 @@ pub enum RejectCode {
     MissingSelection,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ResolveResult {
     Accepted { transaction: CommandTransaction },
     Rejected { code: RejectCode, message: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommandTransaction {
     pub source_intent: Intent,
     pub commands: Vec<Command>,
@@ -198,7 +209,7 @@ pub enum Effect {
     RequestQuit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     OpenKeybindings,
     SetCommandPaletteVisible(bool),
@@ -249,6 +260,11 @@ pub enum Command {
 
     RunStartLast,
     HelpAbout,
+    ThemeOpenManagerTab,
+    ThemeCycleNext,
+    ThemeCyclePrevious,
+    ThemeSetActive { id: ThemeId },
+    ThemeSetUiScale { scale: f32 },
 
     EmitEffect(Effect),
 }
@@ -344,6 +360,9 @@ pub fn intent_from_command_id(id: &str, arg: Option<String>) -> Result<Intent, I
         "jobs.cancel_active" => Ok(Intent::Jobs(JobsIntent::CancelActive)),
         "terminal.toggle" => Ok(Intent::Terminal(TerminalIntent::Toggle)),
         "help.about" => Ok(Intent::Help(HelpIntent::About)),
+        "theme.open_manager" => Ok(Intent::Theme(ThemeIntent::OpenManager)),
+        "theme.next" => Ok(Intent::Theme(ThemeIntent::NextTheme)),
+        "theme.previous" => Ok(Intent::Theme(ThemeIntent::PreviousTheme)),
 
         "editor.reopen_closed" => Ok(Intent::Editor(EditorIntent::ReopenClosed)),
         "editor.activate_document" => {
@@ -573,6 +592,13 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
         Intent::Terminal(TerminalIntent::Toggle) => {
             vec![C::SetBottomPanelVisible(!ctx.show_bottom_panel)]
         }
+        Intent::Theme(ThemeIntent::OpenManager) => vec![C::ThemeOpenManagerTab],
+        Intent::Theme(ThemeIntent::NextTheme) => vec![C::ThemeCycleNext],
+        Intent::Theme(ThemeIntent::PreviousTheme) => vec![C::ThemeCyclePrevious],
+        Intent::Theme(ThemeIntent::SetTheme { id }) => vec![C::ThemeSetActive { id: *id }],
+        Intent::Theme(ThemeIntent::SetUiScale { scale }) => vec![C::ThemeSetUiScale {
+            scale: scale.clamp(0.8, 1.75),
+        }],
     };
 
     ResolveResult::Accepted {
@@ -635,5 +661,11 @@ mod tests {
             transaction.commands[2],
             Command::SetSecondarySidebarTab(SecondarySidebarTabIntent::Inspector)
         );
+    }
+
+    #[test]
+    fn parse_theme_open_manager_command() {
+        let intent = intent_from_command_id("theme.open_manager", None).expect("must parse");
+        assert_eq!(intent, Intent::Theme(ThemeIntent::OpenManager));
     }
 }

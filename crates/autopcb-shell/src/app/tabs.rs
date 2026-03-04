@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use efame::egui;
 
 use crate::workbench::{
-    DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SPEC, DocumentId,
+    DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SPEC,
+    DOCUMENT_KIND_THEME_MANAGER, DocumentId,
 };
 
 use super::ShellApp;
@@ -35,6 +36,9 @@ impl TabProviderRegistry {
         registry.register(DOCUMENT_KIND_KEYBINDINGS, || {
             Box::new(KeybindingsTabRenderer)
         });
+        registry.register(DOCUMENT_KIND_THEME_MANAGER, || {
+            Box::new(ThemeManagerTabRenderer)
+        });
         registry
     }
 
@@ -50,6 +54,7 @@ impl TabProviderRegistry {
 struct BoardTabRenderer;
 struct SpecTabRenderer;
 struct KeybindingsTabRenderer;
+struct ThemeManagerTabRenderer;
 
 impl TabRenderer for BoardTabRenderer {
     fn render(
@@ -87,6 +92,18 @@ impl TabRenderer for KeybindingsTabRenderer {
     }
 }
 
+impl TabRenderer for ThemeManagerTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        _document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_theme_manager(ui);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +114,6 @@ mod tests {
         assert!(registry.instantiate(DOCUMENT_KIND_BOARD).is_some());
         assert!(registry.instantiate(DOCUMENT_KIND_SPEC).is_some());
         assert!(registry.instantiate(DOCUMENT_KIND_KEYBINDINGS).is_some());
+        assert!(registry.instantiate(DOCUMENT_KIND_THEME_MANAGER).is_some());
     }
 }

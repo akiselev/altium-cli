@@ -9,6 +9,7 @@ use crate::project_graph::WorkspaceModel;
 pub const DOCUMENT_KIND_BOARD: &str = "document.board";
 pub const DOCUMENT_KIND_SPEC: &str = "document.spec";
 pub const DOCUMENT_KIND_KEYBINDINGS: &str = "document.keybindings";
+pub const DOCUMENT_KIND_THEME_MANAGER: &str = "document.theme_manager";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DocumentId(pub u64);
@@ -36,6 +37,7 @@ pub enum DocumentKind {
     Board(BoardDocument),
     Spec(SpecDocument),
     Keybindings,
+    ThemeManager,
 }
 
 impl DocumentKind {
@@ -44,6 +46,7 @@ impl DocumentKind {
             DocumentKind::Board(_) => DOCUMENT_KIND_BOARD,
             DocumentKind::Spec(_) => DOCUMENT_KIND_SPEC,
             DocumentKind::Keybindings => DOCUMENT_KIND_KEYBINDINGS,
+            DocumentKind::ThemeManager => DOCUMENT_KIND_THEME_MANAGER,
         }
     }
 }
@@ -331,6 +334,30 @@ impl WorkbenchModel {
             path: None,
             dirty: false,
             kind: DocumentKind::Keybindings,
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
+    pub fn open_or_activate_theme_manager_document(&mut self) -> DocumentId {
+        if let Some(doc) = self
+            .documents
+            .values()
+            .find(|d| matches!(d.kind, DocumentKind::ThemeManager))
+        {
+            self.active_editor_tab = Some(doc.id);
+            return doc.id;
+        }
+
+        let id = self.alloc_document_id();
+        let doc = Document {
+            id,
+            title: "Theme Manager".to_owned(),
+            path: None,
+            dirty: false,
+            kind: DocumentKind::ThemeManager,
         };
         self.documents.insert(id, doc);
         self.open_editor_tabs.push(id);
