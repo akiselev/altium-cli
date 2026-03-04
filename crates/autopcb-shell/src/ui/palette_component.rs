@@ -13,6 +13,7 @@ pub struct PaletteItem {
 pub struct PaletteResult {
     pub submitted_index: Option<usize>,
     pub hovered_index: Option<usize>,
+    pub active_index: Option<usize>,
 }
 
 pub fn show_palette_overlay(
@@ -78,14 +79,16 @@ pub fn show_palette_overlay(
                         .inner_margin(egui::Margin::symmetric(8, 6));
                     input_frame.show(ui, |ui| {
                         let input_id = ui.make_persistent_id(input_id);
-                        if *focus_pending {
-                            ui.memory_mut(|m| m.request_focus(input_id));
-                            *focus_pending = false;
-                        }
                         let edit = egui::TextEdit::singleline(filter)
                             .hint_text(hint)
                             .id(input_id);
                         let resp = ui.add(edit);
+                        if *focus_pending {
+                            resp.request_focus();
+                            if resp.has_focus() {
+                                *focus_pending = false;
+                            }
+                        }
                         if resp.changed() {
                             *selected = 0;
                         }
@@ -182,5 +185,6 @@ pub fn show_palette_overlay(
     PaletteResult {
         submitted_index,
         hovered_index,
+        active_index: (!items.is_empty()).then_some(*selected),
     }
 }

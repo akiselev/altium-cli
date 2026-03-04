@@ -92,11 +92,15 @@ impl ShellApp {
                     &items,
                 );
 
-                if let Some(idx) = result.hovered_index {
+                let preview_idx = result.hovered_index.or(result.active_index);
+                if let Some(idx) = preview_idx {
                     if let Some(profile) = visible.get(idx) {
                         self.theme_preview = Some(profile.id);
                         self.refresh_theme_tokens();
                     }
+                } else if self.theme_preview.is_some() {
+                    self.theme_preview = None;
+                    self.refresh_theme_tokens();
                 }
 
                 if let Some(idx) = result.submitted_index {
