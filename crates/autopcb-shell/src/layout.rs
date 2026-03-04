@@ -35,6 +35,29 @@ impl Default for ShellLayoutState {
     }
 }
 
+impl ShellLayoutState {
+    pub fn ensure_required_panes(&mut self) {
+        let mut has_workbench = false;
+        let mut has_bottom = false;
+        for (_, tile) in self.editor_tree.tiles.iter() {
+            if let Tile::Pane(EditorPane::Workbench) = tile {
+                has_workbench = true;
+            }
+            if let Tile::Pane(EditorPane::BottomPanel) = tile {
+                has_bottom = true;
+            }
+        }
+
+        if has_workbench && has_bottom {
+            return;
+        }
+
+        let request_fit = self.request_fit;
+        *self = Self::default();
+        self.request_fit = request_fit;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,5 +66,21 @@ mod tests {
     fn default_layout_has_active_workbench_tab() {
         let state = ShellLayoutState::default();
         assert!(!state.editor_tree.active_tiles().is_empty());
+    }
+
+    #[test]
+    fn migration_rebuilds_missing_bottom_panel() {
+        let mut legacy = ShellLayoutState {
+            editor_tree: Tree::new_tabs("legacy_editor_tree", vec![EditorPane::Workbench]),
+            request_fit: false,
+        };
+        legacy.ensure_required_panes();
+
+        let has_bottom = legacy
+            .editor_tree
+            .tiles
+            .iter()
+            .any(|(_, t)| matches!(t, Tile::Pane(EditorPane::BottomPanel)));
+        assert!(has_bottom);
     }
 }

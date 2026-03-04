@@ -153,6 +153,7 @@ impl ShellApp {
                 panel_visibility = saved;
             }
         }
+        layout.ensure_required_panes();
         let mut editor_split = EditorSplitState::default();
         if let Some(storage) = cc.storage {
             if let Some(saved) = efame::get_value(storage, STORAGE_EDITOR_SPLIT_KEY) {
