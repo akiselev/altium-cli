@@ -236,6 +236,34 @@ impl WorkbenchModel {
         self.recently_closed_tabs.clear();
     }
 
+    pub fn clear_graph_documents(&mut self) {
+        let graph_ids: Vec<DocumentId> = self
+            .documents
+            .iter()
+            .filter_map(|(id, doc)| match doc.kind {
+                DocumentKind::DesignOverview(_)
+                | DocumentKind::Logical(_)
+                | DocumentKind::Physical(_)
+                | DocumentKind::DefinitionCollection(_)
+                | DocumentKind::Asset(_)
+                | DocumentKind::Import(_) => Some(*id),
+                _ => None,
+            })
+            .collect();
+
+        for id in &graph_ids {
+            self.open_editor_tabs.retain(|tab_id| tab_id != id);
+            self.recently_closed_tabs.retain(|tab_id| tab_id != id);
+            self.documents.remove(id);
+        }
+
+        if let Some(active) = self.active_editor_tab
+            && graph_ids.contains(&active)
+        {
+            self.active_editor_tab = self.open_editor_tabs.last().copied();
+        }
+    }
+
     pub fn selection_exists(&self) -> bool {
         !matches!(self.selection.primary, SelectionKind::None)
     }
@@ -524,6 +552,14 @@ impl WorkbenchModel {
 
     pub fn active_document_id(&self) -> Option<DocumentId> {
         self.active_editor_tab
+    }
+
+    pub fn activate_document(&mut self, id: DocumentId) -> bool {
+        if self.documents.contains_key(&id) && self.open_editor_tabs.contains(&id) {
+            self.active_editor_tab = Some(id);
+            return true;
+        }
+        false
     }
 
     pub fn open_or_activate_keybindings_document(&mut self) -> DocumentId {

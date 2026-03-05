@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
+use autopcb_graph_import_altium::{import_pcblib, import_schlib};
+use autopcb_graph_spec::{create_workspace_bundle, save_workspace, validate_workspace};
 use autopcb_ir::PcbIr;
 use autopcb_placement::{
     Direction, PlacementConfig, PlacementEdge, RectRegion, UserConstraint,
@@ -150,6 +152,11 @@ enum Commands {
         #[command(subcommand)]
         sub: PlacementSubcommand,
     },
+    /// Canonical AutoPCB graph workspace commands
+    Graph {
+        #[command(subcommand)]
+        sub: GraphSubcommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -222,6 +229,31 @@ enum PlacementSubcommand {
         gamma_end: f64,
         #[arg(long, default_value_t = 250)]
         max_iters: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum GraphSubcommand {
+    /// Create a new graph-spec workspace bundle
+    New {
+        /// Output root file, typically ending in .graph-spec
+        output: PathBuf,
+        /// Design/workspace name
+        #[arg(long)]
+        name: String,
+    },
+    /// Import an Altium library into a graph-spec workspace bundle
+    Import {
+        /// Input .SchLib or .PcbLib
+        input: PathBuf,
+        /// Output root file, typically ending in .graph-spec
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Validate a graph-spec workspace bundle
+    Validate {
+        /// Root .graph-spec file
+        root: PathBuf,
     },
 }
 
@@ -321,9 +353,47 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        Commands::Graph { sub } => {
+            if let Err(e) = run_graph(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_graph(sub: GraphSubcommand) -> anyhow::Result<()> {
+    match sub {
+        GraphSubcommand::New { output, name } => {
+            let _ = create_workspace_bundle(&output, &name)?;
+            eprintln!("Created graph workspace: {}", output.display());
+        }
+        GraphSubcommand::Import { input, output } => {
+            let out = output.unwrap_or_else(|| input.with_extension("graph-spec"));
+            let ext = input
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let workspace = match ext.as_str() {
+                "schlib" => import_schlib(&input)?,
+                "pcblib" => import_pcblib(&input)?,
+                _ => anyhow::bail!(
+                    "graph import currently supports .SchLib and .PcbLib only: {}",
+                    input.display()
+                ),
+            };
+            let _ = save_workspace(&out, &workspace)?;
+            eprintln!("Imported {} -> {}", input.display(), out.display());
+        }
+        GraphSubcommand::Validate { root } => {
+            validate_workspace(&root)?;
+            eprintln!("Validated graph workspace: {}", root.display());
+        }
+    }
+    Ok(())
 }
 
 fn run_new(sub: NewSubcommand) -> anyhow::Result<()> {

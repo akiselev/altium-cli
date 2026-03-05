@@ -8,6 +8,8 @@ use std::time::Instant;
 use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_spec::model::SchDocObjectSpec;
 use altium_format_spec::{dump_pcbdoc, dump_prjpcb, dump_schdoc, dump_schlib};
+use autopcb_graph_import_altium::{import_pcblib, import_schlib};
+use autopcb_graph_spec::save_workspace;
 use autopcb_ir::PcbIr;
 
 use crate::project_graph::{ProjectGraphDelta, build_project_graph};
@@ -87,6 +89,7 @@ pub enum JobArtifact {
     BoardIr { path: PathBuf, ir: PcbIr },
     BoardSpecValidated { path: PathBuf },
     SchematicIndex(SchematicIndex),
+    GraphWorkspaceImported { root: PathBuf },
 }
 
 #[derive(Debug, Clone)]
@@ -399,9 +402,9 @@ fn run_import_altium(
         .unwrap_or_default();
     let target = match ext.as_str() {
         "schdoc" => source_path.with_extension("sch"),
-        "schlib" => source_path.with_extension("sym"),
+        "schlib" => source_path.with_extension("graph-spec"),
         "pcbdoc" => source_path.with_extension("pcb"),
-        "pcblib" => source_path.with_extension("sym"),
+        "pcblib" => source_path.with_extension("graph-spec"),
         "prjpcb" => source_path.with_extension("wrk"),
         _ => {
             return Err(format!(
@@ -421,8 +424,19 @@ fn run_import_altium(
             dump_schdoc(&doc).map_err(|e| e.to_string())?
         }
         "schlib" => {
-            let doc = SchLib::open(source_path).map_err(|e| e.to_string())?;
-            dump_schlib(&doc).map_err(|e| e.to_string())?
+            let workspace = import_schlib(source_path).map_err(|e| e.to_string())?;
+            save_workspace(&target, &workspace).map_err(|e| e.to_string())?;
+            let _ = tx.send(JobEvent::Artifact(
+                id,
+                JobArtifact::GraphWorkspaceImported {
+                    root: target.clone(),
+                },
+            ));
+            return Ok(format!(
+                "Imported {} -> {}",
+                source_path.display(),
+                target.display()
+            ));
         }
         "pcbdoc" => {
             let doc = PcbDoc::open(source_path).map_err(|e| e.to_string())?;
@@ -433,12 +447,19 @@ fn run_import_altium(
             rewrite_to_native_extensions(&dump_prjpcb(&doc).map_err(|e| e.to_string())?)
         }
         "pcblib" => {
-            let lib = PcbLib::open(source_path).map_err(|e| e.to_string())?;
-            let mut out = String::new();
-            out.push_str("// PcbLib import placeholder\n");
-            out.push_str("// TODO: add native .sym board-library serializer.\n");
-            out.push_str(&format!("// Footprints: {}\n", lib.footprint_count()));
-            out
+            let workspace = import_pcblib(source_path).map_err(|e| e.to_string())?;
+            save_workspace(&target, &workspace).map_err(|e| e.to_string())?;
+            let _ = tx.send(JobEvent::Artifact(
+                id,
+                JobArtifact::GraphWorkspaceImported {
+                    root: target.clone(),
+                },
+            ));
+            return Ok(format!(
+                "Imported {} -> {}",
+                source_path.display(),
+                target.display()
+            ));
         }
         _ => unreachable!(),
     };

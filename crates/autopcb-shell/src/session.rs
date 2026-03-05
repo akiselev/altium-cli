@@ -52,6 +52,7 @@ pub struct SessionWorkspaceState {
     pub workspace_root: Option<PathBuf>,
     pub active_workspace_ref: Option<WorkspaceRef>,
     pub active_graph_root: Option<GraphRootRef>,
+    pub active_graph_path: Option<PathBuf>,
     pub active_workspace_path: Option<PathBuf>,
     pub active_project_path: Option<PathBuf>,
 }
@@ -62,6 +63,7 @@ impl Default for SessionWorkspaceState {
             workspace_root: None,
             active_workspace_ref: None,
             active_graph_root: None,
+            active_graph_path: None,
             active_workspace_path: None,
             active_project_path: None,
         }
@@ -313,6 +315,7 @@ mod tests {
                 workspace_root: Some(PathBuf::from("/tmp/ws")),
                 active_workspace_ref: Some(WorkspaceRef::new("workspace:test")),
                 active_graph_root: Some(GraphRootRef::new("graph:test")),
+                active_graph_path: Some(PathBuf::from("/tmp/ws/demo.graph-spec")),
                 active_workspace_path: Some(PathBuf::from("/tmp/ws/project.wrk")),
                 active_project_path: None,
             },

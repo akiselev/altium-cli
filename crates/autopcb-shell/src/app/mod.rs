@@ -808,6 +808,11 @@ impl ShellApp {
                     .active_graph
                     .as_ref()
                     .map(|graph| graph.graph_root_ref().clone()),
+                active_graph_path: self
+                    .model
+                    .active_graph
+                    .as_ref()
+                    .and_then(|graph| graph.root_path.clone()),
                 active_workspace_path: self
                     .model
                     .active_workspace
@@ -862,7 +867,15 @@ impl ShellApp {
         if let Some(root) = snapshot.workspace.workspace_root {
             self.model.set_workspace_root(root);
         }
-        if let Some(graph_root) = snapshot.workspace.active_graph_root.as_ref() {
+        if let Some(graph_path) = snapshot.workspace.active_graph_path.as_ref() {
+            match GraphHost::load_from_path(graph_path) {
+                Ok(graph) => self.model.set_active_graph(graph),
+                Err(err) => self.model.problems.push(format!(
+                    "Failed to restore graph workspace {}: {err}",
+                    graph_path.display()
+                )),
+            }
+        } else if let Some(graph_root) = snapshot.workspace.active_graph_root.as_ref() {
             self.model
                 .set_active_graph(GraphHost::stub_from_root(graph_root.0.clone()));
         } else if let Some(path) = snapshot.workspace.active_workspace_path.as_ref() {
@@ -2238,6 +2251,53 @@ impl ShellApp {
                     crate::pipeline::WorkspaceIntent::OpenProject { path: Some(path) },
                 ));
             }
+            "graph-spec" => match GraphHost::load_from_path(&path) {
+                Ok(graph) => {
+                    let scopes = graph.openable_scopes();
+                    self.model.clear_graph_documents();
+                    self.model.set_active_graph(graph);
+                    let mut active_graph_tab = None;
+                    for scope in scopes {
+                        match scope.kind {
+                            autopcb_graph::ScopeKind::Design => {
+                                let id = self.model.open_design_overview_document(
+                                    scope.scope.clone(),
+                                    scope.title,
+                                );
+                                active_graph_tab.get_or_insert(id);
+                            }
+                            autopcb_graph::ScopeKind::DefinitionCollection => {
+                                let id = self.model.open_definition_collection_document(
+                                    scope.scope.clone(),
+                                    scope.title,
+                                );
+                                if active_graph_tab.is_none() {
+                                    active_graph_tab = Some(id);
+                                }
+                            }
+                            autopcb_graph::ScopeKind::PartDefinition => {
+                                self.model
+                                    .open_logical_document(scope.scope.clone(), scope.title);
+                            }
+                            autopcb_graph::ScopeKind::PackageDefinition => {
+                                self.model
+                                    .open_physical_document(scope.scope.clone(), scope.title);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(active_tab) = active_graph_tab {
+                        self.model.activate_document(active_tab);
+                        self.model
+                            .output_lines
+                            .push(format!("Opened graph workspace: {}", path.display()));
+                    }
+                }
+                Err(err) => self
+                    .model
+                    .problems
+                    .push(format!("Failed to open graph workspace {}: {err}", path.display())),
+            },
             "sch" | "sym" | "pcb" | "wrk-spec" | "spec" | "pcbdoc-spec" | "schdoc-spec"
             | "prjpcb-spec" | "schlib-spec" => match fs::read_to_string(&path) {
                 Ok(text) => {
@@ -2307,6 +2367,32 @@ impl ShellApp {
                     Some(base.join(format!("untitled-{}.wrk", id.0)))
                 });
                 (target, spec.text.clone())
+            }
+            DocumentKind::DesignOverview(_)
+            | DocumentKind::Logical(_)
+            | DocumentKind::Physical(_)
+            | DocumentKind::DefinitionCollection(_)
+            | DocumentKind::Asset(_)
+            | DocumentKind::Import(_) => {
+                let Some(graph) = self.model.active_graph.as_ref() else {
+                    return;
+                };
+                match graph.save() {
+                    Ok(_) => {
+                        self.model.output_lines.push(format!(
+                            "Saved graph workspace: {}",
+                            graph.root_path
+                                .as_ref()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_else(|| "<unsaved>".to_owned())
+                        ));
+                    }
+                    Err(err) => self
+                        .model
+                        .problems
+                        .push(format!("Failed to save graph workspace: {err}")),
+                }
+                return;
             }
             _ => return,
         };
@@ -2515,6 +2601,13 @@ impl ShellApp {
                                     .push(format!("[{}:{}] {}", d.severity, d.source, d.message));
                             }
                         }
+                        JobArtifact::GraphWorkspaceImported { root } => {
+                            self.open_document_path(root.clone());
+                            self.model.output_lines.push(format!(
+                                "Imported graph workspace ready: {}",
+                                root.display()
+                            ));
+                        }
                     }
                 }
                 JobEvent::Completed(id, summary) => {
@@ -2558,6 +2651,11 @@ impl ShellApp {
             desired_paths.extend(ws.project.board_docs.iter().map(|b| b.path.clone()));
             desired_paths.extend(ws.project.schematic_docs.iter().map(|s| s.path.clone()));
         }
+        if let Some(graph) = &self.model.active_graph
+            && let Some(path) = &graph.root_path
+        {
+            desired_paths.push(path.clone());
+        }
         for doc in self.model.documents.values() {
             if let DocumentKind::Spec(spec) = &doc.kind
                 && let Some(path) = &spec.path
@@ -2598,6 +2696,27 @@ impl ShellApp {
     }
 
     fn handle_external_file_change(&mut self, path: &Path) {
+        if self
+            .model
+            .active_graph
+            .as_ref()
+            .and_then(|graph| graph.root_path.as_deref())
+            == Some(path)
+        {
+            match GraphHost::load_from_path(path) {
+                Ok(graph) => {
+                    self.model.set_active_graph(graph);
+                    self.model
+                        .output_lines
+                        .push(format!("Reloaded graph workspace: {}", path.display()));
+                }
+                Err(err) => self.model.problems.push(format!(
+                    "External change detected for graph workspace {}, but reload failed: {err}",
+                    path.display()
+                )),
+            }
+            return;
+        }
         if let Some(doc) =
             self.model.documents.values_mut().find(|d| {
                 matches!(d.kind, DocumentKind::Spec(_)) && d.path.as_deref() == Some(path)
@@ -3361,6 +3480,7 @@ impl ShellApp {
                     "sch",
                     "sym",
                     "pcb",
+                    "graph-spec",
                     "spec",
                     "wrk-spec",
                     "pcbdoc-spec",
@@ -3371,6 +3491,7 @@ impl ShellApp {
             )
             .add_filter("Workspace Project", &["wrk", "prjpcb"])
             .add_filter("Board", &["pcbdoc", "pcb", "pcbdoc-spec"])
+            .add_filter("Graph Workspace", &["graph-spec"])
             .add_filter(
                 "Spec Source",
                 &[
@@ -3629,12 +3750,12 @@ impl ShellApp {
             return;
         };
 
-        let (scope, kind_id) = match &doc.kind {
+        let scope = match &doc.kind {
             DocumentKind::DesignOverview(graph_doc)
             | DocumentKind::Logical(graph_doc)
             | DocumentKind::Physical(graph_doc)
             | DocumentKind::DefinitionCollection(graph_doc) => {
-                (graph_doc.scope.clone(), doc.kind_id())
+                graph_doc.scope.clone()
             }
             _ => {
                 ui.label("Graph scope unavailable");
@@ -3642,15 +3763,32 @@ impl ShellApp {
             }
         };
 
+        let scope_kind = graph
+            .scope_summary(&scope)
+            .map(|summary| summary.kind)
+            .unwrap_or(autopcb_graph::ScopeKind::Design);
+
         if let Some(summary) = graph.inspector_summary_for_scope(&scope) {
             ui.heading(summary.title);
             if let Some(subtitle) = summary.subtitle {
                 ui.label(subtitle);
             }
+            if !summary.identity_rows.is_empty() {
+                ui.separator();
+                for (label, value) in summary.identity_rows {
+                    ui.label(format!("{label}: {value}"));
+                }
+            }
+            if !summary.relationship_rows.is_empty() {
+                ui.separator();
+                for (label, value) in summary.relationship_rows {
+                    ui.label(format!("{label}: {value}"));
+                }
+            }
         }
 
-        match kind_id {
-            crate::workbench::DOCUMENT_KIND_LOGICAL | crate::workbench::DOCUMENT_KIND_DESIGN_OVERVIEW => {
+        match scope_kind {
+            autopcb_graph::ScopeKind::Design => {
                 if let Some(render) = graph.logical_render_model(&scope) {
                     ui.separator();
                     ui.label(format!("Revision: {}", render.revision));
@@ -3664,21 +3802,31 @@ impl ShellApp {
                     empty_state(ui, &self.theme, "No logical render snapshot available.");
                 }
             }
-            crate::workbench::DOCUMENT_KIND_PHYSICAL => {
-                if let Some(render) = graph.physical_render_model(&scope) {
+            autopcb_graph::ScopeKind::DefinitionCollection => {
+                let logical = graph.logical_render_model(&scope);
+                let physical = graph.physical_render_model(&scope);
+                if logical.is_none() && physical.is_none() {
+                    empty_state(ui, &self.theme, "No collection render snapshot available.");
+                    return;
+                }
+
+                if let Some(render) = logical {
                     ui.separator();
-                    ui.label(format!("Revision: {}", render.revision));
-                    for warning in render.warnings {
-                        ui.label(warning);
-                    }
+                    ui.label(format!("Logical revision: {}", render.revision));
                     for shape in render.shapes {
-                        ui.label(format!("Shape: {}", shape.label.unwrap_or(shape.id)));
+                        ui.label(format!("Logical: {}", shape.label.unwrap_or(shape.id)));
                     }
-                } else {
-                    empty_state(ui, &self.theme, "No physical render snapshot available.");
+                }
+                if let Some(render) = physical {
+                    ui.separator();
+                    ui.label(format!("Physical revision: {}", render.revision));
+                    for shape in render.shapes {
+                        ui.label(format!("Physical: {}", shape.label.unwrap_or(shape.id)));
+                    }
                 }
             }
-            crate::workbench::DOCUMENT_KIND_DEFINITION_COLLECTION => {
+            autopcb_graph::ScopeKind::PartDefinition
+            | autopcb_graph::ScopeKind::PackageDefinition => {
                 if let Some(render) = graph.definition_preview_model(&scope) {
                     ui.separator();
                     ui.label(format!("Revision: {}", render.revision));
