@@ -15,6 +15,7 @@ use altium_format_spec::{
 };
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
 use egui_tiles::{Behavior, TileId, UiResponse};
+use rfd::FileDialog;
 
 use self::tabs::{TabProviderRegistry, TabRenderer};
 use crate::canvas::{Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView};
@@ -1863,7 +1864,7 @@ impl ShellApp {
         }
 
         for id in triggered {
-            self.queue_command_id(&id, None);
+            self.activate_command_id(&id);
         }
     }
 
@@ -1955,52 +1956,359 @@ impl ShellApp {
     }
 
     fn render_menu_bar_buttons(&mut self, ui: &mut egui::Ui) {
-        let ordered = [
-            "File",
-            "Edit",
-            "Selection",
-            "View",
-            "Go",
-            "Run",
-            "Terminal",
-            "Help",
-            "Session",
-            "App",
-            "Workspace",
-            "Navigate",
-            "PCB",
-            "Panel",
-            "Theme",
-            "History",
-            "Editor",
-        ];
-        let mut by_category: BTreeMap<&str, Vec<_>> = BTreeMap::new();
-        for cmd in self.commands.exposed() {
-            by_category.entry(cmd.category).or_default().push(cmd);
-        }
+        ui.menu_button("File", |ui| {
+            self.menu_intent_button(
+                ui,
+                "New Spec",
+                "file.new_spec",
+                Intent::File(crate::pipeline::FileIntent::NewSpec),
+            );
+            if ui
+                .button(self.menu_label_with_shortcut("Open...", "file.open"))
+                .clicked()
+            {
+                self.open_document_from_dialog();
+                ui.close();
+            }
+            if ui
+                .button(
+                    self.menu_label_with_shortcut("Open Workspace...", "workspace.open_project"),
+                )
+                .clicked()
+            {
+                self.open_workspace_project_from_dialog();
+                ui.close();
+            }
+            ui.separator();
+            self.menu_intent_button(
+                ui,
+                "Save",
+                "file.save",
+                Intent::File(crate::pipeline::FileIntent::Save),
+            );
+            self.menu_intent_button(
+                ui,
+                "Save All",
+                "file.save_all",
+                Intent::File(crate::pipeline::FileIntent::SaveAll),
+            );
+            ui.separator();
+            self.menu_intent_button(
+                ui,
+                "Close",
+                "file.close",
+                Intent::File(crate::pipeline::FileIntent::Close),
+            );
+            self.menu_intent_button(
+                ui,
+                "Close All",
+                "file.close_all",
+                Intent::File(crate::pipeline::FileIntent::CloseAll),
+            );
+            self.menu_intent_button(
+                ui,
+                "Close Others",
+                "file.close_others",
+                Intent::File(crate::pipeline::FileIntent::CloseOthers),
+            );
+        });
 
-        for category in ordered {
-            let Some(commands) = by_category.get(category) else {
-                continue;
-            };
-            ui.menu_button(category, |ui| {
-                for cmd in commands {
-                    let shortcut = self
-                        .shortcut_bindings
-                        .get(cmd.id)
-                        .map(|s| s.display())
-                        .unwrap_or_default();
-                    let label = if shortcut.is_empty() {
-                        cmd.title.to_owned()
-                    } else {
-                        format!("{}\t{}", cmd.title, shortcut)
-                    };
-                    if ui.button(label).clicked() {
-                        self.queue_command_id(cmd.id, None);
-                        ui.close();
-                    }
-                }
-            });
+        ui.menu_button("Edit", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Undo",
+                "edit.undo",
+                Intent::History(crate::pipeline::HistoryIntent::Undo),
+            );
+            self.menu_intent_button(
+                ui,
+                "Redo",
+                "edit.redo",
+                Intent::History(crate::pipeline::HistoryIntent::Redo),
+            );
+        });
+
+        ui.menu_button("View", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Next Editor Tab",
+                "view.next_editor_tab",
+                Intent::View(crate::pipeline::ViewIntent::NextEditorTab),
+            );
+            self.menu_intent_button(
+                ui,
+                "Previous Editor Tab",
+                "view.previous_editor_tab",
+                Intent::View(crate::pipeline::ViewIntent::PreviousEditorTab),
+            );
+            self.menu_intent_button(
+                ui,
+                "Split Editor Right",
+                "view.split_editor_right",
+                Intent::View(crate::pipeline::ViewIntent::SplitEditorRight),
+            );
+            self.menu_intent_button(
+                ui,
+                "Split Editor Down",
+                "view.split_editor_down",
+                Intent::View(crate::pipeline::ViewIntent::SplitEditorDown),
+            );
+            ui.separator();
+            self.menu_intent_button(
+                ui,
+                "Toggle Primary Sidebar",
+                "view.toggle_primary_sidebar",
+                Intent::View(crate::pipeline::ViewIntent::TogglePrimarySidebar),
+            );
+            self.menu_intent_button(
+                ui,
+                "Toggle Secondary Sidebar",
+                "view.toggle_secondary_sidebar",
+                Intent::View(crate::pipeline::ViewIntent::ToggleSecondarySidebar),
+            );
+            self.menu_intent_button(
+                ui,
+                "Toggle Bottom Panel",
+                "view.toggle_bottom_panel",
+                Intent::View(crate::pipeline::ViewIntent::ToggleBottomPanel),
+            );
+            self.menu_intent_button(
+                ui,
+                "Toggle Activity Bar",
+                "view.toggle_activity_bar",
+                Intent::View(crate::pipeline::ViewIntent::ToggleActivityBar),
+            );
+            self.menu_intent_button(
+                ui,
+                "Toggle Status Bar",
+                "view.toggle_status_bar",
+                Intent::View(crate::pipeline::ViewIntent::ToggleStatusBar),
+            );
+            self.menu_intent_button(
+                ui,
+                "Reset Layout",
+                "view.reset_layout",
+                Intent::View(crate::pipeline::ViewIntent::ResetLayout),
+            );
+        });
+
+        ui.menu_button("Workspace", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Open Folder",
+                "workspace.open",
+                Intent::Workspace(crate::pipeline::WorkspaceIntent::Open { root: None }),
+            );
+            if ui
+                .button(self.menu_label_with_shortcut("Open Project...", "workspace.open_project"))
+                .clicked()
+            {
+                self.open_workspace_project_from_dialog();
+                ui.close();
+            }
+            self.menu_intent_button(
+                ui,
+                "Reload Project",
+                "workspace.reload_project",
+                Intent::Workspace(crate::pipeline::WorkspaceIntent::ReloadProject),
+            );
+            self.menu_intent_button(
+                ui,
+                "Sync IR",
+                "workspace.sync_ir",
+                Intent::Workspace(crate::pipeline::WorkspaceIntent::SyncIr),
+            );
+            self.menu_intent_button(
+                ui,
+                "Close Workspace",
+                "workspace.close",
+                Intent::Workspace(crate::pipeline::WorkspaceIntent::Close),
+            );
+        });
+
+        ui.menu_button("Go", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Command Palette",
+                "workbench.command_palette",
+                Intent::Navigate(crate::pipeline::NavigateIntent::CommandPalette),
+            );
+            self.menu_intent_button(
+                ui,
+                "Quick Open",
+                "navigate.quick_open",
+                Intent::Navigate(crate::pipeline::NavigateIntent::QuickOpen),
+            );
+        });
+
+        ui.menu_button("Panel", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Show Explorer",
+                "panel.show.explorer",
+                Intent::Panel(crate::pipeline::PanelIntent::ShowExplorer),
+            );
+            self.menu_intent_button(
+                ui,
+                "Show Inspector",
+                "panel.show.inspector",
+                Intent::Panel(crate::pipeline::PanelIntent::ShowInspector),
+            );
+            self.menu_intent_button(
+                ui,
+                "Show Problems",
+                "panel.show.problems",
+                Intent::Panel(crate::pipeline::PanelIntent::ShowProblems),
+            );
+            self.menu_intent_button(
+                ui,
+                "Show Output",
+                "panel.show.output",
+                Intent::Panel(crate::pipeline::PanelIntent::ShowOutput),
+            );
+            self.menu_intent_button(
+                ui,
+                "Show Jobs",
+                "panel.show.jobs",
+                Intent::Panel(crate::pipeline::PanelIntent::ShowJobs),
+            );
+        });
+
+        ui.menu_button("Theme", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Theme Manager",
+                "theme.open_manager",
+                Intent::Theme(crate::pipeline::ThemeIntent::OpenManager),
+            );
+            self.menu_intent_button(
+                ui,
+                "Next Theme",
+                "theme.next",
+                Intent::Theme(crate::pipeline::ThemeIntent::NextTheme),
+            );
+            self.menu_intent_button(
+                ui,
+                "Previous Theme",
+                "theme.previous",
+                Intent::Theme(crate::pipeline::ThemeIntent::PreviousTheme),
+            );
+        });
+
+        ui.menu_button("Session", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Save Session Now",
+                "session.save_now",
+                Intent::Session(crate::pipeline::SessionIntent::SaveNow),
+            );
+            self.menu_intent_button(
+                ui,
+                "Restore Last Session",
+                "session.restore_last",
+                Intent::Session(crate::pipeline::SessionIntent::RestoreLatest),
+            );
+        });
+
+        ui.menu_button("Help", |ui| {
+            self.menu_intent_button(
+                ui,
+                "About",
+                "help.about",
+                Intent::Help(crate::pipeline::HelpIntent::About),
+            );
+        });
+    }
+
+    fn menu_label_with_shortcut(&self, title: &str, command_id: &str) -> String {
+        let shortcut = self
+            .shortcut_bindings
+            .get(command_id)
+            .map(|s| s.display())
+            .unwrap_or_default();
+        if shortcut.is_empty() {
+            title.to_owned()
+        } else {
+            format!("{title}\t{shortcut}")
+        }
+    }
+
+    fn menu_intent_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        title: &str,
+        command_id: &str,
+        intent: Intent,
+    ) {
+        if ui
+            .button(self.menu_label_with_shortcut(title, command_id))
+            .clicked()
+        {
+            self.queue_intent(intent);
+            ui.close();
+        }
+    }
+
+    fn open_workspace_project_from_dialog(&mut self) {
+        let mut dialog = FileDialog::new().add_filter("Workspace Project", &["wrk", "prjpcb"]);
+        if let Some(root) = &self.model.workspace_root {
+            dialog = dialog.set_directory(root);
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.queue_intent(Intent::Workspace(
+                crate::pipeline::WorkspaceIntent::OpenProject { path: Some(path) },
+            ));
+        }
+    }
+
+    fn open_document_from_dialog(&mut self) {
+        let mut dialog = FileDialog::new()
+            .add_filter(
+                "Openable Files",
+                &[
+                    "wrk",
+                    "prjpcb",
+                    "pcbdoc",
+                    "sch",
+                    "sym",
+                    "pcb",
+                    "spec",
+                    "wrk-spec",
+                    "pcbdoc-spec",
+                    "schdoc-spec",
+                    "prjpcb-spec",
+                    "schlib-spec",
+                ],
+            )
+            .add_filter("Workspace Project", &["wrk", "prjpcb"])
+            .add_filter("Board", &["pcbdoc", "pcb", "pcbdoc-spec"])
+            .add_filter(
+                "Spec Source",
+                &[
+                    "sch",
+                    "sym",
+                    "spec",
+                    "wrk-spec",
+                    "schdoc-spec",
+                    "prjpcb-spec",
+                    "schlib-spec",
+                ],
+            );
+        if let Some(root) = &self.model.workspace_root {
+            dialog = dialog.set_directory(root);
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.queue_intent(Intent::File(crate::pipeline::FileIntent::Open {
+                path: Some(path),
+            }));
+        }
+    }
+
+    pub(crate) fn activate_command_id(&mut self, id: &str) {
+        match id {
+            "file.open" => self.open_document_from_dialog(),
+            "workspace.open_project" => self.open_workspace_project_from_dialog(),
+            _ => self.queue_command_id(id, None),
         }
     }
 

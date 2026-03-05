@@ -49,7 +49,7 @@ impl ShellApp {
 
                 if let Some(idx) = result.submitted_index {
                     if let Some(meta) = commands.get(idx) {
-                        self.queue_command_id(meta.id, None);
+                        self.activate_command_id(meta.id);
                         self.show_command_palette = false;
                         self.palette_focus_pending = false;
                     }
