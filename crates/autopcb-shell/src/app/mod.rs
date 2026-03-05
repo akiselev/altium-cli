@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime};
 
-use altium_format_render_png::{DEFAULT_SCALE, render_schdoc_png, render_schlib_component_png};
+use altium_format_render_png::{DEFAULT_SCALE, render_schlib_component_png};
 use altium_format_spec::parser::parse_spec;
 use altium_format_spec::{
     SpecDomain, SpecModel, apply_spec_schdoc, apply_spec_schlib, compile_spec,
 };
+use altium_format_types::coord::{Coord, CoordPoint};
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
 use egui_tiles::{Behavior, TileId, UiResponse};
 use rfd::FileDialog;
@@ -23,7 +24,8 @@ use crate::agents::{
     ProposalBundle, ProposalId, ProposalStatus,
 };
 use crate::canvas::{
-    BoardCanvasAction, MovePreview, Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView, translate_component,
+    BoardCanvasAction, MovePreview, Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView, SchDoc2dCanvas,
+    SchDocCanvasAction, SchDocCanvasView, SchMovePreview, translate_component,
 };
 use crate::commands::{
     CommandRegistry, ShortcutDef, StoredShortcut, build_context, selection_label,
@@ -178,6 +180,7 @@ pub struct ShellApp {
     last_drag_end_y: f32,
     canvas2d: Pcb2dCanvas,
     canvas3d: Pcb3dCanvas,
+    schdoc_canvas2d: SchDoc2dCanvas,
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
     agents: AgentWorkspaceState,
@@ -209,10 +212,15 @@ struct DocumentRuntime {
 
 #[derive(Debug, Clone)]
 enum ActiveInteraction {
-    MoveSelection {
+    BoardMoveSelection {
         designator: String,
         delta_x_mm: f32,
         delta_y_mm: f32,
+    },
+    SchDocMoveSelection {
+        designator: String,
+        delta_x_mils: f32,
+        delta_y_mils: f32,
     },
 }
 
@@ -350,6 +358,7 @@ impl ShellApp {
             last_drag_end_y: 0.0,
             canvas2d: Pcb2dCanvas::default(),
             canvas3d: Pcb3dCanvas,
+            schdoc_canvas2d: SchDoc2dCanvas::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             agents: AgentWorkspaceState::default(),
@@ -923,10 +932,12 @@ impl ShellApp {
     }
 
     fn resolve_context(&self) -> ResolveContext {
-        let active_document_is_board = self
-            .model
-            .active_document()
-            .is_some_and(|doc| matches!(doc.kind, DocumentKind::Board(_)));
+        let active_document_supports_tools = self.model.active_document().is_some_and(|doc| {
+            matches!(
+                doc.kind,
+                DocumentKind::Board(_) | DocumentKind::SchDocPreview(_)
+            )
+        });
         let selected_component = match &self.model.selection.primary {
             crate::workbench::SelectionKind::Component(designator) => Some(designator.clone()),
             _ => None,
@@ -939,7 +950,7 @@ impl ShellApp {
             show_bottom_panel: self.panel_visibility.show_bottom_panel,
             show_activity_bar: self.panel_visibility.show_activity_bar,
             show_status_bar: self.panel_visibility.show_status_bar,
-            active_document_is_board,
+            active_document_supports_tools,
             selected_component,
         }
     }
@@ -1418,17 +1429,30 @@ impl ShellApp {
                 )
             }
             Command::ToolBeginMoveSelection { designator } => {
+                let active_kind = self.model.active_document().map(|doc| doc.kind_id());
                 let Some(runtime) = self.active_document_runtime_mut() else {
                     self.model
                         .problems
                         .push("No active document runtime for move start".to_owned());
                     return (None, Vec::new(), Vec::new());
                 };
-                runtime.active_interaction = Some(ActiveInteraction::MoveSelection {
-                    designator,
-                    delta_x_mm: 0.0,
-                    delta_y_mm: 0.0,
-                });
+                runtime.active_interaction = match active_kind {
+                    Some(crate::workbench::DOCUMENT_KIND_BOARD) => {
+                        Some(ActiveInteraction::BoardMoveSelection {
+                            designator,
+                            delta_x_mm: 0.0,
+                            delta_y_mm: 0.0,
+                        })
+                    }
+                    Some(crate::workbench::DOCUMENT_KIND_SCHDOC_PREVIEW) => {
+                        Some(ActiveInteraction::SchDocMoveSelection {
+                            designator,
+                            delta_x_mils: 0.0,
+                            delta_y_mils: 0.0,
+                        })
+                    }
+                    _ => None,
+                };
                 (None, Vec::new(), Vec::new())
             }
             Command::ToolPreviewMoveSelection {
@@ -1436,17 +1460,30 @@ impl ShellApp {
                 delta_x_mm,
                 delta_y_mm,
             } => {
+                let active_kind = self.model.active_document().map(|doc| doc.kind_id());
                 let Some(runtime) = self.active_document_runtime_mut() else {
                     self.model
                         .problems
                         .push("No active document runtime for move preview".to_owned());
                     return (None, Vec::new(), Vec::new());
                 };
-                runtime.active_interaction = Some(ActiveInteraction::MoveSelection {
-                    designator,
-                    delta_x_mm,
-                    delta_y_mm,
-                });
+                runtime.active_interaction = match active_kind {
+                    Some(crate::workbench::DOCUMENT_KIND_BOARD) => {
+                        Some(ActiveInteraction::BoardMoveSelection {
+                            designator,
+                            delta_x_mm,
+                            delta_y_mm,
+                        })
+                    }
+                    Some(crate::workbench::DOCUMENT_KIND_SCHDOC_PREVIEW) => {
+                        Some(ActiveInteraction::SchDocMoveSelection {
+                            designator,
+                            delta_x_mils: delta_x_mm,
+                            delta_y_mils: delta_y_mm,
+                        })
+                    }
+                    _ => None,
+                };
                 (None, Vec::new(), Vec::new())
             }
             Command::MoveComponent {
@@ -1468,7 +1505,7 @@ impl ShellApp {
                 );
                 if !moved {
                     self.model.problems.push(format!(
-                        "Selected component '{}' is no longer available in the active board",
+                        "Selected component '{}' is no longer available in the active document",
                         designator
                     ));
                     return (None, Vec::new(), Vec::new());
@@ -1682,7 +1719,7 @@ impl ShellApp {
             .active_interaction
             .as_ref()?
         {
-            ActiveInteraction::MoveSelection {
+            ActiveInteraction::BoardMoveSelection {
                 designator,
                 delta_x_mm,
                 delta_y_mm,
@@ -1691,6 +1728,27 @@ impl ShellApp {
                 delta_x_mm: *delta_x_mm,
                 delta_y_mm: *delta_y_mm,
             }),
+            ActiveInteraction::SchDocMoveSelection { .. } => None,
+        }
+    }
+
+    fn schdoc_move_preview_for_document(&self, id: DocumentId) -> Option<SchMovePreview> {
+        match self
+            .document_runtime
+            .get(&id)?
+            .active_interaction
+            .as_ref()?
+        {
+            ActiveInteraction::SchDocMoveSelection {
+                designator,
+                delta_x_mils,
+                delta_y_mils,
+            } => Some(SchMovePreview {
+                designator: designator.clone(),
+                delta_x_mils: *delta_x_mils,
+                delta_y_mils: *delta_y_mils,
+            }),
+            ActiveInteraction::BoardMoveSelection { .. } => None,
         }
     }
 
@@ -1701,22 +1759,42 @@ impl ShellApp {
         delta_x_mm: f32,
         delta_y_mm: f32,
     ) -> bool {
-        let Some(doc) = self.model.documents.get_mut(&document_id) else {
-            return false;
-        };
-        let DocumentKind::Board(board) = &mut doc.kind else {
-            return false;
-        };
-        let Some((_, component)) = board
-            .ir
-            .components
-            .iter_mut()
-            .find(|(_, component)| component.designator == designator)
+        let Some(kind_id) = self
+            .model
+            .documents
+            .get(&document_id)
+            .map(|doc| doc.kind_id())
         else {
             return false;
         };
-        translate_component(component, delta_x_mm, delta_y_mm);
-        true
+        match kind_id {
+            crate::workbench::DOCUMENT_KIND_BOARD => {
+                let Some(doc) = self.model.documents.get_mut(&document_id) else {
+                    return false;
+                };
+                let DocumentKind::Board(board) = &mut doc.kind else {
+                    return false;
+                };
+                let Some((_, component)) = board
+                    .ir
+                    .components
+                    .iter_mut()
+                    .find(|(_, component)| component.designator == designator)
+                else {
+                    return false;
+                };
+                translate_component(component, delta_x_mm, delta_y_mm);
+                true
+            }
+            crate::workbench::DOCUMENT_KIND_SCHDOC_PREVIEW => self
+                .move_schdoc_component_by_designator(
+                    document_id,
+                    designator,
+                    delta_x_mm,
+                    delta_y_mm,
+                ),
+            _ => false,
+        }
     }
 
     fn handle_board_canvas_actions(&mut self, actions: Vec<BoardCanvasAction>) {
@@ -1754,6 +1832,48 @@ impl ShellApp {
                         crate::pipeline::ToolIntent::CommitMoveSelection {
                             delta_x_mm,
                             delta_y_mm,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    fn handle_schdoc_canvas_actions(&mut self, actions: Vec<SchDocCanvasAction>) {
+        for action in actions {
+            match action {
+                SchDocCanvasAction::ClearSelection => {
+                    self.queue_intent(Intent::Selection(crate::pipeline::SelectionIntent::Clear));
+                }
+                SchDocCanvasAction::SelectComponent(designator) => {
+                    self.queue_intent(Intent::Selection(
+                        crate::pipeline::SelectionIntent::SelectComponent { designator },
+                    ));
+                }
+                SchDocCanvasAction::BeginMoveSelection => {
+                    self.queue_intent(Intent::Tool(
+                        crate::pipeline::ToolIntent::BeginMoveSelection,
+                    ));
+                }
+                SchDocCanvasAction::PreviewMoveSelection {
+                    delta_x_mils,
+                    delta_y_mils,
+                } => {
+                    self.queue_intent(Intent::Tool(
+                        crate::pipeline::ToolIntent::PreviewMoveSelection {
+                            delta_x_mm: delta_x_mils,
+                            delta_y_mm: delta_y_mils,
+                        },
+                    ));
+                }
+                SchDocCanvasAction::CommitMoveSelection {
+                    delta_x_mils,
+                    delta_y_mils,
+                } => {
+                    self.queue_intent(Intent::Tool(
+                        crate::pipeline::ToolIntent::CommitMoveSelection {
+                            delta_x_mm: delta_x_mils,
+                            delta_y_mm: delta_y_mils,
                         },
                     ));
                 }
@@ -3386,16 +3506,61 @@ impl ShellApp {
             }
         };
 
-        let png = match render_schdoc_spec_png(&source_text) {
-            Ok(bytes) => bytes,
+        let schdoc = match build_schdoc_from_spec_source(&source_text) {
+            Ok(doc) => doc,
             Err(err) => {
                 ui.colored_label(self.theme.text_disabled, err);
                 return;
             }
         };
+        let sheet = match schdoc.sheet() {
+            Ok(sheet) => sheet,
+            Err(err) => {
+                ui.colored_label(
+                    self.theme.text_disabled,
+                    format!("failed to decode sheet: {err}"),
+                );
+                return;
+            }
+        };
 
-        let key = format!("schdoc-preview:{}", source_path.display());
-        self.render_png_preview(ui, &key, &source_text, &png);
+        self.ensure_runtime_for_document(document_id);
+        let active_tool = self
+            .document_runtime
+            .get(&document_id)
+            .map(|runtime| runtime.active_tool)
+            .unwrap_or(ToolId::Select);
+        let move_preview = self.schdoc_move_preview_for_document(document_id);
+
+        let tools = [
+            SegmentItem::new(ToolId::Select, "Select"),
+            SegmentItem::new(ToolId::Move, "Move"),
+            SegmentItem::new(ToolId::Route, "Route"),
+            SegmentItem::new(ToolId::Pour, "Pour"),
+        ];
+        if let Some(changed) = segmented_bar(ui, &self.theme, active_tool, &tools) {
+            self.queue_intent(Intent::Tool(crate::pipeline::ToolIntent::SetActive {
+                tool: changed,
+            }));
+        }
+        if let Some(preview) = &move_preview {
+            ui.label(format!(
+                "Move preview: {} dx={:.0}mil dy={:.0}mil",
+                preview.designator, preview.delta_x_mils, preview.delta_y_mils
+            ));
+        }
+        ui.separator();
+
+        let selection = self.model.selection.primary.clone();
+        let actions = self.schdoc_canvas2d.ui(
+            ui,
+            &sheet,
+            &selection,
+            active_tool,
+            move_preview.as_ref(),
+            false,
+        );
+        self.handle_schdoc_canvas_actions(actions);
     }
 
     pub(super) fn render_schlib_gallery_document(
@@ -3572,6 +3737,68 @@ impl ShellApp {
         if let Ok(text) = fs::read_to_string(&source_path) {
             self.model.open_spec_document(Some(source_path), text);
         }
+    }
+
+    fn ensure_source_spec_document(
+        &mut self,
+        preview_document_id: DocumentId,
+    ) -> Result<DocumentId, String> {
+        let (source_path, source_spec_document) =
+            match self.model.documents.get(&preview_document_id) {
+                Some(doc) => match &doc.kind {
+                    DocumentKind::SchDocPreview(preview) => {
+                        (preview.source_path.clone(), preview.source_spec_document)
+                    }
+                    _ => return Err("schematic preview unavailable".to_owned()),
+                },
+                None => return Err("schematic preview unavailable".to_owned()),
+            };
+
+        if let Some(doc_id) = source_spec_document
+            && self.model.documents.contains_key(&doc_id)
+        {
+            return Ok(doc_id);
+        }
+
+        let text = fs::read_to_string(&source_path)
+            .map_err(|e| format!("failed to read {}: {e}", source_path.display()))?;
+        let doc_id = self.model.open_spec_document(Some(source_path), text);
+        self.model.set_active_tab(preview_document_id);
+        if let Some(doc) = self.model.documents.get_mut(&preview_document_id)
+            && let DocumentKind::SchDocPreview(preview) = &mut doc.kind
+        {
+            preview.source_spec_document = Some(doc_id);
+        }
+        Ok(doc_id)
+    }
+
+    fn move_schdoc_component_by_designator(
+        &mut self,
+        preview_document_id: DocumentId,
+        designator: &str,
+        delta_x_mils: f32,
+        delta_y_mils: f32,
+    ) -> bool {
+        let Ok(source_doc_id) = self.ensure_source_spec_document(preview_document_id) else {
+            return false;
+        };
+        let Some(doc) = self.model.documents.get_mut(&source_doc_id) else {
+            return false;
+        };
+        let DocumentKind::Spec(spec) = &mut doc.kind else {
+            return false;
+        };
+        let Ok(updated_text) =
+            rewrite_component_location_in_spec(&spec.text, designator, delta_x_mils, delta_y_mils)
+        else {
+            return false;
+        };
+        spec.text = updated_text;
+        doc.dirty = true;
+        let _ = self.model.bump_document_revision(source_doc_id);
+        let _ = self.model.bump_document_revision(preview_document_id);
+        self.mark_session_dirty();
+        true
     }
 
     fn render_png_preview(&mut self, ui: &mut egui::Ui, cache_key: &str, source: &str, png: &[u8]) {
@@ -3966,7 +4193,7 @@ fn build_schlib_from_spec_source(source_text: &str) -> Result<altium_format::Sch
     Ok(lib)
 }
 
-fn render_schdoc_spec_png(source_text: &str) -> Result<Vec<u8>, String> {
+fn build_schdoc_from_spec_source(source_text: &str) -> Result<altium_format::SchDoc, String> {
     let ast = parse_spec(source_text).map_err(|e| e.to_string())?;
     let model = compile_spec(&ast, SpecDomain::SchDoc).map_err(|e| e.to_string())?;
     let SpecModel::SchDoc(spec) = model else {
@@ -3974,14 +4201,103 @@ fn render_schdoc_spec_png(source_text: &str) -> Result<Vec<u8>, String> {
     };
     let mut doc = altium_format::SchDoc::new_blank_ad26();
     apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
-    render_schdoc_png(&doc, DEFAULT_SCALE * 0.5).map_err(|e| e.to_string())
+    Ok(doc)
+}
+
+fn rewrite_component_location_in_spec(
+    source: &str,
+    designator: &str,
+    delta_x_mils: f32,
+    delta_y_mils: f32,
+) -> Result<String, String> {
+    let mut lines: Vec<String> = source.lines().map(ToOwned::to_owned).collect();
+    let mut in_component = false;
+    let mut brace_depth = 0_i32;
+    let mut component_start = None;
+    let quoted_header = format!("component \"{designator}\"");
+    let bare_header = format!("component {designator}");
+
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if !in_component
+            && (trimmed.starts_with(&quoted_header) || trimmed.starts_with(&bare_header))
+        {
+            in_component = true;
+            component_start = Some(idx);
+        }
+
+        if in_component {
+            brace_depth += line.matches('{').count() as i32;
+            brace_depth -= line.matches('}').count() as i32;
+            if trimmed.starts_with("at:") {
+                let current = parse_spec_coord_point(trimmed.trim_start_matches("at:").trim())?;
+                let next = CoordPoint::new(
+                    current.x + Coord::from_mils_f64(delta_x_mils as f64),
+                    current.y + Coord::from_mils_f64(delta_y_mils as f64),
+                );
+                let indent = line.chars().take_while(|c| c.is_ascii_whitespace()).count();
+                lines[idx] = format!("{}at: {}", " ".repeat(indent), next);
+                return Ok(lines.join("\n") + if source.ends_with('\n') { "\n" } else { "" });
+            }
+            if brace_depth <= 0 {
+                break;
+            }
+        }
+    }
+
+    Err(match component_start {
+        Some(_) => format!("component '{designator}' has no at: property"),
+        None => format!("component '{designator}' not found in schematic spec"),
+    })
+}
+
+fn parse_spec_coord_point(value: &str) -> Result<CoordPoint, String> {
+    let trimmed = value.trim();
+    let inner = trimmed
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .ok_or_else(|| format!("invalid coordinate point '{value}'"))?;
+    let mut parts = inner.split(',');
+    let x = parts
+        .next()
+        .ok_or_else(|| format!("invalid coordinate point '{value}'"))
+        .and_then(parse_spec_coord)?;
+    let y = parts
+        .next()
+        .ok_or_else(|| format!("invalid coordinate point '{value}'"))
+        .and_then(parse_spec_coord)?;
+    if parts.next().is_some() {
+        return Err(format!("invalid coordinate point '{value}'"));
+    }
+    Ok(CoordPoint::new(x, y))
+}
+
+fn parse_spec_coord(value: &str) -> Result<Coord, String> {
+    let trimmed = value.trim();
+    if let Some(number) = trimmed.strip_suffix("mil") {
+        let parsed = number
+            .trim()
+            .parse::<f64>()
+            .map_err(|e| format!("invalid mil coordinate '{value}': {e}"))?;
+        return Ok(Coord::from_mils_f64(parsed));
+    }
+    if let Some(number) = trimmed.strip_suffix("mm") {
+        let parsed = number
+            .trim()
+            .parse::<f64>()
+            .map_err(|e| format!("invalid mm coordinate '{value}': {e}"))?;
+        return Ok(Coord::from_mms(parsed));
+    }
+    Err(format!("unsupported coordinate '{value}'"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         PanelVisibilityState, SecondarySidebarTab, clamp_bottom_panel_height, first_prompt_number,
+        parse_spec_coord_point, rewrite_component_location_in_spec,
     };
+    use altium_format_types::coord::Coord;
 
     #[test]
     fn bottom_panel_drag_up_increases_height() {
@@ -4019,6 +4335,20 @@ mod tests {
     fn prompt_number_parser_extracts_first_numeric_token() {
         assert_eq!(first_prompt_number("move U1 right 2.5 mm"), Some(2.5));
         assert_eq!(first_prompt_number("shift down"), None);
+    }
+
+    #[test]
+    fn rewrite_component_location_updates_at_line() {
+        let source = "component \"U1\" {\n    lib_reference: \"X\"\n    at: (1000mil, 800mil)\n}\n";
+        let updated = rewrite_component_location_in_spec(source, "U1", 50.0, -25.0).unwrap();
+        let at_line = updated
+            .lines()
+            .find(|line| line.trim_start().starts_with("at:"))
+            .expect("updated component has at line");
+        let point = parse_spec_coord_point(at_line.trim_start().trim_start_matches("at:").trim())
+            .expect("updated at line parses");
+        assert_eq!(point.x, Coord::from_mils_f64(1050.0));
+        assert!((point.y.to_mils() - 775.0).abs() < 0.001);
     }
 }
 

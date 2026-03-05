@@ -238,7 +238,7 @@ pub struct ResolveContext {
     pub show_bottom_panel: bool,
     pub show_activity_bar: bool,
     pub show_status_bar: bool,
-    pub active_document_is_board: bool,
+    pub active_document_supports_tools: bool,
     pub selected_component: Option<String>,
 }
 
@@ -618,10 +618,10 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
         };
     }
 
-    if matches!(intent, Intent::Tool(_)) && !ctx.active_document_is_board {
+    if matches!(intent, Intent::Tool(_)) && !ctx.active_document_supports_tools {
         return ResolveResult::Rejected {
             code: RejectCode::MissingBoardDocument,
-            message: "Tool commands require an active board document".to_owned(),
+            message: "Tool commands require an active board or schematic document".to_owned(),
         };
     }
 
@@ -923,7 +923,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: false,
+            active_document_supports_tools: false,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -984,7 +984,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: false,
+            active_document_supports_tools: false,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -1013,7 +1013,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: false,
+            active_document_supports_tools: false,
             selected_component: None,
         };
         let out = resolve_intent(intent, ctx);
@@ -1050,7 +1050,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: true,
+            active_document_supports_tools: true,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -1078,7 +1078,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: true,
+            active_document_supports_tools: true,
             selected_component: Some("U1".to_owned()),
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -1108,7 +1108,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: true,
+            active_document_supports_tools: true,
             selected_component: None,
         };
         let out = resolve_intent(intent, ctx);
@@ -1144,7 +1144,7 @@ mod tests {
             show_bottom_panel: true,
             show_activity_bar: true,
             show_status_bar: true,
-            active_document_is_board: false,
+            active_document_supports_tools: false,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
