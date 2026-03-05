@@ -226,7 +226,7 @@ impl WorkbenchModel {
         let title = path
             .as_ref()
             .map(|p| filename_or_fallback(p, "spec"))
-            .unwrap_or_else(|| "untitled-spec.pcbdoc-spec".to_owned());
+            .unwrap_or_else(|| "untitled-spec.wrk".to_owned());
         let doc = Document {
             id,
             title,

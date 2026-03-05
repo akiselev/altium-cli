@@ -3,15 +3,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use altium_format::{AltiumProject, PcbDoc, SchDoc, SchLib};
-use altium_format_spec::parser::parse_spec;
-use altium_format_spec::{
-    SpecDomain, SpecModel, apply_spec_pcbdoc, apply_spec_prjpcb, apply_spec_schdoc,
-    apply_spec_schlib, compile_spec, reconcile_pcbdoc, reconcile_prjpcb, reconcile_schdoc,
-    reconcile_schdoc_empty, reconcile_schlib, reconcile_schlib_empty,
-};
+use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
+use altium_format_spec::model::SchDocObjectSpec;
+use altium_format_spec::{dump_pcbdoc, dump_prjpcb, dump_schdoc, dump_schlib};
 use autopcb_ir::PcbIr;
 
 use crate::project_graph::{ProjectGraphDelta, build_project_graph};
@@ -25,8 +21,7 @@ pub enum JobKind {
     ParseProject,
     SyncBoardIr,
     SyncSchematicIr,
-    SpecPlan,
-    SpecApply,
+    ImportAltium,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,26 +43,10 @@ pub struct JobRequest {
 
 #[derive(Debug, Clone)]
 pub enum JobPayload {
-    ParseProject {
-        prjpcb_path: PathBuf,
-    },
-    SyncBoardIr {
-        pcbdoc_path: PathBuf,
-    },
-    SyncSchematicIr {
-        schdoc_path: PathBuf,
-    },
-    SpecPlan {
-        spec_path: PathBuf,
-        target_path: PathBuf,
-        domain: SpecDomain,
-    },
-    SpecApply {
-        spec_path: PathBuf,
-        target_path: PathBuf,
-        domain: SpecDomain,
-        dry_run: bool,
-    },
+    ParseProject { project_path: PathBuf },
+    SyncBoardIr { board_path: PathBuf },
+    SyncSchematicIr { schematic_path: PathBuf },
+    ImportAltium { source_path: PathBuf },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,9 +83,9 @@ pub struct SchematicIndex {
 #[derive(Debug)]
 pub enum JobArtifact {
     Diagnostics(Vec<DiagnosticItem>),
-    Eco(altium_format_spec::EngineeringChangeOrder),
     ProjectGraphDelta(ProjectGraphDelta),
     BoardIr { path: PathBuf, ir: PcbIr },
+    BoardSpecValidated { path: PathBuf },
     SchematicIndex(SchematicIndex),
 }
 
@@ -256,14 +235,14 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
     }
 
     let result = match req.payload {
-        JobPayload::ParseProject { prjpcb_path } => (|| -> Result<String, String> {
+        JobPayload::ParseProject { project_path } => (|| -> Result<String, String> {
             report_progress(
                 "parse_project",
                 Some(0.1),
-                format!("Loading {}", prjpcb_path.display()),
+                format!("Loading {}", project_path.display()),
                 &tx,
             );
-            let delta = build_project_graph(&prjpcb_path).map_err(|e| e.to_string())?;
+            let delta = build_project_graph(&project_path).map_err(|e| e.to_string())?;
             if cancel.is_cancelled() {
                 send_cancelled(id, &tx);
                 return Ok("Cancelled".to_owned());
@@ -274,57 +253,119 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
             ));
             Ok("Project graph parsed".to_owned())
         })(),
-        JobPayload::SyncBoardIr { pcbdoc_path } => (|| -> Result<String, String> {
+        JobPayload::SyncBoardIr { board_path } => (|| -> Result<String, String> {
             report_progress(
                 "sync_board_ir",
                 Some(0.2),
-                format!("Parsing {}", pcbdoc_path.display()),
+                format!("Parsing {}", board_path.display()),
                 &tx,
             );
-            let doc = PcbDoc::open(&pcbdoc_path).map_err(|e| e.to_string())?;
-            let board = doc.board().map_err(|e| e.to_string())?;
-            if cancel.is_cancelled() {
-                send_cancelled(id, &tx);
-                return Ok("Cancelled".to_owned());
+            let ext = board_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            if ext == "pcbdoc" {
+                let doc = PcbDoc::open(&board_path).map_err(|e| e.to_string())?;
+                let board = doc.board().map_err(|e| e.to_string())?;
+                if cancel.is_cancelled() {
+                    send_cancelled(id, &tx);
+                    return Ok("Cancelled".to_owned());
+                }
+                let ir = PcbIr::extract(&board).map_err(|e| e.to_string())?;
+                let _ = tx.send(JobEvent::Artifact(
+                    id,
+                    JobArtifact::BoardIr {
+                        path: board_path,
+                        ir,
+                    },
+                ));
+                Ok("Board IR refreshed".to_owned())
+            } else if ext == "pcb" {
+                let source = std::fs::read_to_string(&board_path).map_err(|e| e.to_string())?;
+                let ast =
+                    altium_format_spec::parser::parse_spec(&source).map_err(|e| e.to_string())?;
+                let model =
+                    altium_format_spec::compile_spec(&ast, altium_format_spec::SpecDomain::PcbDoc)
+                        .map_err(|e| e.to_string())?;
+                match model {
+                    altium_format_spec::SpecModel::PcbDoc(_) => {
+                        let _ = tx.send(JobEvent::Artifact(
+                            id,
+                            JobArtifact::BoardSpecValidated { path: board_path },
+                        ));
+                        Ok("Native board spec validated".to_owned())
+                    }
+                    _ => Err("native .pcb file did not compile as PcbDoc".to_owned()),
+                }
+            } else {
+                Err(format!(
+                    "unsupported board sync type for {}",
+                    board_path.display()
+                ))
             }
-            let ir = PcbIr::extract(&board).map_err(|e| e.to_string())?;
-            let _ = tx.send(JobEvent::Artifact(
-                id,
-                JobArtifact::BoardIr {
-                    path: pcbdoc_path,
-                    ir,
-                },
-            ));
-            Ok("Board IR refreshed".to_owned())
         })(),
-        JobPayload::SyncSchematicIr { schdoc_path } => (|| -> Result<String, String> {
+        JobPayload::SyncSchematicIr { schematic_path } => (|| -> Result<String, String> {
             report_progress(
                 "sync_sch_ir",
                 Some(0.2),
-                format!("Parsing {}", schdoc_path.display()),
+                format!("Parsing {}", schematic_path.display()),
                 &tx,
             );
-            let doc = SchDoc::open(&schdoc_path).map_err(|e| e.to_string())?;
-            let sheet = doc.sheet().map_err(|e| e.to_string())?;
-            let index = SchematicIndex {
-                path: schdoc_path,
-                component_count: sheet.components().len(),
-                net_label_count: sheet.net_labels().len(),
+            let ext = schematic_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let index = if ext == "schdoc" {
+                let doc = SchDoc::open(&schematic_path).map_err(|e| e.to_string())?;
+                let sheet = doc.sheet().map_err(|e| e.to_string())?;
+                SchematicIndex {
+                    path: schematic_path,
+                    component_count: sheet.components().len(),
+                    net_label_count: sheet.net_labels().len(),
+                }
+            } else if ext == "sch" {
+                let source = std::fs::read_to_string(&schematic_path).map_err(|e| e.to_string())?;
+                let ast =
+                    altium_format_spec::parser::parse_spec(&source).map_err(|e| e.to_string())?;
+                let model =
+                    altium_format_spec::compile_spec(&ast, altium_format_spec::SpecDomain::SchDoc)
+                        .map_err(|e| e.to_string())?;
+                match model {
+                    altium_format_spec::SpecModel::SchDoc(doc) => {
+                        let mut component_count = 0usize;
+                        let mut net_label_count = 0usize;
+                        for sheet in doc.sheets {
+                            component_count += sheet.components.len();
+                            net_label_count += sheet
+                                .objects
+                                .iter()
+                                .filter(|o| matches!(o, SchDocObjectSpec::NetLabel(_)))
+                                .count();
+                        }
+                        SchematicIndex {
+                            path: schematic_path,
+                            component_count,
+                            net_label_count,
+                        }
+                    }
+                    _ => {
+                        return Err("native .sch file did not compile as SchDoc".to_owned());
+                    }
+                }
+            } else {
+                return Err(format!(
+                    "unsupported schematic sync type for {}",
+                    schematic_path.display()
+                ));
             };
             let _ = tx.send(JobEvent::Artifact(id, JobArtifact::SchematicIndex(index)));
             Ok("Schematic index refreshed".to_owned())
         })(),
-        JobPayload::SpecPlan {
-            spec_path,
-            target_path,
-            domain,
-        } => run_spec_plan(id, &spec_path, &target_path, domain, &tx, &cancel),
-        JobPayload::SpecApply {
-            spec_path,
-            target_path,
-            domain,
-            dry_run,
-        } => run_spec_apply(id, &spec_path, &target_path, domain, dry_run, &tx, &cancel),
+        JobPayload::ImportAltium { source_path } => {
+            run_import_altium(id, &source_path, &tx, &cancel)
+        }
     };
 
     match result {
@@ -345,146 +386,91 @@ fn send_cancelled(id: JobId, tx: &Sender<JobEvent>) {
     let _ = tx.send(JobEvent::Cancelled(id));
 }
 
-fn run_spec_plan(
+fn run_import_altium(
     id: JobId,
-    spec_path: &Path,
-    target_path: &Path,
-    domain: SpecDomain,
+    source_path: &Path,
     tx: &Sender<JobEvent>,
     cancel: &CancelHandle,
 ) -> Result<String, String> {
-    let source = std::fs::read_to_string(spec_path).map_err(|e| e.to_string())?;
-    let ast = parse_spec(&source).map_err(|e| e.to_string())?;
-    let model = compile_spec(&ast, domain).map_err(|e| e.to_string())?;
-
+    let ext = source_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let target = match ext.as_str() {
+        "schdoc" => source_path.with_extension("sch"),
+        "schlib" => source_path.with_extension("sym"),
+        "pcbdoc" => source_path.with_extension("pcb"),
+        "pcblib" => source_path.with_extension("sym"),
+        "prjpcb" => source_path.with_extension("wrk"),
+        _ => {
+            return Err(format!(
+                "unsupported Altium import type: {}",
+                source_path.display()
+            ));
+        }
+    };
     if cancel.is_cancelled() {
         send_cancelled(id, tx);
         return Ok("Cancelled".to_owned());
     }
 
-    match model {
-        SpecModel::SchLib(spec) => {
-            let eco = if target_path.exists() {
-                let doc = SchLib::open(target_path).map_err(|e| e.to_string())?;
-                reconcile_schlib(
-                    &spec,
-                    &doc,
-                    target_path.to_path_buf(),
-                    spec_path.to_path_buf(),
-                )
-                .map_err(|e| e.to_string())?
-            } else {
-                reconcile_schlib_empty(&spec, target_path.to_path_buf(), spec_path.to_path_buf())
-            };
-            let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
-            Ok("Planned SchLib changes".to_owned())
+    let content = match ext.as_str() {
+        "schdoc" => {
+            let doc = SchDoc::open(source_path).map_err(|e| e.to_string())?;
+            dump_schdoc(&doc).map_err(|e| e.to_string())?
         }
-        SpecModel::PcbDoc(spec) => {
-            let doc = PcbDoc::open(target_path).map_err(|e| e.to_string())?;
-            let eco = reconcile_pcbdoc(
-                &spec,
-                &doc,
-                target_path.to_path_buf(),
-                spec_path.to_path_buf(),
-            )
-            .map_err(|e| e.to_string())?;
-            let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
-            Ok("Planned PcbDoc changes".to_owned())
+        "schlib" => {
+            let doc = SchLib::open(source_path).map_err(|e| e.to_string())?;
+            dump_schlib(&doc).map_err(|e| e.to_string())?
         }
-        SpecModel::SchDoc(spec) => {
-            let eco = if target_path.exists() {
-                let doc = SchDoc::open(target_path).map_err(|e| e.to_string())?;
-                reconcile_schdoc(
-                    &spec,
-                    &doc,
-                    target_path.to_path_buf(),
-                    spec_path.to_path_buf(),
-                )
-                .map_err(|e| e.to_string())?
-            } else {
-                reconcile_schdoc_empty(&spec, target_path.to_path_buf(), spec_path.to_path_buf())
-            };
-            let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
-            Ok("Planned SchDoc changes".to_owned())
+        "pcbdoc" => {
+            let doc = PcbDoc::open(source_path).map_err(|e| e.to_string())?;
+            dump_pcbdoc(&doc).map_err(|e| e.to_string())?
         }
-        SpecModel::PrjPcb(spec) => {
-            let doc = AltiumProject::open(target_path).map_err(|e| e.to_string())?;
-            let eco = reconcile_prjpcb(
-                &spec,
-                &doc,
-                target_path.to_path_buf(),
-                spec_path.to_path_buf(),
-            )
-            .map_err(|e| e.to_string())?;
-            let _ = tx.send(JobEvent::Artifact(id, JobArtifact::Eco(eco)));
-            Ok("Planned PrjPcb changes".to_owned())
+        "prjpcb" => {
+            let doc = AltiumProject::open(source_path).map_err(|e| e.to_string())?;
+            rewrite_to_native_extensions(&dump_prjpcb(&doc).map_err(|e| e.to_string())?)
         }
-        _ => Err("only SchLib/PcbDoc/SchDoc/PrjPcb specs are supported in shell jobs".to_owned()),
-    }
+        "pcblib" => {
+            let lib = PcbLib::open(source_path).map_err(|e| e.to_string())?;
+            let mut out = String::new();
+            out.push_str("// PcbLib import placeholder\n");
+            out.push_str("// TODO: add native .sym board-library serializer.\n");
+            out.push_str(&format!("// Footprints: {}\n", lib.footprint_count()));
+            out
+        }
+        _ => unreachable!(),
+    };
+
+    std::fs::write(&target, content).map_err(|e| e.to_string())?;
+    let _ = tx.send(JobEvent::Progress(
+        id,
+        JobProgress {
+            stage: "import_altium".to_owned(),
+            percent: Some(1.0),
+            message: format!("Imported to {}", target.display()),
+        },
+    ));
+    Ok(format!(
+        "Imported {} -> {}",
+        source_path.display(),
+        target.display()
+    ))
 }
 
-fn run_spec_apply(
-    id: JobId,
-    spec_path: &Path,
-    target_path: &Path,
-    domain: SpecDomain,
-    dry_run: bool,
-    tx: &Sender<JobEvent>,
-    cancel: &CancelHandle,
-) -> Result<String, String> {
-    if dry_run {
-        return run_spec_plan(id, spec_path, target_path, domain, tx, cancel);
-    }
-
-    let source = std::fs::read_to_string(spec_path).map_err(|e| e.to_string())?;
-    let ast = parse_spec(&source).map_err(|e| e.to_string())?;
-    let model = compile_spec(&ast, domain).map_err(|e| e.to_string())?;
-
-    if cancel.is_cancelled() {
-        send_cancelled(id, tx);
-        return Ok("Cancelled".to_owned());
-    }
-
-    match model {
-        SpecModel::SchLib(spec) => {
-            let mut doc = if target_path.exists() {
-                SchLib::open(target_path).map_err(|e| e.to_string())?
-            } else {
-                let mut lib = SchLib::new_blank_ad26().map_err(|e| e.to_string())?;
-                let _ = lib.remove_component("Component_1");
-                lib
-            };
-            apply_spec_schlib(&spec, &mut doc).map_err(|e| e.to_string())?;
-            doc.save(target_path).map_err(|e| e.to_string())?;
-            Ok("Applied SchLib spec".to_owned())
-        }
-        SpecModel::PcbDoc(spec) => {
-            let mut doc = PcbDoc::open(target_path).map_err(|e| e.to_string())?;
-            apply_spec_pcbdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
-            doc.save(target_path).map_err(|e| e.to_string())?;
-            thread::sleep(Duration::from_millis(5));
-            Ok("Applied PcbDoc spec".to_owned())
-        }
-        SpecModel::SchDoc(spec) => {
-            let mut doc = if target_path.exists() {
-                SchDoc::open(target_path).map_err(|e| e.to_string())?
-            } else {
-                SchDoc::new_blank_ad26()
-            };
-            apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
-            doc.save(target_path).map_err(|e| e.to_string())?;
-            Ok("Applied SchDoc spec".to_owned())
-        }
-        SpecModel::PrjPcb(spec) => {
-            let mut doc = if target_path.exists() {
-                AltiumProject::open(target_path).map_err(|e| e.to_string())?
-            } else {
-                AltiumProject::new_blank_ad26()
-            };
-            apply_spec_prjpcb(&spec, &mut doc).map_err(|e| e.to_string())?;
-            doc.save(target_path).map_err(|e| e.to_string())?;
-            Ok("Applied PrjPcb spec".to_owned())
-        }
-        _ => Err("only SchLib/PcbDoc/SchDoc/PrjPcb specs are supported in shell jobs".to_owned()),
-    }
+fn rewrite_to_native_extensions(input: &str) -> String {
+    input
+        .replace(".SchDoc", ".sch")
+        .replace(".SCHDOC", ".sch")
+        .replace(".schdoc", ".sch")
+        .replace(".SchLib", ".sym")
+        .replace(".SCHLIB", ".sym")
+        .replace(".schlib", ".sym")
+        .replace(".PcbDoc", ".pcb")
+        .replace(".PCBDOC", ".pcb")
+        .replace(".pcbdoc", ".pcb")
+        .replace(".PrjPcb", ".wrk")
+        .replace(".PRJPCB", ".wrk")
+        .replace(".prjpcb", ".wrk")
 }

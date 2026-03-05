@@ -19,7 +19,8 @@ pub enum IpcRequest {
         path: String,
     },
     OpenProject {
-        prjpcb_path: String,
+        #[serde(alias = "prjpcb_path")]
+        project_path: String,
     },
     RunJob {
         kind: String,

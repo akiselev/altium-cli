@@ -40,6 +40,7 @@ pub enum WorkspaceIntent {
 pub enum FileIntent {
     NewSpec,
     Open { path: Option<PathBuf> },
+    ImportAltium { path: Option<PathBuf> },
     Save,
     SaveAll,
     Revert,
@@ -90,8 +91,17 @@ pub enum JobsIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorIntent {
     ReopenClosed,
-    ActivateDocument { id: DocumentId },
-    CloseDocument { id: DocumentId },
+    ActivateDocument {
+        id: DocumentId,
+    },
+    CloseDocument {
+        id: DocumentId,
+    },
+    OpenSchLibComponent {
+        source_path: PathBuf,
+        source_spec_document: Option<DocumentId>,
+        component_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,12 +126,6 @@ pub enum SelectionIntent {
 pub enum CrossprobeIntent {
     SelectComponent { designator: String },
     SelectNet { net_name: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SpecIntent {
-    Plan,
-    Apply,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +172,6 @@ pub enum Intent {
     Pcb(PcbIntent),
     Selection(SelectionIntent),
     Crossprobe(CrossprobeIntent),
-    Spec(SpecIntent),
     Run(RunIntent),
     Help(HelpIntent),
     Terminal(TerminalIntent),
@@ -236,27 +239,42 @@ pub enum Command {
     SetEditorSplitDown,
     ResetLayout,
     EditorReopenClosed,
-    EditorActivateDocument { id: DocumentId },
-    EditorCloseDocument { id: DocumentId },
+    EditorActivateDocument {
+        id: DocumentId,
+    },
+    EditorCloseDocument {
+        id: DocumentId,
+    },
+    EditorOpenSchLibComponent {
+        source_path: PathBuf,
+        source_spec_document: Option<DocumentId>,
+        component_name: String,
+    },
 
     FileClose,
     FileCloseAll,
     FileCloseOthers,
 
-    WorkspaceOpen { root: Option<PathBuf> },
-    WorkspaceOpenProject { path: Option<PathBuf> },
+    WorkspaceOpen {
+        root: Option<PathBuf>,
+    },
+    WorkspaceOpenProject {
+        path: Option<PathBuf>,
+    },
     WorkspaceReloadProject,
     WorkspaceSyncIr,
     WorkspaceClose,
 
     FileNewSpec,
-    FileOpen { path: Option<PathBuf> },
+    FileOpen {
+        path: Option<PathBuf>,
+    },
+    FileImportAltium {
+        path: Option<PathBuf>,
+    },
     FileSave,
     FileSaveAll,
     FileRevert,
-
-    SpecPlan,
-    SpecApply,
 
     JobsCancelActive,
 
@@ -272,8 +290,12 @@ pub enum Command {
     ThemeOpenManagerTab,
     ThemeCycleNext,
     ThemeCyclePrevious,
-    ThemeSetActive { id: ThemeId },
-    ThemeSetUiScale { scale: f32 },
+    ThemeSetActive {
+        id: ThemeId,
+    },
+    ThemeSetUiScale {
+        scale: f32,
+    },
 
     EmitEffect(Effect),
 }
@@ -328,6 +350,9 @@ pub fn intent_from_command_id(id: &str, arg: Option<String>) -> Result<Intent, I
 
         "file.new_spec" => Ok(Intent::File(FileIntent::NewSpec)),
         "file.open" => Ok(Intent::File(FileIntent::Open {
+            path: arg.map(PathBuf::from),
+        })),
+        "file.import_altium" => Ok(Intent::File(FileIntent::ImportAltium {
             path: arg.map(PathBuf::from),
         })),
         "file.save" => Ok(Intent::File(FileIntent::Save)),
@@ -409,9 +434,6 @@ pub fn intent_from_command_id(id: &str, arg: Option<String>) -> Result<Intent, I
 
         "selection.clear" => Ok(Intent::Selection(SelectionIntent::Clear)),
 
-        "spec.plan" => Ok(Intent::Spec(SpecIntent::Plan)),
-        "spec.apply" => Ok(Intent::Spec(SpecIntent::Apply)),
-
         "crossprobe.select_component" => {
             let designator = arg.ok_or_else(|| IntentParseError::InvalidArgument {
                 id: id.to_owned(),
@@ -492,6 +514,9 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
 
         Intent::File(FileIntent::NewSpec) => vec![C::FileNewSpec],
         Intent::File(FileIntent::Open { path }) => vec![C::FileOpen { path: path.clone() }],
+        Intent::File(FileIntent::ImportAltium { path }) => {
+            vec![C::FileImportAltium { path: path.clone() }]
+        }
         Intent::File(FileIntent::Save) => vec![C::FileSave],
         Intent::File(FileIntent::SaveAll) => vec![C::FileSaveAll],
         Intent::File(FileIntent::Revert) => vec![C::FileRevert],
@@ -576,6 +601,17 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
         Intent::Editor(EditorIntent::CloseDocument { id }) => {
             vec![C::EditorCloseDocument { id: *id }]
         }
+        Intent::Editor(EditorIntent::OpenSchLibComponent {
+            source_path,
+            source_spec_document,
+            component_name,
+        }) => {
+            vec![C::EditorOpenSchLibComponent {
+                source_path: source_path.clone(),
+                source_spec_document: *source_spec_document,
+                component_name: component_name.clone(),
+            }]
+        }
 
         Intent::History(HistoryIntent::Undo) | Intent::History(HistoryIntent::Redo) => Vec::new(),
 
@@ -593,9 +629,6 @@ pub fn resolve_intent(intent: Intent, ctx: ResolveContext) -> ResolveResult {
         Intent::Crossprobe(CrossprobeIntent::SelectNet { net_name }) => {
             vec![C::SetSelection(SelectionKind::Net(net_name.clone()))]
         }
-
-        Intent::Spec(SpecIntent::Plan) => vec![C::SpecPlan],
-        Intent::Spec(SpecIntent::Apply) => vec![C::SpecApply],
 
         Intent::Run(RunIntent::StartLast) => vec![C::RunStartLast],
         Intent::Help(HelpIntent::About) => vec![C::HelpAbout],
@@ -679,5 +712,52 @@ mod tests {
     fn parse_theme_open_manager_command() {
         let intent = intent_from_command_id("theme.open_manager", None).expect("must parse");
         assert_eq!(intent, Intent::Theme(ThemeIntent::OpenManager));
+    }
+
+    #[test]
+    fn parse_file_import_altium_with_arg() {
+        let intent = intent_from_command_id("file.import_altium", Some("x.SchDoc".to_owned()))
+            .expect("must parse");
+        assert_eq!(
+            intent,
+            Intent::File(FileIntent::ImportAltium {
+                path: Some(PathBuf::from("x.SchDoc"))
+            })
+        );
+    }
+
+    #[test]
+    fn spec_plan_command_removed() {
+        let err = intent_from_command_id("spec.plan", None).expect_err("must fail");
+        assert!(matches!(err, IntentParseError::UnknownCommandId { .. }));
+    }
+
+    #[test]
+    fn resolve_open_schlib_component_intent_to_single_command() {
+        let intent = Intent::Editor(EditorIntent::OpenSchLibComponent {
+            source_path: PathBuf::from("lib.sym"),
+            source_spec_document: Some(DocumentId(12)),
+            component_name: "R_0603".to_owned(),
+        });
+        let ctx = ResolveContext {
+            workspace_open: true,
+            selection_exists: false,
+            show_primary_sidebar: true,
+            show_secondary_sidebar: true,
+            show_bottom_panel: true,
+            show_activity_bar: true,
+            show_status_bar: true,
+        };
+        let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
+            panic!("must resolve");
+        };
+        assert_eq!(
+            transaction.commands,
+            vec![Command::EditorOpenSchLibComponent {
+                source_path: PathBuf::from("lib.sym"),
+                source_spec_document: Some(DocumentId(12)),
+                component_name: "R_0603".to_owned(),
+            }]
+        );
     }
 }

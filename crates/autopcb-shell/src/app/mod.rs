@@ -6,7 +6,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use altium_format_render_png::{DEFAULT_SCALE, render_schdoc_png, render_schlib_component_png};
 use altium_format_spec::parser::parse_spec;
@@ -31,7 +31,7 @@ use crate::pipeline::{
     intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
-use crate::session::{FileSessionStore, RestoreMode, SessionSnapshotV1, SessionTabRef};
+use crate::session::{FileSessionStore, RestoreMode, SessionSnapshot, SessionTabRef};
 use crate::session::{
     SessionDocumentState, SessionPrefsState, SessionSelectionState, SessionStore, SessionTabState,
     SessionUiState, SessionWorkspaceState, now_unix_ms, shortcut_overrides_from_stored,
@@ -180,6 +180,8 @@ pub struct ShellApp {
     session_store: FileSessionStore,
     session_dirty: bool,
     last_session_save: Instant,
+    watched_files: BTreeMap<PathBuf, SystemTime>,
+    last_watch_scan: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +264,8 @@ impl ShellApp {
             session_store,
             session_dirty: false,
             last_session_save: Instant::now(),
+            watched_files: BTreeMap::new(),
+            last_watch_scan: Instant::now(),
         };
         app.refresh_theme_tokens();
         app.restore_mode(restore_mode);
@@ -320,7 +324,7 @@ impl ShellApp {
         }
     }
 
-    fn build_snapshot(&self) -> SessionSnapshotV1 {
+    fn build_snapshot(&self) -> SessionSnapshot {
         let mut untitled_by_id: BTreeMap<DocumentId, String> = BTreeMap::new();
         for id in &self.model.open_editor_tabs {
             if let Some(doc) = self.model.documents.get(id)
@@ -390,7 +394,7 @@ impl ShellApp {
                 .map(|(k, v)| (k.clone(), shortcut_to_stored(*v))),
         );
 
-        SessionSnapshotV1 {
+        SessionSnapshot {
             schema_version: crate::session::SESSION_SCHEMA_VERSION,
             saved_at_unix_ms: now_unix_ms(),
             ui: SessionUiState {
@@ -403,11 +407,16 @@ impl ShellApp {
             },
             workspace: SessionWorkspaceState {
                 workspace_root: self.model.workspace_root.clone(),
+                active_workspace_path: self
+                    .model
+                    .active_workspace
+                    .as_ref()
+                    .map(|w| w.project.project_path.clone()),
                 active_project_path: self
                     .model
                     .active_workspace
                     .as_ref()
-                    .map(|w| w.project.prjpcb_path.clone()),
+                    .map(|w| w.project.project_path.clone()),
             },
             tabs: SessionTabState {
                 open_tabs,
@@ -426,7 +435,7 @@ impl ShellApp {
         }
     }
 
-    fn apply_snapshot(&mut self, snapshot: SessionSnapshotV1) -> anyhow::Result<()> {
+    fn apply_snapshot(&mut self, snapshot: SessionSnapshot) -> anyhow::Result<()> {
         self.panel_visibility = snapshot.ui.panel_visibility;
         self.layout = snapshot.ui.layout;
         self.layout.ensure_required_panes();
@@ -516,8 +525,15 @@ impl ShellApp {
             .collect();
 
         self.model.selection = snapshot.selection.selection;
-        if let Some(prjpcb) = snapshot.workspace.active_project_path {
-            self.queue_command_id("workspace.open_project", Some(prjpcb.display().to_string()));
+        if let Some(workspace_path) = snapshot
+            .workspace
+            .active_workspace_path
+            .or(snapshot.workspace.active_project_path)
+        {
+            self.queue_command_id(
+                "workspace.open_project",
+                Some(workspace_path.display().to_string()),
+            );
         }
 
         self.prune_tab_renderers();
@@ -849,6 +865,19 @@ impl ShellApp {
                 }
                 (None, Vec::new())
             }
+            Command::EditorOpenSchLibComponent {
+                source_path,
+                source_spec_document,
+                component_name,
+            } => {
+                self.model.open_schlib_component_document(
+                    source_path,
+                    source_spec_document,
+                    component_name,
+                );
+                self.mark_session_dirty();
+                (None, Vec::new())
+            }
             Command::FileClose => {
                 let _ = self.model.close_active_document();
                 (None, Vec::new())
@@ -879,29 +908,29 @@ impl ShellApp {
             }
             Command::WorkspaceOpenProject { path } => {
                 let path = path.or_else(|| self.find_project_in_workspace_root());
-                let Some(prjpcb) = path else {
+                let Some(project_path) = path else {
                     self.model.problems.push(
-                        "workspace.open_project requires a .PrjPcb path (or one in workspace root)"
+                        "workspace.open_project requires a .wrk/.PrjPcb path (or one in workspace root)"
                             .to_owned(),
                     );
                     return (None, Vec::new());
                 };
                 self.submit_job(JobPayload::ParseProject {
-                    prjpcb_path: prjpcb.clone(),
+                    project_path: project_path.clone(),
                 });
                 self.model
                     .output_lines
-                    .push(format!("Queued project parse: {}", prjpcb.display()));
+                    .push(format!("Queued project parse: {}", project_path.display()));
                 (None, Vec::new())
             }
             Command::WorkspaceReloadProject => {
-                let prjpcb = self
+                let workspace_path = self
                     .model
                     .active_workspace
                     .as_ref()
-                    .map(|w| w.project.prjpcb_path.clone());
-                if let Some(prjpcb_path) = prjpcb {
-                    self.submit_job(JobPayload::ParseProject { prjpcb_path });
+                    .map(|w| w.project.project_path.clone());
+                if let Some(project_path) = workspace_path {
+                    self.submit_job(JobPayload::ParseProject { project_path });
                 } else {
                     self.model
                         .problems
@@ -934,6 +963,16 @@ impl ShellApp {
                 }
                 (None, Vec::new())
             }
+            Command::FileImportAltium { path } => {
+                if let Some(path) = path {
+                    self.submit_job(JobPayload::ImportAltium { source_path: path });
+                } else {
+                    self.model
+                        .problems
+                        .push("file.import_altium requires a source path".to_owned());
+                }
+                (None, Vec::new())
+            }
             Command::FileSave => {
                 self.save_active_document();
                 (None, Vec::new())
@@ -944,14 +983,6 @@ impl ShellApp {
             }
             Command::FileRevert => {
                 self.revert_active_document();
-                (None, Vec::new())
-            }
-            Command::SpecPlan => {
-                self.submit_active_spec_job(true);
-                (None, Vec::new())
-            }
-            Command::SpecApply => {
-                self.submit_active_spec_job(false);
                 (None, Vec::new())
             }
             Command::JobsCancelActive => {
@@ -1066,8 +1097,7 @@ impl ShellApp {
             JobPayload::ParseProject { .. } => JobKind::ParseProject,
             JobPayload::SyncBoardIr { .. } => JobKind::SyncBoardIr,
             JobPayload::SyncSchematicIr { .. } => JobKind::SyncSchematicIr,
-            JobPayload::SpecPlan { .. } => JobKind::SpecPlan,
-            JobPayload::SpecApply { .. } => JobKind::SpecApply,
+            JobPayload::ImportAltium { .. } => JobKind::ImportAltium,
         };
         let req = JobRequest {
             id: self.jobs.allocate_id(),
@@ -1088,17 +1118,20 @@ impl ShellApp {
     fn find_project_in_workspace_root(&self) -> Option<PathBuf> {
         let root = self.model.workspace_root.as_ref()?;
         let entries = fs::read_dir(root).ok()?;
+        let mut legacy: Option<PathBuf> = None;
         for entry in entries.flatten() {
             let path = entry.path();
-            let is_prjpcb = path
+            let ext = path
                 .extension()
                 .and_then(|s| s.to_str())
-                .is_some_and(|s| s.eq_ignore_ascii_case("prjpcb"));
-            if is_prjpcb {
-                return Some(path);
+                .map(|s| s.to_ascii_lowercase());
+            match ext.as_deref() {
+                Some("wrk") => return Some(path),
+                Some("prjpcb") => legacy = Some(path),
+                _ => {}
             }
         }
-        None
+        legacy
     }
 
     fn queue_project_sync_jobs(&mut self) {
@@ -1122,83 +1155,20 @@ impl ShellApp {
             .collect();
 
         for path in board_paths {
-            self.submit_job(JobPayload::SyncBoardIr { pcbdoc_path: path });
+            let ext = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            if ext == "pcbdoc" || ext == "pcb" {
+                self.submit_job(JobPayload::SyncBoardIr { board_path: path });
+            }
         }
         for path in sch_paths {
-            self.submit_job(JobPayload::SyncSchematicIr { schdoc_path: path });
+            self.submit_job(JobPayload::SyncSchematicIr {
+                schematic_path: path,
+            });
         }
-    }
-
-    fn submit_active_spec_job(&mut self, dry_run: bool) {
-        let Some(doc) = self.model.active_document() else {
-            self.model.problems.push("No active document".to_owned());
-            return;
-        };
-        let DocumentKind::Spec(spec) = &doc.kind else {
-            self.model
-                .problems
-                .push("Active document is not a spec".to_owned());
-            return;
-        };
-        let Some(spec_path) = spec.path.clone() else {
-            self.model
-                .problems
-                .push("Save spec before running plan/apply".to_owned());
-            return;
-        };
-        let Some((domain, target)) = self.resolve_spec_target(&spec_path) else {
-            self.model.problems.push(format!(
-                "Unable to resolve target for spec {}",
-                spec_path.display()
-            ));
-            return;
-        };
-        let payload = if dry_run {
-            JobPayload::SpecPlan {
-                spec_path,
-                target_path: target,
-                domain,
-            }
-        } else {
-            JobPayload::SpecApply {
-                spec_path,
-                target_path: target,
-                domain,
-                dry_run: false,
-            }
-        };
-        self.submit_job(payload);
-    }
-
-    fn resolve_spec_target(&self, spec_path: &Path) -> Option<(SpecDomain, PathBuf)> {
-        let file = spec_path
-            .file_name()?
-            .to_string_lossy()
-            .to_ascii_lowercase();
-        let workspace = self.model.active_workspace.as_ref();
-        if file.ends_with(".schlib-spec") {
-            let target = default_output_for_spec(spec_path, SpecDomain::SchLib);
-            return Some((SpecDomain::SchLib, target));
-        }
-        if file.ends_with(".pcbdoc-spec") {
-            let target = workspace
-                .and_then(|w| w.project.board_docs.first().map(|b| b.path.clone()))
-                .unwrap_or_else(|| default_output_for_spec(spec_path, SpecDomain::PcbDoc));
-            return Some((SpecDomain::PcbDoc, target));
-        }
-        if file.ends_with(".schdoc-spec") {
-            let target = workspace
-                .and_then(|w| w.project.schematic_docs.first().map(|s| s.path.clone()))
-                .unwrap_or_else(|| default_output_for_spec(spec_path, SpecDomain::SchDoc));
-            return Some((SpecDomain::SchDoc, target));
-        }
-        if file.ends_with(".prjpcb-spec") {
-            let target = workspace
-                .map(|w| w.project.prjpcb_path.clone())
-                .unwrap_or_else(|| default_output_for_spec(spec_path, SpecDomain::PrjPcb));
-            return Some((SpecDomain::PrjPcb, target));
-        }
-        None
     }
 
     fn open_document_path(&mut self, path: PathBuf) {
@@ -1229,41 +1199,40 @@ impl ShellApp {
                         .push(format!("Failed to open board {}: {err}", path.display())),
                 };
             }
-            "prjpcb" => {
+            "wrk" | "prjpcb" => {
                 self.queue_intent(Intent::Workspace(
                     crate::pipeline::WorkspaceIntent::OpenProject { path: Some(path) },
                 ));
             }
-            "spec" | "pcbdoc-spec" | "schdoc-spec" | "prjpcb-spec" | "schlib-spec" => {
-                match fs::read_to_string(&path) {
-                    Ok(text) => {
-                        let source_doc = self.model.open_spec_document(Some(path.clone()), text);
-                        let ext = path
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .map(|s| s.to_ascii_lowercase())
-                            .unwrap_or_default();
-                        match ext.as_str() {
-                            "schlib-spec" => {
-                                self.model
-                                    .open_schlib_gallery_document(path.clone(), Some(source_doc));
-                            }
-                            "schdoc-spec" => {
-                                self.model
-                                    .open_schdoc_preview_document(path.clone(), Some(source_doc));
-                            }
-                            _ => {}
+            "sch" | "sym" | "pcb" | "wrk-spec" | "spec" | "pcbdoc-spec" | "schdoc-spec"
+            | "prjpcb-spec" | "schlib-spec" => match fs::read_to_string(&path) {
+                Ok(text) => {
+                    let source_doc = self.model.open_spec_document(Some(path.clone()), text);
+                    let ext = path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    match ext.as_str() {
+                        "sym" | "schlib-spec" => {
+                            self.model
+                                .open_schlib_gallery_document(path.clone(), Some(source_doc));
                         }
-                        self.model
-                            .output_lines
-                            .push(format!("Opened spec: {}", path.display()));
+                        "sch" | "schdoc-spec" => {
+                            self.model
+                                .open_schdoc_preview_document(path.clone(), Some(source_doc));
+                        }
+                        _ => {}
                     }
-                    Err(err) => self
-                        .model
-                        .problems
-                        .push(format!("Failed to open spec {}: {err}", path.display())),
+                    self.model
+                        .output_lines
+                        .push(format!("Opened spec: {}", path.display()));
                 }
-            }
+                Err(err) => self
+                    .model
+                    .problems
+                    .push(format!("Failed to open spec {}: {err}", path.display())),
+            },
             _ => {
                 self.model.problems.push(format!(
                     "Unsupported file type for open: {}",
@@ -1301,7 +1270,7 @@ impl ShellApp {
                         .clone()
                         .or_else(|| std::env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    Some(base.join(format!("untitled-{}.pcbdoc-spec", id.0)))
+                    Some(base.join(format!("untitled-{}.wrk", id.0)))
                 });
                 (target, spec.text.clone())
             }
@@ -1411,12 +1380,13 @@ impl ShellApp {
                     JobArtifact::ProjectGraphDelta(delta) => {
                         let root = delta
                             .graph
-                            .prjpcb_path
+                            .project_path
                             .parent()
                             .map(ToOwned::to_owned)
                             .unwrap_or_else(|| PathBuf::from("."));
+                        let workspace_id = hash_path_id(&delta.graph.project_path);
                         let workspace = WorkspaceModel {
-                            id: 1,
+                            id: workspace_id,
                             root,
                             project: delta.graph,
                             opened_at: std::time::SystemTime::now(),
@@ -1426,6 +1396,24 @@ impl ShellApp {
                         self.model
                             .output_lines
                             .push(format!("Loaded project graph from job #{}", id.0));
+                        if let Some(ws) = &self.model.active_workspace {
+                            for board in &ws.project.board_docs {
+                                if !board.path.exists() {
+                                    self.model.problems.push(format!(
+                                        "Workspace references missing board file: {}",
+                                        board.path.display()
+                                    ));
+                                }
+                            }
+                            for sch in &ws.project.schematic_docs {
+                                if !sch.path.exists() {
+                                    self.model.problems.push(format!(
+                                        "Workspace references missing schematic file: {}",
+                                        sch.path.display()
+                                    ));
+                                }
+                            }
+                        }
                         self.queue_project_sync_jobs();
                     }
                     JobArtifact::BoardIr { path, ir } => {
@@ -1439,6 +1427,20 @@ impl ShellApp {
                             }
                             ws.last_sync = Some(std::time::SystemTime::now());
                         }
+                    }
+                    JobArtifact::BoardSpecValidated { path } => {
+                        if let Some(ws) = self.model.active_workspace.as_mut() {
+                            for board in &mut ws.project.board_docs {
+                                if board.path == path {
+                                    board.parse_state = ParseState::Fresh;
+                                    board.ir_state = ParseState::Fresh;
+                                }
+                            }
+                            ws.last_sync = Some(std::time::SystemTime::now());
+                        }
+                        self.model
+                            .output_lines
+                            .push(format!("Native board validated: {}", path.display()));
                     }
                     JobArtifact::SchematicIndex(index) => {
                         if let Some(ws) = self.model.active_workspace.as_mut() {
@@ -1455,13 +1457,6 @@ impl ShellApp {
                             index.path.display(),
                             index.component_count,
                             index.net_label_count
-                        ));
-                    }
-                    JobArtifact::Eco(eco) => {
-                        self.model.output_lines.push(format!(
-                            "Plan generated: {} changes (job #{})",
-                            eco.changes.len(),
-                            id.0
                         ));
                     }
                     JobArtifact::Diagnostics(diags) => {
@@ -1498,6 +1493,100 @@ impl ShellApp {
         }
     }
 
+    fn scan_watched_files(&mut self) {
+        if self.last_watch_scan.elapsed() < Duration::from_millis(1000) {
+            return;
+        }
+        self.last_watch_scan = Instant::now();
+
+        let mut desired_paths: Vec<PathBuf> = Vec::new();
+        if let Some(ws) = &self.model.active_workspace {
+            desired_paths.push(ws.project.project_path.clone());
+            desired_paths.extend(ws.project.board_docs.iter().map(|b| b.path.clone()));
+            desired_paths.extend(ws.project.schematic_docs.iter().map(|s| s.path.clone()));
+        }
+        for doc in self.model.documents.values() {
+            if let DocumentKind::Spec(spec) = &doc.kind
+                && let Some(path) = &spec.path
+            {
+                desired_paths.push(path.clone());
+            }
+        }
+
+        desired_paths.sort();
+        desired_paths.dedup();
+        self.watched_files
+            .retain(|path, _| desired_paths.iter().any(|p| p == path));
+        for path in desired_paths {
+            if let Ok(meta) = fs::metadata(&path)
+                && let Ok(modified) = meta.modified()
+            {
+                self.watched_files.entry(path).or_insert(modified);
+            }
+        }
+
+        let mut changed_paths: Vec<PathBuf> = Vec::new();
+        for (path, last) in &mut self.watched_files {
+            let Ok(meta) = fs::metadata(path) else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            if modified > *last {
+                *last = modified;
+                changed_paths.push(path.clone());
+            }
+        }
+
+        for path in changed_paths {
+            self.handle_external_file_change(&path);
+        }
+    }
+
+    fn handle_external_file_change(&mut self, path: &Path) {
+        if let Some(doc) =
+            self.model.documents.values_mut().find(|d| {
+                matches!(d.kind, DocumentKind::Spec(_)) && d.path.as_deref() == Some(path)
+            })
+        {
+            if doc.dirty {
+                self.model.problems.push(format!(
+                    "External change detected for dirty file {}; reload skipped",
+                    path.display()
+                ));
+                return;
+            }
+            match fs::read_to_string(path) {
+                Ok(text) => {
+                    if let DocumentKind::Spec(spec) = &mut doc.kind {
+                        spec.text = text;
+                    }
+                    doc.dirty = false;
+                    self.model
+                        .output_lines
+                        .push(format!("Auto-reloaded {}", path.display()));
+                }
+                Err(err) => self.model.problems.push(format!(
+                    "External change detected but reload failed for {}: {err}",
+                    path.display()
+                )),
+            }
+            return;
+        }
+
+        let is_workspace_file = self
+            .model
+            .active_workspace
+            .as_ref()
+            .is_some_and(|w| w.project.project_path == path);
+        if is_workspace_file {
+            self.queue_intent(Intent::Workspace(
+                crate::pipeline::WorkspaceIntent::ReloadProject,
+            ));
+        }
+    }
+
     fn prune_tab_renderers(&mut self) {
         self.tab_renderers.retain(|id, _| {
             self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
@@ -1525,8 +1614,8 @@ impl ShellApp {
                 IpcRequest::Ping => self.model.output_lines.push("IPC ping".to_owned()),
                 IpcRequest::Command { id, arg } => self.queue_command_id(&id, arg),
                 IpcRequest::OpenFile { path } => self.queue_command_id("file.open", Some(path)),
-                IpcRequest::OpenProject { prjpcb_path } => {
-                    self.queue_command_id("workspace.open_project", Some(prjpcb_path));
+                IpcRequest::OpenProject { project_path } => {
+                    self.queue_command_id("workspace.open_project", Some(project_path));
                 }
                 IpcRequest::RunJob { kind, args } => {
                     let payload = match kind.as_str() {
@@ -2186,12 +2275,13 @@ impl ShellApp {
                     ui.horizontal(|ui| {
                         ui.strong(&component_name);
                         if ui.button("Open component tab").clicked() {
-                            self.model.open_schlib_component_document(
-                                source_path.clone(),
-                                source_spec_document,
-                                component_name.clone(),
-                            );
-                            self.mark_session_dirty();
+                            self.queue_intent(Intent::Editor(
+                                crate::pipeline::EditorIntent::OpenSchLibComponent {
+                                    source_path: source_path.clone(),
+                                    source_spec_document,
+                                    component_name: component_name.clone(),
+                                },
+                            ));
                         }
                     });
                     match render_schlib_component_png(&lib, &component_name, DEFAULT_SCALE * 0.5) {
@@ -2581,6 +2671,7 @@ impl efame::App for ShellApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut efame::Frame) {
         self.process_ipc();
         self.process_job_events();
+        self.scan_watched_files();
         self.apply_ui_test_ops(ctx);
         self.capture_shortcut_if_needed(ctx);
         self.handle_shortcuts(ctx);
@@ -2657,6 +2748,15 @@ fn hash_bytes(input: &[u8]) -> u64 {
     hasher.finish()
 }
 
+fn hash_path_id(path: &Path) -> u64 {
+    let canonical = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    hash_bytes(canonical.as_bytes())
+}
+
 fn png_to_color_image(bytes: &[u8]) -> Result<ColorImage, String> {
     let decoded = image::load_from_memory(bytes)
         .map_err(|e| format!("failed to decode preview image: {e}"))?
@@ -2687,21 +2787,6 @@ fn render_schdoc_spec_png(source_text: &str) -> Result<Vec<u8>, String> {
     let mut doc = altium_format::SchDoc::new_blank_ad26();
     apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
     render_schdoc_png(&doc, DEFAULT_SCALE * 0.5).map_err(|e| e.to_string())
-}
-
-fn default_output_for_spec(spec_file: &Path, domain: SpecDomain) -> PathBuf {
-    let stem = spec_file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("output");
-    let ext = match domain {
-        SpecDomain::SchLib => "SchLib",
-        SpecDomain::SchDoc => "SchDoc",
-        SpecDomain::PcbLib => "PcbLib",
-        SpecDomain::PrjPcb => "PrjPcb",
-        SpecDomain::PcbDoc => "PcbDoc",
-    };
-    spec_file.with_file_name(format!("{stem}.{ext}"))
 }
 
 #[cfg(test)]

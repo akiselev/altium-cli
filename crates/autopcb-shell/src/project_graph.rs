@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use altium_format::AltiumProject;
+use altium_format_spec::parser::parse_spec;
+use altium_format_spec::{SpecDomain, SpecModel, compile_spec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +46,8 @@ pub enum ProjectEdge {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectGraph {
-    pub prjpcb_path: PathBuf,
+    #[serde(alias = "prjpcb_path")]
+    pub project_path: PathBuf,
     pub board_docs: Vec<BoardNode>,
     pub schematic_docs: Vec<SchematicNode>,
     pub spec_docs: Vec<SpecNode>,
@@ -69,6 +72,8 @@ pub struct ProjectGraphDelta {
 pub enum ProjectGraphError {
     MissingProject(PathBuf),
     ProjectParse(String),
+    SpecParse(String),
+    UnsupportedProjectType(PathBuf),
     MissingBoard,
     MissingSchematics,
     MissingSchematic(PathBuf),
@@ -80,6 +85,10 @@ impl std::fmt::Display for ProjectGraphError {
         match self {
             Self::MissingProject(p) => write!(f, "project file not found: {}", p.display()),
             Self::ProjectParse(e) => write!(f, "project parse failed: {e}"),
+            Self::SpecParse(e) => write!(f, "spec parse failed: {e}"),
+            Self::UnsupportedProjectType(p) => {
+                write!(f, "unsupported workspace/project type: {}", p.display())
+            }
             Self::MissingBoard => write!(f, "project has no PcbDoc reference"),
             Self::MissingSchematics => write!(f, "project has no SchDoc references"),
             Self::MissingSchematic(p) => {
@@ -98,18 +107,36 @@ impl std::fmt::Display for ProjectGraphError {
 
 impl std::error::Error for ProjectGraphError {}
 
-pub fn build_project_graph(prjpcb_path: &Path) -> Result<ProjectGraphDelta, ProjectGraphError> {
-    if !prjpcb_path.exists() {
-        return Err(ProjectGraphError::MissingProject(prjpcb_path.to_path_buf()));
+pub fn build_project_graph(project_path: &Path) -> Result<ProjectGraphDelta, ProjectGraphError> {
+    if !project_path.exists() {
+        return Err(ProjectGraphError::MissingProject(
+            project_path.to_path_buf(),
+        ));
     }
+    let ext = project_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "wrk" => build_project_graph_from_wrk(project_path),
+        "prjpcb" => build_project_graph_from_prjpcb(project_path),
+        _ => Err(ProjectGraphError::UnsupportedProjectType(
+            project_path.to_path_buf(),
+        )),
+    }
+}
 
-    let project = AltiumProject::open(prjpcb_path)
+fn build_project_graph_from_prjpcb(
+    project_path: &Path,
+) -> Result<ProjectGraphDelta, ProjectGraphError> {
+    let project = AltiumProject::open(project_path)
         .map_err(|e| ProjectGraphError::ProjectParse(e.to_string()))?;
     let typed = project
         .project()
         .map_err(|e| ProjectGraphError::ProjectParse(e.to_string()))?;
 
-    let root = prjpcb_path
+    let root = project_path
         .parent()
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| PathBuf::from("."));
@@ -150,21 +177,16 @@ pub fn build_project_graph(prjpcb_path: &Path) -> Result<ProjectGraphDelta, Proj
         }
     }
 
-    if boards.is_empty() {
-        return Err(ProjectGraphError::MissingBoard);
-    }
-    if schematics.is_empty() {
-        return Err(ProjectGraphError::MissingSchematics);
-    }
-
-    for b in &boards {
+    for b in &mut boards {
         if !b.path.exists() {
-            return Err(ProjectGraphError::MissingBoardFile(b.path.clone()));
+            b.parse_state = ParseState::Failed;
+            b.ir_state = ParseState::Failed;
         }
     }
-    for s in &schematics {
+    for s in &mut schematics {
         if !s.path.exists() {
-            return Err(ProjectGraphError::MissingSchematic(s.path.clone()));
+            s.parse_state = ParseState::Failed;
+            s.index_state = ParseState::Failed;
         }
     }
 
@@ -191,7 +213,7 @@ pub fn build_project_graph(prjpcb_path: &Path) -> Result<ProjectGraphDelta, Proj
             }
             "prjpcb" => links.push(ProjectEdge::SpecTargetsProject {
                 spec: spec.path.clone(),
-                project: prjpcb_path.to_path_buf(),
+                project: project_path.to_path_buf(),
             }),
             _ => {}
         }
@@ -199,7 +221,116 @@ pub fn build_project_graph(prjpcb_path: &Path) -> Result<ProjectGraphDelta, Proj
 
     Ok(ProjectGraphDelta {
         graph: ProjectGraph {
-            prjpcb_path: prjpcb_path.to_path_buf(),
+            project_path: project_path.to_path_buf(),
+            board_docs: boards,
+            schematic_docs: schematics,
+            spec_docs,
+            links,
+        },
+    })
+}
+
+fn build_project_graph_from_wrk(wrk_path: &Path) -> Result<ProjectGraphDelta, ProjectGraphError> {
+    let root = wrk_path
+        .parent()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let source = std::fs::read_to_string(wrk_path)
+        .map_err(|e| ProjectGraphError::SpecParse(e.to_string()))?;
+    let ast = parse_spec(&source).map_err(|e| ProjectGraphError::SpecParse(e.to_string()))?;
+    let model = compile_spec(&ast, SpecDomain::PrjPcb)
+        .map_err(|e| ProjectGraphError::SpecParse(e.to_string()))?;
+    let SpecModel::PrjPcb(spec) = model else {
+        return Err(ProjectGraphError::SpecParse(
+            "workspace file did not compile as PrjPcb model".to_owned(),
+        ));
+    };
+
+    let mut boards = Vec::new();
+    let mut schematics = Vec::new();
+    for project in spec.projects {
+        for doc in project.documents {
+            let rel = PathBuf::from(&doc.path);
+            let full = if rel.is_absolute() {
+                rel
+            } else {
+                root.join(rel)
+            };
+            let title = full
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("document")
+                .to_owned();
+            let ext = full
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            match ext.as_str() {
+                "pcb" | "pcbdoc" => boards.push(BoardNode {
+                    path: full.clone(),
+                    title,
+                    parse_state: if full.exists() {
+                        ParseState::Unknown
+                    } else {
+                        ParseState::Failed
+                    },
+                    ir_state: if full.exists() {
+                        ParseState::Unknown
+                    } else {
+                        ParseState::Failed
+                    },
+                }),
+                "sch" | "schdoc" => schematics.push(SchematicNode {
+                    path: full.clone(),
+                    title,
+                    parse_state: if full.exists() {
+                        ParseState::Unknown
+                    } else {
+                        ParseState::Failed
+                    },
+                    index_state: if full.exists() {
+                        ParseState::Unknown
+                    } else {
+                        ParseState::Failed
+                    },
+                }),
+                _ => {}
+            }
+        }
+    }
+
+    let spec_docs = discover_specs(&root);
+    let mut links = Vec::new();
+    for spec in &spec_docs {
+        match spec.domain.as_str() {
+            "pcb" | "pcbdoc" => {
+                for b in &boards {
+                    links.push(ProjectEdge::SpecTargetsBoard {
+                        spec: spec.path.clone(),
+                        board: b.path.clone(),
+                    });
+                }
+            }
+            "sch" | "schdoc" | "sym" | "schlib" => {
+                for s in &schematics {
+                    links.push(ProjectEdge::SpecTargetsSchematic {
+                        spec: spec.path.clone(),
+                        schematic: s.path.clone(),
+                    });
+                }
+            }
+            "wrk" | "prjpcb" => links.push(ProjectEdge::SpecTargetsProject {
+                spec: spec.path.clone(),
+                project: wrk_path.to_path_buf(),
+            }),
+            _ => {}
+        }
+    }
+
+    Ok(ProjectGraphDelta {
+        graph: ProjectGraph {
+            project_path: wrk_path.to_path_buf(),
             board_docs: boards,
             schematic_docs: schematics,
             spec_docs,
@@ -230,7 +361,15 @@ fn discover_specs(root: &Path) -> Vec<SpecNode> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            let domain = if name.ends_with(".pcbdoc-spec") {
+            let domain = if name.ends_with(".pcb") {
+                "pcb"
+            } else if name.ends_with(".sch") {
+                "sch"
+            } else if name.ends_with(".sym") {
+                "sym"
+            } else if name.ends_with(".wrk") {
+                "wrk"
+            } else if name.ends_with(".pcbdoc-spec") {
                 "pcbdoc"
             } else if name.ends_with(".schdoc-spec") {
                 "schdoc"

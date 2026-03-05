@@ -12,7 +12,7 @@ use crate::layout::ShellLayoutState;
 use crate::ui::theme::ThemePrefs;
 use crate::workbench::{BoardViewMode, SelectionState};
 
-pub const SESSION_SCHEMA_VERSION: u32 = 1;
+pub const SESSION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub enum RestoreMode {
@@ -22,7 +22,7 @@ pub enum RestoreMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionSnapshotV1 {
+pub struct SessionSnapshot {
     pub schema_version: u32,
     pub saved_at_unix_ms: u64,
     pub ui: SessionUiState,
@@ -44,9 +44,22 @@ pub struct SessionUiState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SessionWorkspaceState {
     pub workspace_root: Option<PathBuf>,
+    pub active_workspace_path: Option<PathBuf>,
+    // Legacy field (v1); migrated into `active_workspace_path` on load.
     pub active_project_path: Option<PathBuf>,
+}
+
+impl Default for SessionWorkspaceState {
+    fn default() -> Self {
+        Self {
+            workspace_root: None,
+            active_workspace_path: None,
+            active_project_path: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,8 +105,8 @@ pub enum SessionTabRef {
 }
 
 pub trait SessionStore {
-    fn load_latest(&self) -> anyhow::Result<Option<SessionSnapshotV1>>;
-    fn save_atomic(&self, snapshot: &SessionSnapshotV1) -> anyhow::Result<()>;
+    fn load_latest(&self) -> anyhow::Result<Option<SessionSnapshot>>;
+    fn save_atomic(&self, snapshot: &SessionSnapshot) -> anyhow::Result<()>;
     fn snapshot_path(&self) -> &Path;
     fn backup_path(&self) -> PathBuf;
 }
@@ -112,7 +125,7 @@ impl FileSessionStore {
 }
 
 impl SessionStore for FileSessionStore {
-    fn load_latest(&self) -> anyhow::Result<Option<SessionSnapshotV1>> {
+    fn load_latest(&self) -> anyhow::Result<Option<SessionSnapshot>> {
         if !self.snapshot_path.exists() {
             return Ok(None);
         }
@@ -122,23 +135,45 @@ impl SessionStore for FileSessionStore {
                 self.snapshot_path.display()
             )
         })?;
-        let parsed: SessionSnapshotV1 = serde_json::from_str(&raw).with_context(|| {
+        let value: serde_json::Value = serde_json::from_str(&raw).with_context(|| {
             format!(
                 "failed to parse session snapshot {}",
                 self.snapshot_path.display()
             )
         })?;
-        if parsed.schema_version != SESSION_SCHEMA_VERSION {
-            anyhow::bail!(
-                "unsupported session schema version: {} (expected {})",
-                parsed.schema_version,
+        let version = value
+            .get("schema_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        match version {
+            2 => {
+                let parsed: SessionSnapshot = serde_json::from_value(value).with_context(|| {
+                    format!(
+                        "failed to decode session snapshot {}",
+                        self.snapshot_path.display()
+                    )
+                })?;
+                Ok(Some(parsed))
+            }
+            1 => {
+                let legacy: LegacySessionSnapshotV1 =
+                    serde_json::from_value(value).with_context(|| {
+                        format!(
+                            "failed to decode legacy session snapshot {}",
+                            self.snapshot_path.display()
+                        )
+                    })?;
+                Ok(Some(legacy.into_current()))
+            }
+            other => anyhow::bail!(
+                "unsupported session schema version: {} (expected 1 or {})",
+                other,
                 SESSION_SCHEMA_VERSION
-            );
+            ),
         }
-        Ok(Some(parsed))
     }
 
-    fn save_atomic(&self, snapshot: &SessionSnapshotV1) -> anyhow::Result<()> {
+    fn save_atomic(&self, snapshot: &SessionSnapshot) -> anyhow::Result<()> {
         if let Some(parent) = self.snapshot_path.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!("failed creating session directory {}", parent.display())
@@ -177,20 +212,57 @@ impl SessionStore for FileSessionStore {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacySessionSnapshotV1 {
+    pub schema_version: u32,
+    pub saved_at_unix_ms: u64,
+    pub ui: SessionUiState,
+    pub workspace: LegacySessionWorkspaceState,
+    pub tabs: SessionTabState,
+    pub documents: Vec<SessionDocumentState>,
+    pub selection: SessionSelectionState,
+    pub prefs: SessionPrefsState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacySessionWorkspaceState {
+    pub workspace_root: Option<PathBuf>,
+    pub active_project_path: Option<PathBuf>,
+}
+
+impl LegacySessionSnapshotV1 {
+    fn into_current(self) -> SessionSnapshot {
+        SessionSnapshot {
+            schema_version: SESSION_SCHEMA_VERSION,
+            saved_at_unix_ms: self.saved_at_unix_ms,
+            ui: self.ui,
+            workspace: SessionWorkspaceState {
+                workspace_root: self.workspace.workspace_root,
+                active_workspace_path: self.workspace.active_project_path.clone(),
+                active_project_path: self.workspace.active_project_path,
+            },
+            tabs: self.tabs,
+            documents: self.documents,
+            selection: self.selection,
+            prefs: self.prefs,
+        }
+    }
+}
+
 pub fn default_session_path() -> PathBuf {
     if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
         return PathBuf::from(xdg_state_home)
             .join("autopcb-shell")
-            .join("session-v1.json");
+            .join("session-v2.json");
     }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home)
             .join(".local")
             .join("state")
             .join("autopcb-shell")
-            .join("session-v1.json");
+            .join("session-v2.json");
     }
-    PathBuf::from("/tmp/autopcb-shell-session-v1.json")
+    PathBuf::from("/tmp/autopcb-shell-session-v2.json")
 }
 
 pub fn now_unix_ms() -> u64 {
@@ -216,7 +288,7 @@ mod tests {
 
     #[test]
     fn snapshot_roundtrip() {
-        let snapshot = SessionSnapshotV1 {
+        let snapshot = SessionSnapshot {
             schema_version: SESSION_SCHEMA_VERSION,
             saved_at_unix_ms: 1,
             ui: SessionUiState {
@@ -229,6 +301,7 @@ mod tests {
             },
             workspace: SessionWorkspaceState {
                 workspace_root: Some(PathBuf::from("/tmp/ws")),
+                active_workspace_path: Some(PathBuf::from("/tmp/ws/project.wrk")),
                 active_project_path: None,
             },
             tabs: SessionTabState {
@@ -256,7 +329,7 @@ mod tests {
         };
 
         let raw = serde_json::to_string(&snapshot).expect("serialize");
-        let parsed: SessionSnapshotV1 = serde_json::from_str(&raw).expect("deserialize");
+        let parsed: SessionSnapshot = serde_json::from_str(&raw).expect("deserialize");
         assert_eq!(parsed.schema_version, SESSION_SCHEMA_VERSION);
         assert_eq!(parsed.ui.palette_filter, "abc");
     }

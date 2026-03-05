@@ -183,6 +183,12 @@ impl ShellApp {
             ui.horizontal(|ui| {
                 let icon_id = if name.to_ascii_lowercase().ends_with(".pcbdoc") {
                     IconId::PcbDoc
+                } else if name.to_ascii_lowercase().ends_with(".wrk")
+                    || name.to_ascii_lowercase().ends_with(".sch")
+                    || name.to_ascii_lowercase().ends_with(".sym")
+                    || name.to_ascii_lowercase().ends_with(".pcb")
+                {
+                    IconId::Spec
                 } else if name.to_ascii_lowercase().ends_with(".spec")
                     || name.to_ascii_lowercase().ends_with(".pcbdoc-spec")
                     || name.to_ascii_lowercase().ends_with(".schdoc-spec")
