@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use autopcb_graph::{AssetRef, ImportRef, InstancePath, NodeRef, ScopeRef};
 use autopcb_ir::PcbIr;
 use serde::{Deserialize, Serialize};
 
+use crate::graph_host::GraphHost;
 use crate::project_graph::WorkspaceModel;
 
 pub const DOCUMENT_KIND_BOARD: &str = "document.board";
@@ -12,6 +14,12 @@ pub const DOCUMENT_KIND_KEYBINDINGS: &str = "document.keybindings";
 pub const DOCUMENT_KIND_SCHDOC_PREVIEW: &str = "document.schdoc_preview";
 pub const DOCUMENT_KIND_SCHLIB_GALLERY: &str = "document.schlib_gallery";
 pub const DOCUMENT_KIND_SCHLIB_COMPONENT: &str = "document.schlib_component";
+pub const DOCUMENT_KIND_DESIGN_OVERVIEW: &str = "document.design_overview";
+pub const DOCUMENT_KIND_LOGICAL: &str = "document.logical";
+pub const DOCUMENT_KIND_PHYSICAL: &str = "document.physical";
+pub const DOCUMENT_KIND_DEFINITION_COLLECTION: &str = "document.definition_collection";
+pub const DOCUMENT_KIND_ASSET: &str = "document.asset";
+pub const DOCUMENT_KIND_IMPORT: &str = "document.import";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DocumentId(pub u64);
@@ -56,6 +64,21 @@ pub struct SchLibComponentDocument {
     pub component_name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphScopeDocument {
+    pub scope: ScopeRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphAssetDocument {
+    pub asset: AssetRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphImportDocument {
+    pub import: ImportRef,
+}
+
 #[derive(Debug)]
 pub enum DocumentKind {
     Board(BoardDocument),
@@ -63,6 +86,12 @@ pub enum DocumentKind {
     SchDocPreview(SchDocPreviewDocument),
     SchLibGallery(SchLibGalleryDocument),
     SchLibComponent(SchLibComponentDocument),
+    DesignOverview(GraphScopeDocument),
+    Logical(GraphScopeDocument),
+    Physical(GraphScopeDocument),
+    DefinitionCollection(GraphScopeDocument),
+    Asset(GraphAssetDocument),
+    Import(GraphImportDocument),
     Keybindings,
 }
 
@@ -74,6 +103,12 @@ impl DocumentKind {
             DocumentKind::SchDocPreview(_) => DOCUMENT_KIND_SCHDOC_PREVIEW,
             DocumentKind::SchLibGallery(_) => DOCUMENT_KIND_SCHLIB_GALLERY,
             DocumentKind::SchLibComponent(_) => DOCUMENT_KIND_SCHLIB_COMPONENT,
+            DocumentKind::DesignOverview(_) => DOCUMENT_KIND_DESIGN_OVERVIEW,
+            DocumentKind::Logical(_) => DOCUMENT_KIND_LOGICAL,
+            DocumentKind::Physical(_) => DOCUMENT_KIND_PHYSICAL,
+            DocumentKind::DefinitionCollection(_) => DOCUMENT_KIND_DEFINITION_COLLECTION,
+            DocumentKind::Asset(_) => DOCUMENT_KIND_ASSET,
+            DocumentKind::Import(_) => DOCUMENT_KIND_IMPORT,
             DocumentKind::Keybindings => DOCUMENT_KIND_KEYBINDINGS,
         }
     }
@@ -102,11 +137,19 @@ pub enum SelectionKind {
     Net(String),
     Pad { component: String, pad: String },
     Rule(String),
+    Scope(ScopeRef),
+    Node {
+        node: NodeRef,
+        instance_path: Option<InstancePath>,
+    },
+    Asset(AssetRef),
+    Import(ImportRef),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionState {
     pub primary: SelectionKind,
+    pub secondary: Vec<SelectionKind>,
     pub locked: bool,
 }
 
@@ -114,6 +157,7 @@ impl Default for SelectionState {
     fn default() -> Self {
         Self {
             primary: SelectionKind::None,
+            secondary: Vec::new(),
             locked: false,
         }
     }
@@ -123,6 +167,7 @@ impl Default for SelectionState {
 pub struct WorkbenchModel {
     pub workspace_root: Option<PathBuf>,
     pub active_workspace: Option<WorkspaceModel>,
+    pub active_graph: Option<GraphHost>,
     pub documents: BTreeMap<DocumentId, Document>,
     pub open_editor_tabs: Vec<DocumentId>,
     pub active_editor_tab: Option<DocumentId>,
@@ -141,6 +186,7 @@ impl WorkbenchModel {
                 .as_ref()
                 .and_then(|p| p.parent().map(|x| x.to_path_buf())),
             active_workspace: None,
+            active_graph: None,
             documents: BTreeMap::new(),
             open_editor_tabs: Vec::new(),
             active_editor_tab: None,
@@ -162,6 +208,7 @@ impl WorkbenchModel {
 
     pub fn has_workspace(&self) -> bool {
         self.active_workspace.is_some()
+            || self.active_graph.is_some()
             || self.workspace_root.is_some()
             || !self.open_editor_tabs.is_empty()
     }
@@ -175,9 +222,14 @@ impl WorkbenchModel {
         self.active_workspace = Some(workspace);
     }
 
+    pub fn set_active_graph(&mut self, graph: GraphHost) {
+        self.active_graph = Some(graph);
+    }
+
     pub fn clear_workspace(&mut self) {
         self.workspace_root = None;
         self.active_workspace = None;
+        self.active_graph = None;
         self.documents.clear();
         self.open_editor_tabs.clear();
         self.active_editor_tab = None;
@@ -499,6 +551,77 @@ impl WorkbenchModel {
         id
     }
 
+    pub fn open_design_overview_document(&mut self, scope: ScopeRef, title: String) -> DocumentId {
+        self.open_graph_scope_document(title, DocumentKind::DesignOverview(GraphScopeDocument { scope }))
+    }
+
+    pub fn open_logical_document(&mut self, scope: ScopeRef, title: String) -> DocumentId {
+        self.open_graph_scope_document(title, DocumentKind::Logical(GraphScopeDocument { scope }))
+    }
+
+    pub fn open_physical_document(&mut self, scope: ScopeRef, title: String) -> DocumentId {
+        self.open_graph_scope_document(title, DocumentKind::Physical(GraphScopeDocument { scope }))
+    }
+
+    pub fn open_definition_collection_document(
+        &mut self,
+        scope: ScopeRef,
+        title: String,
+    ) -> DocumentId {
+        self.open_graph_scope_document(
+            title,
+            DocumentKind::DefinitionCollection(GraphScopeDocument { scope }),
+        )
+    }
+
+    pub fn open_asset_document(&mut self, asset: AssetRef, title: String) -> DocumentId {
+        let id = self.alloc_document_id();
+        let doc = Document {
+            id,
+            revision: DocumentRevision(0),
+            title,
+            path: None,
+            dirty: false,
+            kind: DocumentKind::Asset(GraphAssetDocument { asset }),
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
+    pub fn open_import_document(&mut self, import: ImportRef, title: String) -> DocumentId {
+        let id = self.alloc_document_id();
+        let doc = Document {
+            id,
+            revision: DocumentRevision(0),
+            title,
+            path: None,
+            dirty: false,
+            kind: DocumentKind::Import(GraphImportDocument { import }),
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
+    fn open_graph_scope_document(&mut self, title: String, kind: DocumentKind) -> DocumentId {
+        let id = self.alloc_document_id();
+        let doc = Document {
+            id,
+            revision: DocumentRevision(0),
+            title,
+            path: None,
+            dirty: false,
+            kind,
+        };
+        self.documents.insert(id, doc);
+        self.open_editor_tabs.push(id);
+        self.active_editor_tab = Some(id);
+        id
+    }
+
     pub fn active_document(&self) -> Option<&Document> {
         self.active_editor_tab
             .and_then(|id| self.documents.get(&id))
@@ -541,6 +664,7 @@ impl WorkbenchModel {
 
     pub fn clear_selection(&mut self) {
         self.selection.primary = SelectionKind::None;
+        self.selection.secondary.clear();
     }
 }
 

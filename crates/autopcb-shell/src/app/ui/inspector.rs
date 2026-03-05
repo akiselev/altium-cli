@@ -1,3 +1,4 @@
+use autopcb_graph::GraphRead;
 use efame::egui;
 
 use super::super::{SecondarySidebarTab, ShellApp};
@@ -67,6 +68,45 @@ impl ShellApp {
                     ui.label(format!("Name: {rule}"));
                     empty_state(ui, &self.theme, "Rule details panel is planned.");
                 }
+                SelectionKind::Scope(scope) => {
+                    if let Some(graph) = &self.model.active_graph {
+                        if let Some(summary) = graph.inspector_summary_for_scope(&scope) {
+                            self.render_graph_inspector_summary(ui, summary);
+                        } else {
+                            self.render_empty_inspector(ui, "Selected scope is not present in current graph host.");
+                        }
+                    } else {
+                        self.render_empty_inspector(ui, "Inspector requires an active graph workspace.");
+                    }
+                }
+                SelectionKind::Node {
+                    node,
+                    instance_path,
+                } => {
+                    if let Some(graph) = &self.model.active_graph {
+                        if let Some(summary) =
+                            graph.inspector_summary_for_node(&node, instance_path.as_ref())
+                        {
+                            self.render_graph_inspector_summary(ui, summary);
+                        } else {
+                            self.render_empty_inspector(ui, "Selected node is not present in current graph host.");
+                        }
+                    } else {
+                        self.render_empty_inspector(ui, "Inspector requires an active graph workspace.");
+                    }
+                }
+                SelectionKind::Asset(asset) => {
+                    ui.heading("Asset");
+                    ui.separator();
+                    ui.label(format!("Asset Ref: {}", asset.0));
+                    empty_state(ui, &self.theme, "Asset inspector details are graph-backed and still expanding.");
+                }
+                SelectionKind::Import(import) => {
+                    ui.heading("Import");
+                    ui.separator();
+                    ui.label(format!("Import Ref: {}", import.0));
+                    empty_state(ui, &self.theme, "Import inspector details are graph-backed and still expanding.");
+                }
             }
         });
     }
@@ -125,5 +165,32 @@ impl ShellApp {
 
     fn render_empty_inspector(&mut self, ui: &mut egui::Ui, message: &str) {
         empty_state(ui, &self.theme, message);
+    }
+
+    fn render_graph_inspector_summary(
+        &mut self,
+        ui: &mut egui::Ui,
+        summary: autopcb_graph::InspectorSummary,
+    ) {
+        ui.heading(summary.title);
+        if let Some(subtitle) = summary.subtitle {
+            ui.label(subtitle);
+        }
+        for (label, value) in summary.identity_rows {
+            ui.separator();
+            ui.label(format!("{label}: {value}"));
+        }
+        for (label, value) in summary.relationship_rows {
+            ui.label(format!("{label}: {value}"));
+        }
+        for (label, value) in summary.connectivity_rows {
+            ui.label(format!("{label}: {value}"));
+        }
+        for (label, value) in summary.artifact_rows {
+            ui.label(format!("{label}: {value}"));
+        }
+        for (label, value) in summary.provenance_rows {
+            ui.label(format!("{label}: {value}"));
+        }
     }
 }

@@ -2,6 +2,7 @@ mod agents;
 mod app;
 mod canvas;
 mod commands;
+mod graph_host;
 mod ipc;
 mod jobs;
 mod layout;

@@ -783,6 +783,10 @@ pub fn selection_label(kind: &SelectionKind) -> String {
         SelectionKind::Net(n) => format!("net {n}"),
         SelectionKind::Pad { component, pad } => format!("pad {component}.{pad}"),
         SelectionKind::Rule(r) => format!("rule {r}"),
+        SelectionKind::Scope(scope) => format!("scope {}", scope.0),
+        SelectionKind::Node { node, .. } => format!("node {}", node.0),
+        SelectionKind::Asset(asset) => format!("asset {}", asset.0),
+        SelectionKind::Import(import) => format!("import {}", import.0),
     }
 }
 

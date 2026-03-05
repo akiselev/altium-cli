@@ -49,7 +49,13 @@ pub fn render_tabstrip(
                                 DocumentKind::Spec(_) => IconId::Spec,
                                 DocumentKind::SchDocPreview(_)
                                 | DocumentKind::SchLibGallery(_)
-                                | DocumentKind::SchLibComponent(_) => IconId::Spec,
+                                | DocumentKind::SchLibComponent(_)
+                                | DocumentKind::Logical(_)
+                                | DocumentKind::DefinitionCollection(_)
+                                | DocumentKind::Import(_)
+                                | DocumentKind::DesignOverview(_) => IconId::Spec,
+                                DocumentKind::Physical(_) => IconId::PcbDoc,
+                                DocumentKind::Asset(_) => IconId::Gear,
                                 DocumentKind::Keybindings => IconId::Gear,
                             };
                             icon(ui, icon_id, tokens.text_muted, 14.0);

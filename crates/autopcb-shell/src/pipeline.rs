@@ -239,6 +239,7 @@ pub struct ResolveContext {
     pub show_activity_bar: bool,
     pub show_status_bar: bool,
     pub active_document_supports_tools: bool,
+    pub selected_target: Option<SelectionKind>,
     pub selected_component: Option<String>,
 }
 
@@ -924,6 +925,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: false,
+            selected_target: None,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -985,6 +987,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: false,
+            selected_target: None,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -1014,6 +1017,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: false,
+            selected_target: None,
             selected_component: None,
         };
         let out = resolve_intent(intent, ctx);
@@ -1051,6 +1055,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: true,
+            selected_target: None,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -1079,6 +1084,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: true,
+            selected_target: Some(SelectionKind::Component("U1".to_owned())),
             selected_component: Some("U1".to_owned()),
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {
@@ -1109,6 +1115,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: true,
+            selected_target: None,
             selected_component: None,
         };
         let out = resolve_intent(intent, ctx);
@@ -1145,6 +1152,7 @@ mod tests {
             show_activity_bar: true,
             show_status_bar: true,
             active_document_supports_tools: false,
+            selected_target: None,
             selected_component: None,
         };
         let ResolveResult::Accepted { transaction } = resolve_intent(intent, ctx) else {

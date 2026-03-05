@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use autopcb_graph::{AssetRef, GraphRootRef, ImportRef, ScopeRef, WorkspaceRef};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::AgentWorkspaceState;
@@ -13,7 +14,7 @@ use crate::layout::ShellLayoutState;
 use crate::ui::theme::ThemePrefs;
 use crate::workbench::{BoardViewMode, SelectionState};
 
-pub const SESSION_SCHEMA_VERSION: u32 = 2;
+pub const SESSION_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub enum RestoreMode {
@@ -49,8 +50,9 @@ pub struct SessionUiState {
 #[serde(default)]
 pub struct SessionWorkspaceState {
     pub workspace_root: Option<PathBuf>,
+    pub active_workspace_ref: Option<WorkspaceRef>,
+    pub active_graph_root: Option<GraphRootRef>,
     pub active_workspace_path: Option<PathBuf>,
-    // Legacy field (v1); migrated into `active_workspace_path` on load.
     pub active_project_path: Option<PathBuf>,
 }
 
@@ -58,6 +60,8 @@ impl Default for SessionWorkspaceState {
     fn default() -> Self {
         Self {
             workspace_root: None,
+            active_workspace_ref: None,
+            active_graph_root: None,
             active_workspace_path: None,
             active_project_path: None,
         }
@@ -77,6 +81,19 @@ pub enum SessionDocumentState {
     Board {
         path: PathBuf,
         view_mode: BoardViewMode,
+    },
+    GraphScope {
+        scope: ScopeRef,
+        title: String,
+        kind: SessionGraphDocumentKind,
+    },
+    GraphAsset {
+        asset: AssetRef,
+        title: String,
+    },
+    GraphImport {
+        import: ImportRef,
+        title: String,
     },
     Spec {
         path: Option<PathBuf>,
@@ -100,10 +117,48 @@ pub struct SessionSelectionState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SessionTabRef {
-    BoardPath(PathBuf),
-    SpecPath(PathBuf),
-    UntitledSpecId(String),
+    DesignOverview {
+        workspace: WorkspaceRef,
+        scope: ScopeRef,
+    },
+    LogicalScope {
+        workspace: WorkspaceRef,
+        scope: ScopeRef,
+    },
+    PhysicalScope {
+        workspace: WorkspaceRef,
+        scope: ScopeRef,
+    },
+    DefinitionScope {
+        workspace: WorkspaceRef,
+        scope: ScopeRef,
+    },
+    AssetScope {
+        workspace: WorkspaceRef,
+        asset: AssetRef,
+    },
+    ImportScope {
+        workspace: WorkspaceRef,
+        import: ImportRef,
+    },
+    BoardPath {
+        path: PathBuf,
+    },
+    SpecTextPath {
+        path: PathBuf,
+    },
+    UntitledSpec {
+        untitled_id: String,
+    },
     Keybindings,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SessionGraphDocumentKind {
+    DesignOverview,
+    Logical,
+    Physical,
+    DefinitionCollection,
 }
 
 pub trait SessionStore {
@@ -146,9 +201,9 @@ impl SessionStore for FileSessionStore {
         let version = value
             .get("schema_version")
             .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
+            .unwrap_or(SESSION_SCHEMA_VERSION as u64) as u32;
         match version {
-            2 => {
+            3 => {
                 let parsed: SessionSnapshot = serde_json::from_value(value).with_context(|| {
                     format!(
                         "failed to decode session snapshot {}",
@@ -157,18 +212,8 @@ impl SessionStore for FileSessionStore {
                 })?;
                 Ok(Some(parsed))
             }
-            1 => {
-                let legacy: LegacySessionSnapshotV1 =
-                    serde_json::from_value(value).with_context(|| {
-                        format!(
-                            "failed to decode legacy session snapshot {}",
-                            self.snapshot_path.display()
-                        )
-                    })?;
-                Ok(Some(legacy.into_current()))
-            }
             other => anyhow::bail!(
-                "unsupported session schema version: {} (expected 1 or {})",
+                "unsupported session schema version: {} (expected {})",
                 other,
                 SESSION_SCHEMA_VERSION
             ),
@@ -214,44 +259,6 @@ impl SessionStore for FileSessionStore {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacySessionSnapshotV1 {
-    pub schema_version: u32,
-    pub saved_at_unix_ms: u64,
-    pub ui: SessionUiState,
-    pub workspace: LegacySessionWorkspaceState,
-    pub tabs: SessionTabState,
-    pub documents: Vec<SessionDocumentState>,
-    pub selection: SessionSelectionState,
-    pub prefs: SessionPrefsState,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacySessionWorkspaceState {
-    pub workspace_root: Option<PathBuf>,
-    pub active_project_path: Option<PathBuf>,
-}
-
-impl LegacySessionSnapshotV1 {
-    fn into_current(self) -> SessionSnapshot {
-        SessionSnapshot {
-            schema_version: SESSION_SCHEMA_VERSION,
-            saved_at_unix_ms: self.saved_at_unix_ms,
-            ui: self.ui,
-            workspace: SessionWorkspaceState {
-                workspace_root: self.workspace.workspace_root,
-                active_workspace_path: self.workspace.active_project_path.clone(),
-                active_project_path: self.workspace.active_project_path,
-            },
-            tabs: self.tabs,
-            documents: self.documents,
-            selection: self.selection,
-            prefs: self.prefs,
-            agents: AgentWorkspaceState::default(),
-        }
-    }
-}
-
 pub fn default_session_path() -> PathBuf {
     if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
         return PathBuf::from(xdg_state_home)
@@ -263,9 +270,9 @@ pub fn default_session_path() -> PathBuf {
             .join(".local")
             .join("state")
             .join("autopcb-shell")
-            .join("session-v2.json");
+            .join("session-v3.json");
     }
-    PathBuf::from("/tmp/autopcb-shell-session-v2.json")
+    PathBuf::from("/tmp/autopcb-shell-session-v3.json")
 }
 
 pub fn now_unix_ms() -> u64 {
@@ -304,12 +311,18 @@ mod tests {
             },
             workspace: SessionWorkspaceState {
                 workspace_root: Some(PathBuf::from("/tmp/ws")),
+                active_workspace_ref: Some(WorkspaceRef::new("workspace:test")),
+                active_graph_root: Some(GraphRootRef::new("graph:test")),
                 active_workspace_path: Some(PathBuf::from("/tmp/ws/project.wrk")),
                 active_project_path: None,
             },
             tabs: SessionTabState {
-                open_tabs: vec![SessionTabRef::UntitledSpecId("u1".to_owned())],
-                active_tab: Some(SessionTabRef::UntitledSpecId("u1".to_owned())),
+                open_tabs: vec![SessionTabRef::UntitledSpec {
+                    untitled_id: "u1".to_owned(),
+                }],
+                active_tab: Some(SessionTabRef::UntitledSpec {
+                    untitled_id: "u1".to_owned(),
+                }),
                 secondary_active_tab: None,
                 recently_closed_tabs: Vec::new(),
             },
@@ -322,6 +335,7 @@ mod tests {
             selection: SessionSelectionState {
                 selection: SelectionState {
                     primary: SelectionKind::None,
+                    secondary: Vec::new(),
                     locked: false,
                 },
             },

@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use efame::egui;
 
 use crate::workbench::{
-    DOCUMENT_KIND_BOARD, DOCUMENT_KIND_KEYBINDINGS, DOCUMENT_KIND_SCHDOC_PREVIEW,
+    DOCUMENT_KIND_ASSET, DOCUMENT_KIND_BOARD, DOCUMENT_KIND_DEFINITION_COLLECTION,
+    DOCUMENT_KIND_DESIGN_OVERVIEW, DOCUMENT_KIND_IMPORT, DOCUMENT_KIND_KEYBINDINGS,
+    DOCUMENT_KIND_LOGICAL, DOCUMENT_KIND_PHYSICAL, DOCUMENT_KIND_SCHDOC_PREVIEW,
     DOCUMENT_KIND_SCHLIB_COMPONENT, DOCUMENT_KIND_SCHLIB_GALLERY, DOCUMENT_KIND_SPEC, DocumentId,
 };
 
@@ -42,6 +44,16 @@ impl TabProviderRegistry {
         registry.register(DOCUMENT_KIND_SCHLIB_COMPONENT, || {
             Box::new(SchLibComponentTabRenderer)
         });
+        registry.register(DOCUMENT_KIND_DESIGN_OVERVIEW, || {
+            Box::new(DesignOverviewTabRenderer)
+        });
+        registry.register(DOCUMENT_KIND_LOGICAL, || Box::new(LogicalTabRenderer));
+        registry.register(DOCUMENT_KIND_PHYSICAL, || Box::new(PhysicalTabRenderer));
+        registry.register(DOCUMENT_KIND_DEFINITION_COLLECTION, || {
+            Box::new(DefinitionCollectionTabRenderer)
+        });
+        registry.register(DOCUMENT_KIND_ASSET, || Box::new(AssetTabRenderer));
+        registry.register(DOCUMENT_KIND_IMPORT, || Box::new(ImportTabRenderer));
         registry.register(DOCUMENT_KIND_KEYBINDINGS, || {
             Box::new(KeybindingsTabRenderer)
         });
@@ -62,6 +74,12 @@ struct SpecTabRenderer;
 struct SchDocPreviewTabRenderer;
 struct SchLibGalleryTabRenderer;
 struct SchLibComponentTabRenderer;
+struct DesignOverviewTabRenderer;
+struct LogicalTabRenderer;
+struct PhysicalTabRenderer;
+struct DefinitionCollectionTabRenderer;
+struct AssetTabRenderer;
+struct ImportTabRenderer;
 struct KeybindingsTabRenderer;
 
 impl TabRenderer for BoardTabRenderer {
@@ -124,6 +142,78 @@ impl TabRenderer for SchLibComponentTabRenderer {
     }
 }
 
+impl TabRenderer for DesignOverviewTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_graph_scope_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for LogicalTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_graph_scope_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for PhysicalTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_graph_scope_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for DefinitionCollectionTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_graph_scope_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for AssetTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_graph_asset_document(ui, document_id);
+    }
+}
+
+impl TabRenderer for ImportTabRenderer {
+    fn render(
+        &mut self,
+        app: &mut ShellApp,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+        _fit_requested: bool,
+    ) {
+        app.render_graph_import_document(ui, document_id);
+    }
+}
+
 impl TabRenderer for KeybindingsTabRenderer {
     fn render(
         &mut self,
@@ -152,6 +242,16 @@ mod tests {
                 .instantiate(DOCUMENT_KIND_SCHLIB_COMPONENT)
                 .is_some()
         );
+        assert!(registry.instantiate(DOCUMENT_KIND_DESIGN_OVERVIEW).is_some());
+        assert!(registry.instantiate(DOCUMENT_KIND_LOGICAL).is_some());
+        assert!(registry.instantiate(DOCUMENT_KIND_PHYSICAL).is_some());
+        assert!(
+            registry
+                .instantiate(DOCUMENT_KIND_DEFINITION_COLLECTION)
+                .is_some()
+        );
+        assert!(registry.instantiate(DOCUMENT_KIND_ASSET).is_some());
+        assert!(registry.instantiate(DOCUMENT_KIND_IMPORT).is_some());
         assert!(registry.instantiate(DOCUMENT_KIND_KEYBINDINGS).is_some());
     }
 }

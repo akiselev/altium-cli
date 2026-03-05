@@ -8,6 +8,7 @@ rust-version = "1.85"
 workspace = true
 
 [dependencies]
+autopcb-graph = { version = "0.1.0", path = "../autopcb-graph" }
 autopcb-ir = { version = "0.2.0", path = "../autopcb-ir" }
 autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
 altium-format = { version = "0.2.0", path = "../altium-format" }

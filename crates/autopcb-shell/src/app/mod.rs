@@ -14,6 +14,7 @@ use altium_format_spec::{
     SpecDomain, SpecModel, apply_spec_schdoc, apply_spec_schlib, compile_spec,
 };
 use altium_format_types::coord::{Coord, CoordPoint};
+use autopcb_graph::{GraphRead, GraphWorkspace, RenderAdapterHost};
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
 use egui_tiles::{Behavior, TileId, UiResponse};
 use rfd::FileDialog;
@@ -31,6 +32,7 @@ use crate::commands::{
     CommandRegistry, ShortcutDef, StoredShortcut, build_context, selection_label,
     shortcut_from_stored, shortcut_to_stored,
 };
+use crate::graph_host::GraphHost;
 use crate::ipc::{IpcRequest, UiTestOp};
 use crate::jobs::{JobArtifact, JobEvent, JobKind, JobManager, JobPayload, JobRequest, JobTrigger};
 use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
@@ -42,8 +44,9 @@ use crate::pipeline::{
 use crate::project_graph::{ParseState, WorkspaceModel};
 use crate::session::{FileSessionStore, RestoreMode, SessionSnapshot, SessionTabRef};
 use crate::session::{
-    SessionDocumentState, SessionPrefsState, SessionSelectionState, SessionStore, SessionTabState,
-    SessionUiState, SessionWorkspaceState, now_unix_ms, shortcut_overrides_from_stored,
+    SessionDocumentState, SessionGraphDocumentKind, SessionPrefsState, SessionSelectionState,
+    SessionStore, SessionTabState, SessionUiState, SessionWorkspaceState, now_unix_ms,
+    shortcut_overrides_from_stored,
 };
 use crate::ui::chrome::{show_central_panel, show_top_bar};
 use crate::ui::section::empty_state;
@@ -412,21 +415,54 @@ impl ShellApp {
         untitled_by_id: &BTreeMap<DocumentId, String>,
     ) -> Option<SessionTabRef> {
         let doc = self.model.documents.get(&id)?;
+        let workspace = self
+            .model
+            .active_graph
+            .as_ref()
+            .map(|graph| graph.workspace_ref().clone());
         match &doc.kind {
-            DocumentKind::Board(_) => doc.path.clone().map(SessionTabRef::BoardPath),
+            DocumentKind::Board(_) => doc.path.clone().map(|path| SessionTabRef::BoardPath { path }),
             DocumentKind::Spec(_) => {
                 if let Some(path) = &doc.path {
-                    Some(SessionTabRef::SpecPath(path.clone()))
+                    Some(SessionTabRef::SpecTextPath { path: path.clone() })
                 } else {
                     untitled_by_id
                         .get(&id)
                         .cloned()
-                        .map(SessionTabRef::UntitledSpecId)
+                        .map(|untitled_id| SessionTabRef::UntitledSpec { untitled_id })
                 }
             }
             DocumentKind::SchDocPreview(_)
             | DocumentKind::SchLibGallery(_)
             | DocumentKind::SchLibComponent(_) => None,
+            DocumentKind::DesignOverview(graph) => workspace.map(|workspace| {
+                SessionTabRef::DesignOverview {
+                    workspace,
+                    scope: graph.scope.clone(),
+                }
+            }),
+            DocumentKind::Logical(graph) => workspace.map(|workspace| SessionTabRef::LogicalScope {
+                workspace,
+                scope: graph.scope.clone(),
+            }),
+            DocumentKind::Physical(graph) => workspace.map(|workspace| SessionTabRef::PhysicalScope {
+                workspace,
+                scope: graph.scope.clone(),
+            }),
+            DocumentKind::DefinitionCollection(graph) => {
+                workspace.map(|workspace| SessionTabRef::DefinitionScope {
+                    workspace,
+                    scope: graph.scope.clone(),
+                })
+            }
+            DocumentKind::Asset(graph) => workspace.map(|workspace| SessionTabRef::AssetScope {
+                workspace,
+                asset: graph.asset.clone(),
+            }),
+            DocumentKind::Import(graph) => workspace.map(|workspace| SessionTabRef::ImportScope {
+                workspace,
+                import: graph.import.clone(),
+            }),
             DocumentKind::Keybindings => Some(SessionTabRef::Keybindings),
         }
     }
@@ -681,6 +717,38 @@ impl ShellApp {
                         dirty: doc.dirty,
                     });
                 }
+                DocumentKind::DesignOverview(graph) => documents.push(
+                    SessionDocumentState::GraphScope {
+                        scope: graph.scope.clone(),
+                        title: doc.title.clone(),
+                        kind: SessionGraphDocumentKind::DesignOverview,
+                    },
+                ),
+                DocumentKind::Logical(graph) => documents.push(SessionDocumentState::GraphScope {
+                    scope: graph.scope.clone(),
+                    title: doc.title.clone(),
+                    kind: SessionGraphDocumentKind::Logical,
+                }),
+                DocumentKind::Physical(graph) => documents.push(SessionDocumentState::GraphScope {
+                    scope: graph.scope.clone(),
+                    title: doc.title.clone(),
+                    kind: SessionGraphDocumentKind::Physical,
+                }),
+                DocumentKind::DefinitionCollection(graph) => documents.push(
+                    SessionDocumentState::GraphScope {
+                        scope: graph.scope.clone(),
+                        title: doc.title.clone(),
+                        kind: SessionGraphDocumentKind::DefinitionCollection,
+                    },
+                ),
+                DocumentKind::Asset(graph) => documents.push(SessionDocumentState::GraphAsset {
+                    asset: graph.asset.clone(),
+                    title: doc.title.clone(),
+                }),
+                DocumentKind::Import(graph) => documents.push(SessionDocumentState::GraphImport {
+                    import: graph.import.clone(),
+                    title: doc.title.clone(),
+                }),
                 DocumentKind::SchDocPreview(_)
                 | DocumentKind::SchLibGallery(_)
                 | DocumentKind::SchLibComponent(_) => {}
@@ -730,6 +798,16 @@ impl ShellApp {
             },
             workspace: SessionWorkspaceState {
                 workspace_root: self.model.workspace_root.clone(),
+                active_workspace_ref: self
+                    .model
+                    .active_graph
+                    .as_ref()
+                    .map(|graph| graph.workspace_ref().clone()),
+                active_graph_root: self
+                    .model
+                    .active_graph
+                    .as_ref()
+                    .map(|graph| graph.graph_root_ref().clone()),
                 active_workspace_path: self
                     .model
                     .active_workspace
@@ -784,6 +862,12 @@ impl ShellApp {
         if let Some(root) = snapshot.workspace.workspace_root {
             self.model.set_workspace_root(root);
         }
+        if let Some(graph_root) = snapshot.workspace.active_graph_root.as_ref() {
+            self.model
+                .set_active_graph(GraphHost::stub_from_root(graph_root.0.clone()));
+        } else if let Some(path) = snapshot.workspace.active_workspace_path.as_ref() {
+            self.model.set_active_graph(GraphHost::stub_from_path(path));
+        }
 
         let mut tab_map: BTreeMap<SessionTabRef, DocumentId> = BTreeMap::new();
         for doc in snapshot.documents {
@@ -799,7 +883,64 @@ impl ShellApp {
                     {
                         board.view_mode = view_mode;
                     }
-                    tab_map.insert(SessionTabRef::BoardPath(path), id);
+                    tab_map.insert(SessionTabRef::BoardPath { path }, id);
+                }
+                SessionDocumentState::GraphScope { scope, title, kind } => {
+                    let workspace = self
+                        .model
+                        .active_graph
+                        .as_ref()
+                        .map(|graph| graph.workspace_ref().clone())
+                        .unwrap_or_default();
+                    let id = match kind {
+                        SessionGraphDocumentKind::DesignOverview => {
+                            self.model.open_design_overview_document(scope.clone(), title)
+                        }
+                        SessionGraphDocumentKind::Logical => {
+                            self.model.open_logical_document(scope.clone(), title)
+                        }
+                        SessionGraphDocumentKind::Physical => {
+                            self.model.open_physical_document(scope.clone(), title)
+                        }
+                        SessionGraphDocumentKind::DefinitionCollection => self
+                            .model
+                            .open_definition_collection_document(scope.clone(), title),
+                    };
+                    let tab_ref = match kind {
+                        SessionGraphDocumentKind::DesignOverview => {
+                            SessionTabRef::DesignOverview { workspace, scope }
+                        }
+                        SessionGraphDocumentKind::Logical => {
+                            SessionTabRef::LogicalScope { workspace, scope }
+                        }
+                        SessionGraphDocumentKind::Physical => {
+                            SessionTabRef::PhysicalScope { workspace, scope }
+                        }
+                        SessionGraphDocumentKind::DefinitionCollection => {
+                            SessionTabRef::DefinitionScope { workspace, scope }
+                        }
+                    };
+                    tab_map.insert(tab_ref, id);
+                }
+                SessionDocumentState::GraphAsset { asset, title } => {
+                    let workspace = self
+                        .model
+                        .active_graph
+                        .as_ref()
+                        .map(|graph| graph.workspace_ref().clone())
+                        .unwrap_or_default();
+                    let id = self.model.open_asset_document(asset.clone(), title);
+                    tab_map.insert(SessionTabRef::AssetScope { workspace, asset }, id);
+                }
+                SessionDocumentState::GraphImport { import, title } => {
+                    let workspace = self
+                        .model
+                        .active_graph
+                        .as_ref()
+                        .map(|graph| graph.workspace_ref().clone())
+                        .unwrap_or_default();
+                    let id = self.model.open_import_document(import.clone(), title);
+                    tab_map.insert(SessionTabRef::ImportScope { workspace, import }, id);
                 }
                 SessionDocumentState::Spec {
                     path,
@@ -815,9 +956,9 @@ impl ShellApp {
                     let id = self.model.open_spec_document(path.clone(), contents);
                     self.model.mark_document_dirty(id, dirty);
                     if let Some(path) = path {
-                        tab_map.insert(SessionTabRef::SpecPath(path), id);
+                        tab_map.insert(SessionTabRef::SpecTextPath { path }, id);
                     } else if let Some(uid) = untitled_id {
-                        tab_map.insert(SessionTabRef::UntitledSpecId(uid), id);
+                        tab_map.insert(SessionTabRef::UntitledSpec { untitled_id: uid }, id);
                     }
                 }
                 SessionDocumentState::Keybindings => {
@@ -951,6 +1092,11 @@ impl ShellApp {
             show_activity_bar: self.panel_visibility.show_activity_bar,
             show_status_bar: self.panel_visibility.show_status_bar,
             active_document_supports_tools,
+            selected_target: (!matches!(
+                self.model.selection.primary,
+                crate::workbench::SelectionKind::None
+            ))
+            .then(|| self.model.selection.primary.clone()),
             selected_component,
         }
     }
@@ -1286,6 +1432,7 @@ impl ShellApp {
                     return (None, Vec::new(), Vec::new());
                 };
                 self.model.set_workspace_root(root.clone());
+                self.model.set_active_graph(GraphHost::stub_from_path(&root));
                 self.model
                     .output_lines
                     .push(format!("Workspace opened: {}", root.display()));
@@ -2286,7 +2433,10 @@ impl ShellApp {
                                 opened_at: std::time::SystemTime::now(),
                                 last_sync: None,
                             };
+                            let graph_stub =
+                                GraphHost::stub_from_path(&workspace.project.project_path);
                             self.model.set_active_workspace(workspace);
+                            self.model.set_active_graph(graph_stub);
                             self.model
                                 .output_lines
                                 .push(format!("Loaded project graph from job #{}", id.0));
@@ -3466,6 +3616,128 @@ impl ShellApp {
             self.model.mark_document_dirty(document_id, true);
             let _ = self.model.bump_document_revision(document_id);
             self.mark_session_dirty();
+        }
+    }
+
+    pub(super) fn render_graph_scope_document(&mut self, ui: &mut egui::Ui, document_id: DocumentId) {
+        let Some(doc) = self.model.documents.get(&document_id) else {
+            ui.label("Graph scope unavailable");
+            return;
+        };
+        let Some(graph) = self.model.active_graph.as_ref() else {
+            empty_state(ui, &self.theme, "No active graph workspace.");
+            return;
+        };
+
+        let (scope, kind_id) = match &doc.kind {
+            DocumentKind::DesignOverview(graph_doc)
+            | DocumentKind::Logical(graph_doc)
+            | DocumentKind::Physical(graph_doc)
+            | DocumentKind::DefinitionCollection(graph_doc) => {
+                (graph_doc.scope.clone(), doc.kind_id())
+            }
+            _ => {
+                ui.label("Graph scope unavailable");
+                return;
+            }
+        };
+
+        if let Some(summary) = graph.inspector_summary_for_scope(&scope) {
+            ui.heading(summary.title);
+            if let Some(subtitle) = summary.subtitle {
+                ui.label(subtitle);
+            }
+        }
+
+        match kind_id {
+            crate::workbench::DOCUMENT_KIND_LOGICAL | crate::workbench::DOCUMENT_KIND_DESIGN_OVERVIEW => {
+                if let Some(render) = graph.logical_render_model(&scope) {
+                    ui.separator();
+                    ui.label(format!("Revision: {}", render.revision));
+                    for warning in render.warnings {
+                        ui.label(warning);
+                    }
+                    for shape in render.shapes {
+                        ui.label(format!("Shape: {}", shape.label.unwrap_or(shape.id)));
+                    }
+                } else {
+                    empty_state(ui, &self.theme, "No logical render snapshot available.");
+                }
+            }
+            crate::workbench::DOCUMENT_KIND_PHYSICAL => {
+                if let Some(render) = graph.physical_render_model(&scope) {
+                    ui.separator();
+                    ui.label(format!("Revision: {}", render.revision));
+                    for warning in render.warnings {
+                        ui.label(warning);
+                    }
+                    for shape in render.shapes {
+                        ui.label(format!("Shape: {}", shape.label.unwrap_or(shape.id)));
+                    }
+                } else {
+                    empty_state(ui, &self.theme, "No physical render snapshot available.");
+                }
+            }
+            crate::workbench::DOCUMENT_KIND_DEFINITION_COLLECTION => {
+                if let Some(render) = graph.definition_preview_model(&scope) {
+                    ui.separator();
+                    ui.label(format!("Revision: {}", render.revision));
+                    for shape in render.shapes {
+                        ui.label(format!("Shape: {}", shape.label.unwrap_or(shape.id)));
+                    }
+                } else {
+                    empty_state(ui, &self.theme, "No definition preview available.");
+                }
+            }
+            _ => empty_state(ui, &self.theme, "Unsupported graph scope kind."),
+        }
+    }
+
+    pub(super) fn render_graph_asset_document(&mut self, ui: &mut egui::Ui, document_id: DocumentId) {
+        let Some(doc) = self.model.documents.get(&document_id) else {
+            ui.label("Graph asset unavailable");
+            return;
+        };
+        let Some(graph) = self.model.active_graph.as_ref() else {
+            empty_state(ui, &self.theme, "No active graph workspace.");
+            return;
+        };
+        let DocumentKind::Asset(graph_doc) = &doc.kind else {
+            ui.label("Graph asset unavailable");
+            return;
+        };
+
+        if let Some(summary) = graph.asset_summary(&graph_doc.asset) {
+            ui.heading(summary.title);
+            ui.label(format!("Authority: {:?}", summary.authority));
+            ui.label(format!("Storage: {:?}", summary.storage));
+            if let Some(digest) = summary.digest {
+                ui.label(format!("Digest: {digest}"));
+            }
+        } else {
+            empty_state(ui, &self.theme, "Selected asset is missing from the active graph host.");
+        }
+    }
+
+    pub(super) fn render_graph_import_document(&mut self, ui: &mut egui::Ui, document_id: DocumentId) {
+        let Some(doc) = self.model.documents.get(&document_id) else {
+            ui.label("Graph import unavailable");
+            return;
+        };
+        let Some(graph) = self.model.active_graph.as_ref() else {
+            empty_state(ui, &self.theme, "No active graph workspace.");
+            return;
+        };
+        let DocumentKind::Import(graph_doc) = &doc.kind else {
+            ui.label("Graph import unavailable");
+            return;
+        };
+
+        if let Some(summary) = graph.import_summary(&graph_doc.import) {
+            ui.heading(summary.title);
+            ui.label(format!("Source kind: {}", summary.source_kind));
+        } else {
+            empty_state(ui, &self.theme, "Selected import is missing from the active graph host.");
         }
     }
 
