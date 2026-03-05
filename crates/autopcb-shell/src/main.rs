@@ -1,3 +1,4 @@
+mod agents;
 mod app;
 mod canvas;
 mod commands;

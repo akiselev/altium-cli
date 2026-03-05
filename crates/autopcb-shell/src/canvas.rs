@@ -1,16 +1,42 @@
-use efame::egui::{self, Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2};
+use efame::egui::{self, Color32, Painter, PointerButton, Pos2, Rect, Stroke, StrokeKind, Vec2};
 
 use autopcb_ir::PcbIr;
+use autopcb_ir::component::IrComponent;
 
+use crate::pipeline::ToolId;
 use crate::workbench::SelectionKind;
 
 pub trait PcbCanvasView {
-    fn ui(&mut self, ui: &mut egui::Ui, ir: &PcbIr, selection: &SelectionKind, fit_requested: bool);
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        ir: &PcbIr,
+        selection: &SelectionKind,
+        tool: ToolId,
+        move_preview: Option<&MovePreview>,
+        fit_requested: bool,
+    ) -> Vec<BoardCanvasAction>;
 }
 
 #[derive(Debug, Default)]
 pub struct Pcb2dCanvas {
     scene_rect: Option<Rect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MovePreview {
+    pub designator: String,
+    pub delta_x_mm: f32,
+    pub delta_y_mm: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoardCanvasAction {
+    ClearSelection,
+    SelectComponent(String),
+    BeginMoveSelection,
+    PreviewMoveSelection { delta_x_mm: f32, delta_y_mm: f32 },
+    CommitMoveSelection { delta_x_mm: f32, delta_y_mm: f32 },
 }
 
 impl Pcb2dCanvas {
@@ -37,8 +63,10 @@ impl PcbCanvasView for Pcb2dCanvas {
         ui: &mut egui::Ui,
         ir: &PcbIr,
         selection: &SelectionKind,
+        tool: ToolId,
+        move_preview: Option<&MovePreview>,
         fit_requested: bool,
-    ) {
+    ) -> Vec<BoardCanvasAction> {
         self.init_rect_if_needed(ir);
         if fit_requested {
             self.fit(ir);
@@ -48,13 +76,60 @@ impl PcbCanvasView for Pcb2dCanvas {
             Rect::from_min_max(egui::pos2(-50.0, -50.0), egui::pos2(50.0, 50.0))
         });
 
-        egui::Scene::new()
+        let scene = egui::Scene::new()
             .zoom_range(0.001..=f32::INFINITY)
-            .show(ui, &mut rect, |ui| {
-                let painter = ui.painter();
-                render_board(painter, ir, selection);
-            });
+            .drag_pan_buttons(egui::DragPanButtons::MIDDLE | egui::DragPanButtons::SECONDARY);
+        let response = scene.show(ui, &mut rect, |ui| {
+            let painter = ui.painter();
+            render_board(painter, ir, selection, move_preview);
+        });
         self.scene_rect = Some(rect);
+
+        let mut actions = Vec::new();
+        let pointer_pos = response.response.interact_pointer_pos();
+        let hovered_component = pointer_pos.and_then(|pos| hit_test_component(ir, pos));
+
+        if response.response.clicked_by(PointerButton::Primary) {
+            match (tool, hovered_component.as_deref()) {
+                (ToolId::Select, Some(designator)) => {
+                    actions.push(BoardCanvasAction::SelectComponent(designator.to_owned()));
+                }
+                (ToolId::Select, None) => actions.push(BoardCanvasAction::ClearSelection),
+                (ToolId::Move, Some(designator)) => {
+                    if !matches!(selection, SelectionKind::Component(current) if current == designator)
+                    {
+                        actions.push(BoardCanvasAction::SelectComponent(designator.to_owned()));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if tool == ToolId::Move && response.response.drag_started_by(PointerButton::Primary) {
+            if let Some(designator) = hovered_component.as_deref()
+                && matches!(selection, SelectionKind::Component(current) if current == designator)
+            {
+                actions.push(BoardCanvasAction::BeginMoveSelection);
+            }
+        }
+
+        if tool == ToolId::Move && response.response.dragged_by(PointerButton::Primary) {
+            let delta = response.response.drag_delta();
+            actions.push(BoardCanvasAction::PreviewMoveSelection {
+                delta_x_mm: delta.x,
+                delta_y_mm: -delta.y,
+            });
+        }
+
+        if tool == ToolId::Move && response.response.drag_stopped_by(PointerButton::Primary) {
+            let delta = response.response.drag_delta();
+            actions.push(BoardCanvasAction::CommitMoveSelection {
+                delta_x_mm: delta.x,
+                delta_y_mm: -delta.y,
+            });
+        }
+
+        actions
     }
 }
 
@@ -67,11 +142,14 @@ impl PcbCanvasView for Pcb3dCanvas {
         ui: &mut egui::Ui,
         _ir: &PcbIr,
         _selection: &SelectionKind,
+        _tool: ToolId,
+        _move_preview: Option<&MovePreview>,
         _fit_requested: bool,
-    ) {
+    ) -> Vec<BoardCanvasAction> {
         ui.centered_and_justified(|ui| {
             ui.label("3D canvas placeholder (PaintCallback-ready boundary)");
         });
+        Vec::new()
     }
 }
 
@@ -79,7 +157,12 @@ fn to_pos2(x_mm: f64, y_mm: f64) -> Pos2 {
     Pos2::new(x_mm as f32, -(y_mm as f32))
 }
 
-fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
+fn render_board(
+    p: &Painter,
+    ir: &PcbIr,
+    selection: &SelectionKind,
+    move_preview: Option<&MovePreview>,
+) {
     if ir.board.outline.len() >= 3 {
         let points: Vec<Pos2> = ir
             .board
@@ -104,7 +187,45 @@ fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
     };
 
     for (_id, comp) in ir.components.iter() {
-        let bb = comp.world_bounds;
+        let (bb, position, pads) = if let Some(preview) = move_preview {
+            if preview.designator == comp.designator {
+                (
+                    translate_bb(comp.world_bounds, preview.delta_x_mm, preview.delta_y_mm),
+                    (
+                        comp.position.x + preview.delta_x_mm as f64,
+                        comp.position.y + preview.delta_y_mm as f64,
+                    ),
+                    comp.pads
+                        .iter()
+                        .map(|pad| {
+                            (
+                                pad,
+                                pad.world_position.x + preview.delta_x_mm as f64,
+                                pad.world_position.y + preview.delta_y_mm as f64,
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                (
+                    comp.world_bounds,
+                    (comp.position.x, comp.position.y),
+                    comp.pads
+                        .iter()
+                        .map(|pad| (pad, pad.world_position.x, pad.world_position.y))
+                        .collect::<Vec<_>>(),
+                )
+            }
+        } else {
+            (
+                comp.world_bounds,
+                (comp.position.x, comp.position.y),
+                comp.pads
+                    .iter()
+                    .map(|pad| (pad, pad.world_position.x, pad.world_position.y))
+                    .collect::<Vec<_>>(),
+            )
+        };
         let min = to_pos2(bb.min.x, bb.min.y);
         let max = to_pos2(bb.max.x, bb.max.y);
         let rect = Rect::from_min_max(
@@ -126,15 +247,15 @@ fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
             StrokeKind::Outside,
         );
         p.text(
-            to_pos2(comp.position.x, comp.position.y),
+            to_pos2(position.0, position.1),
             egui::Align2::CENTER_CENTER,
             &comp.designator,
             egui::FontId::monospace(0.5),
             Color32::from_rgb(220, 220, 220),
         );
 
-        for pad in &comp.pads {
-            let center = to_pos2(pad.world_position.x, pad.world_position.y);
+        for (pad, pad_x, pad_y) in pads {
+            let center = to_pos2(pad_x, pad_y);
             let mut color = if pad.is_through_hole {
                 Color32::from_rgb(180, 200, 80)
             } else {
@@ -162,5 +283,98 @@ fn render_board(p: &Painter, ir: &PcbIr, selection: &SelectionKind) {
                 }
             }
         }
+    }
+}
+
+fn hit_test_component<'a>(ir: &'a PcbIr, pos: Pos2) -> Option<&'a str> {
+    let world_x = pos.x as f64;
+    let world_y = -(pos.y as f64);
+    ir.components.iter().find_map(|(_, comp)| {
+        bb_contains(comp.world_bounds, world_x, world_y).then_some(comp.designator.as_str())
+    })
+}
+
+fn bb_contains(bb: autopcb_ir::types::BoundingBoxMm, x: f64, y: f64) -> bool {
+    x >= bb.min.x && x <= bb.max.x && y >= bb.min.y && y <= bb.max.y
+}
+
+fn translate_bb(
+    bb: autopcb_ir::types::BoundingBoxMm,
+    delta_x_mm: f32,
+    delta_y_mm: f32,
+) -> autopcb_ir::types::BoundingBoxMm {
+    autopcb_ir::types::BoundingBoxMm {
+        min: autopcb_ir::types::PointMm {
+            x: bb.min.x + delta_x_mm as f64,
+            y: bb.min.y + delta_y_mm as f64,
+        },
+        max: autopcb_ir::types::PointMm {
+            x: bb.max.x + delta_x_mm as f64,
+            y: bb.max.y + delta_y_mm as f64,
+        },
+    }
+}
+
+pub fn translate_component(comp: &mut IrComponent, delta_x_mm: f32, delta_y_mm: f32) {
+    let dx = delta_x_mm as f64;
+    let dy = delta_y_mm as f64;
+    comp.position.x += dx;
+    comp.position.y += dy;
+    comp.world_bounds = translate_bb(comp.world_bounds, delta_x_mm, delta_y_mm);
+    for pad in &mut comp.pads {
+        pad.world_position.x += dx;
+        pad.world_position.y += dy;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::translate_component;
+    use autopcb_ir::component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
+    use autopcb_ir::handles::{ComponentId, PadId};
+    use autopcb_ir::types::{BoardSide, BoundingBoxMm, PointMm};
+
+    #[test]
+    fn translate_component_moves_bounds_and_pads() {
+        let mut comp = IrComponent {
+            id: ComponentId::from(0),
+            designator: "U1".to_owned(),
+            pattern: "QFN".to_owned(),
+            value: "IC".to_owned(),
+            position: PointMm { x: 10.0, y: 20.0 },
+            rotation: 0.0,
+            side: BoardSide::Top,
+            local_bounds: BoundingBoxMm {
+                min: PointMm { x: -1.0, y: -1.0 },
+                max: PointMm { x: 1.0, y: 1.0 },
+            },
+            world_bounds: BoundingBoxMm {
+                min: PointMm { x: 9.0, y: 19.0 },
+                max: PointMm { x: 11.0, y: 21.0 },
+            },
+            pads: vec![IrComponentPad {
+                id: PadId::from(0),
+                name: "1".to_owned(),
+                local_position: PointMm { x: 0.0, y: 0.0 },
+                world_position: PointMm { x: 10.5, y: 20.5 },
+                net: None,
+                shape: PadShapeInfo {
+                    kind: PadShapeKind::Rectangular,
+                    size_x: 1.0,
+                    size_y: 1.0,
+                    rotation: 0.0,
+                },
+                is_through_hole: false,
+                hole_size_mm: 0.0,
+            }],
+        };
+
+        translate_component(&mut comp, 2.5, -1.0);
+        assert_eq!(comp.position.x, 12.5);
+        assert_eq!(comp.position.y, 19.0);
+        assert_eq!(comp.world_bounds.min.x, 11.5);
+        assert_eq!(comp.world_bounds.max.y, 20.0);
+        assert_eq!(comp.pads[0].world_position.x, 13.0);
+        assert_eq!(comp.pads[0].world_position.y, 19.5);
     }
 }

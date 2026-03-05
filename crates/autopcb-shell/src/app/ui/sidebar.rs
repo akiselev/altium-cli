@@ -4,7 +4,8 @@ use std::path::Path;
 use efame::egui::{self, RichText};
 
 use super::super::{ActivityView, ShellApp};
-use crate::pipeline::{CrossprobeIntent, FileIntent, Intent};
+use crate::agents::{AgentRunStatus, ProposalStatus};
+use crate::pipeline::{AgentIntent, CrossprobeIntent, FileIntent, Intent, ReviewIntent};
 use crate::ui::chrome::show_left_panel;
 use crate::ui::icons::{IconId, icon};
 use crate::ui::section::{SectionPanel, empty_state};
@@ -31,16 +32,8 @@ impl ShellApp {
                     "SEARCH",
                     "Workspace text search is planned.",
                 ),
-                ActivityView::SourceControl => self.render_placeholder_sidebar(
-                    ui,
-                    "SOURCE CONTROL",
-                    "Source-control integration is planned.",
-                ),
-                ActivityView::Run => self.render_placeholder_sidebar(
-                    ui,
-                    "RUN",
-                    "Automation run tasks will live here.",
-                ),
+                ActivityView::SourceControl => self.render_review_sidebar(ui),
+                ActivityView::Run => self.render_agents_sidebar(ui),
                 ActivityView::Extensions => self.render_placeholder_sidebar(
                     ui,
                     "EXTENSIONS",
@@ -114,6 +107,160 @@ impl ShellApp {
         let theme = self.theme.clone();
         SectionPanel::new(heading).show(ui, &theme, |ui| {
             ui.label(RichText::new(text).color(theme.text_disabled));
+        });
+    }
+
+    fn render_review_sidebar(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        SectionPanel::new("CHANGES & REVIEWS").show(ui, &theme, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} pending review",
+                        self.agents.pending_review_count()
+                    ))
+                    .color(self.theme.text_muted),
+                );
+                if ui.button("Agents").clicked() {
+                    self.queue_intent(Intent::Agent(AgentIntent::OpenPanel));
+                }
+            });
+            ui.separator();
+
+            let proposals: Vec<_> = self
+                .agents
+                .ordered_proposals()
+                .into_iter()
+                .cloned()
+                .collect();
+            if proposals.is_empty() {
+                empty_state(ui, &self.theme, "No agent proposals");
+                return;
+            }
+
+            for proposal in proposals {
+                let is_selected = self.agents.active_proposal == Some(proposal.id);
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(
+                                is_selected,
+                                format!("#{} {}", proposal.id.0, proposal.title),
+                            )
+                            .clicked()
+                        {
+                            self.queue_intent(Intent::Review(ReviewIntent::SelectProposal {
+                                proposal_id: proposal.id,
+                            }));
+                        }
+                        ui.label(
+                            RichText::new(review_status_label(proposal.status))
+                                .color(self.theme.text_muted),
+                        );
+                    });
+                    ui.small(&proposal.summary);
+                    for line in &proposal.preview_lines {
+                        ui.small(RichText::new(line).color(self.theme.text_disabled));
+                    }
+                    ui.horizontal(|ui| {
+                        let can_apply = proposal.status == ProposalStatus::PendingReview;
+                        if ui
+                            .add_enabled(can_apply, egui::Button::new("Accept"))
+                            .clicked()
+                        {
+                            self.queue_intent(Intent::Review(ReviewIntent::AcceptProposal {
+                                proposal_id: proposal.id,
+                            }));
+                        }
+                        if ui
+                            .add_enabled(can_apply, egui::Button::new("Reject"))
+                            .clicked()
+                        {
+                            self.queue_intent(Intent::Review(ReviewIntent::RejectProposal {
+                                proposal_id: proposal.id,
+                            }));
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+            }
+        });
+    }
+
+    fn render_agents_sidebar(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        SectionPanel::new("AGENTS").show(ui, &theme, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("New Session").clicked() {
+                    self.queue_intent(Intent::Agent(AgentIntent::CreateSession));
+                }
+                if ui.button("Review Queue").clicked() {
+                    self.queue_intent(Intent::Review(ReviewIntent::OpenQueue));
+                }
+            });
+            ui.separator();
+
+            if self.agents.sessions.is_empty() {
+                empty_state(
+                    ui,
+                    &self.theme,
+                    "No sessions yet. Ask the local agent to move a selected component to generate a reviewable proposal.",
+                );
+            } else {
+                let sessions: Vec<_> = self.agents.ordered_sessions().into_iter().cloned().collect();
+                for session in sessions {
+                    let is_selected = self.agents.active_session == Some(session.id);
+                    if ui
+                        .selectable_label(
+                            is_selected,
+                            format!(
+                                "#{} {} [{}]",
+                                session.id.0,
+                                session.title,
+                                agent_status_label(session.status)
+                            ),
+                        )
+                        .clicked()
+                    {
+                        self.agents.active_session = Some(session.id);
+                        self.agents.active_proposal = session.proposal_ids.last().copied();
+                    }
+                }
+            }
+
+            ui.separator();
+            ui.label(RichText::new("Prompt").color(self.theme.text_muted));
+            ui.text_edit_multiline(&mut self.agents.composer_text);
+            if ui.button("Send To Agent").clicked() {
+                let prompt = self.agents.composer_text.trim().to_owned();
+                if !prompt.is_empty() {
+                    self.queue_intent(Intent::Agent(AgentIntent::SubmitPrompt {
+                        session_id: self.agents.active_session,
+                        prompt,
+                    }));
+                }
+            }
+            ui.small(
+                RichText::new(
+                    "Local-first stub: prompts that ask to move or shift the selected component create a reviewable proposal instead of mutating immediately.",
+                )
+                .color(self.theme.text_disabled),
+            );
+
+            if let Some(session_id) = self.agents.active_session
+                && let Some(session) = self.agents.sessions.get(&session_id)
+            {
+                ui.separator();
+                ui.label(RichText::new("Transcript").color(self.theme.text_muted));
+                egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
+                    for message in &session.messages {
+                        ui.label(
+                            RichText::new(format!("{}: {}", message.author, message.body))
+                                .color(self.theme.text_primary),
+                        );
+                    }
+                });
+            }
         });
     }
 
@@ -207,5 +354,23 @@ impl ShellApp {
                 }
             });
         }
+    }
+}
+
+fn review_status_label(status: ProposalStatus) -> &'static str {
+    match status {
+        ProposalStatus::PendingReview => "pending",
+        ProposalStatus::Applied => "applied",
+        ProposalStatus::Rejected => "rejected",
+        ProposalStatus::Stale => "stale",
+    }
+}
+
+fn agent_status_label(status: AgentRunStatus) -> &'static str {
+    match status {
+        AgentRunStatus::Idle => "idle",
+        AgentRunStatus::Running => "running",
+        AgentRunStatus::Completed => "completed",
+        AgentRunStatus::Failed => "failed",
     }
 }

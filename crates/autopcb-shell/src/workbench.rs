@@ -16,6 +16,9 @@ pub const DOCUMENT_KIND_SCHLIB_COMPONENT: &str = "document.schlib_component";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DocumentId(pub u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct DocumentRevision(pub u64);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BoardViewMode {
     TwoD,
@@ -79,6 +82,7 @@ impl DocumentKind {
 #[derive(Debug)]
 pub struct Document {
     pub id: DocumentId,
+    pub revision: DocumentRevision,
     pub title: String,
     pub path: Option<PathBuf>,
     pub dirty: bool,
@@ -192,6 +196,12 @@ impl WorkbenchModel {
 
     pub fn open_board_document(&mut self, path: PathBuf, ir: PcbIr) -> DocumentId {
         if let Some(existing) = self.find_document_by_path(&path) {
+            if let Some(doc) = self.documents.get_mut(&existing)
+                && let DocumentKind::Board(board) = &mut doc.kind
+            {
+                board.ir = ir;
+                doc.revision.0 = doc.revision.0.saturating_add(1);
+            }
             self.set_active_tab(existing);
             return existing;
         }
@@ -200,6 +210,7 @@ impl WorkbenchModel {
         let title = filename_or_fallback(&path, "board");
         let doc = Document {
             id,
+            revision: DocumentRevision(0),
             title,
             path: Some(path.clone()),
             dirty: false,
@@ -229,6 +240,7 @@ impl WorkbenchModel {
             .unwrap_or_else(|| "untitled-spec.wrk".to_owned());
         let doc = Document {
             id,
+            revision: DocumentRevision(0),
             title,
             path: path.clone(),
             dirty: false,
@@ -259,6 +271,7 @@ impl WorkbenchModel {
         let title = format!("{} (preview)", filename_or_fallback(&source_path, "schdoc"));
         let doc = Document {
             id,
+            revision: DocumentRevision(0),
             title,
             path: None,
             dirty: false,
@@ -292,6 +305,7 @@ impl WorkbenchModel {
         let title = format!("{} (gallery)", filename_or_fallback(&source_path, "schlib"));
         let doc = Document {
             id,
+            revision: DocumentRevision(0),
             title,
             path: None,
             dirty: false,
@@ -332,6 +346,7 @@ impl WorkbenchModel {
         );
         let doc = Document {
             id,
+            revision: DocumentRevision(0),
             title,
             path: None,
             dirty: false,
@@ -438,6 +453,16 @@ impl WorkbenchModel {
         }
     }
 
+    pub fn document_revision(&self, id: DocumentId) -> Option<DocumentRevision> {
+        self.documents.get(&id).map(|d| d.revision)
+    }
+
+    pub fn bump_document_revision(&mut self, id: DocumentId) -> Option<DocumentRevision> {
+        let doc = self.documents.get_mut(&id)?;
+        doc.revision.0 = doc.revision.0.saturating_add(1);
+        Some(doc.revision)
+    }
+
     pub fn find_document_by_path(&self, path: &Path) -> Option<DocumentId> {
         self.documents
             .values()
@@ -462,6 +487,7 @@ impl WorkbenchModel {
         let id = self.alloc_document_id();
         let doc = Document {
             id,
+            revision: DocumentRevision(0),
             title: "Keyboard Shortcuts".to_owned(),
             path: None,
             dirty: false,
@@ -575,5 +601,20 @@ mod tests {
         assert_eq!(model.active_editor_tab, Some(second));
         model.activate_next_tab();
         assert_eq!(model.active_editor_tab, Some(first));
+    }
+
+    #[test]
+    fn document_revision_bumps_for_explicit_mutations() {
+        let mut model = WorkbenchModel::new(None, None);
+        let doc = model.open_spec_document(None, "a".to_owned());
+        assert_eq!(model.document_revision(doc), Some(DocumentRevision(0)));
+        let r1 = model
+            .bump_document_revision(doc)
+            .expect("revision must bump");
+        assert_eq!(r1, DocumentRevision(1));
+        let r2 = model
+            .bump_document_revision(doc)
+            .expect("revision must bump");
+        assert_eq!(r2, DocumentRevision(2));
     }
 }

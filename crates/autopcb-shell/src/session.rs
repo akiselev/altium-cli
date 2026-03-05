@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+use crate::agents::AgentWorkspaceState;
 use crate::app::{EditorSplitState, PaletteMode, PanelVisibilityState, ShortcutOverrides};
 use crate::commands::StoredShortcut;
 use crate::layout::ShellLayoutState;
@@ -31,6 +32,7 @@ pub struct SessionSnapshot {
     pub documents: Vec<SessionDocumentState>,
     pub selection: SessionSelectionState,
     pub prefs: SessionPrefsState,
+    pub agents: AgentWorkspaceState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,6 +247,7 @@ impl LegacySessionSnapshotV1 {
             documents: self.documents,
             selection: self.selection,
             prefs: self.prefs,
+            agents: AgentWorkspaceState::default(),
         }
     }
 }
@@ -326,6 +329,7 @@ mod tests {
                 theme: ThemePrefs::default(),
                 shortcut_overrides: ShortcutOverrides::default(),
             },
+            agents: AgentWorkspaceState::default(),
         };
 
         let raw = serde_json::to_string(&snapshot).expect("serialize");

@@ -1,7 +1,7 @@
 mod tabs;
 mod ui;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -18,7 +18,13 @@ use egui_tiles::{Behavior, TileId, UiResponse};
 use rfd::FileDialog;
 
 use self::tabs::{TabProviderRegistry, TabRenderer};
-use crate::canvas::{Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView};
+use crate::agents::{
+    AgentMessage, AgentRunStatus, AgentSession, AgentSessionId, AgentWorkspaceState,
+    ProposalBundle, ProposalId, ProposalStatus,
+};
+use crate::canvas::{
+    BoardCanvasAction, MovePreview, Pcb2dCanvas, Pcb3dCanvas, PcbCanvasView, translate_component,
+};
 use crate::commands::{
     CommandRegistry, ShortcutDef, StoredShortcut, build_context, selection_label,
     shortcut_from_stored, shortcut_to_stored,
@@ -28,8 +34,8 @@ use crate::jobs::{JobArtifact, JobEvent, JobKind, JobManager, JobPayload, JobReq
 use crate::layout::{BottomTab, EditorPane, ShellLayoutState};
 use crate::pipeline::{
     ActivityViewIntent, Command, CommandTransaction, Effect, HistoryIntent, Intent, ResolveContext,
-    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, TracingTelemetry,
-    intent_from_command_id, resolve_intent,
+    ResolveResult, SecondarySidebarTabIntent, TelemetrySink, ToolId, TracingTelemetry,
+    TxUndoPolicy, intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
 use crate::session::{FileSessionStore, RestoreMode, SessionSnapshot, SessionTabRef};
@@ -45,7 +51,7 @@ use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{
     ThemeId, ThemePrefs, ThemeTokens, apply_theme, next_theme, previous_theme, theme_tokens_by_id,
 };
-use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, WorkbenchModel};
+use crate::workbench::{BoardViewMode, DocumentId, DocumentKind, DocumentRevision, WorkbenchModel};
 
 const LAYOUT_PROBE_PATH: &str = "/tmp/autopcb-shell-layout.json";
 const SESSION_AUTOSAVE_DEBOUNCE_MS: u64 = 800;
@@ -174,6 +180,7 @@ pub struct ShellApp {
     canvas3d: Pcb3dCanvas,
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
+    agents: AgentWorkspaceState,
     preview_cache: PreviewTextureCache,
     telemetry: TracingTelemetry,
     theme_prefs: ThemePrefs,
@@ -183,12 +190,99 @@ pub struct ShellApp {
     last_session_save: Instant,
     watched_files: BTreeMap<PathBuf, SystemTime>,
     last_watch_scan: Instant,
+    document_runtime: BTreeMap<DocumentId, DocumentRuntime>,
+    pending_job_revisions: BTreeMap<crate::jobs::JobId, BTreeMap<DocumentId, DocumentRevision>>,
 }
 
 #[derive(Debug, Clone)]
 struct UndoEntry {
     forward: CommandTransaction,
     inverse: CommandTransaction,
+}
+
+#[derive(Debug, Default, Clone)]
+struct DocumentRuntime {
+    active_tool: ToolId,
+    active_interaction: Option<ActiveInteraction>,
+    invalidation: DirtySets,
+}
+
+#[derive(Debug, Clone)]
+enum ActiveInteraction {
+    MoveSelection {
+        designator: String,
+        delta_x_mm: f32,
+        delta_y_mm: f32,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum DomainEvent {
+    SelectionChanged,
+    BoardViewModeChanged {
+        document_id: DocumentId,
+    },
+    ComponentMoved {
+        document_id: DocumentId,
+        designator: String,
+    },
+}
+
+#[derive(Debug, Default, Clone)]
+struct DirtySets {
+    render: BTreeSet<RenderDirty>,
+    connectivity: BTreeSet<ConnectivityDirty>,
+    drc: BTreeSet<DrcDirty>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum RenderDirty {
+    SelectionOverlay,
+    BoardViewMode,
+    Component(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ConnectivityDirty {
+    SelectionOverlay,
+    Component(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum DrcDirty {
+    BoardViewMode,
+    Component(String),
+}
+
+#[derive(Debug, Default, Clone)]
+struct InvalidationDelta {
+    by_document: BTreeMap<DocumentId, DirtySets>,
+}
+
+impl InvalidationDelta {
+    fn add_render_hint(&mut self, document_id: DocumentId, hint: RenderDirty) {
+        self.by_document
+            .entry(document_id)
+            .or_default()
+            .render
+            .insert(hint);
+    }
+
+    fn add_connectivity_hint(&mut self, document_id: DocumentId, hint: ConnectivityDirty) {
+        self.by_document
+            .entry(document_id)
+            .or_default()
+            .connectivity
+            .insert(hint);
+    }
+
+    fn add_drc_hint(&mut self, document_id: DocumentId, hint: DrcDirty) {
+        self.by_document
+            .entry(document_id)
+            .or_default()
+            .drc
+            .insert(hint);
+    }
 }
 
 #[derive(Default)]
@@ -258,6 +352,7 @@ impl ShellApp {
             canvas3d: Pcb3dCanvas,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            agents: AgentWorkspaceState::default(),
             preview_cache: PreviewTextureCache::default(),
             telemetry: TracingTelemetry,
             theme_prefs,
@@ -267,6 +362,8 @@ impl ShellApp {
             last_session_save: Instant::now(),
             watched_files: BTreeMap::new(),
             last_watch_scan: Instant::now(),
+            document_runtime: BTreeMap::new(),
+            pending_job_revisions: BTreeMap::new(),
         };
         app.refresh_theme_tokens();
         app.restore_mode(restore_mode);
@@ -323,6 +420,222 @@ impl ShellApp {
             | DocumentKind::SchLibComponent(_) => None,
             DocumentKind::Keybindings => Some(SessionTabRef::Keybindings),
         }
+    }
+
+    fn create_agent_session(&mut self, title: Option<String>) -> AgentSessionId {
+        let session_id = self.agents.allocate_session_id();
+        let now = now_unix_ms();
+        let session = AgentSession {
+            id: session_id,
+            title: title.unwrap_or_else(|| format!("Agent Session {}", session_id.0)),
+            workspace_root: self.model.workspace_root.clone(),
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+            status: AgentRunStatus::Idle,
+            messages: Vec::new(),
+            proposal_ids: Vec::new(),
+            last_error: None,
+        };
+        self.agents.sessions.insert(session_id, session);
+        self.agents.active_session = Some(session_id);
+        self.telemetry.agent_session_started(session_id);
+        session_id
+    }
+
+    fn ensure_active_agent_session(&mut self) -> AgentSessionId {
+        self.agents
+            .active_session
+            .filter(|id| self.agents.sessions.contains_key(id))
+            .unwrap_or_else(|| self.create_agent_session(None))
+    }
+
+    fn append_agent_message(&mut self, session_id: AgentSessionId, author: &str, body: String) {
+        if let Some(session) = self.agents.sessions.get_mut(&session_id) {
+            let now = now_unix_ms();
+            session.updated_at_unix_ms = now;
+            session.messages.push(AgentMessage {
+                author: author.to_owned(),
+                body,
+                created_at_unix_ms: now,
+            });
+        }
+    }
+
+    fn current_move_proposal_request(&self, prompt: &str) -> Option<(String, f32, f32)> {
+        let selection = match &self.model.selection.primary {
+            crate::workbench::SelectionKind::Component(designator) => designator.clone(),
+            _ => return None,
+        };
+        let prompt_lower = prompt.to_ascii_lowercase();
+        if !["move", "shift", "reposition", "nudge"]
+            .iter()
+            .any(|token| prompt_lower.contains(token))
+        {
+            return None;
+        }
+        let magnitude = first_prompt_number(prompt).unwrap_or(1.0);
+        let mut delta_x_mm = 0.0;
+        let mut delta_y_mm = 0.0;
+        if prompt_lower.contains("left") {
+            delta_x_mm -= magnitude;
+        }
+        if prompt_lower.contains("right") {
+            delta_x_mm += magnitude;
+        }
+        if prompt_lower.contains("up") {
+            delta_y_mm += magnitude;
+        }
+        if prompt_lower.contains("down") {
+            delta_y_mm -= magnitude;
+        }
+        if delta_x_mm == 0.0 && delta_y_mm == 0.0 {
+            delta_x_mm = magnitude;
+        }
+        Some((selection, delta_x_mm, delta_y_mm))
+    }
+
+    fn create_move_proposal_from_prompt(
+        &mut self,
+        session_id: AgentSessionId,
+        prompt: &str,
+    ) -> Result<Option<ProposalId>, String> {
+        let Some((designator, delta_x_mm, delta_y_mm)) = self.current_move_proposal_request(prompt)
+        else {
+            self.append_agent_message(
+                session_id,
+                "assistant",
+                "No persistent proposal created. Select a component on a board and ask to move or shift it to generate a reviewable change."
+                    .to_owned(),
+            );
+            return Ok(None);
+        };
+
+        let proposal_intent = Intent::Tool(crate::pipeline::ToolIntent::CommitMoveSelection {
+            delta_x_mm,
+            delta_y_mm,
+        });
+        let transaction = match resolve_intent(proposal_intent, self.resolve_context()) {
+            ResolveResult::Accepted { transaction } => transaction,
+            ResolveResult::Rejected { message, .. } => return Err(message),
+        };
+
+        let active_document = self.model.active_document_id();
+        let mut expected_revisions = BTreeMap::new();
+        let mut target_documents = Vec::new();
+        if let Some(document_id) = active_document
+            && let Some(revision) = self.model.document_revision(document_id)
+        {
+            expected_revisions.insert(document_id, revision);
+            target_documents.push(document_id);
+        }
+
+        let proposal_id = self.agents.allocate_proposal_id();
+        let title = format!("Move {designator}");
+        let summary =
+            format!("Move component {designator} by {delta_x_mm:+.2}mm X and {delta_y_mm:+.2}mm Y");
+        let rationale = format!("Generated from agent prompt: {}", prompt.trim());
+        let preview_lines = vec![
+            summary.clone(),
+            "Status: pending review".to_owned(),
+            "Applying this proposal will run through the normal command transaction path."
+                .to_owned(),
+        ];
+        self.agents.proposals.insert(
+            proposal_id,
+            ProposalBundle {
+                id: proposal_id,
+                session_id,
+                title,
+                summary: summary.clone(),
+                rationale,
+                created_at_unix_ms: now_unix_ms(),
+                status: ProposalStatus::PendingReview,
+                transaction,
+                preview_lines,
+                expected_revisions,
+                target_documents,
+            },
+        );
+        self.telemetry.proposal_created(proposal_id);
+        self.agents.active_proposal = Some(proposal_id);
+        if let Some(session) = self.agents.sessions.get_mut(&session_id) {
+            session.proposal_ids.push(proposal_id);
+            session.status = AgentRunStatus::Completed;
+            session.updated_at_unix_ms = now_unix_ms();
+        }
+        self.append_agent_message(
+            session_id,
+            "assistant",
+            format!(
+                "Created proposal #{} for review: {}. Persistent changes are still blocked until you approve them.",
+                proposal_id.0, summary
+            ),
+        );
+        Ok(Some(proposal_id))
+    }
+
+    fn mark_proposal_rejected(&mut self, proposal_id: ProposalId) {
+        let Some((session_id, title)) =
+            self.agents.proposals.get_mut(&proposal_id).map(|proposal| {
+                proposal.status = ProposalStatus::Rejected;
+                (proposal.session_id, proposal.title.clone())
+            })
+        else {
+            self.model
+                .problems
+                .push(format!("Proposal #{} not found", proposal_id.0));
+            return;
+        };
+        self.telemetry.proposal_rejected(proposal_id);
+        self.agents.active_proposal = Some(proposal_id);
+        self.agents.active_session = Some(session_id);
+        self.append_agent_message(
+            session_id,
+            "system",
+            format!("Proposal #{} rejected: {}", proposal_id.0, title),
+        );
+    }
+
+    fn apply_proposal(&mut self, proposal_id: ProposalId, ctx: &egui::Context) {
+        let Some(snapshot) = self.agents.proposals.get(&proposal_id).cloned() else {
+            self.model
+                .problems
+                .push(format!("Proposal #{} not found", proposal_id.0));
+            return;
+        };
+        if snapshot.status != ProposalStatus::PendingReview {
+            self.model
+                .problems
+                .push(format!("Proposal #{} is not pending review", proposal_id.0));
+            return;
+        }
+        if snapshot
+            .expected_revisions
+            .iter()
+            .any(|(doc_id, expected)| self.model.document_revision(*doc_id) != Some(*expected))
+        {
+            if let Some(proposal) = self.agents.proposals.get_mut(&proposal_id) {
+                proposal.status = ProposalStatus::Stale;
+            }
+            self.model.problems.push(format!(
+                "Proposal #{} is stale and must be regenerated against the latest document state",
+                proposal_id.0
+            ));
+            return;
+        }
+
+        if let Some(proposal) = self.agents.proposals.get_mut(&proposal_id) {
+            proposal.status = ProposalStatus::Applied;
+        }
+        self.telemetry.proposal_applied(proposal_id);
+        self.agents.active_proposal = Some(proposal_id);
+        self.agents.active_session = Some(snapshot.session_id);
+        self.append_agent_message(
+            snapshot.session_id,
+            "system",
+            format!("Proposal #{} approved and applied.", proposal_id.0),
+        );
+        self.apply_transaction(snapshot.transaction, ctx, true);
     }
 
     fn build_snapshot(&self) -> SessionSnapshot {
@@ -433,6 +746,7 @@ impl ShellApp {
                 theme: self.theme_prefs.clone(),
                 shortcut_overrides,
             },
+            agents: self.agents.clone(),
         }
     }
 
@@ -526,6 +840,18 @@ impl ShellApp {
             .collect();
 
         self.model.selection = snapshot.selection.selection;
+        self.agents = snapshot.agents;
+        for proposal in self.agents.proposals.values_mut() {
+            proposal.target_documents.clear();
+            proposal.expected_revisions.clear();
+            if proposal.status == ProposalStatus::PendingReview {
+                proposal.status = ProposalStatus::Stale;
+                proposal.preview_lines.push(
+                    "Restored from session snapshot; proposal must be regenerated before apply."
+                        .to_owned(),
+                );
+            }
+        }
         if let Some(workspace_path) = snapshot
             .workspace
             .active_workspace_path
@@ -538,6 +864,7 @@ impl ShellApp {
         }
 
         self.prune_tab_renderers();
+        self.prune_document_runtime();
         self.session_dirty = false;
         self.last_session_save = Instant::now();
         Ok(())
@@ -596,6 +923,14 @@ impl ShellApp {
     }
 
     fn resolve_context(&self) -> ResolveContext {
+        let active_document_is_board = self
+            .model
+            .active_document()
+            .is_some_and(|doc| matches!(doc.kind, DocumentKind::Board(_)));
+        let selected_component = match &self.model.selection.primary {
+            crate::workbench::SelectionKind::Component(designator) => Some(designator.clone()),
+            _ => None,
+        };
         ResolveContext {
             workspace_open: self.model.has_workspace(),
             selection_exists: self.model.selection_exists(),
@@ -604,6 +939,8 @@ impl ShellApp {
             show_bottom_panel: self.panel_visibility.show_bottom_panel,
             show_activity_bar: self.panel_visibility.show_activity_bar,
             show_status_bar: self.panel_visibility.show_status_bar,
+            active_document_is_board,
+            selected_component,
         }
     }
 
@@ -627,6 +964,7 @@ impl ShellApp {
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            Effect::ApplyProposal { proposal_id } => self.apply_proposal(proposal_id, ctx),
         }
     }
 
@@ -638,22 +976,26 @@ impl ShellApp {
     ) {
         let had_commands = !tx.commands.is_empty();
         let mut inverse = Vec::new();
+        let mut domain_events = Vec::new();
         for command in &tx.commands {
             self.telemetry.command_executed(command);
-            let (inv, effects) = self.apply_command(command.clone());
+            let (inv, effects, events) = self.apply_command(command.clone());
             if let Some(inv) = inv {
                 inverse.push(inv);
             }
+            domain_events.extend(events);
             for effect in effects {
                 self.apply_effect(effect, ctx);
             }
         }
+        self.apply_domain_events(domain_events);
 
-        if allow_history_push && !inverse.is_empty() {
+        if allow_history_push && tx.undo_policy == TxUndoPolicy::Track && !inverse.is_empty() {
             inverse.reverse();
             let inverse_tx = CommandTransaction {
                 source_intent: tx.source_intent.clone(),
                 commands: inverse,
+                undo_policy: TxUndoPolicy::Skip,
             };
             self.telemetry.undo_pushed(inverse_tx.commands.len());
             self.undo_stack.push(UndoEntry {
@@ -712,11 +1054,14 @@ impl ShellApp {
         }
     }
 
-    fn apply_command(&mut self, command: Command) -> (Option<Command>, Vec<Effect>) {
+    fn apply_command(
+        &mut self,
+        command: Command,
+    ) -> (Option<Command>, Vec<Effect>, Vec<DomainEvent>) {
         match command {
             Command::OpenKeybindings => {
                 self.model.open_or_activate_keybindings_document();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::ThemeOpenManagerTab => {
                 self.palette_mode = PaletteMode::Theme;
@@ -724,7 +1069,7 @@ impl ShellApp {
                 self.palette_focus_pending = true;
                 self.palette_filter.clear();
                 self.palette_selected = 0;
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::SetCommandPaletteVisible(value) => {
                 let prev = self.show_command_palette;
@@ -742,17 +1087,29 @@ impl ShellApp {
                     self.theme_preview = None;
                     self.refresh_theme_tokens();
                 }
-                (Some(Command::SetCommandPaletteVisible(prev)), Vec::new())
+                (
+                    Some(Command::SetCommandPaletteVisible(prev)),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::SetPrimarySidebarVisible(value) => {
                 let prev = self.panel_visibility.show_primary_sidebar;
                 self.panel_visibility.show_primary_sidebar = value;
-                (Some(Command::SetPrimarySidebarVisible(prev)), Vec::new())
+                (
+                    Some(Command::SetPrimarySidebarVisible(prev)),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::SetSecondarySidebarVisible(value) => {
                 let prev = self.panel_visibility.show_secondary_sidebar;
                 self.panel_visibility.show_secondary_sidebar = value;
-                (Some(Command::SetSecondarySidebarVisible(prev)), Vec::new())
+                (
+                    Some(Command::SetSecondarySidebarVisible(prev)),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::SetSecondarySidebarTab(tab) => {
                 let prev = self.panel_visibility.secondary_sidebar_tab;
@@ -763,6 +1120,7 @@ impl ShellApp {
                     Some(Command::SetSecondarySidebarTab(match prev {
                         SecondarySidebarTab::Inspector => SecondarySidebarTabIntent::Inspector,
                     })),
+                    Vec::new(),
                     Vec::new(),
                 )
             }
@@ -782,33 +1140,46 @@ impl ShellApp {
                     ActivityView::Run => ActivityViewIntent::Run,
                     ActivityView::Extensions => ActivityViewIntent::Extensions,
                 };
-                (Some(Command::SetActivityView(inv)), Vec::new())
+                (Some(Command::SetActivityView(inv)), Vec::new(), Vec::new())
             }
             Command::SetBottomPanelVisible(value) => {
                 let prev = self.panel_visibility.show_bottom_panel;
                 self.panel_visibility.show_bottom_panel = value;
-                (Some(Command::SetBottomPanelVisible(prev)), Vec::new())
+                (
+                    Some(Command::SetBottomPanelVisible(prev)),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::SetBottomTab(tab) => {
                 let prev = self.panel_visibility.bottom_tab;
                 self.panel_visibility.bottom_tab = tab;
-                (Some(Command::SetBottomTab(prev)), Vec::new())
+                (Some(Command::SetBottomTab(prev)), Vec::new(), Vec::new())
             }
             Command::SetActivityBarVisible(value) => {
                 let prev = self.panel_visibility.show_activity_bar;
                 self.panel_visibility.show_activity_bar = value;
-                (Some(Command::SetActivityBarVisible(prev)), Vec::new())
+                (
+                    Some(Command::SetActivityBarVisible(prev)),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::SetStatusBarVisible(value) => {
                 let prev = self.panel_visibility.show_status_bar;
                 self.panel_visibility.show_status_bar = value;
-                (Some(Command::SetStatusBarVisible(prev)), Vec::new())
+                (
+                    Some(Command::SetStatusBarVisible(prev)),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::ActivateNextEditorTab => {
                 let prev = self.model.active_document_id();
                 self.model.activate_next_tab();
                 (
                     prev.map(|id| Command::EditorActivateDocument { id }),
+                    Vec::new(),
                     Vec::new(),
                 )
             }
@@ -817,6 +1188,7 @@ impl ShellApp {
                 self.model.activate_previous_tab();
                 (
                     prev.map(|id| Command::EditorActivateDocument { id }),
+                    Vec::new(),
                     Vec::new(),
                 )
             }
@@ -829,7 +1201,7 @@ impl ShellApp {
                 self.model
                     .output_lines
                     .push("Split editor: right".to_owned());
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::SetEditorSplitDown => {
                 self.editor_split.is_split = true;
@@ -840,22 +1212,23 @@ impl ShellApp {
                 self.model
                     .output_lines
                     .push("Split editor: down".to_owned());
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::ResetLayout => {
                 self.layout = ShellLayoutState::default();
                 self.editor_split = EditorSplitState::default();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::EditorReopenClosed => {
                 let _ = self.model.reopen_last_closed_document();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::EditorActivateDocument { id } => {
                 let prev = self.model.active_document_id();
                 self.model.set_active_tab(id);
                 (
                     prev.map(|id| Command::EditorActivateDocument { id }),
+                    Vec::new(),
                     Vec::new(),
                 )
             }
@@ -864,7 +1237,7 @@ impl ShellApp {
                 if self.editor_split.secondary_active_tab == Some(id) {
                     self.editor_split.secondary_active_tab = self.model.active_editor_tab;
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::EditorOpenSchLibComponent {
                 source_path,
@@ -877,19 +1250,19 @@ impl ShellApp {
                     component_name,
                 );
                 self.mark_session_dirty();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileClose => {
                 let _ = self.model.close_active_document();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileCloseAll => {
                 while self.model.close_active_document() {}
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileCloseOthers => {
                 self.model.close_other_documents();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::WorkspaceOpen { root } => {
                 let root = root
@@ -899,13 +1272,13 @@ impl ShellApp {
                     self.model
                         .problems
                         .push("Unable to resolve workspace root".to_owned());
-                    return (None, Vec::new());
+                    return (None, Vec::new(), Vec::new());
                 };
                 self.model.set_workspace_root(root.clone());
                 self.model
                     .output_lines
                     .push(format!("Workspace opened: {}", root.display()));
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::WorkspaceOpenProject { path } => {
                 let path = path.or_else(|| self.find_project_in_workspace_root());
@@ -914,7 +1287,7 @@ impl ShellApp {
                         "workspace.open_project requires a .wrk/.PrjPcb path (or one in workspace root)"
                             .to_owned(),
                     );
-                    return (None, Vec::new());
+                    return (None, Vec::new(), Vec::new());
                 };
                 self.submit_job(JobPayload::ParseProject {
                     project_path: project_path.clone(),
@@ -922,7 +1295,7 @@ impl ShellApp {
                 self.model
                     .output_lines
                     .push(format!("Queued project parse: {}", project_path.display()));
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::WorkspaceReloadProject => {
                 let workspace_path = self
@@ -937,22 +1310,24 @@ impl ShellApp {
                         .problems
                         .push("No active project workspace to reload".to_owned());
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::WorkspaceSyncIr => {
                 self.queue_project_sync_jobs();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::WorkspaceClose => {
                 self.model.clear_workspace();
                 self.tab_renderers.clear();
+                self.document_runtime.clear();
+                self.pending_job_revisions.clear();
                 self.model.output_lines.push("Workspace closed".to_owned());
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileNewSpec => {
                 self.model
                     .open_spec_document(None, "// New spec document\n".to_owned());
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileOpen { path } => {
                 if let Some(path) = path {
@@ -962,7 +1337,7 @@ impl ShellApp {
                         "Use Explorer or pass a path to File: Open from command palette".to_owned(),
                     );
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileImportAltium { path } => {
                 if let Some(path) = path {
@@ -972,19 +1347,19 @@ impl ShellApp {
                         .problems
                         .push("file.import_altium requires a source path".to_owned());
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileSave => {
                 self.save_active_document();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileSaveAll => {
                 self.save_all_documents();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::FileRevert => {
                 self.revert_active_document();
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::JobsCancelActive => {
                 if let Some(id) = self.jobs.cancel_first_active() {
@@ -994,35 +1369,210 @@ impl ShellApp {
                 } else {
                     self.model.output_lines.push("No active jobs".to_owned());
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::PcbSetViewMode(mode) => {
                 let prev = self.model.active_board().map(|b| b.view_mode);
+                let active_doc = self.model.active_document_id();
                 if let Some(board) = self.model.active_board_mut() {
                     board.view_mode = mode;
                 }
-                (prev.map(Command::PcbSetViewMode), Vec::new())
+                let events = active_doc
+                    .map(|document_id| DomainEvent::BoardViewModeChanged { document_id })
+                    .into_iter()
+                    .collect();
+                (prev.map(Command::PcbSetViewMode), Vec::new(), events)
             }
             Command::PcbZoomFit => {
                 self.layout.request_fit = true;
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::SetSelection(selection) => {
                 let prev = self.model.selection.primary.clone();
                 self.model.selection.primary = selection;
-                (Some(Command::SetSelection(prev)), Vec::new())
+                if let Some(runtime) = self.active_document_runtime_mut() {
+                    runtime.active_interaction = None;
+                }
+                (
+                    Some(Command::SetSelection(prev)),
+                    Vec::new(),
+                    vec![DomainEvent::SelectionChanged],
+                )
+            }
+            Command::ToolSetActive { tool } => {
+                let Some(runtime) = self.active_document_runtime_mut() else {
+                    self.model
+                        .problems
+                        .push("No active document runtime for tool selection".to_owned());
+                    return (None, Vec::new(), Vec::new());
+                };
+                let prev = runtime.active_tool;
+                runtime.active_tool = tool;
+                if tool != ToolId::Move {
+                    runtime.active_interaction = None;
+                }
+                (
+                    Some(Command::ToolSetActive { tool: prev }),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            }
+            Command::ToolBeginMoveSelection { designator } => {
+                let Some(runtime) = self.active_document_runtime_mut() else {
+                    self.model
+                        .problems
+                        .push("No active document runtime for move start".to_owned());
+                    return (None, Vec::new(), Vec::new());
+                };
+                runtime.active_interaction = Some(ActiveInteraction::MoveSelection {
+                    designator,
+                    delta_x_mm: 0.0,
+                    delta_y_mm: 0.0,
+                });
+                (None, Vec::new(), Vec::new())
+            }
+            Command::ToolPreviewMoveSelection {
+                designator,
+                delta_x_mm,
+                delta_y_mm,
+            } => {
+                let Some(runtime) = self.active_document_runtime_mut() else {
+                    self.model
+                        .problems
+                        .push("No active document runtime for move preview".to_owned());
+                    return (None, Vec::new(), Vec::new());
+                };
+                runtime.active_interaction = Some(ActiveInteraction::MoveSelection {
+                    designator,
+                    delta_x_mm,
+                    delta_y_mm,
+                });
+                (None, Vec::new(), Vec::new())
+            }
+            Command::MoveComponent {
+                designator,
+                delta_x_mm,
+                delta_y_mm,
+            } => {
+                let Some(document_id) = self.model.active_document_id() else {
+                    self.model
+                        .problems
+                        .push("Move command requires an active document".to_owned());
+                    return (None, Vec::new(), Vec::new());
+                };
+                let moved = self.move_component_by_designator(
+                    document_id,
+                    &designator,
+                    delta_x_mm,
+                    delta_y_mm,
+                );
+                if !moved {
+                    self.model.problems.push(format!(
+                        "Selected component '{}' is no longer available in the active board",
+                        designator
+                    ));
+                    return (None, Vec::new(), Vec::new());
+                }
+                let _ = self.model.bump_document_revision(document_id);
+                (
+                    Some(Command::MoveComponent {
+                        designator: designator.clone(),
+                        delta_x_mm: -delta_x_mm,
+                        delta_y_mm: -delta_y_mm,
+                    }),
+                    Vec::new(),
+                    vec![DomainEvent::ComponentMoved {
+                        document_id,
+                        designator,
+                    }],
+                )
+            }
+            Command::ToolCancelInteraction => {
+                if let Some(runtime) = self.active_document_runtime_mut() {
+                    runtime.active_interaction = None;
+                }
+                (None, Vec::new(), Vec::new())
+            }
+            Command::AgentCreateSession => {
+                let session_id = self.create_agent_session(None);
+                self.append_agent_message(
+                    session_id,
+                    "system",
+                    "Agent session created. Persistent design edits will be queued for review instead of applied directly."
+                        .to_owned(),
+                );
+                (None, Vec::new(), Vec::new())
+            }
+            Command::AgentSubmitPrompt { session_id, prompt } => {
+                let session_id = session_id
+                    .filter(|id| self.agents.sessions.contains_key(id))
+                    .unwrap_or_else(|| self.ensure_active_agent_session());
+                self.agents.active_session = Some(session_id);
+                if let Some(session) = self.agents.sessions.get_mut(&session_id) {
+                    session.status = AgentRunStatus::Running;
+                    session.last_error = None;
+                }
+                self.append_agent_message(session_id, "user", prompt.clone());
+                match self.create_move_proposal_from_prompt(session_id, &prompt) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        if let Some(session) = self.agents.sessions.get_mut(&session_id) {
+                            session.status = AgentRunStatus::Failed;
+                            session.last_error = Some(err.clone());
+                        }
+                        self.append_agent_message(
+                            session_id,
+                            "assistant",
+                            format!("Unable to create proposal: {err}"),
+                        );
+                        self.model
+                            .problems
+                            .push(format!("Agent proposal failed: {err}"));
+                    }
+                }
+                if let Some(session) = self.agents.sessions.get_mut(&session_id)
+                    && session.status == AgentRunStatus::Running
+                {
+                    session.status = AgentRunStatus::Completed;
+                }
+                self.agents.composer_text.clear();
+                (None, Vec::new(), Vec::new())
+            }
+            Command::ReviewSelectProposal { proposal_id } => {
+                self.agents.active_proposal = Some(proposal_id);
+                if let Some(proposal) = self.agents.proposals.get(&proposal_id) {
+                    self.agents.active_session = Some(proposal.session_id);
+                }
+                (None, Vec::new(), Vec::new())
+            }
+            Command::ProposalApply { proposal_id } => {
+                if !self.agents.proposals.contains_key(&proposal_id) {
+                    self.model
+                        .problems
+                        .push(format!("Proposal #{} not found", proposal_id.0));
+                    return (None, Vec::new(), Vec::new());
+                }
+                (
+                    None,
+                    vec![Effect::ApplyProposal { proposal_id }],
+                    Vec::new(),
+                )
+            }
+            Command::ProposalReject { proposal_id } => {
+                self.mark_proposal_rejected(proposal_id);
+                (None, Vec::new(), Vec::new())
             }
             Command::RunStartLast => {
                 self.model
                     .output_lines
                     .push("No runnable task configured yet.".to_owned());
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::HelpAbout => {
                 self.model
                     .output_lines
                     .push("AutoPCB Shell - IDE shell for PCB/spec automation".to_owned());
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::SessionSaveNow => {
                 if let Err(err) = self.save_session_now() {
@@ -1035,7 +1585,7 @@ impl ShellApp {
                         self.session_store.snapshot_path().display()
                     ));
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::SessionRestoreLatest => {
                 match self.session_store.load_latest() {
@@ -1060,40 +1610,209 @@ impl ShellApp {
                         .problems
                         .push(format!("Session restore failed: {err}")),
                 }
-                (None, Vec::new())
+                (None, Vec::new(), Vec::new())
             }
             Command::ThemeCycleNext => {
                 let prev = self.theme_prefs.active_theme;
                 self.theme_prefs.active_theme = next_theme(prev);
                 self.theme_preview = None;
                 self.refresh_theme_tokens();
-                (Some(Command::ThemeSetActive { id: prev }), Vec::new())
+                (
+                    Some(Command::ThemeSetActive { id: prev }),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::ThemeCyclePrevious => {
                 let prev = self.theme_prefs.active_theme;
                 self.theme_prefs.active_theme = previous_theme(prev);
                 self.theme_preview = None;
                 self.refresh_theme_tokens();
-                (Some(Command::ThemeSetActive { id: prev }), Vec::new())
+                (
+                    Some(Command::ThemeSetActive { id: prev }),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::ThemeSetActive { id } => {
                 let prev = self.theme_prefs.active_theme;
                 self.theme_prefs.active_theme = id;
                 self.theme_preview = None;
                 self.refresh_theme_tokens();
-                (Some(Command::ThemeSetActive { id: prev }), Vec::new())
+                (
+                    Some(Command::ThemeSetActive { id: prev }),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
             Command::ThemeSetUiScale { scale } => {
                 let prev = self.theme_prefs.ui_scale;
                 self.theme_prefs.ui_scale = scale.clamp(0.8, 1.75);
                 self.refresh_theme_tokens();
-                (Some(Command::ThemeSetUiScale { scale: prev }), Vec::new())
+                (
+                    Some(Command::ThemeSetUiScale { scale: prev }),
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
-            Command::EmitEffect(effect) => (None, vec![effect]),
+            Command::EmitEffect(effect) => (None, vec![effect], Vec::new()),
+        }
+    }
+
+    fn ensure_runtime_for_document(&mut self, id: DocumentId) {
+        self.document_runtime
+            .entry(id)
+            .or_insert_with(|| DocumentRuntime {
+                active_tool: ToolId::Select,
+                active_interaction: None,
+                invalidation: DirtySets::default(),
+            });
+    }
+
+    fn active_document_runtime_mut(&mut self) -> Option<&mut DocumentRuntime> {
+        let id = self.model.active_document_id()?;
+        self.ensure_runtime_for_document(id);
+        self.document_runtime.get_mut(&id)
+    }
+
+    fn move_preview_for_document(&self, id: DocumentId) -> Option<MovePreview> {
+        match self
+            .document_runtime
+            .get(&id)?
+            .active_interaction
+            .as_ref()?
+        {
+            ActiveInteraction::MoveSelection {
+                designator,
+                delta_x_mm,
+                delta_y_mm,
+            } => Some(MovePreview {
+                designator: designator.clone(),
+                delta_x_mm: *delta_x_mm,
+                delta_y_mm: *delta_y_mm,
+            }),
+        }
+    }
+
+    fn move_component_by_designator(
+        &mut self,
+        document_id: DocumentId,
+        designator: &str,
+        delta_x_mm: f32,
+        delta_y_mm: f32,
+    ) -> bool {
+        let Some(doc) = self.model.documents.get_mut(&document_id) else {
+            return false;
+        };
+        let DocumentKind::Board(board) = &mut doc.kind else {
+            return false;
+        };
+        let Some((_, component)) = board
+            .ir
+            .components
+            .iter_mut()
+            .find(|(_, component)| component.designator == designator)
+        else {
+            return false;
+        };
+        translate_component(component, delta_x_mm, delta_y_mm);
+        true
+    }
+
+    fn handle_board_canvas_actions(&mut self, actions: Vec<BoardCanvasAction>) {
+        for action in actions {
+            match action {
+                BoardCanvasAction::ClearSelection => {
+                    self.queue_intent(Intent::Selection(crate::pipeline::SelectionIntent::Clear));
+                }
+                BoardCanvasAction::SelectComponent(designator) => {
+                    self.queue_intent(Intent::Selection(
+                        crate::pipeline::SelectionIntent::SelectComponent { designator },
+                    ));
+                }
+                BoardCanvasAction::BeginMoveSelection => {
+                    self.queue_intent(Intent::Tool(
+                        crate::pipeline::ToolIntent::BeginMoveSelection,
+                    ));
+                }
+                BoardCanvasAction::PreviewMoveSelection {
+                    delta_x_mm,
+                    delta_y_mm,
+                } => {
+                    self.queue_intent(Intent::Tool(
+                        crate::pipeline::ToolIntent::PreviewMoveSelection {
+                            delta_x_mm,
+                            delta_y_mm,
+                        },
+                    ));
+                }
+                BoardCanvasAction::CommitMoveSelection {
+                    delta_x_mm,
+                    delta_y_mm,
+                } => {
+                    self.queue_intent(Intent::Tool(
+                        crate::pipeline::ToolIntent::CommitMoveSelection {
+                            delta_x_mm,
+                            delta_y_mm,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    fn prune_document_runtime(&mut self) {
+        self.document_runtime.retain(|id, _| {
+            self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
+        });
+        for id in self.model.open_editor_tabs.clone() {
+            self.ensure_runtime_for_document(id);
+        }
+    }
+
+    fn apply_domain_events(&mut self, events: Vec<DomainEvent>) {
+        if events.is_empty() {
+            return;
+        }
+        let mut delta = InvalidationDelta::default();
+        let active_document = self.model.active_document_id();
+        for event in events {
+            match event {
+                DomainEvent::SelectionChanged => {
+                    if let Some(id) = active_document {
+                        delta.add_render_hint(id, RenderDirty::SelectionOverlay);
+                        delta.add_connectivity_hint(id, ConnectivityDirty::SelectionOverlay);
+                    }
+                }
+                DomainEvent::BoardViewModeChanged { document_id } => {
+                    delta.add_render_hint(document_id, RenderDirty::BoardViewMode);
+                    delta.add_drc_hint(document_id, DrcDirty::BoardViewMode);
+                }
+                DomainEvent::ComponentMoved {
+                    document_id,
+                    designator,
+                } => {
+                    delta.add_render_hint(document_id, RenderDirty::Component(designator.clone()));
+                    delta.add_connectivity_hint(
+                        document_id,
+                        ConnectivityDirty::Component(designator.clone()),
+                    );
+                    delta.add_drc_hint(document_id, DrcDirty::Component(designator));
+                }
+            }
+        }
+        for (doc_id, dirty) in delta.by_document {
+            self.ensure_runtime_for_document(doc_id);
+            if let Some(runtime) = self.document_runtime.get_mut(&doc_id) {
+                runtime.invalidation.render.extend(dirty.render);
+                runtime.invalidation.connectivity.extend(dirty.connectivity);
+                runtime.invalidation.drc.extend(dirty.drc);
+            }
         }
     }
 
     fn submit_job(&mut self, payload: JobPayload) {
+        let doc_targets = self.job_doc_targets(&payload);
         let kind = match &payload {
             JobPayload::ParseProject { .. } => JobKind::ParseProject,
             JobPayload::SyncBoardIr { .. } => JobKind::SyncBoardIr,
@@ -1109,11 +1828,58 @@ impl ShellApp {
                 .as_ref()
                 .map(|w| w.id)
                 .unwrap_or(0),
-            doc_targets: Vec::new(),
+            doc_targets: doc_targets.clone(),
             payload,
             requested_by: JobTrigger::Command,
         };
-        let _ = self.jobs.submit(req);
+        let id = self.jobs.submit(req);
+        let tracked = self.collect_job_revisions_for(&doc_targets);
+        if !tracked.is_empty() {
+            self.pending_job_revisions.insert(id, tracked);
+        }
+    }
+
+    fn job_doc_targets(&self, payload: &JobPayload) -> Vec<DocumentId> {
+        match payload {
+            JobPayload::SyncBoardIr { board_path } => self
+                .model
+                .find_document_by_path(board_path)
+                .into_iter()
+                .collect(),
+            JobPayload::SyncSchematicIr { schematic_path } => self
+                .model
+                .find_document_by_path(schematic_path)
+                .into_iter()
+                .collect(),
+            JobPayload::ImportAltium { source_path } => self
+                .model
+                .find_document_by_path(source_path)
+                .into_iter()
+                .collect(),
+            JobPayload::ParseProject { .. } => Vec::new(),
+        }
+    }
+
+    fn collect_job_revisions_for(
+        &self,
+        doc_targets: &[DocumentId],
+    ) -> BTreeMap<DocumentId, DocumentRevision> {
+        doc_targets
+            .iter()
+            .filter_map(|id| {
+                self.model
+                    .document_revision(*id)
+                    .map(|revision| (*id, revision))
+            })
+            .collect()
+    }
+
+    fn job_is_stale(&self, id: crate::jobs::JobId) -> bool {
+        self.pending_job_revisions.get(&id).is_some_and(|tracked| {
+            tracked
+                .iter()
+                .any(|(doc_id, expected)| self.model.document_revision(*doc_id) != Some(*expected))
+        })
     }
 
     fn find_project_in_workspace_root(&self) -> Option<PathBuf> {
@@ -1377,104 +2143,119 @@ impl ShellApp {
                         id.0, p.stage, pct, p.message
                     ));
                 }
-                JobEvent::Artifact(id, artifact) => match artifact {
-                    JobArtifact::ProjectGraphDelta(delta) => {
-                        let root = delta
-                            .graph
-                            .project_path
-                            .parent()
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| PathBuf::from("."));
-                        let workspace_id = hash_path_id(&delta.graph.project_path);
-                        let workspace = WorkspaceModel {
-                            id: workspace_id,
-                            root,
-                            project: delta.graph,
-                            opened_at: std::time::SystemTime::now(),
-                            last_sync: None,
-                        };
-                        self.model.set_active_workspace(workspace);
+                JobEvent::Artifact(id, artifact) => {
+                    if self.job_is_stale(id) {
                         self.model
                             .output_lines
-                            .push(format!("Loaded project graph from job #{}", id.0));
-                        if let Some(ws) = &self.model.active_workspace {
-                            for board in &ws.project.board_docs {
-                                if !board.path.exists() {
-                                    self.model.problems.push(format!(
-                                        "Workspace references missing board file: {}",
-                                        board.path.display()
-                                    ));
-                                }
-                            }
-                            for sch in &ws.project.schematic_docs {
-                                if !sch.path.exists() {
-                                    self.model.problems.push(format!(
-                                        "Workspace references missing schematic file: {}",
-                                        sch.path.display()
-                                    ));
-                                }
-                            }
-                        }
-                        self.queue_project_sync_jobs();
+                            .push(format!("Dropped stale job result for job #{}", id.0));
+                        continue;
                     }
-                    JobArtifact::BoardIr { path, ir } => {
-                        let _ = self.model.open_board_document(path.clone(), ir);
-                        if let Some(ws) = self.model.active_workspace.as_mut() {
-                            for board in &mut ws.project.board_docs {
-                                if board.path == path {
-                                    board.parse_state = ParseState::Fresh;
-                                    board.ir_state = ParseState::Fresh;
-                                }
-                            }
-                            ws.last_sync = Some(std::time::SystemTime::now());
-                        }
-                    }
-                    JobArtifact::BoardSpecValidated { path } => {
-                        if let Some(ws) = self.model.active_workspace.as_mut() {
-                            for board in &mut ws.project.board_docs {
-                                if board.path == path {
-                                    board.parse_state = ParseState::Fresh;
-                                    board.ir_state = ParseState::Fresh;
-                                }
-                            }
-                            ws.last_sync = Some(std::time::SystemTime::now());
-                        }
-                        self.model
-                            .output_lines
-                            .push(format!("Native board validated: {}", path.display()));
-                    }
-                    JobArtifact::SchematicIndex(index) => {
-                        if let Some(ws) = self.model.active_workspace.as_mut() {
-                            for sch in &mut ws.project.schematic_docs {
-                                if sch.path == index.path {
-                                    sch.parse_state = ParseState::Fresh;
-                                    sch.index_state = ParseState::Fresh;
-                                }
-                            }
-                            ws.last_sync = Some(std::time::SystemTime::now());
-                        }
-                        self.model.output_lines.push(format!(
-                            "Schematic indexed: {} (components={}, net_labels={})",
-                            index.path.display(),
-                            index.component_count,
-                            index.net_label_count
-                        ));
-                    }
-                    JobArtifact::Diagnostics(diags) => {
-                        for d in diags {
+                    match artifact {
+                        JobArtifact::ProjectGraphDelta(delta) => {
+                            let root = delta
+                                .graph
+                                .project_path
+                                .parent()
+                                .map(ToOwned::to_owned)
+                                .unwrap_or_else(|| PathBuf::from("."));
+                            let workspace_id = hash_path_id(&delta.graph.project_path);
+                            let workspace = WorkspaceModel {
+                                id: workspace_id,
+                                root,
+                                project: delta.graph,
+                                opened_at: std::time::SystemTime::now(),
+                                last_sync: None,
+                            };
+                            self.model.set_active_workspace(workspace);
                             self.model
-                                .problems
-                                .push(format!("[{}:{}] {}", d.severity, d.source, d.message));
+                                .output_lines
+                                .push(format!("Loaded project graph from job #{}", id.0));
+                            if let Some(ws) = &self.model.active_workspace {
+                                for board in &ws.project.board_docs {
+                                    if !board.path.exists() {
+                                        self.model.problems.push(format!(
+                                            "Workspace references missing board file: {}",
+                                            board.path.display()
+                                        ));
+                                    }
+                                }
+                                for sch in &ws.project.schematic_docs {
+                                    if !sch.path.exists() {
+                                        self.model.problems.push(format!(
+                                            "Workspace references missing schematic file: {}",
+                                            sch.path.display()
+                                        ));
+                                    }
+                                }
+                            }
+                            self.queue_project_sync_jobs();
+                        }
+                        JobArtifact::BoardIr { path, ir } => {
+                            let _ = self.model.open_board_document(path.clone(), ir);
+                            if let Some(doc_id) = self.model.find_document_by_path(&path) {
+                                self.apply_domain_events(vec![DomainEvent::BoardViewModeChanged {
+                                    document_id: doc_id,
+                                }]);
+                            }
+                            if let Some(ws) = self.model.active_workspace.as_mut() {
+                                for board in &mut ws.project.board_docs {
+                                    if board.path == path {
+                                        board.parse_state = ParseState::Fresh;
+                                        board.ir_state = ParseState::Fresh;
+                                    }
+                                }
+                                ws.last_sync = Some(std::time::SystemTime::now());
+                            }
+                        }
+                        JobArtifact::BoardSpecValidated { path } => {
+                            if let Some(ws) = self.model.active_workspace.as_mut() {
+                                for board in &mut ws.project.board_docs {
+                                    if board.path == path {
+                                        board.parse_state = ParseState::Fresh;
+                                        board.ir_state = ParseState::Fresh;
+                                    }
+                                }
+                                ws.last_sync = Some(std::time::SystemTime::now());
+                            }
+                            self.model
+                                .output_lines
+                                .push(format!("Native board validated: {}", path.display()));
+                        }
+                        JobArtifact::SchematicIndex(index) => {
+                            if let Some(ws) = self.model.active_workspace.as_mut() {
+                                for sch in &mut ws.project.schematic_docs {
+                                    if sch.path == index.path {
+                                        sch.parse_state = ParseState::Fresh;
+                                        sch.index_state = ParseState::Fresh;
+                                    }
+                                }
+                                ws.last_sync = Some(std::time::SystemTime::now());
+                            }
+                            self.model.output_lines.push(format!(
+                                "Schematic indexed: {} (components={}, net_labels={})",
+                                index.path.display(),
+                                index.component_count,
+                                index.net_label_count
+                            ));
+                        }
+                        JobArtifact::Diagnostics(diags) => {
+                            for d in diags {
+                                self.model
+                                    .problems
+                                    .push(format!("[{}:{}] {}", d.severity, d.source, d.message));
+                            }
                         }
                     }
-                },
+                }
                 JobEvent::Completed(id, summary) => {
+                    self.pending_job_revisions.remove(&id);
                     self.model.jobs.push(format!(
                         "completed #{} in {}ms: {}",
                         id.0, summary.duration_ms, summary.message
                     ));
                 }
                 JobEvent::Failed(id, failure) => {
+                    self.pending_job_revisions.remove(&id);
                     self.model.jobs.push(format!(
                         "failed #{} [{}]: {}",
                         id.0, failure.stage, failure.message
@@ -1485,6 +2266,7 @@ impl ShellApp {
                     ));
                 }
                 JobEvent::Cancelled(id) => {
+                    self.pending_job_revisions.remove(&id);
                     self.model.jobs.push(format!("cancelled #{}", id.0));
                 }
             }
@@ -2092,6 +2874,43 @@ impl ShellApp {
             );
         });
 
+        ui.menu_button("Tools", |ui| {
+            self.menu_intent_button(
+                ui,
+                "Select",
+                "tool.select",
+                Intent::Tool(crate::pipeline::ToolIntent::SetActive {
+                    tool: ToolId::Select,
+                }),
+            );
+            self.menu_intent_button(
+                ui,
+                "Move",
+                "tool.move",
+                Intent::Tool(crate::pipeline::ToolIntent::SetActive { tool: ToolId::Move }),
+            );
+            self.menu_intent_button(
+                ui,
+                "Route",
+                "tool.route",
+                Intent::Tool(crate::pipeline::ToolIntent::SetActive {
+                    tool: ToolId::Route,
+                }),
+            );
+            self.menu_intent_button(
+                ui,
+                "Polygon Pour",
+                "tool.pour",
+                Intent::Tool(crate::pipeline::ToolIntent::SetActive { tool: ToolId::Pour }),
+            );
+            self.menu_intent_button(
+                ui,
+                "Cancel Interaction",
+                "tool.cancel",
+                Intent::Tool(crate::pipeline::ToolIntent::CancelInteraction),
+            );
+        });
+
         ui.menu_button("Workspace", |ui| {
             self.menu_intent_button(
                 ui,
@@ -2431,6 +3250,14 @@ impl ShellApp {
             return;
         };
 
+        self.ensure_runtime_for_document(document_id);
+        let active_tool = self
+            .document_runtime
+            .get(&document_id)
+            .map(|runtime| runtime.active_tool)
+            .unwrap_or(ToolId::Select);
+        let move_preview = self.move_preview_for_document(document_id);
+
         let modes = [
             SegmentItem::new(BoardViewMode::TwoD, "2D"),
             SegmentItem::new(BoardViewMode::ThreeD, "3D"),
@@ -2445,14 +3272,54 @@ impl ShellApp {
                 }
             }
         }
+        let tools = [
+            SegmentItem::new(ToolId::Select, "Select"),
+            SegmentItem::new(ToolId::Move, "Move"),
+            SegmentItem::new(ToolId::Route, "Route"),
+            SegmentItem::new(ToolId::Pour, "Pour"),
+        ];
+        if let Some(changed) = segmented_bar(ui, &self.theme, active_tool, &tools) {
+            self.queue_intent(Intent::Tool(crate::pipeline::ToolIntent::SetActive {
+                tool: changed,
+            }));
+        }
+        if let Some(preview) = &move_preview {
+            ui.label(format!(
+                "Move preview: {} dx={:.2}mm dy={:.2}mm",
+                preview.designator, preview.delta_x_mm, preview.delta_y_mm
+            ));
+        }
         ui.separator();
 
         let selection = self.model.selection.primary.clone();
-        if let Some(board) = self.model.active_board() {
-            match mode {
-                BoardViewMode::TwoD => self.canvas2d.ui(ui, &board.ir, &selection, fit_requested),
-                BoardViewMode::ThreeD => self.canvas3d.ui(ui, &board.ir, &selection, fit_requested),
-            }
+        let board = self
+            .model
+            .documents
+            .get(&document_id)
+            .and_then(|doc| match &doc.kind {
+                DocumentKind::Board(board) => Some(board),
+                _ => None,
+            });
+        if let Some(board) = board {
+            let actions = match mode {
+                BoardViewMode::TwoD => self.canvas2d.ui(
+                    ui,
+                    &board.ir,
+                    &selection,
+                    active_tool,
+                    move_preview.as_ref(),
+                    fit_requested,
+                ),
+                BoardViewMode::ThreeD => self.canvas3d.ui(
+                    ui,
+                    &board.ir,
+                    &selection,
+                    active_tool,
+                    move_preview.as_ref(),
+                    fit_requested,
+                ),
+            };
+            self.handle_board_canvas_actions(actions);
         }
     }
 
@@ -2477,6 +3344,7 @@ impl ShellApp {
 
         if edited {
             self.model.mark_document_dirty(document_id, true);
+            let _ = self.model.bump_document_revision(document_id);
             self.mark_session_dirty();
         }
     }
@@ -2927,6 +3795,13 @@ fn find_conflict(
         .map(|(id, _)| id.clone())
 }
 
+fn first_prompt_number(prompt: &str) -> Option<f32> {
+    prompt
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c: char| c == ',' || c == ';' || c == '(' || c == ')'))
+        .find_map(|token| token.parse::<f32>().ok())
+}
+
 struct EditorTreeBehavior {
     app: *mut ShellApp,
     fit_requested: bool,
@@ -2986,6 +3861,7 @@ impl efame::App for ShellApp {
         self.process_queue(ctx);
         apply_theme(ctx, &self.theme);
         self.prune_tab_renderers();
+        self.prune_document_runtime();
 
         self.render_title_menu_bar(ctx);
         // Reserve the bottom strip across the full viewport before sidebars are laid out.
@@ -3019,7 +3895,7 @@ impl efame::App for ShellApp {
         self.maybe_autosave_session();
         self.write_layout_probe();
 
-        if ctx.input(|i| {
+        let escape_pressed = ctx.input(|i| {
             i.raw.events.iter().any(|e| {
                 matches!(
                     e,
@@ -3030,12 +3906,16 @@ impl efame::App for ShellApp {
                     }
                 )
             })
-        }) && self.show_command_palette
-        {
-            self.show_command_palette = false;
-            self.palette_focus_pending = false;
-            self.theme_preview = None;
-            self.refresh_theme_tokens();
+        });
+        if escape_pressed {
+            if self.show_command_palette {
+                self.show_command_palette = false;
+                self.palette_focus_pending = false;
+                self.theme_preview = None;
+                self.refresh_theme_tokens();
+            } else {
+                self.queue_intent(Intent::Tool(crate::pipeline::ToolIntent::CancelInteraction));
+            }
         }
 
         // Keep a light polling cadence so IPC commands are handled even when the UI is idle.
@@ -3099,7 +3979,9 @@ fn render_schdoc_spec_png(source_text: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PanelVisibilityState, SecondarySidebarTab, clamp_bottom_panel_height};
+    use super::{
+        PanelVisibilityState, SecondarySidebarTab, clamp_bottom_panel_height, first_prompt_number,
+    };
 
     #[test]
     fn bottom_panel_drag_up_increases_height() {
@@ -3131,6 +4013,12 @@ mod tests {
         let panels = PanelVisibilityState::default();
         assert!(panels.show_secondary_sidebar);
         assert_eq!(panels.secondary_sidebar_tab, SecondarySidebarTab::Inspector);
+    }
+
+    #[test]
+    fn prompt_number_parser_extracts_first_numeric_token() {
+        assert_eq!(first_prompt_number("move U1 right 2.5 mm"), Some(2.5));
+        assert_eq!(first_prompt_number("shift down"), None);
     }
 }
 
