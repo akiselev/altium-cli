@@ -8,13 +8,15 @@ use autopcb_graph::{AssetRef, GraphRootRef, ImportRef, ScopeRef, WorkspaceRef};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::AgentWorkspaceState;
-use crate::app::{EditorSplitState, PaletteMode, PanelVisibilityState, ShortcutOverrides};
+use egui_dock::{DockState, egui};
+
+use crate::app::{PaletteMode, PanelVisibilityState, ShortcutOverrides};
 use crate::commands::StoredShortcut;
-use crate::layout::ShellLayoutState;
+use crate::layout::{ShellLayoutState, sanitize_dock_state};
 use crate::ui::theme::ThemePrefs;
 use crate::workbench::{BoardViewMode, SelectionState};
 
-pub const SESSION_SCHEMA_VERSION: u32 = 3;
+pub const SESSION_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub enum RestoreMode {
@@ -40,7 +42,8 @@ pub struct SessionSnapshot {
 pub struct SessionUiState {
     pub panel_visibility: PanelVisibilityState,
     pub layout: ShellLayoutState,
-    pub editor_split: EditorSplitState,
+    #[serde(default = "default_session_editor_dock_state")]
+    pub editor_dock: DockState<SessionEditorDockTab>,
     pub palette_mode: PaletteMode,
     pub palette_filter: String,
     pub palette_selected: usize,
@@ -74,8 +77,15 @@ impl Default for SessionWorkspaceState {
 pub struct SessionTabState {
     pub open_tabs: Vec<SessionTabRef>,
     pub active_tab: Option<SessionTabRef>,
+    #[serde(default)]
     pub secondary_active_tab: Option<SessionTabRef>,
     pub recently_closed_tabs: Vec<SessionTabRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionEditorDockTab {
+    pub instance_id: u64,
+    pub tab: SessionTabRef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,7 +215,7 @@ impl SessionStore for FileSessionStore {
             .and_then(|v| v.as_u64())
             .unwrap_or(SESSION_SCHEMA_VERSION as u64) as u32;
         match version {
-            3 => {
+            3 | 4 => {
                 let parsed: SessionSnapshot = serde_json::from_value(value).with_context(|| {
                     format!(
                         "failed to decode session snapshot {}",
@@ -215,7 +225,7 @@ impl SessionStore for FileSessionStore {
                 Ok(Some(parsed))
             }
             other => anyhow::bail!(
-                "unsupported session schema version: {} (expected {})",
+                "unsupported session schema version: {} (expected {} or 3)",
                 other,
                 SESSION_SCHEMA_VERSION
             ),
@@ -265,16 +275,22 @@ pub fn default_session_path() -> PathBuf {
     if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
         return PathBuf::from(xdg_state_home)
             .join("autopcb-shell")
-            .join("session-v2.json");
+            .join("session-v4.json");
     }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home)
             .join(".local")
             .join("state")
             .join("autopcb-shell")
-            .join("session-v3.json");
+            .join("session-v4.json");
     }
-    PathBuf::from("/tmp/autopcb-shell-session-v3.json")
+    PathBuf::from("/tmp/autopcb-shell-session-v4.json")
+}
+
+fn default_session_editor_dock_state() -> DockState<SessionEditorDockTab> {
+    let mut dock_state = DockState::new(Vec::new());
+    sanitize_dock_state(&mut dock_state);
+    dock_state
 }
 
 pub fn now_unix_ms() -> u64 {
@@ -306,7 +322,7 @@ mod tests {
             ui: SessionUiState {
                 panel_visibility: PanelVisibilityState::default(),
                 layout: ShellLayoutState::default(),
-                editor_split: EditorSplitState::default(),
+                editor_dock: default_session_editor_dock_state(),
                 palette_mode: PaletteMode::Command,
                 palette_filter: "abc".to_owned(),
                 palette_selected: 2,

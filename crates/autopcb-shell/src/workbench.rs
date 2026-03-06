@@ -128,6 +128,26 @@ impl Document {
     pub fn kind_id(&self) -> &'static str {
         self.kind.kind_id()
     }
+
+    fn source_path(&self) -> Option<&Path> {
+        match &self.kind {
+            DocumentKind::SchDocPreview(doc) => Some(doc.source_path.as_path()),
+            DocumentKind::SchLibGallery(doc) => Some(doc.source_path.as_path()),
+            DocumentKind::SchLibComponent(doc) => Some(doc.source_path.as_path()),
+            _ => self.path.as_deref(),
+        }
+    }
+
+    fn path_lookup_rank(&self) -> u8 {
+        match &self.kind {
+            DocumentKind::Board(_) => 0,
+            DocumentKind::SchDocPreview(_) => 1,
+            DocumentKind::SchLibGallery(_) => 1,
+            DocumentKind::SchLibComponent(_) => 1,
+            DocumentKind::Spec(_) => 2,
+            _ => 3,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +155,10 @@ pub enum SelectionKind {
     None,
     Component(String),
     Net(String),
-    Pad { component: String, pad: String },
+    Pad {
+        component: String,
+        pad: String,
+    },
     Rule(String),
     Scope(ScopeRef),
     Node {
@@ -353,7 +376,7 @@ impl WorkbenchModel {
             id,
             revision: DocumentRevision(0),
             title,
-            path: None,
+            path: Some(source_path.clone()),
             dirty: false,
             kind: DocumentKind::SchDocPreview(SchDocPreviewDocument {
                 source_path,
@@ -387,7 +410,7 @@ impl WorkbenchModel {
             id,
             revision: DocumentRevision(0),
             title,
-            path: None,
+            path: Some(source_path.clone()),
             dirty: false,
             kind: DocumentKind::SchLibGallery(SchLibGalleryDocument {
                 source_path,
@@ -428,7 +451,7 @@ impl WorkbenchModel {
             id,
             revision: DocumentRevision(0),
             title,
-            path: None,
+            path: Some(source_path.clone()),
             dirty: false,
             kind: DocumentKind::SchLibComponent(SchLibComponentDocument {
                 source_path,
@@ -546,7 +569,8 @@ impl WorkbenchModel {
     pub fn find_document_by_path(&self, path: &Path) -> Option<DocumentId> {
         self.documents
             .values()
-            .find(|d| d.path.as_deref().is_some_and(|p| p == path))
+            .filter(|d| d.source_path().is_some_and(|p| p == path))
+            .min_by_key(|d| (d.path_lookup_rank(), d.id))
             .map(|d| d.id)
     }
 
@@ -588,7 +612,10 @@ impl WorkbenchModel {
     }
 
     pub fn open_design_overview_document(&mut self, scope: ScopeRef, title: String) -> DocumentId {
-        self.open_graph_scope_document(title, DocumentKind::DesignOverview(GraphScopeDocument { scope }))
+        self.open_graph_scope_document(
+            title,
+            DocumentKind::DesignOverview(GraphScopeDocument { scope }),
+        )
     }
 
     pub fn open_logical_document(&mut self, scope: ScopeRef, title: String) -> DocumentId {

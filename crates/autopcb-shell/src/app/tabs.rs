@@ -242,7 +242,11 @@ mod tests {
                 .instantiate(DOCUMENT_KIND_SCHLIB_COMPONENT)
                 .is_some()
         );
-        assert!(registry.instantiate(DOCUMENT_KIND_DESIGN_OVERVIEW).is_some());
+        assert!(
+            registry
+                .instantiate(DOCUMENT_KIND_DESIGN_OVERVIEW)
+                .is_some()
+        );
         assert!(registry.instantiate(DOCUMENT_KIND_LOGICAL).is_some());
         assert!(registry.instantiate(DOCUMENT_KIND_PHYSICAL).is_some());
         assert!(

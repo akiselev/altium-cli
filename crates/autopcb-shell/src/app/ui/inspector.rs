@@ -73,10 +73,16 @@ impl ShellApp {
                         if let Some(summary) = graph.inspector_summary_for_scope(&scope) {
                             self.render_graph_inspector_summary(ui, summary);
                         } else {
-                            self.render_empty_inspector(ui, "Selected scope is not present in current graph host.");
+                            self.render_empty_inspector(
+                                ui,
+                                "Selected scope is not present in current graph host.",
+                            );
                         }
                     } else {
-                        self.render_empty_inspector(ui, "Inspector requires an active graph workspace.");
+                        self.render_empty_inspector(
+                            ui,
+                            "Inspector requires an active graph workspace.",
+                        );
                     }
                 }
                 SelectionKind::Node {
@@ -89,23 +95,37 @@ impl ShellApp {
                         {
                             self.render_graph_inspector_summary(ui, summary);
                         } else {
-                            self.render_empty_inspector(ui, "Selected node is not present in current graph host.");
+                            self.render_empty_inspector(
+                                ui,
+                                "Selected node is not present in current graph host.",
+                            );
                         }
                     } else {
-                        self.render_empty_inspector(ui, "Inspector requires an active graph workspace.");
+                        self.render_empty_inspector(
+                            ui,
+                            "Inspector requires an active graph workspace.",
+                        );
                     }
                 }
                 SelectionKind::Asset(asset) => {
                     ui.heading("Asset");
                     ui.separator();
                     ui.label(format!("Asset Ref: {}", asset.0));
-                    empty_state(ui, &self.theme, "Asset inspector details are graph-backed and still expanding.");
+                    empty_state(
+                        ui,
+                        &self.theme,
+                        "Asset inspector details are graph-backed and still expanding.",
+                    );
                 }
                 SelectionKind::Import(import) => {
                     ui.heading("Import");
                     ui.separator();
                     ui.label(format!("Import Ref: {}", import.0));
-                    empty_state(ui, &self.theme, "Import inspector details are graph-backed and still expanding.");
+                    empty_state(
+                        ui,
+                        &self.theme,
+                        "Import inspector details are graph-backed and still expanding.",
+                    );
                 }
             }
         });

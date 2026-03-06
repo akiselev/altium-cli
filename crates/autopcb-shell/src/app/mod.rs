@@ -16,7 +16,7 @@ use altium_format_spec::{
 use altium_format_types::coord::{Coord, CoordPoint};
 use autopcb_graph::{GraphRead, GraphWorkspace, RenderAdapterHost};
 use efame::egui::{self, ColorImage, Event, Key, RichText, UserData, ViewportCommand};
-use egui_tiles::{Behavior, TileId, UiResponse};
+use egui_dock::{DockArea, DockState, Split as DockSplit, Style as DockStyle};
 use rfd::FileDialog;
 
 use self::tabs::{TabProviderRegistry, TabRenderer};
@@ -42,7 +42,9 @@ use crate::pipeline::{
     TxUndoPolicy, intent_from_command_id, resolve_intent,
 };
 use crate::project_graph::{ParseState, WorkspaceModel};
-use crate::session::{FileSessionStore, RestoreMode, SessionSnapshot, SessionTabRef};
+use crate::session::{
+    FileSessionStore, RestoreMode, SessionEditorDockTab, SessionSnapshot, SessionTabRef,
+};
 use crate::session::{
     SessionDocumentState, SessionGraphDocumentKind, SessionPrefsState, SessionSelectionState,
     SessionStore, SessionTabState, SessionUiState, SessionWorkspaceState, now_unix_ms,
@@ -52,7 +54,6 @@ use crate::ui::chrome::{show_central_panel, show_top_bar};
 use crate::ui::section::empty_state;
 use crate::ui::segmented::{SegmentItem, segmented_bar};
 use crate::ui::status_bar::{StatusItem, show_status_bar};
-use crate::ui::tabstrip::{TabAction, render_tabstrip};
 use crate::ui::theme::{
     ThemeId, ThemePrefs, ThemeTokens, apply_theme, next_theme, previous_theme, theme_tokens_by_id,
 };
@@ -120,21 +121,10 @@ impl Default for PanelVisibilityState {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct EditorSplitState {
-    is_split: bool,
-    split_vertical: bool,
-    secondary_active_tab: Option<DocumentId>,
-}
-
-impl Default for EditorSplitState {
-    fn default() -> Self {
-        Self {
-            is_split: false,
-            split_vertical: true,
-            secondary_active_tab: None,
-        }
-    }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct EditorDockTab {
+    instance_id: u64,
+    document_id: DocumentId,
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +165,8 @@ pub struct ShellApp {
     tab_registry: TabProviderRegistry,
     tab_renderers: BTreeMap<DocumentId, Box<dyn TabRenderer>>,
     theme: ThemeTokens,
-    editor_split: EditorSplitState,
+    editor_dock: DockState<EditorDockTab>,
+    next_editor_dock_tab_id: u64,
     last_bottom_panel_height: f32,
     last_status_bar_height: f32,
     last_central_height: f32,
@@ -320,7 +311,6 @@ impl ShellApp {
         let mut layout = ShellLayoutState::default();
         let panel_visibility = PanelVisibilityState::default();
         layout.ensure_required_panes();
-        let editor_split = EditorSplitState::default();
         let theme_prefs = ThemePrefs::default();
 
         let commands = CommandRegistry::new_m1();
@@ -353,7 +343,8 @@ impl ShellApp {
                 t.font_scale = theme_prefs.ui_scale;
                 t
             },
-            editor_split,
+            editor_dock: DockState::new(Vec::new()),
+            next_editor_dock_tab_id: 1,
             last_bottom_panel_height: 0.0,
             last_status_bar_height: 24.0,
             last_central_height: 0.0,
@@ -421,7 +412,10 @@ impl ShellApp {
             .as_ref()
             .map(|graph| graph.workspace_ref().clone());
         match &doc.kind {
-            DocumentKind::Board(_) => doc.path.clone().map(|path| SessionTabRef::BoardPath { path }),
+            DocumentKind::Board(_) => doc
+                .path
+                .clone()
+                .map(|path| SessionTabRef::BoardPath { path }),
             DocumentKind::Spec(_) => {
                 if let Some(path) = &doc.path {
                     Some(SessionTabRef::SpecTextPath { path: path.clone() })
@@ -435,20 +429,24 @@ impl ShellApp {
             DocumentKind::SchDocPreview(_)
             | DocumentKind::SchLibGallery(_)
             | DocumentKind::SchLibComponent(_) => None,
-            DocumentKind::DesignOverview(graph) => workspace.map(|workspace| {
-                SessionTabRef::DesignOverview {
+            DocumentKind::DesignOverview(graph) => {
+                workspace.map(|workspace| SessionTabRef::DesignOverview {
                     workspace,
                     scope: graph.scope.clone(),
-                }
-            }),
-            DocumentKind::Logical(graph) => workspace.map(|workspace| SessionTabRef::LogicalScope {
-                workspace,
-                scope: graph.scope.clone(),
-            }),
-            DocumentKind::Physical(graph) => workspace.map(|workspace| SessionTabRef::PhysicalScope {
-                workspace,
-                scope: graph.scope.clone(),
-            }),
+                })
+            }
+            DocumentKind::Logical(graph) => {
+                workspace.map(|workspace| SessionTabRef::LogicalScope {
+                    workspace,
+                    scope: graph.scope.clone(),
+                })
+            }
+            DocumentKind::Physical(graph) => {
+                workspace.map(|workspace| SessionTabRef::PhysicalScope {
+                    workspace,
+                    scope: graph.scope.clone(),
+                })
+            }
             DocumentKind::DefinitionCollection(graph) => {
                 workspace.map(|workspace| SessionTabRef::DefinitionScope {
                     workspace,
@@ -465,6 +463,110 @@ impl ShellApp {
             }),
             DocumentKind::Keybindings => Some(SessionTabRef::Keybindings),
         }
+    }
+
+    fn alloc_editor_dock_tab(&mut self, document_id: DocumentId) -> EditorDockTab {
+        let tab = EditorDockTab {
+            instance_id: self.next_editor_dock_tab_id,
+            document_id,
+        };
+        self.next_editor_dock_tab_id = self.next_editor_dock_tab_id.saturating_add(1);
+        tab
+    }
+
+    fn focused_editor_tab(&self) -> Option<EditorDockTab> {
+        let (surface, node) = self.editor_dock.focused_leaf()?;
+        let leaf = self.editor_dock[surface][node].get_leaf()?;
+        leaf.tabs().get(leaf.active.0).cloned().or_else(|| {
+            self.editor_dock
+                .iter_all_tabs()
+                .next()
+                .map(|(_, tab)| tab.clone())
+        })
+    }
+
+    fn focus_editor_document(&mut self, document_id: DocumentId) -> bool {
+        let Some((node, tab_index)) = self
+            .editor_dock
+            .main_surface()
+            .find_tab_from(|tab| tab.document_id == document_id)
+        else {
+            return false;
+        };
+
+        let surface = egui_dock::SurfaceIndex::main();
+        self.editor_dock
+            .set_focused_node_and_surface((surface, node));
+        self.editor_dock.set_active_tab((surface, node, tab_index));
+        true
+    }
+
+    fn reconcile_editor_dock_from_model(&mut self) {
+        let open_tabs: BTreeSet<_> = self.model.open_editor_tabs.iter().copied().collect();
+        self.editor_dock
+            .retain_tabs(|tab| open_tabs.contains(&tab.document_id));
+
+        for id in self.model.open_editor_tabs.clone() {
+            let exists = self
+                .editor_dock
+                .iter_all_tabs()
+                .any(|(_, tab)| tab.document_id == id);
+            if !exists {
+                let tab = self.alloc_editor_dock_tab(id);
+                self.editor_dock
+                    .main_surface_mut()
+                    .push_to_focused_leaf(tab);
+            }
+        }
+
+        if let Some(active) = self.model.active_editor_tab {
+            let _ = self.focus_editor_document(active);
+        }
+    }
+
+    fn sync_model_tabs_from_editor_dock(&mut self) {
+        let mut ordered = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (_, tab) in self.editor_dock.iter_all_tabs() {
+            if seen.insert(tab.document_id) {
+                ordered.push(tab.document_id);
+            }
+        }
+
+        self.model.open_editor_tabs = ordered;
+        if let Some(active) = self.focused_editor_tab().map(|tab| tab.document_id)
+            && self.model.open_editor_tabs.contains(&active)
+        {
+            self.model.active_editor_tab = Some(active);
+        } else if let Some(active) = self.model.active_editor_tab
+            && !self.model.open_editor_tabs.contains(&active)
+        {
+            self.model.active_editor_tab = self.model.open_editor_tabs.first().copied();
+        } else if self.model.active_editor_tab.is_none() {
+            self.model.active_editor_tab = self.model.open_editor_tabs.first().copied();
+        }
+    }
+
+    fn split_active_editor(&mut self, split: DockSplit) {
+        let Some(active) = self.model.active_editor_tab else {
+            return;
+        };
+        self.reconcile_editor_dock_from_model();
+        let _ = self.focus_editor_document(active);
+
+        let Some((surface, node)) = self.editor_dock.focused_leaf().or_else(|| {
+            self.editor_dock
+                .main_surface()
+                .find_tab_from(|tab| tab.document_id == active)
+                .map(|(node, _)| (egui_dock::SurfaceIndex::main(), node))
+        }) else {
+            return;
+        };
+
+        let new_tab = self.alloc_editor_dock_tab(active);
+        self.editor_dock
+            .split((surface, node), split, 0.5, egui_dock::Node::leaf(new_tab));
+        let _ = self.focus_editor_document(active);
     }
 
     fn create_agent_session(&mut self, title: Option<String>) -> AgentSessionId {
@@ -717,13 +819,13 @@ impl ShellApp {
                         dirty: doc.dirty,
                     });
                 }
-                DocumentKind::DesignOverview(graph) => documents.push(
-                    SessionDocumentState::GraphScope {
+                DocumentKind::DesignOverview(graph) => {
+                    documents.push(SessionDocumentState::GraphScope {
                         scope: graph.scope.clone(),
                         title: doc.title.clone(),
                         kind: SessionGraphDocumentKind::DesignOverview,
-                    },
-                ),
+                    })
+                }
                 DocumentKind::Logical(graph) => documents.push(SessionDocumentState::GraphScope {
                     scope: graph.scope.clone(),
                     title: doc.title.clone(),
@@ -734,13 +836,13 @@ impl ShellApp {
                     title: doc.title.clone(),
                     kind: SessionGraphDocumentKind::Physical,
                 }),
-                DocumentKind::DefinitionCollection(graph) => documents.push(
-                    SessionDocumentState::GraphScope {
+                DocumentKind::DefinitionCollection(graph) => {
+                    documents.push(SessionDocumentState::GraphScope {
                         scope: graph.scope.clone(),
                         title: doc.title.clone(),
                         kind: SessionGraphDocumentKind::DefinitionCollection,
-                    },
-                ),
+                    })
+                }
                 DocumentKind::Asset(graph) => documents.push(SessionDocumentState::GraphAsset {
                     asset: graph.asset.clone(),
                     title: doc.title.clone(),
@@ -768,10 +870,14 @@ impl ShellApp {
             .model
             .active_editor_tab
             .and_then(|id| self.session_tab_ref_for_document(id, &untitled_by_id));
-        let secondary_active_tab = self
-            .editor_split
-            .secondary_active_tab
-            .and_then(|id| self.session_tab_ref_for_document(id, &untitled_by_id));
+        let editor_dock =
+            sanitize_dock_state_for_session(&self.editor_dock).filter_map_tabs(|tab| {
+                self.session_tab_ref_for_document(tab.document_id, &untitled_by_id)
+                    .map(|tab_ref| SessionEditorDockTab {
+                        instance_id: tab.instance_id,
+                        tab: tab_ref,
+                    })
+            });
         let recently_closed_tabs = self
             .model
             .recently_closed_tabs
@@ -790,8 +896,11 @@ impl ShellApp {
             saved_at_unix_ms: now_unix_ms(),
             ui: SessionUiState {
                 panel_visibility: self.panel_visibility.clone(),
-                layout: self.layout.clone(),
-                editor_split: self.editor_split.clone(),
+                layout: ShellLayoutState {
+                    dock_state: sanitize_dock_state_for_session(&self.layout.dock_state),
+                    request_fit: self.layout.request_fit,
+                },
+                editor_dock,
                 palette_mode: self.palette_mode,
                 palette_filter: self.palette_filter.clone(),
                 palette_selected: self.palette_selected,
@@ -827,7 +936,7 @@ impl ShellApp {
             tabs: SessionTabState {
                 open_tabs,
                 active_tab,
-                secondary_active_tab,
+                secondary_active_tab: None,
                 recently_closed_tabs,
             },
             documents,
@@ -843,19 +952,30 @@ impl ShellApp {
     }
 
     fn apply_snapshot(&mut self, snapshot: SessionSnapshot) -> anyhow::Result<()> {
-        self.panel_visibility = snapshot.ui.panel_visibility;
-        self.layout = snapshot.ui.layout;
+        let SessionSnapshot {
+            ui,
+            workspace,
+            tabs,
+            documents,
+            selection,
+            prefs,
+            agents,
+            ..
+        } = snapshot;
+        let session_editor_dock = ui.editor_dock;
+        self.panel_visibility = ui.panel_visibility;
+        self.layout = ui.layout;
         self.layout.ensure_required_panes();
-        self.editor_split = snapshot.ui.editor_split;
-        self.palette_mode = snapshot.ui.palette_mode;
-        self.palette_filter = snapshot.ui.palette_filter;
-        self.palette_selected = snapshot.ui.palette_selected;
+        self.editor_dock = DockState::new(Vec::new());
+        self.palette_mode = ui.palette_mode;
+        self.palette_filter = ui.palette_filter;
+        self.palette_selected = ui.palette_selected;
 
-        self.theme_prefs = snapshot.prefs.theme;
+        self.theme_prefs = prefs.theme;
         self.refresh_theme_tokens();
 
         self.shortcut_bindings = default_shortcuts(&self.commands);
-        for (id, sc) in snapshot.prefs.shortcut_overrides.by_command {
+        for (id, sc) in prefs.shortcut_overrides.by_command {
             if self.commands.get(&id).is_some()
                 && let Some(parsed) = shortcut_from_stored(&sc)
             {
@@ -864,10 +984,10 @@ impl ShellApp {
         }
 
         self.model.clear_workspace();
-        if let Some(root) = snapshot.workspace.workspace_root {
+        if let Some(root) = workspace.workspace_root {
             self.model.set_workspace_root(root);
         }
-        if let Some(graph_path) = snapshot.workspace.active_graph_path.as_ref() {
+        if let Some(graph_path) = workspace.active_graph_path.as_ref() {
             match GraphHost::load_from_path(graph_path) {
                 Ok(graph) => self.model.set_active_graph(graph),
                 Err(err) => self.model.problems.push(format!(
@@ -875,15 +995,15 @@ impl ShellApp {
                     graph_path.display()
                 )),
             }
-        } else if let Some(graph_root) = snapshot.workspace.active_graph_root.as_ref() {
+        } else if let Some(graph_root) = workspace.active_graph_root.as_ref() {
             self.model
                 .set_active_graph(GraphHost::stub_from_root(graph_root.0.clone()));
-        } else if let Some(path) = snapshot.workspace.active_workspace_path.as_ref() {
+        } else if let Some(path) = workspace.active_workspace_path.as_ref() {
             self.model.set_active_graph(GraphHost::stub_from_path(path));
         }
 
         let mut tab_map: BTreeMap<SessionTabRef, DocumentId> = BTreeMap::new();
-        for doc in snapshot.documents {
+        for doc in documents {
             match doc {
                 SessionDocumentState::Board { path, view_mode } => {
                     let before = self.model.active_document_id();
@@ -906,9 +1026,9 @@ impl ShellApp {
                         .map(|graph| graph.workspace_ref().clone())
                         .unwrap_or_default();
                     let id = match kind {
-                        SessionGraphDocumentKind::DesignOverview => {
-                            self.model.open_design_overview_document(scope.clone(), title)
-                        }
+                        SessionGraphDocumentKind::DesignOverview => self
+                            .model
+                            .open_design_overview_document(scope.clone(), title),
                         SessionGraphDocumentKind::Logical => {
                             self.model.open_logical_document(scope.clone(), title)
                         }
@@ -981,29 +1101,37 @@ impl ShellApp {
             }
         }
 
-        self.model.open_editor_tabs = snapshot
-            .tabs
+        self.model.open_editor_tabs = tabs
             .open_tabs
             .into_iter()
             .filter_map(|t| tab_map.get(&t).copied())
             .collect();
-        self.model.active_editor_tab = snapshot
-            .tabs
-            .active_tab
-            .and_then(|t| tab_map.get(&t).copied());
-        self.editor_split.secondary_active_tab = snapshot
-            .tabs
-            .secondary_active_tab
-            .and_then(|t| tab_map.get(&t).copied());
-        self.model.recently_closed_tabs = snapshot
-            .tabs
+        self.model.active_editor_tab = tabs.active_tab.and_then(|t| tab_map.get(&t).copied());
+        self.model.recently_closed_tabs = tabs
             .recently_closed_tabs
             .into_iter()
             .filter_map(|t| tab_map.get(&t).copied())
             .collect();
+        self.editor_dock = session_editor_dock.filter_map_tabs(|tab| {
+            tab_map
+                .get(&tab.tab)
+                .copied()
+                .map(|document_id| EditorDockTab {
+                    instance_id: tab.instance_id,
+                    document_id,
+                })
+        });
+        self.next_editor_dock_tab_id = self
+            .editor_dock
+            .iter_all_tabs()
+            .map(|(_, tab)| tab.instance_id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.reconcile_editor_dock_from_model();
 
-        self.model.selection = snapshot.selection.selection;
-        self.agents = snapshot.agents;
+        self.model.selection = selection.selection;
+        self.agents = agents;
         for proposal in self.agents.proposals.values_mut() {
             proposal.target_documents.clear();
             proposal.expected_revisions.clear();
@@ -1015,10 +1143,9 @@ impl ShellApp {
                 );
             }
         }
-        if let Some(workspace_path) = snapshot
-            .workspace
+        if let Some(workspace_path) = workspace
             .active_workspace_path
-            .or(snapshot.workspace.active_project_path)
+            .or(workspace.active_project_path)
         {
             self.queue_command_id(
                 "workspace.open_project",
@@ -1363,22 +1490,14 @@ impl ShellApp {
                 )
             }
             Command::SetEditorSplitRight => {
-                self.editor_split.is_split = true;
-                self.editor_split.split_vertical = true;
-                if self.editor_split.secondary_active_tab.is_none() {
-                    self.editor_split.secondary_active_tab = self.model.active_document_id();
-                }
+                self.split_active_editor(DockSplit::Right);
                 self.model
                     .output_lines
                     .push("Split editor: right".to_owned());
                 (None, Vec::new(), Vec::new())
             }
             Command::SetEditorSplitDown => {
-                self.editor_split.is_split = true;
-                self.editor_split.split_vertical = false;
-                if self.editor_split.secondary_active_tab.is_none() {
-                    self.editor_split.secondary_active_tab = self.model.active_document_id();
-                }
+                self.split_active_editor(DockSplit::Below);
                 self.model
                     .output_lines
                     .push("Split editor: down".to_owned());
@@ -1386,7 +1505,9 @@ impl ShellApp {
             }
             Command::ResetLayout => {
                 self.layout = ShellLayoutState::default();
-                self.editor_split = EditorSplitState::default();
+                self.editor_dock = DockState::new(Vec::new());
+                self.next_editor_dock_tab_id = 1;
+                self.reconcile_editor_dock_from_model();
                 (None, Vec::new(), Vec::new())
             }
             Command::EditorReopenClosed => {
@@ -1404,9 +1525,7 @@ impl ShellApp {
             }
             Command::EditorCloseDocument { id } => {
                 let _ = self.model.close_document(id);
-                if self.editor_split.secondary_active_tab == Some(id) {
-                    self.editor_split.secondary_active_tab = self.model.active_editor_tab;
-                }
+                self.reconcile_editor_dock_from_model();
                 (None, Vec::new(), Vec::new())
             }
             Command::EditorOpenSchLibComponent {
@@ -1445,7 +1564,8 @@ impl ShellApp {
                     return (None, Vec::new(), Vec::new());
                 };
                 self.model.set_workspace_root(root.clone());
-                self.model.set_active_graph(GraphHost::stub_from_path(&root));
+                self.model
+                    .set_active_graph(GraphHost::stub_from_path(&root));
                 self.model
                     .output_lines
                     .push(format!("Workspace opened: {}", root.display()));
@@ -2293,30 +2413,24 @@ impl ShellApp {
                             .push(format!("Opened graph workspace: {}", path.display()));
                     }
                 }
-                Err(err) => self
-                    .model
-                    .problems
-                    .push(format!("Failed to open graph workspace {}: {err}", path.display())),
+                Err(err) => self.model.problems.push(format!(
+                    "Failed to open graph workspace {}: {err}",
+                    path.display()
+                )),
             },
             "sch" | "sym" | "pcb" | "wrk-spec" | "spec" | "pcbdoc-spec" | "schdoc-spec"
             | "prjpcb-spec" | "schlib-spec" => match fs::read_to_string(&path) {
                 Ok(text) => {
-                    let source_doc = self.model.open_spec_document(Some(path.clone()), text);
-                    let ext = path
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.to_ascii_lowercase())
-                        .unwrap_or_default();
-                    match ext.as_str() {
-                        "sym" | "schlib-spec" => {
-                            self.model
-                                .open_schlib_gallery_document(path.clone(), Some(source_doc));
+                    match spec_open_mode_for_extension(ext.as_str()) {
+                        SpecOpenMode::SchLibGallery => {
+                            self.model.open_schlib_gallery_document(path.clone(), None);
                         }
-                        "sch" | "schdoc-spec" => {
-                            self.model
-                                .open_schdoc_preview_document(path.clone(), Some(source_doc));
+                        SpecOpenMode::SchDocPreview => {
+                            self.model.open_schdoc_preview_document(path.clone(), None);
                         }
-                        _ => {}
+                        SpecOpenMode::SourceText => {
+                            self.model.open_spec_document(Some(path.clone()), text);
+                        }
                     }
                     self.model
                         .output_lines
@@ -2381,7 +2495,8 @@ impl ShellApp {
                     Ok(_) => {
                         self.model.output_lines.push(format!(
                             "Saved graph workspace: {}",
-                            graph.root_path
+                            graph
+                                .root_path
                                 .as_ref()
                                 .map(|path| path.display().to_string())
                                 .unwrap_or_else(|| "<unsaved>".to_owned())
@@ -2763,15 +2878,6 @@ impl ShellApp {
         self.tab_renderers.retain(|id, _| {
             self.model.documents.contains_key(id) && self.model.open_editor_tabs.contains(id)
         });
-        if let Some(id) = self.editor_split.secondary_active_tab {
-            if !self.model.open_editor_tabs.contains(&id) {
-                self.editor_split.secondary_active_tab = self.model.active_document_id();
-            }
-        }
-        if self.model.open_editor_tabs.is_empty() {
-            self.editor_split.is_split = false;
-            self.editor_split.secondary_active_tab = None;
-        }
     }
 
     fn process_ipc(&mut self) {
@@ -3522,45 +3628,6 @@ impl ShellApp {
         }
     }
 
-    fn render_document_tabs(&mut self, ui: &mut egui::Ui) {
-        let actions = render_tabstrip(ui, &self.model, &self.theme, self.model.active_editor_tab);
-        for action in actions {
-            match action {
-                TabAction::Activate(id) => {
-                    self.queue_intent(Intent::Editor(
-                        crate::pipeline::EditorIntent::ActivateDocument { id },
-                    ));
-                }
-                TabAction::Close(id) => {
-                    self.queue_intent(Intent::Editor(
-                        crate::pipeline::EditorIntent::CloseDocument { id },
-                    ));
-                    if self.editor_split.secondary_active_tab == Some(id) {
-                        self.editor_split.secondary_active_tab = self.model.active_editor_tab;
-                    }
-                }
-            }
-        }
-    }
-
-    fn render_secondary_document_tabs(&mut self, ui: &mut egui::Ui) {
-        let active = self.editor_split.secondary_active_tab;
-        let actions = render_tabstrip(ui, &self.model, &self.theme, active);
-        for action in actions {
-            match action {
-                TabAction::Activate(id) => self.editor_split.secondary_active_tab = Some(id),
-                TabAction::Close(id) => {
-                    self.queue_intent(Intent::Editor(
-                        crate::pipeline::EditorIntent::CloseDocument { id },
-                    ));
-                    if self.editor_split.secondary_active_tab == Some(id) {
-                        self.editor_split.secondary_active_tab = self.model.active_editor_tab;
-                    }
-                }
-            }
-        }
-    }
-
     pub(super) fn render_keybindings_editor(&mut self, ui: &mut egui::Ui) {
         ui.heading("Keyboard Shortcuts");
         ui.horizontal(|ui| {
@@ -3740,7 +3807,11 @@ impl ShellApp {
         }
     }
 
-    pub(super) fn render_graph_scope_document(&mut self, ui: &mut egui::Ui, document_id: DocumentId) {
+    pub(super) fn render_graph_scope_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+    ) {
         let Some(doc) = self.model.documents.get(&document_id) else {
             ui.label("Graph scope unavailable");
             return;
@@ -3754,9 +3825,7 @@ impl ShellApp {
             DocumentKind::DesignOverview(graph_doc)
             | DocumentKind::Logical(graph_doc)
             | DocumentKind::Physical(graph_doc)
-            | DocumentKind::DefinitionCollection(graph_doc) => {
-                graph_doc.scope.clone()
-            }
+            | DocumentKind::DefinitionCollection(graph_doc) => graph_doc.scope.clone(),
             _ => {
                 ui.label("Graph scope unavailable");
                 return;
@@ -3841,7 +3910,11 @@ impl ShellApp {
         }
     }
 
-    pub(super) fn render_graph_asset_document(&mut self, ui: &mut egui::Ui, document_id: DocumentId) {
+    pub(super) fn render_graph_asset_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+    ) {
         let Some(doc) = self.model.documents.get(&document_id) else {
             ui.label("Graph asset unavailable");
             return;
@@ -3863,11 +3936,19 @@ impl ShellApp {
                 ui.label(format!("Digest: {digest}"));
             }
         } else {
-            empty_state(ui, &self.theme, "Selected asset is missing from the active graph host.");
+            empty_state(
+                ui,
+                &self.theme,
+                "Selected asset is missing from the active graph host.",
+            );
         }
     }
 
-    pub(super) fn render_graph_import_document(&mut self, ui: &mut egui::Ui, document_id: DocumentId) {
+    pub(super) fn render_graph_import_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_id: DocumentId,
+    ) {
         let Some(doc) = self.model.documents.get(&document_id) else {
             ui.label("Graph import unavailable");
             return;
@@ -3885,7 +3966,11 @@ impl ShellApp {
             ui.heading(summary.title);
             ui.label(format!("Source kind: {}", summary.source_kind));
         } else {
-            empty_state(ui, &self.theme, "Selected import is missing from the active graph host.");
+            empty_state(
+                ui,
+                &self.theme,
+                "Selected import is missing from the active graph host.",
+            );
         }
     }
 
@@ -4283,24 +4368,6 @@ impl ShellApp {
         self.tab_registry.instantiate(kind_id)
     }
 
-    fn render_active_document(&mut self, ui: &mut egui::Ui, fit_requested: bool) {
-        let active_id = self.model.active_editor_tab;
-        let Some(active_id) = active_id else {
-            ui.centered_and_justified(|ui| empty_state(ui, &self.theme, "No document open"));
-            return;
-        };
-
-        let Some(mut renderer) = self.tab_renderer_for_document(active_id) else {
-            ui.label("No tab provider registered for this document type");
-            return;
-        };
-
-        renderer.render(self, ui, active_id, fit_requested);
-        if self.model.documents.contains_key(&active_id) {
-            self.tab_renderers.insert(active_id, renderer);
-        }
-    }
-
     fn render_document_by_id(
         &mut self,
         ui: &mut egui::Ui,
@@ -4318,55 +4385,23 @@ impl ShellApp {
     }
 
     fn render_editor_workspace(&mut self, ui: &mut egui::Ui, fit_requested: bool) {
-        if self.editor_split.is_split {
-            if self.editor_split.secondary_active_tab.is_none() {
-                self.editor_split.secondary_active_tab = self.model.active_document_id();
-            }
-            if self.editor_split.split_vertical {
-                ui.columns(2, |cols| {
-                    self.render_document_tabs(&mut cols[0]);
-                    self.render_active_document(&mut cols[0], fit_requested);
-
-                    self.render_secondary_document_tabs(&mut cols[1]);
-                    if let Some(id) = self.editor_split.secondary_active_tab {
-                        self.render_document_by_id(&mut cols[1], id, fit_requested);
-                    } else {
-                        cols[1].centered_and_justified(|ui| {
-                            empty_state(ui, &self.theme, "No document open")
-                        });
-                    }
-                });
-            } else {
-                ui.vertical(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ui.available_height() * 0.5),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            self.render_document_tabs(ui);
-                            self.render_active_document(ui, fit_requested);
-                        },
-                    );
-                    ui.separator();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            self.render_secondary_document_tabs(ui);
-                            if let Some(id) = self.editor_split.secondary_active_tab {
-                                self.render_document_by_id(ui, id, fit_requested);
-                            } else {
-                                ui.centered_and_justified(|ui| {
-                                    empty_state(ui, &self.theme, "No document open")
-                                });
-                            }
-                        },
-                    );
-                });
-            }
-        } else {
-            self.render_document_tabs(ui);
-            self.render_active_document(ui, fit_requested);
+        if self.model.open_editor_tabs.is_empty() {
+            ui.centered_and_justified(|ui| empty_state(ui, &self.theme, "No document open"));
+            return;
         }
+
+        self.reconcile_editor_dock_from_model();
+        let mut viewer = EditorDockViewer {
+            app: self as *mut ShellApp,
+            fit_requested,
+        };
+        DockArea::new(&mut self.editor_dock)
+            .id(egui::Id::new("autopcb-shell-editor-dock"))
+            .style(DockStyle::from_egui(ui.style().as_ref()))
+            .show_add_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .show_inside(ui, &mut viewer);
     }
 
     fn render_status_bar(&mut self, ctx: &egui::Context) {
@@ -4415,8 +4450,7 @@ impl ShellApp {
             "secondary_sidebar_visible": self.panel_visibility.show_secondary_sidebar,
             "secondary_sidebar_width": self.panel_visibility.secondary_sidebar_width,
             "central_height": self.last_central_height,
-            "split_enabled": self.editor_split.is_split,
-            "split_vertical": self.editor_split.split_vertical,
+            "editor_dock_tabs": self.editor_dock.iter_all_tabs().count(),
             "last_drag_start_y": self.last_drag_start_y,
             "last_drag_end_y": self.last_drag_end_y,
         });
@@ -4449,32 +4483,121 @@ fn first_prompt_number(prompt: &str) -> Option<f32> {
         .find_map(|token| token.parse::<f32>().ok())
 }
 
-struct EditorTreeBehavior {
+fn sanitize_dock_state_for_session<T: Clone>(dock_state: &DockState<T>) -> DockState<T> {
+    let mut sanitized = dock_state.clone();
+    let zero_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO);
+    for (_, node) in sanitized.iter_all_nodes_mut() {
+        node.set_rect(zero_rect);
+        if let Some(leaf) = node.get_leaf_mut() {
+            leaf.viewport = zero_rect;
+        }
+    }
+    sanitized
+}
+
+struct WorkspaceDockViewer {
     app: *mut ShellApp,
     fit_requested: bool,
 }
 
-impl EditorTreeBehavior {
+struct EditorDockViewer {
+    app: *mut ShellApp,
+    fit_requested: bool,
+}
+
+impl EditorDockViewer {
     fn app_mut(&mut self) -> &mut ShellApp {
-        // SAFETY: used synchronously during one `Tree::ui` call on the UI thread.
+        // SAFETY: used synchronously during one DockArea render on the UI thread.
         unsafe { &mut *self.app }
     }
 }
 
-impl Behavior<EditorPane> for EditorTreeBehavior {
-    fn tab_title_for_pane(&mut self, pane: &EditorPane) -> egui::WidgetText {
+impl egui_dock::TabViewer for EditorDockViewer {
+    type Tab = EditorDockTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        self.app_mut()
+            .model
+            .documents
+            .get(&tab.document_id)
+            .map(|doc| {
+                if doc.dirty {
+                    format!("{}*", doc.title).into()
+                } else {
+                    doc.title.clone().into()
+                }
+            })
+            .unwrap_or_else(|| "Missing document".into())
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("editor-dock-tab", tab.instance_id))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        let fit_requested = self.fit_requested;
+        self.app_mut().model.set_active_tab(tab.document_id);
+        self.app_mut()
+            .render_document_by_id(ui, tab.document_id, fit_requested);
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.clicked() {
+            self.app_mut().queue_intent(Intent::Editor(
+                crate::pipeline::EditorIntent::ActivateDocument {
+                    id: tab.document_id,
+                },
+            ));
+        }
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
+        self.app_mut().queue_intent(Intent::Editor(
+            crate::pipeline::EditorIntent::CloseDocument {
+                id: tab.document_id,
+            },
+        ));
+        egui_dock::tab_viewer::OnCloseResponse::Ignore
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+}
+
+impl WorkspaceDockViewer {
+    fn app_mut(&mut self) -> &mut ShellApp {
+        // SAFETY: used synchronously during one DockArea render on the UI thread.
+        unsafe { &mut *self.app }
+    }
+}
+
+impl egui_dock::TabViewer for WorkspaceDockViewer {
+    type Tab = EditorPane;
+
+    fn title(&mut self, pane: &mut Self::Tab) -> egui::WidgetText {
         match pane {
             EditorPane::Workbench => "Editor".into(),
             EditorPane::BottomPanel => "Panel".into(),
         }
     }
 
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        _tile_id: TileId,
-        pane: &mut EditorPane,
-    ) -> UiResponse {
+    fn id(&mut self, pane: &mut Self::Tab) -> egui::Id {
+        match pane {
+            EditorPane::Workbench => egui::Id::new("workspace-pane-editor"),
+            EditorPane::BottomPanel => egui::Id::new("workspace-pane-bottom"),
+        }
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, pane: &mut Self::Tab) {
         match pane {
             EditorPane::Workbench => {
                 let fit_requested = self.fit_requested;
@@ -4485,7 +4608,6 @@ impl Behavior<EditorPane> for EditorTreeBehavior {
                 self.app_mut().last_bottom_panel_height = ui.max_rect().height();
             }
         }
-        UiResponse::None
     }
 }
 
@@ -4509,6 +4631,7 @@ impl efame::App for ShellApp {
         apply_theme(ctx, &self.theme);
         self.prune_tab_renderers();
         self.prune_document_runtime();
+        self.reconcile_editor_dock_from_model();
 
         self.render_title_menu_bar(ctx);
         // Reserve the bottom strip across the full viewport before sidebars are laid out.
@@ -4524,18 +4647,27 @@ impl efame::App for ShellApp {
             let fit_requested = self.layout.request_fit;
             self.layout.request_fit = false;
             if self.panel_visibility.show_bottom_panel {
+                self.layout.ensure_required_panes();
                 let app_ptr: *mut ShellApp = self;
-                let tree = &mut self.layout.editor_tree;
-                let mut behavior = EditorTreeBehavior {
+                let dock_state = &mut self.layout.dock_state;
+                let mut viewer = WorkspaceDockViewer {
                     app: app_ptr,
                     fit_requested,
                 };
-                tree.ui(&mut behavior, ui);
+                DockArea::new(dock_state)
+                    .id(egui::Id::new("autopcb-shell-workspace-dock"))
+                    .style(DockStyle::from_egui(ui.style().as_ref()))
+                    .show_add_buttons(false)
+                    .show_close_buttons(false)
+                    .show_leaf_close_all_buttons(false)
+                    .show_leaf_collapse_buttons(false)
+                    .show_inside(ui, &mut viewer);
             } else {
                 self.last_bottom_panel_height = 0.0;
                 self.render_editor_workspace(ui, fit_requested);
             }
         });
+        self.sync_model_tabs_from_editor_dock();
 
         self.show_palette_window(ctx);
         self.handle_screenshot_flow(ctx);
@@ -4622,6 +4754,21 @@ fn build_schdoc_from_spec_source(source_text: &str) -> Result<altium_format::Sch
     let mut doc = altium_format::SchDoc::new_blank_ad26();
     apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
     Ok(doc)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpecOpenMode {
+    SourceText,
+    SchDocPreview,
+    SchLibGallery,
+}
+
+fn spec_open_mode_for_extension(ext: &str) -> SpecOpenMode {
+    match ext {
+        "sym" | "schlib-spec" => SpecOpenMode::SchLibGallery,
+        "sch" | "schdoc-spec" => SpecOpenMode::SchDocPreview,
+        _ => SpecOpenMode::SourceText,
+    }
 }
 
 fn rewrite_component_location_in_spec(
@@ -4714,8 +4861,9 @@ fn parse_spec_coord(value: &str) -> Result<Coord, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        PanelVisibilityState, SecondarySidebarTab, clamp_bottom_panel_height, first_prompt_number,
-        parse_spec_coord_point, rewrite_component_location_in_spec,
+        PanelVisibilityState, SecondarySidebarTab, SpecOpenMode, clamp_bottom_panel_height,
+        first_prompt_number, parse_spec_coord_point, rewrite_component_location_in_spec,
+        spec_open_mode_for_extension,
     };
     use altium_format_types::coord::Coord;
 
@@ -4769,6 +4917,34 @@ mod tests {
             .expect("updated at line parses");
         assert_eq!(point.x, Coord::from_mils_f64(1050.0));
         assert!((point.y.to_mils() - 775.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn sym_extensions_open_in_library_viewer() {
+        assert_eq!(
+            spec_open_mode_for_extension("sym"),
+            SpecOpenMode::SchLibGallery
+        );
+        assert_eq!(
+            spec_open_mode_for_extension("schlib-spec"),
+            SpecOpenMode::SchLibGallery
+        );
+    }
+
+    #[test]
+    fn schematic_spec_extensions_open_in_preview_viewer() {
+        assert_eq!(
+            spec_open_mode_for_extension("sch"),
+            SpecOpenMode::SchDocPreview
+        );
+        assert_eq!(
+            spec_open_mode_for_extension("schdoc-spec"),
+            SpecOpenMode::SchDocPreview
+        );
+        assert_eq!(
+            spec_open_mode_for_extension("spec"),
+            SpecOpenMode::SourceText
+        );
     }
 }
 

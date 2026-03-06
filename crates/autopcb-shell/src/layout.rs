@@ -1,4 +1,4 @@
-use egui_tiles::{Container, Linear, LinearDir, Tile, Tiles, Tree};
+use egui_dock::{DockState, NodeIndex, SurfaceIndex, TabIndex, egui};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -8,7 +8,7 @@ pub enum BottomTab {
     Jobs,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorPane {
     Workbench,
     BottomPanel,
@@ -16,39 +16,50 @@ pub enum EditorPane {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellLayoutState {
-    pub editor_tree: Tree<EditorPane>,
+    pub dock_state: DockState<EditorPane>,
     pub request_fit: bool,
+}
+
+pub fn build_default_dock_state() -> DockState<EditorPane> {
+    let mut dock_state = DockState::new(vec![EditorPane::Workbench]);
+    let [_top, _bottom] = dock_state.main_surface_mut().split_below(
+        NodeIndex::root(),
+        0.8,
+        vec![EditorPane::BottomPanel],
+    );
+    dock_state.set_focused_node_and_surface((SurfaceIndex::main(), NodeIndex::root()));
+    sanitize_dock_state(&mut dock_state);
+    dock_state
+}
+
+pub fn sanitize_dock_state<T>(dock_state: &mut DockState<T>) {
+    let zero_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO);
+    for (_, node) in dock_state.iter_all_nodes_mut() {
+        node.set_rect(zero_rect);
+        if let egui_dock::Node::Leaf(leaf) = node {
+            leaf.viewport = zero_rect;
+        }
+    }
 }
 
 impl Default for ShellLayoutState {
     fn default() -> Self {
-        let mut tiles = Tiles::default();
-        let workbench = tiles.insert_pane(EditorPane::Workbench);
-        let bottom = tiles.insert_pane(EditorPane::BottomPanel);
-        let linear = Linear::new_binary(LinearDir::Vertical, [workbench, bottom], 0.8);
-        let root = tiles.insert_new(Tile::Container(Container::Linear(linear)));
-
         Self {
-            editor_tree: Tree::new("editor_tree", root, tiles),
+            dock_state: build_default_dock_state(),
             request_fit: false,
         }
     }
 }
 
 impl ShellLayoutState {
-    pub fn ensure_required_panes(&mut self) {
-        let mut has_workbench = false;
-        let mut has_bottom = false;
-        for (_, tile) in self.editor_tree.tiles.iter() {
-            if let Tile::Pane(EditorPane::Workbench) = tile {
-                has_workbench = true;
-            }
-            if let Tile::Pane(EditorPane::BottomPanel) = tile {
-                has_bottom = true;
-            }
-        }
+    pub fn find_pane(&self, pane: EditorPane) -> Option<(SurfaceIndex, NodeIndex, TabIndex)> {
+        self.dock_state.find_tab(&pane)
+    }
 
-        if has_workbench && has_bottom {
+    pub fn ensure_required_panes(&mut self) {
+        if self.find_pane(EditorPane::Workbench).is_some()
+            && self.find_pane(EditorPane::BottomPanel).is_some()
+        {
             return;
         }
 
@@ -63,24 +74,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_layout_has_active_workbench_tab() {
+    fn default_layout_has_required_panes() {
         let state = ShellLayoutState::default();
-        assert!(!state.editor_tree.active_tiles().is_empty());
+        assert!(state.find_pane(EditorPane::Workbench).is_some());
+        assert!(state.find_pane(EditorPane::BottomPanel).is_some());
     }
 
     #[test]
     fn migration_rebuilds_missing_bottom_panel() {
         let mut legacy = ShellLayoutState {
-            editor_tree: Tree::new_tabs("legacy_editor_tree", vec![EditorPane::Workbench]),
+            dock_state: DockState::new(vec![EditorPane::Workbench]),
             request_fit: false,
         };
         legacy.ensure_required_panes();
-
-        let has_bottom = legacy
-            .editor_tree
-            .tiles
-            .iter()
-            .any(|(_, t)| matches!(t, Tile::Pane(EditorPane::BottomPanel)));
-        assert!(has_bottom);
+        assert!(legacy.find_pane(EditorPane::BottomPanel).is_some());
     }
 }

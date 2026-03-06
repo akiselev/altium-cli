@@ -32,7 +32,10 @@ impl GraphHost {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("workspace");
-        Self::new(Some(path.to_path_buf()), DesignWorkspace::new(name, path.display().to_string()))
+        Self::new(
+            Some(path.to_path_buf()),
+            DesignWorkspace::new(name, path.display().to_string()),
+        )
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self, GraphSpecError> {
@@ -79,7 +82,8 @@ impl GraphRead for GraphHost {
         node: &NodeRef,
         instance_path: Option<&autopcb_graph::InstancePath>,
     ) -> Option<InspectorSummary> {
-        self.workspace.inspector_summary_for_node(node, instance_path)
+        self.workspace
+            .inspector_summary_for_node(node, instance_path)
     }
 
     fn inspector_summary_for_scope(&self, scope: &ScopeRef) -> Option<InspectorSummary> {
