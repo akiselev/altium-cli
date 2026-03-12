@@ -390,6 +390,53 @@ pub(crate) fn write_contour(w: &mut BinaryWriter, contour: &crate::pcblib::Conto
     }
 }
 
+/// Writes shape-based contour geometry params from pre-parsed `PolySegment` data.
+///
+/// Shape-based regions in PcbLib monolithic Data streams store geometry in both binary
+/// legacy f64 vertex pairs and as text params (MAINCONTOURVERTEXCOUNT, KINDi, VXi, VYi,
+/// CXi, CYi, SAi, EAi, Ri). The text params carry arc data (center, angles, radius) that
+/// supplements the binary vertex positions. This function regenerates the text params from
+/// the typed `PolySegment` data parsed at load time, preserving roundtrip fidelity.
+///
+/// Does nothing when `segments` is `None` (records from PcbDoc ShapeBasedRegions6 sections
+/// have no text geometry params).
+fn write_shape_contour_params(
+    params: &mut crate::param_collection::ParameterCollection,
+    segments: Option<&[crate::pcblib::PolySegment]>,
+    hole_segments: &[Vec<crate::pcblib::PolySegment>],
+) {
+    use crate::pcblib::primitives::component_body::format_scientific_float;
+    let Some(segs) = segments else { return };
+    params.insert("MAINCONTOURVERTEXCOUNT", segs.len().to_string());
+    for (i, seg) in segs.iter().enumerate() {
+        params.insert(&format!("KIND{i}"), (seg.kind as u8).to_string());
+        params.insert(&format!("VX{i}"), format_mil(seg.vertex.x));
+        params.insert(&format!("VY{i}"), format_mil(seg.vertex.y));
+        params.insert(&format!("CX{i}"), format_mil(seg.center.x));
+        params.insert(&format!("CY{i}"), format_mil(seg.center.y));
+        params.insert(&format!("SA{i}"), format_scientific_float(seg.angle1));
+        params.insert(&format!("EA{i}"), format_scientific_float(seg.angle2));
+        params.insert(&format!("R{i}"), format_mil(seg.radius));
+    }
+    for (h, hole_segs) in hole_segments.iter().enumerate() {
+        params.insert(
+            &format!("HOLECONTOUR{h}VERTEXCOUNT"),
+            hole_segs.len().to_string(),
+        );
+        for (i, seg) in hole_segs.iter().enumerate() {
+            let prefix = format!("HOLECONTOUR{h}");
+            params.insert(&format!("{prefix}KIND{i}"), (seg.kind as u8).to_string());
+            params.insert(&format!("{prefix}VX{i}"), format_mil(seg.vertex.x));
+            params.insert(&format!("{prefix}VY{i}"), format_mil(seg.vertex.y));
+            params.insert(&format!("{prefix}CX{i}"), format_mil(seg.center.x));
+            params.insert(&format!("{prefix}CY{i}"), format_mil(seg.center.y));
+            params.insert(&format!("{prefix}SA{i}"), format_scientific_float(seg.angle1));
+            params.insert(&format!("{prefix}EA{i}"), format_scientific_float(seg.angle2));
+            params.insert(&format!("{prefix}R{i}"), format_mil(seg.radius));
+        }
+    }
+}
+
 /// Serialize a Region primitive to binary bytes.
 pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     let mut w = BinaryWriter::new();
@@ -408,9 +455,15 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     if p.keepout_restrictions != 0 {
         params.insert("KEEPOUTRESTRICTIONS", p.keepout_restrictions.to_string());
     }
-    params.insert("LAYER", p.layer.clone());
-    params.insert("KEEPOUT", if p.keepout { "TRUE".to_owned() } else { "FALSE".to_owned() });
-    params.insert("ISBOARDCUTOUT", if p.is_board_cutout { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    if !p.layer.is_empty() {
+        params.insert("LAYER", p.layer.clone());
+    }
+    if p.keepout || !p.object_kind.is_empty() {
+        params.insert("KEEPOUT", if p.keepout { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    }
+    if p.is_board_cutout || !p.object_kind.is_empty() {
+        params.insert("ISBOARDCUTOUT", if p.is_board_cutout { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    }
     if p.pad_index != -1 {
         params.insert("PADINDEX", p.pad_index.to_string());
     }
@@ -426,6 +479,11 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     if !p.layer_stack_id.is_empty() {
         params.insert("LAYERSTACKID", p.layer_stack_id.clone());
     }
+    write_shape_contour_params(
+        &mut params,
+        p.shape_text_segments.as_deref(),
+        &p.hole_shape_text_segments,
+    );
     let pbytes = params_to_pcb_bytes(&params);
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);
@@ -481,7 +539,9 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     if !p.model_source.is_empty() {
         params.insert("MODEL.MODELSOURCE", p.model_source.clone());
     }
-    params.insert("MODEL.SNAPCOUNT", p.model_snap_points.len().to_string());
+    if !p.model_snap_points.is_empty() {
+        params.insert("MODEL.SNAPCOUNT", p.model_snap_points.len().to_string());
+    }
     for (i, (sx, sy, sz)) in p.model_snap_points.iter().enumerate() {
         params.insert(&format!("MODEL.S{}X", i), sx.to_internal().to_string());
         params.insert(&format!("MODEL.S{}Y", i), sy.to_internal().to_string());
@@ -498,15 +558,23 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     if p.model_sphere_radius != Coord::ZERO {
         params.insert("MODEL.SPHERE.RADIUS", format_mil(p.model_sphere_radius));
     }
+    write_shape_contour_params(&mut params, p.shape_text_segments.as_deref(), &[]);
     let mut pbytes = params_to_pcb_bytes(&params);
     // Altium's ComponentBody serializer inherits from its Region base class.
     // Both independently write ARCRESOLUTION, producing a duplicate key in the
     // param string. ParameterCollection deduplicates, so re-add the second
-    // occurrence before the NUL terminator to match the original byte count.
+    // occurrence at the original position: after BODYPROJECTION, before BODYCOLOR3D.
     let arc_dup = format!("|ARCRESOLUTION={}", format_mil(p.arc_resolution));
-    if pbytes.last() == Some(&0) {
+    let arc_dup_bytes: Vec<u8> = arc_dup.bytes().collect();
+    let bodycolor_marker = b"|BODYCOLOR3D=";
+    if let Some(pos) = pbytes
+        .windows(bodycolor_marker.len())
+        .position(|w| w == bodycolor_marker.as_slice())
+    {
+        pbytes.splice(pos..pos, arc_dup_bytes);
+    } else if pbytes.last() == Some(&0) {
         let nul = pbytes.len() - 1;
-        pbytes.splice(nul..nul, arc_dup.bytes());
+        pbytes.splice(nul..nul, arc_dup_bytes);
     }
     w.write_u32_le(pbytes.len() as u32);
     w.write_bytes(&pbytes);

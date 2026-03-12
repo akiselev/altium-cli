@@ -643,6 +643,8 @@ fn build_region_records(regions: &[Region], ctx: &WriteContext) -> Vec<ParsedPri
                 layer_stack_id: String::new(),
                 outline: Contour::Legacy(r.outline.clone()),
                 holes: r.holes.iter().map(|h| Contour::Legacy(h.clone())).collect(),
+                shape_text_segments: None,
+                hole_shape_text_segments: Vec::new(),
                 unique_id: None,
             }),
         })
@@ -704,6 +706,7 @@ fn build_body_records(
                 model_cylinder_height: Coord::ZERO,
                 model_sphere_radius: Coord::ZERO,
                 outline: Contour::Legacy(b.outline.clone()),
+                shape_text_segments: None,
                 unique_id: None,
             }),
         })

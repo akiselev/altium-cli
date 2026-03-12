@@ -176,6 +176,9 @@ dependencies = [
  "altium-format-spec",
  "altium-format-types",
  "anyhow",
+ "autopcb-graph",
+ "autopcb-graph-import-altium",
+ "autopcb-graph-spec",
  "autopcb-ir",
  "autopcb-placement",
  "cfb",
@@ -709,6 +712,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopcb-graph-import-altium"
+version = "0.1.0"
+dependencies = [
+ "altium-format",
+ "autopcb-graph",
+]
+
+[[package]]
+name = "autopcb-graph-spec"
+version = "0.1.0"
+dependencies = [
+ "autopcb-graph",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "autopcb-ir"
 version = "0.2.0"
 dependencies = [
@@ -738,11 +759,13 @@ dependencies = [
  "altium-format-types",
  "anyhow",
  "autopcb-graph",
+ "autopcb-graph-import-altium",
+ "autopcb-graph-spec",
  "autopcb-ir",
  "autopcb-placement",
  "clap",
  "eframe",
- "egui_tiles",
+ "egui_dock",
  "image",
  "rfd",
  "serde",
@@ -1580,6 +1603,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "duplicate"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e92f10a49176cbffacaedabfaa11d51db1ea0f80a83c26e1873b43cd1742c24"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1726,6 +1760,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_dock"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fd0f689738efbd4afb811433b873379c6a8f3af48f2d296d9849fe70ee021d6"
+dependencies = [
+ "duplicate",
+ "egui",
+ "paste",
+ "serde",
+]
+
+[[package]]
 name = "egui_glow"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1740,19 +1786,6 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "winit",
-]
-
-[[package]]
-name = "egui_tiles"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef184e589f0a80560bd3b63017634642d1ba112a8a8d9b29341f7cafd04601f"
-dependencies = [
- "ahash",
- "egui",
- "itertools 0.14.0",
- "log",
- "serde",
 ]
 
 [[package]]
@@ -4273,6 +4306,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "version_check",
 ]
 
 [[package]]

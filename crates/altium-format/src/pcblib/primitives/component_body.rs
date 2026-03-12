@@ -6,6 +6,46 @@ use crate::pcblib::{Contour, PolySegment, PcbComponentBody};
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
+/// Parses a PolySegmentKind from its u8 string representation.
+fn parse_poly_segment_kind(s: &str) -> Result<PolySegmentKind> {
+    let raw: u8 = s.trim().parse().map_err(|_| AltiumFormatError::InvalidParamValue {
+        key: "KIND".to_owned(),
+        detail: format!("cannot parse '{}' as u8 PolySegmentKind", s),
+    })?;
+    PolySegmentKind::try_from(raw).map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: "KIND".to_owned(),
+        detail: e.to_string(),
+    })
+}
+
+/// Parses a mil-format coordinate string from a raw string value.
+fn parse_mil_param_str(s: &str, key: &str) -> Result<Coord> {
+    if s.is_empty() {
+        return Ok(Coord::ZERO);
+    }
+    let trimmed = s.strip_suffix("mil").unwrap_or(s);
+    let normalized = trimmed.trim().replace(',', ".");
+    let mils: f64 = normalized.parse().map_err(|e: std::num::ParseFloatError| {
+        AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("cannot parse '{}' as mil value: {}", s, e),
+        }
+    })?;
+    Ok(Coord::from_mils_f64(mils))
+}
+
+/// Parses an f64 from a string (handles scientific notation and leading spaces).
+fn parse_float_str(s: &str, key: &str) -> Result<f64> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(0.0);
+    }
+    trimmed.parse::<f64>().map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: key.to_owned(),
+        detail: format!("cannot parse '{}' as f64: {}", s, e),
+    })
+}
+
 /// Decodes an IDENTIFIER value from comma-separated UTF-16 code units.
 ///
 /// Format: `"67,65,80,67,50,48,49,50"` → `"CAPC2012"`.
@@ -312,23 +352,66 @@ pub(crate) fn parse_component_body(data: &[u8], is_shape_based_section: bool) ->
     let model_cylinder_height = parse_mil_param(&mut params, "MODEL.CYLINDER.HEIGHT")?;
     let model_sphere_radius = parse_mil_param(&mut params, "MODEL.SPHERE.RADIUS")?;
 
-    // Shape-based regions include indexed edge geometry in the param string.
-    // ComponentBody inherits from Region so it can also have these.
+    // Shape-based component bodies include indexed edge geometry in the param string.
+    // ComponentBody inherits from Region so it can also have these params.
+    // In PcbLib monolithic Data streams, these carry arc data supplementing the
+    // binary f64 vertex contour. In PcbDoc ShapeBasedComponentBodies6 sections,
+    // these params are absent. We parse them into PolySegment form here and
+    // regenerate them during serialization.
+    let shape_text_segments: Option<Vec<PolySegment>>;
     if is_shape_based {
         let shape_vertex_count = params
             .remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?
             .unwrap_or(0);
-        for i in 0..shape_vertex_count {
-            let idx = i.to_string();
-            params.remove_optional::<String>(&format!("KIND{}", idx))?;
-            params.remove_optional::<String>(&format!("VX{}", idx))?;
-            params.remove_optional::<String>(&format!("VY{}", idx))?;
-            params.remove_optional::<String>(&format!("CX{}", idx))?;
-            params.remove_optional::<String>(&format!("CY{}", idx))?;
-            params.remove_optional::<String>(&format!("SA{}", idx))?;
-            params.remove_optional::<String>(&format!("EA{}", idx))?;
-            params.remove_optional::<String>(&format!("R{}", idx))?;
+        if shape_vertex_count > 0 {
+            let mut segs = Vec::with_capacity(shape_vertex_count as usize);
+            for i in 0..shape_vertex_count {
+                let idx = i.to_string();
+                let kind_raw: String = params
+                    .remove_optional(&format!("KIND{}", idx))?
+                    .unwrap_or_default();
+                let vx: String = params
+                    .remove_optional(&format!("VX{}", idx))?
+                    .unwrap_or_default();
+                let vy: String = params
+                    .remove_optional(&format!("VY{}", idx))?
+                    .unwrap_or_default();
+                let cx: String = params
+                    .remove_optional(&format!("CX{}", idx))?
+                    .unwrap_or_default();
+                let cy: String = params
+                    .remove_optional(&format!("CY{}", idx))?
+                    .unwrap_or_default();
+                let sa: String = params
+                    .remove_optional(&format!("SA{}", idx))?
+                    .unwrap_or_default();
+                let ea: String = params
+                    .remove_optional(&format!("EA{}", idx))?
+                    .unwrap_or_default();
+                let r: String = params
+                    .remove_optional(&format!("R{}", idx))?
+                    .unwrap_or_default();
+                segs.push(PolySegment {
+                    kind: parse_poly_segment_kind(&kind_raw)?,
+                    vertex: CoordPoint::new(
+                        parse_mil_param_str(&vx, &format!("VX{}", idx))?,
+                        parse_mil_param_str(&vy, &format!("VY{}", idx))?,
+                    ),
+                    center: CoordPoint::new(
+                        parse_mil_param_str(&cx, &format!("CX{}", idx))?,
+                        parse_mil_param_str(&cy, &format!("CY{}", idx))?,
+                    ),
+                    angle1: parse_float_str(&sa, &format!("SA{}", idx))?,
+                    angle2: parse_float_str(&ea, &format!("EA{}", idx))?,
+                    radius: parse_mil_param_str(&r, &format!("R{}", idx))?,
+                });
+            }
+            shape_text_segments = Some(segs);
+        } else {
+            shape_text_segments = None;
         }
+    } else {
+        shape_text_segments = None;
     }
 
     params.assert_exhausted()?;
@@ -415,6 +498,7 @@ pub(crate) fn parse_component_body(data: &[u8], is_shape_based_section: bool) ->
         model_cylinder_height,
         model_sphere_radius,
         outline,
+        shape_text_segments,
         unique_id: None,
     })
 }

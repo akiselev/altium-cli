@@ -353,6 +353,15 @@ pub(crate) struct PcbRegion {
     // Geometry: main outline + hole contours
     pub(crate) outline: Contour,
     pub(crate) holes: Vec<Contour>,
+    /// Shape-based outline segments parsed from param-string text geometry, present when
+    /// `is_shape_based=true` and the record originated from a PcbLib monolithic Data stream
+    /// (where binary contour is legacy f64 but text params carry full TPolySegment data).
+    /// Used during serialization to regenerate the MAINCONTOURVERTEXCOUNT/KINDi/VXi/...
+    /// text params. `None` for PcbDoc ShapeBasedRegions6 records (binary-only, no text params).
+    pub(crate) shape_text_segments: Option<Vec<PolySegment>>,
+    /// Per-hole shape-based segments (from HOLECONTOURhVERTEXCOUNT text params), parallel
+    /// to `holes`. Each entry corresponds to the same-index hole contour.
+    pub(crate) hole_shape_text_segments: Vec<Vec<PolySegment>>,
     pub(crate) unique_id: Option<String>,
 }
 
@@ -556,6 +565,12 @@ pub(crate) struct PcbComponentBody {
     /// Sphere model radius (MODEL.SPHERE.RADIUS), only for sphere model types.
     pub(crate) model_sphere_radius: Coord,
     pub(crate) outline: Contour,
+    /// Shape-based outline segments parsed from param-string text geometry, present when
+    /// `is_shape_based=true` and the record originated from a PcbLib monolithic Data stream
+    /// (where binary contour is legacy f64 but text params carry full TPolySegment data).
+    /// Used during serialization to regenerate the MAINCONTOURVERTEXCOUNT/KINDi/VXi/...
+    /// text params. `None` for PcbDoc ShapeBasedComponentBodies6 records (binary-only).
+    pub(crate) shape_text_segments: Option<Vec<PolySegment>>,
     pub(crate) unique_id: Option<String>,
 }
 

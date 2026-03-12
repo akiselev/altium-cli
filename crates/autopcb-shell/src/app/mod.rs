@@ -4115,6 +4115,15 @@ impl ShellApp {
         let mut component_names = lib.component_names();
         component_names.sort();
 
+        if component_names.is_empty() {
+            empty_state(
+                ui,
+                &self.theme,
+                "Library contains no concrete components to preview. If this .sym file only imports other files, open one of the concrete library source files instead.",
+            );
+            return;
+        }
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             for component_name in component_names {
                 ui.group(|ui| {

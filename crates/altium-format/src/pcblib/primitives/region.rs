@@ -6,6 +6,46 @@ use crate::pcblib::{Contour, PolySegment, PcbRegion};
 use crate::pcblib::primitives::common::parse_common_header;
 use crate::{AltiumFormatError, Result};
 
+/// Parses a PolySegmentKind from its u8 string representation.
+fn parse_poly_segment_kind(s: &str) -> Result<PolySegmentKind> {
+    let raw: u8 = s.trim().parse().map_err(|_| AltiumFormatError::InvalidParamValue {
+        key: "KIND".to_owned(),
+        detail: format!("cannot parse '{}' as u8 PolySegmentKind", s),
+    })?;
+    PolySegmentKind::try_from(raw).map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: "KIND".to_owned(),
+        detail: e.to_string(),
+    })
+}
+
+/// Parses a mil-format coordinate string from a raw string value.
+fn parse_mil_param_str(s: &str, key: &str) -> Result<Coord> {
+    if s.is_empty() {
+        return Ok(Coord::ZERO);
+    }
+    let trimmed = s.strip_suffix("mil").unwrap_or(s);
+    let normalized = trimmed.trim().replace(',', ".");
+    let mils: f64 = normalized.parse().map_err(|e: std::num::ParseFloatError| {
+        AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("cannot parse '{}' as mil value: {}", s, e),
+        }
+    })?;
+    Ok(Coord::from_mils_f64(mils))
+}
+
+/// Parses an f64 from a string (handles scientific notation and leading spaces).
+fn parse_float_str(s: &str, key: &str) -> Result<f64> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(0.0);
+    }
+    trimmed.parse::<f64>().map_err(|e| AltiumFormatError::InvalidParamValue {
+        key: key.to_owned(),
+        detail: format!("cannot parse '{}' as f64: {}", s, e),
+    })
+}
+
 /// Parses a mil-format coordinate string (e.g. "0.5mil", "0mil", "-3.937mil").
 /// Returns `Coord::ZERO` if key is absent.
 fn parse_mil_param(params: &mut ParameterCollection, key: &str) -> Result<Coord> {
@@ -184,40 +224,116 @@ pub(crate) fn parse_region(data: &[u8], is_shape_based_section: bool) -> Result<
 
     // Shape-based regions include indexed edge geometry in the param string
     // (MAINCONTOURVERTEXCOUNT, KIND0, VX0, VY0, CX0, CY0, SA0, EA0, R0, ...).
-    // We consume these to pass assert_exhausted but don't store them separately —
-    // the actual geometry comes from the f64 vertex arrays below.
+    // These params are redundant with the binary TPolySegment contour data in PcbDoc
+    // ShapeBasedRegions6 sections, but in PcbLib monolithic Data streams they carry
+    // arc data (center, angles, radius) that supplements the binary f64 vertex contour.
+    // We parse them into PolySegment form here and regenerate them during serialization.
+    let shape_text_segments: Option<Vec<PolySegment>>;
+    let hole_shape_text_segments: Vec<Vec<PolySegment>>;
     if is_shape_based {
         let shape_vertex_count = params
             .remove_optional::<i32>("MAINCONTOURVERTEXCOUNT")?
             .unwrap_or(0);
-        for i in 0..shape_vertex_count {
-            let idx = i.to_string();
-            // Each shape-based edge has: KIND, VX, VY, CX, CY, SA, EA, R
-            params.remove_optional::<String>(&format!("KIND{}", idx))?;
-            params.remove_optional::<String>(&format!("VX{}", idx))?;
-            params.remove_optional::<String>(&format!("VY{}", idx))?;
-            params.remove_optional::<String>(&format!("CX{}", idx))?;
-            params.remove_optional::<String>(&format!("CY{}", idx))?;
-            params.remove_optional::<String>(&format!("SA{}", idx))?;
-            params.remove_optional::<String>(&format!("EA{}", idx))?;
-            params.remove_optional::<String>(&format!("R{}", idx))?;
+        if shape_vertex_count > 0 {
+            let mut segs = Vec::with_capacity(shape_vertex_count as usize);
+            for i in 0..shape_vertex_count {
+                let idx = i.to_string();
+                let kind_raw: String = params
+                    .remove_optional(&format!("KIND{}", idx))?
+                    .unwrap_or_default();
+                let vx: String = params
+                    .remove_optional(&format!("VX{}", idx))?
+                    .unwrap_or_default();
+                let vy: String = params
+                    .remove_optional(&format!("VY{}", idx))?
+                    .unwrap_or_default();
+                let cx: String = params
+                    .remove_optional(&format!("CX{}", idx))?
+                    .unwrap_or_default();
+                let cy: String = params
+                    .remove_optional(&format!("CY{}", idx))?
+                    .unwrap_or_default();
+                let sa: String = params
+                    .remove_optional(&format!("SA{}", idx))?
+                    .unwrap_or_default();
+                let ea: String = params
+                    .remove_optional(&format!("EA{}", idx))?
+                    .unwrap_or_default();
+                let r: String = params
+                    .remove_optional(&format!("R{}", idx))?
+                    .unwrap_or_default();
+                segs.push(PolySegment {
+                    kind: parse_poly_segment_kind(&kind_raw)?,
+                    vertex: CoordPoint::new(
+                        parse_mil_param_str(&vx, &format!("VX{}", idx))?,
+                        parse_mil_param_str(&vy, &format!("VY{}", idx))?,
+                    ),
+                    center: CoordPoint::new(
+                        parse_mil_param_str(&cx, &format!("CX{}", idx))?,
+                        parse_mil_param_str(&cy, &format!("CY{}", idx))?,
+                    ),
+                    angle1: parse_float_str(&sa, &format!("SA{}", idx))?,
+                    angle2: parse_float_str(&ea, &format!("EA{}", idx))?,
+                    radius: parse_mil_param_str(&r, &format!("R{}", idx))?,
+                });
+            }
+            shape_text_segments = Some(segs);
+        } else {
+            shape_text_segments = None;
         }
         // Hole contour shape data
+        let mut hole_segs_all = Vec::with_capacity(hole_count);
         for h in 0..hole_count {
             let hole_key = format!("HOLECONTOUR{}VERTEXCOUNT", h);
             let hole_vertex_count = params.remove_optional::<i32>(&hole_key)?.unwrap_or(0);
+            let mut hole_segs = Vec::with_capacity(hole_vertex_count as usize);
             for i in 0..hole_vertex_count {
                 let prefix = format!("HOLECONTOUR{}", h);
-                params.remove_optional::<String>(&format!("{}KIND{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}VX{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}VY{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}CX{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}CY{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}SA{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}EA{}", prefix, i))?;
-                params.remove_optional::<String>(&format!("{}R{}", prefix, i))?;
+                let kind_raw: String = params
+                    .remove_optional(&format!("{}KIND{}", prefix, i))?
+                    .unwrap_or_default();
+                let vx: String = params
+                    .remove_optional(&format!("{}VX{}", prefix, i))?
+                    .unwrap_or_default();
+                let vy: String = params
+                    .remove_optional(&format!("{}VY{}", prefix, i))?
+                    .unwrap_or_default();
+                let cx: String = params
+                    .remove_optional(&format!("{}CX{}", prefix, i))?
+                    .unwrap_or_default();
+                let cy: String = params
+                    .remove_optional(&format!("{}CY{}", prefix, i))?
+                    .unwrap_or_default();
+                let sa: String = params
+                    .remove_optional(&format!("{}SA{}", prefix, i))?
+                    .unwrap_or_default();
+                let ea: String = params
+                    .remove_optional(&format!("{}EA{}", prefix, i))?
+                    .unwrap_or_default();
+                let r: String = params
+                    .remove_optional(&format!("{}R{}", prefix, i))?
+                    .unwrap_or_default();
+                hole_segs.push(PolySegment {
+                    kind: parse_poly_segment_kind(&kind_raw)?,
+                    vertex: CoordPoint::new(
+                        parse_mil_param_str(&vx, &format!("{}VX{}", prefix, i))?,
+                        parse_mil_param_str(&vy, &format!("{}VY{}", prefix, i))?,
+                    ),
+                    center: CoordPoint::new(
+                        parse_mil_param_str(&cx, &format!("{}CX{}", prefix, i))?,
+                        parse_mil_param_str(&cy, &format!("{}CY{}", prefix, i))?,
+                    ),
+                    angle1: parse_float_str(&sa, &format!("{}SA{}", prefix, i))?,
+                    angle2: parse_float_str(&ea, &format!("{}EA{}", prefix, i))?,
+                    radius: parse_mil_param_str(&r, &format!("{}R{}", prefix, i))?,
+                });
             }
+            hole_segs_all.push(hole_segs);
         }
+        hole_shape_text_segments = hole_segs_all;
+    } else {
+        shape_text_segments = None;
+        hole_shape_text_segments = Vec::new();
     }
 
     params.assert_exhausted()?;
@@ -261,6 +377,8 @@ pub(crate) fn parse_region(data: &[u8], is_shape_based_section: bool) -> Result<
         layer_stack_id,
         outline,
         holes,
+        shape_text_segments,
+        hole_shape_text_segments,
         unique_id: None,
     })
 }

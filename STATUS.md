@@ -136,7 +136,19 @@ their primitives and sidecar streams.
 **Sidecar streams:** ExtendedPrimitiveInformation, PrimitiveGUID, CustomShapes,
 CustomMaskShapes, CornerRadiusChamfer, WideStrings6 (UTF-16LE TLV).
 
-**Serialization:** Complete roundtrip.
+**Serialization:** Complete roundtrip. Shape-based contour geometry text params
+(MAINCONTOURVERTEXCOUNT, KINDn, VXn, VYn, etc.) fully parsed into typed
+`PolySegment` data and regenerated during serialization. Region and ComponentBody
+params conditionally written to match Altium's behavior (LAYER, KEEPOUT,
+ISBOARDCUTOUT omitted at defaults; MODEL.SNAPCOUNT omitted when empty;
+ARCRESOLUTION duplicate positioned correctly).
+
+**Roundtrip fidelity:** Semantic CFB diff shows only acceptable differences:
+- **Font name buffer padding** — Altium leaves garbage after NUL in 64-byte fixed buffer; we zero-fill
+- **Text sub#1 WideStrings upgrade** — Win1252 sub-record text upgraded to match authoritative WideStrings content
+- **Via format upgrade** — ext_size 42 → 45 (adds trailing RevisionID, per upgrade-to-latest policy)
+- **Library/Data stream** — regenerated global stream may differ in size
+- **SharedUnion NUL terminator** — minor off-by-one from trailing NUL handling
 
 **High-Level API:** Full CRUD — `footprint()`, `footprints()`, `footprint_names()`,
 `footprint_count()`, `add_footprint()`, `update_footprint()`, `remove_footprint()`.

@@ -339,6 +339,8 @@ fn region_to_internal(g: &RegionGraphic) -> PcbRegion {
         layer_stack_id: String::new(),
         outline,
         holes: g.holes.iter().map(|h| pcb_contour_to_internal(h)).collect(),
+        shape_text_segments: None,
+        hole_shape_text_segments: Vec::new(),
         unique_id: g.unique_id.clone(),
     }
 }
@@ -498,6 +500,7 @@ fn component_body_to_internal(g: &ComponentBodyGraphic) -> PcbComponentBody {
         model_cylinder_height: Coord::ZERO,
         model_sphere_radius: Coord::ZERO,
         outline,
+        shape_text_segments: None,
         unique_id: g.unique_id.clone(),
     }
 }
