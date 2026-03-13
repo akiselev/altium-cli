@@ -17,7 +17,15 @@ pub(crate) struct TrackedCfbDocument {
 impl TrackedCfbDocument {
     // Opens the CFB at `path`, enumerating all entries upfront for exhaustion tracking.
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let mut inner = CfbDocument::open(path)?;
+        Self::from_cfb(CfbDocument::open(path)?)
+    }
+
+    // Opens a CFB container from an in-memory byte buffer.
+    pub(crate) fn from_bytes(data: Vec<u8>) -> Result<Self> {
+        Self::from_cfb(CfbDocument::from_bytes(data)?)
+    }
+
+    fn from_cfb(mut inner: CfbDocument) -> Result<Self> {
         let all_entries = inner.enumerate_all_entries()?;
         let mut consumed = HashSet::new();
         // Root storage is implicit; never appears as unconsumed.

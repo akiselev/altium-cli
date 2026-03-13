@@ -71,12 +71,7 @@ const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const SCHDOC_ASCII_HEADER_PREFIX: &[u8] =
     b"|HEADER=Protel for Windows - Schematic Capture Ascii File Version";
 
-fn preflight_check_schdoc_container(path: &Path) -> Result<()> {
-    let mut file = std::fs::File::open(path)?;
-    let mut head = [0u8; 128];
-    let read = file.read(&mut head)?;
-    let head = &head[..read];
-
+fn preflight_check_schdoc_bytes(head: &[u8]) -> Result<()> {
     if head.starts_with(&CFB_MAGIC) {
         return Ok(());
     }
@@ -94,8 +89,14 @@ fn preflight_check_schdoc_container(path: &Path) -> Result<()> {
                 .to_owned(),
         });
     }
-
     Ok(())
+}
+
+fn preflight_check_schdoc_container(path: &Path) -> Result<()> {
+    let mut file = std::fs::File::open(path)?;
+    let mut head = [0u8; 128];
+    let read = file.read(&mut head)?;
+    preflight_check_schdoc_bytes(&head[..read])
 }
 
 impl SchDoc {
@@ -196,11 +197,22 @@ impl SchDoc {
         Ok(())
     }
 
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        preflight_check_schdoc_bytes(data).context("detecting SchDoc container format")?;
+        let tracked = TrackedCfbDocument::from_bytes(data.to_vec())
+            .context("opening SchDoc CFB container")?;
+        Self::parse_from_cfb(tracked)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         preflight_check_schdoc_container(path.as_ref())
             .context("detecting SchDoc container format")?;
-        let mut tracked =
+        let tracked =
             TrackedCfbDocument::open(path.as_ref()).context("opening SchDoc CFB container")?;
+        Self::parse_from_cfb(tracked)
+    }
+
+    fn parse_from_cfb(mut tracked: TrackedCfbDocument) -> Result<Self> {
 
         let (root_storages, root_streams) = tracked
             .list_entries("/")

@@ -185,9 +185,20 @@ impl PcbDoc {
         crate::api::pcbdoc_write::board_to_internal(board, self)
     }
 
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        let doc = TrackedCfbDocument::from_bytes(data.to_vec())?;
+        Self::parse_from_cfb(doc)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let mut doc = TrackedCfbDocument::open(path)?;
+        let doc = TrackedCfbDocument::open(path)?;
+        let mut pcbdoc = Self::parse_from_cfb(doc)?;
+        pcbdoc.source_path = Some(path.to_path_buf());
+        Ok(pcbdoc)
+    }
+
+    fn parse_from_cfb(mut doc: TrackedCfbDocument) -> Result<Self> {
 
         let legacy_data = doc.read_stream(&format!("/{FILE_HEADER}"))?;
         let legacy_header = parse_pcb_legacy_header(&legacy_data).context("parsing /FileHeader")?;
@@ -581,7 +592,7 @@ impl PcbDoc {
             violations,
             waived_violations,
             drc_options,
-            source_path: Some(path.to_path_buf()),
+            source_path: None,
         };
         doc.validate_invariants()
             .context("validating PcbDoc invariants")?;

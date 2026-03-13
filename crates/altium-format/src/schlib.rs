@@ -1898,10 +1898,17 @@ impl SchLib {
         Some(false)
     }
 
-    pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
-        let path = path.as_ref();
-        let mut doc = TrackedCfbDocument::open(path)?;
+    pub fn from_bytes(data: &[u8]) -> crate::Result<Self> {
+        let doc = TrackedCfbDocument::from_bytes(data.to_vec())?;
+        Self::parse_from_cfb(doc)
+    }
 
+    pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let doc = TrackedCfbDocument::open(path)?;
+        Self::parse_from_cfb(doc)
+    }
+
+    fn parse_from_cfb(mut doc: TrackedCfbDocument) -> crate::Result<Self> {
         // 1. FileHeader
         let file_header_data = doc.read_stream(&format!("/{}", FILE_HEADER))?;
         let header = parse_file_header(&file_header_data)?;

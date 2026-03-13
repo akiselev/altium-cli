@@ -21,7 +21,12 @@ impl CfbDocument {
     // Reads the file at `path` entirely into memory and opens it as a CFB container.
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self> {
         let bytes = std::fs::read(path)?;
-        let cursor = Cursor::new(bytes);
+        Self::from_bytes(bytes)
+    }
+
+    // Opens a CFB container from an in-memory byte buffer.
+    pub(crate) fn from_bytes(data: Vec<u8>) -> Result<Self> {
+        let cursor = Cursor::new(data);
         let inner = cfb::CompoundFile::open(cursor)
             .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
         Ok(Self { inner })

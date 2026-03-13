@@ -818,9 +818,20 @@ impl PcbLib {
             ))
     }
 
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        let doc = TrackedCfbDocument::from_bytes(data.to_vec())?;
+        Self::parse_from_cfb(doc)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let mut doc = TrackedCfbDocument::open(path)?;
+        let doc = TrackedCfbDocument::open(path)?;
+        let mut lib = Self::parse_from_cfb(doc)?;
+        lib.source_path = Some(path.to_path_buf());
+        Ok(lib)
+    }
+
+    fn parse_from_cfb(mut doc: TrackedCfbDocument) -> Result<Self> {
 
         // 1. FileHeader
         let file_header_data = doc.read_stream(&format!("/{FILE_HEADER}"))?;
@@ -993,7 +1004,7 @@ impl PcbLib {
             texture_entries,
             footprints,
             file_version_info,
-            source_path: Some(path.to_path_buf()),
+            source_path: None,
         };
         lib.validate_invariants()
             .context("validating PcbLib invariants")?;
