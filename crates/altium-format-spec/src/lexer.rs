@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use crate::diagnostic::{ParseError, ParseErrorCode, Span, Unit};
+use crate::trivia::CommentToken;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
@@ -137,8 +138,9 @@ impl TokenKind {
     }
 }
 
-pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
+pub fn lex(input: &str) -> Result<(Vec<Token>, Vec<CommentToken>), ParseError> {
     let mut out = Vec::new();
+    let mut comments: Vec<CommentToken> = Vec::new();
     let mut i = 0usize;
     let bytes = input.as_bytes();
 
@@ -153,10 +155,17 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                 i += 1;
             }
             b'/' if peek_byte(bytes, i + 1) == Some(b'/') => {
+                let comment_start = i;
                 i += 2;
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }
+                let text = input[comment_start..i].to_string();
+                comments.push(CommentToken {
+                    span: Span::new(comment_start as u32, i as u32),
+                    text,
+                    is_block: false,
+                });
             }
             b'/' if peek_byte(bytes, i + 1) == Some(b'*') => {
                 let start = i;
@@ -185,6 +194,12 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                         Span::new(start as u32, input.len() as u32),
                     ));
                 }
+                let text = input[start..i].to_string();
+                comments.push(CommentToken {
+                    span: Span::new(start as u32, i as u32),
+                    text,
+                    is_block: true,
+                });
             }
             b'(' => {
                 out.push(tok(TokenKind::LParen, i, i + 1));
@@ -361,7 +376,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
     }
 
     out.push(tok(TokenKind::Eof, input.len(), input.len()));
-    Ok(out)
+    Ok((out, comments))
 }
 
 fn tok(kind: TokenKind, start: usize, end: usize) -> Token {
@@ -541,7 +556,7 @@ fn read_template_expr(
                 depth -= 1;
                 if depth == 0 {
                     let expr_src = &input[expr_start..i];
-                    let tokens = lex(expr_src).map_err(|e| {
+                    let (tokens, _) = lex(expr_src).map_err(|e| {
                         ParseError::new(
                             ParseErrorCode::E1001,
                             format!("error in template interpolation: {}", e.message),
@@ -685,13 +700,14 @@ mod tests {
     fn lex_kinds(input: &str) -> Vec<TokenKind> {
         lex(input)
             .unwrap()
+            .0
             .into_iter()
             .map(|t| t.kind)
             .collect()
     }
 
     fn lex_ok(input: &str) -> Vec<Token> {
-        lex(input).unwrap()
+        lex(input).unwrap().0
     }
 
     #[test]
@@ -1022,7 +1038,7 @@ mod tests {
 
     #[test]
     fn swap_group_keyword() {
-        let tokens = lex("swap_group").unwrap();
+        let (tokens, _) = lex("swap_group").unwrap();
         assert!(matches!(&tokens[0].kind, TokenKind::SwapGroup));
     }
 }

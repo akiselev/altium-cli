@@ -1290,7 +1290,7 @@ fn resolve_layer_spec_opt(spec: &Option<LayerSpec>, default: V6Layer) -> LayerRe
 }
 
 fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
-    let shape = spec.shape.unwrap_or(PadShape::Round);
+    let shape = spec.shape.unwrap_or(PadShape::Rectangular);
     let x_size = spec.x_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
     let y_size = spec.y_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
     api::Pad {

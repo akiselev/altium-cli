@@ -17,7 +17,13 @@ use super::lexer::{Token, TokenKind, lex};
 
 /// Parse a spec file source string into an AST.
 pub fn parse_spec(source: &str) -> Result<SpecFile, ParseError> {
-    let tokens = lex(source)?;
+    let (tokens, _comments) = lex(source)?;
+    let mut parser = SpecParser::new(source, tokens);
+    parser.parse_file()
+}
+
+/// Parse a spec file from pre-lexed tokens.
+pub fn parse_spec_from_tokens(source: &str, tokens: Vec<Token>) -> Result<SpecFile, ParseError> {
     let mut parser = SpecParser::new(source, tokens);
     parser.parse_file()
 }

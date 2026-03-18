@@ -1068,7 +1068,8 @@ fn dump_pcb_pad(out: &mut String, pad: &PcbLibPad, indent: usize) {
     let y = coord_to_spec(pad.location.y);
     let mut parts = vec![format!("at: ({}, {})", x, y)];
 
-    if pad.shape != PadShape::Round {
+    // Default is Rectangular; only emit shape when it differs.
+    if pad.shape != PadShape::Rectangular {
         parts.push(format!("shape: {}", format!("{:?}", pad.shape).to_lowercase()));
     }
     if pad.x_size != Coord::ZERO {

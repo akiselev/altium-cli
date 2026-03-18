@@ -552,12 +552,12 @@ Extended the spec DSL to support autoplace directives for the upcoming PCB place
 
 ## AutoPCB Placer — Milestone 6: Executor Integration + Spec Rewriter (2026-03-17)
 
-**Files**: `crates/altium-cli/src/spec_rewriter.rs` (new), `crates/altium-cli/src/main.rs`
+**Files**: `crates/altium-cli/src/spec_rewriter.rs`, `crates/altium-cli/src/main.rs`
 
 Implemented the spec rewriter and `autoplace_spec` orchestrator that closes the loop
 from solver output back to an updated `.pcbdoc-spec` file.
 
-### spec_rewriter.rs (new)
+### spec_rewriter.rs — AST-based rewriter (updated 2026-03-17)
 
 Public API:
 ```rust
@@ -565,16 +565,25 @@ pub fn rewrite_spec_with_placement(
     original_spec_text: &str,
     result: &PlacementResult,
     autoplace_designators: &[String],
-) -> RewriteResult
+) -> anyhow::Result<RewriteResult>
 ```
 
-Strategy: text-based rewriting. For each autoplace component in the solver result:
-- Locate the `place DESIGNATOR { ... }` block using a brace-depth scanner
-- Replace `autoplace: true` with `at: (x_mm, y_mm)` and `rotation: N`
-- Add `// autoplace: solved` comment inside the block
-- Multi-designator `place C1, C2, C3 { autoplace: true }` expanded to individual blocks
-- Components not in any place block appended before the closing `}` of `placement {}`
-- All non-autoplace content (constraints, clearance, optimize, groups) preserved verbatim
+Strategy: AST-based rewriting with trivia (comment) preservation.
+
+1. Parse source via `parse_with_trivia()` → `(SpecFile, TriviaMap)`
+2. Find `PlacementDecl` in AST; walk `PlacementItem::Place` children
+3. For each `PlaceDecl` with `autoplace: true` and a solvable designator:
+   - Build replacement text from original property spans + solver `at:`/`rotation:` lines
+   - Re-attach leading trivia (comments before block) and trailing trivia (inline comment on `}`)
+   - Record `(span.start, span.end, replacement_text)`
+4. Multi-designator blocks expanded to individual blocks; only first block gets leading trivia
+5. Unsolved designators in multi-desig blocks: body preserved with `// autoplace: unsolved`
+6. Apply replacements in reverse byte order (preserves offsets)
+7. Append new blocks for designators not found in any place block
+8. Falls back to original text on parse failure; no placement block → output unchanged
+
+Annotations: `// autoplace: solved` and `// autoplace: unsolved` are stable user-facing
+markers — downstream tooling may parse these to identify placement status.
 
 ### autoplace_spec orchestrator (main.rs)
 
@@ -601,13 +610,20 @@ with solved positions. Flags: `--target`, `--dry-run`, `--output`, `--gamma-star
 
 ### Tests
 
-6 unit tests in `spec_rewriter::tests` — all passing:
+13 unit tests in `spec_rewriter::tests` — all passing:
 - `autoplace_true_replaced_with_position` — basic rewrite
 - `locked_components_unchanged` — locked place blocks preserved verbatim
 - `unmentioned_autoplace_components_appended` — appended at end of placement block
 - `multi_designator_block_expanded_to_individual` — expansion to individual blocks
 - `constraints_and_clearance_blocks_preserved` — non-place content unchanged
 - `rotation_nonzero_included_in_output` — non-zero rotation correctly emitted
+- `comment_before_place_block_preserved` — leading trivia preserved
+- `comment_inside_place_body_preserved` — body properties with comments preserved
+- `trailing_comment_on_closing_brace_preserved` — trailing trivia preserved
+- `no_placement_block_output_identical_to_input` — edge: no placement block
+- `all_components_locked_output_identical_to_input` — edge: nothing to rewrite
+- `roundtrip_rewrite_then_reparse` — rewritten output re-parses without errors
+- `comment_between_two_place_blocks_preserved` — inter-block comments preserved
 
 ---
 
@@ -791,6 +807,41 @@ Added two new move types to the SA `Move` enum:
 - `test_write_swap_overlay_empty` — "No swaps" message
 - `test_write_swap_overlay_with_entries` — overlay contains expected blocks
 - `test_collect_net_pin_counts` — correct pin counts from IR
+
+---
+
+## AutoPCB Placer — All Milestones Complete (2026-03-17)
+
+The full autoplacer downstream plumbing (plan: `docs/plans/autopcb-placer.md`) is implemented
+across all 9 implementation milestones:
+
+| Milestone | Status | Key deliverable |
+|---|---|---|
+| M1: Parser Extensions | Complete | `autoplace`, `group`, `separate`, `unplaced` in spec DSL; AST spans |
+| M2: Placement Dump | Complete | `dump_placement_block()` — PcbDoc → `.pcbdoc-spec` position export |
+| M3: Reconciler Comparison | Complete | `reconcile_pcbdoc()` emits MOVE ECOs for position/rotation changes |
+| M4: Viewer File Watch | Complete | `--watch` flag; `notify` watcher on PcbDoc + playback JSON |
+| M5: Constraint Bridge | Complete | `placement_spec_to_constraints()` in `altium-cli/placement_bridge.rs` |
+| M6: Executor + Rewriter | Complete | `autoplace_spec()` orchestrator; `rewrite_spec_with_placement()` |
+| M7: Simulated Annealing | Complete | `refine_with_sa()` with Metropolis acceptance, adaptive cooling |
+| M8: Pin/Part Swaps | Complete | `swap.rs`: greedy passes, integrity check, overlay file generation |
+| M9: CLI Commands | Complete | `altium placement autoplace/dump/plan/apply` |
+
+### End-to-end pipeline
+
+```
+.pcbdoc-spec (partial, autoplace: true)
+  → parse (altium-format-spec)
+  → placement_spec_to_constraints (altium-cli/placement_bridge.rs)
+  → solve_placement (autopcb-placement)
+      Phase 1+2: analytical (solverang LM)
+      Phase 2.5: greedy part swap (allow_part_swap)
+      Phase 3: SA refinement (sa_config)
+      Phase 4.5: greedy pin swap (allow_pin_swap)
+  → rewrite_spec_with_placement (altium-cli/spec_rewriter.rs)
+  → .pcbdoc-spec (at: (x,y) + rotation: N)
+  → altium placement apply → .PcbDoc binary
+```
 
 ---
 

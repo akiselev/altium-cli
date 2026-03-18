@@ -11,6 +11,7 @@ pub mod lexer;
 pub mod model;
 pub mod parser;
 pub mod reconciler;
+pub mod trivia;
 
 // Public API re-exports
 pub use compiler::{compile_spec, compile_spec_with_imports, compile_spec_with_resolved, compile_imported_schlibs};
@@ -27,6 +28,7 @@ pub use eco::{
     PropChange, PropValue,
 };
 pub use formatter::{format_spec, FormatConfig, FormatResult};
+pub use trivia::{CommentToken, TriviaMap, parse_with_trivia};
 pub use model::{
     AutoplaceConfig, BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties,
     GraphicSpec, GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec, PcbGraphicProperties,

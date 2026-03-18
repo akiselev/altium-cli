@@ -1959,7 +1959,7 @@ pub fn autoplace_spec(
     let duration_ms = result.duration_ms;
 
     // Rewrite spec text.
-    let rewrite = spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators);
+    let rewrite = spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators)?;
 
     // Determine output path.
     let out_path = output_path

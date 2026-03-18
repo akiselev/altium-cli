@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::diagnostic::{BinOp, ParseError, Span, Unit};
 use crate::lexer::{TemplatePart, Token, TokenKind};
 use crate::parser::parse_spec;
+use crate::trivia::{ItemTrivia, TriviaLine, scan_trivia_lines};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -36,22 +37,6 @@ pub fn format_spec(source: &str, config: &FormatConfig) -> Result<FormatResult, 
 }
 
 // ── Comment / trivia extraction ───────────────────────────────────────────────
-
-/// Trivia attached to a top-level item.
-#[derive(Debug, Default, Clone)]
-struct ItemTrivia {
-    /// Lines (or blank lines) that appear before the item in the source.
-    leading: Vec<TriviaLine>,
-    /// A single trailing comment on the same line as the item (if any).
-    trailing: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-enum TriviaLine {
-    Blank,
-    LineComment(String),
-    BlockComment(String),
-}
 
 /// Extract trivia for every top-level item plus a trailing trivia entry for
 /// text after the last item.
@@ -91,76 +76,6 @@ fn extract_top_level_trivia(source: &str, ast: &SpecFile) -> Vec<ItemTrivia> {
                 result[idx].trailing = Some(line_tail[..end_pos + 2].to_string());
             }
         }
-    }
-
-    result
-}
-
-/// Scan a gap string (between two top-level items) for trivia lines.
-fn scan_trivia_lines(gap: &str) -> Vec<TriviaLine> {
-    let mut result = Vec::new();
-    let mut i = 0;
-    let bytes = gap.as_bytes();
-
-    while i < bytes.len() {
-        // Skip horizontal whitespace.
-        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r') {
-            i += 1;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-        if bytes[i] == b'\n' {
-            result.push(TriviaLine::Blank);
-            i += 1;
-            continue;
-        }
-        // Line comment.
-        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-            let start = i;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            let text = gap[start..i].trim_end().to_string();
-            result.push(TriviaLine::LineComment(text));
-            // Consume the trailing newline so it doesn't become a Blank.
-            if i < bytes.len() && bytes[i] == b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Block comment.
-        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let start = i;
-            i += 2;
-            let mut depth = 1u32;
-            while i < bytes.len() {
-                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                    depth += 1;
-                    i += 2;
-                } else if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                    depth -= 1;
-                    i += 2;
-                    if depth == 0 {
-                        break;
-                    }
-                } else {
-                    i += 1;
-                }
-            }
-            let text = gap[start..i].to_string();
-            result.push(TriviaLine::BlockComment(text));
-            // Skip trailing whitespace and newline after block comment.
-            while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r') {
-                i += 1;
-            }
-            if i < bytes.len() && bytes[i] == b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Non-whitespace, non-comment character (shouldn't happen in a gap).
-        i += 1;
     }
 
     result
