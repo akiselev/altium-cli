@@ -13,7 +13,7 @@ pub mod parser;
 pub mod reconciler;
 
 // Public API re-exports
-pub use compiler::{compile_spec, compile_spec_with_imports, compile_imported_schlibs};
+pub use compiler::{compile_spec, compile_spec_with_imports, compile_spec_with_resolved, compile_imported_schlibs};
 pub use dump::{dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib, dump_placement_block, IntLibDump};
 pub use executor::{apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc, apply_spec_schlib};
 pub use import::{ResolvedSpec, resolve_imports};

@@ -330,40 +330,13 @@ enum FileDomain {
 }
 
 fn validate_cross_domain(
-    from_path: &Path,
-    to_path: &Path,
-    span: Span,
+    _from_path: &Path,
+    _to_path: &Path,
+    _span: Span,
 ) -> Result<(), SpecError> {
-    let from_domain = file_domain(from_path);
-    let to_domain = file_domain(to_path);
-
-    let forbidden = matches!(
-        (&from_domain, &to_domain),
-        (FileDomain::PcbLib, FileDomain::SchLib)
-            | (FileDomain::PrjPcb, FileDomain::PrjPcb)
-            | (FileDomain::SchDoc, FileDomain::PcbLib)
-            | (FileDomain::SchDoc, FileDomain::SchDoc)
-    );
-    if forbidden {
-        return Err(SpecError::new(
-            SpecErrorCode::CrossDomainViolation,
-            format!(
-                "{:?} spec '{}' cannot import {:?} spec '{}'",
-                from_domain,
-                from_path.display(),
-                to_domain,
-                to_path.display()
-            ),
-            Some(span),
-        ));
-    }
-    // Allowed combinations:
-    // SchLib -> SchLib: bare or named ✓
-    // SchLib -> PcbLib: named only (bare validation at compile time) ✓
-    // PcbLib -> PcbLib: bare or named ✓
-    // PrjPcb -> SchLib: reference import ✓
-    // PrjPcb -> PcbLib: reference import ✓
-    // SchDoc -> SchLib: named only (for $alias.ComponentName references) ✓
+    // All cross-domain imports are allowed. The spec language permits any
+    // spec file to import any other spec file type (e.g. SchLib importing
+    // PcbLib for typed footprint references).
     Ok(())
 }
 
@@ -503,10 +476,10 @@ mod tests {
         assert!(err.message.contains("fp"), "got: {}", err.message);
     }
 
-    // ── Test: cross-domain violation ──────────────────────────────────────────
+    // ── Test: cross-domain imports are allowed ──────────────────────────────
 
     #[test]
-    fn pcblib_cannot_import_schlib() {
+    fn pcblib_can_import_schlib() {
         let tmp = tempfile::TempDir::new().unwrap();
 
         let sch_path = tmp.path().join("comps.schlib-spec");
@@ -516,8 +489,8 @@ mod tests {
         std::fs::write(&root_path, "").unwrap();
 
         let root_ast = spec_with_imports(vec![import_decl("comps.schlib-spec", None)]);
-        let err = resolve_imports(&root_path, root_ast).unwrap_err();
-        assert_eq!(err.code, SpecErrorCode::CrossDomainViolation);
+        let resolved = resolve_imports(&root_path, root_ast).unwrap();
+        assert_eq!(resolved.bare_imports.len(), 1);
     }
 
     // ── Test: bare import collision is now allowed (reference semantics) ─────
@@ -578,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn prjpcb_cannot_import_prjpcb() {
+    fn prjpcb_can_import_prjpcb() {
         let tmp = tempfile::TempDir::new().unwrap();
 
         let nested_path = tmp.path().join("other.prjpcb-spec");
@@ -588,8 +561,8 @@ mod tests {
         std::fs::write(&root_path, "").unwrap();
 
         let root_ast = spec_with_imports(vec![import_decl("other.prjpcb-spec", None)]);
-        let err = resolve_imports(&root_path, root_ast).unwrap_err();
-        assert_eq!(err.code, SpecErrorCode::CrossDomainViolation);
+        let resolved = resolve_imports(&root_path, root_ast).unwrap();
+        assert_eq!(resolved.bare_imports.len(), 1);
     }
 
     // ── Test: file not found ──────────────────────────────────────────────────

@@ -11,7 +11,7 @@ use autopcb_placement::{
 };
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
-    FormatConfig, SpecDomain, compile_spec_with_imports, compile_imported_schlibs,
+    FormatConfig, SpecDomain, compile_spec_with_resolved, compile_imported_schlibs,
     dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
     dump_placement_block,
     format_spec,
@@ -1217,10 +1217,10 @@ fn compile_and_resolve(
     let resolved = resolve_imports(&spec_path_canonical, file.clone())
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
-    // Compile only the root file's own items.
+    // Compile only the root file's own items, with named imports in scope.
     let imported_components = compile_imported_schlibs(&resolved)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
-    let model = compile_spec_with_imports(&file, *domain, imported_components)
+    let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
     // Collect all import paths for --all processing.

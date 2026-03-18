@@ -1618,24 +1618,36 @@ fn dump_parameter(out: &mut String, param: &Parameter, indent: usize) {
 
 fn dump_footprint_map(out: &mut String, fp: &FootprintMap, indent: usize) {
     let pad = " ".repeat(indent);
-    out.push_str(&format!(
-        "{}footprint {} {{\n",
-        pad,
-        quote_entity_name(&fp.model_name)
-    ));
-    // description is not part of FootprintMapSpec; emit as a comment for reference
-    if !fp.description.is_empty() {
-        out.push_str(&format!("{}    // {}\n", pad, fp.description));
-    }
-    for m in &fp.pin_pad_maps {
+    // Check if all mappings are 1:1 (pin == pad)
+    let all_one_to_one = fp.pin_pad_maps.iter().all(|m| m.pin == m.pad);
+
+    if all_one_to_one {
+        // Emit implicit 1:1 form — just the footprint reference, no body
         out.push_str(&format!(
-            "{}    map {{ pin: {}, pad: {} }}\n",
+            "{}footprint {}\n",
             pad,
-            quote_string(&m.pin),
-            quote_string(&m.pad),
+            quote_entity_name(&fp.model_name)
         ));
+    } else {
+        // Emit explicit remapping form
+        out.push_str(&format!(
+            "{}footprint {} {{\n",
+            pad,
+            quote_entity_name(&fp.model_name)
+        ));
+        if !fp.description.is_empty() {
+            out.push_str(&format!("{}    // {}\n", pad, fp.description));
+        }
+        for m in &fp.pin_pad_maps {
+            out.push_str(&format!(
+                "{}    pin {}: pad {}\n",
+                pad,
+                quote_string(&m.pin),
+                quote_string(&m.pad),
+            ));
+        }
+        out.push_str(&format!("{}}}\n", pad));
     }
-    out.push_str(&format!("{}}}\n", pad));
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────

@@ -5,9 +5,9 @@ use super::ast::{
     ComponentDecl, ComponentItem, DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl,
     ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl,
     FootprintItem, FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
-    MapEntry, MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl,
+    MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl,
     OutputGroupBlockDecl, PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem,
-    PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
+    PcbDocPrimitiveDecl, PinDecl, PinPadPair, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
     PlacementGroupDecl, PlacementItem, PlacementSeparateDecl, PolygonDecl, PowerDecl, ProjectDecl,
     ProjectItem, Property, RowDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl,
     SheetItem, SpecFile, SpecItem, SwapGroupDecl, VariantBlockDecl, VariationDecl,
@@ -735,23 +735,31 @@ impl<'a> SpecParser<'a> {
         };
 
         self.skip_newlines();
-        self.expect(&TokenKind::LBrace, "expected '{' after footprint reference")?;
-        let mut maps = Vec::new();
+
+        // If no '{', this is an implicit 1:1 mapping
+        if !self.at(&TokenKind::LBrace) {
+            return Ok(FootprintMapDecl { name, maps: None });
+        }
+
+        // Explicit pin:pad remapping: { $pin: $ref.pad, ... }
+        self.bump(); // consume '{'
+        let mut pairs = Vec::new();
         self.skip_newlines();
         while !self.at(&TokenKind::RBrace) && !self.at_eof() {
-            let map_start = self.current_span();
-            self.expect(&TokenKind::Map, "expected 'map' inside footprint body")?;
+            let pair_start = self.current_span();
+            let pin = self.parse_dollar_path_reference()?;
+            self.expect(&TokenKind::Colon, "expected ':' after pin reference in footprint mapping")?;
             self.skip_newlines();
-            let body = self.parse_object()?;
-            let map_end = self.prev_span();
-            maps.push(Spanned::new(
-                MapEntry { body },
-                map_start.merge(map_end),
+            let pad = self.parse_dollar_path_reference()?;
+            let pair_end = self.prev_span();
+            pairs.push(Spanned::new(
+                PinPadPair { pin, pad },
+                pair_start.merge(pair_end),
             ));
             self.skip_separators();
         }
         self.expect(&TokenKind::RBrace, "expected '}' to close footprint body")?;
-        Ok(FootprintMapDecl { name, maps })
+        Ok(FootprintMapDecl { name, maps: Some(pairs) })
     }
 
     // ── Footprint declaration (top-level) ─────────────────────────────────
@@ -2029,7 +2037,6 @@ impl<'a> SpecParser<'a> {
             TokenKind::Part => "part".to_string(),
             TokenKind::Parameter => "parameter".to_string(),
             TokenKind::Alias => "alias".to_string(),
-            TokenKind::Map => "map".to_string(),
             TokenKind::Row => "row".to_string(),
             TokenKind::Column => "column".to_string(),
             TokenKind::Grid => "grid".to_string(),
@@ -2705,18 +2712,16 @@ component R {
     }
 
     #[test]
-    fn test_component_with_footprint_map() {
+    fn test_component_with_footprint_map_implicit() {
+        // Implicit 1:1 mapping — no body
         let f = parse(r#"
 component R {
-    footprint R0805 {
-        map { pin: 1, pad: 1 }
-        map { pin: 2, pad: 2 }
-    }
+    footprint R0805
 }
 "#);
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::FootprintMap(fm) = &c.body[0].node {
-                assert_eq!(fm.maps.len(), 2);
+                assert!(fm.maps.is_none());
                 if let FootprintRef::Name(EntityName::Ident(n)) = &fm.name.node {
                     assert_eq!(n, "R0805");
                 }
@@ -2727,17 +2732,38 @@ component R {
     }
 
     #[test]
-    fn test_footprint_map_dollar_path() {
+    fn test_component_with_footprint_map_explicit() {
+        // Explicit remapping with $pin: $ref.pad pairs
         let f = parse(r#"
 component R {
     footprint $fp.DIP8 {
-        map { pin: 1, pad: 1 }
+        $pin1: $fp.DIP8.pad2
+        $pin2: $fp.DIP8.pad1
     }
 }
 "#);
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::FootprintMap(fm) = &c.body[0].node {
                 assert!(matches!(&fm.name.node, FootprintRef::DollarPath(_)));
+                let pairs = fm.maps.as_ref().expect("expected explicit pairs");
+                assert_eq!(pairs.len(), 2);
+            } else {
+                panic!("expected FootprintMap");
+            }
+        }
+    }
+
+    #[test]
+    fn test_footprint_map_dollar_path_implicit() {
+        let f = parse(r#"
+component R {
+    footprint $fp.DIP8
+}
+"#);
+        if let SpecItem::Component(c) = &f.items[0].node {
+            if let ComponentItem::FootprintMap(fm) = &c.body[0].node {
+                assert!(matches!(&fm.name.node, FootprintRef::DollarPath(_)));
+                assert!(fm.maps.is_none());
             } else {
                 panic!("expected FootprintMap");
             }
@@ -2925,7 +2951,7 @@ component R {
     pin 1 { ...passive_pin, on: $body.left, at: center }
     pin 2 { ...passive_pin, on: $body.right, at: center }
     parameter Value { text: "{VALUE}" }
-    footprint R0805 { map { pin: 1, pad: 1 }, map { pin: 2, pad: 2 } }
+    footprint R0805
 }
 "#;
         let f = parse(src);
@@ -3009,10 +3035,7 @@ component LM358 {
     pin 4 { electrical: power, is_hidden: true }
     pin 8 { electrical: power, is_hidden: true }
     alias LM358N
-    footprint $fp.DIP8 {
-        map { pin: 1, pad: 1 }
-        map { pin: 2, pad: 2 }
-    }
+    footprint $fp.DIP8
 }
 "#;
         let f = parse(src);

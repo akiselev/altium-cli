@@ -40,7 +40,6 @@ pub enum TokenKind {
     Part,
     Parameter,
     Alias,
-    Map,
     Row,
     Column,
     Grid,
@@ -104,7 +103,6 @@ impl TokenKind {
                 | (Part, Part)
                 | (Parameter, Parameter)
                 | (Alias, Alias)
-                | (Map, Map)
                 | (Row, Row)
                 | (Column, Column)
                 | (Grid, Grid)
@@ -336,7 +334,6 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                         "part" => TokenKind::Part,
                         "parameter" => TokenKind::Parameter,
                         "alias" => TokenKind::Alias,
-                        "map" => TokenKind::Map,
                         "row" => TokenKind::Row,
                         "column" => TokenKind::Column,
                         "grid" => TokenKind::Grid,
@@ -699,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_basic_keywords() {
-        let kinds = lex_kinds("import as component footprint pin pad part parameter alias map row column grid board let true false null");
+        let kinds = lex_kinds("import as component footprint pin pad part parameter alias row column grid board let true false null");
         assert_eq!(kinds, vec![
             TokenKind::Import,
             TokenKind::As,
@@ -710,7 +707,6 @@ mod tests {
             TokenKind::Part,
             TokenKind::Parameter,
             TokenKind::Alias,
-            TokenKind::Map,
             TokenKind::Row,
             TokenKind::Column,
             TokenKind::Grid,

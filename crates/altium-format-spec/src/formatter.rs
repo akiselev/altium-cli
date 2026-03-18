@@ -694,20 +694,24 @@ impl<'a> Printer<'a> {
     fn fmt_footprint_map(&mut self, fm: &FootprintMapDecl) {
         self.push("footprint ");
         self.fmt_footprint_ref(&fm.name.node);
-        self.push(" {");
-        for (i, map_entry) in fm.maps.iter().enumerate() {
-            if i > 0 {
-                self.push(",");
+        match &fm.maps {
+            None => {
+                // Implicit 1:1 — no body
             }
-            self.push(" ");
-            self.fmt_map_entry(map_entry);
+            Some(pairs) => {
+                self.push(" {");
+                for (i, pair) in pairs.iter().enumerate() {
+                    if i > 0 {
+                        self.push(",");
+                    }
+                    self.push(" ");
+                    self.fmt_dollar_path(&pair.node.pin.node);
+                    self.push(": ");
+                    self.fmt_dollar_path(&pair.node.pad.node);
+                }
+                self.push(" }");
+            }
         }
-        self.push(" }");
-    }
-
-    fn fmt_map_entry(&mut self, entry: &Spanned<MapEntry>) {
-        self.push("map ");
-        self.fmt_object(&entry.node.body.node);
     }
 
     fn fmt_graphic_decl(&mut self, g: &GraphicDecl) {
@@ -1391,7 +1395,7 @@ component R {
     pin 1 { ...passive_pin, on: $body.left, at: center }
     parameter Value { text: "{VALUE}" }
     alias RES
-    footprint "0402" { map { pin: 1, pad: 1 }, map { pin: 2, pad: 2 } }
+    footprint "0402"
 }
 "#;
         let first = fmt(input);
@@ -1472,7 +1476,7 @@ let b = 2
     pin 1 { electrical: passive, length: 25, side: outside, on: $body.left, at: center }
     parameter Value { text: "{VALUE}" }
     alias RES
-    footprint "0402" { map { pin: 1, pad: 1 }, map { pin: 2, pad: 2 } }
+    footprint "0402"
 }
 "#;
         let output = fmt(input);

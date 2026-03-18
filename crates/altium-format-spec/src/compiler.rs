@@ -28,7 +28,7 @@ use altium_format_types::sch::{
 use crate::ast::{
     AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem,
     DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
-    GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
+    GraphicDecl, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
     PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
     PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem,
     RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
@@ -81,6 +81,32 @@ pub fn compile_spec_with_imports(
 ) -> Result<SpecModel, SpecError> {
     let mut compiler = SpecCompiler::new(domain, imported_components);
     compiler.compile(file)
+}
+
+/// Compile with resolved imports — named import aliases are registered in scope
+/// as objects mapping entity names to their string names, enabling `fp["0603"]`.
+pub fn compile_spec_with_resolved(
+    resolved: &crate::import::ResolvedSpec,
+    domain: SpecDomain,
+    imported_components: HashMap<String, ComponentSpec>,
+) -> Result<SpecModel, SpecError> {
+    let mut compiler = SpecCompiler::new(domain, imported_components);
+    // Build scope objects for named imports.
+    for (alias, (_path, spec_file)) in &resolved.named_imports {
+        let mut entries = IndexMap::new();
+        for item in &spec_file.items {
+            let name = match &item.node {
+                SpecItem::Component(c) => Some(c.name.node.as_str()),
+                SpecItem::Footprint(f) => Some(f.name.node.as_str()),
+                _ => None,
+            };
+            if let Some(name) = name {
+                entries.insert(name.clone(), Value::String(name));
+            }
+        }
+        compiler.named_import_objects.insert(alias.clone(), Value::Object(entries));
+    }
+    compiler.compile(&resolved.root)
 }
 
 /// Compile all SchLib-domain imports and collect their components by lib_reference.
@@ -208,6 +234,8 @@ struct SpecCompiler {
     part_context: Option<String>,
     /// Pre-compiled SchLib components from imports, keyed by lib_reference.
     imported_components: HashMap<String, ComponentSpec>,
+    /// Named import alias → Value::Object mapping entity names to string names.
+    named_import_objects: IndexMap<String, Value>,
 }
 
 impl SpecCompiler {
@@ -219,12 +247,18 @@ impl SpecCompiler {
             context_name: String::new(),
             part_context: None,
             imported_components,
+            named_import_objects: IndexMap::new(),
         }
     }
 
     fn compile(&mut self, file: &SpecFile) -> Result<SpecModel, SpecError> {
         // Root scope for file-level let bindings.
         self.scope.push();
+
+        // Register named import aliases in scope as objects.
+        for (alias, value) in &self.named_import_objects {
+            self.scope.define(alias.clone(), value.clone());
+        }
 
         // Collect and evaluate file-level let bindings (forward-visible).
         let file_lets: Vec<_> = file.items.iter().filter_map(|item| {
@@ -1205,24 +1239,70 @@ impl SpecCompiler {
     ) -> Result<FootprintMapSpec, SpecError> {
         let model_name = match &decl.name.node {
             FootprintRef::Name(n) => n.as_str(),
-            FootprintRef::DollarPath(dp) => dp.root.node.clone(),
+            FootprintRef::DollarPath(dp) => {
+                // Resolve the dollar path to get the footprint name.
+                // For `$fp.QFP48` or `let x = fp["DFN-4"]; footprint $x`,
+                // evaluate the path to extract the model name string.
+                let spanned_expr = crate::ast::Spanned::new(
+                    crate::ast::Expr::DollarIdent(dp.root.node.clone()),
+                    decl.name.span,
+                );
+                let val = eval_expr(&spanned_expr, &self.scope)?;
+                match val {
+                    Value::String(s) => s,
+                    _ => dp.root.node.clone(),
+                }
+            }
         };
 
-        let mut maps = Vec::new();
-        for map_entry_spanned in &decl.maps {
-            let map_entry: &MapEntry = &map_entry_spanned.node;
-            let map_props = eval_object_to_map(&map_entry.body.node, &self.scope)?;
-
-            let pin = get_string_value_key(&map_props, "pin", map_entry.body.span)?;
-            let pad = get_string_value_key(&map_props, "pad", map_entry.body.span)?;
-            maps.push(PinPadMap { pin, pad });
+        match &decl.maps {
+            None => {
+                // Implicit 1:1 mapping — no maps needed at the model level.
+                // The Altium binary format doesn't strictly require explicit pin-pad
+                // entries when they are 1:1. We emit an empty maps vec; the binary
+                // writer handles this as "all pins map to same-numbered pads".
+                Ok(FootprintMapSpec {
+                    model_name,
+                    maps: vec![],
+                    source: None,
+                })
+            }
+            Some(pairs) => {
+                let mut maps = Vec::new();
+                for pair_spanned in pairs {
+                    let pair = &pair_spanned.node;
+                    // Resolve pin dollar path to its designator string
+                    let pin_val = self.resolve_dollar_path_to_string(&pair.pin)?;
+                    let pad_val = self.resolve_dollar_path_to_string(&pair.pad)?;
+                    maps.push(PinPadMap { pin: pin_val, pad: pad_val });
+                }
+                Ok(FootprintMapSpec {
+                    model_name,
+                    maps,
+                    source: None,
+                })
+            }
         }
+    }
 
-        Ok(FootprintMapSpec {
-            model_name,
-            maps,
-            source: None,
-        })
+    fn resolve_dollar_path_to_string(
+        &self,
+        path: &crate::ast::Spanned<crate::ast::DollarPath>,
+    ) -> Result<String, SpecError> {
+        let dp = &path.node;
+        let expr = crate::ast::Expr::DollarIdent(dp.root.node.clone());
+        let spanned = crate::ast::Spanned::new(expr, path.span);
+        let val = eval_expr(&spanned, &self.scope)?;
+        match val {
+            Value::String(s) => Ok(s),
+            Value::Integer(n) => Ok(n.to_string()),
+            Value::Float(f) => Ok(f.to_string()),
+            _ => Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                format!("expected string or number for pin/pad reference, got {:?}", val),
+                path.span,
+            )),
+        }
     }
 
     // ── Schematic graphic compilation ──────────────────────────────────────
@@ -5184,21 +5264,18 @@ mod tests {
 
     #[test]
     fn footprint_map_compilation() {
+        // Implicit 1:1 mapping — no body
         let src = r#"
             component R_0603 {
-                footprint "R_0603_SMD" {
-                    map { pin: 1, pad: 1 }
-                    map { pin: 2, pad: 2 }
-                }
+                footprint "R_0603_SMD"
             }
         "#;
         let spec = compile_schlib(src).unwrap();
         let c = &spec.components[0];
         assert_eq!(c.footprints.len(), 1);
         assert_eq!(c.footprints[0].model_name, "R_0603_SMD");
-        assert_eq!(c.footprints[0].maps.len(), 2);
-        assert_eq!(c.footprints[0].maps[0].pin, "1");
-        assert_eq!(c.footprints[0].maps[0].pad, "1");
+        // Implicit 1:1 mapping produces empty maps vec
+        assert_eq!(c.footprints[0].maps.len(), 0);
     }
 
     // ── Multiple components ────────────────────────────────────────────────

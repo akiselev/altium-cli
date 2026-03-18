@@ -112,11 +112,14 @@ pub struct AliasDecl {
     pub name: Spanned<EntityName>,
 }
 
-/// footprint NAME_OR_PATH { map { ... } ... }
+/// footprint REF                              — implicit 1:1 pin-to-pad mapping
+/// footprint REF { $pin: $ref.pad, ... }      — explicit remapping
 #[derive(Debug, Clone, PartialEq)]
 pub struct FootprintMapDecl {
     pub name: Spanned<FootprintRef>,
-    pub maps: Vec<Spanned<MapEntry>>,
+    /// `None` = implicit 1:1 mapping (pin N → pad N for all pads).
+    /// `Some(pairs)` = explicit pin:pad remapping.
+    pub maps: Option<Vec<Spanned<PinPadPair>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,10 +128,11 @@ pub enum FootprintRef {
     DollarPath(DollarPath),
 }
 
-/// map { pin: 1, pad: 1 }
+/// $pin_ref: $footprint_ref.padN
 #[derive(Debug, Clone, PartialEq)]
-pub struct MapEntry {
-    pub body: Spanned<Object>,
+pub struct PinPadPair {
+    pub pin: Spanned<DollarPath>,
+    pub pad: Spanned<DollarPath>,
 }
 
 /// [binding =] footprint NAME { ... }
