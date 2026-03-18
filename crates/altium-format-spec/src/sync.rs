@@ -1184,6 +1184,7 @@ mod tests {
             nets: Vec::new(),
             powers: Vec::new(),
             objects: Vec::new(),
+            constraints: Vec::new(),
         }
     }
 
@@ -2312,6 +2313,7 @@ mod proptests {
                 nets: Vec::new(),
                 powers: Vec::new(),
                 objects: Vec::new(),
+                constraints: Vec::new(),
             };
 
             let count = designators.len();

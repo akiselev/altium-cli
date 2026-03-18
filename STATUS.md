@@ -459,6 +459,18 @@ designators, dangling net refs, duplicate annotation IDs, unresolved pin refs (w
 Hard errors when a referenced library component cannot be found; bare designators without
 library references produce no footprint entry (valid case).
 
+**Constraint & rule extensions (M8):** `constraint <kind> { ... }` blocks are now
+parseable inside `sheet { }` blocks. Five typed constraint kinds are supported:
+`edge_placement`, `directional`, `near`, `region`, `fixed_position`. Unknown kinds
+produce a parse error (typo protection). Annotations (`#[annotation(id = "...")]`) are
+accepted before constraint blocks. Compiled constraints surface in `SheetSpec::constraints`
+as `Vec<ConstraintSpec>` with `kind: ConstraintKind` and `properties: IndexMap<String, String>`.
+`PcbDocRuleSpec` is extended with `properties: IndexMap<String, String>` (freeform
+key-value pairs from the rule body) and `scope: Option<String>` (rule scope expression).
+The formatter handles constraint blocks in `fmt_sheet_item`. 13 new parser tests cover
+all five kinds, empty body, annotation, unknown-kind error, outside-sheet error, rule with
+scope, and backward compatibility for existing specs without constraints.
+
 ---
 
 ## Known Issues & Gaps

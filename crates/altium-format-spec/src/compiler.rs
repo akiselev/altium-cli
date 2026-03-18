@@ -26,7 +26,7 @@ use altium_format_types::sch::{
 };
 
 use crate::ast::{
-    AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem,
+    AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem, ConstraintDecl,
     DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
     GraphicDecl, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
     PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
@@ -37,16 +37,16 @@ use crate::annotation::{compile_annotation, CompiledAnnotation};
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
     AnnotationMatchParamSpec, AnnotationSpec, BlanketSpec, BoardSpec, BusEntrySpec, BusSpec,
-    ClassGenSpec, ComparisonRuleSpec, CompileMaskSpec, ComponentSpec, DocumentSpec,
-    ErcLevelOverride, ErcMatrixOverride, FontSpec, FootprintMapSpec, FootprintSpec,
-    GraphicProperties, GraphicSpec, GraphicType, HarnessConnectorSpec, JunctionSpec, LayerSpec,
-    LibraryUpdateSpec, NetLabelSpec, NetSpec, NoConnectSpec, NoteSpec, OutputGroupSpec, OutputSpec,
-    PadSpec, ParamVariationSpec, ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec,
-    PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec,
-    PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec,
-    PcbGraphicType, PinPadMap, PinRef, PinSpec, PlacementClearanceSpec, PlacementConstraintSpec,
-    PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec,
-    AutoplaceConfig, UnplacedStrategy, PortSpec,
+    ClassGenSpec, ComparisonRuleSpec, CompileMaskSpec, ComponentSpec, ConstraintKind,
+    ConstraintSpec, DocumentSpec, ErcLevelOverride, ErcMatrixOverride, FontSpec, FootprintMapSpec,
+    FootprintSpec, GraphicProperties, GraphicSpec, GraphicType, HarnessConnectorSpec,
+    JunctionSpec, LayerSpec, LibraryUpdateSpec, NetLabelSpec, NetSpec, NoConnectSpec, NoteSpec,
+    OutputGroupSpec, OutputSpec, PadSpec, ParamVariationSpec, ParameterSetSpec, ParameterSpec,
+    PartSpec, PcbDocClassSpec, PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec,
+    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties,
+    PcbGraphicSpec, PcbGraphicType, PinPadMap, PinRef, PinSpec, PlacementClearanceSpec,
+    PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
+    PlacementRuleSpec, PlacementSpec, AutoplaceConfig, UnplacedStrategy, PortSpec,
     PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec, SchDocComponentSpec,
     SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec,
     SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, VariantSpec, VariationSpec, WireSpec,
@@ -531,6 +531,7 @@ impl SpecCompiler {
         let mut nets = Vec::new();
         let mut powers = Vec::new();
         let mut objects = Vec::new();
+        let mut constraints = Vec::new();
 
         for item in &file.items {
             match &item.node {
@@ -541,6 +542,7 @@ impl SpecCompiler {
                         &mut custom_width, &mut custom_height,
                         &mut snap_grid_on, &mut visible_grid_on, &mut hot_spot_grid_on,
                         &mut show_hidden_pins, &mut border_on, &mut title_block_on,
+                        &mut constraints,
                     )?;
                 }
                 SpecItem::Component(comp_decl) => {
@@ -583,6 +585,7 @@ impl SpecCompiler {
             nets,
             powers,
             objects,
+            constraints,
         };
 
         Ok(SchDocSpec { sheets: vec![sheet] })
@@ -600,6 +603,7 @@ impl SpecCompiler {
         show_hidden_pins: &mut Option<bool>,
         border_on: &mut Option<bool>,
         title_block_on: &mut Option<bool>,
+        constraints: &mut Vec<ConstraintSpec>,
     ) -> Result<(), SpecError> {
         for item in &decl.body {
             match &item.node {
@@ -631,9 +635,33 @@ impl SpecCompiler {
                 SheetItem::LetBinding(_) => {
                     // Let bindings already evaluated at file level.
                 }
+                SheetItem::Constraint(constraint_decl) => {
+                    constraints.push(self.compile_constraint_decl(constraint_decl)?);
+                }
             }
         }
         Ok(())
+    }
+
+    fn compile_constraint_decl(
+        &mut self,
+        decl: &ConstraintDecl,
+    ) -> Result<ConstraintSpec, SpecError> {
+        use crate::ast::ConstraintKind as AstKind;
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
+        let kind = match decl.kind.node {
+            AstKind::EdgePlacement => ConstraintKind::EdgePlacement,
+            AstKind::Directional => ConstraintKind::Directional,
+            AstKind::Near => ConstraintKind::Near,
+            AstKind::Region => ConstraintKind::Region,
+            AstKind::FixedPosition => ConstraintKind::FixedPosition,
+        };
+        let raw_props = eval_object_to_map(&decl.body.node, &self.scope)?;
+        let mut properties = indexmap::IndexMap::new();
+        for (k, v) in raw_props {
+            properties.insert(k, value_to_string_repr(&v));
+        }
+        Ok(ConstraintSpec { annotation, kind, properties })
     }
 
     fn compile_font(&mut self, decl: &crate::ast::FontDecl) -> Result<FontSpec, SpecError> {
@@ -1812,14 +1840,37 @@ impl SpecCompiler {
     ) -> Result<PcbDocRuleSpec, SpecError> {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
-        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+        let raw = eval_object_to_map(&decl.body.node, &self.scope)?;
+
+        let kind = get_string_opt(&raw, "kind");
+        let enabled = get_bool_opt(&raw, "enabled");
+        let priority = get_integer_opt(&raw, "priority");
+        let scope = get_string_opt(&raw, "scope");
+
+        // Collect remaining key-value pairs into `properties` (everything except the
+        // well-known scalar fields handled above and the `properties` sub-block key).
+        let well_known = ["kind", "enabled", "priority", "scope", "gap", "properties"];
+        let mut properties = indexmap::IndexMap::new();
+        for (k, v) in &raw {
+            if !well_known.contains(&k.as_str()) {
+                properties.insert(k.clone(), value_to_string_repr(v));
+            }
+        }
+        // If a `properties { ... }` sub-block was given, merge those entries too.
+        if let Some(Value::Object(sub)) = raw.get("properties") {
+            for (k, v) in sub {
+                properties.insert(k.clone(), value_to_string_repr(v));
+            }
+        }
 
         Ok(PcbDocRuleSpec {
             annotation,
             name,
-            kind: get_string_opt(&props, "kind"),
-            enabled: get_bool_opt(&props, "enabled"),
-            priority: get_integer_opt(&props, "priority"),
+            kind,
+            enabled,
+            priority,
+            properties,
+            scope,
         })
     }
 
@@ -2830,6 +2881,12 @@ fn collect_object_properties_from_items<'a>(
 }
 
 // ── Property extraction helpers ───────────────────────────────────────────────
+
+/// Convert a [`Value`] to its canonical string representation for storage in
+/// freeform `IndexMap<String, String>` property bags.
+fn value_to_string_repr(v: &Value) -> String {
+    v.display()
+}
 
 fn get_string_opt(props: &IndexMap<String, Value>, key: &str) -> Option<String> {
     props.get(key).and_then(|v| match v {

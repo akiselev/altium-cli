@@ -323,6 +323,25 @@ pub enum SheetItem {
     Property(Property),
     LetBinding(LetBinding),
     FontBlock(FontBlockDecl),
+    Constraint(ConstraintDecl),
+}
+
+/// `constraint <kind> { key: value, ... }` — placement constraint inside a sheet block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstraintDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
+    pub kind: Spanned<ConstraintKind>,
+    pub body: Spanned<Object>,
+}
+
+/// Typed constraint kind — catches typos at parse time.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstraintKind {
+    EdgePlacement,
+    Directional,
+    Near,
+    Region,
+    FixedPosition,
 }
 
 /// fonts { font 1 { ... } font 2 { ... } }

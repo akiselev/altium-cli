@@ -2,17 +2,17 @@ use crate::diagnostic::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
 
 use super::ast::{
     AliasDecl, AnnotationBlockDecl, AnnotationKey, BlockAnnotation, BoardDecl, BoardItem,
-    ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, DifferentialPairDecl,
-    DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr,
-    FontBlockDecl, FontDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
-    GraphicDecl, GridDecl, ImportDecl, LetBinding, MatchParameterDecl, NetDecl, Object, ObjectItem,
-    OutputBlockDecl, OutputGroupBlockDecl, PadDecl, ParamVariationDecl, ParameterDecl, PartBlock,
-    PartItem, PcbDocPrimitiveDecl, PinDecl, PinPadPair, PlaceDecl, PlacementConstraintDecl,
-    PlacementDecl, PlacementGroupDecl, PlacementItem, PlacementSeparateDecl, PolygonDecl,
-    PowerDecl, ProjectDecl, ProjectItem, Property, RowDecl, RuleDecl, SchDocObjectDecl,
-    SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem, SwapGroupDecl, VariantBlockDecl,
-    VariationDecl, is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type,
-    is_schdoc_object_type,
+    ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, ConstraintDecl, ConstraintKind,
+    DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl,
+    ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl, FootprintItem,
+    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
+    MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl,
+    PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PcbDocPrimitiveDecl, PinDecl,
+    PinPadPair, PlaceDecl, PlacementConstraintDecl, PlacementDecl, PlacementGroupDecl,
+    PlacementItem, PlacementSeparateDecl, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem,
+    Property, RowDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem,
+    SpecFile, SpecItem, SwapGroupDecl, VariantBlockDecl, VariationDecl, is_graphic_type,
+    is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
 
@@ -1849,8 +1849,31 @@ impl<'a> SpecParser<'a> {
             return Ok(Spanned::new(SheetItem::LetBinding(binding), start.merge(end)));
         }
 
-        // fonts { ... } sub-block
+        // Optional block annotation before constraint blocks.
+        if self.at(&TokenKind::Hash) {
+            let annotation = self.parse_block_annotation()?;
+            if annotation.is_some() {
+                self.skip_newlines();
+            }
+            // After an annotation, only `constraint` is valid inside a sheet.
+            if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+                if name == "constraint" {
+                    let decl = self.parse_constraint_decl(annotation)?;
+                    let end = self.prev_span();
+                    return Ok(Spanned::new(SheetItem::Constraint(decl), start.merge(end)));
+                }
+            }
+            return Err(self.err("expected 'constraint' after annotation inside sheet block"));
+        }
+
         if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            // "constraint" sub-block
+            if name == "constraint" {
+                let decl = self.parse_constraint_decl(None)?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(SheetItem::Constraint(decl), start.merge(end)));
+            }
+            // "fonts" sub-block
             if name == "fonts" {
                 let block = self.parse_font_block()?;
                 let end = self.prev_span();
@@ -1862,6 +1885,45 @@ impl<'a> SpecParser<'a> {
         let prop = self.parse_property()?;
         let end = self.prev_span();
         Ok(Spanned::new(SheetItem::Property(prop), start.merge(end)))
+    }
+
+    /// Parse `constraint <kind> { key: value, ... }` inside a sheet block.
+    fn parse_constraint_decl(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<ConstraintDecl, ParseError> {
+        // consume "constraint" ident
+        match self.current_kind().clone() {
+            TokenKind::Ident(ref s) if s == "constraint" => { self.bump(); }
+            _ => return Err(self.err("expected 'constraint'")),
+        }
+
+        // Parse the kind identifier.
+        let kind_span = self.current_span();
+        let kind_str = match self.current_kind().clone() {
+            TokenKind::Ident(s) => { self.bump(); s }
+            _ => return Err(self.err("expected constraint kind after 'constraint' (edge_placement, directional, near, region, fixed_position)")),
+        };
+        let kind = match kind_str.as_str() {
+            "edge_placement" => ConstraintKind::EdgePlacement,
+            "directional" => ConstraintKind::Directional,
+            "near" => ConstraintKind::Near,
+            "region" => ConstraintKind::Region,
+            "fixed_position" => ConstraintKind::FixedPosition,
+            other => {
+                return Err(ParseError::new(
+                    crate::diagnostic::ParseErrorCode::E1002,
+                    format!("unknown constraint kind '{}'; expected one of: edge_placement, directional, near, region, fixed_position", other),
+                    kind_span,
+                ));
+            }
+        };
+        let kind_spanned = Spanned::new(kind, kind_span);
+
+        self.skip_newlines();
+        let body = self.parse_object()?;
+
+        Ok(ConstraintDecl { annotation, kind: kind_spanned, body })
     }
 
     /// Parse `fonts { font N { ... } ... }`
@@ -3562,5 +3624,162 @@ placement {
             "got: {}",
             err.message
         );
+    }
+
+    // ── Constraint tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_constraint_edge_placement() {
+        let src = r#"sheet { constraint edge_placement { designator: "U1", edge: "top" } }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            assert_eq!(s.body.len(), 1);
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert_eq!(c.kind.node, ConstraintKind::EdgePlacement);
+                assert!(c.annotation.is_none());
+            } else {
+                panic!("expected Constraint item");
+            }
+        } else {
+            panic!("expected Sheet");
+        }
+    }
+
+    #[test]
+    fn test_constraint_directional() {
+        let src = r#"sheet { constraint directional { a: "U1", b: "U2", direction: "left_of", gap: 5mm } }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert_eq!(c.kind.node, ConstraintKind::Directional);
+            } else {
+                panic!("expected Constraint item");
+            }
+        }
+    }
+
+    #[test]
+    fn test_constraint_near() {
+        let src = r#"sheet { constraint near { a: "U1", b: "U2", max_distance: 10mm } }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert_eq!(c.kind.node, ConstraintKind::Near);
+            } else {
+                panic!("expected Constraint item");
+            }
+        }
+    }
+
+    #[test]
+    fn test_constraint_region() {
+        let src = r#"sheet { constraint region { designator: "U1", min_x: 0mm, min_y: 0mm, max_x: 50mm, max_y: 50mm } }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert_eq!(c.kind.node, ConstraintKind::Region);
+            } else {
+                panic!("expected Constraint item");
+            }
+        }
+    }
+
+    #[test]
+    fn test_constraint_fixed_position() {
+        let src = r#"sheet { constraint fixed_position { designator: "U1", x: 25mm, y: 30mm } }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert_eq!(c.kind.node, ConstraintKind::FixedPosition);
+            } else {
+                panic!("expected Constraint item");
+            }
+        }
+    }
+
+    #[test]
+    fn test_constraint_empty_body() {
+        let src = r#"sheet { constraint edge_placement {} }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert_eq!(c.kind.node, ConstraintKind::EdgePlacement);
+                assert!(c.body.node.items.is_empty());
+            } else {
+                panic!("expected Constraint item");
+            }
+        }
+    }
+
+    #[test]
+    fn test_constraint_with_annotation() {
+        let src = r#"sheet { #[annotation(id = "CONS0001")] constraint edge_placement { designator: "U1" } }"#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            if let SheetItem::Constraint(c) = &s.body[0].node {
+                assert!(c.annotation.is_some());
+                assert_eq!(c.kind.node, ConstraintKind::EdgePlacement);
+            } else {
+                panic!("expected Constraint item");
+            }
+        }
+    }
+
+    #[test]
+    fn test_rule_with_scope_and_properties() {
+        let src = r#"rule r_clearance { kind: "clearance", gap: 5mil, scope: "all_copper" }"#;
+        let f = parse(src);
+        if let SpecItem::Rule(r) = &f.items[0].node {
+            assert_eq!(r.name.node.as_str(), "r_clearance");
+            // Body is a plain object — just verify it parses.
+            assert!(!r.body.node.items.is_empty());
+        } else {
+            panic!("expected Rule");
+        }
+    }
+
+    #[test]
+    fn test_rule_only_name_and_kind() {
+        let src = r#"rule MinClearance { kind: "clearance" }"#;
+        let f = parse(src);
+        assert!(matches!(&f.items[0].node, SpecItem::Rule(_)));
+    }
+
+    #[test]
+    fn test_constraint_unknown_kind_error() {
+        let err = parse_err(r#"sheet { constraint bogus_kind { designator: "U1" } }"#);
+        assert!(
+            err.message.contains("unknown constraint kind") || err.message.contains("bogus_kind"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_constraint_outside_sheet_not_valid_top_level() {
+        // `constraint` is not a valid top-level item — it must be inside a sheet block.
+        let err = parse_err(r#"constraint edge_placement { designator: "U1" }"#);
+        assert!(
+            err.message.contains("expected") || err.message.contains("import"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_existing_spec_without_constraints_parses() {
+        // Existing sheet blocks without constraints must continue to parse fine.
+        let src = r#"
+            sheet {
+                custom_width: 1000mil
+                custom_height: 800mil
+            }
+        "#;
+        let f = parse(src);
+        if let SpecItem::Sheet(s) = &f.items[0].node {
+            assert!(s.body.iter().all(|i| !matches!(i.node, SheetItem::Constraint(_))));
+        } else {
+            panic!("expected Sheet");
+        }
     }
 }

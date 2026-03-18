@@ -117,6 +117,26 @@ pub struct SheetSpec {
     pub nets: Vec<NetSpec>,
     pub powers: Vec<PowerSpec>,
     pub objects: Vec<SchDocObjectSpec>,
+
+    // Placement constraints declared within this sheet.
+    pub constraints: Vec<ConstraintSpec>,
+}
+
+/// A placement constraint declared inside a `sheet { }` block.
+pub struct ConstraintSpec {
+    pub annotation: Option<CompiledAnnotation>,
+    pub kind: ConstraintKind,
+    pub properties: indexmap::IndexMap<String, String>,
+}
+
+/// Typed constraint kind matching `constraint <kind> { ... }` in spec text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintKind {
+    EdgePlacement,
+    Directional,
+    Near,
+    Region,
+    FixedPosition,
 }
 
 pub struct FontSpec {
@@ -557,6 +577,12 @@ pub struct PcbDocRuleSpec {
     pub kind: Option<String>,
     pub enabled: Option<bool>,
     pub priority: Option<i32>,
+    /// Extra rule parameters beyond the well-known scalar fields above.
+    /// Populated when the rule body contains a `properties { ... }` sub-block
+    /// or freeform key-value pairs not otherwise recognized.
+    pub properties: indexmap::IndexMap<String, String>,
+    /// Scope expression limiting which objects the rule applies to (e.g. `"all_copper"`).
+    pub scope: Option<String>,
 }
 
 pub struct PcbDocClassSpec {

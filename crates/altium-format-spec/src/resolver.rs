@@ -137,6 +137,7 @@ mod tests {
             nets: Vec::new(),
             powers: Vec::new(),
             objects: Vec::new(),
+            constraints: Vec::new(),
         }
     }
 

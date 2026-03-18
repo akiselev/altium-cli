@@ -14,6 +14,10 @@ authors = ["Alexander Kiselev <alex@akiselev.com>"]
 keywords = ["altium", "eda", "pcb", "schematic", "cli"]
 categories = ["command-line-utilities"]
 
+[[bin]]
+name = "altium"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 

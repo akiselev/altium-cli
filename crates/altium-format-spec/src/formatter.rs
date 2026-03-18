@@ -975,7 +975,24 @@ impl<'a> Printer<'a> {
             SheetItem::Property(p) => self.fmt_property(p),
             SheetItem::LetBinding(lb) => self.fmt_let_binding(lb),
             SheetItem::FontBlock(fb) => self.fmt_font_block(fb),
+            SheetItem::Constraint(c) => self.fmt_constraint_decl(c),
         }
+    }
+
+    fn fmt_constraint_decl(&mut self, c: &crate::ast::ConstraintDecl) {
+        self.fmt_annotation(&c.annotation);
+        self.push_indent();
+        self.push("constraint ");
+        let kind_str = match c.kind.node {
+            crate::ast::ConstraintKind::EdgePlacement => "edge_placement",
+            crate::ast::ConstraintKind::Directional => "directional",
+            crate::ast::ConstraintKind::Near => "near",
+            crate::ast::ConstraintKind::Region => "region",
+            crate::ast::ConstraintKind::FixedPosition => "fixed_position",
+        };
+        self.push(kind_str);
+        self.push(" ");
+        self.fmt_object(&c.body.node);
     }
 
     fn fmt_font_block(&mut self, fb: &FontBlockDecl) {
