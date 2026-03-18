@@ -4889,7 +4889,7 @@ mod tests {
         let src = r#"
             component R_0603 {
                 parameter "Value" { text: "10k" }
-                parameter "Tolerance" { text: "1%" is_hidden: false }
+                parameter "Tolerance" { text: "1%", is_hidden: false }
             }
         "#;
         let spec = compile_schlib(src).unwrap();
@@ -4942,8 +4942,8 @@ mod tests {
     fn graphic_unique_id_unnamed() {
         let src = r#"
             component R_0603 {
-                line { from: (0mil, 0mil) to: (10mil, 10mil) }
-                line { from: (20mil, 0mil) to: (30mil, 10mil) }
+                line { from: (0mil, 0mil), to: (10mil, 10mil) }
+                line { from: (20mil, 0mil), to: (30mil, 10mil) }
             }
         "#;
         let spec = compile_schlib(src).unwrap();
@@ -4988,7 +4988,7 @@ mod tests {
         let src = r#"
             component LM358 {
                 part 1 {
-                    body = rectangle { from: (0mil, 0mil) to: (100mil, 100mil) }
+                    body = rectangle { from: (0mil, 0mil), to: (100mil, 100mil) }
                 }
             }
         "#;
@@ -5190,11 +5190,11 @@ mod tests {
     fn all_sch_graphic_types() {
         let src = r#"
             component R {
-                line { from: (0mil, 0mil) to: (10mil, 10mil) }
-                rectangle { from: (0mil, 0mil) to: (50mil, 50mil) }
-                arc { center: (0mil, 0mil) radius: 50mil }
-                ellipse { center: (0mil, 0mil) radius: 50mil }
-                label { at: (0mil, 0mil) text: "hello" }
+                line { from: (0mil, 0mil), to: (10mil, 10mil) }
+                rectangle { from: (0mil, 0mil), to: (50mil, 50mil) }
+                arc { center: (0mil, 0mil), radius: 50mil }
+                ellipse { center: (0mil, 0mil), radius: 50mil }
+                label { at: (0mil, 0mil), text: "hello" }
             }
         "#;
         let spec = compile_schlib(src).unwrap();
@@ -5217,7 +5217,7 @@ mod tests {
         // side: outside -> x = -200_000 + (-250_000) = -450_000 (default length=25mil)
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside" }
             }
         "#;
@@ -5235,7 +5235,7 @@ mod tests {
         // location x = 200_000 + 250_000 = 450_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.right, at: "center", side: "outside" }
             }
         "#;
@@ -5253,7 +5253,7 @@ mod tests {
         // location y = 100_000 + 250_000 = 350_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.top, at: "center", side: "outside" }
             }
         "#;
@@ -5271,7 +5271,7 @@ mod tests {
         // location y = -100_000 + (-250_000) = -350_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.bottom, at: "center", side: "outside" }
             }
         "#;
@@ -5291,9 +5291,9 @@ mod tests {
         // end   = min Y = -10mil = -100_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
-                pin start_pin { on: $body.left, at: "start", side: "outside" }
-                pin end_pin   { on: $body.left, at: "end",   side: "outside" }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
+                pin start_pin { on: $body.left, at: "start", side: "outside", gap: 0mil }
+                pin end_pin   { on: $body.left, at: "end",   side: "outside", gap: 0mil }
             }
         "#;
         let spec = compile_schlib(src).unwrap();
@@ -5311,9 +5311,9 @@ mod tests {
         // end   = max X = 20mil = 200_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
-                pin sp { on: $body.top, at: "start", side: "outside" }
-                pin ep { on: $body.top, at: "end",   side: "outside" }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
+                pin sp { on: $body.top, at: "start", side: "outside", gap: 0mil }
+                pin ep { on: $body.top, at: "end",   side: "outside", gap: 0mil }
             }
         "#;
         let spec = compile_schlib(src).unwrap();
@@ -5330,7 +5330,7 @@ mod tests {
         // location x = -200_000 + 250_000 = 50_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.left, at: "center", side: "inside" }
             }
         "#;
@@ -5346,7 +5346,7 @@ mod tests {
         // location x = -200_000 + 0 = -200_000
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.left, at: "center", side: "center" }
             }
         "#;
@@ -5364,7 +5364,7 @@ mod tests {
         // offset: (5mil, 3mil) -> (-450_000+50_000, 0+30_000) = (-400_000, 30_000)
         let src = r#"
             component R {
-                body = rectangle { from: (-20mil, -10mil) to: (20mil, 10mil) }
+                body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside", offset: (5mil, 3mil) }
             }
         "#;
@@ -5384,7 +5384,7 @@ mod tests {
         // p3 after: $p2, gap: 5mil -> y = 50_000 + 50_000 = 100_000
         let src = r#"
             component IC {
-                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                body = rectangle { from: (-20mil, -15mil), to: (20mil, 15mil) }
                 p1 = pin 1 { on: $body.right, at: "center", side: "outside" }
                 p2 = pin 2 { on: $body.right, after: $p1, gap: 5mil, side: "outside" }
                 p3 = pin 3 { on: $body.right, after: $p2, gap: 5mil, side: "outside" }
@@ -5409,7 +5409,7 @@ mod tests {
         // pin 1 auto-generates $pin1, pin 2 references it via after: $pin1
         let src = r#"
             component IC {
-                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                body = rectangle { from: (-20mil, -15mil), to: (20mil, 15mil) }
                 pin 1 { on: $body.right, at: "center", side: "outside" }
                 pin 2 { on: $body.right, after: $pin1, gap: 5mil, side: "outside" }
                 pin 3 { on: $body.right, after: $pin2, gap: 5mil, side: "outside" }
@@ -5429,7 +5429,7 @@ mod tests {
         // Explicit binding `my_pin = pin 1` creates $my_pin, and $pin1 is also available
         let src = r#"
             component IC {
-                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                body = rectangle { from: (-20mil, -15mil), to: (20mil, 15mil) }
                 my_pin = pin 1 { on: $body.right, at: "center", side: "outside" }
                 pin 2 { on: $body.right, after: $my_pin, gap: 5mil, side: "outside" }
             }
@@ -5446,7 +5446,7 @@ mod tests {
         // Non-numeric pin designators like SDA -> $pinSDA
         let src = r#"
             component IC {
-                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                body = rectangle { from: (-20mil, -15mil), to: (20mil, 15mil) }
                 pin SDA { on: $body.left, at: "center", side: "outside" }
                 pin SCL { on: $body.left, after: $pinSDA, gap: 5mil, side: "outside" }
             }
@@ -5627,7 +5627,7 @@ mod tests {
     fn error_cross_edge_reference() {
         let src = r#"
             component IC {
-                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                body = rectangle { from: (-20mil, -15mil), to: (20mil, 15mil) }
                 p1 = pin 1 { on: $body.left,  at: "center", side: "outside" }
                 p2 = pin 2 { on: $body.right, after: $p1,   side: "outside" }
             }
@@ -5928,7 +5928,7 @@ mod tests {
     fn digit_starting_component_name() {
         let src = r#"
             component 74LVC1G17 {
-                body = rectangle { from: (-75mil, -75mil) to: (75mil, 75mil) }
+                body = rectangle { from: (-75mil, -75mil), to: (75mil, 75mil) }
                 pin 2 { on: $body.left, at: "center", side: "outside", electrical: input, name: "A" }
                 pin 4 { on: $body.right, at: "center", side: "outside", electrical: output, name: "Y" }
             }
@@ -5946,14 +5946,14 @@ mod tests {
 
                 part 1 {
                     part_swap_group: "A"
-                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                     pin 3 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
                     pin 1 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
                 }
 
                 part 2 {
                     part_swap_group: "A"
-                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                     pin 5 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
                     pin 7 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
                 }
@@ -6003,7 +6003,7 @@ mod tests {
         let src = r#"
             swap_group digital {}
             component IC {
-                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $digital }
                 pin 2 { on: $body.right, at: "center", side: "outside", electrical: input_output, swap_group: $digital }
             }
@@ -6021,13 +6021,13 @@ mod tests {
                 part_count: 2
                 part 1 {
                     swap_group: $opamp
-                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                     pin 3 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
                     pin 1 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
                 }
                 part 2 {
                     swap_group: $opamp
-                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                     pin 5 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
                     pin 7 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
                 }
@@ -6064,7 +6064,7 @@ mod tests {
     fn swap_group_undefined_reference_error() {
         let src = r#"
             component IC {
-                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $nonexistent }
             }
         "#;
@@ -6076,7 +6076,7 @@ mod tests {
         let src = r#"
             component IC {
                 swap_group my_group {}
-                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $my_group }
                 pin 2 { on: $body.right, at: "center", side: "outside", electrical: input_output, swap_group: $my_group }
             }
@@ -6090,7 +6090,7 @@ mod tests {
     fn swap_group_backward_compat_string() {
         let src = r#"
             component IC {
-                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: "legacy" }
             }
         "#;
@@ -6103,7 +6103,7 @@ mod tests {
         let src = r#"
             sg = swap_group digital {}
             component IC {
-                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                body = rectangle { from: (-100mil, -100mil), to: (100mil, 100mil) }
                 pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $sg }
                 pin 2 { on: $body.right, at: "center", side: "outside", electrical: input_output, swap_group: $digital }
             }
