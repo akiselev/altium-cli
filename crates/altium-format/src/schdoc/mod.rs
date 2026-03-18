@@ -188,11 +188,75 @@ impl SchDoc {
     /// preserved from the existing records by matching on `unique_id` or
     /// `designator`.
     pub fn update_sheet(&mut self, sheet: &crate::api::SchDocSheet) -> Result<()> {
-        let (records, additional_records) = crate::api::schdoc_write::sheet_to_internal(
+        let (mut new_records, additional_records) = crate::api::schdoc_write::sheet_to_internal(
             sheet,
             Some(&self.records),
         )?;
-        self.records = records;
+
+        // sheet_to_internal emits records starting at index 1 (Template onward).
+        // Record 0 must be the Sheet record (RECORD=31) with updated fonts.
+        // Move the existing Sheet record out of self.records, update its fonts, and prepend.
+        let old_records = std::mem::take(&mut self.records);
+        let mut old_records_iter = old_records.into_iter();
+        let sheet_record = match old_records_iter.next() {
+            Some(SchRecord::Sheet(mut s)) => {
+                s.fonts = sheet.fonts.iter().map(|f| SchFont {
+                    id: f.id,
+                    name: f.name.clone(),
+                    size: f.size,
+                    rotation: f.rotation,
+                    bold: f.bold,
+                    italic: f.italic,
+                    underline: f.underline,
+                    strikeout: f.strikeout,
+                }).collect();
+                SchRecord::Sheet(s)
+            }
+            other => {
+                // Should not happen on a valid SchDoc; put the record back if it was not a Sheet.
+                // Reconstruct a minimal Sheet record.
+                if let Some(rec) = other {
+                    new_records.insert(0, rec);
+                }
+                SchRecord::Sheet(SchSheet {
+                    base: SchPrimitiveBase {
+                        owner_index: 0,
+                        is_not_accessible: false,
+                        index_in_sheet: 0,
+                        owner_part_id: 0,
+                        owner_part_display_mode: 0,
+                        selection_memory: 0,
+                        graphically_locked: false,
+                        union_index: 0,
+                        style_id: 0,
+                    },
+                    fonts: sheet.fonts.iter().map(|f| SchFont {
+                        id: f.id,
+                        name: f.name.clone(),
+                        size: f.size,
+                        rotation: f.rotation,
+                        bold: f.bold,
+                        italic: f.italic,
+                        underline: f.underline,
+                        strikeout: f.strikeout,
+                    }).collect(),
+                    display_settings: SchDisplaySettings::default(),
+                    template_vault_guid: String::new(),
+                    template_item_guid: String::new(),
+                    template_revision_guid: String::new(),
+                    template_vault_hrid: String::new(),
+                    template_revision_hrid: String::new(),
+                    release_vault_guid: String::new(),
+                    release_item_guid: String::new(),
+                    item_revision_guid: String::new(),
+                    props_vault_guid: String::new(),
+                    props_revision_guid: String::new(),
+                })
+            }
+        };
+
+        new_records.insert(0, sheet_record);
+        self.records = new_records;
         self.additional_records = additional_records;
         Ok(())
     }

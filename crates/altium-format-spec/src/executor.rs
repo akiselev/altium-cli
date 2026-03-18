@@ -24,7 +24,7 @@ use crate::model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
     PadSpec, ParameterSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocPolygonSpec,
     PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinSpec,
-    PrjPcbSpec, SchLibSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
+    PinConnectionTarget, PrjPcbSpec, SchLibSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -533,10 +533,11 @@ fn bool_to_ini(v: bool) -> String {
 /// 1. Apply sheet metadata (fonts, grid settings, custom size)
 /// 2. Add components (matched by designator, add-or-merge)
 /// 3. Add low-level objects (wires, buses, labels, etc.)
-/// 4. Nets/powers will be implemented later (require pin location resolution)
+/// 4. Generate wire stubs for pin connections
 pub fn apply_spec_schdoc(
     spec: &SchDocSpec,
     doc: &mut SchDoc,
+    imported_components: &std::collections::HashMap<String, ComponentSpec>,
 ) -> Result<(), SpecError> {
     for sheet_spec in &spec.sheets {
         let mut sheet = doc.sheet()
@@ -556,10 +557,17 @@ pub fn apply_spec_schdoc(
             sheet.add_object(obj);
         }
 
-        // 4. Nets and powers (wire stub generation)
-        // TODO: requires resolving pin locations from placed components.
-        // For now, nets/powers are a no-op — they'll be implemented when
-        // we add pin location resolution.
+        // 4. Generate wire stubs for pin connections
+        for comp_spec in &sheet_spec.components {
+            if !comp_spec.pin_connections.is_empty() {
+                generate_pin_connection_stubs(
+                    &mut sheet,
+                    comp_spec,
+                    imported_components,
+                    &sheet_spec.power_declarations,
+                )?;
+            }
+        }
 
         doc.update_sheet(&sheet)
             .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
@@ -645,6 +653,209 @@ fn apply_schdoc_component(
         sheet.add_object(api::SheetObject::Component(comp));
     }
     Ok(())
+}
+
+// ── Pin connection stub generation ─────────────────────────────────────────
+
+// 200mil matches the standard Altium schematic grid spacing; shorter stubs crowd net labels.
+const STUB_LENGTH_INTERNAL: i32 = 200 * 10_000; // 200mil in internal units (1mil = 10_000)
+
+/// Generate wire stubs (and labels/power symbols/no-connects) for all
+/// `pin_connections` on a placed component.
+fn generate_pin_connection_stubs(
+    sheet: &mut api::SchDocSheet,
+    comp_spec: &SchDocComponentSpec,
+    imported_components: &std::collections::HashMap<String, ComponentSpec>,
+    power_declarations: &std::collections::HashMap<String, altium_format_types::sch::PowerObjectStyle>,
+) -> Result<(), SpecError> {
+    // Resolve the SchLib ComponentSpec for this placed component.
+    let lib_ref = match &comp_spec.symbol {
+        SymbolRef::Import { name, .. } => name.as_str(),
+        SymbolRef::Literal(name) => name.as_str(),
+    };
+    let lib_comp = match imported_components.get(lib_ref) {
+        Some(c) => c,
+        None => {
+            return Err(SpecError::no_span(
+                SpecErrorCode::AltiumFormat,
+                format!(
+                    "cannot resolve pin connections for '{}': symbol '{}' not found in imported libraries",
+                    comp_spec.designator, lib_ref
+                ),
+            ));
+        }
+    };
+
+    let comp_orient = comp_spec.orientation.unwrap_or(RotationBy90::Rotate0);
+    let is_mirrored = comp_spec.is_mirrored.unwrap_or(false);
+
+    for conn in &comp_spec.pin_connections {
+        let pin = resolve_pin(lib_comp, &conn.pin_name)?;
+
+        // Pin tip in schematic space.
+        let pin_tip = crate::compiler::transform_pin_position(
+            pin.location,
+            comp_spec.location,
+            comp_orient,
+            is_mirrored,
+        );
+
+        // Transform pin orientation from symbol space to schematic space.
+        let transformed_orient = transform_pin_orientation(pin.orientation, comp_orient, is_mirrored);
+
+        match &conn.target {
+            PinConnectionTarget::NoConnect => {
+                sheet.add_object(api::SheetObject::NoConnect(api::NoConnect {
+                    unique_id: String::new(),
+                    location: pin_tip,
+                    color: Color::new(0x000080),
+                    orientation: RotationBy90::Rotate0,
+                    symbol: String::new(),
+                    is_active: true,
+                    suppress_all: false,
+                }));
+            }
+            PinConnectionTarget::Signal(net_name) => {
+                let stub_end = stub_endpoint(pin_tip, transformed_orient);
+                sheet.add_object(api::SheetObject::Wire(api::Wire {
+                    unique_id: String::new(),
+                    vertices: vec![pin_tip, stub_end],
+                    color: Color::new(0x000080),
+                    line_width: PenWidth::Small,
+                    line_style: LineStyle::Solid,
+                }));
+                let label_orient = remap_label_orient(transformed_orient);
+                sheet.add_object(api::SheetObject::NetLabel(api::NetLabel {
+                    unique_id: String::new(),
+                    text: net_name.clone(),
+                    location: stub_end,
+                    orientation: label_orient,
+                    justification: TextJustification::BottomLeft,
+                    font_id: 1,
+                    color: Color::new(0x000080),
+                    is_mirrored: false,
+                }));
+            }
+            PinConnectionTarget::Power(net_name) => {
+                let stub_end = stub_endpoint(pin_tip, transformed_orient);
+                sheet.add_object(api::SheetObject::Wire(api::Wire {
+                    unique_id: String::new(),
+                    vertices: vec![pin_tip, stub_end],
+                    color: Color::new(0x000080),
+                    line_width: PenWidth::Small,
+                    line_style: LineStyle::Solid,
+                }));
+                // Bar fallback — unreachable in normal flow: only nets present in
+                // power_declarations are classified as Power targets.
+                let style = power_declarations
+                    .get(net_name)
+                    .copied()
+                    .unwrap_or(PowerObjectStyle::Bar);
+                sheet.add_object(api::SheetObject::PowerObject(api::PowerObject {
+                    unique_id: String::new(),
+                    text: net_name.clone(),
+                    location: stub_end,
+                    orientation: transformed_orient,
+                    style,
+                    show_net_name: true,
+                    font_id: 1,
+                    color: Color::new(0x000080),
+                    is_cross_sheet_connector: false,
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a pin by name (first) or designator (fallback) from a SchLib component.
+/// Searches both top-level pins and part-block pins (for multi-part components
+/// like dual op-amps or quad gates).
+fn resolve_pin<'a>(lib_comp: &'a ComponentSpec, pin_name: &str) -> Result<&'a PinSpec, SpecError> {
+    // Try matching pin name field first (across all pin sources).
+    // Name match is preferred: names are human-readable (GPIO4, VDD); designators are positional (1, 2).
+    for pin in lib_comp.pins.iter().chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter())) {
+        if pin.name.as_deref() == Some(pin_name) {
+            return Ok(pin);
+        }
+    }
+    // Fallback: match by designator (across all pin sources).
+    for pin in lib_comp.pins.iter().chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter())) {
+        if pin.designator == pin_name {
+            return Ok(pin);
+        }
+    }
+    // Neither name nor designator matched; build the available-pins list for the diagnostic.
+    let available: Vec<String> = lib_comp.pins.iter()
+        .chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter()))
+        .map(|p| p.name.clone().unwrap_or_else(|| p.designator.clone()))
+        .collect();
+    Err(SpecError::no_span(
+        SpecErrorCode::AltiumFormat,
+        format!(
+            "pin '{}' not found in symbol '{}' (available pins: {})",
+            pin_name,
+            lib_comp.lib_reference,
+            available.join(", ")
+        ),
+    ))
+}
+
+/// Transform a pin's orientation from symbol space to schematic space.
+///
+/// Transform order: (1) apply mirror (flip 0↔180), then (2) add component rotation mod 4.
+/// Mirror precedes rotation — this matches `transform_pin_position` semantics; reversing
+/// the order produces wrong directions for mirrored+rotated components.
+fn transform_pin_orientation(
+    pin_orient: RotationBy90,
+    comp_orient: RotationBy90,
+    is_mirrored: bool,
+) -> RotationBy90 {
+    let mirrored_orient = if is_mirrored {
+        match pin_orient {
+            RotationBy90::Rotate0 => RotationBy90::Rotate180,
+            RotationBy90::Rotate180 => RotationBy90::Rotate0,
+            other => other,
+        }
+    } else {
+        pin_orient
+    };
+    let steps = (mirrored_orient as u8 + comp_orient as u8) % 4;
+    match steps {
+        0 => RotationBy90::Rotate0,
+        1 => RotationBy90::Rotate90,
+        2 => RotationBy90::Rotate180,
+        _ => RotationBy90::Rotate270,
+    }
+}
+
+/// Compute the stub endpoint given a pin tip and transformed orientation.
+/// Stub extends 200mil in the direction the pin faces outward.
+fn stub_endpoint(tip: CoordPoint, orient: RotationBy90) -> CoordPoint {
+    let (dx, dy) = match orient {
+        RotationBy90::Rotate0 => (STUB_LENGTH_INTERNAL, 0),
+        RotationBy90::Rotate90 => (0, STUB_LENGTH_INTERNAL),
+        RotationBy90::Rotate180 => (-STUB_LENGTH_INTERNAL, 0),
+        RotationBy90::Rotate270 => (0, -STUB_LENGTH_INTERNAL),
+        _ => unreachable!("RotationBy90 variant not handled in stub_endpoint"),
+    };
+    CoordPoint {
+        x: altium_format_types::Coord::new(tip.x.raw() + dx),
+        y: altium_format_types::Coord::new(tip.y.raw() + dy),
+    }
+}
+
+/// Map a pin orientation to a NetLabel orientation.
+///
+/// Altium convention: labels are always 0° or 90°, never 180° or 270°.
+/// Inverted text is unreadable in dense schematics; justification controls
+/// the anchor direction for leftward and downward stubs instead.
+fn remap_label_orient(orient: RotationBy90) -> RotationBy90 {
+    match orient {
+        RotationBy90::Rotate0 | RotationBy90::Rotate180 => RotationBy90::Rotate0,
+        RotationBy90::Rotate90 | RotationBy90::Rotate270 => RotationBy90::Rotate90,
+        _ => unreachable!("RotationBy90 variant not handled in remap_label_orient"),
+    }
 }
 
 fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
@@ -1801,6 +2012,339 @@ mod tests {
         assert_eq!(fp.pads.len(), 2);
         assert_eq!(fp.description, "R0603 footprint");
         assert_eq!(fp.pattern, "R0603");
+    }
+
+    // ── Pin connection stub generation tests ──────────────────────────────────
+
+    use crate::model::{PinConnectionSpec, PinConnectionTarget as ConnTarget, SchDocComponentSpec, SchDocSpec, SheetSpec, SymbolRef};
+    use altium_format_types::sch::PowerObjectStyle;
+    use std::collections::HashMap;
+
+    fn make_pin_named(designator: &str, name: &str, location: CoordPoint, orientation: RotationBy90) -> PinSpec {
+        PinSpec {
+            designator: designator.to_string(),
+            name: Some(name.to_string()),
+            electrical: None,
+            length: None,
+            location,
+            orientation,
+            is_hidden: None,
+            hidden_net_name: None,
+            owner_part_id: 1,
+            swap_group: None,
+            part_swap_group: None,
+            pair_swap_group: None,
+        }
+    }
+
+    fn make_lib_component(lib_ref: &str, pins: Vec<PinSpec>) -> ComponentSpec {
+        ComponentSpec {
+            annotation: None,
+            lib_reference: lib_ref.to_string(),
+            designator: Some("U?".to_string()),
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins,
+            parameters: vec![],
+            aliases: vec![],
+            footprints: vec![],
+            graphics: vec![],
+            parts: vec![],
+        }
+    }
+
+    fn make_schdoc_comp(
+        designator: &str,
+        lib_ref: &str,
+        location: CoordPoint,
+        orientation: Option<RotationBy90>,
+        is_mirrored: Option<bool>,
+        pin_connections: Vec<PinConnectionSpec>,
+    ) -> SchDocComponentSpec {
+        SchDocComponentSpec {
+            annotation: None,
+            designator: designator.to_string(),
+            symbol: SymbolRef::Literal(lib_ref.to_string()),
+            location,
+            orientation,
+            is_mirrored,
+            description: None,
+            parameters: vec![],
+            pin_connections,
+        }
+    }
+
+    fn make_sheet_spec(components: Vec<SchDocComponentSpec>, power_declarations: HashMap<String, PowerObjectStyle>) -> SchDocSpec {
+        SchDocSpec {
+            sheets: vec![SheetSpec {
+                annotation: None,
+                fonts: vec![],
+                power_declarations,
+                custom_width: None,
+                custom_height: None,
+                snap_grid_on: None,
+                visible_grid_on: None,
+                hot_spot_grid_on: None,
+                show_hidden_pins: None,
+                border_on: None,
+                title_block_on: None,
+                components,
+                nets: vec![],
+                objects: vec![],
+                powers: vec![],
+                constraints: vec![],
+            }],
+        }
+    }
+
+    fn blank_schdoc() -> SchDoc {
+        SchDoc::new_blank_ad26()
+    }
+
+    #[test]
+    fn pin_connection_signal_stub_orient0() {
+        // Pin at (100mil, 0mil) in symbol space, component at (0, 0), no rotation/mirror.
+        // Pin orientation 0° → stub extends rightward (+X).
+        let pin_loc = make_coord(100, 0);
+        let comp_loc = make_coord(0, 0);
+        let lib_comp = make_lib_component("IC1", vec![
+            make_pin_named("1", "GPIO4", pin_loc, RotationBy90::Rotate0),
+        ]);
+        let mut imported: HashMap<String, ComponentSpec> = HashMap::new();
+        imported.insert("IC1".to_string(), lib_comp);
+
+        let conn = PinConnectionSpec { pin_name: "GPIO4".to_string(), target: ConnTarget::Signal("SDA".to_string()) };
+        let spec = make_sheet_spec(
+            vec![make_schdoc_comp("U1", "IC1", comp_loc, None, None, vec![conn])],
+            HashMap::new(),
+        );
+        let mut doc = blank_schdoc();
+        apply_spec_schdoc(&spec, &mut doc, &imported).unwrap();
+
+        let sheet = doc.sheet().unwrap();
+        // Should have: 1 component + 1 wire + 1 net label
+        let wires: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::Wire(_))).collect();
+        let labels: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::NetLabel(_))).collect();
+        assert_eq!(wires.len(), 1, "expected 1 wire stub");
+        assert_eq!(labels.len(), 1, "expected 1 net label");
+
+        // Wire tip at (100mil, 0), end at (300mil, 0)
+        if let api::SheetObject::Wire(w) = &wires[0] {
+            assert_eq!(w.vertices.len(), 2);
+            let tip = w.vertices[0];
+            let end = w.vertices[1];
+            assert_eq!(tip.x.raw(), make_coord(100, 0).x.raw());
+            assert_eq!(tip.y.raw(), make_coord(100, 0).y.raw());
+            assert_eq!(end.x.raw(), make_coord(300, 0).x.raw(), "stub should extend +200mil in X");
+            assert_eq!(end.y.raw(), make_coord(0, 0).y.raw());
+        }
+
+        // Label at stub end, orientation 0°
+        if let api::SheetObject::NetLabel(n) = &labels[0] {
+            assert_eq!(n.text, "SDA");
+            assert_eq!(n.orientation, RotationBy90::Rotate0);
+        }
+    }
+
+    #[test]
+    fn pin_connection_no_connect() {
+        let pin_loc = make_coord(50, 0);
+        let comp_loc = make_coord(0, 0);
+        let lib_comp = make_lib_component("IC1", vec![
+            make_pin_named("1", "NC1", pin_loc, RotationBy90::Rotate0),
+        ]);
+        let mut imported: HashMap<String, ComponentSpec> = HashMap::new();
+        imported.insert("IC1".to_string(), lib_comp);
+
+        let conn = PinConnectionSpec { pin_name: "NC1".to_string(), target: ConnTarget::NoConnect };
+        let spec = make_sheet_spec(
+            vec![make_schdoc_comp("U1", "IC1", comp_loc, None, None, vec![conn])],
+            HashMap::new(),
+        );
+        let mut doc = blank_schdoc();
+        apply_spec_schdoc(&spec, &mut doc, &imported).unwrap();
+
+        let sheet = doc.sheet().unwrap();
+        let ncs: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::NoConnect(_))).collect();
+        let wires: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::Wire(_))).collect();
+        assert_eq!(ncs.len(), 1, "expected 1 no-connect marker");
+        assert_eq!(wires.len(), 0, "no wire for no-connect");
+
+        if let api::SheetObject::NoConnect(nc) = &ncs[0] {
+            assert_eq!(nc.location.x.raw(), make_coord(50, 0).x.raw());
+        }
+    }
+
+    #[test]
+    fn pin_connection_power_stub() {
+        let pin_loc = make_coord(0, 100);
+        let comp_loc = make_coord(0, 0);
+        let lib_comp = make_lib_component("IC1", vec![
+            make_pin_named("1", "VDD", pin_loc, RotationBy90::Rotate90),
+        ]);
+        let mut imported: HashMap<String, ComponentSpec> = HashMap::new();
+        imported.insert("IC1".to_string(), lib_comp);
+
+        let mut power_decls: HashMap<String, PowerObjectStyle> = HashMap::new();
+        power_decls.insert("VCC".to_string(), PowerObjectStyle::Bar);
+
+        let conn = PinConnectionSpec { pin_name: "VDD".to_string(), target: ConnTarget::Power("VCC".to_string()) };
+        let spec = make_sheet_spec(
+            vec![make_schdoc_comp("U1", "IC1", comp_loc, None, None, vec![conn])],
+            power_decls,
+        );
+        let mut doc = blank_schdoc();
+        apply_spec_schdoc(&spec, &mut doc, &imported).unwrap();
+
+        let sheet = doc.sheet().unwrap();
+        let wires: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::Wire(_))).collect();
+        let powers: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::PowerObject(_))).collect();
+        assert_eq!(wires.len(), 1);
+        assert_eq!(powers.len(), 1);
+
+        if let api::SheetObject::PowerObject(p) = &powers[0] {
+            assert_eq!(p.text, "VCC");
+            assert_eq!(p.style, PowerObjectStyle::Bar);
+            assert_eq!(p.orientation, RotationBy90::Rotate90);
+        }
+    }
+
+    #[test]
+    fn transform_pin_orientation_all_rotations() {
+        // No mirror, pin at 0°: rotation adds
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate0, false), RotationBy90::Rotate0);
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate90, false), RotationBy90::Rotate90);
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate180, false), RotationBy90::Rotate180);
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate270, false), RotationBy90::Rotate270);
+    }
+
+    #[test]
+    fn transform_pin_orientation_mirrored() {
+        // Mirror flips 0↔180
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate0, true), RotationBy90::Rotate180);
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate180, RotationBy90::Rotate0, true), RotationBy90::Rotate0);
+        // 90/270 unchanged by mirror
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate90, RotationBy90::Rotate0, true), RotationBy90::Rotate90);
+        assert_eq!(transform_pin_orientation(RotationBy90::Rotate270, RotationBy90::Rotate0, true), RotationBy90::Rotate270);
+    }
+
+    #[test]
+    fn transform_pin_orientation_mirror_and_rotate() {
+        // pin 0° + mirror + rot 90° → mirror to 180° → +90° = 270°
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate90, true),
+            RotationBy90::Rotate270
+        );
+    }
+
+    #[test]
+    fn stub_endpoint_all_orientations() {
+        let origin = make_coord(0, 0);
+        let stub_mils = 200i32;
+        let internal = stub_mils * 10_000;
+
+        let end0 = stub_endpoint(origin, RotationBy90::Rotate0);
+        assert_eq!(end0.x.raw(), internal);
+        assert_eq!(end0.y.raw(), 0);
+
+        let end90 = stub_endpoint(origin, RotationBy90::Rotate90);
+        assert_eq!(end90.x.raw(), 0);
+        assert_eq!(end90.y.raw(), internal);
+
+        let end180 = stub_endpoint(origin, RotationBy90::Rotate180);
+        assert_eq!(end180.x.raw(), -internal);
+        assert_eq!(end180.y.raw(), 0);
+
+        let end270 = stub_endpoint(origin, RotationBy90::Rotate270);
+        assert_eq!(end270.x.raw(), 0);
+        assert_eq!(end270.y.raw(), -internal);
+    }
+
+    #[test]
+    fn remap_label_orient_convention() {
+        assert_eq!(remap_label_orient(RotationBy90::Rotate0), RotationBy90::Rotate0);
+        assert_eq!(remap_label_orient(RotationBy90::Rotate90), RotationBy90::Rotate90);
+        // 180° and 270° map to 0° and 90° respectively (readability convention)
+        assert_eq!(remap_label_orient(RotationBy90::Rotate180), RotationBy90::Rotate0);
+        assert_eq!(remap_label_orient(RotationBy90::Rotate270), RotationBy90::Rotate90);
+    }
+
+    #[test]
+    fn resolve_pin_by_name_first() {
+        let lib_comp = make_lib_component("IC", vec![
+            make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
+            make_pin_named("2", "GND", make_coord(-100, 0), RotationBy90::Rotate180),
+        ]);
+        let pin = resolve_pin(&lib_comp, "GPIO4").unwrap();
+        assert_eq!(pin.designator, "1");
+    }
+
+    #[test]
+    fn resolve_pin_by_designator_fallback() {
+        let lib_comp = make_lib_component("IC", vec![
+            make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
+        ]);
+        let pin = resolve_pin(&lib_comp, "1").unwrap();
+        assert_eq!(pin.name.as_deref(), Some("GPIO4"));
+    }
+
+    #[test]
+    fn resolve_pin_not_found_error() {
+        let lib_comp = make_lib_component("ESP32", vec![
+            make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
+        ]);
+        let result = resolve_pin(&lib_comp, "NONEXISTENT");
+        assert!(result.is_err(), "expected error for missing pin");
+        let err = result.err().unwrap();
+        let msg = format!("{err}");
+        assert!(msg.contains("NONEXISTENT"), "error should name the missing pin");
+        assert!(msg.contains("ESP32"), "error should name the symbol");
+        assert!(msg.contains("GPIO4"), "error should list available pins");
+    }
+
+    #[test]
+    fn resolve_pin_in_parts() {
+        use crate::model::PartSpec;
+        let mut lib_comp = make_lib_component("IC", vec![]);
+        lib_comp.parts.push(PartSpec {
+            part_number: 1,
+            pins: vec![make_pin_named("A1", "IN+", make_coord(0, 50), RotationBy90::Rotate180)],
+            graphics: vec![],
+        });
+        let pin = resolve_pin(&lib_comp, "IN+").unwrap();
+        assert_eq!(pin.designator, "A1");
+    }
+
+    #[test]
+    fn missing_symbol_in_imports_error() {
+        let imported: HashMap<String, ComponentSpec> = HashMap::new();
+        let conn = PinConnectionSpec { pin_name: "GPIO4".to_string(), target: ConnTarget::Signal("SDA".to_string()) };
+        let spec = make_sheet_spec(
+            vec![make_schdoc_comp("U1", "MISSING_IC", make_coord(0, 0), None, None, vec![conn])],
+            HashMap::new(),
+        );
+        let mut doc = blank_schdoc();
+        let err = apply_spec_schdoc(&spec, &mut doc, &imported).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("U1"), "error should identify the designator");
+        assert!(msg.contains("MISSING_IC"), "error should identify the missing symbol");
+    }
+
+    #[test]
+    fn label_orient_leftward_stub_is_rotate0() {
+        // Mirrored component: pin orient 0° → mirror → 180° → stub extends leftward.
+        // NetLabel orientation should be Rotate0 (not Rotate180) for readability.
+        let label_orient = remap_label_orient(RotationBy90::Rotate180);
+        assert_eq!(label_orient, RotationBy90::Rotate0);
+    }
+
+    #[test]
+    fn label_orient_downward_stub_is_rotate90() {
+        // Downward stub (270°) → NetLabel orientation should be Rotate90.
+        let label_orient = remap_label_orient(RotationBy90::Rotate270);
+        assert_eq!(label_orient, RotationBy90::Rotate90);
     }
 
     #[test]

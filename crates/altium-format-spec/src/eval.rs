@@ -161,6 +161,12 @@ pub enum Value {
     Object(IndexMap<String, Value>),
     /// A declared swap group reference; the inner string is the group's entity name.
     SwapGroup(String),
+    /// An import object — maps entity names to their string names.
+    /// Stores provenance (alias) so field access can return ImportRef.
+    ImportObject { alias: String, entries: IndexMap<String, Value> },
+    /// A resolved `$alias.Name` reference; carries the import alias for error
+    /// reporting and symbol validation.
+    ImportRef { alias: String, name: String },
 }
 
 impl Value {
@@ -194,6 +200,8 @@ impl Value {
                 format!("{{{}}}", items.join(", "))
             }
             Value::SwapGroup(s) => s.clone(),
+            Value::ImportObject { alias, .. } => format!("<import:{alias}>"),
+            Value::ImportRef { alias, name } => format!("{alias}.{name}"),
         }
     }
 
@@ -210,6 +218,8 @@ impl Value {
             Value::Array(_) => "array",
             Value::Object(_) => "object",
             Value::SwapGroup(_) => "swap_group",
+            Value::ImportObject { .. } => "import_object",
+            Value::ImportRef { .. } => "import_ref",
         }
     }
 
@@ -234,6 +244,7 @@ impl Value {
     pub fn into_object(self, span: Option<Span>) -> EvalResult<IndexMap<String, Value>> {
         match self {
             Value::Object(m) => Ok(m),
+            Value::ImportObject { entries, .. } => Ok(entries),
             other => Err(SpecError::new(
                 SpecErrorCode::NotAnObject,
                 format!("expected object, got {}", other.kind_name()),
@@ -694,6 +705,17 @@ fn eval_field_access(base: Value, field: &str, span: Option<Span>) -> EvalResult
                 format!("no field '{field}' on object"),
                 span,
             ))
+        }
+        Value::ImportObject { alias, entries } => {
+            match entries.get(field) {
+                Some(Value::String(name)) => Ok(Value::ImportRef { alias, name: name.clone() }),
+                Some(other) => Ok(other.clone()),
+                None => Err(SpecError::new(
+                    SpecErrorCode::InvalidFieldAccess,
+                    format!("no entity '{field}' in import '{alias}'"),
+                    span,
+                )),
+            }
         }
         Value::CoordPoint(x, y) => match field {
             "x" => Ok(Value::Dim(x)),

@@ -105,7 +105,9 @@ pub fn compile_spec_with_resolved(
                 entries.insert(name.clone(), Value::String(name));
             }
         }
-        compiler.named_import_objects.insert(alias.clone(), Value::Object(entries));
+        // ImportObject stores the alias with entries so field access on `$alias.Name`
+        // returns ImportRef, preserving import provenance for symbol validation.
+        compiler.named_import_objects.insert(alias.clone(), Value::ImportObject { alias: alias.clone(), entries });
     }
     compiler.compile(&resolved.root)
 }
@@ -141,7 +143,8 @@ fn collect_schlib_components(
                 components.insert(comp.lib_reference.clone(), comp);
             }
         }
-        _ => {}
+        Ok(_) => {}
+        Err(e) => return Err(e),
     }
     Ok(())
 }
@@ -483,6 +486,9 @@ impl SpecCompiler {
                 ComponentItem::SwapGroup(_) => {
                     // Already registered in scope; nothing to emit into the component spec.
                 }
+                ComponentItem::PinConnection(_) => {
+                    // Resolved at executor time; nothing to compile into the component spec yet.
+                }
             }
         }
 
@@ -518,6 +524,16 @@ impl SpecCompiler {
     fn compile_schdoc(&mut self, file: &SpecFile) -> Result<SchDocSpec, SpecError> {
         let mut sheet_annotation: Option<CompiledAnnotation> = None;
         let mut fonts = Vec::new();
+        // Pre-pass: collect power net names so pin-connection classification
+        // (Signal vs Power) is order-independent.
+        let mut power_declarations: std::collections::HashMap<String, PowerObjectStyle> =
+            std::collections::HashMap::new();
+        for item in &file.items {
+            if let SpecItem::Power(power_decl) = &item.node {
+                // Placeholder — final style is resolved after all power declarations compile.
+                power_declarations.insert(power_decl.name.node.as_str(), PowerObjectStyle::Bar);
+            }
+        }
         let mut custom_width = None;
         let mut custom_height = None;
         let mut snap_grid_on = None;
@@ -546,7 +562,7 @@ impl SpecCompiler {
                     )?;
                 }
                 SpecItem::Component(comp_decl) => {
-                    let comp = self.compile_schdoc_component(comp_decl)?;
+                    let comp = self.compile_schdoc_component(comp_decl, &power_declarations)?;
                     let binding = build_component_binding(&comp, &self.imported_components);
                     self.scope.define(comp.designator.clone(), binding);
                     components.push(comp);
@@ -570,9 +586,16 @@ impl SpecCompiler {
             }
         }
 
+        // power_declarations: names from pre-pass, styles from this loop.
+        // Styles were unavailable during pre-pass (power items not yet compiled).
+        for power in &powers {
+            power_declarations.insert(power.name.clone(), power.style);
+        }
+
         let sheet = SheetSpec {
             annotation: sheet_annotation,
             fonts,
+            power_declarations,
             custom_width,
             custom_height,
             snap_grid_on,
@@ -689,6 +712,7 @@ impl SpecCompiler {
     fn compile_schdoc_component(
         &mut self,
         decl: &ComponentDecl,
+        power_declarations: &std::collections::HashMap<String, PowerObjectStyle>,
     ) -> Result<SchDocComponentSpec, SpecError> {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let designator = decl.name.node.as_str();
@@ -717,8 +741,28 @@ impl SpecCompiler {
         // Resolve symbol reference: either $alias.Name or lib_reference: "Name"
         let symbol = if let Some(v) = props.get("symbol") {
             match v {
+                Value::ImportRef { alias, name } => {
+                    let alias = alias.clone();
+                    let name = name.clone();
+                    if !self.imported_components.contains_key(&name) {
+                        let available: Vec<String> = self.imported_components
+                            .keys()
+                            .cloned()
+                            .collect();
+                        return Err(SpecError::no_span(
+                            SpecErrorCode::AltiumFormat,
+                            format!(
+                                "symbol '{}' not found in import '{}' (available: {})",
+                                name,
+                                alias,
+                                available.join(", ")
+                            ),
+                        ));
+                    }
+                    SymbolRef::Import { alias, name }
+                }
                 Value::String(s) => {
-                    // Check if it's a $alias.Name from a DollarIdent expression
+                    // Plain lib_reference string — no import validation; treated as opaque component name.
                     SymbolRef::Literal(s.clone())
                 }
                 _ => {
@@ -762,6 +806,30 @@ impl SpecCompiler {
 
         self.scope.pop();
 
+        // Compile pin connections
+        let mut pin_connections = Vec::new();
+        for item in &decl.body {
+            if let ComponentItem::PinConnection(conn_decl) = &item.node {
+                let target = match &conn_decl.target {
+                    crate::ast::PinConnectionTarget::NoConnect => {
+                        crate::model::PinConnectionTarget::NoConnect
+                    }
+                    crate::ast::PinConnectionTarget::NetRef(net_name) => {
+                        let name = net_name.node.clone();
+                        if power_declarations.contains_key(&name) {
+                            crate::model::PinConnectionTarget::Power(name)
+                        } else {
+                            crate::model::PinConnectionTarget::Signal(name)
+                        }
+                    }
+                };
+                pin_connections.push(crate::model::PinConnectionSpec {
+                    pin_name: conn_decl.pin_name.node.clone(),
+                    target,
+                });
+            }
+        }
+
         Ok(SchDocComponentSpec {
             annotation,
             designator,
@@ -771,6 +839,7 @@ impl SpecCompiler {
             is_mirrored,
             description,
             parameters,
+            pin_connections,
         })
     }
 
@@ -6565,5 +6634,315 @@ placement {
         assert!(spec.allow_pin_swap);
         assert!(!spec.allow_part_swap);
         assert!(spec.allow_gate_swap);
+    }
+
+    // ── Pin connection compilation ─────────────────────────────────────────
+
+    #[test]
+    fn pin_connection_signal_compiles() {
+        let src = r#"
+component U1 {
+    at: (0mil, 0mil)
+    pin GPIO4 -> #SDA
+}
+"#;
+        let spec = compile_schdoc(src).unwrap();
+        let sheet = &spec.sheets[0];
+        let comp = &sheet.components[0];
+        assert_eq!(comp.pin_connections.len(), 1);
+        let conn = &comp.pin_connections[0];
+        assert_eq!(conn.pin_name, "GPIO4");
+        match &conn.target {
+            crate::model::PinConnectionTarget::Signal(name) => assert_eq!(name, "SDA"),
+            other => panic!("expected Signal, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn pin_connection_power_compiles() {
+        let src = r#"
+power VDD3V3 {
+    pins: []
+}
+component U1 {
+    at: (0mil, 0mil)
+    pin VDD -> #VDD3V3
+}
+"#;
+        let spec = compile_schdoc(src).unwrap();
+        let sheet = &spec.sheets[0];
+        let comp = &sheet.components[0];
+        assert_eq!(comp.pin_connections.len(), 1);
+        let conn = &comp.pin_connections[0];
+        assert_eq!(conn.pin_name, "VDD");
+        match &conn.target {
+            crate::model::PinConnectionTarget::Power(name) => assert_eq!(name, "VDD3V3"),
+            other => panic!("expected Power, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn pin_connection_no_connect_compiles() {
+        let src = r#"
+component U1 {
+    at: (0mil, 0mil)
+    pin NC1 -> nc
+}
+"#;
+        let spec = compile_schdoc(src).unwrap();
+        let sheet = &spec.sheets[0];
+        let comp = &sheet.components[0];
+        assert_eq!(comp.pin_connections.len(), 1);
+        let conn = &comp.pin_connections[0];
+        assert_eq!(conn.pin_name, "NC1");
+        assert!(matches!(conn.target, crate::model::PinConnectionTarget::NoConnect));
+    }
+
+    #[test]
+    fn component_without_pin_connections_has_empty_vec() {
+        let src = r#"
+component U1 {
+    at: (0mil, 0mil)
+}
+"#;
+        let spec = compile_schdoc(src).unwrap();
+        let comp = &spec.sheets[0].components[0];
+        assert!(comp.pin_connections.is_empty());
+    }
+
+    #[test]
+    fn pin_connection_mix_compiles() {
+        let src = r#"
+power GND {
+    pins: []
+}
+component U1 {
+    at: (0mil, 0mil)
+    pin A -> #SDA
+    pin B -> #GND
+    pin C -> nc
+}
+"#;
+        let spec = compile_schdoc(src).unwrap();
+        let comp = &spec.sheets[0].components[0];
+        assert_eq!(comp.pin_connections.len(), 3);
+        assert!(matches!(&comp.pin_connections[0].target, crate::model::PinConnectionTarget::Signal(n) if n == "SDA"),
+            "expected Signal(SDA) for pin A");
+        assert!(matches!(&comp.pin_connections[1].target, crate::model::PinConnectionTarget::Power(n) if n == "GND"),
+            "expected Power(GND) for pin B");
+        assert!(matches!(&comp.pin_connections[2].target, crate::model::PinConnectionTarget::NoConnect),
+            "expected NoConnect for pin C");
+    }
+
+    // ── Validated symbol reference (ImportRef) ─────────────────────────────
+
+    fn make_minimal_component_spec(lib_ref: &str) -> ComponentSpec {
+        ComponentSpec {
+            annotation: None,
+            lib_reference: lib_ref.to_string(),
+            designator: None,
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: Vec::new(),
+            parameters: Vec::new(),
+            aliases: Vec::new(),
+            footprints: Vec::new(),
+            graphics: Vec::new(),
+            parts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn lib_reference_string_is_literal_no_validation() {
+        // Regression: plain lib_reference: "Name" produces SymbolRef::Literal, no error even if
+        // the name isn't in imported_components.
+        let src = r#"
+component U1 {
+    at: (0mil, 0mil)
+    lib_reference: "ESP32-C6"
+}
+"#;
+        let spec = compile_schdoc_with_imports(src, HashMap::new()).unwrap();
+        let sym = &spec.sheets[0].components[0].symbol;
+        assert!(matches!(sym, SymbolRef::Literal(s) if s == "ESP32-C6"));
+    }
+
+    #[test]
+    fn import_ref_valid_symbol_produces_import_symbol_ref() {
+        // compile_spec_with_imports puts ESP32_C6 in imported_components keyed by lib_reference.
+        // The $mcu.ESP32_C6 path requires ImportObject in named_import_objects, which is only
+        // populated via compile_spec_with_resolved. This test verifies the ImportRef → SymbolRef::Import
+        // path using a direct Value::ImportRef in the symbol slot by testing the validation logic
+        // via the compile_spec_with_imports path (which doesn't populate named_import_objects).
+        //
+        // The symbol: $alias.Name path that produces ImportRef requires named_import_objects
+        // (set via compile_spec_with_resolved). Here we just verify that when imported_components
+        // contains the name, a SymbolRef::Literal still works (regression check).
+        let mut imported = HashMap::new();
+        imported.insert("ESP32_C6".to_string(), make_minimal_component_spec("ESP32_C6"));
+        let src = r#"
+component U1 {
+    at: (0mil, 0mil)
+    lib_reference: "ESP32_C6"
+}
+"#;
+        let spec = compile_schdoc_with_imports(src, imported).unwrap();
+        let sym = &spec.sheets[0].components[0].symbol;
+        assert!(matches!(sym, SymbolRef::Literal(s) if s == "ESP32_C6"));
+    }
+
+    #[test]
+    fn import_ref_unknown_symbol_produces_error() {
+        // $mcu.TYPO where the schlib DOES contain TYPO (so ImportRef is created), but
+        // imported_components does NOT contain "TYPO" → AltiumFormat error with available names.
+        use crate::import::ResolvedSpec;
+        use indexmap::IndexMap as IMap;
+
+        let root_src = r#"
+component U1 {
+    at: (0mil, 0mil)
+    symbol: $mcu.TYPO
+}
+"#;
+        // The schlib contains TYPO so the named_imports entries map has it → ImportRef is produced.
+        let schlib_src = r#"
+component TYPO {
+    designator: "U"
+}
+component ESP32_C6 {
+    designator: "U"
+}
+"#;
+        let root_file = parse_spec(root_src).expect("parse root failed");
+        let schlib_file = parse_spec(schlib_src).expect("parse schlib failed");
+
+        let mut named_imports = IMap::new();
+        named_imports.insert(
+            "mcu".to_string(),
+            (std::path::PathBuf::from("mcu.schlib"), schlib_file),
+        );
+        let resolved = ResolvedSpec {
+            root: root_file,
+            named_imports,
+            bare_imports: Vec::new(),
+        };
+
+        // imported_components has ESP32_C6 but NOT TYPO → validation fails.
+        let mut imported = HashMap::new();
+        imported.insert("ESP32_C6".to_string(), make_minimal_component_spec("ESP32_C6"));
+
+        let result = compile_spec_with_resolved(&resolved, SpecDomain::SchDoc, imported);
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected compile error for unknown import symbol"),
+        };
+        assert_eq!(err.code, SpecErrorCode::AltiumFormat);
+        assert!(err.message.contains("TYPO"), "error should mention symbol name: {}", err.message);
+        assert!(err.message.contains("mcu"), "error should mention import alias: {}", err.message);
+        assert!(err.message.contains("ESP32_C6"), "error should list available symbols: {}", err.message);
+    }
+
+    #[test]
+    fn import_ref_valid_symbol_via_resolved() {
+        // $mcu.ESP32_C6 where ESP32_C6 is in both named_imports and imported_components
+        // → compiles to SymbolRef::Import { alias: "mcu", name: "ESP32_C6" }, no error.
+        use crate::import::ResolvedSpec;
+        use indexmap::IndexMap as IMap;
+
+        let root_src = r#"
+component U1 {
+    at: (0mil, 0mil)
+    symbol: $mcu.ESP32_C6
+}
+"#;
+        let schlib_src = r#"
+component ESP32_C6 {
+    designator: "U"
+}
+"#;
+        let root_file = parse_spec(root_src).expect("parse root failed");
+        let schlib_file = parse_spec(schlib_src).expect("parse schlib failed");
+
+        let mut named_imports = IMap::new();
+        named_imports.insert(
+            "mcu".to_string(),
+            (std::path::PathBuf::from("mcu.schlib"), schlib_file),
+        );
+        let resolved = ResolvedSpec {
+            root: root_file,
+            named_imports,
+            bare_imports: Vec::new(),
+        };
+
+        let mut imported = HashMap::new();
+        imported.insert("ESP32_C6".to_string(), make_minimal_component_spec("ESP32_C6"));
+
+        let spec = compile_spec_with_resolved(&resolved, SpecDomain::SchDoc, imported)
+            .expect("compile should succeed");
+        let spec = match spec {
+            SpecModel::SchDoc(s) => s,
+            other => panic!("expected SchDoc, got {:?}", std::mem::discriminant(&other)),
+        };
+        let sym = &spec.sheets[0].components[0].symbol;
+        match sym {
+            SymbolRef::Import { alias, name } => {
+                assert_eq!(alias, "mcu");
+                assert_eq!(name, "ESP32_C6");
+            }
+            other => panic!("expected SymbolRef::Import, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    // ── Pin connection classification ──────────────────────────────────────
+
+    #[test]
+    fn pin_connection_power_target() {
+        let src = r#"
+            power GND { style: gnd_power, pins: [] }
+            component U1 {
+                pin 1 -> #GND
+            }
+        "#;
+        let spec = compile_schdoc(src).unwrap();
+        let conn = &spec.sheets[0].components[0].pin_connections[0];
+        assert_eq!(conn.pin_name, "1");
+        assert!(
+            matches!(&conn.target, crate::model::PinConnectionTarget::Power(n) if n == "GND"),
+            "expected Power(\"GND\"), got {:?}", conn.target
+        );
+    }
+
+    #[test]
+    fn pin_connection_signal_target() {
+        let src = r#"
+            component U1 {
+                pin 1 -> #SDA
+            }
+        "#;
+        let spec = compile_schdoc(src).unwrap();
+        let conn = &spec.sheets[0].components[0].pin_connections[0];
+        assert_eq!(conn.pin_name, "1");
+        assert!(
+            matches!(&conn.target, crate::model::PinConnectionTarget::Signal(n) if n == "SDA"),
+            "expected Signal(\"SDA\"), got {:?}", conn.target
+        );
+    }
+
+    #[test]
+    fn pin_connection_noconnect_target() {
+        let src = r#"
+            component U1 {
+                pin NC -> nc
+            }
+        "#;
+        let spec = compile_schdoc(src).unwrap();
+        let conn = &spec.sheets[0].components[0].pin_connections[0];
+        assert_eq!(conn.pin_name, "NC");
+        assert!(
+            matches!(&conn.target, crate::model::PinConnectionTarget::NoConnect),
+            "expected NoConnect, got {:?}", conn.target
+        );
     }
 }

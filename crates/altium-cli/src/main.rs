@@ -1156,7 +1156,7 @@ fn run_apply(
     let result = compile_and_resolve(&source, spec_file, &domain)?;
 
     // Apply root spec.
-    apply_for_model(&result.model, target, output, spec_file, &domain)?;
+    apply_for_model(&result.model, target, output, spec_file, &domain, &result.imported_components)?;
 
     // Apply imports with --all.
     if all {
@@ -1165,7 +1165,7 @@ fn run_apply(
             let import_source = std::fs::read_to_string(import_path)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", import_path.display()))?;
             let import_result = compile_and_resolve(&import_source, import_path, &import_domain)?;
-            apply_for_model(&import_result.model, None, None, import_path, &import_domain)?;
+            apply_for_model(&import_result.model, None, None, import_path, &import_domain, &import_result.imported_components)?;
         }
     }
 
@@ -1179,6 +1179,7 @@ fn apply_for_model(
     output: Option<&PathBuf>,
     spec_file: &PathBuf,
     domain: &SpecDomain,
+    imported_components: &std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
 ) -> anyhow::Result<()> {
     let library_path = default_output_for_spec(spec_file, domain);
 
@@ -1248,7 +1249,7 @@ fn apply_for_model(
 
             let out_path = output.cloned().unwrap_or(library_path);
 
-            apply_spec_schdoc(spec, &mut doc)
+            apply_spec_schdoc(spec, &mut doc, imported_components)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
             doc.save(&out_path)?;
@@ -1396,6 +1397,9 @@ struct CompileResult {
     model: altium_format_spec::model::SpecModel,
     /// All import paths (bare + named) for --all processing.
     import_paths: Vec<PathBuf>,
+    /// Compiled SchLib components from imports, keyed by lib_reference.
+    /// Used by SchDoc apply to resolve pin positions.
+    imported_components: std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
 }
 
 fn compile_and_resolve(
@@ -1417,6 +1421,11 @@ fn compile_and_resolve(
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
     // Compile only the root file's own items, with named imports in scope.
+    // Two callees need the imported-components map: compile_spec_with_resolved for symbol
+    // validation and apply_spec_schdoc for pin position resolution. Build it twice since
+    // ComponentSpec does not implement Clone.
+    let imported_components_for_exec = compile_imported_schlibs(&resolved)
+        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
     let imported_components = compile_imported_schlibs(&resolved)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
     let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
@@ -1430,7 +1439,7 @@ fn compile_and_resolve(
         .chain(resolved.named_imports.values().map(|(p, _)| p.clone()))
         .collect();
 
-    Ok(CompileResult { model, import_paths })
+    Ok(CompileResult { model, import_paths, imported_components: imported_components_for_exec })
 }
 
 fn run_info(path: &std::path::Path, format: &str) -> anyhow::Result<()> {

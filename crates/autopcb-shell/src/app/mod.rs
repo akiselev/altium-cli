@@ -4761,7 +4761,7 @@ fn build_schdoc_from_spec_source(source_text: &str) -> Result<altium_format::Sch
         return Err("spec did not compile as SchDoc".to_owned());
     };
     let mut doc = altium_format::SchDoc::new_blank_ad26();
-    apply_spec_schdoc(&spec, &mut doc).map_err(|e| e.to_string())?;
+    apply_spec_schdoc(&spec, &mut doc, &std::collections::HashMap::new()).map_err(|e| e.to_string())?;
     Ok(doc)
 }
 

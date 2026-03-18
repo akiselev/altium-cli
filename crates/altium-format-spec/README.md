@@ -232,6 +232,44 @@ Altium internal coordinates are 10,000 units/mil, so Coord→f64→Coord round-t
 at most ~0.003 mm error. The 0.01 mm threshold (3× round-trip error) suppresses encoding
 artifacts while catching real moves. 0.1° equals Altium's minimum UI rotation granularity.
 
+**Pin orientation transform order: mirror then rotate.** When resolving `pin X -> #NET`
+connections, a pin's orientation from the SchLib must be transformed by the component's
+placement. Mirror is applied first (flips left↔right, i.e., 0°↔180°; 90° and 270°
+unchanged), then the component rotation is added modulo 360°. Reversing the order produces
+wrong stub directions. This matches the `transform_pin_position` function used elsewhere in
+the executor.
+
+Example: pin orientation 0° (right) + mirror=true + rotation=90° → mirror flips to 180°
+(left) → add 90° = 270° (down). Stub extends downward.
+
+**NetLabel orientation convention: 0° or 90° only, never 180°/270°.** Altium's NetLabel
+`orientation` field accepts four values, but standard Altium schematics always use 0° for
+horizontal stubs (both left- and right-pointing) and 90° for vertical stubs (both up- and
+down-pointing). Using 180° or 270° produces text that reads backward or upside-down.
+`remap_label_orient()` enforces this: Rotate180 → Rotate0, Rotate270 → Rotate90.
+
+**Power symbol orientation matches stub direction directly.** A `PowerObject`'s
+`orientation` field equals the stub direction (the direction the pin extends). There is no
+secondary remapping — the power symbol rotates to face wherever the stub points. This
+differs from NetLabel where the text-readability constraint requires collapsing 180°/270°.
+
+**`PinConnectionSpec` stays in model; executor resolves at apply time.** Pin connection
+declarations are not collapsed to wire coordinates during compilation. The executor needs
+live access to `imported_components` (a `HashMap<String, SchLibSpec>` threaded from the
+CLI) to look up pin positions from the imported SchLib. Keeping the spec-level intent in
+`PinConnectionSpec` also preserves a clean separation between "what the user declared" and
+"what Altium objects result." Round-trip dump of `pin X -> #NET` from an existing SchDoc
+is not implemented; dump emits the resolved low-level wire/label objects instead.
+
+**`Value::ImportRef` carries alias provenance for compile-time symbol validation.** When
+`eval_field_access` resolves `$mcu.ESP32_C6` and the base `Value` is an
+`ImportObject { alias, entries }`, it returns `Value::ImportRef { alias, name }` instead
+of a plain `Value::String`. The compiler recognises `ImportRef` in the `symbol:` property
+and emits `SymbolRef::Import { alias, name }`, then validates `name` against the
+`imported_components` SchLib at compile time. All other field access paths (non-import
+objects) continue to return `Value::String`. This change is contained entirely to
+`eval_field_access`.
+
 ## Invariants
 
 - `compiler.rs` resolves all unit conversions (mm, mil, inch) to internal Altium coords
@@ -240,3 +278,12 @@ artifacts while catching real moves. 0.1° equals Altium's minimum UI rotation g
   normalizes to lowercase before storing in SpecModel.
 - The reconciler is read-only with respect to the document. Only `apply_spec_*` mutates.
 - `dump_*` always sorts output by designator/name for stable diffs.
+- A net name in `pin X -> #NET` that matches any key in `SheetSpec::power_declarations`
+  generates a `PowerObject`; all other net names generate a `NetLabel`. The compiler
+  pre-scans all `power {}` blocks before processing components to populate this map.
+- `remap_label_orient()` must never return `Rotate180` or `Rotate270`. Any new caller
+  that bypasses `remap_label_orient` must document why it can produce non-standard
+  orientations.
+- `SymbolRef::Import { alias, name }` is only produced by `compile_schdoc_component`
+  when the `symbol:` value is `Value::ImportRef`. `SymbolRef::Literal` is the fallback for
+  all other string-valued `symbol:` properties.

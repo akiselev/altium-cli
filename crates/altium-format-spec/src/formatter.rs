@@ -579,6 +579,7 @@ impl<'a> Printer<'a> {
             ComponentItem::Property(p) => self.fmt_property(p),
             ComponentItem::LetBinding(lb) => self.fmt_let_binding(lb),
             ComponentItem::Part(part) => self.fmt_part_block(part),
+            ComponentItem::PinConnection(pc) => self.fmt_pin_connection(pc),
             ComponentItem::Pin(pin) => self.fmt_pin_decl(pin),
             ComponentItem::Parameter(param) => self.fmt_parameter_decl(param),
             ComponentItem::Alias(alias) => self.fmt_alias_decl(alias),
@@ -614,6 +615,21 @@ impl<'a> Printer<'a> {
             PartItem::Pin(pin) => self.fmt_pin_decl(pin),
             PartItem::Graphic(g) => self.fmt_graphic_decl(g),
             PartItem::Property(p) => self.fmt_property(p),
+        }
+    }
+
+    fn fmt_pin_connection(&mut self, pc: &PinConnectionDecl) {
+        self.push("pin ");
+        self.push(&pc.pin_name.node);
+        self.push(" -> ");
+        match &pc.target {
+            PinConnectionTarget::NetRef(net) => {
+                self.push("#");
+                self.push(&net.node);
+            }
+            PinConnectionTarget::NoConnect => {
+                self.push("nc");
+            }
         }
     }
 

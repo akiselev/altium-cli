@@ -5,7 +5,7 @@ use super::ast::{
     ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, ConstraintDecl, ConstraintKind,
     DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl,
     ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl, FootprintItem,
-    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
+    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding, PinConnectionDecl, PinConnectionTarget,
     MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl,
     PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PcbDocPrimitiveDecl, PinDecl,
     PinPadPair, PlaceDecl, PlacementConstraintDecl, PlacementDecl, PlacementGroupDecl,
@@ -572,6 +572,57 @@ impl<'a> SpecParser<'a> {
 
         // pin declaration
         if self.at(&TokenKind::Pin) {
+            // Peek ahead: Pin IDENT Arrow | Pin Integer Arrow → pin connection
+            // Pin IDENT/Integer LBrace → pin block declaration (not a pin connection)
+            let pin_name_offset = 1;
+            let after_name_offset = 2;
+            let is_pin_connection = {
+                let after_pin = self.peek_ahead(pin_name_offset);
+                let name_is_scalar = matches!(
+                    after_pin,
+                    TokenKind::Ident(_) | TokenKind::Integer(_)
+                );
+                name_is_scalar
+                    && self.peek_ahead(after_name_offset).same_variant(&TokenKind::Arrow)
+            };
+            if is_pin_connection {
+                let start = self.current_span();
+                self.bump(); // consume `pin`
+                let pin_name_str = match self.current_kind().clone() {
+                    TokenKind::Ident(s) => {
+                        let span = self.current_span();
+                        self.bump();
+                        Spanned::new(s, span)
+                    }
+                    TokenKind::Integer(n) => {
+                        let span = self.current_span();
+                        self.bump();
+                        Spanned::new(n.to_string(), span)
+                    }
+                    _ => unreachable!("guarded by is_pin_connection check"),
+                };
+                self.expect(&TokenKind::Arrow, "expected '->'")?;
+                let target = match self.current_kind().clone() {
+                    TokenKind::Hash => {
+                        self.bump(); // consume `#`
+                        let net_name = self.expect_ident("expected net name after '#'")?;
+                        PinConnectionTarget::NetRef(net_name)
+                    }
+                    TokenKind::Ident(ref s) if s == "nc" => {
+                        self.bump();
+                        PinConnectionTarget::NoConnect
+                    }
+                    TokenKind::Ident(_) => {
+                        return Err(self.err("expected '#' before net name"));
+                    }
+                    _ => {
+                        return Err(self.err("expected '#NET' or 'nc' after '->'"));
+                    }
+                };
+                let end = self.prev_span();
+                let decl = PinConnectionDecl { pin_name: pin_name_str, target };
+                return Ok(Spanned::new(ComponentItem::PinConnection(decl), start.merge(end)));
+            }
             let decl = self.parse_pin(None)?;
             let end = self.prev_span();
             return Ok(Spanned::new(ComponentItem::Pin(decl), start.merge(end)));
@@ -712,7 +763,7 @@ impl<'a> SpecParser<'a> {
         }
 
         Err(self.err(
-            "expected component item (property, pin, parameter, alias, footprint, part, graphic, swap_group, or let binding)",
+            "expected component item (property, pin, parameter, alias, footprint, part, graphic, swap_group, pin connection, or let binding)",
         ))
     }
 
@@ -2528,7 +2579,7 @@ impl<'a> SpecParser<'a> {
                 self.bump();
                 Ok(Spanned::new(Expr::Ident("sheet".to_string()), start))
             }
-            // New placement keywords that can also appear as identifier values in expressions.
+            // Placement keywords that also appear as identifier values in expressions.
             // e.g. `unplaced: autoplace`, `algorithm: full_pipeline`
             TokenKind::Autoplace => {
                 self.bump();
@@ -3781,5 +3832,110 @@ placement {
         } else {
             panic!("expected Sheet");
         }
+    }
+
+    // ── Pin connection tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_pin_connection_net_ref_ident() {
+        let f = parse(r#"component MCU { pin GPIO4 -> #SDA }"#);
+        if let SpecItem::Component(c) = &f.items[0].node {
+            assert_eq!(c.body.len(), 1);
+            if let ComponentItem::PinConnection(pc) = &c.body[0].node {
+                assert_eq!(pc.pin_name.node, "GPIO4");
+                if let PinConnectionTarget::NetRef(net) = &pc.target {
+                    assert_eq!(net.node, "SDA");
+                } else {
+                    panic!("expected NetRef");
+                }
+            } else {
+                panic!("expected PinConnection");
+            }
+        } else {
+            panic!("expected Component");
+        }
+    }
+
+    #[test]
+    fn test_pin_connection_integer_designator() {
+        let f = parse(r#"component U1 { pin 1 -> #VCC }"#);
+        if let SpecItem::Component(c) = &f.items[0].node {
+            if let ComponentItem::PinConnection(pc) = &c.body[0].node {
+                assert_eq!(pc.pin_name.node, "1");
+                if let PinConnectionTarget::NetRef(net) = &pc.target {
+                    assert_eq!(net.node, "VCC");
+                } else {
+                    panic!("expected NetRef");
+                }
+            } else {
+                panic!("expected PinConnection");
+            }
+        } else {
+            panic!("expected Component");
+        }
+    }
+
+    #[test]
+    fn test_pin_connection_no_connect() {
+        let f = parse(r#"component U1 { pin NC1 -> nc }"#);
+        if let SpecItem::Component(c) = &f.items[0].node {
+            if let ComponentItem::PinConnection(pc) = &c.body[0].node {
+                assert_eq!(pc.pin_name.node, "NC1");
+                assert_eq!(pc.target, PinConnectionTarget::NoConnect);
+            } else {
+                panic!("expected PinConnection");
+            }
+        } else {
+            panic!("expected Component");
+        }
+    }
+
+    #[test]
+    fn test_pin_connection_missing_hash_error() {
+        let err = parse_err(r#"component U1 { pin GPIO4 -> SDA }"#);
+        assert!(
+            err.message.contains("expected '#' before net name"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_pin_block_backward_compat() {
+        // `pin 1 { ... }` must still parse as a PinDecl, not a PinConnection.
+        let f = parse(r#"component R { pin 1 { electrical: passive } }"#);
+        if let SpecItem::Component(c) = &f.items[0].node {
+            assert!(
+                matches!(c.body[0].node, ComponentItem::Pin(_)),
+                "expected Pin, got {:?}",
+                c.body[0].node
+            );
+        } else {
+            panic!("expected Component");
+        }
+    }
+
+    #[test]
+    fn test_minus_in_expression_unchanged() {
+        // `-` in arithmetic expressions must still work after adding Arrow token.
+        let f = parse("x = 10 - 3");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            assert!(
+                matches!(b.value.node, Expr::BinOp(_, _, _)),
+                "expected BinOp for subtraction"
+            );
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_pin_connection_keyword_as_pin_name() {
+        // `pin net -> #CLK` — "net" is a keyword but context allows it as pin name since
+        // the lexer emits it as TokenKind::Net; this tests the peek-ahead fallthrough path.
+        // Since "net" is not Ident(_) or Integer(_), it falls through to pin block parsing,
+        // which will then fail — that is the correct behavior.
+        let err = parse_err(r#"component U1 { pin net -> #CLK }"#);
+        assert!(!err.message.is_empty());
     }
 }

@@ -1165,6 +1165,7 @@ mod tests {
             is_mirrored: None,
             description: None,
             parameters: Vec::new(),
+            pin_connections: Vec::new(),
         }
     }
 
@@ -1172,6 +1173,7 @@ mod tests {
         SheetSpec {
             annotation: None,
             fonts: Vec::new(),
+            power_declarations: std::collections::HashMap::new(),
             custom_width: None,
             custom_height: None,
             snap_grid_on: None,
@@ -2301,6 +2303,7 @@ mod proptests {
             let mut sheet = SheetSpec {
                 annotation: None,
                 fonts: Vec::new(),
+                power_declarations: std::collections::HashMap::new(),
                 custom_width: None,
                 custom_height: None,
                 snap_grid_on: None,
@@ -2330,6 +2333,7 @@ mod proptests {
                     is_mirrored: None,
                     description: None,
                     parameters: Vec::new(),
+                    pin_connections: Vec::new(),
                 });
             }
 

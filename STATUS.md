@@ -471,6 +471,20 @@ The formatter handles constraint blocks in `fmt_sheet_item`. 13 new parser tests
 all five kinds, empty body, annotation, unknown-kind error, outside-sheet error, rule with
 scope, and backward compatibility for existing specs without constraints.
 
+**Pin connections & validated symbol references (M9):** `pin X -> #NET` syntax inside
+schdoc component bodies declares pin-to-net connections. The compiler classifies targets
+as `Signal`, `Power` (if matching a `power` declaration), or `NoConnect` (`pin X -> nc`).
+The executor resolves pin positions from imported SchLib data via `resolve_pin` (name-first,
+designator-fallback), transforms orientation (mirror then rotate), and generates Wire stubs
+(200mil), NetLabels (signal), PowerObjects (power), or NoConnect markers. `symbol: $alias.Name`
+provides compile-time validated symbol references via `Value::ImportRef` provenance tracking —
+field access on `Value::ImportObject` returns `ImportRef` instead of `String`, enabling the
+compiler to validate that the referenced symbol exists in the imported SchLib. The `Arrow`
+(`->`) token, `PinConnectionDecl`/`PinConnectionTarget` AST types, `PinConnectionSpec` model
+type, and `SheetSpec::power_declarations` support the full pipeline. CLI threads
+`imported_components` from `compile_imported_schlibs` through to `apply_spec_schdoc`.
+27 new tests across parser (5), compiler (8), and executor (14).
+
 ---
 
 ## Known Issues & Gaps

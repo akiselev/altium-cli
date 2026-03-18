@@ -68,6 +68,7 @@ pub enum TokenKind {
     Dot,
     DotDotDot,
     Eq,
+    Arrow,
     Plus,
     Minus,
     Star,
@@ -128,6 +129,7 @@ impl TokenKind {
                 | (Dot, Dot)
                 | (DotDotDot, DotDotDot)
                 | (Eq, Eq)
+                | (Arrow, Arrow)
                 | (Plus, Plus)
                 | (Minus, Minus)
                 | (Star, Star)
@@ -254,8 +256,13 @@ pub fn lex(input: &str) -> Result<(Vec<Token>, Vec<CommentToken>), ParseError> {
                 i += 1;
             }
             b'-' => {
-                out.push(tok(TokenKind::Minus, i, i + 1));
-                i += 1;
+                if peek_byte(bytes, i + 1) == Some(b'>') {
+                    out.push(tok(TokenKind::Arrow, i, i + 2));
+                    i += 2;
+                } else {
+                    out.push(tok(TokenKind::Minus, i, i + 1));
+                    i += 1;
+                }
             }
             b'*' => {
                 out.push(tok(TokenKind::Star, i, i + 1));

@@ -93,12 +93,31 @@ pub enum ComponentItem {
     Property(Property),
     LetBinding(LetBinding),
     Part(PartBlock),
+    PinConnection(PinConnectionDecl),
     Pin(PinDecl),
     Parameter(ParameterDecl),
     Alias(AliasDecl),
     FootprintMap(FootprintMapDecl),
     Graphic(GraphicDecl),
     SwapGroup(SwapGroupDecl),
+}
+
+/// Target of a pin connection declaration: `pin X -> #NET` or `pin X -> nc`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PinConnectionTarget {
+    /// `#NAME` — a signal or power net reference.
+    NetRef(Spanned<String>),
+    /// `nc` — a no-connect marker.
+    NoConnect,
+}
+
+/// `pin NAME -> #NET` or `pin NAME -> nc` inside a schdoc component body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinConnectionDecl {
+    /// The pin name or designator (e.g. `GPIO4`, `1`).
+    pub pin_name: Spanned<String>,
+    /// The connection target.
+    pub target: PinConnectionTarget,
 }
 
 /// [binding =] part N { ... }

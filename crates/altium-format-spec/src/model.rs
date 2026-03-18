@@ -93,6 +93,28 @@ pub struct PinPadMap {
     pub pad: String,
 }
 
+// ── Pin connection model types ───────────────────────────────────────────────
+
+/// Target of a compiled pin connection.
+#[derive(Debug, Clone)]
+pub enum PinConnectionTarget {
+    /// A signal net — generates a NetLabel.
+    Signal(String),
+    /// A power net — generates a PowerObject (style from power_declarations).
+    Power(String),
+    /// No-connect — generates a NoConnect marker, no wire stub.
+    NoConnect,
+}
+
+/// A compiled pin-to-net connection for a placed SchDoc component.
+#[derive(Debug, Clone)]
+pub struct PinConnectionSpec {
+    /// Pin name or designator to look up in the SchLib ComponentSpec.
+    pub pin_name: String,
+    /// The resolved connection target.
+    pub target: PinConnectionTarget,
+}
+
 // ── SchDoc ──────────────────────────────────────────────────────────────────
 
 pub struct SchDocSpec {
@@ -103,6 +125,9 @@ pub struct SheetSpec {
     pub annotation: Option<CompiledAnnotation>,
     // Sheet metadata
     pub fonts: Vec<FontSpec>,
+    /// Power net declarations collected from top-level `power` items.
+    /// Keyed by net name (without `#` prefix). Used by executor for stub generation.
+    pub power_declarations: std::collections::HashMap<String, PowerObjectStyle>,
     pub custom_width: Option<Coord>,
     pub custom_height: Option<Coord>,
     pub snap_grid_on: Option<bool>,
@@ -159,6 +184,8 @@ pub struct SchDocComponentSpec {
     pub is_mirrored: Option<bool>,
     pub description: Option<String>,
     pub parameters: Vec<ParameterSpec>,
+    /// Pin-to-net connections declared with `pin X -> #NET` syntax.
+    pub pin_connections: Vec<PinConnectionSpec>,
 }
 
 /// How a SchDoc component references its symbol.
