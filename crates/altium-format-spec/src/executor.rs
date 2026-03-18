@@ -1024,7 +1024,7 @@ fn merge_graphics(existing: &mut Vec<api::Graphic>, spec_graphics: &[GraphicSpec
 fn pin_from_spec(spec: &PinSpec) -> api::Pin {
     api::Pin {
         designator: spec.designator.clone(),
-        name: spec.name.clone().unwrap_or_default(),
+        name: spec.name.clone().unwrap_or_else(|| spec.designator.clone()),
         electrical: spec.electrical.unwrap_or(PinElectricalType::Passive),
         location: spec.location,
         length: spec.length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord")),

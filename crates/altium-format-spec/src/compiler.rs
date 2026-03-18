@@ -12,7 +12,7 @@
 //! - `row`, `column`, `grid` blocks are skipped (M10).
 //! - Anchor references (`on:`, `after:`, `before:`) are resolved in M7.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
@@ -347,7 +347,7 @@ impl SpecCompiler {
         // Pass 1: build graphic binding map for anchor resolution.
         // Bound box-type graphics (rectangle, round_rectangle, text_frame, image)
         // expose named edges that pins can reference via `on: $body.left` etc.
-        let binding_map = build_graphic_binding_map(
+        let (mut binding_map, auto_sized) = build_graphic_binding_map(
             decl.body.iter().filter_map(|item| {
                 if let ComponentItem::Graphic(g) = &item.node { Some(g) } else { None }
             }),
@@ -366,13 +366,30 @@ impl SpecCompiler {
             })
             .collect();
 
+        // Pass 2b: auto-size any rectangles whose from/to were omitted.
+        if !auto_sized.is_empty() {
+            compute_auto_size_bounds(
+                &auto_sized,
+                &all_pin_decls_at_level,
+                decl.body.iter().filter_map(|item| {
+                    if let ComponentItem::Graphic(g) = &item.node { Some(g) } else { None }
+                }),
+                &mut binding_map,
+                &self.scope,
+            )?;
+        }
+
         // Compile children.
-        let mut pins = resolve_anchor_pins(&all_pin_decls_at_level, &binding_map, &self.scope)?;
+        let pins = resolve_anchor_pins(&all_pin_decls_at_level, &binding_map, &self.scope)?;
         let mut parameters = Vec::new();
         let mut aliases = Vec::new();
         let mut footprints = Vec::new();
         let mut graphics = Vec::new();
         let mut parts = Vec::new();
+
+        // Track auto-sized graphic binding names along with their source decl binding
+        // so we can patch from/to after compilation.
+        let mut auto_sized_graphic_indices: Vec<(usize, String)> = Vec::new();
 
         for item in &decl.body {
             match &item.node {
@@ -389,7 +406,14 @@ impl SpecCompiler {
                     footprints.push(self.compile_footprint_map(fp_decl)?);
                 }
                 ComponentItem::Graphic(graphic_decl) => {
-                    graphics.push(self.compile_sch_graphic(graphic_decl)?);
+                    let idx = graphics.len();
+                    let spec = self.compile_sch_graphic(graphic_decl)?;
+                    if let Some(b) = &graphic_decl.binding {
+                        if auto_sized.contains(&b.node) {
+                            auto_sized_graphic_indices.push((idx, b.node.clone()));
+                        }
+                    }
+                    graphics.push(spec);
                 }
                 ComponentItem::Part(part_block) => {
                     parts.push(self.compile_part_with_anchors(part_block, &binding_map)?);
@@ -400,6 +424,14 @@ impl SpecCompiler {
                 ComponentItem::SwapGroup(_) => {
                     // Already registered in scope; nothing to emit into the component spec.
                 }
+            }
+        }
+
+        // Patch auto-sized rectangle from/to with computed bounds.
+        for (idx, binding_name) in auto_sized_graphic_indices {
+            if let Some(geom) = binding_map.get(&binding_name) {
+                graphics[idx].properties.from = Some(geom.from);
+                graphics[idx].properties.to = Some(geom.to);
             }
         }
 
@@ -1004,16 +1036,16 @@ impl SpecCompiler {
         eval_let_bindings_slice(&part_lets, &mut self.scope)?;
 
         // Part-level graphic bindings (may shadow component-level ones).
-        let part_binding_map = {
+        let (mut part_binding_map, part_auto_sized) = {
             let part_graphics = part_block.body.iter().filter_map(|item| {
                 if let PartItem::Graphic(g) = &item.node { Some(g) } else { None }
             });
-            let mut m = build_graphic_binding_map(part_graphics, &self.scope)?;
+            let (mut m, auto_s) = build_graphic_binding_map(part_graphics, &self.scope)?;
             // Merge component-level map (part-level takes precedence).
             for (k, v) in binding_map {
                 m.entry(k.clone()).or_insert_with(|| v.clone());
             }
-            m
+            (m, auto_s)
         };
 
         let part_pin_decls: Vec<(&PinDecl, i32)> = part_block.body.iter()
@@ -1021,6 +1053,19 @@ impl SpecCompiler {
                 if let PartItem::Pin(p) = &item.node { Some((p, part_number)) } else { None }
             })
             .collect();
+
+        // Auto-size part-level rectangles whose from/to were omitted.
+        if !part_auto_sized.is_empty() {
+            compute_auto_size_bounds(
+                &part_auto_sized,
+                &part_pin_decls,
+                part_block.body.iter().filter_map(|item| {
+                    if let PartItem::Graphic(g) = &item.node { Some(g) } else { None }
+                }),
+                &mut part_binding_map,
+                &self.scope,
+            )?;
+        }
 
         let mut pins = resolve_anchor_pins(&part_pin_decls, &part_binding_map, &self.scope)?;
 
@@ -1050,12 +1095,28 @@ impl SpecCompiler {
         }
 
         let mut graphics = Vec::new();
+        let mut auto_sized_part_graphic_indices: Vec<(usize, String)> = Vec::new();
         for item in &part_block.body {
             match &item.node {
                 PartItem::Graphic(graphic_decl) => {
-                    graphics.push(self.compile_sch_graphic(graphic_decl)?);
+                    let idx = graphics.len();
+                    let spec = self.compile_sch_graphic(graphic_decl)?;
+                    if let Some(b) = &graphic_decl.binding {
+                        if part_auto_sized.contains(&b.node) {
+                            auto_sized_part_graphic_indices.push((idx, b.node.clone()));
+                        }
+                    }
+                    graphics.push(spec);
                 }
                 PartItem::Pin(_) | PartItem::LetBinding(_) | PartItem::Property(_) => {}
+            }
+        }
+
+        // Patch auto-sized rectangle from/to with computed bounds.
+        for (idx, binding_name) in auto_sized_part_graphic_indices {
+            if let Some(geom) = part_binding_map.get(&binding_name) {
+                graphics[idx].properties.from = Some(geom.from);
+                graphics[idx].properties.to = Some(geom.to);
             }
         }
 
@@ -3281,11 +3342,16 @@ impl BoxGeometry {
 pub type GraphicBindingMap = HashMap<String, BoxGeometry>;
 
 /// Build a GraphicBindingMap by scanning bound box-type graphics in the current scope.
+///
+/// Returns `(map, auto_sized)` where `auto_sized` contains binding names whose
+/// `from`/`to` were absent — they get a zero placeholder and will be patched later
+/// by `compute_auto_size_bounds`.
 fn build_graphic_binding_map<'a>(
     graphic_decls: impl Iterator<Item = &'a crate::ast::GraphicDecl>,
     scope: &ScopeStack,
-) -> Result<GraphicBindingMap, SpecError> {
+) -> Result<(GraphicBindingMap, HashSet<String>), SpecError> {
     let mut map = GraphicBindingMap::new();
+    let mut auto_sized: HashSet<String> = HashSet::new();
 
     for decl in graphic_decls {
         let binding_name = match &decl.binding {
@@ -3305,17 +3371,24 @@ fn build_graphic_binding_map<'a>(
         let props = eval_object_to_map(&decl.body.node, scope)?;
         let from = match props.get("from") {
             Some(v) => value_to_coord_point(v, Some(decl.body.span))?,
-            None => continue, // can't compute edges without geometry
+            None => {
+                // Auto-sized: placeholder bounds, will be computed from pin extents.
+                auto_sized.insert(binding_name.clone());
+                CoordPoint::zero()
+            }
         };
         let to = match props.get("to") {
             Some(v) => value_to_coord_point(v, Some(decl.body.span))?,
-            None => continue,
+            None => {
+                auto_sized.insert(binding_name.clone());
+                CoordPoint::zero()
+            }
         };
 
         map.insert(binding_name, BoxGeometry { from, to });
     }
 
-    Ok(map)
+    Ok((map, auto_sized))
 }
 
 // ── Anchor expression parsing ─────────────────────────────────────────────────
@@ -3441,6 +3514,296 @@ enum PinAnchorMode {
         before_ref: String,
         gap: i32,
     },
+    /// No `on:`, but `after: $ref` present — binding+field will be inferred from the chain.
+    InferredAfter {
+        after_ref: String,
+        gap: i32,
+    },
+    /// No `on:`, but `before: $ref` present — binding+field will be inferred from the chain.
+    InferredBefore {
+        before_ref: String,
+        gap: i32,
+    },
+}
+
+/// Auto-size rectangle bounds from pin extents.
+///
+/// For each binding in `auto_sized`, groups pins by their resolved edge, sums gaps along
+/// each edge chain, and sets `from`/`to` in `binding_map` to enclose all pins with margins.
+///
+/// Properties read from rectangle graphic body (all optional):
+/// - `margin`    (default 20mil = 200_000)
+/// - `min_width` (default 80mil = 800_000)
+/// - `min_height`(default 50mil = 500_000)
+fn compute_auto_size_bounds<'a>(
+    auto_sized: &HashSet<String>,
+    pin_decls: &[(&'a crate::ast::PinDecl, i32)],
+    graphic_decls: impl Iterator<Item = &'a crate::ast::GraphicDecl>,
+    binding_map: &mut GraphicBindingMap,
+    scope: &ScopeStack,
+) -> Result<(), SpecError> {
+    if auto_sized.is_empty() {
+        return Ok(());
+    }
+
+    // Parse per-binding rectangle properties (padding, min_width, min_height).
+    struct RectProps {
+        padding: i32,
+        min_width: i32,
+        min_height: i32,
+    }
+    let mut rect_props_map: HashMap<String, RectProps> = HashMap::new();
+    for decl in graphic_decls {
+        let binding_name = match &decl.binding {
+            Some(b) => b.node.clone(),
+            None => continue,
+        };
+        if !auto_sized.contains(&binding_name) {
+            continue;
+        }
+        let props = eval_object_to_map(&decl.body.node, scope)?;
+        // padding: space from body edge to first/last pin (default 20mil = 200,000)
+        let padding = get_coord_opt(&props, "padding")?.map(|c| c.raw()).unwrap_or(200_000);
+        // min dimensions (default 50mil × 50mil = 500,000)
+        let min_width = get_coord_opt(&props, "min_width")?.map(|c| c.raw()).unwrap_or(500_000);
+        let min_height = get_coord_opt(&props, "min_height")?.map(|c| c.raw()).unwrap_or(500_000);
+        rect_props_map.insert(binding_name, RectProps { padding, min_width, min_height });
+    }
+
+    // For each auto-sized binding, accumulate extent per edge.
+    // extent = sum of all gaps in the chain (root_gap + subsequent gaps).
+    for binding_name in auto_sized {
+        // Collect pins belonging to this binding, grouped by edge field.
+        struct EdgePin {
+            pin_binding: Option<String>,
+            gap: i32,
+        }
+        let mut edge_pins: HashMap<String, Vec<EdgePin>> = HashMap::new();
+
+        for (decl, _) in pin_decls {
+            let on_ref = extract_on_ref(&decl.body.node);
+            let field = if let Some((ref b, ref f)) = on_ref {
+                if b != binding_name { continue; }
+                f.clone()
+            } else {
+                // Inferred — need to follow chain; we handle this after initial pass.
+                continue;
+            };
+
+            let props_map = eval_object_to_map_skip_anchor_keys(&decl.body.node, scope);
+            let gap = if let Ok(ref m) = props_map {
+                get_coord_opt(m, "gap")?.map(|c| c.raw()).unwrap_or(500_000)
+            } else {
+                1_000_000
+            };
+            let pin_binding = decl.binding.as_ref().map(|b| b.node.clone())
+                .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
+
+            edge_pins.entry(field).or_default().push(EdgePin { pin_binding, gap });
+        }
+
+        // Also include inferred pins — walk each inferred pin's chain to find its edge.
+        // Build a name -> (on_ref, field) lookup from the direct pins we already have.
+        let pin_field_lookup: HashMap<String, String> = edge_pins.iter()
+            .flat_map(|(field, pins)| {
+                pins.iter().filter_map(move |p| {
+                    p.pin_binding.as_ref().map(|b| (b.clone(), field.clone()))
+                })
+            })
+            .collect();
+
+        for (decl, _) in pin_decls {
+            if extract_on_ref(&decl.body.node).is_some() {
+                continue; // already handled above
+            }
+            let after = extract_sequence_ref(&decl.body.node, "after");
+            let before_ref_raw = extract_sequence_ref(&decl.body.node, "before");
+            if after.is_none() && before_ref_raw.is_none() {
+                continue;
+            }
+            // Walk chain to find field.
+            let chain_ref = after.as_ref().or(before_ref_raw.as_ref()).unwrap();
+            let field = {
+                let mut visited: HashSet<String> = HashSet::new();
+                let mut cur = chain_ref.clone();
+                let mut found: Option<String> = None;
+                loop {
+                    if !visited.insert(cur.clone()) { break; } // cycle
+                    if let Some(f) = pin_field_lookup.get(&cur) {
+                        found = Some(f.clone());
+                        break;
+                    }
+                    // Look up in pin_decls to follow chain.
+                    let next = pin_decls.iter().find_map(|(d, _)| {
+                        let bn = d.binding.as_ref().map(|b| b.node.clone())
+                            .unwrap_or_else(|| format!("pin{}", d.name.node.as_str()));
+                        if bn == cur {
+                            extract_sequence_ref(&d.body.node, "after")
+                                .or_else(|| extract_sequence_ref(&d.body.node, "before"))
+                        } else {
+                            None
+                        }
+                    });
+                    match next {
+                        Some(n) => cur = n,
+                        None => break,
+                    }
+                }
+                match found {
+                    Some(f) => f,
+                    None => continue, // couldn't resolve — skip this pin
+                }
+            };
+
+            let props_map = eval_object_to_map_skip_anchor_keys(&decl.body.node, scope);
+            let gap = if let Ok(ref m) = props_map {
+                get_coord_opt(m, "gap")?.map(|c| c.raw()).unwrap_or(500_000)
+            } else {
+                1_000_000
+            };
+            let pin_binding = decl.binding.as_ref().map(|b| b.node.clone())
+                .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
+
+            edge_pins.entry(field).or_default().push(EdgePin { pin_binding, gap });
+        }
+
+        // Compute extent for each edge: padding + (n-1) * gaps + padding.
+        // Compute extent for each edge:
+        // root_pin_gap (start padding) + (n-1) inter-pin gaps + root_pin_gap (end padding)
+        // The root pin's gap acts as padding from both edges.
+        let extent_for_edge = |field: &str| -> i32 {
+            let pins = match edge_pins.get(field) {
+                Some(p) if !p.is_empty() => p,
+                _ => return 0,
+            };
+            // Root pin gap acts as padding from edge start
+            let start_padding = pins[0].gap;
+            // Inter-pin spacing: sum of gaps for chained pins
+            let inter_pin: i32 = pins.iter().skip(1).map(|p| p.gap).sum();
+            // Use root pin gap as end padding too (symmetric)
+            start_padding + inter_pin + start_padding
+        };
+
+        let left_extent = extent_for_edge("left");
+        let right_extent = extent_for_edge("right");
+        let top_extent = extent_for_edge("top");
+        let bottom_extent = extent_for_edge("bottom");
+
+        let rp = rect_props_map.get(binding_name).map(|r| (r.padding, r.min_width, r.min_height))
+            .unwrap_or((200_000, 500_000, 500_000));
+        let (_padding, min_width, min_height) = rp;
+
+        // Total extent already includes start/end padding from root pin gap.
+        let height_from_pins = left_extent.max(right_extent);
+        let width_from_pins = top_extent.max(bottom_extent);
+
+        let height = height_from_pins.max(min_height);
+        let width = width_from_pins.max(min_width);
+
+        let from = CoordPoint::new(Coord::new(-(width / 2)), Coord::new(-(height / 2)));
+        let to = CoordPoint::new(Coord::new(width / 2), Coord::new(height / 2));
+
+        if let Some(geom) = binding_map.get_mut(binding_name) {
+            geom.from = from;
+            geom.to = to;
+        }
+    }
+
+    Ok(())
+}
+
+/// Walk `InferredAfter`/`InferredBefore` chains to find an explicit `on:` edge, then
+/// promote the inferred pin to `After`/`Before` with the resolved binding+field.
+fn resolve_inferred_edges(pending: &mut Vec<PendingPin>) -> Result<(), SpecError> {
+    // Build name→index map.
+    let name_to_idx: HashMap<String, usize> = pending.iter().enumerate()
+        .filter_map(|(i, p)| p.binding_name.as_ref().map(|b| (b.clone(), i)))
+        .collect();
+
+    // Collect the indices that are currently Inferred*.
+    let inferred_indices: Vec<usize> = pending.iter().enumerate()
+        .filter(|(_, p)| matches!(
+            &p.anchor_mode,
+            PinAnchorMode::InferredAfter { .. } | PinAnchorMode::InferredBefore { .. }
+        ))
+        .map(|(i, _)| i)
+        .collect();
+
+    for start_idx in inferred_indices {
+        // Walk the chain from start_idx until finding a pin with explicit binding+field.
+        let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut current = start_idx;
+
+        // The is_after flag follows whether each hop in the chain is "after" or "before".
+        let is_after = matches!(&pending[start_idx].anchor_mode, PinAnchorMode::InferredAfter { .. });
+
+        loop {
+            if !visited.insert(current) {
+                return Err(SpecError::no_span(
+                    SpecErrorCode::CircularBinding,
+                    format!(
+                        "circular inferred anchor chain detected at pin '{}'",
+                        pending[current].decl.name.node.as_str()
+                    ),
+                ));
+            }
+
+            let ref_name = match &pending[current].anchor_mode {
+                PinAnchorMode::InferredAfter { after_ref, .. } => after_ref.clone(),
+                PinAnchorMode::InferredBefore { before_ref, .. } => before_ref.clone(),
+                // Found an explicit edge — use its binding+field.
+                PinAnchorMode::After { binding, field, .. }
+                | PinAnchorMode::Before { binding, field, .. }
+                | PinAnchorMode::AtPosition { binding, field, .. } => {
+                    let binding = binding.clone();
+                    let field = field.clone();
+                    // Now patch the start_idx pin.
+                    let (orig_ref, gap) = match &pending[start_idx].anchor_mode {
+                        PinAnchorMode::InferredAfter { after_ref, gap } => (after_ref.clone(), *gap),
+                        PinAnchorMode::InferredBefore { before_ref, gap } => (before_ref.clone(), *gap),
+                        _ => unreachable!(),
+                    };
+                    if is_after {
+                        pending[start_idx].anchor_mode = PinAnchorMode::After {
+                            binding,
+                            field,
+                            after_ref: orig_ref,
+                            gap,
+                        };
+                    } else {
+                        pending[start_idx].anchor_mode = PinAnchorMode::Before {
+                            binding,
+                            field,
+                            before_ref: orig_ref,
+                            gap,
+                        };
+                    }
+                    break;
+                }
+                PinAnchorMode::Absolute => {
+                    return Err(SpecError::no_span(
+                        SpecErrorCode::UndefinedBinding,
+                        format!(
+                            "pin '{}' uses after:/before: without on:, but the referenced pin '{}' has no anchor edge",
+                            pending[start_idx].decl.name.node.as_str(),
+                            pending[current].decl.name.node.as_str(),
+                        ),
+                    ));
+                }
+            };
+
+            // Follow the chain to the referenced pin.
+            let next_idx = name_to_idx.get(&ref_name).copied().ok_or_else(|| {
+                SpecError::no_span(
+                    SpecErrorCode::UndefinedBinding,
+                    format!("inferred anchor chain: referenced pin '${ref_name}' not found"),
+                )
+            })?;
+            current = next_idx;
+        }
+    }
+
+    Ok(())
 }
 
 /// Resolve all anchor-based and absolute pins in a pin list.
@@ -3477,9 +3840,9 @@ fn resolve_anchor_pins(
 
             let props_map = eval_object_to_map_skip_anchor_keys(&decl.body.node, scope);
             let gap = if let Ok(ref m) = props_map {
-                get_coord_opt(m, "gap")?.map(|c| c.raw()).unwrap_or(0)
+                get_coord_opt(m, "gap")?.map(|c| c.raw()).unwrap_or(500_000)
             } else {
-                0
+                1_000_000
             };
 
             if let Some(after_ref) = after {
@@ -3494,7 +3857,22 @@ fn resolve_anchor_pins(
                 }
             }
         } else {
-            PinAnchorMode::Absolute
+            // No on: — check for after/before to infer edge from referenced pin.
+            let after = extract_sequence_ref(&decl.body.node, "after");
+            let before = extract_sequence_ref(&decl.body.node, "before");
+            let props_map = eval_object_to_map_skip_anchor_keys(&decl.body.node, scope);
+            let gap = if let Ok(ref m) = props_map {
+                get_coord_opt(m, "gap")?.map(|c| c.raw()).unwrap_or(500_000)
+            } else {
+                1_000_000
+            };
+            if let Some(after_ref) = after {
+                PinAnchorMode::InferredAfter { after_ref, gap }
+            } else if let Some(before_ref) = before {
+                PinAnchorMode::InferredBefore { before_ref, gap }
+            } else {
+                PinAnchorMode::Absolute
+            }
         };
 
         // Explicit binding (`p1 = pin 1 { ... }`) takes priority.
@@ -3506,6 +3884,10 @@ fn resolve_anchor_pins(
             .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
         pending.push(PendingPin { decl, owner_part_id: *owner_part_id, binding_name, anchor_mode: mode });
     }
+
+    // Resolve InferredAfter/InferredBefore chains — walk until finding a pin with
+    // explicit binding+field (After/Before/AtPosition), then copy that binding+field.
+    resolve_inferred_edges(&mut pending)?;
 
     // Group anchor pins by (binding_name, edge_field) for sequencing.
     // Absolute pins can be compiled immediately.
@@ -3653,7 +4035,10 @@ fn get_dep_edge(dep_pin: &PendingPin, _ref_binding: &str) -> Option<String> {
         PinAnchorMode::AtPosition { field, .. }
         | PinAnchorMode::After { field, .. }
         | PinAnchorMode::Before { field, .. } => Some(field.clone()),
-        PinAnchorMode::Absolute => None,
+        // Inferred modes don't have a resolved field yet; topo sort runs after resolution.
+        PinAnchorMode::InferredAfter { .. }
+        | PinAnchorMode::InferredBefore { .. }
+        | PinAnchorMode::Absolute => None,
     }
 }
 
@@ -3718,7 +4103,7 @@ fn compile_one_pin(
             ))?;
             let side = get_enum_opt(&props, "side", parse_placement_side)?
                 .unwrap_or(PlacementSide::Outside);
-            let gap = get_coord_opt(&props, "gap")?.map(|c| c.raw()).unwrap_or(0);
+            let gap = get_coord_opt(&props, "gap")?.map(|c| c.raw()).unwrap_or(500_000);
             let offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
             let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (location, orientation) = resolve_anchor_placement(
@@ -3833,6 +4218,12 @@ fn compile_one_pin(
                 pair_swap_group: pair_swap_group.clone(),
             })
         }
+        PinAnchorMode::InferredAfter { .. } | PinAnchorMode::InferredBefore { .. } => {
+            return Err(SpecError::no_span(
+                SpecErrorCode::UndefinedBinding,
+                "inferred anchor mode was not resolved before pin compilation (internal error)",
+            ));
+        }
     }
 }
 
@@ -3878,12 +4269,28 @@ pub fn resolve_anchor_placement(
     edge: &Edge,
     at_pos: AnchorPosition,
     side: PlacementSide,
-    _gap: Coord,
+    gap: Coord,
     pin_length: Coord,
     offset: Option<CoordPoint>,
 ) -> Result<(CoordPoint, RotationBy90), SpecError> {
     // Step 1: position along the edge.
-    let along = edge.point_at(at_pos);
+    // For start/end positions, apply gap as an inward offset from the edge boundary.
+    // This creates padding between the edge and the first/last pin.
+    let along = {
+        let base = edge.point_at(at_pos);
+        let dir = edge.side.forward_direction();
+        match at_pos {
+            AnchorPosition::Start => {
+                // Offset inward (in forward direction) from edge start
+                Coord::new(base.raw() + dir * gap.raw())
+            }
+            AnchorPosition::End => {
+                // Offset inward (against forward direction) from edge end
+                Coord::new(base.raw() - dir * gap.raw())
+            }
+            AnchorPosition::Center => base,
+        }
+    };
 
     // Step 2: fixed coordinate (perpendicular) with side offset.
     let side_offset = compute_side_offset(edge, side, pin_length);

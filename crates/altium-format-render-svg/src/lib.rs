@@ -115,9 +115,15 @@ fn compute_bounds(calls: &[DrawCall]) -> (f64, f64, f64, f64) {
 /// - Transform stack via `<g transform="...">` groups
 /// - Round stroke caps and joins (matching Altium's `PenInfo.cs` defaults)
 /// - Line dash patterns via `stroke-dasharray`
+/// Render draw calls to SVG with default padding (50 mils).
 pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
+    draw_calls_to_svg_with_padding(calls, 50.0)
+}
+
+/// Render draw calls to SVG with configurable padding in mils around the content.
+pub fn draw_calls_to_svg_with_padding(calls: &[DrawCall], padding_mils: f64) -> String {
     let bounds = compute_bounds(calls);
-    let margin = 10.0_f64;
+    let margin = padding_mils;
     let min_x = bounds.0 - margin;
     let max_x = bounds.1 + margin;
     let min_y = bounds.2 - margin;

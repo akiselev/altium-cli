@@ -29,7 +29,7 @@ pub(crate) fn component_to_internal(
 ) -> Result<(SchComponent, Vec<SchRecord>, Vec<SchRecord>, SchLibComponentIndex)> {
     let mut records = Vec::new();
 
-    // Compute body rectangle bounds for text placement.
+    // Compute body rectangle bounds and pin extents for text placement.
     // Scan graphics for the first solid rectangle to use as the body.
     let body_bounds = comp.graphics.iter().find_map(|g| {
         if let crate::api::schlib_types::Graphic::Rectangle(r) = g {
@@ -43,11 +43,23 @@ pub(crate) fn component_to_internal(
         }
         None
     });
-    // Designator above the body top; value at body center.
-    let desig_location = if let Some((_min_x, _max_x, _min_y, max_y)) = body_bounds {
-        use altium_format_types::Coord;
-        let offset = Coord::from_mils(15).unwrap_or(max_y);
-        CoordPoint::new(Coord::default(), max_y + offset)
+
+    // Designator at the top-right corner of the body rectangle.
+    use altium_format_types::Coord;
+    let desig_location = if let Some((_, max_x, _, max_y)) = body_bounds {
+        let offset = Coord::from_mils(15).expect("15 mils fits Coord");
+        CoordPoint::new(max_x, Coord::new(max_y.raw() + offset.raw()))
+    } else {
+        let offset = Coord::from_mils(15).expect("15 mils fits Coord");
+        CoordPoint::new(Coord::default(), offset)
+    };
+
+    // Value at the body center.
+    let value_location = if let Some((min_x, max_x, min_y, max_y)) = body_bounds {
+        CoordPoint::new(
+            Coord::new((min_x.raw() + max_x.raw()) / 2),
+            Coord::new((min_y.raw() + max_y.raw()) / 2),
+        )
     } else {
         CoordPoint::zero()
     };
@@ -81,8 +93,13 @@ pub(crate) fn component_to_internal(
     }
 
     // 2. Parameter records (RECORD=41)
+    // Place the first visible parameter (typically "Value") at the body center.
     for param in &comp.parameters {
-        records.push(SchRecord::Parameter(parameter_to_internal(param)));
+        let mut internal = parameter_to_internal(param);
+        if !internal.is_hidden && internal.location == CoordPoint::zero() {
+            internal.location = value_location;
+        }
+        records.push(SchRecord::Parameter(internal));
     }
 
     // 3. Pin records (RECORD=2)

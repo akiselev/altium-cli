@@ -90,33 +90,30 @@ pub(crate) fn draw_sch_record(
                 canvas.draw_text(&p.name, name_pos, name_angle, &font, &pen);
             }
 
-            // Pin designator (number): on the pin line, centered vertically.
-            // Positioned at external end, offset along the pin axis away from body.
-            // No perpendicular offset — Altium renders numbers ON the pin line.
-            let desig_margin = 4.0;
+            // Pin designator (number): ABOVE the pin line, centered on the pin midpoint.
+            // For horizontal pins: centered horizontally on pin, shifted up.
+            // For vertical pins: centered vertically on pin, shifted to the side.
+            let desig_perp_offset = 3.0; // perpendicular distance above pin line
             if p.show_designator && !p.designator.is_empty() {
                 let mut font = lookup_font(fonts, 1);
-                font.v_align = TextVAlign::Middle;
+                let mid = ((loc.0 + end.0) / 2.0, (loc.1 + end.1) / 2.0);
                 let (desig_pos, desig_angle) = match p.orientation {
-                    RotationBy90::Rotate0 => {
-                        font.h_align = TextHAlign::Right;
-                        ((loc.0 - desig_margin, loc.1), 0.0)
+                    RotationBy90::Rotate0 | RotationBy90::Rotate180 => {
+                        // Horizontal pin: number above, centered on midpoint
+                        font.h_align = TextHAlign::Center;
+                        font.v_align = TextVAlign::Baseline;
+                        ((mid.0, mid.1 + desig_perp_offset), 0.0)
                     }
-                    RotationBy90::Rotate180 => {
-                        font.h_align = TextHAlign::Left;
-                        ((loc.0 + desig_margin, loc.1), 0.0)
-                    }
-                    RotationBy90::Rotate90 => {
-                        font.h_align = TextHAlign::Right;
-                        ((loc.0, loc.1 - desig_margin), 90.0)
-                    }
-                    RotationBy90::Rotate270 => {
-                        font.h_align = TextHAlign::Left;
-                        ((loc.0, loc.1 + desig_margin), 90.0)
+                    RotationBy90::Rotate90 | RotationBy90::Rotate270 => {
+                        // Vertical pin: number to the left, centered on midpoint
+                        font.h_align = TextHAlign::Center;
+                        font.v_align = TextVAlign::Baseline;
+                        ((mid.0 - desig_perp_offset, mid.1), 90.0)
                     }
                     _ => {
-                        font.h_align = TextHAlign::Right;
-                        ((loc.0 - desig_margin, loc.1), 0.0)
+                        font.h_align = TextHAlign::Center;
+                        font.v_align = TextVAlign::Baseline;
+                        ((mid.0, mid.1 + desig_perp_offset), 0.0)
                     }
                 };
                 canvas.draw_text(&p.designator, desig_pos, desig_angle, &font, &pen);
@@ -400,7 +397,9 @@ pub(crate) fn draw_sch_record(
                 return;
             }
             let pen = Pen::new(p.color, 0.0);
-            let font = lookup_font(fonts, p.font_id);
+            let mut font = lookup_font(fonts, p.font_id);
+            font.h_align = TextHAlign::Center;
+            font.v_align = TextVAlign::Middle;
             canvas.draw_text(
                 &p.text,
                 to_dp(p.location),

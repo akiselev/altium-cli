@@ -25,6 +25,7 @@ use altium_format_types::project::{
     ErrorLevel, FlattenMode,
 };
 use indexmap::IndexMap;
+use std::collections::HashSet;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -858,7 +859,7 @@ fn dump_schdoc_component(out: &mut String, comp: &altium_format::api::SchDocComp
 
     for child in &comp.children {
         match child {
-            ComponentChild::Pin(pin) => dump_pin(out, pin, indent + 4),
+            ComponentChild::Pin(pin) => dump_pin(out, pin, indent + 4, &HashSet::new()),
             ComponentChild::Parameter(param) => dump_parameter(out, param, indent + 4),
             ComponentChild::Graphic(g) => dump_graphic(out, g, indent + 4),
             ComponentChild::FootprintMap(fm) => dump_footprint_map(out, fm, indent + 4),
@@ -1231,6 +1232,37 @@ fn dump_component(out: &mut String, comp: &Component) {
         }
     }
 
+    // Pre-scan: collect all unique swap group strings from all pins.
+    // Groups with 2+ members get declared as `swap_group` blocks.
+    let declared_swap_groups: HashSet<String> = {
+        let mut all_ids: Vec<&str> = Vec::new();
+        for pin in &comp.pins {
+            if !pin.swap_id_pin.is_empty() {
+                all_ids.push(&pin.swap_id_pin);
+            }
+            if !pin.swap_id_part.is_empty() {
+                all_ids.push(&pin.swap_id_part);
+            }
+            if !pin.swap_id_pair.is_empty() {
+                all_ids.push(&pin.swap_id_pair);
+            }
+        }
+        // Deduplicate
+        let unique: HashSet<String> = all_ids.into_iter().map(|s| s.to_string()).collect();
+        // Emit swap_group declarations for groups that appear on 2+ pins
+        let mut declared = HashSet::new();
+        for sg in &unique {
+            let count = comp.pins.iter().filter(|p| {
+                p.swap_id_pin == *sg || p.swap_id_part == *sg || p.swap_id_pair == *sg
+            }).count();
+            if count >= 2 {
+                out.push_str(&format!("    swap_group {} {{}}\n", quote_entity_name(sg)));
+                declared.insert(sg.clone());
+            }
+        }
+        declared
+    };
+
     // Group pins and graphics by owner_part_id > 0 into part blocks
     let part_ids: Vec<i32> = {
         let mut ids: Vec<i32> = comp.pins.iter()
@@ -1256,7 +1288,7 @@ fn dump_component(out: &mut String, comp: &Component) {
         }
         for pin in &comp.pins {
             if pin.owner_part_id <= 0 {
-                dump_pin(out, pin, 4);
+                dump_pin(out, pin, 4, &declared_swap_groups);
             }
         }
     } else {
@@ -1268,12 +1300,39 @@ fn dump_component(out: &mut String, comp: &Component) {
         }
         for pin in &comp.pins {
             if pin.owner_part_id <= 0 {
-                dump_pin(out, pin, 4);
+                dump_pin(out, pin, 4, &declared_swap_groups);
             }
         }
         // Emit per-part blocks
         for part_id in &part_ids {
+            // Check if all pins in this part share the same swap_id_part.
+            // If so, emit it as a part-level property instead of per-pin.
+            let part_pins: Vec<&Pin> = comp.pins.iter()
+                .filter(|p| p.owner_part_id == *part_id)
+                .collect();
+            let uniform_part_swap: Option<&str> = {
+                let first = part_pins.first().and_then(|p| {
+                    if p.swap_id_part.is_empty() { None } else { Some(p.swap_id_part.as_str()) }
+                });
+                if let Some(val) = first {
+                    if part_pins.iter().all(|p| p.swap_id_part == val) {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
             out.push_str(&format!("    part {} {{\n", part_id));
+            if let Some(sg) = uniform_part_swap {
+                if declared_swap_groups.contains(sg) {
+                    out.push_str(&format!("        swap_group: ${}\n", quote_entity_name(sg)));
+                } else {
+                    out.push_str(&format!("        swap_group: {}\n", quote_string(sg)));
+                }
+            }
             for graphic in &comp.graphics {
                 if graphic.owner_part_id() == *part_id {
                     dump_graphic(out, graphic, 8);
@@ -1281,7 +1340,11 @@ fn dump_component(out: &mut String, comp: &Component) {
             }
             for pin in &comp.pins {
                 if pin.owner_part_id == *part_id {
-                    dump_pin(out, pin, 8);
+                    // If part_swap_group was emitted at part level, suppress it on pins
+                    dump_pin_with_part_swap_override(
+                        out, pin, 8, &declared_swap_groups,
+                        uniform_part_swap.is_some(),
+                    );
                 }
             }
             out.push_str("    }\n");
@@ -1308,7 +1371,17 @@ fn dump_component(out: &mut String, comp: &Component) {
 
 // ── Pin ───────────────────────────────────────────────────────────────────────
 
-fn dump_pin(out: &mut String, pin: &Pin, indent: usize) {
+fn dump_pin(out: &mut String, pin: &Pin, indent: usize, declared_groups: &HashSet<String>) {
+    dump_pin_with_part_swap_override(out, pin, indent, declared_groups, false);
+}
+
+fn dump_pin_with_part_swap_override(
+    out: &mut String,
+    pin: &Pin,
+    indent: usize,
+    declared_groups: &HashSet<String>,
+    suppress_part_swap: bool,
+) {
     let pad = " ".repeat(indent);
     let mut parts = vec![
         format!("at: {}", pin.location),
@@ -1329,13 +1402,25 @@ fn dump_pin(out: &mut String, pin: &Pin, indent: usize) {
         parts.push(format!("hidden_net_name: {}", quote_string(&pin.hidden_net_name)));
     }
     if !pin.swap_id_pin.is_empty() {
-        parts.push(format!("swap_group: {}", quote_string(&pin.swap_id_pin)));
+        if declared_groups.contains(&pin.swap_id_pin) {
+            parts.push(format!("swap_group: ${}", quote_entity_name(&pin.swap_id_pin)));
+        } else {
+            parts.push(format!("swap_group: {}", quote_string(&pin.swap_id_pin)));
+        }
     }
-    if !pin.swap_id_part.is_empty() {
-        parts.push(format!("part_swap_group: {}", quote_string(&pin.swap_id_part)));
+    if !suppress_part_swap && !pin.swap_id_part.is_empty() {
+        if declared_groups.contains(&pin.swap_id_part) {
+            parts.push(format!("part_swap_group: ${}", quote_entity_name(&pin.swap_id_part)));
+        } else {
+            parts.push(format!("part_swap_group: {}", quote_string(&pin.swap_id_part)));
+        }
     }
     if !pin.swap_id_pair.is_empty() {
-        parts.push(format!("pair_swap_group: {}", quote_string(&pin.swap_id_pair)));
+        if declared_groups.contains(&pin.swap_id_pair) {
+            parts.push(format!("pair_swap_group: ${}", quote_entity_name(&pin.swap_id_pair)));
+        } else {
+            parts.push(format!("pair_swap_group: {}", quote_string(&pin.swap_id_pair)));
+        }
     }
     out.push_str(&format!(
         "{}pin {} {{ {} }}\n",
