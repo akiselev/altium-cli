@@ -348,6 +348,14 @@ full `SchLib`/`PcbLib` objects with all their normal API methods.
 | `cfb cat`     | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
 
 
+### Spec Sync Commands
+
+| Command                                                   | Purpose                                      |
+| --------------------------------------------------------- | -------------------------------------------- |
+| `altium spec sync --forward <schdoc-spec> <pcbdoc-spec>`  | Forward sync: push SchDoc changes to PcbDoc  |
+| `altium spec sync --diff <schdoc-spec> <pcbdoc-spec>`     | Diff only: show changes without applying     |
+| `altium spec sync ... --dry-run`                          | Show ECO report without writing files        |
+
 ### CFB Tools (Low-Level Debugging)
 
 All CFB subcommands work on any OLE/CFB container regardless of document type:
@@ -426,6 +434,30 @@ Supports SchLib, PcbLib, PrjPcb, SchDoc, and PcbDoc (full compile/plan/apply sup
 Features: let bindings, arithmetic expressions, dimensional units (`100mil`, `2.54mm`),
 color literals (`#FF0000`), spread operators, template interpolation, row/column/grid
 pad expansion, multi-part components, pin anchoring, import resolution.
+
+**Annotation system (M1–M3):** Rust-style block annotations (`#[annotation(id = "...",
+stable = true, group = "...")]`) on all spec block types. IDs are 8-character
+`[A-Z0-9]` strings matching Altium's UniqueID format. Auto-generated on dump when
+absent. Duplicate detection is two-layer: compiler catches within-file duplicates
+(fast-fail); validator catches cross-file duplicates (authoritative).
+
+**Sync IR (M4–M6):** `SyncSnapshot` intermediate representation enables spec-to-spec
+synchronization. Both `SchDocSpec` and `PcbDocSpec` project into a common normalized
+snapshot. `diff_snapshots()` produces a direction-agnostic `Vec<SyncChange>`.
+`filter_changes()` applies `SyncPolicy` direction rules and hard-errors on pin variants.
+`apply_sync_changes_to_pcbdoc()` applies changes to `PcbDocSpec.boards[0]` in
+remove-before-add dependency order.
+
+CLI: `altium spec sync --forward <schdoc-spec> <pcbdoc-spec>` (forward sync),
+`altium spec sync --diff <schdoc-spec> <pcbdoc-spec>` (diff only),
+`--dry-run` (no file write).
+
+**Validator and resolver (M7):** `validate_schdoc_spec()` / `validate_pcbdoc_spec()`
+return `Result<Vec<SpecError>, Vec<SpecError>>` (warnings vs errors). Checks: duplicate
+designators, dangling net refs, duplicate annotation IDs, unresolved pin refs (warning).
+`resolve_schdoc_spec()` builds designator → footprint map from `SchLibSpec` slices.
+Hard errors when a referenced library component cannot be found; bare designators without
+library references produce no footprint entry (valid case).
 
 ---
 

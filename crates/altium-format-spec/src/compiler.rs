@@ -33,6 +33,7 @@ use crate::ast::{
     PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem,
     RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
 };
+use crate::annotation::{compile_annotation, CompiledAnnotation};
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
     AnnotationMatchParamSpec, AnnotationSpec, BlanketSpec, BoardSpec, BusEntrySpec, BusSpec,
@@ -236,6 +237,9 @@ struct SpecCompiler {
     imported_components: HashMap<String, ComponentSpec>,
     /// Named import alias → Value::Object mapping entity names to string names.
     named_import_objects: IndexMap<String, Value>,
+    /// Tracks annotation IDs seen within the current spec file compile.
+    /// Constructed fresh per top-level compile call (one set per spec file).
+    seen_ids: HashSet<String>,
 }
 
 impl SpecCompiler {
@@ -248,6 +252,25 @@ impl SpecCompiler {
             part_context: None,
             imported_components,
             named_import_objects: IndexMap::new(),
+            seen_ids: HashSet::new(),
+        }
+    }
+
+    /// Compile an optional `#[annotation(...)]` from the AST into a `CompiledAnnotation`.
+    ///
+    /// Returns `None` when the AST has no annotation (unannotated blocks — auto-generation
+    /// for those is deferred to the dump phase, M3). Returns `Some(compiled)` when an
+    /// annotation is present, auto-generating an ID if none was specified.
+    fn compile_opt_annotation(
+        &mut self,
+        ann: Option<&crate::diagnostic::Spanned<crate::ast::BlockAnnotation>>,
+    ) -> Result<Option<CompiledAnnotation>, SpecError> {
+        match ann {
+            None => Ok(None),
+            Some(spanned) => {
+                let compiled = compile_annotation(&spanned.node, &mut self.seen_ids, Some(spanned.span))?;
+                Ok(Some(compiled))
+            }
         }
     }
 
@@ -331,6 +354,7 @@ impl SpecCompiler {
     // ── Component compilation ──────────────────────────────────────────────
 
     fn compile_component(&mut self, decl: &ComponentDecl) -> Result<ComponentSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let lib_reference = decl.name.node.as_str();
         self.context_name = lib_reference.clone();
         self.unnamed_counters.clear();
@@ -473,6 +497,7 @@ impl SpecCompiler {
         self.scope.pop();
 
         Ok(ComponentSpec {
+            annotation,
             lib_reference,
             designator,
             description,
@@ -491,6 +516,7 @@ impl SpecCompiler {
     // ── SchDoc compilation ──────────────────────────────────────────────────
 
     fn compile_schdoc(&mut self, file: &SpecFile) -> Result<SchDocSpec, SpecError> {
+        let mut sheet_annotation: Option<CompiledAnnotation> = None;
         let mut fonts = Vec::new();
         let mut custom_width = None;
         let mut custom_height = None;
@@ -509,6 +535,7 @@ impl SpecCompiler {
         for item in &file.items {
             match &item.node {
                 SpecItem::Sheet(sheet_decl) => {
+                    sheet_annotation = self.compile_opt_annotation(sheet_decl.annotation.as_ref())?;
                     self.compile_sheet_metadata(
                         sheet_decl, &mut fonts,
                         &mut custom_width, &mut custom_height,
@@ -542,6 +569,7 @@ impl SpecCompiler {
         }
 
         let sheet = SheetSpec {
+            annotation: sheet_annotation,
             fonts,
             custom_width,
             custom_height,
@@ -634,6 +662,7 @@ impl SpecCompiler {
         &mut self,
         decl: &ComponentDecl,
     ) -> Result<SchDocComponentSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let designator = decl.name.node.as_str();
 
         self.scope.push();
@@ -706,6 +735,7 @@ impl SpecCompiler {
         self.scope.pop();
 
         Ok(SchDocComponentSpec {
+            annotation,
             designator,
             symbol,
             location,
@@ -717,15 +747,17 @@ impl SpecCompiler {
     }
 
     fn compile_net(&mut self, decl: &crate::ast::NetDecl) -> Result<NetSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
         let pins = self.compile_pin_refs(&props, decl.body.span)?;
 
-        Ok(NetSpec { name, pins })
+        Ok(NetSpec { annotation, name, pins })
     }
 
     fn compile_power(&mut self, decl: &crate::ast::PowerDecl) -> Result<PowerSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
@@ -735,7 +767,7 @@ impl SpecCompiler {
         let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
         let pins = self.compile_pin_refs(&props, decl.body.span)?;
 
-        Ok(PowerSpec { name, style, pins, show_net_name, orientation })
+        Ok(PowerSpec { annotation, name, style, pins, show_net_name, orientation })
     }
 
     /// Parse a `pins: [U1.14, C1.1]` array into PinRef values.
@@ -1332,6 +1364,7 @@ impl SpecCompiler {
         &mut self,
         decl: &FootprintDecl,
     ) -> Result<FootprintSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let display_name = decl.name.node.as_str();
         self.context_name = display_name.clone();
         self.unnamed_counters.clear();
@@ -1427,6 +1460,7 @@ impl SpecCompiler {
         self.scope.pop();
 
         Ok(FootprintSpec {
+            annotation,
             display_name,
             description,
             height,
@@ -1550,6 +1584,7 @@ impl SpecCompiler {
         self.unnamed_counters.clear();
 
         let mut board_name = String::new();
+        let mut board_annotation: Option<CompiledAnnotation> = None;
         let mut board_settings_props = IndexMap::new();
         let mut nets = Vec::new();
         let mut components = Vec::new();
@@ -1564,6 +1599,7 @@ impl SpecCompiler {
         for item in &file.items {
             match &item.node {
                 SpecItem::Board(decl) => {
+                    board_annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
                     board_name = decl.name.node.as_str();
                     board_settings_props = self.compile_board_settings(decl)?;
                 }
@@ -1601,6 +1637,7 @@ impl SpecCompiler {
         }
 
         let board = BoardSpec {
+            annotation: board_annotation,
             name: board_name,
             signal_layer_count: get_integer_opt(&board_settings_props, "signal_layer_count"),
             snap_grid_size: get_coord_opt(&board_settings_props, "snap_grid_size")?,
@@ -1662,6 +1699,7 @@ impl SpecCompiler {
         &mut self,
         decl: &crate::ast::NetDecl,
     ) -> Result<PcbDocNetSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
@@ -1670,13 +1708,14 @@ impl SpecCompiler {
             .transpose()?;
         let visible = get_bool_opt(&props, "visible");
 
-        Ok(PcbDocNetSpec { name, color, visible })
+        Ok(PcbDocNetSpec { annotation, name, color, visible })
     }
 
     fn compile_pcbdoc_component(
         &mut self,
         decl: &ComponentDecl,
     ) -> Result<PcbDocComponentSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let designator = decl.name.node.as_str();
 
         // Collect properties from component body items.
@@ -1700,6 +1739,7 @@ impl SpecCompiler {
         let source_library = get_string_opt(&props, "source_library");
 
         Ok(PcbDocComponentSpec {
+            annotation,
             designator,
             pattern,
             comment,
@@ -1752,10 +1792,12 @@ impl SpecCompiler {
         &mut self,
         decl: &PolygonDecl,
     ) -> Result<PcbDocPolygonSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
         Ok(PcbDocPolygonSpec {
+            annotation,
             name,
             net: get_string_opt(&props, "net"),
             layer: get_enum_opt(&props, "layer", parse_layer_spec)?,
@@ -1768,10 +1810,12 @@ impl SpecCompiler {
         &mut self,
         decl: &RuleDecl,
     ) -> Result<PcbDocRuleSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
         Ok(PcbDocRuleSpec {
+            annotation,
             name,
             kind: get_string_opt(&props, "kind"),
             enabled: get_bool_opt(&props, "enabled"),
@@ -1783,10 +1827,12 @@ impl SpecCompiler {
         &mut self,
         decl: &ClassDecl,
     ) -> Result<PcbDocClassSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
         Ok(PcbDocClassSpec {
+            annotation,
             name,
             kind: get_string_opt(&props, "kind"),
         })
@@ -1800,6 +1846,7 @@ impl SpecCompiler {
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
         Ok(PcbDocDifferentialPairSpec {
+            annotation: None,
             name,
             positive_net: get_string_opt(&props, "positive_net"),
             negative_net: get_string_opt(&props, "negative_net"),
@@ -1817,6 +1864,7 @@ impl SpecCompiler {
     }
 
     fn compile_placement_decl(&mut self, decl: &PlacementDecl) -> Result<PlacementSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         // placement-level lets
         self.scope.push();
         let placement_lets: Vec<_> = decl.body.iter().filter_map(|item| {
@@ -1918,6 +1966,7 @@ impl SpecCompiler {
         self.scope.pop();
 
         Ok(PlacementSpec {
+            annotation,
             target,
             places,
             constraints,
@@ -1933,6 +1982,7 @@ impl SpecCompiler {
     }
 
     fn compile_placement_place(&mut self, decl: &PlaceDecl) -> Result<PlacementPlaceSpec, SpecError> {
+        let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let designators = decl
             .designators
             .iter()
@@ -2026,6 +2076,7 @@ impl SpecCompiler {
         };
 
         Ok(PlacementPlaceSpec {
+            annotation,
             designators,
             region_name,
             region_rect,
@@ -5712,6 +5763,7 @@ mod tests {
 
     fn make_test_component(lib_ref: &str, pins: Vec<(&str, i32, i32)>) -> ComponentSpec {
         ComponentSpec {
+            annotation: None,
             lib_reference: lib_ref.to_string(),
             designator: None,
             description: None,

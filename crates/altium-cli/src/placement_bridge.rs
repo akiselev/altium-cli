@@ -299,6 +299,7 @@ mod tests {
         unplaced: UnplacedStrategy,
     ) -> PlacementSpec {
         PlacementSpec {
+            annotation: None,
             target: None,
             places,
             constraints: vec![],
@@ -315,6 +316,7 @@ mod tests {
 
     fn locked_place(designator: &str, x_mils: f64, y_mils: f64) -> PlacementPlaceSpec {
         PlacementPlaceSpec {
+            annotation: None,
             designators: vec![designator.to_string()],
             region_name: None,
             region_rect: None,
@@ -334,6 +336,7 @@ mod tests {
 
     fn autoplace_place(designator: &str) -> PlacementPlaceSpec {
         PlacementPlaceSpec {
+            annotation: None,
             designators: vec![designator.to_string()],
             region_name: None,
             region_rect: None,

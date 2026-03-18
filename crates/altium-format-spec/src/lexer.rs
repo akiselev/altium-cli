@@ -73,6 +73,7 @@ pub enum TokenKind {
     Star,
     Slash,
     Semi,
+    Hash,
     Newline,
 
     Eof,
@@ -132,6 +133,7 @@ impl TokenKind {
                 | (Star, Star)
                 | (Slash, Slash)
                 | (Semi, Semi)
+                | (Hash, Hash)
                 | (Newline, Newline)
                 | (Eof, Eof)
         )
@@ -316,12 +318,9 @@ pub fn lex(input: &str) -> Result<(Vec<Token>, Vec<CommentToken>), ParseError> {
                         }
                     }
                 }
-                return Err(ParseError::new(
-                    ParseErrorCode::E1001,
-                    "expected 6 hex digits after '#' for color literal",
-                    Span::new(start as u32, (start + 1) as u32),
-                )
-                .with_help("example: #FF0000 for red"));
+                // Not a color literal — emit standalone Hash token (used for annotations).
+                out.push(tok(TokenKind::Hash, start, start + 1));
+                i += 1;
             }
             _ if is_digit(b as char) => {
                 let start = i;
@@ -846,8 +845,24 @@ mod tests {
 
     #[test]
     fn test_invalid_color() {
-        assert!(lex("#FFGG00").is_err());
-        assert!(lex("#FFF").is_err());
+        // A `#` not followed by exactly 6 hex digits is now a standalone Hash token
+        // (used for annotations). Invalid color syntax becomes a parse error at the
+        // parser level, not the lexer level.
+        let kinds = lex_kinds("#FFGG00");
+        assert!(matches!(kinds[0], TokenKind::Hash));
+        // #FFF: Hash + Ident("FFF")
+        let kinds = lex_kinds("#FFF");
+        assert!(matches!(kinds[0], TokenKind::Hash));
+    }
+
+    #[test]
+    fn test_hash_token() {
+        let kinds = lex_kinds("#[");
+        assert_eq!(kinds, vec![
+            TokenKind::Hash,
+            TokenKind::LBracket,
+            TokenKind::Eof,
+        ]);
     }
 
     #[test]

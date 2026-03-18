@@ -21,6 +21,13 @@ use altium_format_spec::{
     reconcile_schdoc, reconcile_schdoc_empty,
     reconcile_schlib, reconcile_schlib_empty, resolve_imports,
     apply_spec_pcbdoc, apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc,
+    validate_schdoc_spec, validate_pcbdoc_spec,
+    project_schdoc_spec, project_pcbdoc_spec,
+    diff_snapshots, filter_changes,
+    apply_sync_changes_to_pcbdoc,
+    rewrite_pcbdoc_spec_with_changes,
+    render_eco_report,
+    SyncPolicy, SyncDirection,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -173,6 +180,11 @@ enum Commands {
         #[arg(long)]
         stdout: bool,
     },
+    /// Spec-to-spec synchronization commands
+    Spec {
+        #[command(subcommand)]
+        sub: SpecSubcommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -314,6 +326,26 @@ enum GraphSubcommand {
     },
 }
 
+#[derive(Subcommand)]
+enum SpecSubcommand {
+    /// Synchronize SchDoc-spec and PcbDoc-spec files
+    Sync {
+        /// Path to the .schdoc-spec source file
+        schdoc_spec: PathBuf,
+        /// Path to the .pcbdoc-spec target file
+        pcbdoc_spec: PathBuf,
+        /// Forward sync: apply SchDoc changes to PcbDoc
+        #[arg(long, conflicts_with = "diff")]
+        forward: bool,
+        /// Diff only: show changes without applying
+        #[arg(long, conflicts_with = "forward")]
+        diff: bool,
+        /// Show changes without writing to disk
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -425,9 +457,176 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Commands::Spec { sub } => {
+            if let Err(e) = run_spec(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_spec(sub: SpecSubcommand) -> anyhow::Result<()> {
+    match sub {
+        SpecSubcommand::Sync {
+            schdoc_spec,
+            pcbdoc_spec,
+            forward,
+            diff,
+            dry_run,
+        } => run_spec_sync(&schdoc_spec, &pcbdoc_spec, forward, diff, dry_run),
+    }
+}
+
+fn run_spec_sync(
+    schdoc_spec_path: &PathBuf,
+    pcbdoc_spec_path: &PathBuf,
+    forward: bool,
+    diff_only: bool,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    if !forward && !diff_only {
+        anyhow::bail!("specify --forward or --diff");
+    }
+
+    // ── Step 1: Read both spec files ─────────────────────────────────────────
+
+    let schdoc_source = std::fs::read_to_string(schdoc_spec_path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", schdoc_spec_path.display()))?;
+    let pcbdoc_source = std::fs::read_to_string(pcbdoc_spec_path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", pcbdoc_spec_path.display()))?;
+
+    // ── Step 2: Parse and compile both specs ──────────────────────────────────
+
+    let schdoc_result =
+        compile_and_resolve(&schdoc_source, schdoc_spec_path, &SpecDomain::SchDoc)?;
+    let pcbdoc_result =
+        compile_and_resolve(&pcbdoc_source, pcbdoc_spec_path, &SpecDomain::PcbDoc)?;
+
+    let schdoc_spec = match schdoc_result.model {
+        altium_format_spec::model::SpecModel::SchDoc(spec) => spec,
+        _ => anyhow::bail!("{} is not a valid .schdoc-spec file", schdoc_spec_path.display()),
+    };
+    let pcbdoc_spec_model = match pcbdoc_result.model {
+        altium_format_spec::model::SpecModel::PcbDoc(spec) => spec,
+        _ => anyhow::bail!("{} is not a valid .pcbdoc-spec file", pcbdoc_spec_path.display()),
+    };
+
+    // ── Step 3: Validate both specs ───────────────────────────────────────────
+
+    let schdoc_name = schdoc_spec_path.display().to_string();
+    let pcbdoc_name = pcbdoc_spec_path.display().to_string();
+
+    match validate_schdoc_spec(&schdoc_spec) {
+        Ok(warnings) => {
+            for w in &warnings {
+                eprintln!("{}", w.render(&schdoc_name, &schdoc_source));
+            }
+        }
+        Err(errors) => {
+            let msgs: Vec<String> = errors.iter().map(|e| e.render(&schdoc_name, &schdoc_source)).collect();
+            anyhow::bail!(
+                "validation errors in {}: {}",
+                schdoc_name,
+                msgs.join("; ")
+            );
+        }
+    }
+
+    match validate_pcbdoc_spec(&pcbdoc_spec_model) {
+        Ok(warnings) => {
+            for w in &warnings {
+                eprintln!("{}", w.render(&pcbdoc_name, &pcbdoc_source));
+            }
+        }
+        Err(errors) => {
+            let msgs: Vec<String> = errors.iter().map(|e| e.render(&pcbdoc_name, &pcbdoc_source)).collect();
+            anyhow::bail!(
+                "validation errors in {}: {}",
+                pcbdoc_name,
+                msgs.join("; ")
+            );
+        }
+    }
+
+    // ── Step 4: Project both specs to SyncSnapshot ────────────────────────────
+
+    let schdoc_snapshot = project_schdoc_spec(&schdoc_spec)
+        .map_err(|e| anyhow::anyhow!("projecting {}: {}", schdoc_name, e.render(&schdoc_name, &schdoc_source)))?;
+    let pcbdoc_snapshot = project_pcbdoc_spec(&pcbdoc_spec_model)
+        .map_err(|e| anyhow::anyhow!("projecting {}: {}", pcbdoc_name, e.render(&pcbdoc_name, &pcbdoc_source)))?;
+
+    // ── Step 5: Diff snapshots ────────────────────────────────────────────────
+
+    let changes = diff_snapshots(&schdoc_snapshot, &pcbdoc_snapshot);
+
+    // ── Step 6: Filter changes with explicit SyncPolicy ───────────────────────
+
+    let policy = SyncPolicy {
+        comment: SyncDirection::Forward,
+        footprint: SyncDirection::None,
+        source_library: SyncDirection::None,
+        parameters: SyncDirection::None,
+        net_name: SyncDirection::Forward,
+        net_color: SyncDirection::None,
+        pin_net_assignment: SyncDirection::None,
+        component_location: SyncDirection::None,
+    };
+
+    let filtered = filter_changes(&changes, &policy, SyncDirection::Forward)
+        .map_err(|e| anyhow::anyhow!("filtering sync changes: {}", e.message))?;
+
+    // ── Step 7: Print ECO report ──────────────────────────────────────────────
+
+    let report = render_eco_report(&filtered);
+    print!("{}", report);
+
+    if diff_only || dry_run {
+        return Ok(());
+    }
+
+    // ── Step 8: Apply changes and write-back ──────────────────────────────────
+
+    if filtered.is_empty() {
+        return Ok(());
+    }
+
+    // Apply changes to the in-memory PcbDocSpec model (for validation).
+    let mut pcbdoc_spec_mut = pcbdoc_spec_model;
+    apply_sync_changes_to_pcbdoc(&filtered, &mut pcbdoc_spec_mut)
+        .map_err(|e| anyhow::anyhow!("applying sync changes: {}", e.message))?;
+
+    // Rewrite the source text with the changes.
+    let new_source = rewrite_pcbdoc_spec_with_changes(&pcbdoc_source, &filtered)
+        .map_err(|e| anyhow::anyhow!("rewriting {}: {}", pcbdoc_name, e.message))?;
+
+    // ── Step 9: Atomic write ──────────────────────────────────────────────────
+
+    let pcbdoc_dir = pcbdoc_spec_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let tmp_path = pcbdoc_dir.join(format!(
+        ".{}.tmp",
+        pcbdoc_spec_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pcbdoc-spec")
+    ));
+
+    std::fs::write(&tmp_path, &new_source)
+        .map_err(|e| anyhow::anyhow!("writing temp file {}: {e}", tmp_path.display()))?;
+
+    std::fs::rename(&tmp_path, pcbdoc_spec_path).map_err(|e| {
+        // Try to clean up temp file on failure; ignore errors.
+        let _ = std::fs::remove_file(&tmp_path);
+        anyhow::anyhow!("renaming {} -> {}: {e}", tmp_path.display(), pcbdoc_name)
+    })?;
+
+    eprintln!("Updated: {}", pcbdoc_name);
+
+    Ok(())
 }
 
 fn run_format(files: Vec<PathBuf>, check: bool, to_stdout: bool) -> anyhow::Result<ExitCode> {

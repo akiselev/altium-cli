@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::annotation::CompiledAnnotation;
+
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
     PlaneConnectionStyle, RotationBy90,
@@ -36,6 +38,7 @@ pub struct SchLibSpec {
 }
 
 pub struct ComponentSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub lib_reference: String,
     pub designator: Option<String>,
     pub description: Option<String>,
@@ -97,6 +100,7 @@ pub struct SchDocSpec {
 }
 
 pub struct SheetSpec {
+    pub annotation: Option<CompiledAnnotation>,
     // Sheet metadata
     pub fonts: Vec<FontSpec>,
     pub custom_width: Option<Coord>,
@@ -127,6 +131,7 @@ pub struct FontSpec {
 }
 
 pub struct SchDocComponentSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub designator: String,
     pub symbol: SymbolRef,
     pub location: CoordPoint,
@@ -146,11 +151,13 @@ pub enum SymbolRef {
 }
 
 pub struct NetSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub pins: Vec<PinRef>,
 }
 
 pub struct PowerSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub style: PowerObjectStyle,
     pub pins: Vec<PinRef>,
@@ -325,6 +332,7 @@ pub struct PcbLibSpec {
 }
 
 pub struct FootprintSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub display_name: String,
     pub description: Option<String>,
     pub height: Option<Coord>,
@@ -483,6 +491,7 @@ pub struct PcbDocSpec {
 }
 
 pub struct BoardSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub signal_layer_count: Option<i32>,
     pub snap_grid_size: Option<Coord>,
@@ -516,12 +525,14 @@ pub struct PcbDocPrimitiveSpec {
 }
 
 pub struct PcbDocNetSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub color: Option<Color>,
     pub visible: Option<bool>,
 }
 
 pub struct PcbDocComponentSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub designator: String,
     pub pattern: Option<String>,
     pub comment: Option<String>,
@@ -532,6 +543,7 @@ pub struct PcbDocComponentSpec {
 }
 
 pub struct PcbDocPolygonSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub net: Option<String>,
     pub layer: Option<LayerSpec>,
@@ -540,6 +552,7 @@ pub struct PcbDocPolygonSpec {
 }
 
 pub struct PcbDocRuleSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub kind: Option<String>,
     pub enabled: Option<bool>,
@@ -547,17 +560,20 @@ pub struct PcbDocRuleSpec {
 }
 
 pub struct PcbDocClassSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub kind: Option<String>,
 }
 
 pub struct PcbDocDifferentialPairSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub positive_net: Option<String>,
     pub negative_net: Option<String>,
 }
 
 pub struct PlacementSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub target: Option<String>,
     pub places: Vec<PlacementPlaceSpec>,
     pub constraints: Vec<PlacementConstraintSpec>,
@@ -572,6 +588,7 @@ pub struct PlacementSpec {
 }
 
 pub struct PlacementPlaceSpec {
+    pub annotation: Option<CompiledAnnotation>,
     pub designators: Vec<String>,
     pub region_name: Option<String>,
     pub region_rect: Option<(CoordPoint, CoordPoint)>,

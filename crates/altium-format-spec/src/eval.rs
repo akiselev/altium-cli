@@ -18,11 +18,22 @@ use crate::ast::{Expr, Object, ObjectItem, TemplatePart};
 
 // ── Error types ──────────────────────────────────────────────────────────────
 
+/// Severity level for a [`SpecError`].
+///
+/// All constructors default to [`Severity::Error`]. Use
+/// [`SpecError::with_severity`] to downgrade to a warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecError {
     pub code: SpecErrorCode,
     pub message: String,
     pub span: Option<Span>,
+    pub severity: Severity,
 }
 
 impl SpecError {
@@ -31,6 +42,7 @@ impl SpecError {
             code,
             message: message.into(),
             span,
+            severity: Severity::Error,
         }
     }
 
@@ -42,18 +54,30 @@ impl SpecError {
         Self::new(code, message, None)
     }
 
+    /// Override the severity of this error (builder pattern).
+    pub fn with_severity(mut self, severity: Severity) -> Self {
+        self.severity = severity;
+        self
+    }
+
     /// Render this error with source location context (file:line:col + caret).
     ///
     /// Falls back to a plain `error[Code]: message` when no span is available.
+    /// Prefixes with `warning[...]` when severity is [`Severity::Warning`].
     pub fn render(&self, source_name: &str, source: &str) -> String {
         use crate::diagnostic::{locate_line, caret_len};
 
+        let prefix = match self.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+
         let Some(span) = self.span else {
-            return format!("error[{:?}]: {}", self.code, self.message);
+            return format!("{}[{:?}]: {}", prefix, self.code, self.message);
         };
         let (line_no, col_no, line_text) = locate_line(source, span.start as usize);
         let mut out = String::new();
-        out.push_str(&format!("error[{:?}]: {}\n", self.code, self.message));
+        out.push_str(&format!("{}[{:?}]: {}\n", prefix, self.code, self.message));
         out.push_str(&format!(" --> {}:{}:{}\n", source_name, line_no, col_no));
         out.push_str("  |\n");
         out.push_str(&format!("{:>2} | {}\n", line_no, line_text));
@@ -68,7 +92,11 @@ impl SpecError {
 
 impl fmt::Display for SpecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "error[{:?}]: {}", self.code, self.message)?;
+        let prefix = match self.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        write!(f, "{}[{:?}]: {}", prefix, self.code, self.message)?;
         if let Some(span) = self.span {
             write!(f, " (at {}..{})", span.start, span.end)?;
         }
@@ -102,6 +130,15 @@ pub enum SpecErrorCode {
     CrossEdgeReference,
     // Wraps altium_format::AltiumFormatError via message string
     AltiumFormat,
+    // Validator errors (Phase 3)
+    DuplicateDesignator,
+    DanglingNetRef,
+    DuplicateAnnotationId,
+    UnresolvedPinRef,
+    // Resolver errors (Phase 4)
+    UnresolvableLibrary,
+    // Sync errors
+    NotSupported,
 }
 
 pub type EvalResult<T> = Result<T, SpecError>;

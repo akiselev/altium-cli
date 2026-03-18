@@ -1,6 +1,32 @@
 pub use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 pub use super::lexer::TemplatePart;
 
+/// Sync annotation attached to a block declaration: `#[annotation(id = "...", ...)]`.
+/// This is distinct from `AnnotationBlockDecl`, which represents Altium's designator
+/// annotation feature inside a project block. `BlockAnnotation` is for the sync system.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockAnnotation {
+    pub id: Option<Spanned<String>>,
+    pub stable: Option<Spanned<bool>>,
+    pub group: Option<Spanned<String>>,
+}
+
+/// Known keys for a `#[annotation(...)]` attribute.
+///
+/// Only predefined keys are permitted — arbitrary key-value pairs are not accepted.
+///
+/// Rationale: if arbitrary keys were allowed, a typo like `stabl = true` would be
+/// silently accepted by the parser and have no effect. With a predefined enum the
+/// parser rejects unknown keys at parse time, surfacing the mistake immediately.
+/// To attach new metadata to a block, add a new variant here rather than introducing
+/// a free-form escape hatch.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnnotationKey {
+    Id,
+    Stable,
+    Group,
+}
+
 /// A parsed spec file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecFile {
@@ -56,6 +82,7 @@ pub struct LetBinding {
 /// [binding =] component NAME { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComponentDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub binding: Option<Spanned<String>>,
     pub name: Spanned<EntityName>,
     pub body: Vec<Spanned<ComponentItem>>,
@@ -138,6 +165,7 @@ pub struct PinPadPair {
 /// [binding =] footprint NAME { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct FootprintDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub binding: Option<Spanned<String>>,
     pub name: Spanned<EntityName>,
     pub body: Vec<Spanned<FootprintItem>>,
@@ -285,6 +313,7 @@ pub struct ParamVariationDecl {
 /// sheet { ... } — sheet metadata block
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub body: Vec<Spanned<SheetItem>>,
 }
 
@@ -312,6 +341,7 @@ pub struct FontDecl {
 /// net NAME { pins: [...] }
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub name: Spanned<EntityName>,
     pub body: Spanned<Object>,
 }
@@ -319,6 +349,7 @@ pub struct NetDecl {
 /// power NAME { style: ..., pins: [...] }
 #[derive(Debug, Clone, PartialEq)]
 pub struct PowerDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub name: Spanned<EntityName>,
     pub body: Spanned<Object>,
 }
@@ -356,6 +387,7 @@ pub struct EntryDecl {
 /// board NAME { settings... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoardDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub name: Spanned<EntityName>,
     pub body: Vec<Spanned<BoardItem>>,
 }
@@ -378,6 +410,7 @@ pub struct PcbDocPrimitiveDecl {
 /// polygon NAME { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolygonDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub name: Spanned<EntityName>,
     pub body: Spanned<Object>,
 }
@@ -385,6 +418,7 @@ pub struct PolygonDecl {
 /// rule NAME { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuleDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub name: Spanned<EntityName>,
     pub body: Spanned<Object>,
 }
@@ -392,6 +426,7 @@ pub struct RuleDecl {
 /// class NAME { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub name: Spanned<EntityName>,
     pub body: Spanned<Object>,
 }
@@ -406,6 +441,7 @@ pub struct DifferentialPairDecl {
 /// placement { ... } top-level block for placement solver directives.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacementDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub body: Vec<Spanned<PlacementItem>>,
 }
 
@@ -439,6 +475,7 @@ pub struct PlacementSeparateDecl {
 /// place U1, U2 { ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaceDecl {
+    pub annotation: Option<Spanned<BlockAnnotation>>,
     pub designators: Vec<Spanned<EntityName>>,
     pub body: Spanned<Object>,
 }

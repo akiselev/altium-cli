@@ -192,6 +192,43 @@ impl<'a> Printer<'a> {
         }
     }
 
+    // ── Annotation ────────────────────────────────────────────────────────────
+
+    /// Emit a `#[annotation(id = "...")]` line at the current indent level,
+    /// if an annotation is present on the block declaration.
+    ///
+    /// Only fields with non-default values are emitted:
+    /// - `id` is always emitted (always present after compilation).
+    /// - `stable` is emitted only when `true`.
+    /// - `group` is emitted only when `Some`.
+    fn fmt_annotation(&mut self, annotation: &Option<Spanned<BlockAnnotation>>) {
+        let ann = match annotation {
+            Some(a) => &a.node,
+            None => return,
+        };
+
+        let id_part = match &ann.id {
+            Some(id) => format!("id = \"{}\"", id.node),
+            None => return, // no ID — nothing to emit
+        };
+
+        let mut parts = vec![id_part];
+        if let Some(stable) = &ann.stable {
+            if stable.node {
+                parts.push("stable = true".to_owned());
+            }
+        }
+        if let Some(group) = &ann.group {
+            parts.push(format!("group = \"{}\"", group.node));
+        }
+
+        self.push_indent();
+        self.push("#[annotation(");
+        self.push(&parts.join(", "));
+        self.push(")]");
+        self.push_newline();
+    }
+
     // ── Entity names ──────────────────────────────────────────────────────────
 
     fn fmt_entity_name(&mut self, name: &EntityName) {
@@ -518,6 +555,7 @@ impl<'a> Printer<'a> {
     // ── Component ─────────────────────────────────────────────────────────────
 
     fn fmt_component(&mut self, decl: &ComponentDecl) {
+        self.fmt_annotation(&decl.annotation);
         if let Some(binding) = &decl.binding {
             self.push(&binding.node);
             self.push(" = ");
@@ -653,6 +691,7 @@ impl<'a> Printer<'a> {
     // ── Footprint ─────────────────────────────────────────────────────────────
 
     fn fmt_footprint(&mut self, decl: &FootprintDecl) {
+        self.fmt_annotation(&decl.annotation);
         if let Some(binding) = &decl.binding {
             self.push(&binding.node);
             self.push(" = ");
@@ -959,6 +998,7 @@ impl<'a> Printer<'a> {
     // ── Net / Power ───────────────────────────────────────────────────────────
 
     fn fmt_net(&mut self, decl: &NetDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("net ");
         self.fmt_entity_name(&decl.name.node);
         self.push(" ");
@@ -966,6 +1006,7 @@ impl<'a> Printer<'a> {
     }
 
     fn fmt_power(&mut self, decl: &PowerDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("power ");
         self.fmt_entity_name(&decl.name.node);
         self.push(" ");
@@ -1012,6 +1053,7 @@ impl<'a> Printer<'a> {
     // ── Board ─────────────────────────────────────────────────────────────────
 
     fn fmt_board(&mut self, decl: &BoardDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("board ");
         self.fmt_entity_name(&decl.name.node);
         self.push(" {");
@@ -1036,6 +1078,7 @@ impl<'a> Printer<'a> {
     // ── Placement ─────────────────────────────────────────────────────────────
 
     fn fmt_placement(&mut self, decl: &PlacementDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("placement {");
         self.push_newline();
         self.indent();
@@ -1131,6 +1174,7 @@ impl<'a> Printer<'a> {
     }
 
     fn fmt_polygon(&mut self, decl: &PolygonDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("polygon ");
         self.fmt_entity_name(&decl.name.node);
         self.push(" ");
@@ -1138,6 +1182,7 @@ impl<'a> Printer<'a> {
     }
 
     fn fmt_rule(&mut self, decl: &RuleDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("rule ");
         self.fmt_entity_name(&decl.name.node);
         self.push(" ");
@@ -1145,6 +1190,7 @@ impl<'a> Printer<'a> {
     }
 
     fn fmt_class(&mut self, decl: &ClassDecl) {
+        self.fmt_annotation(&decl.annotation);
         self.push("class ");
         self.fmt_entity_name(&decl.name.node);
         self.push(" ");

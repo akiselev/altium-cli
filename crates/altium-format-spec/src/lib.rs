@@ -1,3 +1,4 @@
+pub mod annotation;
 pub mod ast;
 pub mod compiler;
 pub mod diagnostic;
@@ -11,7 +12,10 @@ pub mod lexer;
 pub mod model;
 pub mod parser;
 pub mod reconciler;
+pub mod resolver;
+pub mod sync;
 pub mod trivia;
+pub mod validator;
 
 // Public API re-exports
 pub use compiler::{compile_spec, compile_spec_with_imports, compile_spec_with_resolved, compile_imported_schlibs};
@@ -20,15 +24,28 @@ pub use executor::{apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb, appl
 pub use import::{ResolvedSpec, resolve_imports};
 pub use reconciler::{reconcile_pcbdoc, reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib, reconcile_schlib_empty};
 pub use eval::{
-    EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr, eval_let_bindings,
+    EvalResult, Severity, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr, eval_let_bindings,
     unit_to_internal,
 };
+pub use validator::{validate_schdoc_spec, validate_pcbdoc_spec};
+pub use resolver::{FootprintResolvedSpec, resolve_schdoc_spec};
 pub use eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, EcoSummary, KindSummary,
     PropChange, PropValue,
 };
 pub use formatter::{format_spec, FormatConfig, FormatResult};
 pub use trivia::{CommentToken, TriviaMap, parse_with_trivia};
+pub use annotation::{CompiledAnnotation, generate_short_id, validate_short_id};
+pub use sync::{
+    SyncSnapshot, SyncComponent, SyncPin, SyncNet,
+    SyncChange, FieldChange, SyncPolicy, SyncDirection,
+    project_schdoc_spec, project_pcbdoc_spec,
+    diff_snapshots, filter_changes,
+    apply_sync_changes_to_pcbdoc,
+    rewrite_pcbdoc_spec_with_changes,
+    render_eco_report,
+    quote_spec_string, quote_spec_entity_name,
+};
 pub use model::{
     AutoplaceConfig, BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties,
     GraphicSpec, GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec, PcbGraphicProperties,

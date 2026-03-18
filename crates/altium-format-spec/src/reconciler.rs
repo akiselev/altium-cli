@@ -2206,6 +2206,7 @@ mod tests {
 
     fn make_component(lib_ref: &str, pins: Vec<PinSpec>) -> ComponentSpec {
         ComponentSpec {
+            annotation: None,
             lib_reference: lib_ref.to_string(),
             designator: Some("R?".to_string()),
             description: Some("A resistor".to_string()),
@@ -2287,6 +2288,7 @@ mod tests {
     #[test]
     fn component_add_includes_parameters() {
         let spec = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R".to_string(),
             designator: Some("R?".to_string()),
             description: Some("Resistor".to_string()),
@@ -2347,6 +2349,7 @@ mod tests {
     #[test]
     fn multi_part_component_pins() {
         let spec = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "LM358".to_string(),
             designator: Some("U?".to_string()),
             description: Some("Dual Op-Amp".to_string()),
@@ -2442,6 +2445,7 @@ mod tests {
         apply_spec_schlib(&spec1, &mut doc).unwrap();
 
         let spec2 = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R_0603".to_string(),
             designator: Some("R?".to_string()),
             description: Some("Updated description".to_string()),
@@ -2511,6 +2515,7 @@ mod tests {
     #[test]
     fn reconcile_detects_new_parameter() {
         let spec1 = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R".to_string(),
             designator: Some("R?".to_string()),
             description: None,
@@ -2531,6 +2536,7 @@ mod tests {
 
         // Spec with an additional parameter
         let spec2 = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R".to_string(),
             designator: Some("R?".to_string()),
             description: None,
@@ -2599,6 +2605,7 @@ mod tests {
 
     fn make_footprint(name: &str, pads: Vec<PadSpec>) -> crate::model::FootprintSpec {
         crate::model::FootprintSpec {
+            annotation: None,
             display_name: name.to_string(),
             description: Some("Test footprint".to_string()),
             height: None,
@@ -2776,6 +2783,7 @@ mod tests {
         lib.save(tmp.path()).unwrap();
 
         let spec2 = make_pcblib_spec(vec![FootprintSpec {
+            annotation: None,
             display_name: "0805".to_string(),
             description: Some("Updated 0805".to_string()),
             height: None,
@@ -2912,6 +2920,7 @@ mod tests {
 
     fn make_placement_spec(places: Vec<PlacementPlaceSpec>) -> PlacementSpec {
         PlacementSpec {
+            annotation: None,
             target: None,
             places,
             constraints: vec![],
@@ -2928,6 +2937,7 @@ mod tests {
 
     fn make_place_at(designators: Vec<String>, x_mm: f64, y_mm: f64) -> PlacementPlaceSpec {
         PlacementPlaceSpec {
+            annotation: None,
             designators,
             region_name: None,
             region_rect: None,
@@ -3023,6 +3033,7 @@ mod tests {
             make_pcbdoc_component("U1", 5.0, 5.0, 0.0),
         ]);
         let placement = make_placement_spec(vec![PlacementPlaceSpec {
+            annotation: None,
             designators: vec!["U1".to_string()],
             region_name: None,
             region_rect: None,

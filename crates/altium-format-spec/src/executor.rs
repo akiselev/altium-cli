@@ -1498,6 +1498,7 @@ mod tests {
 
     fn make_component(lib_ref: &str, pins: Vec<PinSpec>) -> ComponentSpec {
         ComponentSpec {
+            annotation: None,
             lib_reference: lib_ref.to_string(),
             designator: Some("R?".to_string()),
             description: Some("A resistor".to_string()),
@@ -1570,6 +1571,7 @@ mod tests {
 
         // Now update it with a new spec that changes description and adds a pin
         let spec2 = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R_0603".to_string(),
             designator: None, // None → preserve existing
             description: Some("Updated resistor".to_string()),
@@ -1599,6 +1601,7 @@ mod tests {
     #[test]
     fn apply_with_parameters() {
         let spec = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R".to_string(),
             designator: Some("R?".to_string()),
             description: None,
@@ -1642,6 +1645,7 @@ mod tests {
     #[test]
     fn apply_multi_part_component() {
         let spec = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "LM358".to_string(),
             designator: Some("U?".to_string()),
             description: Some("Dual Op-Amp".to_string()),
@@ -1682,6 +1686,7 @@ mod tests {
     fn merge_preserves_existing_children() {
         // Create a component with specific pins
         let spec1 = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R".to_string(),
             designator: Some("R?".to_string()),
             description: None,
@@ -1702,6 +1707,7 @@ mod tests {
 
         // Apply spec that only mentions pin "1" and a new parameter
         let spec2 = make_spec(vec![ComponentSpec {
+            annotation: None,
             lib_reference: "R".to_string(),
             designator: None,
             description: None,
@@ -1769,6 +1775,7 @@ mod tests {
 
     fn make_footprint_spec(name: &str, pads: Vec<PadSpec>) -> FootprintSpec {
         FootprintSpec {
+            annotation: None,
             display_name: name.to_string(),
             description: Some(format!("{name} footprint")),
             height: None,
@@ -1806,6 +1813,7 @@ mod tests {
 
         let spec2 = PcbLibSpec {
             footprints: vec![FootprintSpec {
+                annotation: None,
                 display_name: "C0805".to_string(),
                 description: Some("Updated cap".to_string()),
                 height: None,
