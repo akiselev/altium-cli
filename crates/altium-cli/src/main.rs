@@ -1425,9 +1425,17 @@ fn compile_and_resolve(
     // validation and apply_spec_schdoc for pin position resolution. Build it twice since
     // ComponentSpec does not implement Clone.
     let imported_components_for_exec = compile_imported_schlibs(&resolved)
-        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
+        .map_err(|(path, e)| {
+            let import_source = std::fs::read_to_string(&path).unwrap_or_default();
+            let import_name = path.display().to_string();
+            anyhow::anyhow!("{}", e.render(&import_name, &import_source))
+        })?;
     let imported_components = compile_imported_schlibs(&resolved)
-        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
+        .map_err(|(path, e)| {
+            let import_source = std::fs::read_to_string(&path).unwrap_or_default();
+            let import_name = path.display().to_string();
+            anyhow::anyhow!("{}", e.render(&import_name, &import_source))
+        })?;
     let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 

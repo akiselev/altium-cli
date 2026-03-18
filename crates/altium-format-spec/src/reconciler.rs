@@ -1287,6 +1287,23 @@ fn schdoc_component_to_add(spec: &crate::model::SchDocComponentSpec) -> EntityCh
             });
         }
     }
+    if !spec.pin_connections.is_empty() {
+        let conn_summary = spec.pin_connections.iter()
+            .map(|c| {
+                let target = match &c.target {
+                    crate::model::PinConnectionTarget::Signal(net) => format!("#{net}"),
+                    crate::model::PinConnectionTarget::Power(net) => format!("#{net}"),
+                    crate::model::PinConnectionTarget::NoConnect => "NC".to_string(),
+                };
+                format!("{} -> {}", c.pin_name, target)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        props.push(PropValue {
+            field: "pin_connections".to_string(),
+            value: conn_summary,
+        });
+    }
     EntityChange::Add {
         kind: EntityKind::Component,
         identity: spec.designator.clone(),

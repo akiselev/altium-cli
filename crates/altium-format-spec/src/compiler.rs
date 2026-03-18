@@ -118,33 +118,38 @@ pub fn compile_spec_with_resolved(
 /// component bindings (pin access).
 pub fn compile_imported_schlibs(
     resolved: &crate::import::ResolvedSpec,
-) -> Result<HashMap<String, ComponentSpec>, SpecError> {
+) -> Result<HashMap<String, ComponentSpec>, (std::path::PathBuf, SpecError)> {
     let mut components = HashMap::new();
 
-    for (_path, spec_file) in &resolved.bare_imports {
-        collect_schlib_components(spec_file, &mut components)?;
+    for (path, spec_file) in &resolved.bare_imports {
+        collect_schlib_components(path, spec_file, &mut components)
+            .map_err(|e| (path.clone(), e))?;
     }
 
-    for (_alias, (_path, spec_file)) in &resolved.named_imports {
-        collect_schlib_components(spec_file, &mut components)?;
+    for (_alias, (path, spec_file)) in &resolved.named_imports {
+        collect_schlib_components(path, spec_file, &mut components)
+            .map_err(|e| (path.clone(), e))?;
     }
 
     Ok(components)
 }
 
 fn collect_schlib_components(
+    path: &std::path::Path,
     file: &SpecFile,
     components: &mut HashMap<String, ComponentSpec>,
 ) -> Result<(), SpecError> {
-    let mut compiler = SpecCompiler::new(SpecDomain::SchLib, HashMap::new());
-    match compiler.compile(file) {
-        Ok(SpecModel::SchLib(schlib)) => {
+    // Resolve the imported file's own imports (e.g., schlib-spec importing pcblib-spec)
+    // so that transitive bindings like `$fp["FootprintName"]` are available during compilation.
+    let sub_resolved = crate::import::resolve_imports(path, file.clone())?;
+    let sub_model = compile_spec_with_resolved(&sub_resolved, SpecDomain::SchLib, HashMap::new())?;
+    match sub_model {
+        SpecModel::SchLib(schlib) => {
             for comp in schlib.components {
                 components.insert(comp.lib_reference.clone(), comp);
             }
         }
-        Ok(_) => {}
-        Err(e) => return Err(e),
+        _ => {}
     }
     Ok(())
 }
@@ -873,9 +878,10 @@ impl SpecCompiler {
         props: &IndexMap<String, Value>,
         span: crate::diagnostic::Span,
     ) -> Result<Vec<PinRef>, SpecError> {
-        let pins_val = props.get("pins").ok_or_else(|| {
-            SpecError::new(SpecErrorCode::TypeMismatch, "'pins' field is required".to_string(), Some(span))
-        })?;
+        let pins_val = match props.get("pins") {
+            Some(v) => v,
+            None => return Ok(Vec::new()),
+        };
 
         let arr = match pins_val {
             Value::Array(a) => a,

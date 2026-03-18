@@ -580,7 +580,7 @@ impl<'a> SpecParser<'a> {
                 let after_pin = self.peek_ahead(pin_name_offset);
                 let name_is_scalar = matches!(
                     after_pin,
-                    TokenKind::Ident(_) | TokenKind::Integer(_)
+                    TokenKind::Ident(_) | TokenKind::Integer(_) | TokenKind::String(_)
                 );
                 name_is_scalar
                     && self.peek_ahead(after_name_offset).same_variant(&TokenKind::Arrow)
@@ -598,6 +598,11 @@ impl<'a> SpecParser<'a> {
                         let span = self.current_span();
                         self.bump();
                         Spanned::new(n.to_string(), span)
+                    }
+                    TokenKind::String(s) => {
+                        let span = self.current_span();
+                        self.bump();
+                        Spanned::new(s, span)
                     }
                     _ => unreachable!("guarded by is_pin_connection check"),
                 };

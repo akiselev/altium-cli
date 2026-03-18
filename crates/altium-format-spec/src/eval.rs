@@ -763,6 +763,17 @@ fn eval_index_access(base: Value, idx: Value, span: Option<Span>) -> EvalResult<
                 span,
             ))
         }
+        (Value::ImportObject { alias, entries }, Value::String(key)) => {
+            match entries.get(&key) {
+                Some(Value::String(name)) => Ok(Value::ImportRef { alias, name: name.clone() }),
+                Some(other) => Ok(other.clone()),
+                None => Err(SpecError::new(
+                    SpecErrorCode::InvalidFieldAccess,
+                    format!("no entity '{key}' in import '{alias}'"),
+                    span,
+                )),
+            }
+        }
         (base, idx) => Err(SpecError::new(
             SpecErrorCode::InvalidFieldAccess,
             format!("cannot index {} with {}", base.kind_name(), idx.kind_name()),
