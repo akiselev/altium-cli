@@ -1117,7 +1117,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             line_style: LineStyle::default(),
             color: props.color.unwrap_or_default(),
             area_color: props.area_color.unwrap_or_default(),
-            is_solid: props.is_solid.unwrap_or(false),
+            is_solid: props.is_solid.unwrap_or(true),
             transparent: false,
         })),
         GraphicType::RoundRectangle => Some(api::Graphic::RoundRectangle(api::RoundRectangleGraphic {
@@ -1130,7 +1130,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
             area_color: props.area_color.unwrap_or_default(),
-            is_solid: props.is_solid.unwrap_or(false),
+            is_solid: props.is_solid.unwrap_or(true),
         })),
         GraphicType::Arc => Some(api::Graphic::Arc(api::ArcGraphic {
             unique_id: spec.unique_id.clone(),
@@ -1162,7 +1162,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
             area_color: props.area_color.unwrap_or_default(),
-            is_solid: props.is_solid.unwrap_or(false),
+            is_solid: props.is_solid.unwrap_or(true),
             transparent: false,
         })),
         GraphicType::Pie => Some(api::Graphic::Pie(api::PieGraphic {
@@ -1174,7 +1174,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
             area_color: props.area_color.unwrap_or_default(),
-            is_solid: props.is_solid.unwrap_or(false),
+            is_solid: props.is_solid.unwrap_or(true),
         })),
         GraphicType::Polyline => Some(api::Graphic::Polyline(api::PolylineGraphic {
             unique_id: spec.unique_id.clone(),
@@ -1194,7 +1194,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
             area_color: props.area_color.unwrap_or_default(),
-            is_solid: props.is_solid.unwrap_or(false),
+            is_solid: props.is_solid.unwrap_or(true),
             transparent: false,
         })),
         GraphicType::Bezier => Some(api::Graphic::Bezier(api::BezierGraphic {
@@ -1226,7 +1226,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             area_color: props.area_color.unwrap_or_default(),
             text_color: Color::default(),
             font_id: props.font_id.unwrap_or(1),
-            is_solid: props.is_solid.unwrap_or(false),
+            is_solid: props.is_solid.unwrap_or(true),
             show_border: props.show_border.unwrap_or(true),
             alignment: HorizontalAlign::default(),
             word_wrap: true,

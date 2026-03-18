@@ -127,6 +127,8 @@ pub(crate) struct PcbLegacyLayerEntry {
     pub(crate) diel_const: f64,
     pub(crate) diel_height: Coord,
     pub(crate) diel_material: String,
+    /// Sheet linkage flag, present in some PcbLib files embedded in IntLibs.
+    pub(crate) sheet_linked: Option<String>,
 }
 
 /// Legacy plane pullback entry: `PLANE{N}PULLBACK=<distance>` / `PLANE{N}PULLBACK.LAYER=<layer>`.
@@ -257,6 +259,8 @@ pub(crate) struct PcbCfg2D {
     pub(crate) mech_layer_linked_to_sheet_set: String,
     pub(crate) mech_coverlay_updated: bool,
     pub(crate) layer_opacity: IndexMap<String, String>,
+    /// Flat semicolon-delimited opacity array (older serialization format).
+    pub(crate) layer_opacity_flat: Option<String>,
     pub(crate) workspace_col_alpha: IndexMap<String, String>,
 }
 
@@ -608,6 +612,8 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                 let diel_material = params
                     .remove_optional::<String>(&format!("LAYER{n}DIELMATERIAL"))?
                     .unwrap_or_default();
+                let sheet_linked = params
+                    .remove_optional::<String>(&format!("LAYER{n}SHEETLINKED"))?;
                 legacy_layers.push(PcbLegacyLayerEntry {
                     name,
                     prev,
@@ -619,6 +625,7 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                     diel_const,
                     diel_height,
                     diel_material,
+                    sheet_linked,
                 });
             }
         }
@@ -983,6 +990,10 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         .unwrap_or_default();
 
     // CFG2D indexed families
+    // Older files use a flat semicolon-delimited form: CFG2D.LAYEROPACITY=1.0;1.0;...
+    // Newer files use per-layer keys: CFG2D.LAYEROPACITY.TOPLAYER=1.0 etc.
+    let layer_opacity_flat = params
+        .remove_optional::<String>("CFG2D.LAYEROPACITY")?;
     let opacity_raw = params.remove_prefixed("CFG2D.LAYEROPACITY.");
     let prefix_len = "CFG2D.LAYEROPACITY.".len();
     let layer_opacity: IndexMap<String, String> = opacity_raw
@@ -1034,6 +1045,7 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         mech_layer_linked_to_sheet_set: cfg2d_mech_layer_linked_to_sheet_set,
         mech_coverlay_updated: cfg2d_mech_coverlay_updated,
         layer_opacity,
+        layer_opacity_flat,
         workspace_col_alpha,
     };
 
@@ -1300,6 +1312,9 @@ pub(crate) fn serialize_board_config(
         params.insert(&format!("LAYER{n}DIELCONST"), leg.diel_const.to_param_value());
         params.insert(&format!("LAYER{n}DIELHEIGHT"), MilCoord(leg.diel_height).to_param_value());
         params.insert(&format!("LAYER{n}DIELMATERIAL"), leg.diel_material.clone());
+        if let Some(sl) = &leg.sheet_linked {
+            params.insert(&format!("LAYER{n}SHEETLINKED"), sl.clone());
+        }
     }
 
     // 10. Surface properties
@@ -1441,6 +1456,9 @@ pub(crate) fn serialize_board_config(
     }
 
     // CFG2D indexed families
+    if let Some(flat) = &c2.layer_opacity_flat {
+        params.insert("CFG2D.LAYEROPACITY", flat.clone());
+    }
     for (key, val) in &c2.layer_opacity {
         params.insert(&format!("CFG2D.LAYEROPACITY.{key}"), val.clone());
     }

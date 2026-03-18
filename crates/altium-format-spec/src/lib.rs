@@ -5,6 +5,7 @@ pub mod dump;
 pub mod eco;
 pub mod eval;
 pub mod executor;
+pub mod formatter;
 pub mod import;
 pub mod lexer;
 pub mod model;
@@ -13,7 +14,7 @@ pub mod reconciler;
 
 // Public API re-exports
 pub use compiler::{compile_spec, compile_spec_with_imports, compile_imported_schlibs};
-pub use dump::{dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib};
+pub use dump::{dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib, IntLibDump};
 pub use executor::{apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc, apply_spec_schlib};
 pub use import::{ResolvedSpec, resolve_imports};
 pub use reconciler::{reconcile_pcbdoc, reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib, reconcile_schlib_empty};
@@ -25,6 +26,7 @@ pub use eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, EcoSummary, KindSummary,
     PropChange, PropValue,
 };
+pub use formatter::{format_spec, FormatConfig, FormatResult};
 pub use model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec,
     GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec, PcbGraphicProperties,

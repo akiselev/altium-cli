@@ -41,6 +41,16 @@ pub(crate) fn parse_pcb_file_header(data: &[u8]) -> Result<PcbFileHeader> {
             ),
         });
     }
+    // V5 headers (e.g. "PCB 5.0 Binary Library File" from IntLib-embedded
+    // PcbLibs) contain only the version string with no f64 or unique_id.
+    if reader.remaining() == 0 {
+        return Ok(PcbFileHeader {
+            version_string,
+            version: 0.0,
+            unique_id: None,
+        });
+    }
+
     let version = reader.read_f64_le()?;
 
     // Record 2: unique ID (optional in some observed PcbDoc files).

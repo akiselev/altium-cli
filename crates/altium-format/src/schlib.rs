@@ -142,7 +142,8 @@ pub(crate) fn parse_file_header(data: &[u8]) -> Result<SchLibHeader> {
     }
 
     let weight: i32 = params.remove_required(WEIGHT)?;
-    let minor_version: i32 = params.remove_required(MINOR_VERSION)?;
+    // MinorVersion is absent in SchLibs embedded inside older IntLib files.
+    let minor_version: i32 = params.remove_with_default(MINOR_VERSION, 0)?;
     let unique_id: String = params.remove_with_default(UNIQUE_ID, String::new())?;
 
     // Font table (1-based indexing)

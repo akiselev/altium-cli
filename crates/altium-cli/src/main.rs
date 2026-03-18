@@ -11,8 +11,9 @@ use autopcb_placement::{
 };
 use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
-    SpecDomain, compile_spec_with_imports, compile_imported_schlibs,
-    dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
+    FormatConfig, SpecDomain, compile_spec_with_imports, compile_imported_schlibs,
+    dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
+    format_spec,
     PlacementConstraintSpec, PlacementPlaceSpec,
     reconcile_pcbdoc, reconcile_pcbdoc_empty,
     reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
@@ -157,6 +158,17 @@ enum Commands {
     Graph {
         #[command(subcommand)]
         sub: GraphSubcommand,
+    },
+    /// Format spec files (.schlib-spec, .pcblib-spec, etc.)
+    Format {
+        /// Spec files to format (reads from stdin if none given)
+        files: Vec<PathBuf>,
+        /// Check formatting without writing (exit code 1 if changes needed)
+        #[arg(long)]
+        check: bool,
+        /// Write output to stdout instead of modifying files in-place
+        #[arg(long)]
+        stdout: bool,
     },
 }
 
@@ -360,9 +372,60 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        Commands::Format { files, check, stdout } => {
+            match run_format(files, check, stdout) {
+                Ok(code) => return code,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_format(files: Vec<PathBuf>, check: bool, to_stdout: bool) -> anyhow::Result<ExitCode> {
+    let config = FormatConfig::default();
+
+    if files.is_empty() {
+        // stdin → stdout mode
+        let mut source = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut source)?;
+        let result = format_spec(&source, &config)
+            .map_err(|e| anyhow::anyhow!("{}", e.render("<stdin>", &source)))?;
+        print!("{}", result.output);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let mut any_changed = false;
+    for path in &files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+        let file_name = path.display().to_string();
+        let result = format_spec(&source, &config)
+            .map_err(|e| anyhow::anyhow!("{}", e.render(&file_name, &source)))?;
+
+        if check {
+            if result.changed {
+                eprintln!("{}", path.display());
+                any_changed = true;
+            }
+        } else if to_stdout {
+            print!("{}", result.output);
+        } else if result.changed {
+            std::fs::write(path, &result.output)
+                .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
+            eprintln!("formatted {}", path.display());
+        }
+    }
+
+    if check && any_changed {
+        Ok(ExitCode::from(1))
+    } else {
+        Ok(ExitCode::SUCCESS)
+    }
 }
 
 fn run_graph(sub: GraphSubcommand) -> anyhow::Result<()> {
@@ -640,7 +703,12 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
             doc.validate_invariants()?;
         }
         "intlib" => {
-            let _doc = IntLib::open(path)?;
+            let lib = IntLib::open(path)?;
+            println!(
+                "  {} SchLib(s), {} PcbLib(s)",
+                lib.schlibs().len(),
+                lib.pcblibs().len()
+            );
         }
         "prjpcb" => {
             let doc = AltiumProject::open(path)?;
@@ -970,6 +1038,17 @@ fn apply_for_model(
 // ── dump ──────────────────────────────────────────────────────────────────────
 
 fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
+    // IntLib produces two output files (schlib-spec + pcblib-spec), so it
+    // bypasses the single-domain path.
+    let ext = document
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "intlib" {
+        return run_dump_intlib(document, output);
+    }
+
     let domain = detect_document_domain(document)?;
     let out_path = output.cloned().unwrap_or_else(|| default_spec_for_document(document, &domain));
 
@@ -1018,6 +1097,51 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
                 .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
             println!("Dumped: {} -> {}", document.display(), out_path.display());
         }
+    }
+
+    Ok(())
+}
+
+fn run_dump_intlib(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
+    let lib = IntLib::open(document)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+    let dump = dump_intlib(&lib)
+        .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
+
+    let stem = document
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+
+    let out_dir = match output {
+        Some(p) if p.is_dir() => p.clone(),
+        Some(p) => p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf(),
+        None => document
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf(),
+    };
+
+    let mut wrote_any = false;
+    if let Some(schlib_spec) = &dump.schlib_spec {
+        let path = out_dir.join(format!("{stem}.schlib-spec"));
+        std::fs::write(&path, schlib_spec)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+        println!("Dumped: {} -> {}", document.display(), path.display());
+        wrote_any = true;
+    }
+    if let Some(pcblib_spec) = &dump.pcblib_spec {
+        let path = out_dir.join(format!("{stem}.pcblib-spec"));
+        std::fs::write(&path, pcblib_spec)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+        println!("Dumped: {} -> {}", document.display(), path.display());
+        wrote_any = true;
+    }
+    if !wrote_any {
+        anyhow::bail!(
+            "{} contains no SchLib or PcbLib data",
+            document.display()
+        );
     }
 
     Ok(())

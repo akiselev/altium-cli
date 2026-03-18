@@ -4,7 +4,7 @@
 //! Generated output uses absolute placement only (`at: (x, y)`, explicit
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
-use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
+use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format::api::{
     Component, Pin, Parameter, FootprintMap, Graphic,
     SheetObject, ComponentChild, SheetSymbolChild,
@@ -54,6 +54,51 @@ pub fn dump_schlib(lib: &SchLib) -> Result<String, altium_format::AltiumFormatEr
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Result of dumping an IntLib — produces separate SchLib and PcbLib spec text.
+pub struct IntLibDump {
+    /// `.schlib-spec` source for all embedded schematic symbols, or `None` if
+    /// the IntLib contains no SchLib data.
+    pub schlib_spec: Option<String>,
+    /// `.pcblib-spec` source for all embedded footprints, or `None` if the
+    /// IntLib contains no PcbLib data.
+    pub pcblib_spec: Option<String>,
+}
+
+/// Dump an IntLib's embedded libraries as `.schlib-spec` and `.pcblib-spec`.
+pub fn dump_intlib(lib: &IntLib) -> Result<IntLibDump, altium_format::AltiumFormatError> {
+    let schlib_spec = if lib.schlibs().is_empty() {
+        None
+    } else {
+        let mut out = String::new();
+        for schlib in lib.schlibs() {
+            for comp in &schlib.components()? {
+                dump_component(&mut out, comp);
+                out.push('\n');
+            }
+        }
+        Some(out)
+    };
+
+    let pcblib_spec = if lib.pcblibs().is_empty() {
+        None
+    } else {
+        let mut out = String::new();
+        for pcblib in lib.pcblibs() {
+            for name in pcblib.footprint_names() {
+                let fp = pcblib.footprint(name)?;
+                dump_footprint(&mut out, &fp);
+                out.push('\n');
+            }
+        }
+        Some(out)
+    };
+
+    Ok(IntLibDump {
+        schlib_spec,
+        pcblib_spec,
+    })
 }
 
 /// Generate `.prjpcb-spec` source from a PrjPcb project.
@@ -1252,6 +1297,12 @@ fn dump_component(out: &mut String, comp: &Component) {
         // Emit swap_group declarations for groups that appear on 2+ pins
         let mut declared = HashSet::new();
         for sg in &unique {
+            // Only declare swap_group bindings for valid identifiers.
+            // Groups with special characters can't be referenced as $name,
+            // so they use inline string literals instead.
+            if !is_valid_ident(sg) {
+                continue;
+            }
             let count = comp.pins.iter().filter(|p| {
                 p.swap_id_pin == *sg || p.swap_id_part == *sg || p.swap_id_pair == *sg
             }).count();
@@ -1327,11 +1378,7 @@ fn dump_component(out: &mut String, comp: &Component) {
 
             out.push_str(&format!("    part {} {{\n", part_id));
             if let Some(sg) = uniform_part_swap {
-                if declared_swap_groups.contains(sg) {
-                    out.push_str(&format!("        swap_group: ${}\n", quote_entity_name(sg)));
-                } else {
-                    out.push_str(&format!("        swap_group: {}\n", quote_string(sg)));
-                }
+                out.push_str(&format!("        swap_group: {}\n", swap_group_ref(sg, &declared_swap_groups)));
             }
             for graphic in &comp.graphics {
                 if graphic.owner_part_id() == *part_id {
@@ -1402,25 +1449,13 @@ fn dump_pin_with_part_swap_override(
         parts.push(format!("hidden_net_name: {}", quote_string(&pin.hidden_net_name)));
     }
     if !pin.swap_id_pin.is_empty() {
-        if declared_groups.contains(&pin.swap_id_pin) {
-            parts.push(format!("swap_group: ${}", quote_entity_name(&pin.swap_id_pin)));
-        } else {
-            parts.push(format!("swap_group: {}", quote_string(&pin.swap_id_pin)));
-        }
+        parts.push(format!("swap_group: {}", swap_group_ref(&pin.swap_id_pin, declared_groups)));
     }
     if !suppress_part_swap && !pin.swap_id_part.is_empty() {
-        if declared_groups.contains(&pin.swap_id_part) {
-            parts.push(format!("part_swap_group: ${}", quote_entity_name(&pin.swap_id_part)));
-        } else {
-            parts.push(format!("part_swap_group: {}", quote_string(&pin.swap_id_part)));
-        }
+        parts.push(format!("part_swap_group: {}", swap_group_ref(&pin.swap_id_part, declared_groups)));
     }
     if !pin.swap_id_pair.is_empty() {
-        if declared_groups.contains(&pin.swap_id_pair) {
-            parts.push(format!("pair_swap_group: ${}", quote_entity_name(&pin.swap_id_pair)));
-        } else {
-            parts.push(format!("pair_swap_group: {}", quote_string(&pin.swap_id_pair)));
-        }
+        parts.push(format!("pair_swap_group: {}", swap_group_ref(&pin.swap_id_pair, declared_groups)));
     }
     out.push_str(&format!(
         "{}pin {} {{ {} }}\n",
@@ -1588,27 +1623,16 @@ fn dump_footprint_map(out: &mut String, fp: &FootprintMap, indent: usize) {
         pad,
         quote_entity_name(&fp.model_name)
     ));
+    // description is not part of FootprintMapSpec; emit as a comment for reference
     if !fp.description.is_empty() {
-        out.push_str(&format!("{}    description: {}\n", pad, quote_string(&fp.description)));
+        out.push_str(&format!("{}    // {}\n", pad, fp.description));
     }
-    // Group API entries by pin to reproduce `map PIN -> PAD1, PAD2` syntax.
-    // The API uses Vec<PinPadMap> where each entry is 1:1 (pin, pad).
-    let mut pin_to_pads: IndexMap<&str, Vec<&str>> = IndexMap::new();
     for m in &fp.pin_pad_maps {
-        pin_to_pads.entry(&m.pin).or_default().push(&m.pad);
-    }
-    for (pin, pads) in &pin_to_pads {
-        if pads.is_empty() {
-            continue;
-        }
-        let pad_strs: Vec<String> = pads.iter()
-            .map(|p| quote_entity_name(p))
-            .collect();
         out.push_str(&format!(
-            "{}    map {} -> {}\n",
+            "{}    map {{ pin: {}, pad: {} }}\n",
             pad,
-            quote_entity_name(pin),
-            pad_strs.join(", ")
+            quote_string(&m.pin),
+            quote_string(&m.pad),
         ));
     }
     out.push_str(&format!("{}}}\n", pad));
@@ -1665,6 +1689,19 @@ fn is_valid_ident(s: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Format a swap group reference for dump output.
+///
+/// If the group was declared with `swap_group <name> { ... }` and the name is
+/// a valid identifier, emit `$name` (a binding reference). Otherwise fall back
+/// to a plain string literal.
+fn swap_group_ref(name: &str, declared_groups: &HashSet<String>) -> String {
+    if declared_groups.contains(name) && is_valid_ident(name) {
+        format!("${name}")
+    } else {
+        quote_string(name)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

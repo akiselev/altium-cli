@@ -1882,7 +1882,11 @@ impl<'a> SpecParser<'a> {
         while !self.at(&TokenKind::RBrace) && !self.at_eof() {
             let item = self.parse_object_item()?;
             items.push(item);
-            self.eat_separator();
+            // Require a separator (comma, newline, or semicolon) between items.
+            // Without this, `after: $ref electrical:` on the same line would silently parse.
+            if !self.at(&TokenKind::RBrace) && !self.at_eof() && !self.eat_separator() {
+                return Err(self.err("expected ',' or newline between properties"));
+            }
             self.skip_newlines();
         }
         let end = self.current_span();

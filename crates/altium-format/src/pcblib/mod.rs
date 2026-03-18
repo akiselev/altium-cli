@@ -861,35 +861,47 @@ impl PcbLib {
         let (library, suffix_names) =
             parse_library_data(&lib_data_raw).context("parsing /Library/Data")?;
 
-        let lib_toc_header = doc.read_stream("/Library/ComponentParamsTOC/Header")?;
-        let lib_toc_data = doc.read_stream("/Library/ComponentParamsTOC/Data")?;
-        let component_toc = parse_component_toc(&lib_toc_header, &lib_toc_data)
-            .context("parsing /Library/ComponentParamsTOC")?;
-        doc.consume_storage("/Library/ComponentParamsTOC");
+        // ComponentParamsTOC is absent in older V6 PcbLibs (e.g. IntLib-embedded).
+        let component_toc = if doc.exists("/Library/ComponentParamsTOC/Header") {
+            let lib_toc_header = doc.read_stream("/Library/ComponentParamsTOC/Header")?;
+            let lib_toc_data = doc.read_stream("/Library/ComponentParamsTOC/Data")?;
+            let toc = parse_component_toc(&lib_toc_header, &lib_toc_data)
+                .context("parsing /Library/ComponentParamsTOC")?;
+            doc.consume_storage("/Library/ComponentParamsTOC");
 
-        // Cross-validate Library/Data suffix names against ComponentParamsTOC.
-        if !suffix_names.is_empty() {
-            let toc_names: Vec<&str> = component_toc.iter().map(|e| e.name.as_str()).collect();
-            let suffix_refs: Vec<&str> = suffix_names.iter().map(|s| s.as_str()).collect();
-            if toc_names != suffix_refs {
-                return Err(AltiumFormatError::InvalidParamValue {
-                    key: "Library/Data suffix".to_owned(),
-                    detail: format!(
-                        "component name index mismatch: suffix has {:?} but ComponentParamsTOC has {:?}",
-                        suffix_refs, toc_names
-                    ),
-                });
+            // Cross-validate Library/Data suffix names against ComponentParamsTOC.
+            if !suffix_names.is_empty() {
+                let toc_names: Vec<&str> = toc.iter().map(|e| e.name.as_str()).collect();
+                let suffix_refs: Vec<&str> = suffix_names.iter().map(|s| s.as_str()).collect();
+                if toc_names != suffix_refs {
+                    return Err(AltiumFormatError::InvalidParamValue {
+                        key: "Library/Data suffix".to_owned(),
+                        detail: format!(
+                            "component name index mismatch: suffix has {:?} but ComponentParamsTOC has {:?}",
+                            suffix_refs, toc_names
+                        ),
+                    });
+                }
             }
-        }
+            toc
+        } else {
+            Vec::new()
+        };
 
-        let lib_models_header = doc.read_stream("/Library/Models/Header")?;
-        let lib_models_data = doc.read_stream("/Library/Models/Data")?;
-        let mut model_entries = parse_model_metadata(&lib_models_header, &lib_models_data)?;
-        for (i, entry) in model_entries.iter_mut().enumerate() {
-            let blob_path = format!("/Library/Models/{i}");
-            entry.blob = doc.read_stream_optional(&blob_path)?;
-        }
-        doc.consume_storage("/Library/Models");
+        // Models storage is absent in older V6 PcbLibs (e.g. IntLib-embedded).
+        let model_entries = if doc.exists("/Library/Models/Header") {
+            let lib_models_header = doc.read_stream("/Library/Models/Header")?;
+            let lib_models_data = doc.read_stream("/Library/Models/Data")?;
+            let mut entries = parse_model_metadata(&lib_models_header, &lib_models_data)?;
+            for (i, entry) in entries.iter_mut().enumerate() {
+                let blob_path = format!("/Library/Models/{i}");
+                entry.blob = doc.read_stream_optional(&blob_path)?;
+            }
+            doc.consume_storage("/Library/Models");
+            entries
+        } else {
+            Vec::new()
+        };
 
         // Auxiliary Library sub-storages (optional)
         let layer_kind_mapping = if doc.exists("/Library/LayerKindMapping/Header") {
@@ -1952,6 +1964,7 @@ mod tests {
                         mech_layer_linked_to_sheet_set: String::new(),
                         mech_coverlay_updated: false,
                         layer_opacity: indexmap::IndexMap::new(),
+                        layer_opacity_flat: None,
                         workspace_col_alpha: indexmap::IndexMap::new(),
                     },
                     cfg3d: indexmap::IndexMap::new(),
