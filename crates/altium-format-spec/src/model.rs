@@ -563,6 +563,12 @@ pub struct PlacementSpec {
     pub constraints: Vec<PlacementConstraintSpec>,
     pub optimize: PlacementOptimizeSpec,
     pub clearance: PlacementClearanceSpec,
+    pub autoplace_config: Option<AutoplaceConfig>,
+    pub unplaced: UnplacedStrategy,
+    pub allow_pin_swap: bool,
+    pub allow_part_swap: bool,
+    pub allow_gate_swap: bool,
+    pub groups: Vec<PlacementGroupSpec>,
 }
 
 pub struct PlacementPlaceSpec {
@@ -577,6 +583,37 @@ pub struct PlacementPlaceSpec {
     pub fixed: bool,
     pub at: Option<CoordPoint>,
     pub side: Option<String>,
+    pub autoplace: bool,
+    pub no_pin_swap: Vec<String>,
+    pub no_part_swap: bool,
+}
+
+/// Strategy for components present in PcbDoc but not mentioned in the spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnplacedStrategy {
+    #[default]
+    Autoplace,
+    Ignore,
+    Error,
+}
+
+/// Configuration for the autoplace solver.
+pub struct AutoplaceConfig {
+    pub algorithm: Option<String>,
+    pub sa_cooling: Option<f64>,
+    pub sa_moves_per_temp: Option<usize>,
+    pub sa_max_steps: Option<usize>,
+    pub enable_net_crossings: Option<bool>,
+    pub default_clearance: Option<Coord>,
+    pub board_edge_clearance: Option<Coord>,
+    pub grid_snap: Option<Coord>,
+    pub auto_cluster: Option<bool>,
+}
+
+/// A named group of components for placement solver grouping.
+pub struct PlacementGroupSpec {
+    pub name: String,
+    pub components: Vec<String>,
 }
 
 pub enum PlacementConstraintSpec {

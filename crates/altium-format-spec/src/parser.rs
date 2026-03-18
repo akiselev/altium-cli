@@ -8,9 +8,9 @@ use super::ast::{
     MapEntry, MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl,
     OutputGroupBlockDecl, PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem,
     PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
-    PlacementItem, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property, RowDecl, RuleDecl,
-    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem, SwapGroupDecl,
-    VariantBlockDecl, VariationDecl,
+    PlacementGroupDecl, PlacementItem, PlacementSeparateDecl, PolygonDecl, PowerDecl, ProjectDecl,
+    ProjectItem, Property, RowDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl,
+    SheetItem, SpecFile, SpecItem, SwapGroupDecl, VariantBlockDecl, VariationDecl,
     is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
@@ -1418,6 +1418,32 @@ impl<'a> SpecParser<'a> {
                 }
             }
 
+            if self.at(&TokenKind::Group) {
+                let decl = self.parse_placement_group()?;
+                let end = self.prev_span();
+                body.push(Spanned::new(PlacementItem::GroupDecl(decl), start.merge(end)));
+                self.skip_separators();
+                continue;
+            }
+
+            if self.at(&TokenKind::Separate) {
+                let decl = self.parse_placement_separate()?;
+                let end = self.prev_span();
+                body.push(Spanned::new(PlacementItem::SeparateDecl(decl), start.merge(end)));
+                self.skip_separators();
+                continue;
+            }
+
+            if self.at(&TokenKind::Autoplace) {
+                self.bump();
+                self.skip_newlines();
+                let obj = self.parse_object()?;
+                let end = self.prev_span();
+                body.push(Spanned::new(PlacementItem::AutoplaceBlock(obj), start.merge(end)));
+                self.skip_separators();
+                continue;
+            }
+
             let prop = self.parse_property()?;
             let end = self.prev_span();
             body.push(Spanned::new(PlacementItem::Property(prop), start.merge(end)));
@@ -1481,6 +1507,56 @@ impl<'a> SpecParser<'a> {
             "below" => PlacementConstraintDecl::Below { a, b, body },
             _ => return Err(self.err("unsupported directional placement constraint")),
         })
+    }
+
+    /// Parse `group NAME { ... }` inside a placement block.
+    fn parse_placement_group(&mut self) -> Result<PlacementGroupDecl, ParseError> {
+        self.expect(&TokenKind::Group, "expected 'group'")?;
+        self.skip_newlines();
+        let name_start = self.current_span();
+        let name_str = match self.current_kind().clone() {
+            TokenKind::Ident(s) => {
+                self.bump();
+                s
+            }
+            TokenKind::String(s) => {
+                self.bump();
+                s
+            }
+            _ => return Err(self.err("expected group name after 'group'")),
+        };
+        let name_end = self.prev_span();
+        let name = Spanned::new(name_str, name_start.merge(name_end));
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(PlacementGroupDecl { name, body })
+    }
+
+    /// Parse `separate $group_a, $group_b { gap: Nmm }` inside a placement block.
+    fn parse_placement_separate(&mut self) -> Result<PlacementSeparateDecl, ParseError> {
+        self.expect(&TokenKind::Separate, "expected 'separate'")?;
+        self.skip_newlines();
+        let mut groups = Vec::new();
+        loop {
+            let g = self.parse_dollar_path_reference()?;
+            groups.push(g);
+            self.skip_newlines();
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            self.skip_newlines();
+            // stop consuming if next token is LBrace (start of body)
+            if self.at(&TokenKind::LBrace) {
+                break;
+            }
+        }
+        self.skip_newlines();
+        let body = if self.at(&TokenKind::LBrace) {
+            Some(self.parse_object()?)
+        } else {
+            None
+        };
+        Ok(PlacementSeparateDecl { groups, body })
     }
 
     /// Parse a PcbDoc primitive from an identifier token: `track { ... }`, `arc { ... }`, etc.
@@ -1959,6 +2035,9 @@ impl<'a> SpecParser<'a> {
             TokenKind::Grid => "grid".to_string(),
             TokenKind::Project => "project".to_string(),
             TokenKind::SwapGroup => "swap_group".to_string(),
+            TokenKind::Group => "group".to_string(),
+            TokenKind::Separate => "separate".to_string(),
+            TokenKind::Autoplace => "autoplace".to_string(),
             TokenKind::Let => "let".to_string(),
             TokenKind::True => "true".to_string(),
             TokenKind::False => "false".to_string(),
@@ -2219,6 +2298,20 @@ impl<'a> SpecParser<'a> {
             TokenKind::Sheet => {
                 self.bump();
                 Ok(Spanned::new(Expr::Ident("sheet".to_string()), start))
+            }
+            // New placement keywords that can also appear as identifier values in expressions.
+            // e.g. `unplaced: autoplace`, `algorithm: full_pipeline`
+            TokenKind::Autoplace => {
+                self.bump();
+                Ok(Spanned::new(Expr::Ident("autoplace".to_string()), start))
+            }
+            TokenKind::Group => {
+                self.bump();
+                Ok(Spanned::new(Expr::Ident("group".to_string()), start))
+            }
+            TokenKind::Separate => {
+                self.bump();
+                Ok(Spanned::new(Expr::Ident("separate".to_string()), start))
             }
 
             // bare IDENT — let binding ref or enum value, possibly with path tail
@@ -2927,6 +3020,191 @@ component LM358 {
         if let SpecItem::Component(c) = &f.items[1].node {
             // designator, part 1, part 2, pin 4, pin 8, alias, footprint
             assert_eq!(c.body.len(), 7);
+        }
+    }
+
+    // ── Placement autoplace extension tests ────────────────────────────────
+
+    #[test]
+    fn placement_autoplace_property_in_place_block() {
+        let f = parse(r#"
+placement {
+    place U1 { autoplace: true, region: center }
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            if let PlacementItem::Place(place) = &p.body[0].node {
+                assert_eq!(place.designators.len(), 1);
+                assert_eq!(place.designators[0].node.as_str(), "U1");
+                // body contains autoplace: true, region: center
+                let body = &place.body.node;
+                let has_autoplace = body.items.iter().any(|item| {
+                    if let ObjectItem::Property(prop) = &item.node {
+                        prop.key.node == "autoplace"
+                    } else {
+                        false
+                    }
+                });
+                assert!(has_autoplace, "expected autoplace property in place body");
+            } else {
+                panic!("expected Place item");
+            }
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_autoplace_block_full_pipeline() {
+        let f = parse(r#"
+placement {
+    autoplace { algorithm: full_pipeline, grid_snap: 0.5mm }
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            assert!(
+                p.body.iter().any(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))),
+                "expected AutoplaceBlock item"
+            );
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_autoplace_block_empty() {
+        let f = parse(r#"
+placement {
+    autoplace {}
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            assert!(
+                p.body.iter().any(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))),
+                "expected AutoplaceBlock item even when empty"
+            );
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_unplaced_strategy_autoplace() {
+        let f = parse(r#"
+placement {
+    unplaced: autoplace
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            let found = p.body.iter().any(|item| {
+                if let PlacementItem::Property(prop) = &item.node {
+                    prop.key.node == "unplaced"
+                } else {
+                    false
+                }
+            });
+            assert!(found, "expected unplaced property");
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_group_decl() {
+        let f = parse(r#"
+placement {
+    group analog { components: [U5, R10, C20] }
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            let found = p.body.iter().any(|item| {
+                if let PlacementItem::GroupDecl(g) = &item.node {
+                    g.name.node == "analog"
+                } else {
+                    false
+                }
+            });
+            assert!(found, "expected GroupDecl with name 'analog'");
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_separate_decl() {
+        let f = parse(r#"
+placement {
+    separate $analog, $digital { gap: 8mm }
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            let found = p.body.iter().any(|item| {
+                if let PlacementItem::SeparateDecl(s) = &item.node {
+                    s.groups.len() == 2 && s.body.is_some()
+                } else {
+                    false
+                }
+            });
+            assert!(found, "expected SeparateDecl with 2 groups and a body");
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_no_pin_swap_in_place_block() {
+        let f = parse(r#"
+placement {
+    place U1 { no_pin_swap: [A, B], no_part_swap: true }
+}
+"#);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            if let PlacementItem::Place(place) = &p.body[0].node {
+                let has_no_pin_swap = place.body.node.items.iter().any(|item| {
+                    if let ObjectItem::Property(prop) = &item.node {
+                        prop.key.node == "no_pin_swap"
+                    } else {
+                        false
+                    }
+                });
+                assert!(has_no_pin_swap, "expected no_pin_swap in place body");
+            } else {
+                panic!("expected Place item");
+            }
+        } else {
+            panic!("expected Placement");
+        }
+    }
+
+    #[test]
+    fn placement_complete_block_with_all_new_properties() {
+        let src = r#"
+placement {
+    unplaced: autoplace
+    allow_pin_swap: true
+    allow_part_swap: false
+    allow_gate_swap: true
+    autoplace { algorithm: full_pipeline, grid_snap: 0.5mm, auto_cluster: true }
+    group analog { components: [U5, R10, C20] }
+    group digital { components: [U1, U2] }
+    separate $analog, $digital { gap: 8mm }
+    place U1 { autoplace: true, region: center }
+    place U5 { fixed: true, at: (10mm, 20mm) }
+    place C1, C2 { autoplace: true, no_part_swap: true }
+}
+"#;
+        let f = parse(src);
+        if let SpecItem::Placement(p) = &f.items[0].node {
+            let group_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::GroupDecl(_))).count();
+            assert_eq!(group_count, 2, "expected 2 group declarations");
+            let place_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::Place(_))).count();
+            assert_eq!(place_count, 3, "expected 3 place declarations");
+            let autoplace_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))).count();
+            assert_eq!(autoplace_count, 1, "expected 1 autoplace block");
+            let separate_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::SeparateDecl(_))).count();
+            assert_eq!(separate_count, 1, "expected 1 separate declaration");
+        } else {
+            panic!("expected Placement");
         }
     }
 }

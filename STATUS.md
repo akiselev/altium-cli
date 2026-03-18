@@ -18,11 +18,11 @@ altium-format          (core: parsing, serialization, high-level API, rendering 
      └→ altium-format-render-png  (PNG rasterization via resvg)
 altium-format-spec     (spec DSL: compiler, executor, reconciler, dump)
      ↓
-altium-cli             (CLI binary: validate, save-as, render, query, plan, apply, dump, inspect, cfb tools)
+altium-cli             (CLI binary: validate, save-as, render, query, plan, apply, dump, inspect, cfb tools, placement dump/plan/apply/autoplace)
 
 autopcb-ir             (PCB intermediate representation: mm-based extraction from PcbDocBoard; serde JSON export)
      ↓
-autopcb-viewer         (standalone egui/wgpu binary: 2D + 2.5D PCB viewer with pan/zoom/orbit)
+autopcb-viewer         (standalone egui/wgpu binary: 2D + 2.5D PCB viewer with pan/zoom/orbit; accepts .pcbdoc-spec files directly with spec position overrides)
 ```
 
 ---
@@ -36,7 +36,7 @@ autopcb-viewer         (standalone egui/wgpu binary: 2D + 2.5D PCB viewer with p
 | **PcbLib** | .PcbLib | ✅      | ✅         | ✅ Full CRUD    | ✅         | ✅     | ✅ SVG/PNG | ✅            | ✅           | ✅       |
 | **PcbDoc** | .PcbDoc | ✅      | ✅         | ✅ Read/Write   | ✅         | ✅     | ❌         | ✅            | ✅           | ❌       |
 | **PrjPcb** | .PrjPcb | ✅      | ✅         | ✅ Read-only    | ✅         | ❌     | ❌         | ✅            | ✅           | ✅       |
-| **IntLib** | .IntLib | ❌ Stub | ❌ Stub    | ❌ None         | ❌         | ❌     | ❌         | ⚠️ open only  | ❌           | ❌       |
+| **IntLib** | .IntLib | ✅ Read | ❌         | ❌ None         | ❌         | ❌     | ❌         | ✅             | ✅ dump      | ❌       |
 
 ---
 
@@ -253,6 +253,17 @@ requires an existing target file (no `new` for PcbDoc). Dump produces roundtripp
 `.pcbdoc-spec` output. Reconciler uses name-based matching for named collections and
 ID-based matching for primitives.
 
+**AutoPCB Placer — Milestone 3 (Reconciler Placement Comparison):** Implemented.
+`reconcile_pcbdoc()` now compares component positions from `placement { place ... }`
+blocks against PcbDoc component locations. Emits `Update` ECO entries for components
+whose position differs by more than 0.01mm (tolerance covers Coord↔f64 round-trip
+artifacts). Rotation comparison reserved for when `PlacementPlaceSpec` gains a
+`rotation` field (`ROTATION_TOLERANCE_DEG = 0.1` constant defined and ready).
+Components in spec but absent from PcbDoc emit a warning and are skipped. Only
+`place` blocks with an explicit `at:` coordinate participate in comparison.
+6 unit tests cover: moved component, same position, within tolerance, no `at:`,
+missing designator, and multi-designator place blocks.
+
 **Query:** Supported. Entity types: pcbdoc_net, pcbdoc_component, pcbdoc_polygon,
 pcbdoc_rule, pcbdoc_class, pcbdoc_dimension, pcbdoc_differential_pair, plus reused
 PcbLib primitive selectors (track, pad, via, arc, fill, text, region, component_body).
@@ -299,10 +310,20 @@ section properties, ERC matrix overrides, documents, output groups, variants.
 
 ---
 
-### IntLib (.IntLib) — STUB
+### IntLib (.IntLib) — READ-ONLY
 
-**Status:** Returns `NotImplemented` error on `open()`. No parsing, serialization, API,
-or CLI support beyond a basic `validate` call that just attempts to open.
+**Parsing:** Opens CFB container, decompresses zlib-wrapped embedded SchLib and PcbLib
+streams (0x02 prefix + zlib), and parses them using the existing SchLib/PcbLib parsers.
+Handles V5 and V6 embedded libraries, optional CKT/MDL/PCB3DLib storages.
+Some older IntLib files (pre-AD6) may fail on V5 PcbLib primitives.
+
+**Serialization:** Not implemented. Read-only.
+
+**API:** `IntLib::open(path)`, `.schlibs()`, `.pcblibs()`. Embedded libraries are
+full `SchLib`/`PcbLib` objects with all their normal API methods.
+
+**CLI:** `validate` (reports SchLib/PcbLib counts), `dump` (produces separate
+`.schlib-spec` and `.pcblib-spec` files from the embedded libraries).
 
 ---
 
@@ -311,7 +332,7 @@ or CLI support beyond a basic `validate` call that just attempts to open.
 | Command       | SchLib | SchDoc | PcbLib | PcbDoc | PrjPcb | IntLib      |
 | ------------- | ------ | ------ | ------ | ------ | ------ | ----------- |
 | `new`         | ✅      | ✅      | ✅      | ❌      | ✅      | ❌           |
-| `validate`    | ✅      | ✅      | ✅      | ✅      | ✅      | ⚠️ open only |
+| `validate`    | ✅      | ✅      | ✅      | ✅      | ✅      | ✅            |
 | `save-as`     | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
 | `get version` | ✅      | ❌      | ✅      | ❌      | ❌      | ❌           |
 | `render`      | ✅      | ✅      | ✅      | ❌      | ❌      | ❌           |
@@ -319,7 +340,7 @@ or CLI support beyond a basic `validate` call that just attempts to open.
 | `info`        | ✅      | ✅      | ✅      | ✅      | ❌      | ❌           |
 | `plan`        | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
 | `apply`       | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
-| `dump`        | ✅      | ✅      | ✅      | ✅      | ✅      | ❌           |
+| `dump`        | ✅      | ✅      | ✅      | ✅      | ✅      | ✅           |
 | `cfb ls`      | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
 | `cfb dump`    | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
 | `cfb blocks`  | ✅      | ✅      | ✅      | ✅      | n/a    | ✅           |
@@ -412,8 +433,9 @@ pad expansion, multi-part components, pin anchoring, import resolution.
 
 ### Critical
 
-1. **IntLib is a stub** — returns `NotImplemented`. Violates fail-fast if users expect
-   it to work. Should either implement or clearly document as unsupported.
+1. ~~**IntLib is a stub**~~ — **Fixed.** Read-only IntLib support implemented: `validate`
+   and `dump` work. Produces `.schlib-spec` + `.pcblib-spec` from embedded libraries.
+   Some older pre-AD6 IntLib files may fail on V5 PcbLib primitive formats.
 
 ### Moderate
 
@@ -484,6 +506,294 @@ Fixed all 15 rule violations identified in `rule-review.md`:
 
 ---
 
+## AutoPCB Placer — Milestone 1: Spec Parser Extensions + Model Updates (2026-03-17)
+
+**Files**: `crates/altium-format-spec/src/{model,ast,lexer,parser,compiler,formatter}.rs`
+
+Extended the spec DSL to support autoplace directives for the upcoming PCB placement solver:
+
+### Lexer (`lexer.rs`)
+- Added `Group`, `Separate`, `Autoplace` keyword tokens
+- All three also allowed as property keys in objects and as identifier values in expressions
+
+### AST (`ast.rs`)
+- Added `PlacementItem::GroupDecl(PlacementGroupDecl)` — `group NAME { components: [...] }`
+- Added `PlacementItem::SeparateDecl(PlacementSeparateDecl)` — `separate $a, $b { gap: Nmm }`
+- Added `PlacementItem::AutoplaceBlock(Spanned<Object>)` — `autoplace { algorithm: ..., ... }`
+- All new AST nodes carry `Span` byte offsets (required by M6 spec rewriter)
+
+### Model (`model.rs`)
+- `PlacementSpec`: added `autoplace_config`, `unplaced`, `allow_pin_swap`, `allow_part_swap`, `allow_gate_swap`, `groups`
+- `PlacementPlaceSpec`: added `autoplace: bool`, `no_pin_swap: Vec<String>`, `no_part_swap: bool`
+- New `UnplacedStrategy` enum: `Autoplace` (default), `Ignore`, `Error`
+- New `AutoplaceConfig` struct: `algorithm`, `sa_cooling`, `sa_moves_per_temp`, `sa_max_steps`, `enable_net_crossings`, `default_clearance`, `board_edge_clearance`, `grid_snap`, `auto_cluster`
+- New `PlacementGroupSpec` struct: `name`, `components`
+
+### Parser (`parser.rs`)
+- `parse_placement`: handles `group`, `separate`, `autoplace` blocks via `Group`/`Separate`/`Autoplace` token kinds
+- `parse_placement_group`: parses `group NAME { ... }`
+- `parse_placement_separate`: parses `separate $a, $b { ... }` with optional body
+- Place body: `autoplace`, `no_pin_swap`, `no_part_swap` properties recognized
+
+### Compiler (`compiler.rs`)
+- `compile_placement_decl`: compiles `unplaced`, `allow_*_swap` properties, `AutoplaceBlock` → `AutoplaceConfig`, `GroupDecl` → `PlacementGroupSpec`
+- `compile_placement_place`: compiles `autoplace`, `no_pin_swap`, `no_part_swap`
+- `compile_autoplace_config`: extracts all 9 config fields from object
+- `compile_placement_group`: extracts name and components array
+
+### Formatter (`formatter.rs`)
+- `fmt_placement_item`: handles `AutoplaceBlock`, `GroupDecl`, `SeparateDecl`
+
+### Tests: 18 new tests — all passing (262 total, was 244)
+- Parser tests: `placement_autoplace_property_in_place_block`, `placement_autoplace_block_full_pipeline`, `placement_autoplace_block_empty`, `placement_unplaced_strategy_autoplace`, `placement_group_decl`, `placement_separate_decl`, `placement_no_pin_swap_in_place_block`, `placement_complete_block_with_all_new_properties`
+- Compiler tests: `autoplace_place_flag_compiles`, `autoplace_block_algorithm_compiles`, `autoplace_block_empty_compiles`, `unplaced_strategy_autoplace_compiles`, `unplaced_strategy_ignore_compiles`, `unplaced_strategy_error_compiles`, `unplaced_strategy_invalid_value_produces_error`, `group_decl_compiles`, `no_pin_swap_list_compiles`, `allow_swap_flags_compile`
+
+---
+
+## AutoPCB Placer — Milestone 6: Executor Integration + Spec Rewriter (2026-03-17)
+
+**Files**: `crates/altium-cli/src/spec_rewriter.rs` (new), `crates/altium-cli/src/main.rs`
+
+Implemented the spec rewriter and `autoplace_spec` orchestrator that closes the loop
+from solver output back to an updated `.pcbdoc-spec` file.
+
+### spec_rewriter.rs (new)
+
+Public API:
+```rust
+pub fn rewrite_spec_with_placement(
+    original_spec_text: &str,
+    result: &PlacementResult,
+    autoplace_designators: &[String],
+) -> RewriteResult
+```
+
+Strategy: text-based rewriting. For each autoplace component in the solver result:
+- Locate the `place DESIGNATOR { ... }` block using a brace-depth scanner
+- Replace `autoplace: true` with `at: (x_mm, y_mm)` and `rotation: N`
+- Add `// autoplace: solved` comment inside the block
+- Multi-designator `place C1, C2, C3 { autoplace: true }` expanded to individual blocks
+- Components not in any place block appended before the closing `}` of `placement {}`
+- All non-autoplace content (constraints, clearance, optimize, groups) preserved verbatim
+
+### autoplace_spec orchestrator (main.rs)
+
+```rust
+pub fn autoplace_spec(
+    spec_path: &Path,
+    pcbdoc_path: Option<&Path>,
+    config: &PlacementConfig,
+    dry_run: bool,
+    output_path: Option<&Path>,
+) -> anyhow::Result<AutoplaceReport>
+```
+
+Pipeline: read spec → compile → open PcbDoc → extract IR → build constraints
+(via `placement_bridge`) → build `PlacementConfig` (from spec clearance/optimize/autoplace
+config + caller-provided overrides) → `solve_placement` → `rewrite_spec_with_placement`
+→ write output (unless `--dry-run`).
+
+### CLI command
+
+`altium placement autoplace <spec.pcbdoc-spec>` — run autoplacer, rewrite spec in-place
+with solved positions. Flags: `--target`, `--dry-run`, `--output`, `--gamma-start`,
+`--gamma-end`, `--max-iters`.
+
+### Tests
+
+6 unit tests in `spec_rewriter::tests` — all passing:
+- `autoplace_true_replaced_with_position` — basic rewrite
+- `locked_components_unchanged` — locked place blocks preserved verbatim
+- `unmentioned_autoplace_components_appended` — appended at end of placement block
+- `multi_designator_block_expanded_to_individual` — expansion to individual blocks
+- `constraints_and_clearance_blocks_preserved` — non-place content unchanged
+- `rotation_nonzero_included_in_output` — non-zero rotation correctly emitted
+
+---
+
+## AutoPCB Placer — Milestone 5: PlacementSpec → UserConstraint Bridge (2026-03-17)
+
+**File**: `crates/altium-cli/src/placement_bridge.rs`
+
+Implemented the constraint bridge that connects the spec DSL placement model to the
+`autopcb-placement` solver's `UserConstraint` format.
+
+### Location rationale
+
+`altium-format-spec` does not depend on `autopcb-placement` and vice versa. The bridge
+lives in `altium-cli` (option a from the plan) which already imports both crates.
+
+### Public API
+
+```rust
+pub fn placement_spec_to_constraints(
+    spec: &PlacementSpec,
+    ir: &PcbIr,
+) -> anyhow::Result<(Vec<UserConstraint>, Vec<String>)>
+```
+
+Returns `(constraints, autoplace_designators)`.
+
+### Constraint mapping
+
+| Spec | Solver |
+|------|--------|
+| `at:` without `autoplace` | `UserConstraint::FixedPosition` |
+| `autoplace: true` | added to autoplace designator list |
+| `autoplace: true` + `edge:` | `UserConstraint::EdgePlacement` |
+| `autoplace: true` + `near:` + `max_distance:` | `UserConstraint::Near` |
+| `autoplace: true` + `region_rect:` | `UserConstraint::RegionContainment` |
+| `autoplace: true` + `region_name:` (named preset) | `UserConstraint::RegionContainment` |
+| `left_of` / `right_of` / `above` / `below` | `UserConstraint::Directional` |
+
+### Unplaced strategy
+
+- `Autoplace` (default): unmentioned IR components added to autoplace set
+- `Ignore`: unmentioned IR components locked at current IR position
+- `Error`: error if any IR component not mentioned in spec
+
+### Designator validation
+
+Designators in spec but not in IR: warning emitted + skip (or error if `unplaced: error`).
+
+### Exports
+
+`UnplacedStrategy`, `AutoplaceConfig`, `PlacementGroupSpec` are now exported from
+`altium-format-spec/src/lib.rs`.
+
+### Tests
+
+11 unit tests in `placement_bridge::tests` — all passing, no fixture files required.
+
+---
+
+## AutoPCB Placer — Milestone 2: Placement Dump (2026-03-17)
+
+**File**: `crates/altium-format-spec/src/dump.rs`
+
+Added placement dump functionality to the spec DSL dump module:
+
+- `dump_placement_block(out, board)` — public API: emits a `placement { ... }` block from a `PcbDocBoard`
+- `dump_placement_block_from_parts(out, components, clearance_gap)` — inner helper testable without constructing a full board
+- `designator_key(s)` — numeric-aware sort key: "U2" < "U10" < "U11"
+- `format_coord_point_at(pt)` — formats `CoordPoint` as `(Xmm, Ymm)` for `at:` properties
+- Clearance: if a `ComponentClearance` design rule with global scope exists, emits `clearance { all: N }`
+- 7 new unit tests in `dump::tests` — all passing, no fixture files required
+
+---
+
+## AutoPCB Placer — Milestone 7: Simulated Annealing (Phase 3) (2026-03-17)
+
+**Files**: `crates/autopcb-placement/src/simulated_annealing.rs` (new), `crates/autopcb-placement/src/lib.rs`, `crates/autopcb-placement/Cargo.toml`
+
+Implemented the SA refinement pass (Phase 3) for the autopcb placement pipeline.
+
+### SAConfig
+
+`SAConfig` (serializable) with: `cooling_rate` (0.95), `moves_per_temp` (100), `max_steps` (5000), `initial_acceptance` (0.8), `t_frozen` (0.001), `min_acceptance_steps` (5), `snapshot_interval` (50). Full `Default` impl.
+
+### Internal structures
+
+- `ComponentState` — x/y/rotation/width/height/is_movable + cached pad offsets `(net_idx, local_x, local_y)`
+- `SpatialGrid` — `HashMap<(i32,i32), Vec<usize>>` for O(k) AABB overlap checking; `insert`/`remove`/`neighbours`
+- `NetComponentIndex` — bidirectional comp↔net mapping built from `PcbIr`; enables incremental HPWL recomputation over only affected nets
+- `Move` enum — `Displace { comp_idx, dx, dy }`, `Swap { comp_a, comp_b }`, `Rotate { comp_idx, new_rotation }`
+
+### Algorithm
+
+- `auto_init_temperature`: samples 100 random moves, computes `T₀ = -median_|Δcost| / ln(initial_acceptance)`
+- `generate_move`: 50% Displace / 30% Swap / 20% Rotate; displace range proportional to temperature
+- `delta_cost`: incremental cost = ΔHPWL (over affected nets only) + ΔAABB-overlap-penalty + Δboard-containment-penalty; all computed without full-placement clone
+- Metropolis acceptance: `dc ≤ 0` always accepted; `dc > 0` accepted with prob `exp(-dc/T)`
+- Adaptive cooling: `T *= 0.5` if acceptance > 96%, `T *= 0.99` if acceptance < 2%, else `T *= cooling_rate`
+- Stopping: `T < t_frozen` OR acceptance < 1% for `min_acceptance_steps` consecutive steps
+- Best-tracking: solution with lowest HPWL is preserved; returned result always ≤ input HPWL
+- `moves_per_temp == 0`: returns input unchanged (identity pass)
+
+### Integration
+
+- `PlacementConfig` gains `sa_config: Option<SAConfig>` field (serializable, default `None`)
+- `solve_placement` calls `refine_with_sa` after Phase 2 legalization when `sa_config` is `Some`
+- SA snapshots appended to result's `snapshots` list (phase labels: `"sa_refine"`, `"sa_final"`)
+- `rand = "0.9"` added to `autopcb-placement` dependencies
+
+### Tests: 9 unit tests — all passing
+
+- `hpwl_known_4_pin_net` — HPWL = 18.0 for 4 components at corners of 10×8 grid
+- `aabb_overlap_detects_overlap` — overlapping AABBs return positive area
+- `aabb_overlap_detects_non_overlap` — separated AABBs return 0.0
+- `metropolis_high_temp_always_accepts` — exp(-dc/T∞) ≈ 1.0
+- `metropolis_zero_temp_rejects_uphill` — exp(-dc/T≈0) ≈ 0.0
+- `sa_zero_moves_returns_unchanged` — identity pass verified
+- `spatial_grid_insert_remove_query` — insert/remove/query round-trip
+- `spatial_grid_exclude_self` — self excluded from neighbour results
+- `net_component_index_lookup` — bidirectional index values correct
+
+---
+
+## AutoPCB Placer — Milestone 8: Pin/Part Swap Optimization (2026-03-17)
+
+**Files**: `crates/autopcb-placement/src/swap.rs` (new), `crates/autopcb-placement/src/lib.rs`, `crates/autopcb-placement/src/simulated_annealing.rs`, `crates/autopcb-ir/src/component.rs`, `crates/autopcb-ir/src/extract.rs`
+
+Implemented greedy pin and part swap optimization passes that run after the analytical solver and optional SA refinement.
+
+### IrComponentPad extensions (`component.rs`)
+
+Added two optional swap ID fields to `IrComponentPad`:
+- `swap_id_pin: Option<String>` — pin swap group within a component; pads in the same group are electrically interchangeable
+- `swap_id_part: Option<String>` — part swap group across components; components with the same ID have identical pinouts
+
+### Extract (`extract.rs`)
+
+`IrComponentPad` construction now initializes both swap ID fields to `None`. PcbDoc pad records do not carry back-annotated swap group data; swap IDs must be injected externally (e.g. from SchLib parameters) before building a `SwapModel`.
+
+### swap.rs (new)
+
+Public API:
+- `build_swap_model(ir: &PcbIr) -> SwapModel` — groups pads and components by swap ID; excludes singleton groups
+- `greedy_pin_swap_sweep(placement: &mut PlacementResult, ir: &PcbIr, model: &SwapModel) -> SwapChangelog` — tries all pairwise pad net swaps within each group; accepts improvements; repeats until convergence
+- `greedy_part_swap_pass(placement: &mut PlacementResult, ir: &PcbIr, model: &SwapModel) -> SwapChangelog` — tries all pairwise component position swaps within each group; accepts improvements
+- `compute_hpwl(placement: &PlacementResult, ir: &PcbIr) -> f64` — exact HPWL from pad world positions
+- `compute_hpwl_with_overlay(...)` — HPWL with a net-assignment overlay (used internally by pin sweep)
+- `verify_swap_integrity(ir: &PcbIr, before: &HashMap<String, usize>) -> Result<(), SwapError>` — checks net count and per-net pin count unchanged
+- `collect_net_pin_counts(ir: &PcbIr) -> HashMap<String, usize>` — baseline snapshot for integrity check
+- `write_swap_overlay(changelog: &SwapChangelog) -> String` — generates `.schdoc-spec` overlay text
+
+Pin swap uses a net-assignment overlay (not mutating IR) so HPWL is recomputed without side effects. Part swap exchanges `(x_mm, y_mm, rotation_deg)` in the `PlacementResult`.
+
+### PlacementConfig extensions (`lib.rs`)
+
+- `allow_pin_swap: bool` — enable Phase 4.5 greedy pin sweep (default `false`)
+- `allow_part_swap: bool` — enable Phase 2.5 greedy part pass (default `false`)
+
+Wired into `solve_placement`: Phase 2.5 (part swap) runs after legalization; Phase 4.5 (pin sweep) runs after SA or Phase 2 result.
+
+### SA Move types (`simulated_annealing.rs`)
+
+Added two new move types to the SA `Move` enum:
+- `PinSwap { comp_idx, pad_a, pad_b }` — swap net indices of two pads on a component; delta cost computed analytically without mutation via `hpwl_for_net_with_swap`
+- `PartSwap { comp_a, comp_b }` — exchange positions of two components in the same part swap group
+
+`generate_move` updated: 45% Displace / 25% Swap / 15% Rotate / 7.5% PinSwap / 7.5% PartSwap (when opportunities exist; fallback to Displace when swap lists are empty).
+
+`build_swap_opportunities(ir, comp_designators)` helper builds the SA-internal pin/part swap opportunity lists from IR pad data.
+
+`rebuild_net_index_for_swap` keeps the `NetComponentIndex` consistent after a PinSwap move is applied.
+
+### Tests: 9 unit tests in `swap::tests` — all passing (18 total in autopcb-placement)
+
+- `test_build_swap_model_with_known_groups` — 2-component resistor pair, 2 pin swap groups + 1 part group
+- `test_single_pad_group_excluded` — singleton group not in model
+- `test_part_swap_runs_without_panic` — swap accepted only if HPWL improves
+- `test_pin_swap_runs_without_panic` — HPWL non-increasing after sweep
+- `test_verify_swap_integrity_passes_after_no_swaps` — baseline passes
+- `test_verify_swap_integrity_detects_pin_count_change` — detects count change
+- `test_write_swap_overlay_empty` — "No swaps" message
+- `test_write_swap_overlay_with_entries` — overlay contains expected blocks
+- `test_collect_net_pin_counts` — correct pin counts from IR
+
+---
+
 ## Solverang Integration — Phase 0d/0e (2026-03-02)
 
 ### autopcb-ir Enhancements
@@ -527,6 +837,13 @@ saves PNG, exits. Interactive S key also saves `screenshot.png`.
 - Orbit camera with mouse drag + scroll zoom
 - Lambertian shading in WGSL shader for depth perception
 - Orthographic projection with configurable yaw/pitch/zoom
+
+**File watch (`--watch`):** `autopcb-viewer <file> --watch` sets up a `notify::RecommendedWatcher`
+(via `mpsc::channel`) on the PcbDoc path and optional `--playback` JSON path. On
+`Modify`/`Create` events the viewer reloads the PcbDoc, rebuilds the IR, updates GPU scene
+resources, reloads the playback JSON if applicable, and shows a green "Reloaded at HH:MM:SS UTC"
+label in the sidebar. Events within 100ms of each other are debounced to a single reload.
+`request_repaint()` is called after each reload so egui redraws immediately.
 
 ---
 

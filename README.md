@@ -28,13 +28,28 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 
 ## Current CLI commands
 
-- `new schdoc <output>`
-- `new schlib <output>`
-- `validate <path>`
-- `save-as <input> <output>`
-- `get version <path>`
-- `ops apply <path> --spec-file <file.ops> [--output <path>] [--dry-run] [--report-json]`
-- `cfb ls|dump|blocks|diff|cat ...` (CFB/OLE inspection/debugging)
+- `new {schdoc,schlib,pcblib,prjpcb} <output>` — create blank Altium documents
+- `validate <path>` — validate Altium files (.SchLib, .PcbLib, .SchDoc, .PcbDoc, .PrjPcb, .IntLib)
+- `save-as <input> <output>` — roundtrip parse and re-save
+- `render <path> [-o dir] [--format svg|png]` — render SchLib/PcbLib/SchDoc to SVG/PNG
+- `plan <spec>` — preview changes (ECO dry run)
+- `apply <spec>` — apply spec file to create/update Altium document
+- `dump <document>` — reverse-generate spec from Altium file
+- `info <path>` — document summary
+- `query <path> "<AQL>"` — query with Altium Query Language
+- `inspect <pcbdoc> {summary,components,nets,board-outline,rules}`
+- `placement solve <spec> --target <pcbdoc>` — component placement solver
+- `cfb ls|dump|blocks|diff|cat ...` — CFB/OLE container inspection
+
+### IntLib support
+
+IntLib (Integrated Library) files can be parsed and dumped to extract embedded
+schematic symbols and PCB footprints:
+
+```bash
+altium-cli validate vendor.IntLib    # reports SchLib/PcbLib counts
+altium-cli dump vendor.IntLib        # produces vendor.schlib-spec + vendor.pcblib-spec
+```
 
 ## Roadmap
 

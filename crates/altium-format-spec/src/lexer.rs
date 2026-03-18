@@ -46,6 +46,9 @@ pub enum TokenKind {
     Grid,
     Board,
     SwapGroup,
+    Group,
+    Separate,
+    Autoplace,
 
     // Shared keywords
     Let,
@@ -107,6 +110,9 @@ impl TokenKind {
                 | (Grid, Grid)
                 | (Board, Board)
                 | (SwapGroup, SwapGroup)
+                | (Group, Group)
+                | (Separate, Separate)
+                | (Autoplace, Autoplace)
                 | (Let, Let)
                 | (True, True)
                 | (False, False)
@@ -336,6 +342,9 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                         "grid" => TokenKind::Grid,
                         "board" => TokenKind::Board,
                         "swap_group" => TokenKind::SwapGroup,
+                        "group" => TokenKind::Group,
+                        "separate" => TokenKind::Separate,
+                        "autoplace" => TokenKind::Autoplace,
                         "let" => TokenKind::Let,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,

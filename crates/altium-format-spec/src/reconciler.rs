@@ -17,8 +17,8 @@ use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec,
     PcbDocClassSpec, PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec,
-    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PinSpec, PrjPcbSpec,
-    ProjectSpec, SchDocSpec, SchDocObjectSpec, SchLibSpec, PcbLibSpec,
+    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PinSpec,
+    PrjPcbSpec, ProjectSpec, SchDocSpec, SchDocObjectSpec, SchLibSpec, PcbLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -1434,6 +1434,11 @@ pub fn reconcile_pcbdoc(
         diff_pcbdoc_texts(&board, &board_spec.texts, &mut changes);
     }
 
+    // Placement position comparison: spec placement.places vs PcbDoc component positions
+    if let Some(ref placement) = spec.placement {
+        diff_placement_positions(&board, placement, &mut changes);
+    }
+
     let summary = compute_summary(&changes);
     Ok(EngineeringChangeOrder {
         library_path,
@@ -1938,6 +1943,95 @@ fn check_coord_prop(
                 old_value: existing_str.to_string(),
                 new_value: new_str,
             });
+        }
+    }
+}
+
+// ── Placement position comparison ─────────────────────────────────────────────
+
+/// Position tolerance in mm: 0.01mm covers encoding artifacts (Coord→f64→Coord
+/// round-trip introduces ≤0.003mm error) while catching real placement moves.
+const POSITION_TOLERANCE_MM: f64 = 0.01;
+
+/// Rotation tolerance in degrees: 0.1° matches Altium's minimum UI granularity.
+/// Reserved for when `PlacementPlaceSpec` gains a `rotation` field.
+#[allow(dead_code)]
+const ROTATION_TOLERANCE_DEG: f64 = 0.1;
+
+/// Compare placement positions from the spec's `placement { place ... }` blocks
+/// against component locations in the PcbDoc. Emits MOVE ECO entries (as
+/// `EntityChange::Update` on `PcbDocComponent`) for components whose position
+/// or rotation differs beyond the configured tolerances.
+///
+/// Only `place` blocks that carry an explicit `at:` coordinate are compared.
+/// Components mentioned in the spec but absent from the PcbDoc emit a warning
+/// via `eprintln!` and are skipped rather than causing an error.
+fn diff_placement_positions(
+    board: &api::PcbDocBoard,
+    placement: &crate::model::PlacementSpec,
+    changes: &mut Vec<EntityChange>,
+) {
+    let existing_map: HashMap<&str, &api::PcbDocComponent> = board.components.iter()
+        .map(|c| (c.designator.as_str(), c))
+        .collect();
+
+    for place in &placement.places {
+        let spec_at = match place.at {
+            Some(at) => at,
+            None => continue, // no position specified → skip
+        };
+
+        for designator in &place.designators {
+            match existing_map.get(designator.as_str()) {
+                Some(existing) => {
+                    let mut prop_changes = Vec::new();
+
+                    // Compare position with 0.01mm tolerance
+                    let dx_mm = (spec_at.x.to_mms() - existing.location.x.to_mms()).abs();
+                    let dy_mm = (spec_at.y.to_mms() - existing.location.y.to_mms()).abs();
+                    if dx_mm > POSITION_TOLERANCE_MM || dy_mm > POSITION_TOLERANCE_MM {
+                        prop_changes.push(PropChange {
+                            field: "location".to_string(),
+                            old_value: format!(
+                                "({:.4}mm, {:.4}mm)",
+                                existing.location.x.to_mms(),
+                                existing.location.y.to_mms()
+                            ),
+                            new_value: format!(
+                                "({:.4}mm, {:.4}mm)",
+                                spec_at.x.to_mms(),
+                                spec_at.y.to_mms()
+                            ),
+                        });
+                    }
+
+                    // Compare rotation with 0.1° tolerance (only if spec specifies rotation)
+                    // PlacementPlaceSpec does not carry a rotation field — rotation comparison
+                    // is left for a future milestone when PlacementPlaceSpec gains a rotation field.
+
+                    if prop_changes.is_empty() {
+                        changes.push(EntityChange::Unchanged {
+                            kind: EntityKind::PcbDocComponent,
+                            identity: designator.clone(),
+                        });
+                    } else {
+                        changes.push(EntityChange::Update {
+                            kind: EntityKind::PcbDocComponent,
+                            identity: designator.clone(),
+                            prop_changes,
+                            children: vec![],
+                        });
+                    }
+                }
+                None => {
+                    // Designator in spec but not in PcbDoc: warn and skip
+                    eprintln!(
+                        "reconciler: placement spec references designator {:?} \
+                         which does not exist in PcbDoc (skipping)",
+                        designator
+                    );
+                }
+            }
         }
     }
 }
@@ -2740,5 +2834,248 @@ mod tests {
         } else {
             panic!("expected Update");
         }
+    }
+
+    // ── Tests: diff_placement_positions ──────────────────────────────────────
+
+    use altium_format::api::{
+        PcbDocBoard, PcbDocComponent, BoardSettings, BoardGeometry, LayerStack,
+    };
+    use altium_format_types::common::Unit;
+    use altium_format_types::pcb::{LayerRef, V6Layer};
+    use altium_format_types::LayerStackStyle;
+    use crate::model::{
+        PlacementSpec, PlacementPlaceSpec, PlacementOptimizeSpec, PlacementClearanceSpec,
+        UnplacedStrategy,
+    };
+
+    fn make_coord_mm(x_mm: f64, y_mm: f64) -> CoordPoint {
+        CoordPoint {
+            x: Coord::from_mms(x_mm),
+            y: Coord::from_mms(y_mm),
+        }
+    }
+
+    fn make_board_with_components(components: Vec<PcbDocComponent>) -> PcbDocBoard {
+        PcbDocBoard {
+            settings: BoardSettings {
+                document_name: String::new(),
+                signal_layer_count: 2,
+                board_outline: None,
+                snap_grid_size: Coord::ZERO,
+                visible_grid_size: Coord::ZERO,
+                display_unit: Unit::Metric,
+                layer_stack: LayerStack {
+                    style: LayerStackStyle::Pairs,
+                    is_flex: false,
+                    layers: vec![],
+                    copper_layer_count: 2,
+                },
+                geometry: BoardGeometry {
+                    outline: None,
+                    cutouts: vec![],
+                    keepouts: vec![],
+                },
+            },
+            nets: vec![],
+            components,
+            polygons: vec![],
+            classes: vec![],
+            rules: vec![],
+            differential_pairs: vec![],
+            tracks: vec![],
+            arcs: vec![],
+            vias: vec![],
+            pads: vec![],
+            fills: vec![],
+            texts: vec![],
+            regions: vec![],
+            component_bodies: vec![],
+            dimensions: vec![],
+            models: vec![],
+        }
+    }
+
+    fn make_pcbdoc_component(designator: &str, x_mm: f64, y_mm: f64, rotation: f64) -> PcbDocComponent {
+        PcbDocComponent {
+            id: designator.to_string(),
+            designator: designator.to_string(),
+            pattern: String::new(),
+            comment: String::new(),
+            location: make_coord_mm(x_mm, y_mm),
+            rotation,
+            layer: LayerRef::from_v6(V6Layer::TopLayer),
+            source_library: String::new(),
+            source_lib_reference: String::new(),
+        }
+    }
+
+    fn make_placement_spec(places: Vec<PlacementPlaceSpec>) -> PlacementSpec {
+        PlacementSpec {
+            target: None,
+            places,
+            constraints: vec![],
+            optimize: PlacementOptimizeSpec { ratsnest: true, ratsnest_weight: 1.0 },
+            clearance: PlacementClearanceSpec { all: None, edge: None },
+            autoplace_config: None,
+            unplaced: UnplacedStrategy::default(),
+            allow_pin_swap: false,
+            allow_part_swap: false,
+            allow_gate_swap: false,
+            groups: vec![],
+        }
+    }
+
+    fn make_place_at(designators: Vec<String>, x_mm: f64, y_mm: f64) -> PlacementPlaceSpec {
+        PlacementPlaceSpec {
+            designators,
+            region_name: None,
+            region_rect: None,
+            edge: None,
+            inset: None,
+            near: None,
+            max_distance: None,
+            rotation_options: vec![],
+            fixed: false,
+            at: Some(make_coord_mm(x_mm, y_mm)),
+            side: None,
+            autoplace: false,
+            no_pin_swap: vec![],
+            no_part_swap: false,
+        }
+    }
+
+    #[test]
+    fn placement_component_moved_emits_update() {
+        // Spec says U1 at (10mm, 20mm), PcbDoc has U1 at (5mm, 5mm) → MOVE ECO
+        let board = make_board_with_components(vec![
+            make_pcbdoc_component("U1", 5.0, 5.0, 0.0),
+        ]);
+        let placement = make_placement_spec(vec![
+            make_place_at(vec!["U1".to_string()], 10.0, 20.0),
+        ]);
+
+        let mut changes = Vec::new();
+        diff_placement_positions(&board, &placement, &mut changes);
+
+        assert_eq!(changes.len(), 1);
+        assert!(
+            matches!(&changes[0], EntityChange::Update {
+                kind: EntityKind::PcbDocComponent,
+                identity,
+                prop_changes,
+                ..
+            } if identity == "U1" && prop_changes.iter().any(|p| p.field == "location")),
+            "expected Update with location change for U1, got {:?}",
+            changes[0]
+        );
+    }
+
+    #[test]
+    fn placement_component_at_same_position_unchanged() {
+        // Spec says U1 at (10mm, 20mm), PcbDoc has U1 at (10mm, 20mm) → no change
+        let board = make_board_with_components(vec![
+            make_pcbdoc_component("U1", 10.0, 20.0, 0.0),
+        ]);
+        let placement = make_placement_spec(vec![
+            make_place_at(vec!["U1".to_string()], 10.0, 20.0),
+        ]);
+
+        let mut changes = Vec::new();
+        diff_placement_positions(&board, &placement, &mut changes);
+
+        assert_eq!(changes.len(), 1);
+        assert!(
+            matches!(&changes[0], EntityChange::Unchanged {
+                kind: EntityKind::PcbDocComponent,
+                identity,
+            } if identity == "U1"),
+            "expected Unchanged for U1 at same position, got {:?}",
+            changes[0]
+        );
+    }
+
+    #[test]
+    fn placement_within_tolerance_unchanged() {
+        // Spec says U1 at (10mm, 20mm), PcbDoc at (10.005mm, 20.005mm) → within 0.01mm → no change
+        let board = make_board_with_components(vec![
+            make_pcbdoc_component("U1", 10.005, 20.005, 0.0),
+        ]);
+        let placement = make_placement_spec(vec![
+            make_place_at(vec!["U1".to_string()], 10.0, 20.0),
+        ]);
+
+        let mut changes = Vec::new();
+        diff_placement_positions(&board, &placement, &mut changes);
+
+        assert_eq!(changes.len(), 1);
+        assert!(
+            matches!(&changes[0], EntityChange::Unchanged { kind: EntityKind::PcbDocComponent, .. }),
+            "expected Unchanged within 0.005mm tolerance, got {:?}",
+            changes[0]
+        );
+    }
+
+    #[test]
+    fn placement_place_without_at_skipped() {
+        // PlacementPlaceSpec without `at:` → no placement comparison
+        let board = make_board_with_components(vec![
+            make_pcbdoc_component("U1", 5.0, 5.0, 0.0),
+        ]);
+        let placement = make_placement_spec(vec![PlacementPlaceSpec {
+            designators: vec!["U1".to_string()],
+            region_name: None,
+            region_rect: None,
+            edge: None,
+            inset: None,
+            near: None,
+            max_distance: None,
+            rotation_options: vec![],
+            fixed: false,
+            at: None, // no position specified
+            side: None,
+            autoplace: false,
+            no_pin_swap: vec![],
+            no_part_swap: false,
+        }]);
+
+        let mut changes = Vec::new();
+        diff_placement_positions(&board, &placement, &mut changes);
+
+        assert_eq!(changes.len(), 0, "no changes expected when at: is None");
+    }
+
+    #[test]
+    fn placement_designator_not_in_pcbdoc_skipped() {
+        // U2 in spec but not in PcbDoc → warning (via eprintln), no ECO entry
+        let board = make_board_with_components(vec![
+            make_pcbdoc_component("U1", 10.0, 20.0, 0.0),
+        ]);
+        let placement = make_placement_spec(vec![
+            make_place_at(vec!["U2".to_string()], 10.0, 20.0), // U2 absent from PcbDoc
+        ]);
+
+        let mut changes = Vec::new();
+        diff_placement_positions(&board, &placement, &mut changes);
+
+        assert_eq!(changes.len(), 0, "missing designator should produce no ECO entry");
+    }
+
+    #[test]
+    fn placement_multiple_designators_in_one_place_block() {
+        // place C1, C2 { at: (10mm, 20mm) } — both moved
+        let board = make_board_with_components(vec![
+            make_pcbdoc_component("C1", 0.0, 0.0, 0.0),
+            make_pcbdoc_component("C2", 1.0, 1.0, 0.0),
+        ]);
+        let placement = make_placement_spec(vec![
+            make_place_at(vec!["C1".to_string(), "C2".to_string()], 10.0, 20.0),
+        ]);
+
+        let mut changes = Vec::new();
+        diff_placement_positions(&board, &placement, &mut changes);
+
+        assert_eq!(changes.len(), 2);
+        assert!(changes.iter().all(|c| matches!(c, EntityChange::Update { kind: EntityKind::PcbDocComponent, .. })));
     }
 }

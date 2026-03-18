@@ -1704,6 +1704,93 @@ fn swap_group_ref(name: &str, declared_groups: &HashSet<String>) -> String {
     }
 }
 
+// ── Placement dump ────────────────────────────────────────────────────────────
+
+/// Numeric-aware sort key for component designators.
+///
+/// Splits a designator like "U10" into ("u", Some(10)) so that "U2" < "U10".
+/// Mixed-type designators fall back to case-insensitive lexicographic order.
+fn designator_key(s: &str) -> (String, Option<u64>, String) {
+    // Find where the trailing digit run starts.
+    let split = s.len() - s.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let (prefix, suffix) = s.split_at(split);
+    (prefix.to_lowercase(), suffix.parse::<u64>().ok(), suffix.to_string())
+}
+
+/// Format a `CoordPoint` as an `(x, y)` tuple for use in `at:` properties.
+///
+/// Each component is formatted using `coord_to_spec` (mm if clean, mils otherwise).
+fn format_coord_point_at(pt: altium_format_types::CoordPoint) -> String {
+    format!("({}, {})", coord_to_spec(pt.x), coord_to_spec(pt.y))
+}
+
+/// Append a `placement { ... }` block to `out` describing the current positions
+/// of all components in `board`.
+///
+/// Each component is emitted as:
+/// ```text
+/// place DESIGNATOR {
+///     at: (x, y),
+///     rotation: N,
+/// }
+/// ```
+/// Components are sorted by designator for stable output.
+///
+/// If the board has a `ComponentClearance` design rule whose scope covers all
+/// objects (empty scope string), its `gap` is also emitted as:
+/// ```text
+/// clearance { all: N }
+/// ```
+pub fn dump_placement_block(out: &mut String, board: &altium_format::api::PcbDocBoard) {
+    // Find component-clearance rule with global scope (empty scope → applies to all).
+    let clearance_gap = board.rules.iter().find_map(|r| {
+        if let altium_format::api::RuleParams::ComponentClearance { gap, .. } = &r.params {
+            if r.scope.is_empty() || r.scope == "All" || r.scope == "all" {
+                return Some(*gap);
+            }
+        }
+        None
+    });
+
+    dump_placement_block_from_parts(out, &board.components, clearance_gap);
+}
+
+/// Inner helper: emit a `placement { ... }` block from component slices.
+///
+/// Separated from `dump_placement_block` so that unit tests can construct
+/// lightweight inputs without building a full `PcbDocBoard`.
+fn dump_placement_block_from_parts(
+    out: &mut String,
+    components: &[altium_format::api::PcbDocComponent],
+    clearance_gap: Option<Coord>,
+) {
+    if components.is_empty() {
+        return;
+    }
+
+    // Collect and sort by designator (numeric-aware: "U2" < "U10").
+    let mut comps: Vec<&altium_format::api::PcbDocComponent> = components.iter().collect();
+    comps.sort_by(|a, b| designator_key(&a.designator).cmp(&designator_key(&b.designator)));
+
+    out.push_str("placement {\n");
+
+    if let Some(gap) = clearance_gap {
+        out.push_str(&format!("    clearance {{ all: {} }}\n\n", coord_to_spec(gap)));
+    }
+
+    for comp in &comps {
+        let name = quote_entity_name(&comp.designator);
+        let at = format_coord_point_at(comp.location);
+        let rot = format_float(comp.rotation);
+        out.push_str(&format!(
+            "    place {} {{\n        at: {},\n        rotation: {},\n    }}\n",
+            name, at, rot,
+        ));
+    }
+
+    out.push_str("}\n");
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1784,5 +1871,136 @@ mod tests {
         assert_eq!(quote_string("hello"), "\"hello\"");
         assert_eq!(quote_string("say \"hi\""), "\"say \\\"hi\\\"\"");
         assert_eq!(quote_string("back\\slash"), "\"back\\\\slash\"");
+    }
+
+    // ── Placement dump unit tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_format_coord_point_at_clean_mm() {
+        // 100 mils = 2.54 mm (clean), 200 mils = 5.08 mm (clean)
+        let pt = altium_format_types::CoordPoint {
+            x: Coord::from_mils(100).expect("100 mils"),
+            y: Coord::from_mils(200).expect("200 mils"),
+        };
+        assert_eq!(format_coord_point_at(pt), "(2.54mm, 5.08mm)");
+    }
+
+    #[test]
+    fn test_format_coord_point_at_zero() {
+        let pt = altium_format_types::CoordPoint {
+            x: Coord::ZERO,
+            y: Coord::ZERO,
+        };
+        assert_eq!(format_coord_point_at(pt), "(0mil, 0mil)");
+    }
+
+    #[test]
+    fn test_format_coord_point_at_negative() {
+        // -100 mils = -2.54 mm
+        let pt = altium_format_types::CoordPoint {
+            x: Coord::from_mils(-100).expect("-100 mils"),
+            y: Coord::from_mils(-200).expect("-200 mils"),
+        };
+        assert_eq!(format_coord_point_at(pt), "(-2.54mm, -5.08mm)");
+    }
+
+    /// Build a minimal `PcbDocComponent` for use in tests.
+    fn make_test_component(
+        designator: &str,
+        x_mils: i32,
+        y_mils: i32,
+        rotation: f64,
+    ) -> altium_format::api::PcbDocComponent {
+        use altium_format_types::{CoordPoint, LayerRef};
+        altium_format::api::PcbDocComponent {
+            id: designator.to_string(),
+            designator: designator.to_string(),
+            pattern: String::new(),
+            comment: String::new(),
+            location: CoordPoint {
+                x: Coord::from_mils(x_mils).expect("coord"),
+                y: Coord::from_mils(y_mils).expect("coord"),
+            },
+            rotation,
+            layer: LayerRef::default(),
+            source_library: String::new(),
+            source_lib_reference: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_dump_placement_block_basic() {
+        let components = vec![
+            make_test_component("U2", 200, 100, 0.0),
+            make_test_component("U1", 100, 200, 90.0),
+            make_test_component("C10", 300, 300, 270.0),
+        ];
+
+        let mut out = String::new();
+        dump_placement_block_from_parts(&mut out, &components, None);
+
+        // Block starts with placement keyword.
+        assert!(out.contains("placement {"), "missing placement block open");
+        assert!(out.contains("place C10"), "C10 missing");
+        assert!(out.contains("place U1"), "U1 missing");
+        assert!(out.contains("place U2"), "U2 missing");
+
+        // Verify ordering: C10 before U1 before U2.
+        let pos_c10 = out.find("place C10").expect("C10 pos");
+        let pos_u1 = out.find("place U1").expect("U1 pos");
+        let pos_u2 = out.find("place U2").expect("U2 pos");
+        assert!(pos_c10 < pos_u1, "C10 should precede U1");
+        assert!(pos_u1 < pos_u2, "U1 should precede U2");
+
+        // U1: x=100mils=2.54mm, y=200mils=5.08mm.
+        assert!(out.contains("(2.54mm, 5.08mm)"), "U1 coordinates wrong");
+        assert!(out.contains("rotation: 90"), "U1 rotation wrong");
+        assert!(out.contains("rotation: 270"), "C10 rotation wrong");
+    }
+
+    #[test]
+    fn test_dump_placement_block_roundtrip_parse() {
+        let components = vec![make_test_component("U1", 100, 200, 0.0)];
+
+        let mut out = String::new();
+        dump_placement_block_from_parts(&mut out, &components, None);
+
+        // The generated spec should parse without errors.
+        let result = crate::parser::parse_spec(&out);
+        assert!(result.is_ok(), "Placement spec failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_dump_placement_block_270_rotation() {
+        let components = vec![make_test_component("R1", 0, 0, 270.0)];
+        let mut out = String::new();
+        dump_placement_block_from_parts(&mut out, &components, None);
+        assert!(out.contains("rotation: 270"), "270° rotation not serialized correctly");
+    }
+
+    #[test]
+    fn test_dump_placement_block_empty() {
+        let mut out = String::new();
+        dump_placement_block_from_parts(&mut out, &[], None);
+        assert!(out.is_empty(), "empty component list should produce no placement block");
+    }
+
+    #[test]
+    fn test_dump_placement_block_clearance() {
+        let components = vec![make_test_component("U1", 100, 100, 0.0)];
+        let gap = Coord::from_mils(100).expect("100 mils gap");
+
+        let mut out = String::new();
+        dump_placement_block_from_parts(&mut out, &components, Some(gap));
+
+        assert!(out.contains("clearance {"), "clearance block missing");
+        assert!(out.contains("all: 2.54mm"), "clearance value wrong");
+    }
+
+    #[test]
+    fn test_designator_key_ordering() {
+        let mut designators = vec!["U10", "U2", "U1", "C1", "R100", "R9"];
+        designators.sort_by(|a, b| designator_key(a).cmp(&designator_key(b)));
+        assert_eq!(designators, vec!["C1", "R9", "R100", "U1", "U2", "U10"]);
     }
 }

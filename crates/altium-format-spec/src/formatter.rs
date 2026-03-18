@@ -1143,6 +1143,29 @@ impl<'a> Printer<'a> {
                 self.push("clearance ");
                 self.fmt_object(&obj.node);
             }
+            PlacementItem::AutoplaceBlock(obj) => {
+                self.push("autoplace ");
+                self.fmt_object(&obj.node);
+            }
+            PlacementItem::GroupDecl(group) => {
+                self.push("group ");
+                self.push(&group.name.node);
+                self.push(" ");
+                self.fmt_object(&group.body.node);
+            }
+            PlacementItem::SeparateDecl(sep) => {
+                self.push("separate ");
+                for (i, g) in sep.groups.iter().enumerate() {
+                    if i > 0 {
+                        self.push(", ");
+                    }
+                    self.fmt_dollar_path(&g.node);
+                }
+                if let Some(body) = &sep.body {
+                    self.push(" ");
+                    self.fmt_object(&body.node);
+                }
+            }
         }
     }
 

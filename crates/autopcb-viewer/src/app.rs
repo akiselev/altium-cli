@@ -1,8 +1,10 @@
 //! The eframe application struct and its `App` implementation.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
+
+use crate::{apply_spec_positions, load_spec};
 
 use eframe::egui::{self, ColorImage, Event, Rect, UserData, ViewportCommand};
 
@@ -13,6 +15,9 @@ use crate::colors;
 use crate::interaction;
 use crate::renderer::{self, RenderOptions};
 use crate::view3d::{Camera, PcbScene3D, PcbScene3DCallback, SceneResources};
+
+/// Minimum time between two consecutive reloads (debounce window).
+const RELOAD_DEBOUNCE: Duration = Duration::from_millis(100);
 
 /// Whether to show the 2-D top-down view or the 2.5-D wgpu view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +49,20 @@ pub struct ViewerApp {
     playback_index: usize,
     playback_playing: bool,
     playback_last_tick: Instant,
+    /// Receiver for file-system change events from `notify`.  `None` if --watch was not passed.
+    watch_rx: Option<mpsc::Receiver<notify::Result<notify::Event>>>,
+    /// Path to the PcbDoc being displayed; used to reload on file change.
+    pcbdoc_path: PathBuf,
+    /// Path to the playback JSON file; reloaded when the file changes.
+    playback_path: Option<PathBuf>,
+    /// Path to the `.pcbdoc-spec` file, if the viewer was launched with one.
+    spec_path: Option<PathBuf>,
+    /// Explicit `--target` override for spec mode; `None` means use the spec's `target:` field.
+    explicit_target: Option<PathBuf>,
+    /// Timestamp of the most recent successful reload; shown in the sidebar.
+    last_reloaded: Option<std::time::SystemTime>,
+    /// Wall-clock instant of the most recent reload; used for debouncing.
+    last_reload_instant: Option<Instant>,
 }
 
 impl ViewerApp {
@@ -51,6 +70,11 @@ impl ViewerApp {
         ir: Arc<Mutex<PcbIr>>,
         screenshot_path: Option<PathBuf>,
         playback: Option<Vec<PlacementIterationSnapshot>>,
+        watch_rx: Option<mpsc::Receiver<notify::Result<notify::Event>>>,
+        pcbdoc_path: PathBuf,
+        playback_path: Option<PathBuf>,
+        spec_path: Option<PathBuf>,
+        explicit_target: Option<PathBuf>,
         cc: &eframe::CreationContext<'_>,
     ) -> Self {
         // Initialize scene_rect from the board bounds
@@ -109,6 +133,13 @@ impl ViewerApp {
             playback_index: 0,
             playback_playing: false,
             playback_last_tick: Instant::now(),
+            watch_rx,
+            pcbdoc_path,
+            playback_path,
+            spec_path,
+            explicit_target,
+            last_reloaded: None,
+            last_reload_instant: None,
         }
     }
 
@@ -177,6 +208,179 @@ impl ViewerApp {
             }
         }
     }
+
+    /// Drain pending watcher events and reload files if a relevant change was detected.
+    ///
+    /// Returns `true` if a reload was performed and the caller should call
+    /// `request_repaint()`.
+    fn check_watch_events(&mut self, cc_wgpu: Option<&egui_wgpu::RenderState>) -> bool {
+        use notify::EventKind;
+
+        let rx = match self.rx_ref() {
+            Some(r) => r as *const mpsc::Receiver<notify::Result<notify::Event>>,
+            None => return false,
+        };
+        // SAFETY: we only use `rx` while `self.watch_rx` is `Some`, and we do not
+        // call any method that would drop or move `self.watch_rx` during this scope.
+        let rx = unsafe { &*rx };
+
+        let mut reload_pcbdoc = false;
+        let mut reload_playback = false;
+
+        while let Ok(event_result) = rx.try_recv() {
+            let event = match event_result {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Watch error: {e}");
+                    continue;
+                }
+            };
+
+            match event.kind {
+                EventKind::Modify(_) | EventKind::Create(_) => {}
+                _ => continue,
+            }
+
+            for path in &event.paths {
+                if path == &self.pcbdoc_path {
+                    reload_pcbdoc = true;
+                }
+                // A change to the spec file also triggers a full PcbDoc reload
+                // so that updated `at:` positions are re-applied.
+                if let Some(ref sp) = self.spec_path {
+                    if path == sp {
+                        reload_pcbdoc = true;
+                    }
+                }
+                if let Some(ref pb) = self.playback_path {
+                    if path == pb {
+                        reload_playback = true;
+                    }
+                }
+            }
+        }
+
+        if !reload_pcbdoc && !reload_playback {
+            return false;
+        }
+
+        // Debounce: ignore if we reloaded less than RELOAD_DEBOUNCE ago.
+        if let Some(last) = self.last_reload_instant {
+            if last.elapsed() < RELOAD_DEBOUNCE {
+                return false;
+            }
+        }
+
+        let mut did_reload = false;
+
+        if reload_pcbdoc {
+            match self.reload_pcbdoc(cc_wgpu) {
+                Ok(()) => {
+                    did_reload = true;
+                }
+                Err(e) => {
+                    eprintln!("Reload failed: {e}");
+                }
+            }
+        }
+
+        if reload_playback {
+            match self.reload_playback() {
+                Ok(()) => {
+                    did_reload = true;
+                }
+                Err(e) => {
+                    eprintln!("Playback reload failed: {e}");
+                }
+            }
+        }
+
+        if did_reload {
+            self.last_reloaded = Some(std::time::SystemTime::now());
+            self.last_reload_instant = Some(Instant::now());
+        }
+
+        did_reload
+    }
+
+    fn rx_ref(&self) -> Option<&mpsc::Receiver<notify::Result<notify::Event>>> {
+        self.watch_rx.as_ref()
+    }
+
+    fn reload_pcbdoc(&mut self, cc_wgpu: Option<&egui_wgpu::RenderState>) -> anyhow::Result<()> {
+        use altium_format::PcbDoc;
+        use autopcb_ir::PcbIr;
+
+        // If a spec file is present, re-parse it to pick up updated positions
+        // and (if using the spec's target:) to re-resolve the PcbDoc path.
+        let spec_positions: Vec<(String, f64, f64)> = if let Some(ref sp) = self.spec_path.clone() {
+            eprintln!("Re-parsing spec {}...", sp.display());
+            match load_spec(sp, self.explicit_target.as_deref()) {
+                Ok((_resolved_pcbdoc, positions)) => positions,
+                Err(e) => {
+                    eprintln!("Spec reload failed: {e}");
+                    return Err(e);
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        eprintln!("Reloading {}...", self.pcbdoc_path.display());
+        let doc = PcbDoc::open(&self.pcbdoc_path)
+            .map_err(|e| anyhow::anyhow!("open: {e}"))?;
+        let board = doc.board()
+            .map_err(|e| anyhow::anyhow!("board: {e}"))?;
+        let mut new_ir = PcbIr::extract(&board)
+            .map_err(|e| anyhow::anyhow!("extract: {e}"))?;
+
+        if !spec_positions.is_empty() {
+            apply_spec_positions(&mut new_ir, &spec_positions);
+        }
+
+        if let Some(wgpu_state) = cc_wgpu {
+            let scene = crate::view3d::PcbScene3D::from_ir(
+                &new_ir,
+                &wgpu_state.device,
+                &wgpu_state.queue,
+                wgpu_state.target_format,
+            );
+            wgpu_state
+                .renderer
+                .write()
+                .callback_resources
+                .insert(SceneResources { scene });
+        }
+
+        *self.ir.lock().unwrap() = new_ir;
+        eprintln!("Reload complete.");
+        Ok(())
+    }
+
+    fn reload_playback(&mut self) -> anyhow::Result<()> {
+        let pb_path = match self.playback_path.as_ref() {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        eprintln!("Reloading playback {}...", pb_path.display());
+        let source = std::fs::read_to_string(&pb_path)
+            .map_err(|e| anyhow::anyhow!("read: {e}"))?;
+        let snapshots: Vec<PlacementIterationSnapshot> = serde_json::from_str(&source)
+            .map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        self.playback = Some(snapshots);
+        self.playback_index = 0;
+        Ok(())
+    }
+
+    /// Format a `SystemTime` as `HH:MM:SS` in local time (best-effort; falls back to UTC).
+    fn format_reload_time(t: std::time::SystemTime) -> String {
+        use std::time::{UNIX_EPOCH};
+        let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let h = (secs / 3600) % 24;
+        let m = (secs / 60) % 60;
+        let s = secs % 60;
+        format!("{h:02}:{m:02}:{s:02} UTC")
+    }
 }
 
 fn save_screenshot_png(image: &ColorImage, path: &Path) {
@@ -200,7 +404,13 @@ fn save_screenshot_png(image: &ColorImage, path: &Path) {
 }
 
 impl eframe::App for ViewerApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Check for file-system change events before anything else.
+        let wgpu_state = frame.wgpu_render_state();
+        if self.check_watch_events(wgpu_state) {
+            ctx.request_repaint();
+        }
+
         self.advance_playback();
 
         // Screenshot mode: request on first frame, save on receipt, then close.
@@ -290,6 +500,20 @@ impl eframe::App for ViewerApp {
                     "Copper layers: {}",
                     ir.layer_stack.copper_layer_count
                 ));
+
+                // Reload indicator (only shown after at least one file-watch reload)
+                if let Some(t) = self.last_reloaded {
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Reloaded at {}",
+                            Self::format_reload_time(t)
+                        ))
+                        .color(egui::Color32::from_rgb(100, 220, 100))
+                        .small(),
+                    );
+                }
+
                 ui.separator();
 
                 if let Some(playback) = self.playback.as_ref() {

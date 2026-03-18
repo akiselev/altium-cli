@@ -1,7 +1,11 @@
+pub mod simulated_annealing;
+pub mod swap;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use autopcb_ir::{PcbIr, PointMm};
 use serde::{Deserialize, Serialize};
+use simulated_annealing::SAConfig;
 use solverang::constraint::Constraint;
 use solverang::entity::Entity;
 use solverang::id::{ConstraintId, EntityId, ParamId};
@@ -18,6 +22,15 @@ pub struct PlacementConfig {
     pub default_clearance_mm: f64,
     pub board_edge_clearance_mm: f64,
     pub grid_snap_mm: Option<f64>,
+    /// When set, run SA refinement (Phase 3) after legalization.
+    #[serde(default)]
+    pub sa_config: Option<SAConfig>,
+    /// Run greedy part swap pass (Phase 2.5) after legalization if swap data is available.
+    #[serde(default)]
+    pub allow_part_swap: bool,
+    /// Run greedy pin swap sweep (Phase 4.5) after final refinement if swap data is available.
+    #[serde(default)]
+    pub allow_pin_swap: bool,
 }
 
 impl Default for PlacementConfig {
@@ -30,6 +43,9 @@ impl Default for PlacementConfig {
             default_clearance_mm: 0.5,
             board_edge_clearance_mm: 0.0,
             grid_snap_mm: None,
+            sa_config: None,
+            allow_part_swap: false,
+            allow_pin_swap: false,
         }
     }
 }
@@ -956,16 +972,53 @@ pub fn solve_placement(
     components.sort_by(|a, b| a.designator.cmp(&b.designator));
 
     let hpwl = estimate_hpwl(&components, &runtimes, &net_to_pins);
+    let overlap_count = count_overlaps(&system, &runtimes, config.default_clearance_mm);
 
-    Ok(PlacementResult {
+    let mut phase2_result = PlacementResult {
         status: status_str(&second.status).to_string(),
         total_iterations: first.total_iterations + second.total_iterations,
         duration_ms: first.duration.as_millis() + second.duration.as_millis(),
         components,
         snapshots,
         hpwl_estimate_mm: hpwl,
-        overlap_violations: count_overlaps(&system, &runtimes, config.default_clearance_mm),
-    })
+        overlap_violations: overlap_count,
+    };
+
+    // Phase 2.5: optional greedy part swap pass.
+    if config.allow_part_swap {
+        let swap_model = swap::build_swap_model(ir);
+        if !swap_model.part_swap_groups.is_empty() {
+            let _changelog = swap::greedy_part_swap_pass(&mut phase2_result, ir, &swap_model);
+            phase2_result.hpwl_estimate_mm =
+                swap::compute_hpwl(&phase2_result, ir);
+        }
+    }
+
+    // Phase 3: optional simulated annealing refinement.
+    let mut post_sa_result = if let Some(sa_cfg) = &config.sa_config {
+        // All components from the analytical solver are considered movable.
+        let autoplace_designators: Vec<String> =
+            phase2_result.components.iter().map(|c| c.designator.clone()).collect();
+        simulated_annealing::refine_with_sa(
+            &phase2_result,
+            ir,
+            sa_cfg,
+            &autoplace_designators,
+        )?
+    } else {
+        phase2_result
+    };
+
+    // Phase 4.5: optional greedy pin swap sweep.
+    if config.allow_pin_swap {
+        let swap_model = swap::build_swap_model(ir);
+        if !swap_model.pin_swap_groups.is_empty() {
+            let _changelog =
+                swap::greedy_pin_swap_sweep(&mut post_sa_result, ir, &swap_model);
+        }
+    }
+
+    Ok(post_sa_result)
 }
 
 fn status_str(status: &SystemStatus) -> &'static str {

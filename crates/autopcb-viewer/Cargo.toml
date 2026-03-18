@@ -11,10 +11,12 @@ workspace = true
 autopcb-ir = { version = "0.2.0", path = "../autopcb-ir" }
 autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
 altium-format = { version = "0.2.0", path = "../altium-format" }
+altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
 eframe = { version = "0.33", features = ["wgpu"] }
 egui-wgpu = "0.33"
 wgpu = "27"
 bytemuck = { version = "1", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 anyhow = "1.0"
+notify = "7"
 serde_json = "1.0"

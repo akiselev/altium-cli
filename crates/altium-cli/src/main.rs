@@ -13,6 +13,7 @@ use altium_format_query::{eval_query, parse_query};
 use altium_format_spec::{
     FormatConfig, SpecDomain, compile_spec_with_imports, compile_imported_schlibs,
     dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
+    dump_placement_block,
     format_spec,
     PlacementConstraintSpec, PlacementPlaceSpec,
     reconcile_pcbdoc, reconcile_pcbdoc_empty,
@@ -28,6 +29,8 @@ use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_sc
 use clap::{Parser, Subcommand};
 
 mod cfb;
+pub mod placement_bridge;
+pub mod spec_rewriter;
 
 #[derive(Parser)]
 #[command(name = "altium", about = "CLI tool for Altium Designer files")]
@@ -242,6 +245,47 @@ enum PlacementSubcommand {
         gamma_end: f64,
         #[arg(long, default_value_t = 250)]
         max_iters: usize,
+    },
+    /// Auto-place components from a .pcbdoc-spec and rewrite it with solved positions
+    Autoplace {
+        /// Path to .pcbdoc-spec source file
+        spec_file: PathBuf,
+        /// Target .PcbDoc (overrides `target:` in spec)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Show plan without writing any files
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Write updated spec to this path (default: overwrite spec_file)
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long, default_value_t = 2.0)]
+        gamma_start: f64,
+        #[arg(long, default_value_t = 10.0)]
+        gamma_end: f64,
+        #[arg(long, default_value_t = 250)]
+        max_iters: usize,
+    },
+    /// Dump current component positions from a PcbDoc as a placement spec
+    Dump {
+        /// Target PcbDoc file
+        target: PathBuf,
+    },
+    /// Show placement ECO plan (what would change)
+    Plan {
+        /// Path to .pcbdoc-spec source file
+        spec_file: PathBuf,
+        /// Target .PcbDoc file
+        #[arg(long)]
+        target: PathBuf,
+    },
+    /// Apply placement spec to PcbDoc
+    Apply {
+        /// Path to .pcbdoc-spec source file
+        spec_file: PathBuf,
+        /// Target .PcbDoc file
+        #[arg(long)]
+        target: PathBuf,
     },
 }
 
@@ -1680,6 +1724,43 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
 
 fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
     match sub {
+        PlacementSubcommand::Autoplace {
+            spec_file,
+            target,
+            dry_run,
+            output,
+            gamma_start,
+            gamma_end,
+            max_iters,
+        } => {
+            let cfg = PlacementConfig { gamma_start, gamma_end, max_iters, ..PlacementConfig::default() };
+            let report = autoplace_spec(
+                &spec_file,
+                target.as_deref(),
+                &cfg,
+                dry_run,
+                output.as_deref(),
+            )?;
+            println!("AUTOPLACE REPORT");
+            println!("  components placed:  {}", report.autoplace_count);
+            println!("  total components:   {}", report.component_count);
+            println!("  HPWL estimate:      {:.3} mm", report.hpwl_mm);
+            println!("  duration:           {} ms", report.duration_ms);
+            if dry_run {
+                println!("  (dry-run: no files written)");
+            } else {
+                println!("  output spec:        {}", report.output_path.display());
+            }
+        }
+        PlacementSubcommand::Dump { target } => {
+            cmd_placement_dump(&target)?;
+        }
+        PlacementSubcommand::Plan { spec_file, target } => {
+            cmd_placement_plan(&spec_file, &target)?;
+        }
+        PlacementSubcommand::Apply { spec_file, target } => {
+            cmd_placement_apply(&spec_file, &target)?;
+        }
         PlacementSubcommand::Solve {
             spec_file,
             target,
@@ -1768,6 +1849,179 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Summary returned by [`autoplace_spec`].
+pub struct AutoplaceReport {
+    /// HPWL estimate from the solver (mm).
+    pub hpwl_mm: f64,
+    /// Total number of components in the IR.
+    pub component_count: usize,
+    /// Number of components that were auto-placed by the solver.
+    pub autoplace_count: usize,
+    /// Solver wall-clock duration.
+    pub duration_ms: u128,
+    /// Path of the written output spec (same as input when not dry-run and no --output given).
+    pub output_path: std::path::PathBuf,
+}
+
+/// Orchestrate the full autoplace pipeline:
+///
+/// 1. Read and compile the spec file.
+/// 2. Open the target PcbDoc and extract the IR.
+/// 3. Build solver constraints via [`placement_bridge::placement_spec_to_constraints`].
+/// 4. Build [`PlacementConfig`] from spec clearance/optimize settings.
+/// 5. Call [`solve_placement`].
+/// 6. Rewrite the spec file with solved positions via [`spec_rewriter::rewrite_spec_with_placement`].
+/// 7. Write the output (unless `dry_run`).
+pub fn autoplace_spec(
+    spec_path: &std::path::Path,
+    pcbdoc_path: Option<&std::path::Path>,
+    config: &PlacementConfig,
+    dry_run: bool,
+    output_path: Option<&std::path::Path>,
+) -> anyhow::Result<AutoplaceReport> {
+    use altium_format_spec::model::SpecModel;
+
+    let spec_path_buf = spec_path.to_path_buf();
+    let source = std::fs::read_to_string(spec_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_path.display()))?;
+
+    let compiled = compile_and_resolve(&source, &spec_path_buf, &SpecDomain::PcbDoc)?;
+    let spec = match compiled.model {
+        SpecModel::PcbDoc(s) => s,
+        _ => anyhow::bail!("expected PcbDoc spec for {}", spec_path.display()),
+    };
+
+    let placement = spec.placement.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "spec {} has no placement {{ ... }} block",
+            spec_path.display()
+        )
+    })?;
+
+    // Resolve target PcbDoc path.
+    let target_path: std::path::PathBuf = if let Some(p) = pcbdoc_path {
+        p.to_path_buf()
+    } else if let Some(ref t) = spec.placement.as_ref().and_then(|p| p.target.clone()) {
+        // Resolve relative to spec file directory.
+        let base = spec_path.parent().unwrap_or(std::path::Path::new("."));
+        base.join(t)
+    } else {
+        anyhow::bail!(
+            "no target PcbDoc specified: pass --target or add `target: \"board.PcbDoc\"` to spec"
+        )
+    };
+
+    let doc = PcbDoc::open(&target_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target_path.display()))?;
+    let board = doc.board()?;
+    let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Build PlacementConfig from spec settings, then overlay caller-provided config.
+    let mut cfg = config.clone();
+    if let Some(all) = placement.clearance.all {
+        cfg.default_clearance_mm = all.to_mms();
+    }
+    if let Some(edge) = placement.clearance.edge {
+        cfg.board_edge_clearance_mm = edge.to_mms();
+    }
+    for rule in &spec.placement_rules {
+        if let (Some(kind), Some(gap)) = (&rule.kind, rule.gap) {
+            match kind.as_str() {
+                "component_clearance" => cfg.default_clearance_mm = gap.to_mms(),
+                "board_outline_clearance" => cfg.board_edge_clearance_mm = gap.to_mms(),
+                _ => {}
+            }
+        }
+    }
+    cfg.ratsnest_weight = placement.optimize.ratsnest_weight;
+
+    if let Some(ref ac) = placement.autoplace_config {
+        if let Some(gs) = ac.grid_snap {
+            cfg.grid_snap_mm = Some(gs.to_mms());
+        }
+    }
+
+    // Build constraints and collect autoplace designator list.
+    let (user_constraints, autoplace_designators) =
+        placement_bridge::placement_spec_to_constraints(placement, &ir)?;
+
+    let component_count = ir.components.len();
+    let autoplace_count = autoplace_designators.len();
+
+    // Run solver.
+    let result = solve_placement(&ir, &user_constraints, &cfg)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let hpwl_mm = result.hpwl_estimate_mm;
+    let duration_ms = result.duration_ms;
+
+    // Rewrite spec text.
+    let rewrite = spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators);
+
+    // Determine output path.
+    let out_path = output_path
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| spec_path.to_path_buf());
+
+    if !dry_run {
+        std::fs::write(&out_path, &rewrite.text)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+    }
+
+    Ok(AutoplaceReport {
+        hpwl_mm,
+        component_count,
+        autoplace_count,
+        duration_ms,
+        output_path: out_path,
+    })
+}
+
+fn cmd_placement_dump(target: &std::path::Path) -> anyhow::Result<()> {
+    let doc = PcbDoc::open(target)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
+    let board = doc.board()?;
+    let mut out = String::new();
+    dump_placement_block(&mut out, &board);
+    print!("{}", out);
+    Ok(())
+}
+
+fn cmd_placement_plan(spec_file: &std::path::Path, target: &std::path::Path) -> anyhow::Result<()> {
+    let spec_file_buf = spec_file.to_path_buf();
+    let source = std::fs::read_to_string(spec_file)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
+    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::PcbDoc)?;
+    let spec = match compiled.model {
+        altium_format_spec::model::SpecModel::PcbDoc(s) => s,
+        _ => anyhow::bail!("expected PcbDoc spec for {}", spec_file.display()),
+    };
+    let doc = PcbDoc::open(target)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
+    let eco = reconcile_pcbdoc(&spec, &doc, target.to_path_buf(), spec_file.to_path_buf())
+        .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?;
+    println!("{}", eco.render_text());
+    Ok(())
+}
+
+fn cmd_placement_apply(spec_file: &std::path::Path, target: &std::path::Path) -> anyhow::Result<()> {
+    let spec_file_buf = spec_file.to_path_buf();
+    let source = std::fs::read_to_string(spec_file)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
+    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::PcbDoc)?;
+    let spec = match compiled.model {
+        altium_format_spec::model::SpecModel::PcbDoc(s) => s,
+        _ => anyhow::bail!("expected PcbDoc spec for {}", spec_file.display()),
+    };
+    let mut doc = PcbDoc::open(target)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
+    apply_spec_pcbdoc(&spec, &mut doc)
+        .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+    doc.save(target)?;
+    println!("Saved: {}", target.display());
     Ok(())
 }
 

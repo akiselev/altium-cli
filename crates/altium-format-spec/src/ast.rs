@@ -413,6 +413,23 @@ pub enum PlacementItem {
     Constraint(PlacementConstraintDecl),
     Optimize(Spanned<Object>),
     Clearance(Spanned<Object>),
+    GroupDecl(PlacementGroupDecl),
+    SeparateDecl(PlacementSeparateDecl),
+    AutoplaceBlock(Spanned<Object>),
+}
+
+/// group NAME { components: [...] }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacementGroupDecl {
+    pub name: Spanned<String>,
+    pub body: Spanned<Object>,
+}
+
+/// separate $group_a, $group_b { gap: Nmm }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacementSeparateDecl {
+    pub groups: Vec<Spanned<DollarPath>>,
+    pub body: Option<Spanned<Object>>,
 }
 
 /// place U1, U2 { ... }

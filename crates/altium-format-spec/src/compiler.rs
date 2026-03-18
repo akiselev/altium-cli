@@ -29,9 +29,9 @@ use crate::ast::{
     AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem,
     DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
     GraphicDecl, MapEntry, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
-    PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl, PlacementItem,
-    PolygonDecl, ProjectDecl, ProjectItem, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl,
-    SheetItem, SpecFile, SpecItem,
+    PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
+    PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem,
+    RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
@@ -44,7 +44,8 @@ use crate::model::{
     PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec,
     PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec,
     PcbGraphicType, PinPadMap, PinRef, PinSpec, PlacementClearanceSpec, PlacementConstraintSpec,
-    PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec, PortSpec,
+    PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec,
+    AutoplaceConfig, UnplacedStrategy, PortSpec,
     PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec, SchDocComponentSpec,
     SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec,
     SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, VariantSpec, VariationSpec, WireSpec,
@@ -1757,12 +1758,43 @@ impl SpecCompiler {
             all: None,
             edge: None,
         };
+        let mut autoplace_config: Option<AutoplaceConfig> = None;
+        let mut unplaced = UnplacedStrategy::default();
+        let mut allow_pin_swap = false;
+        let mut allow_part_swap = false;
+        let mut allow_gate_swap = false;
+        let mut groups: Vec<PlacementGroupSpec> = Vec::new();
 
         for item in &decl.body {
             match &item.node {
                 PlacementItem::Property(p) => {
-                    if p.key.node == "target" {
-                        target = Some(self.expr_to_string(&p.value.node, p.value.span)?);
+                    match p.key.node.as_str() {
+                        "target" => {
+                            target = Some(self.expr_to_string(&p.value.node, p.value.span)?);
+                        }
+                        "unplaced" => {
+                            let s = self.expr_to_string(&p.value.node, p.value.span)?;
+                            unplaced = match s.as_str() {
+                                "autoplace" => UnplacedStrategy::Autoplace,
+                                "ignore" => UnplacedStrategy::Ignore,
+                                "error" => UnplacedStrategy::Error,
+                                _ => return Err(SpecError::at(
+                                    SpecErrorCode::TypeMismatch,
+                                    format!("invalid unplaced strategy '{}'; expected autoplace, ignore, or error", s),
+                                    p.value.span,
+                                )),
+                            };
+                        }
+                        "allow_pin_swap" => {
+                            allow_pin_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
+                        }
+                        "allow_part_swap" => {
+                            allow_part_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
+                        }
+                        "allow_gate_swap" => {
+                            allow_gate_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
+                        }
+                        _ => {}
                     }
                 }
                 PlacementItem::Place(place) => places.push(self.compile_placement_place(place)?),
@@ -1789,6 +1821,16 @@ impl SpecCompiler {
                         clearance.edge = Some(self.expr_to_coord(v.0, v.1)?);
                     }
                 }
+                PlacementItem::AutoplaceBlock(obj) => {
+                    autoplace_config = Some(self.compile_autoplace_config(&obj.node)?);
+                }
+                PlacementItem::GroupDecl(group) => {
+                    groups.push(self.compile_placement_group(group)?);
+                }
+                PlacementItem::SeparateDecl(_) => {
+                    // SeparateDecl is stored in constraints or ignored for now.
+                    // Future milestones will convert these to PlacementConstraintSpec variants.
+                }
                 PlacementItem::LetBinding(_) => {}
             }
         }
@@ -1801,6 +1843,12 @@ impl SpecCompiler {
             constraints,
             optimize,
             clearance,
+            autoplace_config,
+            unplaced,
+            allow_pin_swap,
+            allow_part_swap,
+            allow_gate_swap,
+            groups,
         })
     }
 
@@ -1877,6 +1925,25 @@ impl SpecCompiler {
             Some((expr, span)) => Some(self.expr_to_string(expr, *span)?),
             None => None,
         };
+        let autoplace = match props.get("autoplace") {
+            Some((expr, span)) => self.expr_to_bool(expr, *span)?,
+            None => false,
+        };
+        let no_pin_swap = match props.get("no_pin_swap") {
+            Some((crate::ast::Expr::Array(items), _)) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.expr_to_string(&item.node, item.span)?);
+                }
+                out
+            }
+            Some((expr, span)) => vec![self.expr_to_string(expr, *span)?],
+            None => Vec::new(),
+        };
+        let no_part_swap = match props.get("no_part_swap") {
+            Some((expr, span)) => self.expr_to_bool(expr, *span)?,
+            None => false,
+        };
 
         Ok(PlacementPlaceSpec {
             designators,
@@ -1890,7 +1957,81 @@ impl SpecCompiler {
             fixed,
             at,
             side,
+            autoplace,
+            no_pin_swap,
+            no_part_swap,
         })
+    }
+
+    fn compile_autoplace_config(&mut self, obj: &Object) -> Result<AutoplaceConfig, SpecError> {
+        let props = self.object_expr_map(obj)?;
+        let algorithm = match props.get("algorithm") {
+            Some((expr, span)) => Some(self.expr_to_string(expr, *span)?),
+            None => None,
+        };
+        let sa_cooling = match props.get("sa_cooling") {
+            Some((expr, span)) => Some(self.expr_to_f64(expr, *span)?),
+            None => None,
+        };
+        let sa_moves_per_temp = match props.get("sa_moves_per_temp") {
+            Some((expr, span)) => Some(self.expr_to_i32(expr, *span)? as usize),
+            None => None,
+        };
+        let sa_max_steps = match props.get("sa_max_steps") {
+            Some((expr, span)) => Some(self.expr_to_i32(expr, *span)? as usize),
+            None => None,
+        };
+        let enable_net_crossings = match props.get("enable_net_crossings") {
+            Some((expr, span)) => Some(self.expr_to_bool(expr, *span)?),
+            None => None,
+        };
+        let default_clearance = match props.get("default_clearance") {
+            Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
+            None => None,
+        };
+        let board_edge_clearance = match props.get("board_edge_clearance") {
+            Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
+            None => None,
+        };
+        let grid_snap = match props.get("grid_snap") {
+            Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
+            None => None,
+        };
+        let auto_cluster = match props.get("auto_cluster") {
+            Some((expr, span)) => Some(self.expr_to_bool(expr, *span)?),
+            None => None,
+        };
+        Ok(AutoplaceConfig {
+            algorithm,
+            sa_cooling,
+            sa_moves_per_temp,
+            sa_max_steps,
+            enable_net_crossings,
+            default_clearance,
+            board_edge_clearance,
+            grid_snap,
+            auto_cluster,
+        })
+    }
+
+    fn compile_placement_group(
+        &mut self,
+        decl: &PlacementGroupDecl,
+    ) -> Result<PlacementGroupSpec, SpecError> {
+        let name = decl.name.node.clone();
+        let props = self.object_expr_map(&decl.body.node)?;
+        let components = match props.get("components") {
+            Some((crate::ast::Expr::Array(items), _)) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.expr_to_string(&item.node, item.span)?);
+                }
+                out
+            }
+            Some((expr, span)) => vec![self.expr_to_string(expr, *span)?],
+            None => Vec::new(),
+        };
+        Ok(PlacementGroupSpec { name, components })
     }
 
     fn compile_placement_constraint(
@@ -6111,5 +6252,132 @@ mod tests {
         let spec = compile_schlib(src).unwrap();
         assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("digital"));
         assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("digital"));
+    }
+
+    // ── Autoplace model compilation tests ──────────────────────────────────
+
+    fn compile_placement(src: &str) -> Result<PlacementSpec, SpecError> {
+        let file = parse_spec(src).expect("parse must succeed for compiler tests");
+        match compile_spec(&file, SpecDomain::PcbDoc)? {
+            SpecModel::PcbDoc(spec) => {
+                spec.placement.ok_or_else(|| SpecError::no_span(
+                    SpecErrorCode::TypeMismatch,
+                    "no placement block found in test input",
+                ))
+            }
+            other => panic!("expected PcbDoc, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn autoplace_place_flag_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    place U1 { autoplace: true, region: center }
+}
+"#).unwrap();
+        assert!(spec.places[0].autoplace);
+    }
+
+    #[test]
+    fn autoplace_block_algorithm_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    autoplace { algorithm: full_pipeline, grid_snap: 0.5mm }
+}
+"#).unwrap();
+        let config = spec.autoplace_config.as_ref().expect("expected autoplace_config");
+        assert_eq!(config.algorithm.as_deref(), Some("full_pipeline"));
+        assert!(config.grid_snap.is_some());
+    }
+
+    #[test]
+    fn autoplace_block_empty_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    autoplace {}
+}
+"#).unwrap();
+        assert!(spec.autoplace_config.is_some(), "empty autoplace block should produce Some(AutoplaceConfig)");
+    }
+
+    #[test]
+    fn unplaced_strategy_autoplace_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    unplaced: autoplace
+}
+"#).unwrap();
+        assert_eq!(spec.unplaced, UnplacedStrategy::Autoplace);
+    }
+
+    #[test]
+    fn unplaced_strategy_ignore_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    unplaced: ignore
+}
+"#).unwrap();
+        assert_eq!(spec.unplaced, UnplacedStrategy::Ignore);
+    }
+
+    #[test]
+    fn unplaced_strategy_error_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    unplaced: error
+}
+"#).unwrap();
+        assert_eq!(spec.unplaced, UnplacedStrategy::Error);
+    }
+
+    #[test]
+    fn unplaced_strategy_invalid_value_produces_error() {
+        let result = compile_placement(r#"
+placement {
+    unplaced: invalid_value
+}
+"#);
+        assert!(result.is_err(), "invalid unplaced strategy should produce an error");
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("invalid_value") || msg.contains("invalid unplaced strategy"),
+            "error message should mention the invalid value: {}", msg);
+    }
+
+    #[test]
+    fn group_decl_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    group analog { components: [U5, R10, C20] }
+}
+"#).unwrap();
+        assert_eq!(spec.groups.len(), 1);
+        assert_eq!(spec.groups[0].name, "analog");
+        assert_eq!(spec.groups[0].components, vec!["U5", "R10", "C20"]);
+    }
+
+    #[test]
+    fn no_pin_swap_list_compiles() {
+        let spec = compile_placement(r#"
+placement {
+    place U1 { no_pin_swap: [A, B], no_part_swap: true }
+}
+"#).unwrap();
+        assert_eq!(spec.places[0].no_pin_swap, vec!["A", "B"]);
+        assert!(spec.places[0].no_part_swap);
+    }
+
+    #[test]
+    fn allow_swap_flags_compile() {
+        let spec = compile_placement(r#"
+placement {
+    allow_pin_swap: true
+    allow_part_swap: false
+    allow_gate_swap: true
+}
+"#).unwrap();
+        assert!(spec.allow_pin_swap);
+        assert!(!spec.allow_part_swap);
+        assert!(spec.allow_gate_swap);
     }
 }

@@ -44,6 +44,14 @@ pub struct IrComponentPad {
     pub is_through_hole: bool,
     /// Drill hole diameter in mm (0.0 for SMD pads).
     pub hole_size_mm: f64,
+    /// Pin swap group identifier within the component (from back-annotated SchLib data).
+    /// Pads with the same `swap_id_pin` within a component are electrically interchangeable.
+    /// `None` if the pad has no pin swap group or if PcbDoc does not carry this data.
+    pub swap_id_pin: Option<String>,
+    /// Part swap group identifier across components (from back-annotated SchLib data).
+    /// Components with the same `swap_id_part` have identical pinouts and can be swapped.
+    /// `None` if the component has no part swap group or if PcbDoc does not carry this data.
+    pub swap_id_part: Option<String>,
 }
 
 /// Describes the shape of a pad for rendering and clearance purposes.
