@@ -1038,9 +1038,9 @@ fn pin_from_spec(spec: &PinSpec) -> api::Pin {
         symbol_outer_edge: IeeeSymbol::default(),
         symbol_inside: IeeeSymbol::default(),
         symbol_outside: IeeeSymbol::default(),
-        swap_id_pin: String::new(),
-        swap_id_part: String::new(),
-        swap_id_pair: String::new(),
+        swap_id_pin: spec.swap_group.clone().unwrap_or_default(),
+        swap_id_part: spec.part_swap_group.clone().unwrap_or_default(),
+        swap_id_pair: spec.pair_swap_group.clone().unwrap_or_default(),
         default_value: String::new(),
         pin_package_length: String::new(),
         propagation_delay: String::new(),
@@ -1490,6 +1490,9 @@ mod tests {
             is_hidden: None,
             hidden_net_name: None,
             owner_part_id,
+            swap_group: None,
+            part_swap_group: None,
+            pair_swap_group: None,
         }
     }
 
@@ -1715,6 +1718,9 @@ mod tests {
                 is_hidden: None,
                 hidden_net_name: None,
                 owner_part_id: 0,
+                swap_group: None,
+                part_swap_group: None,
+                pair_swap_group: None,
             }],
             parameters: vec![
                 ParameterSpec { name: "VALUE".to_string(), text: "10K".to_string(), is_hidden: None },

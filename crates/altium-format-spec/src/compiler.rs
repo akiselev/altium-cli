@@ -63,8 +63,135 @@ use crate::diagnostic::Spanned;
 /// `domain` selects whether to compile SchLib or PcbLib entities.
 /// Top-level entities that don't match the domain are silently skipped.
 pub fn compile_spec(file: &SpecFile, domain: SpecDomain) -> Result<SpecModel, SpecError> {
-    let mut compiler = SpecCompiler::new(domain);
+    compile_spec_with_imports(file, domain, HashMap::new())
+}
+
+/// Compile a parsed spec file into a typed [`SpecModel`], with imported SchLib
+/// component definitions available for rich component bindings.
+///
+/// When `imported_components` is non-empty and a placed SchDoc component's
+/// `lib_reference` matches an entry, the scope binding becomes a
+/// `Value::Object` with `x`, `y`, and `pin<N>` fields rather than a plain
+/// `Value::CoordPoint`. This enables `$U1.pin1.x`-style expressions.
+pub fn compile_spec_with_imports(
+    file: &SpecFile,
+    domain: SpecDomain,
+    imported_components: HashMap<String, ComponentSpec>,
+) -> Result<SpecModel, SpecError> {
+    let mut compiler = SpecCompiler::new(domain, imported_components);
     compiler.compile(file)
+}
+
+/// Compile all SchLib-domain imports and collect their components by lib_reference.
+///
+/// This is used by SchDoc compilation to resolve symbol references for rich
+/// component bindings (pin access).
+pub fn compile_imported_schlibs(
+    resolved: &crate::import::ResolvedSpec,
+) -> Result<HashMap<String, ComponentSpec>, SpecError> {
+    let mut components = HashMap::new();
+
+    for (_path, spec_file) in &resolved.bare_imports {
+        collect_schlib_components(spec_file, &mut components)?;
+    }
+
+    for (_alias, (_path, spec_file)) in &resolved.named_imports {
+        collect_schlib_components(spec_file, &mut components)?;
+    }
+
+    Ok(components)
+}
+
+fn collect_schlib_components(
+    file: &SpecFile,
+    components: &mut HashMap<String, ComponentSpec>,
+) -> Result<(), SpecError> {
+    let mut compiler = SpecCompiler::new(SpecDomain::SchLib, HashMap::new());
+    match compiler.compile(file) {
+        Ok(SpecModel::SchLib(schlib)) => {
+            for comp in schlib.components {
+                components.insert(comp.lib_reference.clone(), comp);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+// ── Component binding helpers ─────────────────────────────────────────────────
+
+/// Build a rich binding value for a placed SchDoc component.
+///
+/// If the component's lib_reference is found in `imported_components`, produces a
+/// `Value::Object` with `x`, `y`, and `pin<N>` fields (each pin is a CoordPoint
+/// with the pin's transformed schematic-space position). Otherwise falls back to
+/// `Value::CoordPoint(x, y)`.
+fn build_component_binding(
+    comp: &SchDocComponentSpec,
+    imported_components: &HashMap<String, ComponentSpec>,
+) -> Value {
+    let lib_ref = match &comp.symbol {
+        SymbolRef::Literal(name) => name.as_str(),
+        SymbolRef::Import { name, .. } => name.as_str(),
+    };
+
+    let lib_comp = match imported_components.get(lib_ref) {
+        Some(c) => c,
+        None => return Value::CoordPoint(comp.location.x.raw(), comp.location.y.raw()),
+    };
+
+    let mut fields = IndexMap::new();
+    fields.insert("x".to_string(), Value::Dim(comp.location.x.raw()));
+    fields.insert("y".to_string(), Value::Dim(comp.location.y.raw()));
+
+    let orientation = comp.orientation.unwrap_or(RotationBy90::Rotate0);
+    let is_mirrored = comp.is_mirrored.unwrap_or(false);
+
+    for pin in &lib_comp.pins {
+        let transformed = transform_pin_position(
+            pin.location,
+            comp.location,
+            orientation,
+            is_mirrored,
+        );
+        let pin_key = format!("pin{}", pin.designator);
+        fields.insert(pin_key, Value::CoordPoint(transformed.x.raw(), transformed.y.raw()));
+    }
+
+    Value::Object(fields)
+}
+
+/// Transform a pin position from symbol space to schematic space.
+///
+/// Applies mirror, rotation, then translation (same order as Altium's placement):
+/// 1. Mirror (if mirrored): negate X
+/// 2. Rotate by orientation around origin
+/// 3. Translate by component location
+pub fn transform_pin_position(
+    pin_location: CoordPoint,
+    comp_location: CoordPoint,
+    orientation: RotationBy90,
+    is_mirrored: bool,
+) -> CoordPoint {
+    let mut x = pin_location.x.raw();
+    let y = pin_location.y.raw();
+
+    if is_mirrored {
+        x = -x;
+    }
+
+    let (rx, ry) = match orientation {
+        RotationBy90::Rotate0   => (x, y),
+        RotationBy90::Rotate90  => (-y, x),
+        RotationBy90::Rotate180 => (-x, -y),
+        RotationBy90::Rotate270 => (y, -x),
+        _ => (x, y),
+    };
+
+    CoordPoint::new(
+        Coord::new(rx + comp_location.x.raw()),
+        Coord::new(ry + comp_location.y.raw()),
+    )
 }
 
 // ── Compiler state ────────────────────────────────────────────────────────────
@@ -78,16 +205,19 @@ struct SpecCompiler {
     context_name: String,
     /// Current part context (e.g. "part1") for part-scoped unique_ids.
     part_context: Option<String>,
+    /// Pre-compiled SchLib components from imports, keyed by lib_reference.
+    imported_components: HashMap<String, ComponentSpec>,
 }
 
 impl SpecCompiler {
-    fn new(domain: SpecDomain) -> Self {
+    fn new(domain: SpecDomain, imported_components: HashMap<String, ComponentSpec>) -> Self {
         Self {
             domain,
             scope: ScopeStack::new(),
             unnamed_counters: IndexMap::new(),
             context_name: String::new(),
             part_context: None,
+            imported_components,
         }
     }
 
@@ -103,6 +233,21 @@ impl SpecCompiler {
             }
         }).collect();
         eval_let_bindings_slice(&file_lets, &mut self.scope)?;
+
+        // Register file-level swap_group declarations in scope.
+        for item in &file.items {
+            if let SpecItem::SwapGroup(decl) = &item.node {
+                let sg_name = decl.name.node.as_str();
+                let binding_name = decl.binding.as_ref()
+                    .map(|b| b.node.clone())
+                    .unwrap_or_else(|| sg_name.clone());
+                self.scope.define(binding_name.clone(), Value::SwapGroup(sg_name.clone()));
+                // If an explicit binding was provided, also register under the entity name.
+                if decl.binding.is_some() && binding_name != sg_name {
+                    self.scope.define(sg_name.clone(), Value::SwapGroup(sg_name.clone()));
+                }
+            }
+        }
 
         match self.domain {
             SpecDomain::SchLib => {
@@ -167,6 +312,20 @@ impl SpecCompiler {
             }
         }).collect();
         eval_let_bindings_slice(&comp_lets, &mut self.scope)?;
+
+        // Register component-level swap_group declarations in scope.
+        for item in &decl.body {
+            if let ComponentItem::SwapGroup(sg_decl) = &item.node {
+                let sg_name = sg_decl.name.node.as_str();
+                let binding_name = sg_decl.binding.as_ref()
+                    .map(|b| b.node.clone())
+                    .unwrap_or_else(|| sg_name.clone());
+                self.scope.define(binding_name.clone(), Value::SwapGroup(sg_name.clone()));
+                if sg_decl.binding.is_some() && binding_name != sg_name {
+                    self.scope.define(sg_name.clone(), Value::SwapGroup(sg_name.clone()));
+                }
+            }
+        }
 
         // Collect component-level properties from Property items.
         let props = collect_object_properties_from_items(
@@ -238,6 +397,9 @@ impl SpecCompiler {
                 ComponentItem::Property(_) | ComponentItem::LetBinding(_) => {
                     // Already handled above.
                 }
+                ComponentItem::SwapGroup(_) => {
+                    // Already registered in scope; nothing to emit into the component spec.
+                }
             }
         }
 
@@ -288,7 +450,10 @@ impl SpecCompiler {
                     )?;
                 }
                 SpecItem::Component(comp_decl) => {
-                    components.push(self.compile_schdoc_component(comp_decl)?);
+                    let comp = self.compile_schdoc_component(comp_decl)?;
+                    let binding = build_component_binding(&comp, &self.imported_components);
+                    self.scope.define(comp.designator.clone(), binding);
+                    components.push(comp);
                 }
                 SpecItem::Net(net_decl) => {
                     nets.push(self.compile_net(net_decl)?);
@@ -299,12 +464,12 @@ impl SpecCompiler {
                 SpecItem::SchDocObject(obj_decl) => {
                     objects.push(self.compile_schdoc_object(obj_decl)?);
                 }
-                SpecItem::Import(_) | SpecItem::LetBinding(_)
+                SpecItem::Import(_) | SpecItem::LetBinding(_) | SpecItem::SwapGroup(_)
                 | SpecItem::Footprint(_) | SpecItem::Project(_)
                 | SpecItem::Board(_) | SpecItem::PcbDocPrimitive(_)
                 | SpecItem::Placement(_) | SpecItem::Polygon(_) | SpecItem::Rule(_)
                 | SpecItem::Class(_) | SpecItem::DifferentialPair(_) => {
-                    // Imports and let bindings handled above; other domains silently skipped.
+                    // Imports, let bindings, swap groups, and other-domain items silently skipped.
                 }
             }
         }
@@ -857,7 +1022,32 @@ impl SpecCompiler {
             })
             .collect();
 
-        let pins = resolve_anchor_pins(&part_pin_decls, &part_binding_map, &self.scope)?;
+        let mut pins = resolve_anchor_pins(&part_pin_decls, &part_binding_map, &self.scope)?;
+
+        // Extract part_swap_group from part-level properties and apply to all part pins.
+        // Accepts both "part_swap_group" and "swap_group" property names, and both
+        // Value::SwapGroup (typed reference) and Value::String (backward compat).
+        let part_swap_group: Option<String> = part_block.body.iter().find_map(|item| {
+            if let PartItem::Property(prop) = &item.node {
+                if prop.key.node == "part_swap_group" || prop.key.node == "swap_group" {
+                    if let Ok(val) = eval_expr(&prop.value, &self.scope) {
+                        match val {
+                            Value::SwapGroup(s) => return Some(s),
+                            Value::String(s) => return Some(s),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            None
+        });
+        if let Some(ref psg) = part_swap_group {
+            for pin in &mut pins {
+                if pin.part_swap_group.is_none() {
+                    pin.part_swap_group = Some(psg.clone());
+                }
+            }
+        }
 
         let mut graphics = Vec::new();
         for item in &part_block.body {
@@ -865,7 +1055,7 @@ impl SpecCompiler {
                 PartItem::Graphic(graphic_decl) => {
                     graphics.push(self.compile_sch_graphic(graphic_decl)?);
                 }
-                PartItem::Pin(_) | PartItem::LetBinding(_) => {}
+                PartItem::Pin(_) | PartItem::LetBinding(_) | PartItem::Property(_) => {}
             }
         }
 
@@ -890,6 +1080,9 @@ impl SpecCompiler {
         let length = get_coord_opt(&props, "length")?;
         let is_hidden = get_bool_opt(&props, "is_hidden");
         let hidden_net_name = get_string_opt(&props, "hidden_net_name");
+        let swap_group = get_swap_group_opt(&props, "swap_group")?;
+        let part_swap_group = get_swap_group_opt(&props, "part_swap_group")?;
+        let pair_swap_group = get_swap_group_opt(&props, "pair_swap_group")?;
         let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?
             .unwrap_or(RotationBy90::Rotate0);
 
@@ -916,6 +1109,9 @@ impl SpecCompiler {
             is_hidden,
             hidden_net_name,
             owner_part_id,
+            swap_group,
+            part_swap_group,
+            pair_swap_group,
         })
     }
 
@@ -2310,6 +2506,23 @@ fn get_string_opt(props: &IndexMap<String, Value>, key: &str) -> Option<String> 
     })
 }
 
+/// Extract a swap group name from props, accepting either `Value::SwapGroup` (typed reference)
+/// or `Value::String` (backward compatibility with raw string literals).
+fn get_swap_group_opt(
+    props: &IndexMap<String, Value>,
+    key: &str,
+) -> Result<Option<String>, SpecError> {
+    match props.get(key) {
+        Some(Value::SwapGroup(s)) => Ok(Some(s.clone())),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(other) => Err(SpecError::no_span(
+            SpecErrorCode::TypeMismatch,
+            format!("{key}: expected swap_group reference or string, got {}", other.kind_name()),
+        )),
+        None => Ok(None),
+    }
+}
+
 fn get_bool_opt(props: &IndexMap<String, Value>, key: &str) -> Option<bool> {
     props.get(key).and_then(|v| match v {
         Value::Bool(b) => Some(*b),
@@ -3284,7 +3497,13 @@ fn resolve_anchor_pins(
             PinAnchorMode::Absolute
         };
 
-        let binding_name = decl.binding.as_ref().map(|b| b.node.clone());
+        // Explicit binding (`p1 = pin 1 { ... }`) takes priority.
+        // Otherwise, auto-generate an implicit binding from the designator:
+        //   pin 1   -> $pin1
+        //   pin SDA -> $pinSDA
+        let binding_name = decl.binding.as_ref()
+            .map(|b| b.node.clone())
+            .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
         pending.push(PendingPin { decl, owner_part_id: *owner_part_id, binding_name, anchor_mode: mode });
     }
 
@@ -3457,6 +3676,9 @@ fn compile_one_pin(
     let length = get_coord_opt(&props, "length")?;
     let is_hidden = get_bool_opt(&props, "is_hidden");
     let hidden_net_name = get_string_opt(&props, "hidden_net_name");
+    let swap_group = get_swap_group_opt(&props, "swap_group")?;
+    let part_swap_group = get_swap_group_opt(&props, "part_swap_group")?;
+    let pair_swap_group = get_swap_group_opt(&props, "pair_swap_group")?;
 
     match &p.anchor_mode {
         PinAnchorMode::Absolute => {
@@ -3478,6 +3700,9 @@ fn compile_one_pin(
                 designator: decl.name.node.as_str(),
                 name, electrical, length, location, orientation, is_hidden, hidden_net_name,
                 owner_part_id: p.owner_part_id,
+                swap_group: swap_group.clone(),
+                part_swap_group: part_swap_group.clone(),
+                pair_swap_group: pair_swap_group.clone(),
             })
         }
         PinAnchorMode::AtPosition { binding, field, at_pos } => {
@@ -3503,6 +3728,9 @@ fn compile_one_pin(
                 designator: decl.name.node.as_str(),
                 name, electrical, length, location, orientation, is_hidden, hidden_net_name,
                 owner_part_id: p.owner_part_id,
+                swap_group: swap_group.clone(),
+                part_swap_group: part_swap_group.clone(),
+                pair_swap_group: pair_swap_group.clone(),
             })
         }
         PinAnchorMode::After { binding, field, after_ref, gap } => {
@@ -3551,6 +3779,9 @@ fn compile_one_pin(
                 designator: decl.name.node.as_str(),
                 name, electrical, length, location, orientation, is_hidden, hidden_net_name,
                 owner_part_id: p.owner_part_id,
+                swap_group: swap_group.clone(),
+                part_swap_group: part_swap_group.clone(),
+                pair_swap_group: pair_swap_group.clone(),
             })
         }
         PinAnchorMode::Before { binding, field, before_ref, gap } => {
@@ -3597,6 +3828,9 @@ fn compile_one_pin(
                 designator: decl.name.node.as_str(),
                 name, electrical, length, location, orientation, is_hidden, hidden_net_name,
                 owner_part_id: p.owner_part_id,
+                swap_group: swap_group.clone(),
+                part_swap_group: part_swap_group.clone(),
+                pair_swap_group: pair_swap_group.clone(),
             })
         }
     }
@@ -4173,6 +4407,14 @@ mod tests {
         match compile_spec(&file, SpecDomain::SchLib)? {
             SpecModel::SchLib(s) => Ok(s),
             other => panic!("expected SchLib, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    fn compile_schdoc(src: &str) -> Result<SchDocSpec, SpecError> {
+        let file = parse_spec(src).expect("parse failed");
+        match compile_spec(&file, SpecDomain::SchDoc)? {
+            SpecModel::SchDoc(s) => Ok(s),
+            other => panic!("expected SchDoc, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
@@ -4753,6 +4995,225 @@ mod tests {
         assert_eq!(pins[2].location.y, Coord::new(100_000));
     }
 
+    // ── Implicit pin bindings ─────────────────────────────────────────────
+
+    #[test]
+    fn implicit_binding_after_chain() {
+        // pin 1 auto-generates $pin1, pin 2 references it via after: $pin1
+        let src = r#"
+            component IC {
+                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                pin 1 { on: $body.right, at: "center", side: "outside" }
+                pin 2 { on: $body.right, after: $pin1, gap: 5mil, side: "outside" }
+                pin 3 { on: $body.right, after: $pin2, gap: 5mil, side: "outside" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        let pins = &spec.components[0].pins;
+        assert_eq!(pins.len(), 3);
+        // Same positions as the explicit binding test above
+        assert_eq!(pins[0].location.y, Coord::ZERO);
+        assert_eq!(pins[1].location.y, Coord::new(50_000));
+        assert_eq!(pins[2].location.y, Coord::new(100_000));
+    }
+
+    #[test]
+    fn explicit_binding_overrides_implicit() {
+        // Explicit binding `my_pin = pin 1` creates $my_pin, and $pin1 is also available
+        let src = r#"
+            component IC {
+                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                my_pin = pin 1 { on: $body.right, at: "center", side: "outside" }
+                pin 2 { on: $body.right, after: $my_pin, gap: 5mil, side: "outside" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        let pins = &spec.components[0].pins;
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[0].location.y, Coord::ZERO);
+        assert_eq!(pins[1].location.y, Coord::new(50_000));
+    }
+
+    #[test]
+    fn implicit_binding_named_pins() {
+        // Non-numeric pin designators like SDA -> $pinSDA
+        let src = r#"
+            component IC {
+                body = rectangle { from: (-20mil, -15mil) to: (20mil, 15mil) }
+                pin SDA { on: $body.left, at: "center", side: "outside" }
+                pin SCL { on: $body.left, after: $pinSDA, gap: 5mil, side: "outside" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        let pins = &spec.components[0].pins;
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[0].location.y, Coord::ZERO);
+        assert_eq!(pins[1].location.y, Coord::new(-50_000));
+    }
+
+    // ── Implicit component bindings (SchDoc) ──────────────────────────────
+
+    #[test]
+    fn implicit_component_binding_relative_placement() {
+        // component "U1" at (100mil, 200mil) creates $U1 as CoordPoint.
+        // component "C1" can reference $U1.x / $U1.y for relative placement.
+        let src = r#"
+            component "U1" { at: (100mil, 200mil) }
+            component "C1" { at: ($U1.x + 50mil, $U1.y) }
+        "#;
+        let spec = compile_schdoc(src).unwrap();
+        let comps = &spec.sheets[0].components;
+        assert_eq!(comps.len(), 2);
+        // U1 at (100mil, 200mil) = (1_000_000, 2_000_000) internal
+        assert_eq!(comps[0].location.x, Coord::new(1_000_000));
+        assert_eq!(comps[0].location.y, Coord::new(2_000_000));
+        // C1 at (150mil, 200mil) = (1_500_000, 2_000_000) internal
+        assert_eq!(comps[1].location.x, Coord::new(1_500_000));
+        assert_eq!(comps[1].location.y, Coord::new(2_000_000));
+    }
+
+    // ── Rich component bindings with imported SchLib pins ─────────────────
+
+    fn compile_schdoc_with_imports(
+        src: &str,
+        imported_components: HashMap<String, ComponentSpec>,
+    ) -> Result<SchDocSpec, SpecError> {
+        let file = parse_spec(src).expect("parse failed");
+        match compile_spec_with_imports(&file, SpecDomain::SchDoc, imported_components)? {
+            SpecModel::SchDoc(s) => Ok(s),
+            other => panic!("expected SchDoc, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    fn make_test_component(lib_ref: &str, pins: Vec<(&str, i32, i32)>) -> ComponentSpec {
+        ComponentSpec {
+            lib_reference: lib_ref.to_string(),
+            designator: None,
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: pins.iter().map(|(des, x, y)| PinSpec {
+                designator: des.to_string(),
+                name: None,
+                electrical: None,
+                length: None,
+                location: CoordPoint::new(Coord::new(*x), Coord::new(*y)),
+                orientation: RotationBy90::Rotate0,
+                is_hidden: None,
+                hidden_net_name: None,
+                owner_part_id: 0,
+                swap_group: None,
+                part_swap_group: None,
+                pair_swap_group: None,
+            }).collect(),
+            parameters: vec![],
+            aliases: vec![],
+            footprints: vec![],
+            graphics: vec![],
+            parts: vec![],
+        }
+    }
+
+    #[test]
+    fn rich_component_binding_pin_access() {
+        let mut imports = HashMap::new();
+        imports.insert("MCU".to_string(), make_test_component("MCU", vec![
+            ("1", -2_000_000, 0),
+            ("2", 2_000_000, 0),
+        ]));
+
+        let src = r#"
+            component "U1" { lib_reference: "MCU", at: (1000mil, 500mil) }
+        "#;
+        let spec = compile_schdoc_with_imports(src, imports).unwrap();
+        let comp = &spec.sheets[0].components[0];
+        assert_eq!(comp.location.x, Coord::new(10_000_000));
+        assert_eq!(comp.location.y, Coord::new(5_000_000));
+    }
+
+    #[test]
+    fn rich_binding_pin_reference_in_expression() {
+        let mut imports = HashMap::new();
+        imports.insert("MCU".to_string(), make_test_component("MCU", vec![
+            ("1", -2_000_000, 0),
+            ("2", 2_000_000, 0),
+        ]));
+
+        let src = r#"
+            component "U1" { lib_reference: "MCU", at: (1000mil, 500mil) }
+            component "R1" { at: ($U1.pin2.x + 200mil, $U1.pin2.y) }
+        "#;
+        let spec = compile_schdoc_with_imports(src, imports).unwrap();
+        let comps = &spec.sheets[0].components;
+        // U1.pin2 is at symbol (200mil, 0) translated to schematic (1200mil, 500mil)
+        // R1 at (1200mil + 200mil, 500mil) = (1400mil, 500mil)
+        assert_eq!(comps[1].location.x, Coord::new(14_000_000));
+        assert_eq!(comps[1].location.y, Coord::new(5_000_000));
+    }
+
+    #[test]
+    fn rich_binding_rotation_90() {
+        let mut imports = HashMap::new();
+        imports.insert("MCU".to_string(), make_test_component("MCU", vec![
+            ("1", 1_000_000, 0),
+        ]));
+
+        let src = r#"
+            component "U1" { lib_reference: "MCU", at: (500mil, 500mil), orientation: "rotate90" }
+        "#;
+        let spec = compile_schdoc_with_imports(src, imports).unwrap();
+        assert_eq!(spec.sheets[0].components.len(), 1);
+    }
+
+    #[test]
+    fn rich_binding_rotation_transforms() {
+        let pin = CoordPoint::new(Coord::new(1_000_000), Coord::new(0));
+        let comp = CoordPoint::new(Coord::new(5_000_000), Coord::new(5_000_000));
+
+        let r0 = transform_pin_position(pin, comp, RotationBy90::Rotate0, false);
+        assert_eq!(r0.x, Coord::new(6_000_000));
+        assert_eq!(r0.y, Coord::new(5_000_000));
+
+        let r90 = transform_pin_position(pin, comp, RotationBy90::Rotate90, false);
+        assert_eq!(r90.x, Coord::new(5_000_000));
+        assert_eq!(r90.y, Coord::new(6_000_000));
+
+        let r180 = transform_pin_position(pin, comp, RotationBy90::Rotate180, false);
+        assert_eq!(r180.x, Coord::new(4_000_000));
+        assert_eq!(r180.y, Coord::new(5_000_000));
+
+        let r270 = transform_pin_position(pin, comp, RotationBy90::Rotate270, false);
+        assert_eq!(r270.x, Coord::new(5_000_000));
+        assert_eq!(r270.y, Coord::new(4_000_000));
+    }
+
+    #[test]
+    fn rich_binding_mirror_transform() {
+        let pin = CoordPoint::new(Coord::new(1_000_000), Coord::new(0));
+        let comp = CoordPoint::new(Coord::new(5_000_000), Coord::new(5_000_000));
+
+        let m = transform_pin_position(pin, comp, RotationBy90::Rotate0, true);
+        assert_eq!(m.x, Coord::new(4_000_000));
+        assert_eq!(m.y, Coord::new(5_000_000));
+
+        let m90 = transform_pin_position(pin, comp, RotationBy90::Rotate90, true);
+        assert_eq!(m90.x, Coord::new(5_000_000));
+        assert_eq!(m90.y, Coord::new(4_000_000));
+    }
+
+    #[test]
+    fn fallback_to_coord_point_when_lib_not_found() {
+        let src = r#"
+            component "U1" { lib_reference: "MCU", at: (100mil, 200mil) }
+            component "C1" { at: ($U1.x + 50mil, $U1.y) }
+        "#;
+        let spec = compile_schdoc(src).unwrap();
+        let comps = &spec.sheets[0].components;
+        assert_eq!(comps[1].location.x, Coord::new(1_500_000));
+        assert_eq!(comps[1].location.y, Coord::new(2_000_000));
+    }
+
     // ── Error: cross-edge reference ────────────────────────────────────────
 
     #[test]
@@ -5052,5 +5513,196 @@ mod tests {
         // cols=2: col 0 offset = (0 - 0.5)*200mil = -100mil, col 1 = +100mil
         assert_eq!(fp.pads[0].at.x, Coord::from_mils(-100).expect("test coord"));
         assert_eq!(fp.pads[1].at.x, Coord::from_mils(100).expect("test coord"));
+    }
+
+    // ── Bug fixes ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn digit_starting_component_name() {
+        let src = r#"
+            component 74LVC1G17 {
+                body = rectangle { from: (-75mil, -75mil) to: (75mil, 75mil) }
+                pin 2 { on: $body.left, at: "center", side: "outside", electrical: input, name: "A" }
+                pin 4 { on: $body.right, at: "center", side: "outside", electrical: output, name: "Y" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        assert_eq!(spec.components[0].lib_reference, "74LVC1G17");
+        assert_eq!(spec.components[0].pins.len(), 2);
+    }
+
+    #[test]
+    fn part_swap_group_in_part_block() {
+        let src = r#"
+            component MCP6002 {
+                part_count: 2
+
+                part 1 {
+                    part_swap_group: "A"
+                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    pin 3 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
+                    pin 1 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
+                }
+
+                part 2 {
+                    part_swap_group: "A"
+                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    pin 5 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
+                    pin 7 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
+                }
+
+                pin 8 { at: (0mil, -200mil), orientation: 90, electrical: power, is_hidden: true, hidden_net_name: "VDD" }
+                pin 4 { at: (0mil, 200mil), orientation: 270, electrical: power, is_hidden: true, hidden_net_name: "GND" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        let comp = &spec.components[0];
+
+        // All part-1 pins should have part_swap_group = "A"
+        let part1_pins: Vec<_> = comp.parts.iter()
+            .find(|p| p.part_number == 1)
+            .map(|p| &p.pins)
+            .into_iter()
+            .flatten()
+            .collect();
+        assert!(!part1_pins.is_empty(), "part 1 should have pins");
+        assert!(part1_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("A")),
+            "part 1 pins should all have part_swap_group = A");
+
+        // Part-2 pins should also have part_swap_group = "A"
+        let part2_pins: Vec<_> = comp.parts.iter()
+            .find(|p| p.part_number == 2)
+            .map(|p| &p.pins)
+            .into_iter()
+            .flatten()
+            .collect();
+        assert!(!part2_pins.is_empty(), "part 2 should have pins");
+        assert!(part2_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("A")),
+            "part 2 pins should all have part_swap_group = A");
+
+        // Component-level pins (owner_part_id 0) should NOT have part_swap_group
+        let level0_pins: Vec<_> = comp.pins.iter()
+            .filter(|p| p.owner_part_id == 0)
+            .collect();
+        assert!(!level0_pins.is_empty(), "component-level pins should exist");
+        assert!(level0_pins.iter().all(|p| p.part_swap_group.is_none()),
+            "component-level pins should not have part_swap_group");
+    }
+
+    // ── swap_group block declaration tests ───────────────────────────────────
+
+    #[test]
+    fn swap_group_block_declaration_pin() {
+        let src = r#"
+            swap_group digital {}
+            component IC {
+                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $digital }
+                pin 2 { on: $body.right, at: "center", side: "outside", electrical: input_output, swap_group: $digital }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("digital"));
+        assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("digital"));
+    }
+
+    #[test]
+    fn swap_group_block_on_part() {
+        let src = r#"
+            swap_group opamp {}
+            component MCP6002 {
+                part_count: 2
+                part 1 {
+                    swap_group: $opamp
+                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    pin 3 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
+                    pin 1 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
+                }
+                part 2 {
+                    swap_group: $opamp
+                    body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                    pin 5 { on: $body.left, at: "center", side: "outside", electrical: input, name: "IN+" }
+                    pin 7 { on: $body.right, at: "center", side: "outside", electrical: output, name: "OUT" }
+                }
+                pin 8 { at: (0mil, -200mil), orientation: 90, electrical: power, is_hidden: true, hidden_net_name: "VDD" }
+                pin 4 { at: (0mil, 200mil), orientation: 270, electrical: power, is_hidden: true, hidden_net_name: "GND" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        let comp = &spec.components[0];
+
+        let part1_pins: Vec<_> = comp.parts.iter()
+            .find(|p| p.part_number == 1)
+            .map(|p| &p.pins)
+            .into_iter()
+            .flatten()
+            .collect();
+        assert!(!part1_pins.is_empty());
+        assert!(part1_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("opamp")));
+
+        let part2_pins: Vec<_> = comp.parts.iter()
+            .find(|p| p.part_number == 2)
+            .map(|p| &p.pins)
+            .into_iter()
+            .flatten()
+            .collect();
+        assert!(!part2_pins.is_empty());
+        assert!(part2_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("opamp")));
+
+        let lvl0_pins: Vec<_> = comp.pins.iter().filter(|p| p.owner_part_id == 0).collect();
+        assert!(lvl0_pins.iter().all(|p| p.part_swap_group.is_none()));
+    }
+
+    #[test]
+    fn swap_group_undefined_reference_error() {
+        let src = r#"
+            component IC {
+                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $nonexistent }
+            }
+        "#;
+        assert!(compile_schlib(src).is_err());
+    }
+
+    #[test]
+    fn swap_group_component_scoped() {
+        let src = r#"
+            component IC {
+                swap_group my_group {}
+                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $my_group }
+                pin 2 { on: $body.right, at: "center", side: "outside", electrical: input_output, swap_group: $my_group }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("my_group"));
+        assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("my_group"));
+    }
+
+    #[test]
+    fn swap_group_backward_compat_string() {
+        let src = r#"
+            component IC {
+                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: "legacy" }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("legacy"));
+    }
+
+    #[test]
+    fn swap_group_explicit_binding() {
+        let src = r#"
+            sg = swap_group digital {}
+            component IC {
+                body = rectangle { from: (-100mil, -100mil) to: (100mil, 100mil) }
+                pin 1 { on: $body.left, at: "center", side: "outside", electrical: input_output, swap_group: $sg }
+                pin 2 { on: $body.right, at: "center", side: "outside", electrical: input_output, swap_group: $digital }
+            }
+        "#;
+        let spec = compile_schlib(src).unwrap();
+        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("digital"));
+        assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("digital"));
     }
 }

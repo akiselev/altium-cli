@@ -45,8 +45,9 @@ pub use pcb::{
     LayerRef, V6Layer, V7Layer,
     // DRC enums
     BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, ComponentCollisionCheckMode,
-    ConfinementStyle, FanoutDirection, FanoutStyle, NetScope, NetTopology,
-    ObjectClearanceId, PolygonReliefAngle, RouteVia, RuleLayerKind, TestpointValid,
+    ComponentOrientationFlags, ConfinementStyle, FanoutDirection, FanoutStyle, LengthenerStyle,
+    NetScope, NetTopology, ObjectClearanceId, PolygonReliefAngle, RouteVia, RuleLayerKind,
+    TestpointValid,
 };
 pub use sch::{
     ConnectorKind, ConnectorState, HarnessBrush, HarnessCavityPartType,

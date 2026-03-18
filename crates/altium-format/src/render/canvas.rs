@@ -115,6 +115,28 @@ impl Brush {
     }
 }
 
+/// Horizontal text alignment (maps to SVG `text-anchor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextHAlign {
+    /// Left-aligned (SVG: text-anchor="start"). Default.
+    #[default]
+    Left,
+    /// Centered (SVG: text-anchor="middle").
+    Center,
+    /// Right-aligned (SVG: text-anchor="end").
+    Right,
+}
+
+/// Vertical text alignment (maps to SVG `dominant-baseline`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextVAlign {
+    /// Baseline (SVG default). Text sits on the baseline.
+    #[default]
+    Baseline,
+    /// Middle — vertically centered on the position.
+    Middle,
+}
+
 /// Font specification for text rendering.
 #[derive(Debug, Clone)]
 pub struct FontSpec {
@@ -122,6 +144,8 @@ pub struct FontSpec {
     pub size_mils: f64,
     pub bold: bool,
     pub italic: bool,
+    pub h_align: TextHAlign,
+    pub v_align: TextVAlign,
 }
 
 impl Default for FontSpec {
@@ -131,6 +155,8 @@ impl Default for FontSpec {
             size_mils: 10.0,
             bold: false,
             italic: false,
+            h_align: TextHAlign::Left,
+            v_align: TextVAlign::Baseline,
         }
     }
 }

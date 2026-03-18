@@ -111,6 +111,7 @@ pub(crate) fn draw_pcb_primitive(prim: &PcbPrimitive, canvas: &mut dyn AltiumCan
                 size_mils: c_to_f(t.height),
                 bold: t.is_bold,
                 italic: t.is_italic,
+                ..FontSpec::default()
             };
             canvas.draw_text(&t.text, to_dp(t.location), t.rotation, &font, &pen);
         }

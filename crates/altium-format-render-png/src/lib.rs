@@ -38,7 +38,12 @@ impl From<altium_format::AltiumFormatError> for PngRenderError {
 }
 
 fn svg_to_png(svg_str: &str, scale: f32) -> Result<Vec<u8>, PngRenderError> {
-    let opt = usvg::Options::default();
+    let mut opt = usvg::Options::default();
+    // Load system fonts so text elements can be rasterized.
+    // Without this, usvg's fontdb is empty and all text is silently dropped.
+    let mut fontdb = usvg::fontdb::Database::new();
+    fontdb.load_system_fonts();
+    opt.fontdb = std::sync::Arc::new(fontdb);
     let tree = usvg::Tree::from_str(svg_str, &opt).map_err(PngRenderError::SvgParse)?;
     let sz = tree.size().to_int_size();
     if sz.width() == 0 || sz.height() == 0 {

@@ -2243,11 +2243,74 @@ impl SchLibComponent {
         canvas: &mut dyn crate::render::AltiumCanvas,
         fonts: &[altium_format_types::sch::SchFont],
     ) {
-        for record in &self.records {
-            crate::render::sch::draw_sch_record(record, canvas, fonts);
+        use crate::sch_records::SchRecord;
+
+        // In SchLib editor context, always apply component colors to children.
+        // This matches Altium's behavior where component body colors come from
+        // the component record, not from individual primitives.
+        let overrides = crate::render::sch::ComponentColorOverrides {
+            line_color: self.component.color,
+            area_color: self.component.area_color,
+            pin_color: self.component.pin_color,
+        };
+        let ovr = Some(&overrides);
+
+        let all_records = self.records.iter().chain(self.additional_records.iter());
+
+        // Draw in correct Z-order: filled shapes first (body background),
+        // then pins, then text/labels on top. This matches Altium's painter
+        // which draws body shapes before pins and annotations.
+        //
+        // Pass 1: body shapes (rectangles, polygons, ellipses, etc.)
+        // Pass 2: lines, arcs, beziers (body outlines/decorations)
+        // Pass 3: pins
+        // Pass 4: text, labels, designators, parameters, everything else
+        for record in all_records.clone() {
+            if matches!(
+                record,
+                SchRecord::Rectangle(_)
+                    | SchRecord::RoundRectangle(_)
+                    | SchRecord::Polygon(_)
+                    | SchRecord::Ellipse(_)
+                    | SchRecord::Pie(_)
+            ) {
+                crate::render::sch::draw_sch_record(record, canvas, fonts, ovr);
+            }
         }
-        for record in &self.additional_records {
-            crate::render::sch::draw_sch_record(record, canvas, fonts);
+        for record in all_records.clone() {
+            if matches!(
+                record,
+                SchRecord::Line(_)
+                    | SchRecord::Polyline(_)
+                    | SchRecord::Arc(_)
+                    | SchRecord::EllipticalArc(_)
+                    | SchRecord::Bezier(_)
+            ) {
+                crate::render::sch::draw_sch_record(record, canvas, fonts, ovr);
+            }
+        }
+        for record in all_records.clone() {
+            if matches!(record, SchRecord::Pin(_)) {
+                crate::render::sch::draw_sch_record(record, canvas, fonts, ovr);
+            }
+        }
+        for record in all_records {
+            if !matches!(
+                record,
+                SchRecord::Rectangle(_)
+                    | SchRecord::RoundRectangle(_)
+                    | SchRecord::Polygon(_)
+                    | SchRecord::Ellipse(_)
+                    | SchRecord::Pie(_)
+                    | SchRecord::Line(_)
+                    | SchRecord::Polyline(_)
+                    | SchRecord::Arc(_)
+                    | SchRecord::EllipticalArc(_)
+                    | SchRecord::Bezier(_)
+                    | SchRecord::Pin(_)
+            ) {
+                crate::render::sch::draw_sch_record(record, canvas, fonts, ovr);
+            }
         }
     }
 }

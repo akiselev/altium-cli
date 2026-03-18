@@ -6,8 +6,9 @@
 
 use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
-    BgaFanoutDirection, BgaFanoutViaMode, CornerStyle, FanoutDirection, FanoutStyle, NetScope,
-    NetTopology, PlaneConnectionStyle, PolygonReliefAngle, RouteVia, RuleKind, RuleLayerKind,
+    BgaFanoutDirection, BgaFanoutViaMode, ComponentOrientationFlags, CornerStyle, FanoutDirection,
+    FanoutStyle, LengthenerStyle, NetScope, NetTopology, PlaneConnectionStyle, PolygonReliefAngle,
+    RouteVia, RuleKind, RuleLayerKind,
 };
 
 use crate::param_collection::ParameterCollection;
@@ -97,8 +98,8 @@ pub(crate) enum PcbRuleKindData {
     ConfinementConstraint(ConfinementConstraintRuleData),
     SmdToCorner(SmdToCornerRuleData),
     ComponentClearance(ComponentClearanceRuleData),
-    ComponentRotations(EmptyRuleData),
-    PermittedLayers(EmptyRuleData),
+    ComponentRotations(ComponentRotationsRuleData),
+    PermittedLayers(PermittedLayersRuleData),
     NetsToIgnore(EmptyRuleData),
     SignalStimulus(SignalStimulusRuleData),
     OvershootFallingEdge(OvershootUndershootRuleData),
@@ -221,16 +222,6 @@ pub(crate) struct ClearanceRuleData {
     pub ignore_pad_to_pad: bool,
     #[param(key = "OBJECTCLEARANCES", default = ClearanceMatrix::default())]
     pub object_clearances: ClearanceMatrix,
-    #[param(key = "CHECKNETSINDIFFPAIR", default = false)]
-    pub check_nets_in_diff_pair: bool,
-    #[param(key = "CHECKDIFFPAIRVSDIFFPAIR", default = false)]
-    pub check_diff_pair_vs_diff_pair: bool,
-    #[param(key = "CHECKXSIGNALS", default = false)]
-    pub check_x_signals: bool,
-    #[param(key = "CHECKOTHERS", default = false)]
-    pub check_others: bool,
-    #[param(key = "CHECKCONNECTEDCOPPER", default = false)]
-    pub check_connected_copper: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
@@ -461,6 +452,16 @@ pub(crate) struct MatchedLengthsRuleData {
     pub phase_delay_tolerance: f64,
     #[param(key = "PHASEDISTANCE", default = MilCoord::default())]
     pub phase_distance: MilCoord,
+    /// Serpentine amplitude. From `IPCB_MatchedNetLengthsConstraint.GetState_Amplitude`.
+    #[param(key = "AMPLITUDE", default = MilCoord::default())]
+    pub amplitude: MilCoord,
+    /// Serpentine gap. From `IPCB_MatchedNetLengthsConstraint.GetState_Gap`.
+    #[param(key = "GAP", default = MilCoord::default())]
+    pub gap: MilCoord,
+    /// Serpentine style. From `IPCB_MatchedNetLengthsConstraint.GetState_Style`.
+    /// String values from `xPCBTypes.Consts.cLengthenerStyleStrings`.
+    #[param(key = "STYLE", default = LengthenerStyle::default())]
+    pub style: LengthenerStyle,
 }
 
 #[derive(FromParams, ToParams, Debug)]
@@ -766,6 +767,9 @@ pub(crate) struct PolygonConnectStyleRuleData {
     pub relief_entries: Option<i32>,
     pub polygon_relief_angle: Option<PolygonReliefAngle>,
     pub air_gap_width: Option<MilCoord>,
+    pub conductor_by_pad_edge: Option<bool>,
+    pub enable_min_distance: Option<bool>,
+    pub min_distance: Option<MilCoord>,
     /// Per-pad-type overrides (THPAD.*, SMDPAD.*, VIA.*).
     pub pad_type_overrides: Vec<PadTypePolygonConnect>,
 }
@@ -778,6 +782,9 @@ pub(crate) struct PadTypePolygonConnect {
     pub relief_entries: i32,
     pub polygon_relief_angle: PolygonReliefAngle,
     pub air_gap_width: MilCoord,
+    pub conductor_by_pad_edge: bool,
+    pub enable_min_distance: bool,
+    pub min_distance: MilCoord,
 }
 
 impl PolygonConnectStyleRuleData {
@@ -791,6 +798,11 @@ impl PolygonConnectStyleRuleData {
         let polygon_relief_angle: Option<PolygonReliefAngle> =
             params.remove_optional("POLYGONRELIEFANGLE")?;
         let air_gap_width: Option<MilCoord> = params.remove_optional("AIRGAPWIDTH")?;
+        let conductor_by_pad_edge: Option<bool> =
+            params.remove_optional("CONDUCTORBYPADEDGE")?;
+        let enable_min_distance: Option<bool> =
+            params.remove_optional("ENABLEMINDISTANCE")?;
+        let min_distance: Option<MilCoord> = params.remove_optional("MINDISTANCE")?;
 
         // Try per-pad-type prefixed fields (THPAD., SMDPAD., VIA.).
         let mut pad_type_overrides = Vec::new();
@@ -801,6 +813,9 @@ impl PolygonConnectStyleRuleData {
                 let re_key = format!("{prefix}.RELIEFENTRIES");
                 let ra_key = format!("{prefix}.POLYGONRELIEFANGLE");
                 let ag_key = format!("{prefix}.AIRGAPWIDTH");
+                let cb_key = format!("{prefix}.CONDUCTORBYPADEDGE");
+                let em_key = format!("{prefix}.ENABLEMINDISTANCE");
+                let md_key = format!("{prefix}.MINDISTANCE");
                 pad_type_overrides.push(PadTypePolygonConnect {
                     prefix: prefix.to_string(),
                     connect_style: cs,
@@ -811,6 +826,12 @@ impl PolygonConnectStyleRuleData {
                         .remove_with_default(&ra_key, PolygonReliefAngle::Angle90)?,
                     air_gap_width: params
                         .remove_with_default(&ag_key, MilCoord::default())?,
+                    conductor_by_pad_edge: params.remove_with_default(&cb_key, false)?,
+                    enable_min_distance: params.remove_with_default(&em_key, false)?,
+                    min_distance: params.remove_with_default(
+                        &md_key,
+                        MilCoord(altium_format_types::Coord::from_mils_f64(10.0)),
+                    )?,
                 });
             }
         }
@@ -821,6 +842,9 @@ impl PolygonConnectStyleRuleData {
             relief_entries,
             polygon_relief_angle,
             air_gap_width,
+            conductor_by_pad_edge,
+            enable_min_distance,
+            min_distance,
             pad_type_overrides,
         })
     }
@@ -841,12 +865,24 @@ impl PolygonConnectStyleRuleData {
         if let Some(v) = &self.air_gap_width {
             params.insert("AIRGAPWIDTH", v.to_param_value());
         }
+        if let Some(v) = self.conductor_by_pad_edge {
+            params.insert("CONDUCTORBYPADEDGE", v.to_param_value());
+        }
+        if let Some(v) = self.enable_min_distance {
+            params.insert("ENABLEMINDISTANCE", v.to_param_value());
+        }
+        if let Some(v) = &self.min_distance {
+            params.insert("MINDISTANCE", v.to_param_value());
+        }
         for ov in &self.pad_type_overrides {
             params.insert(&format!("{}.CONNECTSTYLE", ov.prefix), ov.connect_style.to_param_value());
             params.insert(&format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix), ov.relief_conductor_width.to_param_value());
             params.insert(&format!("{}.RELIEFENTRIES", ov.prefix), ov.relief_entries.to_param_value());
             params.insert(&format!("{}.POLYGONRELIEFANGLE", ov.prefix), ov.polygon_relief_angle.to_param_value());
             params.insert(&format!("{}.AIRGAPWIDTH", ov.prefix), ov.air_gap_width.to_param_value());
+            params.insert(&format!("{}.CONDUCTORBYPADEDGE", ov.prefix), ov.conductor_by_pad_edge.to_param_value());
+            params.insert(&format!("{}.ENABLEMINDISTANCE", ov.prefix), ov.enable_min_distance.to_param_value());
+            params.insert(&format!("{}.MINDISTANCE", ov.prefix), ov.min_distance.to_param_value());
         }
     }
 }
@@ -964,6 +1000,27 @@ pub(crate) struct ComponentClearanceRuleData {
     pub show_distances: bool,
     #[param(key = "DONOTCHECKWITHOUT3DBODY", default = false)]
     pub do_not_check_without_3d_body: bool,
+}
+
+/// Component orientation rule: bitmask of allowed placement rotations.
+/// Parameter key `AllowedRotations` stores the bitmask as a signed integer.
+/// Bitmask values are defined by `ComponentOrientationFlags`.
+#[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
+pub(crate) struct ComponentRotationsRuleData {
+    #[param(key = "AllowedRotations", default = ComponentOrientationFlags(0))]
+    pub allowed_rotations: ComponentOrientationFlags,
+}
+
+/// Permitted layers rule: which signal layers a component may be placed on.
+/// `TopLayerPermitted` and `BottomLayerPermitted` are stored as boolean flags.
+#[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
+pub(crate) struct PermittedLayersRuleData {
+    #[param(key = "TopLayerPermitted", default = true)]
+    pub top_layer_permitted: bool,
+    #[param(key = "BottomLayerPermitted", default = true)]
+    pub bottom_layer_permitted: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
@@ -1125,6 +1182,24 @@ pub(crate) struct DiffPairsRoutingRuleData {
     pub impedance_profile_id: Option<String>,
     pub impedance_profile_value: Option<f64>,
     pub substack_overrides: Vec<DiffPairsSubstackOverride>,
+    /// Whether the rule is impedance-driven (not profile-driven).
+    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_ImpedanceDriven`.
+    pub impedance_driven: Option<bool>,
+    /// Minimum impedance in ohms.
+    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_MinImpedance`.
+    pub min_imp: Option<f64>,
+    /// Maximum impedance in ohms.
+    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_MaxImpedance`.
+    pub max_imp: Option<f64>,
+    /// Preferred/favored impedance in ohms.
+    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_FavoredImpedance`.
+    pub fav_imp: Option<f64>,
+    /// Most frequent width across all layers.
+    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_MostFrequentWidth`.
+    pub most_freq_width: Option<MilCoord>,
+    /// Layer-stack filter GUID.
+    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_FilterLayerStackID`.
+    pub filter_layer_stack_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1193,6 +1268,15 @@ impl DiffPairsRoutingRuleData {
         let impedance_profile_id: Option<String> = params.remove_optional("IMPEDANCEPROFILEID")?;
         let impedance_profile_value: Option<f64> = params.remove_optional("IMPEDANCEPROFILEVALUE")?;
 
+        // Impedance-driven fields (non-profile).
+        // From IPCB_DifferentialPairsRoutingRule3: GetState_ImpedanceDriven/Min/Max/Favored.
+        let impedance_driven: Option<bool> = params.remove_optional("IMPEDANCEDRIVEN")?;
+        let min_imp: Option<f64> = params.remove_optional("MINIMP")?;
+        let max_imp: Option<f64> = params.remove_optional("MAXIMP")?;
+        let fav_imp: Option<f64> = params.remove_optional("FAVIMP")?;
+        let most_freq_width: Option<MilCoord> = params.remove_optional("MOSTFREQWIDTH")?;
+        let filter_layer_stack_id: Option<String> = params.remove_optional("FILTERLAYERSTACKID")?;
+
         // Per-substack overrides for diff-pairs routing.
         let mut substack_overrides = Vec::new();
         let mut n = 1usize;
@@ -1237,6 +1321,12 @@ impl DiffPairsRoutingRuleData {
             impedance_profile_id,
             impedance_profile_value,
             substack_overrides,
+            impedance_driven,
+            min_imp,
+            max_imp,
+            fav_imp,
+            most_freq_width,
+            filter_layer_stack_id,
         })
     }
 
@@ -1275,6 +1365,24 @@ impl DiffPairsRoutingRuleData {
         }
         if let Some(v) = self.impedance_profile_value {
             params.insert("IMPEDANCEPROFILEVALUE", v.to_param_value());
+        }
+        if let Some(v) = self.impedance_driven {
+            params.insert("IMPEDANCEDRIVEN", v.to_param_value());
+        }
+        if let Some(v) = self.min_imp {
+            params.insert("MINIMP", v.to_param_value());
+        }
+        if let Some(v) = self.max_imp {
+            params.insert("MAXIMP", v.to_param_value());
+        }
+        if let Some(v) = self.fav_imp {
+            params.insert("FAVIMP", v.to_param_value());
+        }
+        if let Some(v) = &self.most_freq_width {
+            params.insert("MOSTFREQWIDTH", v.to_param_value());
+        }
+        if let Some(v) = &self.filter_layer_stack_id {
+            params.insert("FILTERLAYERSTACKID", v.to_param_value());
         }
 
         for (n, ss) in self.substack_overrides.iter().enumerate() {
@@ -1387,11 +1495,54 @@ pub(crate) struct CreepageRuleData {
     pub voltage: MilCoord,
 }
 
-#[derive(FromParams, ToParams, Debug)]
-#[param(tier2)]
+/// Per-layer maximum routed length for a neck-down segment.
+/// A value of `None` means no limit is set for that layer.
+/// From `IPCB_RoutingNeckDownRule.GetState_MaxLength()` (`IPCB_LayerToCoord`).
+#[derive(Debug)]
+pub(crate) struct NeckDownLayerMaxLength {
+    pub prefix: String,
+    pub max_length: Option<MilCoord>,
+}
+
+#[derive(Debug)]
 pub(crate) struct RoutingNeckDownRuleData {
-    #[param(key = "NECKDOWNPERCENTAGE", default = 0f64)]
     pub neck_down_percentage: f64,
+    /// Per-layer maximum routing length constraints.
+    /// Serialized as `{PREFIX}_MAXLENGTH` for each signal layer that has a value.
+    pub per_layer_max_length: Vec<NeckDownLayerMaxLength>,
+}
+
+impl RoutingNeckDownRuleData {
+    fn from_params(params: &mut ParameterCollection) -> Result<Self> {
+        let neck_down_percentage: f64 =
+            params.remove_with_default("NECKDOWNPERCENTAGE", 0f64)?;
+
+        let mut per_layer_max_length = Vec::new();
+        for prefix in &signal_layer_prefixes() {
+            let key = format!("{prefix}_MAXLENGTH");
+            let max_length: Option<MilCoord> = params.remove_optional(&key)?;
+            if max_length.is_some() {
+                per_layer_max_length.push(NeckDownLayerMaxLength {
+                    prefix: prefix.to_string(),
+                    max_length,
+                });
+            }
+        }
+
+        Ok(Self {
+            neck_down_percentage,
+            per_layer_max_length,
+        })
+    }
+
+    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        params.insert("NECKDOWNPERCENTAGE", self.neck_down_percentage.to_param_value());
+        for entry in &self.per_layer_max_length {
+            if let Some(v) = &entry.max_length {
+                params.insert(&format!("{}_MAXLENGTH", entry.prefix), v.to_param_value());
+            }
+        }
+    }
 }
 
 #[derive(FromParams, ToParams, Debug)]
@@ -1447,8 +1598,8 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
         RuleKind::ConfinementConstraint => PcbRuleKindData::ConfinementConstraint(ConfinementConstraintRuleData::from_params(params)?),
         RuleKind::SmdToCorner => PcbRuleKindData::SmdToCorner(SmdToCornerRuleData::from_params(params)?),
         RuleKind::ComponentClearance => PcbRuleKindData::ComponentClearance(ComponentClearanceRuleData::from_params(params)?),
-        RuleKind::ComponentRotations => PcbRuleKindData::ComponentRotations(EmptyRuleData::from_params(params)?),
-        RuleKind::PermittedLayers => PcbRuleKindData::PermittedLayers(EmptyRuleData::from_params(params)?),
+        RuleKind::ComponentRotations => PcbRuleKindData::ComponentRotations(ComponentRotationsRuleData::from_params(params)?),
+        RuleKind::PermittedLayers => PcbRuleKindData::PermittedLayers(PermittedLayersRuleData::from_params(params)?),
         RuleKind::NetsToIgnore => PcbRuleKindData::NetsToIgnore(EmptyRuleData::from_params(params)?),
         RuleKind::SignalStimulus => PcbRuleKindData::SignalStimulus(SignalStimulusRuleData::from_params(params)?),
         RuleKind::OvershootFallingEdge => PcbRuleKindData::OvershootFallingEdge(OvershootUndershootRuleData::from_params(params)?),

@@ -7,7 +7,7 @@
 //! (`stroke-dasharray`), and Altium-matching stroke defaults (round caps and joins).
 
 use altium_format::render::{
-    Brush, DrawCall, DrawPoint, RecordingCanvas, RenderTransform,
+    Brush, DrawCall, DrawPoint, RecordingCanvas, RenderTransform, TextHAlign, TextVAlign,
 };
 use altium_format_types::Color;
 use std::fmt::Write;
@@ -311,16 +311,25 @@ pub fn draw_calls_to_svg(calls: &[DrawCall]) -> String {
                     continue;
                 }
                 let (x, y) = to_svg(*pos);
-                let elem = SvgText::new(text.as_str())
+                let mut elem = SvgText::new(text.as_str())
                     .set("x", format!("{x:.2}"))
                     .set("y", format!("{y:.2}"))
-                    .set("font-family", font.name.as_str())
+                    .set("font-family", format!("'{}', sans-serif", font.name))
                     .set("font-size", format!("{:.1}", font.size_mils.max(6.0)))
                     .set("fill", color_to_css(color.color))
                     .set(
                         "transform",
                         format!("rotate({:.1},{:.2},{:.2})", -angle_deg, x, y),
                     );
+                match font.h_align {
+                    TextHAlign::Left => {} // SVG default
+                    TextHAlign::Center => { elem = elem.set("text-anchor", "middle"); }
+                    TextHAlign::Right => { elem = elem.set("text-anchor", "end"); }
+                }
+                match font.v_align {
+                    TextVAlign::Baseline => {} // SVG default
+                    TextVAlign::Middle => { elem = elem.set("dominant-baseline", "central"); }
+                }
                 write!(body, "{elem}").unwrap();
             }
             // Skip embedded images — pixel data is not available here

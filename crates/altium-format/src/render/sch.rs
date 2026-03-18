@@ -1,16 +1,32 @@
 //! Schematic record draw dispatch for AltiumCanvas.
 
 use crate::render::canvas::{
-    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, bus_width_to_mils, c_to_f,
-    junction_radius_mils, pen_width_to_mils, to_dp,
+    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, TextHAlign, TextVAlign,
+    bus_width_to_mils, c_to_f, junction_radius_mils, pen_width_to_mils, to_dp,
 };
 use crate::sch_records::SchRecord;
+use altium_format_types::Color;
 use altium_format_types::sch::SchFont;
+
+/// Color overrides from a parent component, matching Altium's `OverideColors` mechanism.
+///
+/// When a component has `OverideColors=TRUE`, its colors are forcibly applied to all
+/// child primitives during rendering. Pins receive `pin_color`; all other primitives
+/// receive `line_color` (outline) and `area_color` (fill).
+///
+/// See `SchComponentDrawGraphObject.InternalDraw()` and
+/// `DrawGraphObjectBase.DrawWithoutChildren()` in the C# source.
+pub(crate) struct ComponentColorOverrides {
+    pub line_color: Color,
+    pub area_color: Color,
+    pub pin_color: Color,
+}
 
 pub(crate) fn draw_sch_record(
     record: &SchRecord,
     canvas: &mut dyn AltiumCanvas,
     fonts: &[SchFont],
+    overrides: Option<&ComponentColorOverrides>,
 ) {
     match record {
         SchRecord::Wire(w) => {
@@ -31,46 +47,105 @@ pub(crate) fn draw_sch_record(
             if p.is_hidden {
                 return;
             }
+            use altium_format_types::RotationBy90;
             let (dx, dy) = match p.orientation {
-                altium_format_types::RotationBy90::Rotate0 => (1.0, 0.0),
-                altium_format_types::RotationBy90::Rotate90 => (0.0, 1.0),
-                altium_format_types::RotationBy90::Rotate180 => (-1.0, 0.0),
-                altium_format_types::RotationBy90::Rotate270 => (0.0, -1.0),
+                RotationBy90::Rotate0 => (1.0, 0.0),
+                RotationBy90::Rotate90 => (0.0, 1.0),
+                RotationBy90::Rotate180 => (-1.0, 0.0),
+                RotationBy90::Rotate270 => (0.0, -1.0),
                 _ => (1.0, 0.0),
             };
             let len = c_to_f(p.pin_length);
-            let loc = to_dp(p.location);
-            let end = (loc.0 + dx * len, loc.1 + dy * len);
-            let pen = Pen::new(p.color, 1.0);
+            let loc = to_dp(p.location); // external end (wire side)
+            let end = (loc.0 + dx * len, loc.1 + dy * len); // body end
+            let pin_color = overrides.map(|o| o.pin_color).unwrap_or(p.color);
+            let pen = Pen::new(pin_color, 1.0);
             canvas.draw_line(loc, end, &pen);
+
+            // Pin name: positioned at body end, offset into the body.
+            // Altium constant: PinNamePositionOffsetC = 40000 = 4 mils.
+            let name_margin = 6.0;
             if p.show_name && !p.name.is_empty() {
-                let font = lookup_font(fonts, 1);
-                canvas.draw_text(&p.name, end, 0.0, &font, &pen);
+                let mut font = lookup_font(fonts, 1);
+                font.v_align = TextVAlign::Middle;
+                let (name_pos, name_angle) = match p.orientation {
+                    RotationBy90::Rotate0 => {
+                        font.h_align = TextHAlign::Left;
+                        ((end.0 + name_margin, end.1), 0.0)
+                    }
+                    RotationBy90::Rotate180 => {
+                        font.h_align = TextHAlign::Right;
+                        ((end.0 - name_margin, end.1), 0.0)
+                    }
+                    RotationBy90::Rotate90 => {
+                        font.h_align = TextHAlign::Left;
+                        ((end.0, end.1 + name_margin), 90.0)
+                    }
+                    RotationBy90::Rotate270 => {
+                        font.h_align = TextHAlign::Right;
+                        ((end.0, end.1 - name_margin), 90.0)
+                    }
+                    _ => ((end.0 + name_margin, end.1), 0.0),
+                };
+                canvas.draw_text(&p.name, name_pos, name_angle, &font, &pen);
             }
+
+            // Pin designator (number): on the pin line, centered vertically.
+            // Positioned at external end, offset along the pin axis away from body.
+            // No perpendicular offset — Altium renders numbers ON the pin line.
+            let desig_margin = 4.0;
             if p.show_designator && !p.designator.is_empty() {
-                let font = lookup_font(fonts, 1);
-                canvas.draw_text(&p.designator, loc, 0.0, &font, &pen);
+                let mut font = lookup_font(fonts, 1);
+                font.v_align = TextVAlign::Middle;
+                let (desig_pos, desig_angle) = match p.orientation {
+                    RotationBy90::Rotate0 => {
+                        font.h_align = TextHAlign::Right;
+                        ((loc.0 - desig_margin, loc.1), 0.0)
+                    }
+                    RotationBy90::Rotate180 => {
+                        font.h_align = TextHAlign::Left;
+                        ((loc.0 + desig_margin, loc.1), 0.0)
+                    }
+                    RotationBy90::Rotate90 => {
+                        font.h_align = TextHAlign::Right;
+                        ((loc.0, loc.1 - desig_margin), 90.0)
+                    }
+                    RotationBy90::Rotate270 => {
+                        font.h_align = TextHAlign::Left;
+                        ((loc.0, loc.1 + desig_margin), 90.0)
+                    }
+                    _ => {
+                        font.h_align = TextHAlign::Right;
+                        ((loc.0 - desig_margin, loc.1), 0.0)
+                    }
+                };
+                canvas.draw_text(&p.designator, desig_pos, desig_angle, &font, &pen);
             }
         }
         SchRecord::Line(l) => {
-            let pen = Pen::new(l.color, pen_width_to_mils(l.line_width)).with_style(l.line_style);
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(l.color);
+            let pen = Pen::new(line_color, pen_width_to_mils(l.line_width)).with_style(l.line_style);
             canvas.draw_line(to_dp(l.location), to_dp(l.corner), &pen);
         }
         SchRecord::Rectangle(r) => {
-            let pen = Pen::new(r.color, pen_width_to_mils(r.line_width));
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(r.color);
+            let area_color = overrides.map(|o| o.area_color).unwrap_or(r.area_color);
+            let pen = Pen::new(line_color, pen_width_to_mils(r.line_width));
             let fill = if r.is_solid && !r.transparent {
-                Some(Brush::solid(r.area_color))
+                Some(Brush::solid(area_color))
             } else if r.transparent {
-                Some(Brush::transparent(r.area_color))
+                Some(Brush::transparent(area_color))
             } else {
                 None
             };
             canvas.draw_rect(to_dp(r.location), to_dp(r.corner), &pen, fill.as_ref());
         }
         SchRecord::RoundRectangle(r) => {
-            let pen = Pen::new(r.color, pen_width_to_mils(r.line_width));
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(r.color);
+            let area_color = overrides.map(|o| o.area_color).unwrap_or(r.area_color);
+            let pen = Pen::new(line_color, pen_width_to_mils(r.line_width));
             let fill = if r.is_solid {
-                Some(Brush::solid(r.area_color))
+                Some(Brush::solid(area_color))
             } else {
                 None
             };
@@ -84,13 +159,15 @@ pub(crate) fn draw_sch_record(
             );
         }
         SchRecord::Arc(a) => {
-            let pen = Pen::new(a.color, pen_width_to_mils(a.line_width));
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(a.color);
+            let pen = Pen::new(line_color, pen_width_to_mils(a.line_width));
             let r = c_to_f(a.radius);
             let end = a.end_angle.as_ref().map(|e| e.0).unwrap_or(360.0);
             canvas.draw_arc(to_dp(a.location), r, r, a.start_angle.0, end, &pen);
         }
         SchRecord::EllipticalArc(a) => {
-            let pen = Pen::new(a.color, pen_width_to_mils(a.line_width));
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(a.color);
+            let pen = Pen::new(line_color, pen_width_to_mils(a.line_width));
             let end = a.end_angle.as_ref().map(|e| e.0).unwrap_or(360.0);
             canvas.draw_arc(
                 to_dp(a.location),
@@ -102,11 +179,13 @@ pub(crate) fn draw_sch_record(
             );
         }
         SchRecord::Ellipse(e) => {
-            let pen = Pen::new(e.color, pen_width_to_mils(e.line_width));
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(e.color);
+            let area_color = overrides.map(|o| o.area_color).unwrap_or(e.area_color);
+            let pen = Pen::new(line_color, pen_width_to_mils(e.line_width));
             let fill = if e.is_solid && !e.transparent {
-                Some(Brush::solid(e.area_color))
+                Some(Brush::solid(area_color))
             } else if e.transparent {
-                Some(Brush::transparent(e.area_color))
+                Some(Brush::transparent(area_color))
             } else {
                 None
             };
@@ -119,9 +198,11 @@ pub(crate) fn draw_sch_record(
             );
         }
         SchRecord::Pie(p) => {
-            let pen = Pen::new(p.color, pen_width_to_mils(p.line_width));
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(p.color);
+            let area_color = overrides.map(|o| o.area_color).unwrap_or(p.area_color);
+            let pen = Pen::new(line_color, pen_width_to_mils(p.line_width));
             let fill = if p.is_solid {
-                Some(Brush::solid(p.area_color))
+                Some(Brush::solid(area_color))
             } else {
                 None
             };
@@ -156,25 +237,29 @@ pub(crate) fn draw_sch_record(
             }
         }
         SchRecord::Polyline(p) => {
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(p.color);
             let pts: Vec<_> = p.vertices.iter().copied().map(to_dp).collect();
-            let pen = Pen::new(p.color, pen_width_to_mils(p.line_width)).with_style(p.line_style);
+            let pen = Pen::new(line_color, pen_width_to_mils(p.line_width)).with_style(p.line_style);
             canvas.draw_polyline(&pts, &pen);
         }
         SchRecord::Polygon(p) => {
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(p.color);
+            let area_color = overrides.map(|o| o.area_color).unwrap_or(p.area_color);
             let pts: Vec<_> = p.vertices.iter().copied().map(to_dp).collect();
-            let pen = Pen::new(p.color, pen_width_to_mils(p.line_width));
+            let pen = Pen::new(line_color, pen_width_to_mils(p.line_width));
             let fill = if p.is_solid && !p.transparent {
-                Some(Brush::solid(p.area_color))
+                Some(Brush::solid(area_color))
             } else if p.transparent {
-                Some(Brush::transparent(p.area_color))
+                Some(Brush::transparent(area_color))
             } else {
                 None
             };
             canvas.draw_polygon(&pts, &pen, fill.as_ref());
         }
         SchRecord::Bezier(b) => {
+            let line_color = overrides.map(|o| o.line_color).unwrap_or(b.color);
             let pts: Vec<_> = b.vertices.iter().copied().map(to_dp).collect();
-            let pen = Pen::new(b.color, pen_width_to_mils(b.line_width));
+            let pen = Pen::new(line_color, pen_width_to_mils(b.line_width));
             canvas.draw_bezier(&pts, &pen);
         }
         SchRecord::Label(l) | SchRecord::Hyperlink(l) => {
@@ -358,6 +443,8 @@ fn lookup_font(fonts: &[SchFont], font_id: i32) -> FontSpec {
             size_mils: f.size as f64,
             bold: f.bold,
             italic: f.italic,
+            h_align: TextHAlign::Left,
+            v_align: TextVAlign::Baseline,
         }
     } else {
         FontSpec::default()
@@ -402,7 +489,7 @@ mod tests {
             assigned_interface_signal: String::new(),
         };
         let mut canvas = RecordingCanvas::new();
-        draw_sch_record(&SchRecord::Wire(wire), &mut canvas, &[]);
+        draw_sch_record(&SchRecord::Wire(wire), &mut canvas, &[], None);
         assert_eq!(canvas.calls.len(), 1);
         assert!(matches!(canvas.calls[0], DrawCall::Polyline { .. }));
     }
@@ -419,7 +506,7 @@ mod tests {
             unique_id: String::new(),
         };
         let mut canvas = RecordingCanvas::new();
-        draw_sch_record(&SchRecord::Junction(j), &mut canvas, &[]);
+        draw_sch_record(&SchRecord::Junction(j), &mut canvas, &[], None);
         assert_eq!(canvas.calls.len(), 1);
         assert!(matches!(canvas.calls[0], DrawCall::Ellipse { .. }));
     }
@@ -441,7 +528,7 @@ mod tests {
             unique_id: String::new(),
         };
         let mut canvas = RecordingCanvas::new();
-        draw_sch_record(&SchRecord::NoConnect(n), &mut canvas, &[]);
+        draw_sch_record(&SchRecord::NoConnect(n), &mut canvas, &[], None);
         assert_eq!(canvas.calls.len(), 2);
     }
 }

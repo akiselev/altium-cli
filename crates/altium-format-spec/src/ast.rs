@@ -15,6 +15,7 @@ pub enum SpecItem {
     Component(ComponentDecl),
     Footprint(FootprintDecl),
     Project(ProjectDecl),
+    SwapGroup(SwapGroupDecl),
     // SchDoc-specific
     Sheet(SheetDecl),
     Net(NetDecl),
@@ -35,6 +36,14 @@ pub enum SpecItem {
 pub struct ImportDecl {
     pub path: Spanned<String>,
     pub alias: Option<Spanned<String>>,
+}
+
+/// [binding =] swap_group NAME { ... }
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwapGroupDecl {
+    pub binding: Option<Spanned<String>>,
+    pub name: Spanned<EntityName>,
+    pub body: Spanned<Object>,
 }
 
 /// [let] name = expr
@@ -62,6 +71,7 @@ pub enum ComponentItem {
     Alias(AliasDecl),
     FootprintMap(FootprintMapDecl),
     Graphic(GraphicDecl),
+    SwapGroup(SwapGroupDecl),
 }
 
 /// [binding =] part N { ... }
@@ -77,6 +87,7 @@ pub enum PartItem {
     LetBinding(LetBinding),
     Pin(PinDecl),
     Graphic(GraphicDecl),
+    Property(Property),
 }
 
 /// [binding =] pin NAME { ... }

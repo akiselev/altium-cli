@@ -1328,6 +1328,15 @@ fn dump_pin(out: &mut String, pin: &Pin, indent: usize) {
     if !pin.hidden_net_name.is_empty() {
         parts.push(format!("hidden_net_name: {}", quote_string(&pin.hidden_net_name)));
     }
+    if !pin.swap_id_pin.is_empty() {
+        parts.push(format!("swap_group: {}", quote_string(&pin.swap_id_pin)));
+    }
+    if !pin.swap_id_part.is_empty() {
+        parts.push(format!("part_swap_group: {}", quote_string(&pin.swap_id_part)));
+    }
+    if !pin.swap_id_pair.is_empty() {
+        parts.push(format!("pair_swap_group: {}", quote_string(&pin.swap_id_pair)));
+    }
     out.push_str(&format!(
         "{}pin {} {{ {} }}\n",
         pad,

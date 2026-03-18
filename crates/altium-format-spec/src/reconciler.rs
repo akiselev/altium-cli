@@ -2104,6 +2104,9 @@ mod tests {
             is_hidden: None,
             hidden_net_name: None,
             owner_part_id,
+            swap_group: None,
+            part_swap_group: None,
+            pair_swap_group: None,
         }
     }
 

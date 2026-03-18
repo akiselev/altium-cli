@@ -45,6 +45,7 @@ pub enum TokenKind {
     Column,
     Grid,
     Board,
+    SwapGroup,
 
     // Shared keywords
     Let,
@@ -105,6 +106,7 @@ impl TokenKind {
                 | (Column, Column)
                 | (Grid, Grid)
                 | (Board, Board)
+                | (SwapGroup, SwapGroup)
                 | (Let, Let)
                 | (True, True)
                 | (False, False)
@@ -333,6 +335,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, ParseError> {
                         "column" => TokenKind::Column,
                         "grid" => TokenKind::Grid,
                         "board" => TokenKind::Board,
+                        "swap_group" => TokenKind::SwapGroup,
                         "let" => TokenKind::Let,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
@@ -619,6 +622,13 @@ fn read_number_or_dim(input: &str, start: usize) -> Result<(TokenKind, usize), P
                 })?;
                 return Ok((TokenKind::Dim(value, unit), unit_end));
             }
+            if !is_float {
+                // Not a known unit suffix and number is integer —
+                // treat the whole token as an identifier (e.g. "74LVC1G17").
+                let full_ident = &input[start..unit_end];
+                return Ok((TokenKind::Ident(full_ident.to_string()), unit_end));
+            }
+            // Float with unknown suffix is still an error.
             return Err(ParseError::new(
                 ParseErrorCode::E1003,
                 format!("unknown unit suffix '{}'", unit_str),
@@ -760,8 +770,46 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_unit_suffix() {
-        assert!(lex("20xyz").is_err());
+    fn test_unknown_unit_suffix_on_integer_becomes_ident() {
+        // Integer followed by unknown suffix is treated as an identifier, not an error.
+        let kinds = lex_kinds("20xyz");
+        assert_eq!(kinds, vec![
+            TokenKind::Ident("20xyz".to_string()),
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn test_unknown_unit_suffix_on_float_is_error() {
+        // Float followed by unknown suffix is still an error.
+        assert!(lex("3.14abc").is_err());
+    }
+
+    #[test]
+    fn digit_starting_ident() {
+        let kinds = lex_kinds("74LVC1G17");
+        assert_eq!(kinds, vec![
+            TokenKind::Ident("74LVC1G17".to_string()),
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn pure_integer_still_works() {
+        let kinds = lex_kinds("42");
+        assert_eq!(kinds, vec![
+            TokenKind::Integer(42),
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn dimension_still_works() {
+        let kinds = lex_kinds("100mil");
+        assert_eq!(kinds, vec![
+            TokenKind::Dim(100.0, Unit::Mil),
+            TokenKind::Eof,
+        ]);
     }
 
     #[test]
@@ -965,5 +1013,11 @@ mod tests {
     #[test]
     fn test_unexpected_char() {
         assert!(lex("@").is_err());
+    }
+
+    #[test]
+    fn swap_group_keyword() {
+        let tokens = lex("swap_group").unwrap();
+        assert!(matches!(&tokens[0].kind, TokenKind::SwapGroup));
     }
 }

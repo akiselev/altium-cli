@@ -9,7 +9,7 @@ use super::ast::{
     OutputGroupBlockDecl, PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem,
     PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
     PlacementItem, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property, RowDecl, RuleDecl,
-    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem, SwapGroupDecl,
     VariantBlockDecl, VariationDecl,
     is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
@@ -268,6 +268,14 @@ impl<'a> SpecParser<'a> {
             return Ok(Spanned::new(SpecItem::SchDocObject(decl), start.merge(end)));
         }
 
+        // Handle: swap_group NAME { ... }
+        // Distinguish from a bare property key (which doesn't appear at top level, but handle gracefully).
+        if self.at(&TokenKind::SwapGroup) && !self.peek_ahead(1).same_variant(&TokenKind::Colon) {
+            let decl = self.parse_swap_group_decl(None)?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(SpecItem::SwapGroup(decl), start.merge(end)));
+        }
+
         // Skip optional `let`
         let had_let = self.eat(&TokenKind::Let);
 
@@ -302,6 +310,12 @@ impl<'a> SpecParser<'a> {
                         let decl = self.parse_project(binding)?;
                         let end = self.prev_span();
                         return Ok(Spanned::new(SpecItem::Project(decl), start.merge(end)));
+                    }
+                    TokenKind::SwapGroup => {
+                        let binding = Some(Spanned::new(name, name_span));
+                        let decl = self.parse_swap_group_decl(binding)?;
+                        let end = self.prev_span();
+                        return Ok(Spanned::new(SpecItem::SwapGroup(decl), start.merge(end)));
                     }
                     _ => {
                         // It's a let binding
@@ -369,6 +383,19 @@ impl<'a> SpecParser<'a> {
             None
         };
         Ok(super::ast::ImportDecl { path, alias })
+    }
+
+    // ── SwapGroup ──────────────────────────────────────────────────────────
+
+    fn parse_swap_group_decl(
+        &mut self,
+        binding: Option<Spanned<String>>,
+    ) -> Result<SwapGroupDecl, ParseError> {
+        self.expect(&TokenKind::SwapGroup, "expected 'swap_group'")?;
+        let name = self.parse_entity_name()?;
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(SwapGroupDecl { binding, name, body })
     }
 
     // ── Component ─────────────────────────────────────────────────────────
@@ -448,6 +475,21 @@ impl<'a> SpecParser<'a> {
             ));
         }
 
+        // swap_group at component scope: either a declaration or a property.
+        // swap_group NAME { ... }  → declaration
+        // swap_group: $ref         → property (e.g. on a part body handled via parse_part_item)
+        if self.at(&TokenKind::SwapGroup) {
+            if self.peek_ahead(1).same_variant(&TokenKind::Colon) {
+                // It's a property: swap_group: value
+                let prop = self.parse_property()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(ComponentItem::Property(prop), start.merge(end)));
+            }
+            let decl = self.parse_swap_group_decl(None)?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(ComponentItem::SwapGroup(decl), start.merge(end)));
+        }
+
         // IDENT-led items: property, let binding, or graphic / bound entity
         if let TokenKind::Ident(name) = self.current_kind().clone() {
             let name_span = self.current_span();
@@ -500,6 +542,15 @@ impl<'a> SpecParser<'a> {
                             start.merge(end),
                         ));
                     }
+                    TokenKind::SwapGroup => {
+                        let decl =
+                            self.parse_swap_group_decl(Some(Spanned::new(name, name_span)))?;
+                        let end = self.prev_span();
+                        return Ok(Spanned::new(
+                            ComponentItem::SwapGroup(decl),
+                            start.merge(end),
+                        ));
+                    }
                     _ => {
                         // It's a let binding: name = expr
                         let value = self.parse_expr()?;
@@ -525,7 +576,7 @@ impl<'a> SpecParser<'a> {
         }
 
         Err(self.err(
-            "expected component item (property, pin, parameter, alias, footprint, part, graphic, or let binding)",
+            "expected component item (property, pin, parameter, alias, footprint, part, graphic, swap_group, or let binding)",
         ))
     }
 
@@ -570,6 +621,13 @@ impl<'a> SpecParser<'a> {
             return Ok(Spanned::new(PartItem::LetBinding(binding), start.merge(end)));
         }
 
+        // swap_group: $ref inside a part block is a property.
+        if self.at(&TokenKind::SwapGroup) && self.peek_ahead(1).same_variant(&TokenKind::Colon) {
+            let prop = self.parse_property()?;
+            let end = self.prev_span();
+            return Ok(Spanned::new(PartItem::Property(prop), start.merge(end)));
+        }
+
         if let TokenKind::Ident(name) = self.current_kind().clone() {
             let name_span = self.current_span();
             let next = self.peek_ahead(1);
@@ -608,6 +666,18 @@ impl<'a> SpecParser<'a> {
                 let decl = self.parse_graphic(None)?;
                 let end = self.prev_span();
                 return Ok(Spanned::new(PartItem::Graphic(decl), start.merge(end)));
+            }
+
+            if next.same_variant(&TokenKind::Colon) {
+                self.bump(); // IDENT
+                self.bump(); // :
+                let value = self.parse_expr()?;
+                let end = self.prev_span();
+                let prop = Property {
+                    key: Spanned::new(name, name_span),
+                    value,
+                };
+                return Ok(Spanned::new(PartItem::Property(prop), start.merge(end)));
             }
         }
 
@@ -1884,6 +1954,7 @@ impl<'a> SpecParser<'a> {
             TokenKind::Column => "column".to_string(),
             TokenKind::Grid => "grid".to_string(),
             TokenKind::Project => "project".to_string(),
+            TokenKind::SwapGroup => "swap_group".to_string(),
             TokenKind::Let => "let".to_string(),
             TokenKind::True => "true".to_string(),
             TokenKind::False => "false".to_string(),

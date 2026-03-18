@@ -9,5 +9,5 @@ pub(crate) mod pcb;
 pub mod recording;
 pub(crate) mod sch;
 
-pub use canvas::{AltiumCanvas, Brush, DrawPoint, FontSpec, Pen, RenderTransform};
+pub use canvas::{AltiumCanvas, Brush, DrawPoint, FontSpec, Pen, RenderTransform, TextHAlign, TextVAlign};
 pub use recording::{DrawCall, NullCanvas, RecordingCanvas};

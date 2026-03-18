@@ -68,6 +68,9 @@ pub struct PinSpec {
     pub is_hidden: Option<bool>,
     pub hidden_net_name: Option<String>,
     pub owner_part_id: i32,
+    pub swap_group: Option<String>,
+    pub part_swap_group: Option<String>,
+    pub pair_swap_group: Option<String>,
 }
 
 pub struct ParameterSpec {

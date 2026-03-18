@@ -356,11 +356,26 @@ impl SchDoc {
             })
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
+
+        let mut current_overrides: Option<crate::render::sch::ComponentColorOverrides> = None;
+
         for record in &self.records {
-            crate::render::sch::draw_sch_record(record, canvas, fonts);
+            // Track component context for color overrides
+            if let crate::sch_records::SchRecord::Component(c) = record {
+                if c.override_colors {
+                    current_overrides = Some(crate::render::sch::ComponentColorOverrides {
+                        line_color: c.color,
+                        area_color: c.area_color,
+                        pin_color: c.pin_color,
+                    });
+                } else {
+                    current_overrides = None;
+                }
+            }
+            crate::render::sch::draw_sch_record(record, canvas, fonts, current_overrides.as_ref());
         }
         for record in &self.additional_records {
-            crate::render::sch::draw_sch_record(record, canvas, fonts);
+            crate::render::sch::draw_sch_record(record, canvas, fonts, None);
         }
         Ok(())
     }

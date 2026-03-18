@@ -4,11 +4,12 @@
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
 use altium_format_types::{
     BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, Color, ComponentKind,
-    ComponentCollisionCheckMode, ConfinementStyle, Coord, CornerStyle, FanoutDirection,
-    FanoutStyle, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape, LineStyle, NetScope,
-    NetTopology, ObjectClearanceId, ParameterReadOnlyState, ParameterType, PenWidth,
-    PlaneConnectionStyle, PolygonReliefAngle, RotationBy90, RouteVia, RuleKind, RuleLayerKind,
-    SheetSymbolType, TestpointValid, TextHorzAnchor, TextJustification, TextVertAnchor, UniqueId,
+    ComponentCollisionCheckMode, ComponentOrientationFlags, ConfinementStyle, Coord, CornerStyle,
+    FanoutDirection, FanoutStyle, HorizontalAlign, IeeeSymbol, LeftRightSide, LengthenerStyle,
+    LineShape, LineStyle, NetScope, NetTopology, ObjectClearanceId, ParameterReadOnlyState,
+    ParameterType, PenWidth, PlaneConnectionStyle, PolygonReliefAngle, RotationBy90, RouteVia,
+    RuleKind, RuleLayerKind, SheetSymbolType, TestpointValid, TextHorzAnchor, TextJustification,
+    TextVertAnchor, UniqueId,
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle},
 };
 
@@ -391,6 +392,14 @@ impl_string_enum_param_value!(BgaFanoutViaMode,
     Closest => "Closest",
 );
 
+// LengthenerStyle: string values from xPCBTypes.Consts.cLengthenerStyleStrings.
+impl_string_enum_param_value!(LengthenerStyle,
+    Degree90 => "90-Degree",
+    Degree45 => "45-Degree",
+    Round => "Round",
+    Mitered90 => "Mitered",
+);
+
 impl FromParamValue for CornerStyle {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {
         match value {
@@ -418,6 +427,21 @@ impl ToParamValue for CornerStyle {
 
 // ComponentCollisionCheckMode serializes as integer string (not string name).
 impl_enum_param_value!(ComponentCollisionCheckMode, TestpointValid);
+
+// ComponentOrientationFlags serializes as a signed decimal integer bitmask
+// in the "AllowedRotations" parameter (from IPCB_ComponentRotationsRule).
+impl FromParamValue for ComponentOrientationFlags {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        let raw = i32::from_param_value(key, value)?;
+        Ok(Self(raw))
+    }
+}
+
+impl ToParamValue for ComponentOrientationFlags {
+    fn to_param_value(&self) -> String {
+        self.0.to_string()
+    }
+}
 
 // ObjectClearanceId: helper methods (from_clearance_string / to_clearance_string) are
 // defined in altium-format-types. Used by ClearanceMatrix parser below.

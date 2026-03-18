@@ -1582,6 +1582,41 @@ impl TryFrom<u8> for DaisyChainStyle {
     }
 }
 
+/// Serpentine / length-tuner style for matched-length rules.
+///
+/// Maps to the Delphi `TLengthenerStyle` enum and the C# `TLengthenerStyle` enum.
+/// String values come from `xPCBTypes.Consts.cLengthenerStyleStrings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum LengthenerStyle {
+    /// 90-degree square serpentine.
+    #[default]
+    Degree90 = 0,
+    /// 45-degree sawtooth serpentine.
+    Degree45 = 1,
+    /// Rounded serpentine.
+    Round = 2,
+    /// Mitered 90-degree serpentine.
+    Mitered90 = 3,
+}
+
+impl TryFrom<u8> for LengthenerStyle {
+    type Error = InvalidEnumValue;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Degree90),
+            1 => Ok(Self::Degree45),
+            2 => Ok(Self::Round),
+            3 => Ok(Self::Mitered90),
+            _ => Err(InvalidEnumValue {
+                type_name: "LengthenerStyle",
+                value: v as i64,
+            }),
+        }
+    }
+}
+
 /// Dimension kind (0-10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -2907,5 +2942,55 @@ impl TryFrom<u8> for TestpointValid {
             3 => Ok(Self::AllowMultiple),
             _ => Err(InvalidEnumValue { type_name: "TestpointValid", value: v as i64 }),
         }
+    }
+}
+
+/// Bitmask of allowed component placement orientations.
+///
+/// Corresponds to the C# `ComponentOrientationKind` flags enum
+/// (`[Flags] enum ComponentOrientationKind : short`).
+/// Stored as a signed 32-bit integer in the `AllowedRotations` parameter.
+///
+/// Flag values from `ComponentOrientationKind.cs`:
+/// - `RotationNone  = 0x00` — no rotation allowed
+/// - `Rotation0     = 0x01` — 0 degrees
+/// - `Rotation90    = 0x02` — 90 degrees
+/// - `Rotation180   = 0x08` — 180 degrees
+/// - `Rotation270   = 0x10` — 270 degrees
+/// - `RotationsAll  = 0x20` — all rotations allowed
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ComponentOrientationFlags(pub i32);
+
+impl ComponentOrientationFlags {
+    pub const NONE: Self = Self(0x00);
+    pub const ROTATION_0: Self = Self(0x01);
+    pub const ROTATION_90: Self = Self(0x02);
+    pub const ROTATION_180: Self = Self(0x08);
+    pub const ROTATION_270: Self = Self(0x10);
+    pub const ALL: Self = Self(0x20);
+
+    pub fn raw(self) -> i32 {
+        self.0
+    }
+
+    pub fn allows_0_degrees(self) -> bool {
+        self.0 & Self::ROTATION_0.0 != 0
+    }
+
+    pub fn allows_90_degrees(self) -> bool {
+        self.0 & Self::ROTATION_90.0 != 0
+    }
+
+    pub fn allows_180_degrees(self) -> bool {
+        self.0 & Self::ROTATION_180.0 != 0
+    }
+
+    pub fn allows_270_degrees(self) -> bool {
+        self.0 & Self::ROTATION_270.0 != 0
+    }
+
+    pub fn allows_all(self) -> bool {
+        self.0 & Self::ALL.0 != 0
     }
 }

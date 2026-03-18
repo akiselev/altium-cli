@@ -29,11 +29,34 @@ pub(crate) fn component_to_internal(
 ) -> Result<(SchComponent, Vec<SchRecord>, Vec<SchRecord>, SchLibComponentIndex)> {
     let mut records = Vec::new();
 
+    // Compute body rectangle bounds for text placement.
+    // Scan graphics for the first solid rectangle to use as the body.
+    let body_bounds = comp.graphics.iter().find_map(|g| {
+        if let crate::api::schlib_types::Graphic::Rectangle(r) = g {
+            if r.is_solid {
+                let min_x = r.location.x.min(r.corner.x);
+                let max_x = r.location.x.max(r.corner.x);
+                let min_y = r.location.y.min(r.corner.y);
+                let max_y = r.location.y.max(r.corner.y);
+                return Some((min_x, max_x, min_y, max_y));
+            }
+        }
+        None
+    });
+    // Designator above the body top; value at body center.
+    let desig_location = if let Some((_min_x, _max_x, _min_y, max_y)) = body_bounds {
+        use altium_format_types::Coord;
+        let offset = Coord::from_mils(15).unwrap_or(max_y);
+        CoordPoint::new(Coord::default(), max_y + offset)
+    } else {
+        CoordPoint::zero()
+    };
+
     // 1. Designator record (RECORD=34) if present
     if let Some(ref des_text) = comp.designator {
         records.push(SchRecord::Designator(SchDesignator {
             base: default_base(),
-            location: CoordPoint::zero(),
+            location: desig_location,
             color: Color::new(0x00000080),
             font_id: 1,
             text: des_text.clone(),

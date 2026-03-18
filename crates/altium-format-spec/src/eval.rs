@@ -122,6 +122,8 @@ pub enum Value {
     CoordPoint(i32, i32),
     Array(Vec<Value>),
     Object(IndexMap<String, Value>),
+    /// A declared swap group reference; the inner string is the group's entity name.
+    SwapGroup(String),
 }
 
 impl Value {
@@ -154,6 +156,7 @@ impl Value {
                     .collect();
                 format!("{{{}}}", items.join(", "))
             }
+            Value::SwapGroup(s) => s.clone(),
         }
     }
 
@@ -169,6 +172,7 @@ impl Value {
             Value::CoordPoint(..) => "coord",
             Value::Array(_) => "array",
             Value::Object(_) => "object",
+            Value::SwapGroup(_) => "swap_group",
         }
     }
 
