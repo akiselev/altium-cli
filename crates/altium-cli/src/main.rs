@@ -1171,7 +1171,7 @@ fn run_apply(
     let result = compile_and_resolve(&source, spec_file, &domain)?;
 
     // Apply root spec.
-    apply_for_model(&result.model, target, output, spec_file, &domain, &result.imported_components)?;
+    apply_for_model(&result.model, target, output, spec_file, &domain, &result.imported_components, &result.import_paths)?;
 
     // Apply imports with --all.
     if all {
@@ -1180,7 +1180,7 @@ fn run_apply(
             let import_source = std::fs::read_to_string(import_path)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", import_path.display()))?;
             let import_result = compile_and_resolve(&import_source, import_path, &import_domain)?;
-            apply_for_model(&import_result.model, None, None, import_path, &import_domain, &import_result.imported_components)?;
+            apply_for_model(&import_result.model, None, None, import_path, &import_domain, &import_result.imported_components, &import_result.import_paths)?;
         }
     }
 
@@ -1195,6 +1195,7 @@ fn apply_for_model(
     spec_file: &PathBuf,
     domain: &SpecDomain,
     imported_components: &std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
+    import_paths: &[PathBuf],
 ) -> anyhow::Result<()> {
     let library_path = default_output_for_spec(spec_file, domain);
 
@@ -1286,10 +1287,119 @@ fn apply_for_model(
             apply_spec_pcbdoc(spec, &mut doc)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
+            instantiate_footprint_pads(&mut doc, import_paths)?;
+
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
     }
+
+    Ok(())
+}
+
+// ── footprint pad instantiation ───────────────────────────────────────────────
+
+/// For each imported `.pcblib-spec`, derive the corresponding `.PcbLib` binary
+/// path, open it, and instantiate pads for every board component whose `pattern`
+/// matches a footprint in that library.
+///
+/// Pad coordinates are transformed from footprint-local to board space using the
+/// component's placement position and rotation.  Existing component-owned pads are
+/// removed before re-instantiation so that running `apply` twice is idempotent.
+fn instantiate_footprint_pads(doc: &mut PcbDoc, import_paths: &[PathBuf]) -> anyhow::Result<()> {
+    use altium_format_types::coord::{Coord, CoordPoint};
+
+    let pcblib_paths: Vec<PathBuf> = import_paths
+        .iter()
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("pcblib-spec"))
+                .unwrap_or(false)
+        })
+        .map(|p| p.with_extension("PcbLib"))
+        .collect();
+
+    if pcblib_paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut board = doc.board()
+        .map_err(|e| anyhow::anyhow!("failed to read board for pad instantiation: {e}"))?;
+
+    // Remove all pads that are currently associated with a component; they will
+    // be re-instantiated from the footprint library below.
+    board.pads.retain(|p| p.component.is_none());
+
+    for pcblib_path in &pcblib_paths {
+        if !pcblib_path.exists() {
+            eprintln!(
+                "Warning: imported pcblib-spec has no corresponding binary at {} — skipping pad instantiation",
+                pcblib_path.display()
+            );
+            continue;
+        }
+
+        let lib = PcbLib::open(pcblib_path)
+            .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", pcblib_path.display()))?;
+
+        let components: Vec<_> = board.components.clone();
+        for comp in &components {
+            if comp.pattern.is_empty() {
+                continue;
+            }
+
+            let fp = match lib.footprint(&comp.pattern) {
+                Ok(fp) => fp,
+                Err(_) => continue,
+            };
+
+            let comp_x_f64 = comp.location.x.to_mms();
+            let comp_y_f64 = comp.location.y.to_mms();
+            let comp_rot_rad = comp.rotation.to_radians();
+            let cos_r = comp_rot_rad.cos();
+            let sin_r = comp_rot_rad.sin();
+
+            for (pad_idx, fp_pad) in fp.pads.iter().enumerate() {
+                let local_x = fp_pad.location.x.to_mms();
+                let local_y = fp_pad.location.y.to_mms();
+
+                let rotated_x = local_x * cos_r - local_y * sin_r;
+                let rotated_y = local_x * sin_r + local_y * cos_r;
+
+                let abs_x = Coord::from_mms(comp_x_f64 + rotated_x);
+                let abs_y = Coord::from_mms(comp_y_f64 + rotated_y);
+
+                let pad_id = format!("{}-{}", comp.designator, pad_idx + 1);
+
+                board.pads.push(altium_format::api::PcbDocPad {
+                    id: pad_id,
+                    pad_name: fp_pad.pad_name.clone(),
+                    layer: fp_pad.layer.clone(),
+                    net: None,
+                    component: Some(comp.designator.clone()),
+                    location: CoordPoint::new(abs_x, abs_y),
+                    shape: fp_pad.shape,
+                    x_size: fp_pad.x_size,
+                    y_size: fp_pad.y_size,
+                    rotation: fp_pad.rotation + comp.rotation,
+                    hole_size: fp_pad.hole_size,
+                    is_plated: fp_pad.is_plated,
+                    pad_mode: fp_pad.pad_mode,
+                    solder_mask_expansion: fp_pad.solder_mask_expansion,
+                    paste_mask_expansion: fp_pad.paste_mask_expansion,
+                    plane_connection: fp_pad.plane_connection,
+                    relief_conductor_width: fp_pad.relief_conductor_width,
+                    relief_entries: fp_pad.relief_entries,
+                    relief_air_gap: fp_pad.relief_air_gap,
+                    stack: fp_pad.stack.clone(),
+                });
+            }
+        }
+    }
+
+    doc.update_board(&board)
+        .map_err(|e| anyhow::anyhow!("failed to update board with instantiated pads: {e}"))?;
 
     Ok(())
 }
