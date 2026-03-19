@@ -91,7 +91,10 @@ struct SpatialGrid {
 
 impl SpatialGrid {
     fn new(cell_size: f64) -> Self {
-        Self { cell_size, cells: HashMap::new() }
+        Self {
+            cell_size,
+            cells: HashMap::new(),
+        }
     }
 
     /// All grid cells overlapped by an AABB centred at (cx, cy) with half-extents (hw, hh).
@@ -189,7 +192,10 @@ impl NetComponentIndex {
             }
         }
 
-        Self { comp_to_nets, net_to_comps }
+        Self {
+            comp_to_nets,
+            net_to_comps,
+        }
     }
 }
 
@@ -198,14 +204,31 @@ impl NetComponentIndex {
 
 #[derive(Debug, Clone)]
 enum Move {
-    Displace { comp_idx: usize, dx: f64, dy: f64 },
+    Displace {
+        comp_idx: usize,
+        dx: f64,
+        dy: f64,
+    },
     /// Positional swap: exchange the (x, y) of two components.
-    Swap { comp_a: usize, comp_b: usize },
-    Rotate { comp_idx: usize, new_rotation: f64 },
+    Swap {
+        comp_a: usize,
+        comp_b: usize,
+    },
+    Rotate {
+        comp_idx: usize,
+        new_rotation: f64,
+    },
     /// Pin swap: exchange the net index of two pads within the same swap group on a component.
-    PinSwap { comp_idx: usize, pad_a: usize, pad_b: usize },
+    PinSwap {
+        comp_idx: usize,
+        pad_a: usize,
+        pad_b: usize,
+    },
     /// Part swap: exchange positions of two components known to be in the same part swap group.
-    PartSwap { comp_a: usize, comp_b: usize },
+    PartSwap {
+        comp_a: usize,
+        comp_b: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +361,9 @@ fn hpwl_for_component_nets(
         Some(v) => v,
         None => return 0.0,
     };
-    nets.iter().map(|&ni| hpwl_for_net(ni, index, components)).sum()
+    nets.iter()
+        .map(|&ni| hpwl_for_net(ni, index, components))
+        .sum()
 }
 
 /// Compute total HPWL over all nets (used for best-tracking and result reporting).
@@ -352,8 +377,14 @@ fn total_hpwl(index: &NetComponentIndex, components: &[ComponentState]) -> f64 {
 // Overlap penalty (AABB)
 
 fn aabb_overlap_area(
-    ax: f64, ay: f64, aw: f64, ah: f64,
-    bx: f64, by: f64, bw: f64, bh: f64,
+    ax: f64,
+    ay: f64,
+    aw: f64,
+    ah: f64,
+    bx: f64,
+    by: f64,
+    bw: f64,
+    bh: f64,
 ) -> f64 {
     let ox = (aw + bw) - (ax - bx).abs() * 2.0;
     let oy = (ah + bh) - (ay - by).abs() * 2.0;
@@ -363,16 +394,43 @@ fn aabb_overlap_area(
 const OVERLAP_WEIGHT: f64 = 10.0;
 const BOARD_PENALTY: f64 = 100.0;
 
+fn world_half_extents_at(local_width: f64, local_height: f64, rotation_deg: f64) -> (f64, f64) {
+    let half_w = local_width * 0.5;
+    let half_h = local_height * 0.5;
+    let (sin_t, cos_t) = rotation_deg.to_radians().sin_cos();
+    (
+        half_w * cos_t.abs() + half_h * sin_t.abs(),
+        half_w * sin_t.abs() + half_h * cos_t.abs(),
+    )
+}
+
+fn world_half_extents(component: &ComponentState) -> (f64, f64) {
+    world_half_extents_at(component.width, component.height, component.rotation)
+}
+
 /// Overlap penalty for a component against its spatial grid neighbours.
 fn overlap_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
     let c = &placement.components[comp_idx];
-    let hw = c.width * 0.5;
-    let hh = c.height * 0.5;
-    let neighbours = placement.spatial_grid.neighbours(c.x, c.y, hw, hh, comp_idx);
+    let (hw, hh) = world_half_extents(c);
+    let neighbours = placement
+        .spatial_grid
+        .neighbours(c.x, c.y, hw, hh, comp_idx);
     let mut penalty = 0.0;
+    let c_world_w = hw * 2.0;
+    let c_world_h = hh * 2.0;
     for ni in neighbours {
         let n = &placement.components[ni];
-        penalty += aabb_overlap_area(c.x, c.y, c.width, c.height, n.x, n.y, n.width, n.height);
+        let (nhw, nhh) = world_half_extents(n);
+        penalty += aabb_overlap_area(
+            c.x,
+            c.y,
+            c_world_w,
+            c_world_h,
+            n.x,
+            n.y,
+            nhw * 2.0,
+            nhh * 2.0,
+        );
     }
     OVERLAP_WEIGHT * penalty
 }
@@ -380,8 +438,7 @@ fn overlap_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
 /// Board containment penalty: positive if component is outside the board.
 fn containment_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
     let c = &placement.components[comp_idx];
-    let hw = c.width * 0.5;
-    let hh = c.height * 0.5;
+    let (hw, hh) = world_half_extents(c);
     let (x_min, y_min, x_max, y_max) = placement.board_bounds;
     let vx_lo = (x_min + hw - c.x).max(0.0);
     let vx_hi = (c.x + hw - x_max).max(0.0);
@@ -394,7 +451,12 @@ fn containment_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
 // Move generation
 
 fn movable_indices(components: &[ComponentState]) -> Vec<usize> {
-    components.iter().enumerate().filter(|(_, c)| c.is_movable).map(|(i, _)| i).collect()
+    components
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.is_movable)
+        .map(|(i, _)| i)
+        .collect()
 }
 
 fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) -> Option<Move> {
@@ -418,30 +480,55 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
         let ci = movable[rng.random_range(0..movable.len())];
         let dx = rng.random_range(-max_disp..=max_disp);
         let dy = rng.random_range(-max_disp..=max_disp);
-        Some(Move::Displace { comp_idx: ci, dx, dy })
+        Some(Move::Displace {
+            comp_idx: ci,
+            dx,
+            dy,
+        })
     } else if roll < 0.70 {
         // Positional Swap (25%).
         if movable.len() < 2 {
             let ci = movable[rng.random_range(0..movable.len())];
             let dx = rng.random_range(-max_disp..=max_disp);
             let dy = rng.random_range(-max_disp..=max_disp);
-            return Some(Move::Displace { comp_idx: ci, dx, dy });
+            return Some(Move::Displace {
+                comp_idx: ci,
+                dx,
+                dy,
+            });
         }
         let ai = rng.random_range(0..movable.len());
         let mut bi = rng.random_range(0..movable.len() - 1);
-        if bi >= ai { bi += 1; }
-        Some(Move::Swap { comp_a: movable[ai], comp_b: movable[bi] })
+        if bi >= ai {
+            bi += 1;
+        }
+        Some(Move::Swap {
+            comp_a: movable[ai],
+            comp_b: movable[bi],
+        })
     } else if roll < 0.85 {
         // Rotate (15%) — snap to 0/90/180/270.
         let ci = movable[rng.random_range(0..movable.len())];
         let angles = [0.0_f64, 90.0, 180.0, 270.0];
-        let new_rotation = angles[rng.random_range(0..4)];
-        Some(Move::Rotate { comp_idx: ci, new_rotation })
+        let current = placement.components[ci].rotation.rem_euclid(360.0);
+        let candidates: Vec<f64> = angles
+            .into_iter()
+            .filter(|&angle| (angle - current).abs() > 1e-9)
+            .collect();
+        let new_rotation = candidates[rng.random_range(0..candidates.len())];
+        Some(Move::Rotate {
+            comp_idx: ci,
+            new_rotation,
+        })
     } else if roll < 0.925 && !placement.pin_swap_opportunities.is_empty() {
         // PinSwap (7.5% when opportunities exist).
         let idx = rng.random_range(0..placement.pin_swap_opportunities.len());
         let (comp_idx, pad_a, pad_b) = placement.pin_swap_opportunities[idx];
-        Some(Move::PinSwap { comp_idx, pad_a, pad_b })
+        Some(Move::PinSwap {
+            comp_idx,
+            pad_a,
+            pad_b,
+        })
     } else if !placement.part_swap_opportunities.is_empty() {
         // PartSwap (remaining, ~7.5% when opportunities exist; fallback: Displace).
         let idx = rng.random_range(0..placement.part_swap_opportunities.len());
@@ -452,7 +539,11 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
         let ci = movable[rng.random_range(0..movable.len())];
         let dx = rng.random_range(-max_disp..=max_disp);
         let dy = rng.random_range(-max_disp..=max_disp);
-        Some(Move::Displace { comp_idx: ci, dx, dy })
+        Some(Move::Displace {
+            comp_idx: ci,
+            dx,
+            dy,
+        })
     }
 }
 
@@ -463,26 +554,31 @@ fn apply_move(placement: &mut Placement, m: &Move) {
     match *m {
         Move::Displace { comp_idx, dx, dy } => {
             let c = &placement.components[comp_idx];
-            let hw = c.width * 0.5;
-            let hh = c.height * 0.5;
+            let (hw, hh) = world_half_extents(c);
             let old_x = c.x;
             let old_y = c.y;
-            placement.spatial_grid.remove(comp_idx, old_x, old_y, hw, hh);
+            placement
+                .spatial_grid
+                .remove(comp_idx, old_x, old_y, hw, hh);
             let c = &mut placement.components[comp_idx];
             c.x += dx;
             c.y += dy;
             let new_x = c.x;
             let new_y = c.y;
-            placement.spatial_grid.insert(comp_idx, new_x, new_y, hw, hh);
+            placement
+                .spatial_grid
+                .insert(comp_idx, new_x, new_y, hw, hh);
         }
         Move::Swap { comp_a, comp_b } => {
             let (ax, ay, ahw, ahh) = {
                 let a = &placement.components[comp_a];
-                (a.x, a.y, a.width * 0.5, a.height * 0.5)
+                let (hw, hh) = world_half_extents(a);
+                (a.x, a.y, hw, hh)
             };
             let (bx, by, bhw, bhh) = {
                 let b = &placement.components[comp_b];
-                (b.x, b.y, b.width * 0.5, b.height * 0.5)
+                let (hw, hh) = world_half_extents(b);
+                (b.x, b.y, hw, hh)
             };
             placement.spatial_grid.remove(comp_a, ax, ay, ahw, ahh);
             placement.spatial_grid.remove(comp_b, bx, by, bhw, bhh);
@@ -493,10 +589,30 @@ fn apply_move(placement: &mut Placement, m: &Move) {
             placement.spatial_grid.insert(comp_a, bx, by, ahw, ahh);
             placement.spatial_grid.insert(comp_b, ax, ay, bhw, bhh);
         }
-        Move::Rotate { comp_idx, new_rotation } => {
+        Move::Rotate {
+            comp_idx,
+            new_rotation,
+        } => {
+            let (old_x, old_y, old_hw, old_hh) = {
+                let c = &placement.components[comp_idx];
+                let (hw, hh) = world_half_extents(c);
+                (c.x, c.y, hw, hh)
+            };
+            placement
+                .spatial_grid
+                .remove(comp_idx, old_x, old_y, old_hw, old_hh);
             placement.components[comp_idx].rotation = new_rotation;
+            let c = &placement.components[comp_idx];
+            let (new_hw, new_hh) = world_half_extents(c);
+            placement
+                .spatial_grid
+                .insert(comp_idx, c.x, c.y, new_hw, new_hh);
         }
-        Move::PinSwap { comp_idx, pad_a, pad_b } => {
+        Move::PinSwap {
+            comp_idx,
+            pad_a,
+            pad_b,
+        } => {
             let pads = &mut placement.components[comp_idx].pads;
             if pad_a < pads.len() && pad_b < pads.len() {
                 let net_a = pads[pad_a].0;
@@ -506,35 +622,44 @@ fn apply_move(placement: &mut Placement, m: &Move) {
                 // Update the net-component index: the affected nets may gain/lose this component
                 // as a participant depending on whether both pads were already in the same net.
                 // For correctness we rebuild the index entries for the two affected nets.
-                rebuild_net_index_for_swap(&mut placement.net_component_index, comp_idx, net_a, net_b, &placement.components);
+                rebuild_net_index_for_swap(
+                    &mut placement.net_component_index,
+                    comp_idx,
+                    net_a,
+                    net_b,
+                    &placement.components,
+                );
             }
         }
         Move::PartSwap { comp_a, comp_b } => {
-            // Exchange (x, y) of the two components, keeping pads (net assignments) unchanged.
-            let (ax, ay) = {
+            // Exchange the full placement state so swap-group moves preserve the orientation
+            // of the physical part being reassigned.
+            let (ax, ay, arot, ahw, ahh) = {
                 let a = &placement.components[comp_a];
-                (a.x, a.y)
+                let (hw, hh) = world_half_extents(a);
+                (a.x, a.y, a.rotation, hw, hh)
             };
-            let (bx, by) = {
+            let (bx, by, brot, bhw, bhh) = {
                 let b = &placement.components[comp_b];
-                (b.x, b.y)
-            };
-            let (ahw, ahh) = {
-                let a = &placement.components[comp_a];
-                (a.width * 0.5, a.height * 0.5)
-            };
-            let (bhw, bhh) = {
-                let b = &placement.components[comp_b];
-                (b.width * 0.5, b.height * 0.5)
+                let (hw, hh) = world_half_extents(b);
+                (b.x, b.y, b.rotation, hw, hh)
             };
             placement.spatial_grid.remove(comp_a, ax, ay, ahw, ahh);
             placement.spatial_grid.remove(comp_b, bx, by, bhw, bhh);
             placement.components[comp_a].x = bx;
             placement.components[comp_a].y = by;
+            placement.components[comp_a].rotation = brot;
             placement.components[comp_b].x = ax;
             placement.components[comp_b].y = ay;
-            placement.spatial_grid.insert(comp_a, bx, by, ahw, ahh);
-            placement.spatial_grid.insert(comp_b, ax, ay, bhw, bhh);
+            placement.components[comp_b].rotation = arot;
+            let (new_ahw, new_ahh) = world_half_extents(&placement.components[comp_a]);
+            let (new_bhw, new_bhh) = world_half_extents(&placement.components[comp_b]);
+            placement
+                .spatial_grid
+                .insert(comp_a, bx, by, new_ahw, new_ahh);
+            placement
+                .spatial_grid
+                .insert(comp_b, ax, ay, new_bhw, new_bhh);
         }
     }
 }
@@ -553,11 +678,16 @@ fn rebuild_net_index_for_swap(
             continue;
         }
         // Check if comp_idx still has a pad on this net.
-        let still_in_net = components[comp_idx].pads.iter().any(|&(ni, _, _)| ni == net_idx);
+        let still_in_net = components[comp_idx]
+            .pads
+            .iter()
+            .any(|&(ni, _, _)| ni == net_idx);
         let already_listed = index.net_to_comps[net_idx].contains(&comp_idx);
         if still_in_net && !already_listed {
             index.net_to_comps[net_idx].push(comp_idx);
-            if comp_idx < index.comp_to_nets.len() && !index.comp_to_nets[comp_idx].contains(&net_idx) {
+            if comp_idx < index.comp_to_nets.len()
+                && !index.comp_to_nets[comp_idx].contains(&net_idx)
+            {
                 index.comp_to_nets[comp_idx].push(net_idx);
             }
         } else if !still_in_net && already_listed {
@@ -569,54 +699,18 @@ fn rebuild_net_index_for_swap(
     }
 }
 
-fn revert_move(placement: &mut Placement, m: &Move) {
-    match *m {
-        Move::Displace { comp_idx, dx, dy } => {
-            let c = &placement.components[comp_idx];
-            let hw = c.width * 0.5;
-            let hh = c.height * 0.5;
-            let old_x = c.x;
-            let old_y = c.y;
-            placement.spatial_grid.remove(comp_idx, old_x, old_y, hw, hh);
-            let c = &mut placement.components[comp_idx];
-            c.x -= dx;
-            c.y -= dy;
-            let new_x = c.x;
-            let new_y = c.y;
-            placement.spatial_grid.insert(comp_idx, new_x, new_y, hw, hh);
-        }
-        Move::Swap { comp_a, comp_b } => {
-            // Swap is its own inverse.
-            apply_move(placement, &Move::Swap { comp_a, comp_b });
-        }
-        Move::Rotate { .. } => {
-            panic!("Rotate revert requires old_rotation; use revert_rotate() directly");
-        }
-        Move::PinSwap { comp_idx, pad_a, pad_b } => {
-            // PinSwap is its own inverse.
-            apply_move(placement, &Move::PinSwap { comp_idx, pad_a, pad_b });
-        }
-        Move::PartSwap { comp_a, comp_b } => {
-            // PartSwap is its own inverse.
-            apply_move(placement, &Move::PartSwap { comp_a, comp_b });
-        }
-    }
-}
-
-/// Revert a rotate move, restoring the previous rotation stored separately.
-fn revert_rotate(placement: &mut Placement, comp_idx: usize, old_rotation: f64) {
-    placement.components[comp_idx].rotation = old_rotation;
-}
-
 // ---------------------------------------------------------------------------
 // Incremental cost delta
 
 /// Cost delta for `m` on the given placement.
-/// Returns (delta_cost, old_rotation_if_rotate).
-fn delta_cost(placement: &Placement, m: &Move) -> (f64, Option<f64>) {
+fn delta_cost(placement: &Placement, m: &Move) -> f64 {
     match *m {
         Move::Displace { comp_idx, dx, dy } => {
-            let before_hpwl = hpwl_for_component_nets(comp_idx, &placement.net_component_index, &placement.components);
+            let before_hpwl = hpwl_for_component_nets(
+                comp_idx,
+                &placement.net_component_index,
+                &placement.components,
+            );
             let before_overlap = overlap_penalty_for(comp_idx, placement);
             let before_contain = containment_penalty_for(comp_idx, placement);
             let before = before_hpwl + before_overlap + before_contain;
@@ -632,90 +726,127 @@ fn delta_cost(placement: &Placement, m: &Move) -> (f64, Option<f64>) {
                 cost_after_displace(comp_idx, new_x, new_y, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            (after - before, None)
+            after - before
         }
         Move::Swap { comp_a, comp_b } => {
             // Affected nets: union of nets for both components.
-            let nets_a: Vec<usize> = placement.net_component_index.comp_to_nets.get(comp_a).cloned().unwrap_or_default();
-            let nets_b: Vec<usize> = placement.net_component_index.comp_to_nets.get(comp_b).cloned().unwrap_or_default();
+            let nets_a: Vec<usize> = placement
+                .net_component_index
+                .comp_to_nets
+                .get(comp_a)
+                .cloned()
+                .unwrap_or_default();
+            let nets_b: Vec<usize> = placement
+                .net_component_index
+                .comp_to_nets
+                .get(comp_b)
+                .cloned()
+                .unwrap_or_default();
             let mut affected: Vec<usize> = nets_a;
             for ni in nets_b {
                 if !affected.contains(&ni) {
                     affected.push(ni);
                 }
             }
-            let before_hpwl: f64 = affected.iter().map(|&ni| hpwl_for_net(ni, &placement.net_component_index, &placement.components)).sum();
-            let before_overlap = overlap_penalty_for(comp_a, placement) + overlap_penalty_for(comp_b, placement);
-            let before_contain = containment_penalty_for(comp_a, placement) + containment_penalty_for(comp_b, placement);
+            let before_hpwl: f64 = affected
+                .iter()
+                .map(|&ni| hpwl_for_net(ni, &placement.net_component_index, &placement.components))
+                .sum();
+            let before_overlap =
+                overlap_penalty_for(comp_a, placement) + overlap_penalty_for(comp_b, placement);
+            let before_contain = containment_penalty_for(comp_a, placement)
+                + containment_penalty_for(comp_b, placement);
             let before = before_hpwl + before_overlap + before_contain;
 
             let (after_hpwl, after_overlap, after_contain) =
                 cost_after_swap(comp_a, comp_b, &affected, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            (after - before, None)
+            after - before
         }
-        Move::Rotate { comp_idx, new_rotation } => {
-            let old_rotation = placement.components[comp_idx].rotation;
-            let before_hpwl = hpwl_for_component_nets(comp_idx, &placement.net_component_index, &placement.components);
+        Move::Rotate {
+            comp_idx,
+            new_rotation,
+        } => {
+            let before_hpwl = hpwl_for_component_nets(
+                comp_idx,
+                &placement.net_component_index,
+                &placement.components,
+            );
+            let before_overlap = overlap_penalty_for(comp_idx, placement);
             let before_contain = containment_penalty_for(comp_idx, placement);
-            let before = before_hpwl + before_contain;
+            let before = before_hpwl + before_overlap + before_contain;
 
             let after_hpwl = hpwl_after_rotate(comp_idx, new_rotation, placement);
-            let after_contain = contain_after_rotate(comp_idx, placement);
-            let after = after_hpwl + after_contain;
+            let after_overlap = overlap_after_rotate(comp_idx, new_rotation, placement);
+            let after_contain = contain_after_rotate(comp_idx, new_rotation, placement);
+            let after = after_hpwl + after_overlap + after_contain;
 
-            (after - before, Some(old_rotation))
+            after - before
         }
-        Move::PinSwap { comp_idx, pad_a, pad_b } => {
+        Move::PinSwap {
+            comp_idx,
+            pad_a,
+            pad_b,
+        } => {
             // Affected nets: the two nets currently assigned to pad_a and pad_b.
             let pads = &placement.components[comp_idx].pads;
             if pad_a >= pads.len() || pad_b >= pads.len() {
-                return (0.0, None);
+                return 0.0;
             }
             let net_a = pads[pad_a].0;
             let net_b = pads[pad_b].0;
             if net_a == net_b {
-                return (0.0, None);
+                return 0.0;
             }
 
-            let before_hpwl = hpwl_for_net(net_a, &placement.net_component_index, &placement.components)
-                + hpwl_for_net(net_b, &placement.net_component_index, &placement.components);
+            let before_hpwl =
+                hpwl_for_net(net_a, &placement.net_component_index, &placement.components)
+                    + hpwl_for_net(net_b, &placement.net_component_index, &placement.components);
 
             // Compute "after" HPWL analytically: within comp_idx, pad_a now belongs to net_b
             // and pad_b belongs to net_a.  Recompute bounding boxes for the two affected nets
             // using a modified view of the component's pads.
-            let after_hpwl = hpwl_for_net_with_swap(
-                net_a, net_b, comp_idx, pad_a, pad_b, placement,
-            ) + hpwl_for_net_with_swap(
-                net_b, net_a, comp_idx, pad_b, pad_a, placement,
-            );
+            let after_hpwl =
+                hpwl_for_net_with_swap(net_a, net_b, comp_idx, pad_a, pad_b, placement)
+                    + hpwl_for_net_with_swap(net_b, net_a, comp_idx, pad_b, pad_a, placement);
 
-            (after_hpwl - before_hpwl, None)
+            after_hpwl - before_hpwl
         }
         Move::PartSwap { comp_a, comp_b } => {
-            // Same as positional Swap for cost purposes: HPWL + overlap + containment.
-            let nets_a: Vec<usize> = placement.net_component_index.comp_to_nets.get(comp_a).cloned().unwrap_or_default();
-            let nets_b: Vec<usize> = placement.net_component_index.comp_to_nets.get(comp_b).cloned().unwrap_or_default();
+            let nets_a: Vec<usize> = placement
+                .net_component_index
+                .comp_to_nets
+                .get(comp_a)
+                .cloned()
+                .unwrap_or_default();
+            let nets_b: Vec<usize> = placement
+                .net_component_index
+                .comp_to_nets
+                .get(comp_b)
+                .cloned()
+                .unwrap_or_default();
             let mut affected: Vec<usize> = nets_a;
             for ni in nets_b {
                 if !affected.contains(&ni) {
                     affected.push(ni);
                 }
             }
-            let before_hpwl: f64 = affected.iter().map(|&ni| hpwl_for_net(ni, &placement.net_component_index, &placement.components)).sum();
-            let before_overlap = overlap_penalty_for(comp_a, placement) + overlap_penalty_for(comp_b, placement);
-            let before_contain = containment_penalty_for(comp_a, placement) + containment_penalty_for(comp_b, placement);
+            let before_hpwl: f64 = affected
+                .iter()
+                .map(|&ni| hpwl_for_net(ni, &placement.net_component_index, &placement.components))
+                .sum();
+            let before_overlap =
+                overlap_penalty_for(comp_a, placement) + overlap_penalty_for(comp_b, placement);
+            let before_contain = containment_penalty_for(comp_a, placement)
+                + containment_penalty_for(comp_b, placement);
             let before = before_hpwl + before_overlap + before_contain;
 
-            // PartSwap and positional Swap differ only in that PartSwap preserves net-component
-            // index correctness (same nets stay on the same components).  For HPWL delta, the
-            // spatial movement is the same as a positional Swap.
             let (after_hpwl, after_overlap, after_contain) =
-                cost_after_swap(comp_a, comp_b, &affected, placement);
+                cost_after_part_swap(comp_a, comp_b, &affected, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            (after - before, None)
+            after - before
         }
     }
 }
@@ -724,12 +855,19 @@ fn delta_cost(placement: &Placement, m: &Move) -> (f64, Option<f64>) {
 // Cost-after helpers (avoid cloning the whole placement)
 
 /// Compute HPWL + overlap + containment for `comp_idx` after displacing to (new_x, new_y).
-fn cost_after_displace(comp_idx: usize, new_x: f64, new_y: f64, placement: &Placement) -> (f64, f64, f64) {
+fn cost_after_displace(
+    comp_idx: usize,
+    new_x: f64,
+    new_y: f64,
+    placement: &Placement,
+) -> (f64, f64, f64) {
     // Compute HPWL for affected nets as if comp is at (new_x, new_y).
-    let nets = match placement.net_component_index.comp_to_nets.get(comp_idx) {
-        Some(v) => v.clone(),
-        None => return (0.0, 0.0, 0.0),
-    };
+    let nets = placement
+        .net_component_index
+        .comp_to_nets
+        .get(comp_idx)
+        .cloned()
+        .unwrap_or_default();
 
     let mut hpwl_after = 0.0;
     for ni in &nets {
@@ -751,7 +889,9 @@ fn cost_after_displace(comp_idx: usize, new_x: f64, new_y: f64, placement: &Plac
             };
             let (sin_t, cos_t) = rot.to_radians().sin_cos();
             for &(pad_net, lx, ly) in &placement.components[ci].pads {
-                if pad_net != *ni { continue; }
+                if pad_net != *ni {
+                    continue;
+                }
                 let wx = cx + lx * cos_t - ly * sin_t;
                 let wy = cy + lx * sin_t + ly * cos_t;
                 min_x = min_x.min(wx);
@@ -768,15 +908,26 @@ fn cost_after_displace(comp_idx: usize, new_x: f64, new_y: f64, placement: &Plac
 
     // Overlap: check neighbours of the new position.
     let c = &placement.components[comp_idx];
-    let hw = c.width * 0.5;
-    let hh = c.height * 0.5;
+    let (hw, hh) = world_half_extents(c);
     let (x_min, y_min, x_max, y_max) = placement.board_bounds;
 
-    let neighbours = placement.spatial_grid.neighbours(new_x, new_y, hw, hh, comp_idx);
+    let neighbours = placement
+        .spatial_grid
+        .neighbours(new_x, new_y, hw, hh, comp_idx);
     let mut overlap = 0.0;
     for ni in neighbours {
         let n = &placement.components[ni];
-        overlap += aabb_overlap_area(new_x, new_y, c.width, c.height, n.x, n.y, n.width, n.height);
+        let (nhw, nhh) = world_half_extents(n);
+        overlap += aabb_overlap_area(
+            new_x,
+            new_y,
+            hw * 2.0,
+            hh * 2.0,
+            n.x,
+            n.y,
+            nhw * 2.0,
+            nhh * 2.0,
+        );
     }
     let overlap_after = OVERLAP_WEIGHT * overlap;
 
@@ -796,8 +947,14 @@ fn cost_after_swap(
     affected_nets: &[usize],
     placement: &Placement,
 ) -> (f64, f64, f64) {
-    let (ax, ay) = (placement.components[comp_a].x, placement.components[comp_a].y);
-    let (bx, by) = (placement.components[comp_b].x, placement.components[comp_b].y);
+    let (ax, ay) = (
+        placement.components[comp_a].x,
+        placement.components[comp_a].y,
+    );
+    let (bx, by) = (
+        placement.components[comp_b].x,
+        placement.components[comp_b].y,
+    );
 
     let mut hpwl_after = 0.0;
     for &ni in affected_nets {
@@ -821,7 +978,9 @@ fn cost_after_swap(
             let rot = placement.components[ci].rotation;
             let (sin_t, cos_t) = rot.to_radians().sin_cos();
             for &(pad_net, lx, ly) in &placement.components[ci].pads {
-                if pad_net != ni { continue; }
+                if pad_net != ni {
+                    continue;
+                }
                 let wx = cx + lx * cos_t - ly * sin_t;
                 let wy = cy + lx * sin_t + ly * cos_t;
                 min_x = min_x.min(wx);
@@ -839,10 +998,8 @@ fn cost_after_swap(
     // Overlap for swapped positions.
     let ca = &placement.components[comp_a];
     let cb = &placement.components[comp_b];
-    let ahw = ca.width * 0.5;
-    let ahh = ca.height * 0.5;
-    let bhw = cb.width * 0.5;
-    let bhh = cb.height * 0.5;
+    let (ahw, ahh) = world_half_extents(ca);
+    let (bhw, bhh) = world_half_extents(cb);
 
     let (x_min, y_min, x_max, y_max) = placement.board_bounds;
 
@@ -850,20 +1007,26 @@ fn cost_after_swap(
     let nbrs_a = placement.spatial_grid.neighbours(bx, by, ahw, ahh, comp_a);
     let mut ov_a = 0.0;
     for ni in nbrs_a {
-        if ni == comp_b { continue; }
+        if ni == comp_b {
+            continue;
+        }
         let n = &placement.components[ni];
-        ov_a += aabb_overlap_area(bx, by, ca.width, ca.height, n.x, n.y, n.width, n.height);
+        let (nhw, nhh) = world_half_extents(n);
+        ov_a += aabb_overlap_area(bx, by, ahw * 2.0, ahh * 2.0, n.x, n.y, nhw * 2.0, nhh * 2.0);
     }
     // Include mutual overlap of a and b (a at bx,by vs b at ax,ay).
-    ov_a += aabb_overlap_area(bx, by, ca.width, ca.height, ax, ay, cb.width, cb.height);
+    ov_a += aabb_overlap_area(bx, by, ahw * 2.0, ahh * 2.0, ax, ay, bhw * 2.0, bhh * 2.0);
 
     // comp_b is now at (ax, ay).
     let nbrs_b = placement.spatial_grid.neighbours(ax, ay, bhw, bhh, comp_b);
     let mut ov_b = 0.0;
     for ni in nbrs_b {
-        if ni == comp_a { continue; }
+        if ni == comp_a {
+            continue;
+        }
         let n = &placement.components[ni];
-        ov_b += aabb_overlap_area(ax, ay, cb.width, cb.height, n.x, n.y, n.width, n.height);
+        let (nhw, nhh) = world_half_extents(n);
+        ov_b += aabb_overlap_area(ax, ay, bhw * 2.0, bhh * 2.0, n.x, n.y, nhw * 2.0, nhh * 2.0);
     }
 
     let overlap_after = OVERLAP_WEIGHT * (ov_a + ov_b);
@@ -876,7 +1039,8 @@ fn cost_after_swap(
     let vxb_hi = (ax + bhw - x_max).max(0.0);
     let vyb_lo = (y_min + bhh - ay).max(0.0);
     let vyb_hi = (ay + bhh - y_max).max(0.0);
-    let contain_after = BOARD_PENALTY * (vxa_lo + vxa_hi + vya_lo + vya_hi + vxb_lo + vxb_hi + vyb_lo + vyb_hi);
+    let contain_after =
+        BOARD_PENALTY * (vxa_lo + vxa_hi + vya_lo + vya_hi + vxb_lo + vxb_hi + vyb_lo + vyb_hi);
 
     (hpwl_after, overlap_after, contain_after)
 }
@@ -909,7 +1073,9 @@ fn hpwl_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) 
                 (oc.x, oc.y, s2, c2)
             };
             for &(pad_net, lx, ly) in &placement.components[ci].pads {
-                if pad_net != ni { continue; }
+                if pad_net != ni {
+                    continue;
+                }
                 let wx = cx + lx * cc - ly * s;
                 let wy = cy + lx * s + ly * cc;
                 min_x = min_x.min(wx);
@@ -926,9 +1092,154 @@ fn hpwl_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) 
     total
 }
 
-/// Containment penalty is rotation-invariant (AABB stays same size for 90° steps).
-fn contain_after_rotate(comp_idx: usize, placement: &Placement) -> f64 {
-    containment_penalty_for(comp_idx, placement)
+fn overlap_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) -> f64 {
+    let c = &placement.components[comp_idx];
+    let (hw, hh) = world_half_extents_at(c.width, c.height, new_rotation);
+    let neighbours = placement
+        .spatial_grid
+        .neighbours(c.x, c.y, hw, hh, comp_idx);
+    let mut penalty = 0.0;
+    for ni in neighbours {
+        let n = &placement.components[ni];
+        let (nhw, nhh) = world_half_extents(n);
+        penalty += aabb_overlap_area(c.x, c.y, hw * 2.0, hh * 2.0, n.x, n.y, nhw * 2.0, nhh * 2.0);
+    }
+    OVERLAP_WEIGHT * penalty
+}
+
+fn contain_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) -> f64 {
+    let c = &placement.components[comp_idx];
+    let (hw, hh) = world_half_extents_at(c.width, c.height, new_rotation);
+    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
+    let vx_lo = (x_min + hw - c.x).max(0.0);
+    let vx_hi = (c.x + hw - x_max).max(0.0);
+    let vy_lo = (y_min + hh - c.y).max(0.0);
+    let vy_hi = (c.y + hh - y_max).max(0.0);
+    BOARD_PENALTY * (vx_lo + vx_hi + vy_lo + vy_hi)
+}
+
+fn cost_after_part_swap(
+    comp_a: usize,
+    comp_b: usize,
+    affected_nets: &[usize],
+    placement: &Placement,
+) -> (f64, f64, f64) {
+    let a = &placement.components[comp_a];
+    let b = &placement.components[comp_b];
+    let (ax, ay, arot) = (a.x, a.y, a.rotation);
+    let (bx, by, brot) = (b.x, b.y, b.rotation);
+
+    let mut hpwl_after = 0.0;
+    for &ni in affected_nets {
+        let comp_indices = match placement.net_component_index.net_to_comps.get(ni) {
+            Some(v) if v.len() >= 2 => v,
+            _ => continue,
+        };
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        let mut pin_count = 0usize;
+        for &ci in comp_indices {
+            let (cx, cy, rot) = if ci == comp_a {
+                (bx, by, brot)
+            } else if ci == comp_b {
+                (ax, ay, arot)
+            } else {
+                let c = &placement.components[ci];
+                (c.x, c.y, c.rotation)
+            };
+            let (sin_t, cos_t) = rot.to_radians().sin_cos();
+            for &(pad_net, lx, ly) in &placement.components[ci].pads {
+                if pad_net != ni {
+                    continue;
+                }
+                let wx = cx + lx * cos_t - ly * sin_t;
+                let wy = cy + lx * sin_t + ly * cos_t;
+                min_x = min_x.min(wx);
+                max_x = max_x.max(wx);
+                min_y = min_y.min(wy);
+                max_y = max_y.max(wy);
+                pin_count += 1;
+            }
+        }
+        if pin_count >= 2 {
+            hpwl_after += (max_x - min_x) + (max_y - min_y);
+        }
+    }
+
+    let (new_ahw, new_ahh) = world_half_extents_at(a.width, a.height, brot);
+    let (new_bhw, new_bhh) = world_half_extents_at(b.width, b.height, arot);
+    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
+
+    let nbrs_a = placement
+        .spatial_grid
+        .neighbours(bx, by, new_ahw, new_ahh, comp_a);
+    let mut ov_a = 0.0;
+    for ni in nbrs_a {
+        if ni == comp_b {
+            continue;
+        }
+        let n = &placement.components[ni];
+        let (nhw, nhh) = world_half_extents(n);
+        ov_a += aabb_overlap_area(
+            bx,
+            by,
+            new_ahw * 2.0,
+            new_ahh * 2.0,
+            n.x,
+            n.y,
+            nhw * 2.0,
+            nhh * 2.0,
+        );
+    }
+    ov_a += aabb_overlap_area(
+        bx,
+        by,
+        new_ahw * 2.0,
+        new_ahh * 2.0,
+        ax,
+        ay,
+        new_bhw * 2.0,
+        new_bhh * 2.0,
+    );
+
+    let nbrs_b = placement
+        .spatial_grid
+        .neighbours(ax, ay, new_bhw, new_bhh, comp_b);
+    let mut ov_b = 0.0;
+    for ni in nbrs_b {
+        if ni == comp_a {
+            continue;
+        }
+        let n = &placement.components[ni];
+        let (nhw, nhh) = world_half_extents(n);
+        ov_b += aabb_overlap_area(
+            ax,
+            ay,
+            new_bhw * 2.0,
+            new_bhh * 2.0,
+            n.x,
+            n.y,
+            nhw * 2.0,
+            nhh * 2.0,
+        );
+    }
+
+    let overlap_after = OVERLAP_WEIGHT * (ov_a + ov_b);
+
+    let vxa_lo = (x_min + new_ahw - bx).max(0.0);
+    let vxa_hi = (bx + new_ahw - x_max).max(0.0);
+    let vya_lo = (y_min + new_ahh - by).max(0.0);
+    let vya_hi = (by + new_ahh - y_max).max(0.0);
+    let vxb_lo = (x_min + new_bhw - ax).max(0.0);
+    let vxb_hi = (ax + new_bhw - x_max).max(0.0);
+    let vyb_lo = (y_min + new_bhh - ay).max(0.0);
+    let vyb_hi = (ay + new_bhh - y_max).max(0.0);
+    let contain_after =
+        BOARD_PENALTY * (vxa_lo + vxa_hi + vya_lo + vya_hi + vxb_lo + vxb_hi + vyb_lo + vyb_hi);
+
+    (hpwl_after, overlap_after, contain_after)
 }
 
 // ---------------------------------------------------------------------------
@@ -942,7 +1253,7 @@ fn auto_init_temperature(placement: &Placement, config: &SAConfig, rng: &mut imp
     let mut deltas: Vec<f64> = Vec::with_capacity(n_samples);
     for _ in 0..n_samples {
         if let Some(m) = generate_move(placement, t_probe, rng) {
-            let (dc, _) = delta_cost(placement, &m);
+            let dc = delta_cost(placement, &m);
             deltas.push(dc.abs());
         }
     }
@@ -961,7 +1272,11 @@ fn auto_init_temperature(placement: &Placement, config: &SAConfig, rng: &mut imp
 // ---------------------------------------------------------------------------
 // Snapshot helpers
 
-fn snapshot_from_placement(phase: &str, components: &[ComponentState], note: Option<String>) -> PlacementIterationSnapshot {
+fn snapshot_from_placement(
+    phase: &str,
+    components: &[ComponentState],
+    note: Option<String>,
+) -> PlacementIterationSnapshot {
     let mut states: Vec<PlacementComponentState> = components
         .iter()
         .map(|c| PlacementComponentState {
@@ -972,7 +1287,11 @@ fn snapshot_from_placement(phase: &str, components: &[ComponentState], note: Opt
         })
         .collect();
     states.sort_by(|a, b| a.designator.cmp(&b.designator));
-    PlacementIterationSnapshot { phase: phase.to_string(), components: states, note }
+    PlacementIterationSnapshot {
+        phase: phase.to_string(),
+        components: states,
+        note,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,7 +1354,8 @@ pub fn refine_with_sa(
     let cell_size = estimate_cell_size(&components, board_bounds);
     let mut spatial_grid = SpatialGrid::new(cell_size);
     for (idx, c) in components.iter().enumerate() {
-        spatial_grid.insert(idx, c.x, c.y, c.width * 0.5, c.height * 0.5);
+        let (hw, hh) = world_half_extents(c);
+        spatial_grid.insert(idx, c.x, c.y, hw, hh);
     }
 
     // Build swap opportunities from IR pad swap IDs.
@@ -1079,7 +1399,7 @@ pub fn refine_with_sa(
             };
             attempted += 1;
 
-            let (dc, old_rot) = delta_cost(&placement, &m);
+            let dc = delta_cost(&placement, &m);
             let accept = if dc <= 0.0 {
                 true
             } else {
@@ -1088,13 +1408,6 @@ pub fn refine_with_sa(
             };
 
             if accept {
-                // Handle rotate revert data before applying.
-                let old_rotation_for_revert = if let Move::Rotate { comp_idx, .. } = &m {
-                    Some((*comp_idx, placement.components[*comp_idx].rotation))
-                } else {
-                    None
-                };
-                let _ = old_rotation_for_revert; // captured before apply
                 apply_move(&mut placement, &m);
                 accepted += 1;
 
@@ -1104,29 +1417,25 @@ pub fn refine_with_sa(
                     best_hpwl = hpwl;
                     best_components = placement.components.clone();
                 }
-            } else {
-                // Revert.
-                match &m {
-                    Move::Rotate { comp_idx, .. } => {
-                        if let Some(old) = old_rot {
-                            revert_rotate(&mut placement, *comp_idx, old);
-                        }
-                    }
-                    _ => {
-                        revert_move(&mut placement, &m);
-                    }
-                }
             }
         }
 
         // Snapshot.
         if step % config.snapshot_interval == 0 {
             let note = Some(format!("SA step {} T={:.4}", step, temperature));
-            snapshots.push(snapshot_from_placement("sa_refine", &placement.components, note));
+            snapshots.push(snapshot_from_placement(
+                "sa_refine",
+                &placement.components,
+                note,
+            ));
         }
 
         // Adaptive cooling.
-        let acceptance_rate = if attempted > 0 { accepted as f64 / attempted as f64 } else { 0.0 };
+        let acceptance_rate = if attempted > 0 {
+            accepted as f64 / attempted as f64
+        } else {
+            0.0
+        };
         temperature = if acceptance_rate > 0.96 {
             temperature * 0.5
         } else if acceptance_rate < 0.02 {
@@ -1246,7 +1555,10 @@ fn build_swap_opportunities(
                 .iter()
                 .all(|p| p.swap_id_part.as_deref() == Some(group_id.as_str()));
             if all_same {
-                part_group_members.entry(group_id.clone()).or_default().push(sa_idx);
+                part_group_members
+                    .entry(group_id.clone())
+                    .or_default()
+                    .push(sa_idx);
             }
         }
     }
@@ -1276,7 +1588,10 @@ fn find_ir_component_data(designator: &str, ir: &PcbIr) -> (f64, f64, Vec<(usize
             let pads: Vec<(usize, f64, f64)> = comp
                 .pads
                 .iter()
-                .filter_map(|p| p.net.map(|nid| (nid.raw() as usize, p.local_position.x, p.local_position.y)))
+                .filter_map(|p| {
+                    p.net
+                        .map(|nid| (nid.raw() as usize, p.local_position.x, p.local_position.y))
+                })
                 .collect();
             return (w, h, pads);
         }
@@ -1312,6 +1627,28 @@ fn estimate_cell_size(components: &[ComponentState], board_bounds: (f64, f64, f6
 mod tests {
     use super::*;
 
+    fn placement_for_test(
+        components: Vec<ComponentState>,
+        board_bounds: (f64, f64, f64, f64),
+    ) -> Placement {
+        let mut spatial_grid = SpatialGrid::new(1.0);
+        for (idx, component) in components.iter().enumerate() {
+            let (hw, hh) = world_half_extents(component);
+            spatial_grid.insert(idx, component.x, component.y, hw, hh);
+        }
+        Placement {
+            net_component_index: NetComponentIndex {
+                comp_to_nets: vec![Vec::new(); components.len()],
+                net_to_comps: Vec::new(),
+            },
+            components,
+            spatial_grid,
+            board_bounds,
+            pin_swap_opportunities: Vec::new(),
+            part_swap_opportunities: Vec::new(),
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Unit: HPWL for a known 4-pin net
 
@@ -1320,10 +1657,46 @@ mod tests {
         // Place 4 components at corners; one net connecting all four.
         // Pins are at component centres (zero local offset).
         let components = vec![
-            ComponentState { designator: "U1".into(), x: 0.0, y: 0.0, rotation: 0.0, width: 1.0, height: 1.0, is_movable: true, pads: vec![(0, 0.0, 0.0)] },
-            ComponentState { designator: "U2".into(), x: 10.0, y: 0.0, rotation: 0.0, width: 1.0, height: 1.0, is_movable: true, pads: vec![(0, 0.0, 0.0)] },
-            ComponentState { designator: "U3".into(), x: 10.0, y: 8.0, rotation: 0.0, width: 1.0, height: 1.0, is_movable: true, pads: vec![(0, 0.0, 0.0)] },
-            ComponentState { designator: "U4".into(), x: 0.0, y: 8.0, rotation: 0.0, width: 1.0, height: 1.0, is_movable: true, pads: vec![(0, 0.0, 0.0)] },
+            ComponentState {
+                designator: "U1".into(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                width: 1.0,
+                height: 1.0,
+                is_movable: true,
+                pads: vec![(0, 0.0, 0.0)],
+            },
+            ComponentState {
+                designator: "U2".into(),
+                x: 10.0,
+                y: 0.0,
+                rotation: 0.0,
+                width: 1.0,
+                height: 1.0,
+                is_movable: true,
+                pads: vec![(0, 0.0, 0.0)],
+            },
+            ComponentState {
+                designator: "U3".into(),
+                x: 10.0,
+                y: 8.0,
+                rotation: 0.0,
+                width: 1.0,
+                height: 1.0,
+                is_movable: true,
+                pads: vec![(0, 0.0, 0.0)],
+            },
+            ComponentState {
+                designator: "U4".into(),
+                x: 0.0,
+                y: 8.0,
+                rotation: 0.0,
+                width: 1.0,
+                height: 1.0,
+                is_movable: true,
+                pads: vec![(0, 0.0, 0.0)],
+            },
         ];
         let net_idx = NetComponentIndex {
             comp_to_nets: vec![vec![0], vec![0], vec![0], vec![0]],
@@ -1387,20 +1760,30 @@ mod tests {
             status: "Solved".into(),
             total_iterations: 10,
             duration_ms: 50,
-            components: vec![
-                PlacementComponentState { designator: "U1".into(), x_mm: 5.0, y_mm: 5.0, rotation_deg: 0.0 },
-            ],
+            components: vec![PlacementComponentState {
+                designator: "U1".into(),
+                x_mm: 5.0,
+                y_mm: 5.0,
+                rotation_deg: 0.0,
+            }],
             snapshots: Vec::new(),
             hpwl_estimate_mm: 1.0,
             overlap_violations: 0,
         };
 
-        let config = SAConfig { moves_per_temp: 0, ..Default::default() };
+        let config = SAConfig {
+            moves_per_temp: 0,
+            ..Default::default()
+        };
         let autoplace = vec!["U1".to_string()];
 
         // We can't easily build a full PcbIr in a unit test, so we test the
         // moves_per_temp == 0 early-return path directly.
-        let result = if config.moves_per_temp == 0 { input.clone() } else { input.clone() };
+        let result = if config.moves_per_temp == 0 {
+            input.clone()
+        } else {
+            input.clone()
+        };
 
         assert_eq!(result.components[0].x_mm, 5.0);
         assert_eq!(result.components[0].y_mm, 5.0);
@@ -1443,5 +1826,137 @@ mod tests {
         };
         assert_eq!(index.comp_to_nets[0], vec![0, 1]);
         assert_eq!(index.net_to_comps[1], vec![0, 1]);
+    }
+
+    #[test]
+    fn world_half_extents_swap_on_90_degree_rotation() {
+        let (hw0, hh0) = world_half_extents_at(8.0, 2.0, 0.0);
+        let (hw90, hh90) = world_half_extents_at(8.0, 2.0, 90.0);
+        assert!((hw0 - 4.0).abs() < 1e-9);
+        assert!((hh0 - 1.0).abs() < 1e-9);
+        assert!((hw90 - 1.0).abs() < 1e-9);
+        assert!((hh90 - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotate_delta_cost_includes_rotation_aware_containment() {
+        let placement = placement_for_test(
+            vec![ComponentState {
+                designator: "U1".into(),
+                x: 7.0,
+                y: 5.0,
+                rotation: 0.0,
+                width: 8.0,
+                height: 2.0,
+                is_movable: true,
+                pads: Vec::new(),
+            }],
+            (0.0, 0.0, 10.0, 10.0),
+        );
+
+        let dc = delta_cost(
+            &placement,
+            &Move::Rotate {
+                comp_idx: 0,
+                new_rotation: 90.0,
+            },
+        );
+        assert!(
+            dc < -99.0,
+            "expected rotation to reduce containment penalty, got {dc}"
+        );
+    }
+
+    #[test]
+    fn apply_rotate_updates_spatial_grid_for_new_extents() {
+        let mut placement = placement_for_test(
+            vec![
+                ComponentState {
+                    designator: "U1".into(),
+                    x: 5.0,
+                    y: 5.0,
+                    rotation: 0.0,
+                    width: 8.0,
+                    height: 2.0,
+                    is_movable: true,
+                    pads: Vec::new(),
+                },
+                ComponentState {
+                    designator: "U2".into(),
+                    x: 5.0,
+                    y: 8.0,
+                    rotation: 0.0,
+                    width: 2.0,
+                    height: 2.0,
+                    is_movable: true,
+                    pads: Vec::new(),
+                },
+            ],
+            (0.0, 0.0, 12.0, 12.0),
+        );
+
+        assert_eq!(overlap_penalty_for(1, &placement), 0.0);
+        apply_move(
+            &mut placement,
+            &Move::Rotate {
+                comp_idx: 0,
+                new_rotation: 90.0,
+            },
+        );
+        assert!(overlap_penalty_for(1, &placement) > 0.0);
+    }
+
+    #[test]
+    fn part_swap_exchanges_rotation_and_position() {
+        let mut placement = placement_for_test(
+            vec![
+                ComponentState {
+                    designator: "R1".into(),
+                    x: 1.0,
+                    y: 2.0,
+                    rotation: 0.0,
+                    width: 4.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: Vec::new(),
+                },
+                ComponentState {
+                    designator: "R2".into(),
+                    x: 9.0,
+                    y: 6.0,
+                    rotation: 90.0,
+                    width: 4.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: Vec::new(),
+                },
+            ],
+            (0.0, 0.0, 12.0, 12.0),
+        );
+
+        apply_move(
+            &mut placement,
+            &Move::PartSwap {
+                comp_a: 0,
+                comp_b: 1,
+            },
+        );
+
+        assert_eq!(
+            (
+                placement.components[0].x,
+                placement.components[0].y,
+                placement.components[0].rotation
+            ),
+            (9.0, 6.0, 90.0)
+        );
+        assert_eq!(
+            (
+                placement.components[1].x,
+                placement.components[1].y,
+                placement.components[1].rotation
+            ),
+            (1.0, 2.0, 0.0)
+        );
     }
 }

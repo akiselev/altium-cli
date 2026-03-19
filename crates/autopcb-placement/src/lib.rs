@@ -152,9 +152,15 @@ struct PcbComponentEntity {
 }
 
 impl Entity for PcbComponentEntity {
-    fn id(&self) -> EntityId { self.id }
-    fn params(&self) -> &[ParamId] { &self.params }
-    fn name(&self) -> &str { &self.designator }
+    fn id(&self) -> EntityId {
+        self.id
+    }
+    fn params(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn name(&self) -> &str {
+        &self.designator
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -164,9 +170,15 @@ struct PcbBoardEntity {
 }
 
 impl Entity for PcbBoardEntity {
-    fn id(&self) -> EntityId { self.id }
-    fn params(&self) -> &[ParamId] { &self.params }
-    fn name(&self) -> &str { "PcbBoardOutline" }
+    fn id(&self) -> EntityId {
+        self.id
+    }
+    fn params(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn name(&self) -> &str {
+        "PcbBoardOutline"
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -186,11 +198,21 @@ struct BoardContainment {
 }
 
 impl Constraint for BoardContainment {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "BoardContainment" }
-    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 4 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "BoardContainment"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        std::slice::from_ref(&self.entity)
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        4
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let x = store.get(self.x);
@@ -236,11 +258,21 @@ struct ComponentClearance {
 }
 
 impl Constraint for ComponentClearance {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "ComponentClearance" }
-    fn entity_ids(&self) -> &[EntityId] { &self.entities }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 1 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "ComponentClearance"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        &self.entities
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        1
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let dx = store.get(self.x2) - store.get(self.x1);
@@ -282,11 +314,21 @@ struct EdgePlacementConstraint {
 }
 
 impl Constraint for EdgePlacementConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "EdgePlacement" }
-    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 1 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "EdgePlacement"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        std::slice::from_ref(&self.entity)
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        1
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let x = store.get(self.x);
@@ -327,11 +369,21 @@ struct DirectionalOrderingConstraint {
 }
 
 impl Constraint for DirectionalOrderingConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "DirectionalOrdering" }
-    fn entity_ids(&self) -> &[EntityId] { &self.entities }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 1 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "DirectionalOrdering"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        &self.entities
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        1
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let ax = store.get(self.a_x);
@@ -385,11 +437,21 @@ struct NearConstraint {
 }
 
 impl Constraint for NearConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "NearConstraint" }
-    fn entity_ids(&self) -> &[EntityId] { &self.entities }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 1 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "NearConstraint"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        &self.entities
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        1
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let dx = store.get(self.b_x) - store.get(self.a_x);
@@ -423,11 +485,21 @@ struct RegionContainmentConstraint {
 }
 
 impl Constraint for RegionContainmentConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "RegionContainment" }
-    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 4 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "RegionContainment"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        std::slice::from_ref(&self.entity)
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        4
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let x = store.get(self.x);
@@ -466,11 +538,21 @@ struct FixedPositionConstraint {
 }
 
 impl Constraint for FixedPositionConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "FixedPosition" }
-    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 2 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "FixedPosition"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        std::slice::from_ref(&self.entity)
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        2
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         vec![store.get(self.x) - self.tx, store.get(self.y) - self.ty]
@@ -490,11 +572,21 @@ struct RotationDiscretizeConstraint {
 }
 
 impl Constraint for RotationDiscretizeConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "RotationDiscretize" }
-    fn entity_ids(&self) -> &[EntityId] { std::slice::from_ref(&self.entity) }
-    fn param_ids(&self) -> &[ParamId] { &self.params }
-    fn equation_count(&self) -> usize { 1 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "RotationDiscretize"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        std::slice::from_ref(&self.entity)
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.params
+    }
+    fn equation_count(&self) -> usize {
+        1
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let theta = store.get(self.theta);
@@ -543,11 +635,21 @@ impl SmoothHpwlConstraint {
 }
 
 impl Constraint for SmoothHpwlConstraint {
-    fn id(&self) -> ConstraintId { self.id }
-    fn name(&self) -> &str { "SmoothHPWL" }
-    fn entity_ids(&self) -> &[EntityId] { &self.entity_ids }
-    fn param_ids(&self) -> &[ParamId] { &self.param_ids }
-    fn equation_count(&self) -> usize { 2 }
+    fn id(&self) -> ConstraintId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        "SmoothHPWL"
+    }
+    fn entity_ids(&self) -> &[EntityId] {
+        &self.entity_ids
+    }
+    fn param_ids(&self) -> &[ParamId] {
+        &self.param_ids
+    }
+    fn equation_count(&self) -> usize {
+        2
+    }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let (xs, ys) = self.compute_world_positions(store);
@@ -588,8 +690,12 @@ impl Constraint for SmoothHpwlConstraint {
         out
     }
 
-    fn is_soft(&self) -> bool { true }
-    fn weight(&self) -> f64 { self.weight }
+    fn is_soft(&self) -> bool {
+        true
+    }
+    fn weight(&self) -> f64 {
+        self.weight
+    }
 }
 
 fn lse_max(values: &[f64], gamma: f64) -> f64 {
@@ -612,7 +718,10 @@ fn softmax(values: &[f64], gamma: f64) -> Vec<f64> {
 
 fn softmax_neg(values: &[f64], gamma: f64) -> Vec<f64> {
     let min_v = values.iter().copied().fold(f64::INFINITY, f64::min);
-    let exps: Vec<f64> = values.iter().map(|v| (-(v - min_v) * gamma).exp()).collect();
+    let exps: Vec<f64> = values
+        .iter()
+        .map(|v| (-(v - min_v) * gamma).exp())
+        .collect();
     let sum: f64 = exps.iter().sum();
     exps.into_iter().map(|v| v / sum).collect()
 }
@@ -623,23 +732,74 @@ struct ComponentRuntime {
     pads: Vec<(String, PointMm)>,
 }
 
-fn named_region(region: &str, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Option<RectRegion> {
+fn named_region(
+    region: &str,
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+) -> Option<RectRegion> {
     let mid_x = (min_x + max_x) / 2.0;
     let mid_y = (min_y + max_y) / 2.0;
     Some(match region {
         "center" => {
             let w = (max_x - min_x) * 0.25;
             let h = (max_y - min_y) * 0.25;
-            RectRegion { min_x: mid_x - w, max_x: mid_x + w, min_y: mid_y - h, max_y: mid_y + h }
+            RectRegion {
+                min_x: mid_x - w,
+                max_x: mid_x + w,
+                min_y: mid_y - h,
+                max_y: mid_y + h,
+            }
         }
-        "top_half" => RectRegion { min_x, max_x, min_y: mid_y, max_y },
-        "bottom_half" => RectRegion { min_x, max_x, min_y, max_y: mid_y },
-        "left_half" => RectRegion { min_x, max_x: mid_x, min_y, max_y },
-        "right_half" => RectRegion { min_x: mid_x, max_x, min_y, max_y },
-        "quadrant_tl" => RectRegion { min_x, max_x: mid_x, min_y: mid_y, max_y },
-        "quadrant_tr" => RectRegion { min_x: mid_x, max_x, min_y: mid_y, max_y },
-        "quadrant_bl" => RectRegion { min_x, max_x: mid_x, min_y, max_y: mid_y },
-        "quadrant_br" => RectRegion { min_x: mid_x, max_x, min_y, max_y: mid_y },
+        "top_half" => RectRegion {
+            min_x,
+            max_x,
+            min_y: mid_y,
+            max_y,
+        },
+        "bottom_half" => RectRegion {
+            min_x,
+            max_x,
+            min_y,
+            max_y: mid_y,
+        },
+        "left_half" => RectRegion {
+            min_x,
+            max_x: mid_x,
+            min_y,
+            max_y,
+        },
+        "right_half" => RectRegion {
+            min_x: mid_x,
+            max_x,
+            min_y,
+            max_y,
+        },
+        "quadrant_tl" => RectRegion {
+            min_x,
+            max_x: mid_x,
+            min_y: mid_y,
+            max_y,
+        },
+        "quadrant_tr" => RectRegion {
+            min_x: mid_x,
+            max_x,
+            min_y: mid_y,
+            max_y,
+        },
+        "quadrant_bl" => RectRegion {
+            min_x,
+            max_x: mid_x,
+            min_y,
+            max_y: mid_y,
+        },
+        "quadrant_br" => RectRegion {
+            min_x: mid_x,
+            max_x,
+            min_y,
+            max_y: mid_y,
+        },
         _ => return None,
     })
 }
@@ -666,7 +826,10 @@ pub fn solve_placement(
     });
 
     let board_eid = system.alloc_entity_id();
-    system.add_entity(Box::new(PcbBoardEntity { id: board_eid, params: [] }));
+    system.add_entity(Box::new(PcbBoardEntity {
+        id: board_eid,
+        params: [],
+    }));
 
     let mut runtimes = Vec::<ComponentRuntime>::with_capacity(ir.components.len());
     let mut designator_to_idx = BTreeMap::<String, usize>::new();
@@ -680,14 +843,17 @@ pub fn solve_placement(
         let all_same_pos = {
             let mut iter = ir.components.values();
             let first = iter.next().map(|c| (c.position.x, c.position.y));
-            first.is_some() && iter.all(|c| {
-                (c.position.x - first.unwrap().0).abs() < 0.01
-                && (c.position.y - first.unwrap().1).abs() < 0.01
-            })
+            first.is_some()
+                && iter.all(|c| {
+                    (c.position.x - first.unwrap().0).abs() < 0.01
+                        && (c.position.y - first.unwrap().1).abs() < 0.01
+                })
         };
         let any_outside = ir.components.values().any(|c| {
-            c.position.x < bounds.min.x || c.position.x > bounds.max.x
-            || c.position.y < bounds.min.y || c.position.y > bounds.max.y
+            c.position.x < bounds.min.x
+                || c.position.x > bounds.max.x
+                || c.position.y < bounds.min.y
+                || c.position.y > bounds.max.y
         });
         if all_same_pos || any_outside {
             let cols = (n as f64).sqrt().ceil() as usize;
@@ -738,7 +904,10 @@ pub fn solve_placement(
         let pads = comp
             .pads
             .iter()
-            .filter_map(|pad| pad.net.map(|nid| (ir.nets[nid].name.clone(), pad.local_position)))
+            .filter_map(|pad| {
+                pad.net
+                    .map(|nid| (ir.nets[nid].name.clone(), pad.local_position))
+            })
             .collect();
 
         designator_to_idx.insert(comp.designator.clone(), runtimes.len());
@@ -800,7 +969,11 @@ pub fn solve_placement(
     // User constraints.
     for uc in user_constraints {
         match uc {
-            UserConstraint::EdgePlacement { designator, edge, inset_mm } => {
+            UserConstraint::EdgePlacement {
+                designator,
+                edge,
+                inset_mm,
+            } => {
                 let idx = *designator_to_idx
                     .get(designator)
                     .ok_or_else(|| PlacementError::UnknownComponent(designator.clone()))?;
@@ -822,9 +995,18 @@ pub fn solve_placement(
                     params: [comp.x, comp.y],
                 }));
             }
-            UserConstraint::Directional { a, b, direction, gap_mm } => {
-                let ia = *designator_to_idx.get(a).ok_or_else(|| PlacementError::UnknownComponent(a.clone()))?;
-                let ib = *designator_to_idx.get(b).ok_or_else(|| PlacementError::UnknownComponent(b.clone()))?;
+            UserConstraint::Directional {
+                a,
+                b,
+                direction,
+                gap_mm,
+            } => {
+                let ia = *designator_to_idx
+                    .get(a)
+                    .ok_or_else(|| PlacementError::UnknownComponent(a.clone()))?;
+                let ib = *designator_to_idx
+                    .get(b)
+                    .ok_or_else(|| PlacementError::UnknownComponent(b.clone()))?;
                 let ca = &runtimes[ia].entity;
                 let cb = &runtimes[ib].entity;
                 let slack = system.alloc_param(0.01, ca.id);
@@ -846,9 +1028,17 @@ pub fn solve_placement(
                     params: [ca.x, ca.y, cb.x, cb.y, slack],
                 }));
             }
-            UserConstraint::Near { a, b, max_distance_mm } => {
-                let ia = *designator_to_idx.get(a).ok_or_else(|| PlacementError::UnknownComponent(a.clone()))?;
-                let ib = *designator_to_idx.get(b).ok_or_else(|| PlacementError::UnknownComponent(b.clone()))?;
+            UserConstraint::Near {
+                a,
+                b,
+                max_distance_mm,
+            } => {
+                let ia = *designator_to_idx
+                    .get(a)
+                    .ok_or_else(|| PlacementError::UnknownComponent(a.clone()))?;
+                let ib = *designator_to_idx
+                    .get(b)
+                    .ok_or_else(|| PlacementError::UnknownComponent(b.clone()))?;
                 let ca = &runtimes[ia].entity;
                 let cb = &runtimes[ib].entity;
                 let slack = system.alloc_param(0.01, ca.id);
@@ -885,7 +1075,11 @@ pub fn solve_placement(
                     params: [comp.x, comp.y, s0, s1, s2, s3],
                 }));
             }
-            UserConstraint::FixedPosition { designator, x_mm, y_mm } => {
+            UserConstraint::FixedPosition {
+                designator,
+                x_mm,
+                y_mm,
+            } => {
                 let idx = *designator_to_idx
                     .get(designator)
                     .ok_or_else(|| PlacementError::UnknownComponent(designator.clone()))?;
@@ -948,7 +1142,12 @@ pub fn solve_placement(
     snapshots.push(snapshot_from_system("initial", &system, &runtimes, None));
 
     let first = system.solve();
-    snapshots.push(snapshot_from_system("continuous", &system, &runtimes, Some(status_str(&first.status).to_string())));
+    snapshots.push(snapshot_from_system(
+        "continuous",
+        &system,
+        &runtimes,
+        Some(status_str(&first.status).to_string()),
+    ));
 
     // Snap rotations to nearest 90.
     for comp in &runtimes {
@@ -1003,7 +1202,12 @@ pub fn solve_placement(
     }
 
     let overlaps = greedy_legalize_overlaps(&mut system, &runtimes, config.default_clearance_mm);
-    snapshots.push(snapshot_from_system("legalized", &system, &runtimes, Some(format!("shifted {} overlaps", overlaps))));
+    snapshots.push(snapshot_from_system(
+        "legalized",
+        &system,
+        &runtimes,
+        Some(format!("shifted {} overlaps", overlaps)),
+    ));
 
     let mut components = Vec::with_capacity(runtimes.len());
     for comp in &runtimes {
@@ -1034,22 +1238,19 @@ pub fn solve_placement(
         let swap_model = swap::build_swap_model(ir);
         if !swap_model.part_swap_groups.is_empty() {
             let _changelog = swap::greedy_part_swap_pass(&mut phase2_result, ir, &swap_model);
-            phase2_result.hpwl_estimate_mm =
-                swap::compute_hpwl(&phase2_result, ir);
+            phase2_result.hpwl_estimate_mm = swap::compute_hpwl(&phase2_result, ir);
         }
     }
 
     // Phase 3: optional simulated annealing refinement.
     let mut post_sa_result = if let Some(sa_cfg) = &config.sa_config {
         // All components from the analytical solver are considered movable.
-        let autoplace_designators: Vec<String> =
-            phase2_result.components.iter().map(|c| c.designator.clone()).collect();
-        simulated_annealing::refine_with_sa(
-            &phase2_result,
-            ir,
-            sa_cfg,
-            &autoplace_designators,
-        )?
+        let autoplace_designators: Vec<String> = phase2_result
+            .components
+            .iter()
+            .map(|c| c.designator.clone())
+            .collect();
+        simulated_annealing::refine_with_sa(&phase2_result, ir, sa_cfg, &autoplace_designators)?
     } else {
         phase2_result
     };
@@ -1058,8 +1259,7 @@ pub fn solve_placement(
     if config.allow_pin_swap {
         let swap_model = swap::build_swap_model(ir);
         if !swap_model.pin_swap_groups.is_empty() {
-            let _changelog =
-                swap::greedy_pin_swap_sweep(&mut post_sa_result, ir, &swap_model);
+            let _changelog = swap::greedy_pin_swap_sweep(&mut post_sa_result, ir, &swap_model);
         }
     }
 
@@ -1128,7 +1328,11 @@ fn greedy_legalize_overlaps(
     moved
 }
 
-fn count_overlaps(system: &ConstraintSystem, runtimes: &[ComponentRuntime], clearance: f64) -> usize {
+fn count_overlaps(
+    system: &ConstraintSystem,
+    runtimes: &[ComponentRuntime],
+    clearance: f64,
+) -> usize {
     let mut count = 0usize;
     for i in 0..runtimes.len() {
         for j in (i + 1)..runtimes.len() {
@@ -1155,8 +1359,14 @@ fn estimate_hpwl(
 ) -> f64 {
     let mut param_to_pos = HashMap::<ParamId, (f64, f64, f64)>::new();
     for state in final_components {
-        if let Some(rt) = runtimes.iter().find(|r| r.entity.designator == state.designator) {
-            param_to_pos.insert(rt.entity.x, (state.x_mm, state.y_mm, state.rotation_deg.to_radians()));
+        if let Some(rt) = runtimes
+            .iter()
+            .find(|r| r.entity.designator == state.designator)
+        {
+            param_to_pos.insert(
+                rt.entity.x,
+                (state.x_mm, state.y_mm, state.rotation_deg.to_radians()),
+            );
         }
     }
 

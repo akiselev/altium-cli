@@ -815,6 +815,36 @@ Implemented the SA refinement pass (Phase 3) for the autopcb placement pipeline.
 - `spatial_grid_exclude_self` — self excluded from neighbour results
 - `net_component_index_lookup` — bidirectional index values correct
 
+### Rotation + swap-group follow-up (2026-03-19)
+
+Updated `crates/autopcb-placement/src/simulated_annealing.rs` to make Phase 3
+rotation-aware and swap-group-consistent:
+
+- Added rotation-aware world half-extents helper and switched SA overlap/board
+  containment cost terms to use world AABBs instead of assuming local width/height
+  stay valid after 90° rotation
+- `Move::Rotate` now updates the spatial grid and its incremental cost includes
+  Δoverlap + Δcontainment, not just ΔHPWL
+- Rotate move generation now excludes the component's current rotation, avoiding
+  no-op rotate proposals
+- `Move::PartSwap` in SA now exchanges full placement state `(x, y, rotation)` so
+  part-swap-group moves preserve the orientation of the physical part being
+  reassigned, matching the greedy part-swap pass semantics
+- Fixed an SA correctness bug where rejected moves were being "reverted" even
+  though they had never been applied, which inverted rejected displacements/swaps
+- Fixed `cost_after_displace` so geometry penalties still apply to components with
+  no nets (previously it returned early and skipped overlap/containment entirely)
+
+### Tests: 13 unit tests in `simulated_annealing::tests` — all passing (22 total in `autopcb-placement`)
+
+- `world_half_extents_swap_on_90_degree_rotation` — 90° swaps the effective AABB axes
+- `rotate_delta_cost_includes_rotation_aware_containment` — rotation can improve
+  containment cost for elongated parts
+- `apply_rotate_updates_spatial_grid_for_new_extents` — accepted rotate moves update
+  neighbour queries via the spatial grid
+- `part_swap_exchanges_rotation_and_position` — SA part swaps now exchange rotation
+  alongside position
+
 ---
 
 ## AutoPCB Placer — Milestone 8: Pin/Part Swap Optimization (2026-03-17)

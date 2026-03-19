@@ -29,7 +29,11 @@ pub enum SwapError {
     #[error("net count changed after swaps: before={before}, after={after}")]
     NetCountChanged { before: usize, after: usize },
     #[error("pin count for net '{net}' changed: before={before}, after={after}")]
-    PinCountChanged { net: String, before: usize, after: usize },
+    PinCountChanged {
+        net: String,
+        before: usize,
+        after: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +85,10 @@ pub fn build_swap_model(ir: &PcbIr) -> SwapModel {
     pin_swap_groups.retain(|_, v| v.len() >= 2);
     part_swap_groups.retain(|_, v| v.len() >= 2);
 
-    SwapModel { pin_swap_groups, part_swap_groups }
+    SwapModel {
+        pin_swap_groups,
+        part_swap_groups,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -285,8 +292,7 @@ pub fn greedy_pin_swap_sweep(
 
     // Update the HPWL estimate in the placement result.
     if changelog.total_hpwl_improvement > 0.0 {
-        placement.hpwl_estimate_mm =
-            compute_hpwl_with_overlay(placement, ir, &overlay);
+        placement.hpwl_estimate_mm = compute_hpwl_with_overlay(placement, ir, &overlay);
     }
 
     changelog
@@ -304,8 +310,11 @@ pub fn greedy_part_swap_pass(
 ) -> SwapChangelog {
     let mut changelog = SwapChangelog::default();
 
-    let comp_designators: Vec<String> =
-        ir.components.iter().map(|(_, c)| c.designator.clone()).collect();
+    let comp_designators: Vec<String> = ir
+        .components
+        .iter()
+        .map(|(_, c)| c.designator.clone())
+        .collect();
 
     let mut improved = true;
     while improved {
@@ -329,11 +338,19 @@ pub fn greedy_part_swap_pass(
 
                     let before_hpwl = compute_hpwl(placement, ir);
 
-                    let pos_a = match placement.components.iter().find(|c| c.designator == desig_a) {
+                    let pos_a = match placement
+                        .components
+                        .iter()
+                        .find(|c| c.designator == desig_a)
+                    {
                         Some(c) => (c.x_mm, c.y_mm, c.rotation_deg),
                         None => continue,
                     };
-                    let pos_b = match placement.components.iter().find(|c| c.designator == desig_b) {
+                    let pos_b = match placement
+                        .components
+                        .iter()
+                        .find(|c| c.designator == desig_b)
+                    {
                         Some(c) => (c.x_mm, c.y_mm, c.rotation_deg),
                         None => continue,
                     };
@@ -530,15 +547,15 @@ pub fn write_swap_overlay(changelog: &SwapChangelog) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PlacementComponentState, PlacementResult};
+    use autopcb_ir::component::{PadShapeInfo, PadShapeKind};
+    use autopcb_ir::types::{BoardSide, BoundingBoxMm, PointMm};
     use autopcb_ir::{
+        FreeCopperGeometry, IrBoardGeometry, IrComponent, IrComponentPad, IrLayerStack, IrNet,
+        IrNetPin,
         extract::PcbIr,
         handles::{ComponentId, IdMap, NetId, PadId},
-        IrBoardGeometry, IrComponent, IrComponentPad, IrLayerStack, IrNet, IrNetPin,
-        FreeCopperGeometry,
     };
-    use autopcb_ir::types::{BoardSide, BoundingBoxMm, PointMm};
-    use autopcb_ir::component::{PadShapeInfo, PadShapeKind};
-    use crate::{PlacementComponentState, PlacementResult};
 
     fn make_point(x: f64, y: f64) -> PointMm {
         PointMm::new(x, y)
@@ -549,7 +566,12 @@ mod tests {
     }
 
     fn default_shape() -> PadShapeInfo {
-        PadShapeInfo { kind: PadShapeKind::Round, size_x: 1.0, size_y: 1.0, rotation: 0.0 }
+        PadShapeInfo {
+            kind: PadShapeKind::Round,
+            size_x: 1.0,
+            size_y: 1.0,
+            rotation: 0.0,
+        }
     }
 
     fn make_pad(
@@ -627,7 +649,7 @@ mod tests {
             world_bounds: make_bb(8.5, 9.5, 11.5, 10.5),
             pads: vec![
                 make_pad(0, "1", -1.0, 0.0, Some(net_a), Some("G1"), Some("RG")),
-                make_pad(1, "2",  1.0, 0.0, Some(net_b), Some("G1"), Some("RG")),
+                make_pad(1, "2", 1.0, 0.0, Some(net_b), Some("G1"), Some("RG")),
             ],
         });
         components[r1_id].id = r1_id;
@@ -644,18 +666,34 @@ mod tests {
             world_bounds: make_bb(8.5, 49.5, 11.5, 50.5),
             pads: vec![
                 make_pad(2, "1", -1.0, 0.0, Some(net_a), Some("G1"), Some("RG")),
-                make_pad(3, "2",  1.0, 0.0, Some(net_b), Some("G1"), Some("RG")),
+                make_pad(3, "2", 1.0, 0.0, Some(net_b), Some("G1"), Some("RG")),
             ],
         });
         components[r2_id].id = r2_id;
 
         nets[net_a].pins = vec![
-            IrNetPin { pad: PadId::from(0), component: r1_id, position: make_point(9.0, 10.0) },
-            IrNetPin { pad: PadId::from(2), component: r2_id, position: make_point(9.0, 50.0) },
+            IrNetPin {
+                pad: PadId::from(0),
+                component: r1_id,
+                position: make_point(9.0, 10.0),
+            },
+            IrNetPin {
+                pad: PadId::from(2),
+                component: r2_id,
+                position: make_point(9.0, 50.0),
+            },
         ];
         nets[net_b].pins = vec![
-            IrNetPin { pad: PadId::from(1), component: r1_id, position: make_point(11.0, 10.0) },
-            IrNetPin { pad: PadId::from(3), component: r2_id, position: make_point(11.0, 50.0) },
+            IrNetPin {
+                pad: PadId::from(1),
+                component: r1_id,
+                position: make_point(11.0, 10.0),
+            },
+            IrNetPin {
+                pad: PadId::from(3),
+                component: r2_id,
+                position: make_point(11.0, 50.0),
+            },
         ];
         nets[net_a].component_count = 2;
         nets[net_b].component_count = 2;
@@ -694,7 +732,11 @@ mod tests {
         let model = build_swap_model(&ir);
 
         // Each component has one pin swap group "G1" with 2 pads.
-        assert_eq!(model.pin_swap_groups.len(), 2, "R1 and R2 each have one group");
+        assert_eq!(
+            model.pin_swap_groups.len(),
+            2,
+            "R1 and R2 each have one group"
+        );
 
         // Both components are in part swap group "RG".
         assert_eq!(model.part_swap_groups.len(), 1);
@@ -724,30 +766,46 @@ mod tests {
             side: BoardSide::Top,
             local_bounds: make_bb(-1.0, -1.0, 1.0, 1.0),
             world_bounds: make_bb(-1.0, -1.0, 1.0, 1.0),
-            pads: vec![
-                make_pad(0, "1", 0.0, 0.0, Some(net_a), Some("SOLO"), None),
-            ],
+            pads: vec![make_pad(0, "1", 0.0, 0.0, Some(net_a), Some("SOLO"), None)],
         });
         components[c_id].id = c_id;
 
         let ir = PcbIr {
             board: IrBoardGeometry {
-                outline: vec![make_point(0.0, 0.0), make_point(10.0, 0.0), make_point(10.0, 10.0), make_point(0.0, 10.0)],
+                outline: vec![
+                    make_point(0.0, 0.0),
+                    make_point(10.0, 0.0),
+                    make_point(10.0, 10.0),
+                    make_point(0.0, 10.0),
+                ],
                 cutouts: Vec::new(),
                 bounds: make_bb(0.0, 0.0, 10.0, 10.0),
                 keepouts: Vec::new(),
             },
-            layer_stack: IrLayerStack { copper_layers: Vec::new(), copper_layer_count: 2 },
+            layer_stack: IrLayerStack {
+                copper_layers: Vec::new(),
+                copper_layer_count: 2,
+            },
             components,
             nets,
             rules: IdMap::new(),
-            free_copper: FreeCopperGeometry { tracks: Vec::new(), vias: Vec::new(), fills: Vec::new() },
+            free_copper: FreeCopperGeometry {
+                tracks: Vec::new(),
+                vias: Vec::new(),
+                fills: Vec::new(),
+            },
             polygons: IdMap::new(),
         };
 
         let model = build_swap_model(&ir);
-        assert!(model.pin_swap_groups.is_empty(), "single-pad group must be excluded");
-        assert!(model.part_swap_groups.is_empty(), "single-component part group must be excluded");
+        assert!(
+            model.pin_swap_groups.is_empty(),
+            "single-pad group must be excluded"
+        );
+        assert!(
+            model.part_swap_groups.is_empty(),
+            "single-component part group must be excluded"
+        );
     }
 
     #[test]
