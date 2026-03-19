@@ -319,6 +319,13 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
         let layer = parse_layer_param(&mut params, V6Layer::TopLayer)
             .context("Components6 layer")?;
 
+        let source_unique_id: String = params
+            .remove_with_default("SOURCEUNIQUEID", String::new())
+            .context("Components6 source_unique_id")?;
+        let source_hierarchical_path: String = params
+            .remove_with_default("SOURCEHIERARCHICALPATH", String::new())
+            .context("Components6 source_hierarchical_path")?;
+
         let id = designator.clone();
         components.push(PcbDocComponent {
             id,
@@ -330,6 +337,9 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
             layer,
             source_library,
             source_lib_reference,
+            source_unique_id,
+            source_hierarchical_path,
+            parameters: Vec::new(),
         });
     }
     Ok(components)
@@ -1176,6 +1186,8 @@ fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Pad {
         relief_entries: p.cache.relief_entries as i32,
         relief_air_gap: p.cache.relief_air_gap,
         stack,
+        swap_id_pin: None,
+        swap_id_part: None,
     }
 }
 

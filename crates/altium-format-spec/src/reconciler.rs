@@ -2932,6 +2932,9 @@ mod tests {
             layer: LayerRef::from_v6(V6Layer::TopLayer),
             source_library: String::new(),
             source_lib_reference: String::new(),
+            source_unique_id: String::new(),
+            source_hierarchical_path: String::new(),
+            parameters: Vec::new(),
         }
     }
 

@@ -40,7 +40,7 @@ pub fn format_spec(source: &str, config: &FormatConfig) -> Result<FormatResult, 
 
 /// Extract trivia for every top-level item plus a trailing trivia entry for
 /// text after the last item.
-fn extract_top_level_trivia(source: &str, ast: &SpecFile) -> Vec<ItemTrivia> {
+pub fn extract_top_level_trivia(source: &str, ast: &SpecFile) -> Vec<ItemTrivia> {
     let n = ast.items.len();
     if n == 0 {
         return Vec::new();
@@ -220,6 +220,9 @@ impl<'a> Printer<'a> {
         }
         if let Some(group) = &ann.group {
             parts.push(format!("group = \"{}\"", group.node));
+        }
+        if let Some(source_id) = &ann.source_id {
+            parts.push(format!("source_id = \"{}\"", source_id.node));
         }
 
         self.push_indent();

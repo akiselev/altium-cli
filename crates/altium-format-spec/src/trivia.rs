@@ -10,22 +10,22 @@ use crate::parser::parse_spec_from_tokens;
 
 /// Trivia attached to a top-level item (used by the formatter).
 #[derive(Debug, Default, Clone)]
-pub(crate) struct ItemTrivia {
+pub struct ItemTrivia {
     /// Lines (or blank lines) that appear before the item in the source.
-    pub(crate) leading: Vec<TriviaLine>,
+    pub leading: Vec<TriviaLine>,
     /// A single trailing comment on the same line as the item (if any).
-    pub(crate) trailing: Option<String>,
+    pub trailing: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum TriviaLine {
+pub enum TriviaLine {
     Blank,
     LineComment(String),
     BlockComment(String),
 }
 
 /// Scan a gap string (between two top-level items) for trivia lines.
-pub(crate) fn scan_trivia_lines(gap: &str) -> Vec<TriviaLine> {
+pub fn scan_trivia_lines(gap: &str) -> Vec<TriviaLine> {
     let mut result = Vec::new();
     let mut i = 0;
     let bytes = gap.as_bytes();

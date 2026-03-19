@@ -33,6 +33,8 @@ pub struct CompiledAnnotation {
     pub stable: bool,
     /// Optional group name for grouping related blocks.
     pub group: Option<String>,
+    /// Altium UNIQUE_ID of the source schematic component (opaque, not validated).
+    pub source_id: Option<String>,
 }
 
 // ── ID generation ─────────────────────────────────────────────────────────────
@@ -50,6 +52,28 @@ pub fn generate_short_id() -> String {
             SHORT_ID_ALPHABET[idx] as char
         })
         .collect()
+}
+
+/// Generate a deterministic 8-character short ID by hashing a seed string.
+///
+/// Produces the same ID for the same input, making sync idempotent. Uses FNV-1a
+/// hash (no crypto dependency needed) mapped to the `[A-Z0-9]` alphabet.
+pub fn generate_source_id(seed: &str) -> String {
+    // FNV-1a 64-bit hash
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in seed.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    let mut id = String::with_capacity(SHORT_ID_LEN);
+    let base = SHORT_ID_ALPHABET.len() as u64;
+    let mut val = hash;
+    for _ in 0..SHORT_ID_LEN {
+        id.push(SHORT_ID_ALPHABET[(val % base) as usize] as char);
+        val /= base;
+    }
+    id
 }
 
 // ── ID validation ─────────────────────────────────────────────────────────────
@@ -111,8 +135,9 @@ pub fn compile_annotation(
 
     let stable = ann.stable.as_ref().map(|s| s.node).unwrap_or(false);
     let group = ann.group.as_ref().map(|g| g.node.clone());
+    let source_id = ann.source_id.as_ref().map(|s| s.node.clone());
 
-    Ok(CompiledAnnotation { id, stable, group })
+    Ok(CompiledAnnotation { id, stable, group, source_id })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -205,6 +230,7 @@ mod tests {
             id: Some(Spanned { node: "AB12CD34".to_string(), span: dummy_span }),
             stable: None,
             group: None,
+            source_id: None,
         };
         let mut seen = HashSet::new();
         let compiled = compile_annotation(&ann, &mut seen, None).unwrap();
@@ -223,6 +249,7 @@ mod tests {
             id: None,
             stable: Some(Spanned { node: true, span: dummy_span }),
             group: None,
+            source_id: None,
         };
         let mut seen = HashSet::new();
         let compiled = compile_annotation(&ann, &mut seen, None).unwrap();
@@ -241,6 +268,7 @@ mod tests {
             id: Some(Spanned { node: "AB12CD34".to_string(), span: dummy_span }),
             stable: None,
             group: Some(Spanned { node: "power".to_string(), span: dummy_span }),
+            source_id: None,
         };
         let mut seen = HashSet::new();
         let compiled = compile_annotation(&ann, &mut seen, None).unwrap();
@@ -257,6 +285,7 @@ mod tests {
             id: Some(Spanned { node: "short".to_string(), span: dummy_span }),
             stable: None,
             group: None,
+            source_id: None,
         };
         let mut seen = HashSet::new();
         let err = compile_annotation(&ann, &mut seen, None).unwrap_err();
@@ -277,6 +306,7 @@ mod tests {
             id: Some(Spanned { node: "ab12cd34".to_string(), span: dummy_span }),
             stable: None,
             group: None,
+            source_id: None,
         };
         let mut seen = HashSet::new();
         let err = compile_annotation(&ann, &mut seen, None).unwrap_err();
@@ -297,6 +327,7 @@ mod tests {
             id: Some(Spanned { node: "AB12CD34".to_string(), span: dummy_span }),
             stable: None,
             group: None,
+            source_id: None,
         };
         let mut seen = HashSet::new();
         compile_annotation(&ann, &mut seen, None).unwrap();

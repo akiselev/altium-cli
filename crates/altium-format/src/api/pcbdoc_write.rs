@@ -22,11 +22,14 @@ use crate::pcbdoc::primitives::{
     ParsedPrimitiveRecord, PcbArc, PcbFill, PcbPrimitive, PcbText, PcbTrack,
 };
 use crate::pcbdoc::records::{
-    ParamSectionKind, PrimitiveSectionKind, StandardParamRecord, WideString6Record,
+    BinaryLenRecord, BinaryLenSectionKind, ConnectionCommonHeader, ParamSectionKind,
+    PrimitiveSectionKind, StandardParamRecord, WideString6Record,
 };
 use crate::pcbdoc::{
-    ParamSectionData, PcbDoc, PcbDocSection, PrimitiveSectionData, WideStringsSectionData,
+    BinarySectionData, ParamSectionData, PcbDoc, PcbDocSection, PrimitiveSectionData,
+    PrimitiveParametersSectionData, WideStringsSectionData,
 };
+use crate::pcbdoc::records::PrimitiveParameterGroup;
 use crate::pcblib::{
     Contour, PcbComponentBody, PcbPad, PcbPadCache, PcbPrimitiveCommon, PcbRegion, PcbVia,
 };
@@ -141,20 +144,23 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         ParamSectionKind::Polygons6,
         build_polygon_records(&board.polygons, &ctx),
     );
-    replace_param_section(
+    let enriched_classes = ensure_standard_classes(board);
+    merge_param_section(
         doc,
         ParamSectionKind::Classes6,
-        build_class_records(&board.classes),
+        build_class_records(&enriched_classes),
+        "NAME",
     );
     replace_param_section(
         doc,
         ParamSectionKind::DifferentialPairs6,
         build_diff_pair_records(&board.differential_pairs),
     );
-    replace_param_section(
+    merge_param_section(
         doc,
         ParamSectionKind::Board6,
         build_board_record(&board.settings),
+        "DOCUMENTNAME",
     );
 
     // ── Step 3: Replace primitive sections ──
@@ -223,6 +229,17 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     // ── Step 4: Replace WideStrings6 ──
     replace_wide_strings(doc, wide_strings_data);
 
+    // ── Step 5: Generate Connections6 (ratsnest) ──
+    let connections = compute_ratsnest(board, &ctx);
+    replace_binary_section(doc, BinaryLenSectionKind::Connections6, connections);
+
+    // ── Step 6: Generate PrimitiveParameters (BOM data) ──
+    let prim_params = build_primitive_parameters(&board.components);
+    replace_primitive_parameters_section(doc, prim_params);
+
+    // ── Step 7: Rebuild UniqueIDPrimitiveInformation for pads ──
+    assign_and_rebuild_unique_id_section(doc);
+
     Ok(())
 }
 
@@ -261,7 +278,12 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
             // These are written in the order Altium Designer expects.
             params.insert("SELECTION", "FALSE".to_string());
             let layer_v6 = comp.layer.to_v6().unwrap_or(V6Layer::TopLayer);
-            params.insert("LAYER", layer_v6.to_string_name().to_uppercase());
+            let layer_name = match layer_v6 {
+                V6Layer::TopLayer => "TOP".to_string(),
+                V6Layer::BottomLayer => "BOTTOM".to_string(),
+                other => other.to_string_name().to_uppercase(),
+            };
+            params.insert("LAYER", layer_name);
             params.insert("LOCKED", "FALSE".to_string());
             params.insert("POLYGONOUTLINE", "FALSE".to_string());
             params.insert("USERROUTED", "TRUE".to_string());
@@ -280,8 +302,8 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
             params.insert("UNIONINDEX", "0".to_string());
             params.insert("CHANNELOFFSET", "0".to_string());
             params.insert("SOURCEDESIGNATOR", comp.designator.clone());
-            params.insert("SOURCEUNIQUEID", String::new());
-            params.insert("SOURCEHIERARCHICALPATH", String::new());
+            params.insert("SOURCEUNIQUEID", comp.source_unique_id.clone());
+            params.insert("SOURCEHIERARCHICALPATH", comp.source_hierarchical_path.clone());
             params.insert("SOURCEFOOTPRINTLIBRARY", String::new());
             params.insert(
                 "SOURCECOMPONENTLIBRARY",
@@ -348,6 +370,38 @@ fn build_polygon_records(polygons: &[Polygon], ctx: &WriteContext) -> Vec<Standa
             StandardParamRecord { params }
         })
         .collect()
+}
+
+fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
+    use altium_format_types::pcb::ClassMemberKind;
+
+    let mut classes = board.classes.clone();
+
+    if !classes.iter().any(|c| c.name == "All Components") {
+        let members: Vec<String> = board.components.iter()
+            .map(|c| c.designator.clone())
+            .collect();
+        classes.push(NetClass {
+            id: "all-components".to_string(),
+            name: "All Components".to_string(),
+            kind: ClassMemberKind::Component,
+            members,
+        });
+    }
+
+    if !classes.iter().any(|c| c.name == "All Nets") {
+        let members: Vec<String> = board.nets.iter()
+            .map(|n| n.name.clone())
+            .collect();
+        classes.push(NetClass {
+            id: "all-nets".to_string(),
+            name: "All Nets".to_string(),
+            kind: ClassMemberKind::Net,
+            members,
+        });
+    }
+
+    classes
 }
 
 fn build_class_records(classes: &[NetClass]) -> Vec<StandardParamRecord> {
@@ -1081,6 +1135,185 @@ fn rebuild_wide_strings(texts: &[Text]) -> (WideStringsSectionData, Vec<i32>) {
     (WideStringsSectionData { entries }, indices)
 }
 
+// ── Ratsnest computation ───────────────────────────────────────────────────
+
+/// Compute Connections6 ratsnest records from pad/net data.
+///
+/// Groups pads by net, skipping pads with no net. For each net with ≥2 pads,
+/// produces a star topology: the pad closest to the geometric centroid is the
+/// hub, with one `BinaryLenRecord` per remaining pad connecting to it.
+/// Single-pad nets produce no records.
+fn compute_ratsnest(board: &PcbDocBoard, ctx: &WriteContext) -> Vec<BinaryLenRecord> {
+    // Group pad locations by net name.
+    let mut net_pads: HashMap<&str, Vec<&Pad>> = HashMap::new();
+    for pad in &board.pads {
+        if let Some(net_name) = &pad.net {
+            net_pads.entry(net_name.as_str()).or_default().push(pad);
+        }
+    }
+
+    let mut connections = Vec::new();
+
+    for (net_name, pads) in &net_pads {
+        if pads.len() < 2 {
+            continue;
+        }
+
+        let net_index = ctx.net_indices.get(*net_name).copied().unwrap_or(0xFFFF) as i16;
+
+        // Compute geometric centroid of all pad locations in the net.
+        let centroid_x: i64 = pads.iter().map(|p| p.location.x.raw() as i64).sum::<i64>()
+            / pads.len() as i64;
+        let centroid_y: i64 = pads.iter().map(|p| p.location.y.raw() as i64).sum::<i64>()
+            / pads.len() as i64;
+
+        // Pick the pad closest to the centroid as the hub.
+        let hub_idx = pads
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| {
+                let dx = p.location.x.raw() as i64 - centroid_x;
+                let dy = p.location.y.raw() as i64 - centroid_y;
+                dx * dx + dy * dy
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        let hub = pads[hub_idx];
+        let hub_layer = hub.layer.to_v6().unwrap_or(V6Layer::MultiLayer);
+
+        for (i, pad) in pads.iter().enumerate() {
+            if i == hub_idx {
+                continue;
+            }
+            let pad_layer = pad.layer.to_v6().unwrap_or(V6Layer::MultiLayer);
+            connections.push(BinaryLenRecord {
+                common: ConnectionCommonHeader {
+                    layer: V6Layer::MultiLayer,
+                    flags: 0,
+                    net_index,
+                    unknown_1: 0,
+                    component_index: -1,
+                    polygon_index: -1,
+                    unknown_2: 0,
+                },
+                from: hub.location,
+                to: pad.location,
+                from_layer: hub_layer,
+                to_layer: pad_layer,
+                connection_layer_enum: 0,
+                from_layer_enum: 0,
+                to_layer_enum: 0,
+            });
+        }
+    }
+
+    connections
+}
+
+// ── PrimitiveParameters (BOM data) generation ─────────────────────────────
+
+/// Build PrimitiveParameterGroup records from component parameters.
+///
+/// Produces one group per component that has at least one parameter.
+/// The group header contains `SOURCEDESIGNATOR` and `COUNT`.
+/// Each parameter block contains `NAME`, `VALUE`, and `ISIMPORTED`.
+fn build_primitive_parameters(components: &[PcbDocComponent]) -> Vec<PrimitiveParameterGroup> {
+    components
+        .iter()
+        .filter(|c| !c.parameters.is_empty())
+        .map(|comp| {
+            let mut component_header = ParameterCollection::new();
+            component_header.insert("SOURCEDESIGNATOR", comp.designator.clone());
+
+            let parameters: Vec<ParameterCollection> = comp
+                .parameters
+                .iter()
+                .map(|(name, value)| {
+                    let mut p = ParameterCollection::new();
+                    p.insert("NAME", name.clone());
+                    p.insert("VALUE", value.clone());
+                    p.insert("ISIMPORTED", "FALSE".to_string());
+                    p
+                })
+                .collect();
+
+            PrimitiveParameterGroup {
+                component_header,
+                parameters,
+            }
+        })
+        .collect()
+}
+
+/// Replace the PrimitiveParameters section in `doc`, or append if not found.
+fn replace_primitive_parameters_section(
+    doc: &mut PcbDoc,
+    groups: Vec<PrimitiveParameterGroup>,
+) {
+    for section in &mut doc.sections {
+        if let PcbDocSection::PrimitiveParameters(pp) = section {
+            pp.groups = groups;
+            return;
+        }
+    }
+    doc.sections.push(PcbDocSection::PrimitiveParameters(PrimitiveParametersSectionData {
+        groups,
+    }));
+}
+
+// ── UniqueIDPrimitiveInformation rebuild ───────────────────────────────────
+
+/// Assigns unique IDs to any pad that lacks one, then rebuilds the
+/// UniqueIDPrimitiveInformation parameter section from all pads.
+///
+/// Pre-existing pads preserve their unique IDs via `preserve_pad_fields`.
+/// New pads (added by the apply pipeline, with index beyond the old Pads6 count)
+/// arrive with `unique_id: None` and receive freshly generated IDs here.
+///
+/// The section is written as a standard param section:
+/// Header=[u32 count], Data=[u32 len][|PRIMITIVEINDEX=N|PRIMITIVEOBJECTID=Pad|UNIQUEID=XXXXXXXX|]*N
+fn assign_and_rebuild_unique_id_section(doc: &mut PcbDoc) {
+    // Find the Pads6 section and assign unique IDs to any pad that lacks one.
+    for section in doc.sections.iter_mut() {
+        if let PcbDocSection::Primitive(prim) = section {
+            if prim.kind == PrimitiveSectionKind::Pads6 {
+                for record in prim.records.iter_mut() {
+                    if let PcbPrimitive::Pad(pad) = &mut record.primitive {
+                        if pad.unique_id.is_none() {
+                            pad.unique_id = Some(generate_unique_id());
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // Build UniqueIDPrimitiveInformation records for all pads with a unique ID.
+    let mut uid_records: Vec<StandardParamRecord> = Vec::new();
+    for section in doc.sections.iter() {
+        if let PcbDocSection::Primitive(prim) = section {
+            if prim.kind == PrimitiveSectionKind::Pads6 {
+                for (index, record) in prim.records.iter().enumerate() {
+                    if let PcbPrimitive::Pad(pad) = &record.primitive {
+                        if let Some(uid) = &pad.unique_id {
+                            let mut params = ParameterCollection::new();
+                            params.insert("PRIMITIVEINDEX", index.to_string());
+                            params.insert("PRIMITIVEOBJECTID", PcbObjectId::Pad.to_string());
+                            params.insert("UNIQUEID", uid.clone());
+                            uid_records.push(StandardParamRecord { params });
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    replace_param_section(doc, ParamSectionKind::UniqueIdPrimitiveInformation, uid_records);
+}
+
 // ── Section replacement helpers ────────────────────────────────────────────
 
 /// Replace a parameter section by kind, or append if not found.
@@ -1222,6 +1455,23 @@ fn replace_wide_strings(doc: &mut PcbDoc, data: WideStringsSectionData) {
         }
     }
     doc.sections.push(PcbDocSection::WideStrings(data));
+}
+
+/// Replace a binary-len section by kind, or append if not found.
+fn replace_binary_section(
+    doc: &mut PcbDoc,
+    kind: BinaryLenSectionKind,
+    records: Vec<BinaryLenRecord>,
+) {
+    for section in &mut doc.sections {
+        if let PcbDocSection::Binary(bin) = section {
+            if bin.kind == kind {
+                bin.records = records;
+                return;
+            }
+        }
+    }
+    doc.sections.push(PcbDocSection::Binary(BinarySectionData { kind, records }));
 }
 
 /// Detect which section kind to write: prefer `modern` if it contains records, else `legacy`.

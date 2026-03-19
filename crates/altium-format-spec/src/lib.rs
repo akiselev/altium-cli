@@ -33,8 +33,8 @@ pub use eco::{
     EngineeringChangeOrder, EntityChange, EntityKind, EcoSummary, KindSummary,
     PropChange, PropValue,
 };
-pub use formatter::{format_spec, FormatConfig, FormatResult};
-pub use trivia::{CommentToken, TriviaMap, parse_with_trivia};
+pub use formatter::{format_spec, FormatConfig, FormatResult, extract_top_level_trivia};
+pub use trivia::{CommentToken, TriviaMap, parse_with_trivia, ItemTrivia, TriviaLine, scan_trivia_lines};
 pub use annotation::{CompiledAnnotation, generate_short_id, validate_short_id};
 pub use sync::{
     SyncSnapshot, SyncComponent, SyncPin, SyncNet,

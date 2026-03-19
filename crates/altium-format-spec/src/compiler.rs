@@ -1851,6 +1851,7 @@ impl SpecCompiler {
             rotation,
             layer,
             source_library,
+            parameters: indexmap::IndexMap::new(),
         })
     }
 

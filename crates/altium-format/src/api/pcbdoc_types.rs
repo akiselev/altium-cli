@@ -210,6 +210,10 @@ pub struct PcbDocComponent {
     pub layer: LayerRef,
     pub source_library: String,
     pub source_lib_reference: String,
+    pub source_unique_id: String,
+    pub source_hierarchical_path: String,
+    /// BOM parameters (name, value) pairs, e.g. ("Value", "100R").
+    pub parameters: Vec<(String, String)>,
 }
 
 /// A copper polygon pour.
@@ -507,6 +511,12 @@ pub struct Pad {
     pub relief_air_gap: Coord,
     /// Per-layer pad shapes. Only populated for non-Simple pad modes.
     pub stack: PadStack,
+    /// Pin-level swap group ID from the originating SchLib pin record.
+    /// Not stored in PcbDoc format — populated during footprint instantiation.
+    pub swap_id_pin: Option<String>,
+    /// Part-level swap group ID from the originating SchLib pin record.
+    /// Not stored in PcbDoc format — populated during footprint instantiation.
+    pub swap_id_part: Option<String>,
 }
 
 // PadStack, PadLayerShape, PadInnerLayerOverride are re-exported from pcb_common.

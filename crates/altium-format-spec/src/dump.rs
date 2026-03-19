@@ -38,9 +38,21 @@ use crate::annotation::generate_short_id;
 /// Called before each block keyword (component, footprint, net, polygon, rule)
 /// during first-time dumps where no existing annotation ID is present.
 /// Generates a new unique 8-character short ID via `generate_short_id()`.
-fn emit_annotation_line(out: &mut String, indent: &str) {
+///
+/// When `source_id` is `Some`, also emits `source_id = "..."` in the annotation.
+fn emit_annotation_line(out: &mut String, indent: &str, source_id: Option<&str>) {
     let id = generate_short_id();
-    out.push_str(&format!("{}#[annotation(id = \"{}\")]\n", indent, id));
+    match source_id {
+        Some(sid) => {
+            out.push_str(&format!(
+                "{}#[annotation(id = \"{}\", source_id = \"{}\")]\n",
+                indent, id, sid
+            ));
+        }
+        None => {
+            out.push_str(&format!("{}#[annotation(id = \"{}\")]\n", indent, id));
+        }
+    }
 }
 
 /// Generate `.pcblib-spec` source from a PcbLib document.
@@ -320,7 +332,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
 
     // Nets
     for net in &board.nets {
-        emit_annotation_line(out, "");
+        emit_annotation_line(out, "", None);
         out.push_str(&format!(
             "net {} {{ color: #{:02X}{:02X}{:02X}, visible: {} }}\n",
             quote_entity_name(&net.name),
@@ -332,7 +344,12 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
 
     // Components
     for comp in &board.components {
-        emit_annotation_line(out, "");
+        let sid = if comp.source_unique_id.is_empty() {
+            None
+        } else {
+            Some(comp.source_unique_id.strip_prefix('\\').unwrap_or(&comp.source_unique_id))
+        };
+        emit_annotation_line(out, "", sid);
         out.push_str(&format!(
             "component {} {{ pattern: {}, at: {}, layer: {}, rotation: {} }}\n",
             quote_entity_name(&comp.designator),
@@ -450,7 +467,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         props.push(format!("layer: {}", poly.layer));
         props.push(format!("connect_style: \"{}\"", plane_connection_to_spec_string(poly.connect_style)));
         props.push(format!("pour_order: {}", poly.pour_order));
-        emit_annotation_line(out, "");
+        emit_annotation_line(out, "", None);
         out.push_str(&format!("polygon {} {{ {} }}\n", quote_entity_name(&poly.name), props.join(", ")));
     }
     if !board.polygons.is_empty() { out.push('\n'); }
@@ -463,7 +480,7 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
             format!("priority: {}", rule.priority),
         ];
         dump_rule_params(&rule.params, &mut props);
-        emit_annotation_line(out, "");
+        emit_annotation_line(out, "", None);
         out.push_str(&format!(
             "rule {} {{ {} }}\n",
             quote_entity_name(&rule.name),
@@ -905,6 +922,8 @@ fn dump_schdoc_component(out: &mut String, comp: &altium_format::api::SchDocComp
     } else {
         quote_entity_name(&comp.lib_reference)
     };
+    let sid = if comp.unique_id.is_empty() { None } else { Some(comp.unique_id.as_str()) };
+    emit_annotation_line(out, &pad, sid);
     out.push_str(&format!("{}component {} {{\n", pad, name));
     out.push_str(&format!("{}    lib_reference: {}\n", pad, quote_string(&comp.lib_reference)));
     out.push_str(&format!("{}    at: {}\n", pad, comp.location));
@@ -1058,7 +1077,7 @@ fn variation_kind_to_spec(v: altium_format_types::project::VariationKind) -> Res
 // ── Footprint (PcbLib — still uses DumpView) ─────────────────────────────────
 
 fn dump_footprint(out: &mut String, fp: &Footprint) {
-    emit_annotation_line(out, "");
+    emit_annotation_line(out, "", None);
     out.push_str(&format!("footprint {} {{\n", quote_entity_name(&fp.display_name)));
 
     if !fp.description.is_empty() {
@@ -1289,7 +1308,7 @@ fn dump_contour_segments(contour: &PcbContour) -> String {
 // ── Component (SchLib — uses high-level API types) ───────────────────────────
 
 fn dump_component(out: &mut String, comp: &Component) {
-    emit_annotation_line(out, "");
+    emit_annotation_line(out, "", None);
     out.push_str(&format!("component {} {{\n", quote_entity_name(&comp.lib_reference)));
 
     if let Some(desc) = &comp.description {
@@ -1958,6 +1977,9 @@ mod tests {
             layer: LayerRef::default(),
             source_library: String::new(),
             source_lib_reference: String::new(),
+            source_unique_id: String::new(),
+            source_hierarchical_path: String::new(),
+            parameters: Vec::new(),
         }
     }
 
@@ -2042,7 +2064,7 @@ mod tests {
     #[test]
     fn test_emit_annotation_line_format() {
         let mut out = String::new();
-        emit_annotation_line(&mut out, "");
+        emit_annotation_line(&mut out, "", None);
         assert!(
             out.starts_with("#[annotation(id = \""),
             "annotation line must start with #[annotation(id = \": got {:?}",
@@ -2068,7 +2090,7 @@ mod tests {
     #[test]
     fn test_emit_annotation_line_indented() {
         let mut out = String::new();
-        emit_annotation_line(&mut out, "    ");
+        emit_annotation_line(&mut out, "    ", None);
         assert!(
             out.starts_with("    #[annotation(id = \""),
             "indented annotation line must start with spaces: got {:?}",
@@ -2082,7 +2104,7 @@ mod tests {
         // we use dump_placement_block_from_parts to indirectly verify annotation
         // is present. For dump_component we verify the generated text format.
         let mut out = String::new();
-        emit_annotation_line(&mut out, "");
+        emit_annotation_line(&mut out, "", None);
         out.push_str("component R {}\n");
         assert!(out.contains("#[annotation(id = \""), "annotation must be present");
         // The annotation must appear on the line before the component keyword.
@@ -2097,7 +2119,7 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for _ in 0..10 {
             let mut out = String::new();
-            emit_annotation_line(&mut out, "");
+            emit_annotation_line(&mut out, "", None);
             let id_start = out.find("id = \"").unwrap() + 6;
             let id_end = out.rfind("\")]").unwrap();
             let id = out[id_start..id_end].to_string();
@@ -2171,7 +2193,7 @@ component C {
         let mut ids = std::collections::HashSet::new();
         for _ in 0..n {
             let mut out = String::new();
-            emit_annotation_line(&mut out, "");
+            emit_annotation_line(&mut out, "", None);
             let id_start = out.find("id = \"").unwrap() + 6;
             let id_end = out.rfind("\")]").unwrap();
             let id = out[id_start..id_end].to_string();
@@ -2187,7 +2209,7 @@ component C {
         let mut spec = String::new();
         let components = ["R", "C", "U"];
         for name in &components {
-            emit_annotation_line(&mut spec, "");
+            emit_annotation_line(&mut spec, "", None);
             spec.push_str(&format!("component {} {{}}\n\n", name));
         }
 

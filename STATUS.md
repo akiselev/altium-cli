@@ -253,6 +253,18 @@ requires an existing target file (no `new` for PcbDoc). Dump produces roundtripp
 `.pcbdoc-spec` output. Reconciler uses name-based matching for named collections and
 ID-based matching for primitives.
 
+**PrimitiveParameters (BOM Data) — M10:** Implemented. `PcbDocComponent` now carries
+a `parameters: Vec<(String, String)>` field. `board_to_internal()` generates the
+`PrimitiveParameters` CFB section from component parameters, one group per component
+with `SOURCEDESIGNATOR`/`COUNT` header and `NAME`/`VALUE`/`ISIMPORTED` parameter blocks.
+`PcbDocComponentSpec` has a matching `parameters: IndexMap<String, String>` field that
+flows through: sync projection (`project_pcbdoc_spec` reads from spec; SchDoc projection
+already populated from component parameters), diff (`diff_snapshots` compares `parameter:*`
+fields), filter (`SyncDirection::Forward` enabled in main.rs), apply
+(`apply_sync_changes_to_pcbdoc` updates the spec parameters map), and executor
+(`apply_pcbdoc_components` merges spec parameters onto the board component). The text
+rewriter silently skips `parameter:*` fields (parameters are not stored as spec properties).
+
 **AutoPCB Placer — Milestone 3 (Reconciler Placement Comparison):** Implemented.
 `reconcile_pcbdoc()` now compares component positions from `placement { place ... }`
 blocks against PcbDoc component locations. Emits `Update` ECO entries for components
@@ -865,6 +877,61 @@ Added two new move types to the SA `Move` enum:
 - `test_write_swap_overlay_empty` — "No swaps" message
 - `test_write_swap_overlay_with_entries` — overlay contains expected blocks
 - `test_collect_net_pin_counts` — correct pin counts from IR
+
+---
+
+## Placer Pipeline Gap Fixes (2026-03-19)
+
+Plan: `docs/plans/placer-gaps.md`
+
+| Milestone | Status | Summary |
+|-----------|--------|---------|
+| M1: Board6 Merge | Complete | `replace_param_section` → `merge_param_section("DOCUMENTNAME")` preserves ~93KB layer stack |
+| M2: Pin→Pad Resolution | Complete | `build_pin_to_pad_map()` in sync.rs resolves pin names to pad designators via SchLib FootprintMapSpec |
+| M3: Pad-Net Assignment | Complete | `build_pad_net_map()` discovers sibling schdoc-specs, projects to get pad→net, passes to instantiation |
+| M4: Connections6 | Complete | `compute_ratsnest()` generates star-topology ratsnest; `replace_binary_section()` writes Connections6 |
+| M5: Footprint Graphics | Complete | `instantiate_footprint_primitives` copies tracks/arcs/fills/texts/regions/bodies from PcbLib |
+| M6: SOURCEUNIQUEID | Partial | Fields added to PcbDocComponent, read/write path preserves roundtrip values. NOT YET populated from SchDoc UniqueID data during apply — new components get empty strings. |
+| M7: Layer Names | Complete | Component LAYER uses abbreviated "TOP"/"BOTTOM" instead of "TOPLAYER"/"BOTTOMLAYER" |
+| M8: Classes6 Members | Complete | Auto-generates "All Components" and "All Nets" classes; uses `merge_param_section("NAME")` |
+| M9: Swap Group IDs | Complete | Wires SchLib PinSpec.swap_group → PcbDocPad.swap_id_pin → IrComponentPad.swap_id_pin |
+| M10: PrimitiveParameters | Complete | BOM data pipeline: PcbDocComponent.parameters → PrimitiveParameterGroup → write; sync forwards parameters |
+| M11: Import-Based Spec | Deferred | Needs RFC — large scope redesign of pcbdoc-spec format |
+| M12: UniqueID Rebuild | Complete | `assign_and_rebuild_unique_id_section()` generates UIDs for new pads, rebuilds UniqueIDPrimitiveInformation |
+
+---
+
+## Placer Pipeline Gap Fix — M5: Footprint Graphics Instantiation (2026-03-19)
+
+**File**: `crates/altium-cli/src/main.rs`
+
+Extended the footprint instantiation pipeline to copy all non-pad graphics from PcbLib
+footprints into the PcbDoc when `altium apply` is run.
+
+### Changes
+
+- Renamed `instantiate_footprint_pads` → `instantiate_footprint_primitives`
+- Added `build_pad_net_map` function (scans sibling `.schdoc-spec` files, projects
+  each through `project_schdoc_spec()`, and builds a `(designator, pad_name) → net_name` map)
+- Added `transform_point` helper: rotates a footprint-local `CoordPoint` into board space
+- Added `transform_contour` helper: maps `PcbContour::to_points()` through `transform_point`,
+  returning `Vec<CoordPoint>` for board region/component-body outlines
+- Added retain calls to remove component-owned tracks, arcs, fills, texts, regions, and
+  component bodies before re-instantiation (idempotent re-apply)
+- Added graphics instantiation loop iterating `fp.graphics` after the pad loop:
+  - **Track**: transforms start/end; sets `net: None`, `component`
+  - **Arc**: transforms center; adds `comp.rotation` to start/end angles
+  - **Fill**: transforms corner1/corner2; adds rotation
+  - **Text**: transforms location; substitutes `.Designator`/`.DESIGNATOR` with actual designator;
+    sets `is_comment: false`, `is_designator: false`
+  - **Region**: transforms outline + all holes via `transform_contour`; sets
+    `is_board_cutout: false`, `is_keepout: false`
+  - **Via**: skipped (handled separately)
+  - **ComponentBody**: transforms outline via `transform_contour`
+
+Each instantiated primitive gets a unique ID of the form `{designator}-{type}-{counter}`.
+
+All 24 existing unit tests pass. `cargo check -p altium-cli` clean.
 
 ---
 

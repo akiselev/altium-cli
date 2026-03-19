@@ -37,6 +37,7 @@ use clap::{Parser, Subcommand};
 
 mod cfb;
 pub mod placement_bridge;
+pub mod spec_merge;
 pub mod spec_rewriter;
 
 #[derive(Parser)]
@@ -577,7 +578,7 @@ fn run_spec_sync(
         comment: SyncDirection::Forward,
         footprint: SyncDirection::Forward,
         source_library: SyncDirection::Forward,
-        parameters: SyncDirection::None,
+        parameters: SyncDirection::Forward,
         net_name: SyncDirection::Forward,
         net_color: SyncDirection::None,
         pin_net_assignment: SyncDirection::None,
@@ -619,6 +620,10 @@ fn run_spec_sync(
     // Rewrite the source text with the changes.
     let new_source = rewrite_pcbdoc_spec_with_changes(&pcbdoc_source, &filtered)
         .map_err(|e| anyhow::anyhow!("rewriting {}: {}", pcbdoc_name, e.message))?;
+
+    let format_result = format_spec(&new_source, &FormatConfig::default())
+        .map_err(|e| anyhow::anyhow!("formatting {}: {e}", pcbdoc_name))?;
+    let new_source = format_result.output;
 
     // ── Step 9: Atomic write ──────────────────────────────────────────────────
 
@@ -1290,7 +1295,8 @@ fn apply_for_model(
             apply_spec_pcbdoc(spec, &mut doc)
                 .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
-            instantiate_footprint_pads(&mut doc, import_paths)?;
+            let pad_net_map = build_pad_net_map(spec_file)?;
+            instantiate_footprint_primitives(&mut doc, import_paths, &pad_net_map, imported_components)?;
 
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
@@ -1300,16 +1306,109 @@ fn apply_for_model(
     Ok(())
 }
 
-// ── footprint pad instantiation ───────────────────────────────────────────────
+// ── footprint primitive instantiation ────────────────────────────────────────
+
+/// Discovers sibling `.schdoc-spec` files and builds a pad-to-net map.
+///
+/// The map keys are `(component_designator, pad_designator)` → `net_name`.
+/// Uses `project_schdoc_spec()` (with pin→pad resolution) to resolve pin names
+/// to pad designators via SchLib data.
+fn build_pad_net_map(
+    spec_file: &PathBuf,
+) -> anyhow::Result<std::collections::HashMap<(String, String), String>> {
+    let mut pad_net_map = std::collections::HashMap::new();
+
+    let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
+    let schdoc_specs: Vec<PathBuf> = std::fs::read_dir(spec_dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("schdoc-spec"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    for schdoc_path in &schdoc_specs {
+        let source = std::fs::read_to_string(schdoc_path)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", schdoc_path.display()))?;
+
+        let domain = SpecDomain::SchDoc;
+        let result = compile_and_resolve(&source, schdoc_path, &domain)?;
+
+        let schdoc_spec = match result.model {
+            altium_format_spec::model::SpecModel::SchDoc(spec) => spec,
+            _ => continue,
+        };
+
+        let snapshot =
+            project_schdoc_spec(&schdoc_spec, &result.imported_components).map_err(|e| {
+                let name = schdoc_path.display().to_string();
+                anyhow::anyhow!("projecting {}: {}", name, e.render(&name, &source))
+            })?;
+
+        for (comp_des, comp) in &snapshot.components {
+            for (pad_des, pin) in &comp.pins {
+                if let Some(net) = &pin.net {
+                    pad_net_map.insert((comp_des.clone(), pad_des.clone()), net.clone());
+                }
+            }
+        }
+    }
+
+    Ok(pad_net_map)
+}
+
+/// Transform a footprint-local point into board space using the component's
+/// placement position and rotation.
+fn transform_point(
+    pt: altium_format_types::coord::CoordPoint,
+    comp_x: f64,
+    comp_y: f64,
+    cos_r: f64,
+    sin_r: f64,
+) -> altium_format_types::coord::CoordPoint {
+    use altium_format_types::coord::{Coord, CoordPoint};
+    let local_x = pt.x.to_mms();
+    let local_y = pt.y.to_mms();
+    let rotated_x = local_x * cos_r - local_y * sin_r;
+    let rotated_y = local_x * sin_r + local_y * cos_r;
+    CoordPoint::new(
+        Coord::from_mms(comp_x + rotated_x),
+        Coord::from_mms(comp_y + rotated_y),
+    )
+}
+
+/// Transform all vertices in a `PcbContour` and return a flat `Vec<CoordPoint>`.
+fn transform_contour(
+    contour: &altium_format::api::PcbContour,
+    comp_x: f64,
+    comp_y: f64,
+    cos_r: f64,
+    sin_r: f64,
+) -> Vec<altium_format_types::coord::CoordPoint> {
+    contour
+        .to_points()
+        .into_iter()
+        .map(|pt| transform_point(pt, comp_x, comp_y, cos_r, sin_r))
+        .collect()
+}
 
 /// For each imported `.pcblib-spec`, derive the corresponding `.PcbLib` binary
-/// path, open it, and instantiate pads for every board component whose `pattern`
-/// matches a footprint in that library.
+/// path, open it, and instantiate pads and graphics for every board component
+/// whose `pattern` matches a footprint in that library.
 ///
-/// Pad coordinates are transformed from footprint-local to board space using the
-/// component's placement position and rotation.  Existing component-owned pads are
-/// removed before re-instantiation so that running `apply` twice is idempotent.
-fn instantiate_footprint_pads(doc: &mut PcbDoc, import_paths: &[PathBuf]) -> anyhow::Result<()> {
+/// Coordinates are transformed from footprint-local to board space using the
+/// component's placement position and rotation.  Existing component-owned
+/// primitives are removed before re-instantiation so that running `apply` twice
+/// is idempotent.
+fn instantiate_footprint_primitives(
+    doc: &mut PcbDoc,
+    import_paths: &[PathBuf],
+    pad_net_map: &std::collections::HashMap<(String, String), String>,
+    imported_components: &std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
+) -> anyhow::Result<()> {
     use altium_format_types::coord::{Coord, CoordPoint};
 
     let pcblib_paths: Vec<PathBuf> = import_paths
@@ -1328,16 +1427,22 @@ fn instantiate_footprint_pads(doc: &mut PcbDoc, import_paths: &[PathBuf]) -> any
     }
 
     let mut board = doc.board()
-        .map_err(|e| anyhow::anyhow!("failed to read board for pad instantiation: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to read board for primitive instantiation: {e}"))?;
 
-    // Remove all pads that are currently associated with a component; they will
-    // be re-instantiated from the footprint library below.
+    // Remove all primitives currently associated with a component; they will be
+    // re-instantiated from the footprint library below.
     board.pads.retain(|p| p.component.is_none());
+    board.tracks.retain(|t| t.component.is_none());
+    board.arcs.retain(|a| a.component.is_none());
+    board.fills.retain(|f| f.component.is_none());
+    board.texts.retain(|t| t.component.is_none());
+    board.regions.retain(|r| r.component.is_none());
+    board.component_bodies.retain(|b| b.component.is_none());
 
     for pcblib_path in &pcblib_paths {
         if !pcblib_path.exists() {
             eprintln!(
-                "Warning: imported pcblib-spec has no corresponding binary at {} — skipping pad instantiation",
+                "Warning: imported pcblib-spec has no corresponding binary at {} — skipping primitive instantiation",
                 pcblib_path.display()
             );
             continue;
@@ -1363,6 +1468,25 @@ fn instantiate_footprint_pads(doc: &mut PcbDoc, import_paths: &[PathBuf]) -> any
             let cos_r = comp_rot_rad.cos();
             let sin_r = comp_rot_rad.sin();
 
+            // Build pin swap ID lookup for this component from SchLib data.
+            // Keys are pin designators; values are (swap_id_pin, swap_id_part).
+            let swap_id_lookup: std::collections::HashMap<&str, (Option<String>, Option<String>)> =
+                if let Some(comp_spec) = imported_components.get(&comp.source_lib_reference) {
+                    comp_spec
+                        .pins
+                        .iter()
+                        .chain(comp_spec.parts.iter().flat_map(|p| p.pins.iter()))
+                        .map(|pin| {
+                            (
+                                pin.designator.as_str(),
+                                (pin.swap_group.clone(), pin.part_swap_group.clone()),
+                            )
+                        })
+                        .collect()
+                } else {
+                    std::collections::HashMap::new()
+                };
+
             for (pad_idx, fp_pad) in fp.pads.iter().enumerate() {
                 let local_x = fp_pad.location.x.to_mms();
                 let local_y = fp_pad.location.y.to_mms();
@@ -1375,11 +1499,18 @@ fn instantiate_footprint_pads(doc: &mut PcbDoc, import_paths: &[PathBuf]) -> any
 
                 let pad_id = format!("{}-{}", comp.designator, pad_idx + 1);
 
+                let (swap_id_pin, swap_id_part) = swap_id_lookup
+                    .get(fp_pad.pad_name.as_str())
+                    .cloned()
+                    .unwrap_or((None, None));
+
                 board.pads.push(altium_format::api::PcbDocPad {
                     id: pad_id,
                     pad_name: fp_pad.pad_name.clone(),
                     layer: fp_pad.layer.clone(),
-                    net: None,
+                    net: pad_net_map
+                        .get(&(comp.designator.clone(), fp_pad.pad_name.clone()))
+                        .cloned(),
                     component: Some(comp.designator.clone()),
                     location: CoordPoint::new(abs_x, abs_y),
                     shape: fp_pad.shape,
@@ -1396,18 +1527,186 @@ fn instantiate_footprint_pads(doc: &mut PcbDoc, import_paths: &[PathBuf]) -> any
                     relief_entries: fp_pad.relief_entries,
                     relief_air_gap: fp_pad.relief_air_gap,
                     stack: fp_pad.stack.clone(),
+                    swap_id_pin,
+                    swap_id_part,
                 });
+            }
+
+            let mut track_counter: usize = 0;
+            let mut arc_counter: usize = 0;
+            let mut fill_counter: usize = 0;
+            let mut text_counter: usize = 0;
+            let mut region_counter: usize = 0;
+            let mut body_counter: usize = 0;
+
+            for graphic in &fp.graphics {
+                match graphic {
+                    altium_format::api::PcbGraphic::Track(track) => {
+                        let start = transform_point(
+                            track.start, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        let end = transform_point(
+                            track.end, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        board.tracks.push(altium_format::api::Track {
+                            id: format!("{}-track-{}", comp.designator, track_counter),
+                            layer: track.layer.clone(),
+                            net: None,
+                            component: Some(comp.designator.clone()),
+                            start,
+                            end,
+                            width: track.width,
+                        });
+                        track_counter += 1;
+                    }
+                    altium_format::api::PcbGraphic::Arc(arc) => {
+                        let center = transform_point(
+                            arc.center, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        board.arcs.push(altium_format::api::Arc {
+                            id: format!("{}-arc-{}", comp.designator, arc_counter),
+                            layer: arc.layer.clone(),
+                            net: None,
+                            component: Some(comp.designator.clone()),
+                            center,
+                            radius: arc.radius,
+                            start_angle: arc.start_angle + comp.rotation,
+                            end_angle: arc.end_angle + comp.rotation,
+                            width: arc.width,
+                        });
+                        arc_counter += 1;
+                    }
+                    altium_format::api::PcbGraphic::Fill(fill) => {
+                        let corner1 = transform_point(
+                            fill.corner1, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        let corner2 = transform_point(
+                            fill.corner2, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        board.fills.push(altium_format::api::Fill {
+                            id: format!("{}-fill-{}", comp.designator, fill_counter),
+                            layer: fill.layer.clone(),
+                            net: None,
+                            component: Some(comp.designator.clone()),
+                            corner1,
+                            corner2,
+                            rotation: fill.rotation + comp.rotation,
+                        });
+                        fill_counter += 1;
+                    }
+                    altium_format::api::PcbGraphic::Text(text) => {
+                        let location = transform_point(
+                            text.location, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        let text_str =
+                            if text.text == ".Designator" || text.text == ".DESIGNATOR" {
+                                comp.designator.clone()
+                            } else {
+                                text.text.clone()
+                            };
+                        board.texts.push(altium_format::api::PcbDocText {
+                            id: format!("{}-text-{}", comp.designator, text_counter),
+                            layer: text.layer.clone(),
+                            component: Some(comp.designator.clone()),
+                            location,
+                            text: text_str,
+                            rotation: text.rotation + comp.rotation,
+                            height: text.height,
+                            width: text.width,
+                            font_name: text.font_name.clone(),
+                            is_mirrored: text.is_mirrored,
+                            is_comment: false,
+                            is_designator: false,
+                        });
+                        text_counter += 1;
+                    }
+                    altium_format::api::PcbGraphic::Region(region) => {
+                        let outline = transform_contour(
+                            &region.outline, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        let holes: Vec<Vec<CoordPoint>> = region
+                            .holes
+                            .iter()
+                            .map(|h| transform_contour(h, comp_x_f64, comp_y_f64, cos_r, sin_r))
+                            .collect();
+                        board.regions.push(altium_format::api::Region {
+                            id: format!("{}-region-{}", comp.designator, region_counter),
+                            layer: region.layer.clone(),
+                            net: None,
+                            component: Some(comp.designator.clone()),
+                            kind: region.kind,
+                            outline,
+                            holes,
+                            is_board_cutout: false,
+                            is_keepout: false,
+                        });
+                        region_counter += 1;
+                    }
+                    altium_format::api::PcbGraphic::Via(_via) => {
+                        // Vias in footprint graphics are skipped — they are handled
+                        // separately if needed.
+                    }
+                    altium_format::api::PcbGraphic::ComponentBody(body) => {
+                        let outline = transform_contour(
+                            &body.outline, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                        );
+                        board.component_bodies.push(altium_format::api::ComponentBody {
+                            id: format!("{}-body-{}", comp.designator, body_counter),
+                            layer: body.layer.clone(),
+                            component: Some(comp.designator.clone()),
+                            standoff_height: body.standoff_height,
+                            overall_height: body.overall_height,
+                            body_color_3d: body.body_color_3d,
+                            body_opacity_3d: body.body_opacity_3d,
+                            model_name: body.model_name.clone(),
+                            outline,
+                        });
+                        body_counter += 1;
+                    }
+                }
             }
         }
     }
 
     doc.update_board(&board)
-        .map_err(|e| anyhow::anyhow!("failed to update board with instantiated pads: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to update board with instantiated primitives: {e}"))?;
 
     Ok(())
 }
 
 // ── dump ──────────────────────────────────────────────────────────────────────
+
+/// Write a spec file, merging with existing content if the output file exists.
+///
+/// If the output file already exists and can be parsed, merges the fresh dump
+/// with the existing content to preserve comments and annotation IDs.
+/// Falls back to overwriting if the existing file can't be parsed.
+fn write_spec_merged(out_path: &std::path::Path, spec_source: &str, document: &PathBuf) -> anyhow::Result<()> {
+    if out_path.exists() {
+        match std::fs::read_to_string(out_path) {
+            Ok(old_text) => {
+                match spec_merge::merge_spec(&old_text, spec_source) {
+                    Some(merged) => {
+                        std::fs::write(out_path, &merged)
+                            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+                        println!("Merged: {} -> {}", document.display(), out_path.display());
+                        return Ok(());
+                    }
+                    None => {
+                        eprintln!("Warning: existing spec file has parse errors, overwriting without merge");
+                    }
+                }
+            }
+            Err(_) => {
+                // Can't read existing file — just overwrite.
+            }
+        }
+    }
+    std::fs::write(out_path, spec_source)
+        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+    println!("Dumped: {} -> {}", document.display(), out_path.display());
+    Ok(())
+}
 
 fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
     // IntLib produces two output files (schlib-spec + pcblib-spec), so it
@@ -1430,44 +1729,34 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_schlib(&lib)
                 .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
-            std::fs::write(&out_path, &spec_source)
-                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-            println!("Dumped: {} -> {}", document.display(), out_path.display());
+            write_spec_merged(&out_path, &spec_source, document)?;
         }
         SpecDomain::PcbLib => {
             let lib = PcbLib::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_pcblib(&lib);
-            std::fs::write(&out_path, &spec_source)
-                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-            println!("Dumped: {} -> {}", document.display(), out_path.display());
+            write_spec_merged(&out_path, &spec_source, document)?;
         }
         SpecDomain::SchDoc => {
             let doc = SchDoc::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_schdoc(&doc)
                 .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
-            std::fs::write(&out_path, &spec_source)
-                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-            println!("Dumped: {} -> {}", document.display(), out_path.display());
+            write_spec_merged(&out_path, &spec_source, document)?;
         }
         SpecDomain::PrjPcb => {
             let doc = AltiumProject::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_prjpcb(&doc)
                 .map_err(|e| anyhow::anyhow!("dump failed: {e}"))?;
-            std::fs::write(&out_path, &spec_source)
-                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-            println!("Dumped: {} -> {}", document.display(), out_path.display());
+            write_spec_merged(&out_path, &spec_source, document)?;
         }
         SpecDomain::PcbDoc => {
             let doc = PcbDoc::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_pcbdoc(&doc)
                 .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
-            std::fs::write(&out_path, &spec_source)
-                .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-            println!("Dumped: {} -> {}", document.display(), out_path.display());
+            write_spec_merged(&out_path, &spec_source, document)?;
         }
     }
 
@@ -1497,16 +1786,12 @@ fn run_dump_intlib(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Resu
     let mut wrote_any = false;
     if let Some(schlib_spec) = &dump.schlib_spec {
         let path = out_dir.join(format!("{stem}.schlib-spec"));
-        std::fs::write(&path, schlib_spec)
-            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
-        println!("Dumped: {} -> {}", document.display(), path.display());
+        write_spec_merged(&path, schlib_spec, document)?;
         wrote_any = true;
     }
     if let Some(pcblib_spec) = &dump.pcblib_spec {
         let path = out_dir.join(format!("{stem}.pcblib-spec"));
-        std::fs::write(&path, pcblib_spec)
-            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
-        println!("Dumped: {} -> {}", document.display(), path.display());
+        write_spec_merged(&path, pcblib_spec, document)?;
         wrote_any = true;
     }
     if !wrote_any {

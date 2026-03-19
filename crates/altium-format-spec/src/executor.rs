@@ -285,6 +285,14 @@ fn apply_pcbdoc_components(
             if let Some(ref src) = spec.source_library {
                 existing.source_library = src.clone();
             }
+            // Merge parameters: spec values overlay existing ones.
+            for (k, v) in &spec.parameters {
+                if let Some(existing_param) = existing.parameters.iter_mut().find(|(n, _)| n == k) {
+                    existing_param.1 = v.clone();
+                } else {
+                    existing.parameters.push((k.clone(), v.clone()));
+                }
+            }
         } else {
             board.components.push(api::PcbDocComponent {
                 id: spec.designator.clone(),
@@ -297,6 +305,12 @@ fn apply_pcbdoc_components(
                     .unwrap_or(LayerRef::from_v6(V6Layer::TopLayer)),
                 source_library: spec.source_library.clone().unwrap_or_default(),
                 source_lib_reference: String::new(),
+                source_unique_id: spec.annotation.as_ref()
+                    .and_then(|a| a.source_id.as_ref())
+                    .map(|sid| format!("\\{}", sid))
+                    .unwrap_or_default(),
+                source_hierarchical_path: String::new(),
+                parameters: spec.parameters.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             });
         }
     }

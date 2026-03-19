@@ -181,6 +181,28 @@ directly; footprint comes from the library symbol). Syncing `None` forward would
 clear all PcbDoc footprint assignments. Same reasoning applies to `net_color` and
 `component_location`. These are excluded from the Phase 1 forward `SyncPolicy`.
 
+### Why SyncPin.designator holds a pad designator, not a pin name
+
+`SyncPin.designator` contains the **pad designator** (the string identifying a pad within
+a footprint, e.g. `"10"`), not the schematic pin name (e.g. `"IO8"`). The resolution
+happens in `build_pin_to_pad_map()` during `project_schdoc_spec()`:
+
+1. Pin name → pin designator via `PinSpec.name`/`PinSpec.designator`
+2. Pin designator → pad name via `FootprintMapSpec.maps`
+3. If `maps` is empty: pin designator IS pad name (implicit 1:1)
+
+Both forms (pin name and pin designator) are stored as keys so that callers can look up
+either without knowing which form the SchDoc uses for a given component.
+
+### Why source_unique_id uses backslash-prefix format
+
+`SyncComponent.source_unique_id` produces `\UNIQUEID` (backslash-prefixed) for
+single-sheet designs. Altium's own ECO populates this field from the schematic
+`UNIQUE_ID` parameter with this exact prefix. Hierarchical paths use
+`Sheet1\UNIQUEID` (sheet name + backslash + ID). Altium's "Update PCB from
+Schematic" uses `SOURCEUNIQUEID` to match PCB components to schematic components; an
+empty or wrong value causes Altium to treat every component as new on each ECO cycle.
+
 ### Resolver library alias limitation
 
 `SchLibSpec` carries no library identity (filename or alias). The resolver cannot

@@ -362,12 +362,14 @@ mod tests {
                     id: shared_id.to_string(),
                     stable: false,
                     group: None,
+                    source_id: None,
                 });
                 let mut c2 = make_component("R2");
                 c2.annotation = Some(CompiledAnnotation {
                     id: shared_id.to_string(),
                     stable: false,
                     group: None,
+                    source_id: None,
                 });
                 sheet.components.push(c1);
                 sheet.components.push(c2);
@@ -421,6 +423,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
+        parameters: indexmap::IndexMap::new(),
         }
     }
 
@@ -504,12 +507,14 @@ mod tests {
                     id: shared_id.to_string(),
                     stable: false,
                     group: None,
+                    source_id: None,
                 });
                 let mut c2 = make_pcbdoc_component("U2");
                 c2.annotation = Some(CompiledAnnotation {
                     id: shared_id.to_string(),
                     stable: false,
                     group: None,
+                    source_id: None,
                 });
                 b.components.push(c1);
                 b.components.push(c2);

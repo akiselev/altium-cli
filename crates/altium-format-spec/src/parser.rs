@@ -165,6 +165,7 @@ impl<'a> SpecParser<'a> {
         let mut id: Option<Spanned<String>> = None;
         let mut stable: Option<Spanned<bool>> = None;
         let mut group: Option<Spanned<String>> = None;
+        let mut source_id: Option<Spanned<String>> = None;
 
         // Parse comma-separated key = value pairs.
         self.skip_newlines();
@@ -182,6 +183,7 @@ impl<'a> SpecParser<'a> {
                 "id" => AnnotationKey::Id,
                 "stable" => AnnotationKey::Stable,
                 "group" => AnnotationKey::Group,
+                "source_id" => AnnotationKey::SourceId,
                 other => {
                     return Err(ParseError::new(
                         ParseErrorCode::E1002,
@@ -221,6 +223,11 @@ impl<'a> SpecParser<'a> {
                         self.expect_string("expected string value for annotation key 'group'")?;
                     group = Some(val);
                 }
+                AnnotationKey::SourceId => {
+                    let val =
+                        self.expect_string("expected string value for annotation key 'source_id'")?;
+                    source_id = Some(val);
+                }
             }
             self.skip_newlines();
             if !self.eat(&TokenKind::Comma) {
@@ -234,7 +241,7 @@ impl<'a> SpecParser<'a> {
 
         let end = self.prev_span();
         Ok(Some(Spanned::new(
-            BlockAnnotation { id, stable, group },
+            BlockAnnotation { id, stable, group, source_id },
             start.merge(end),
         )))
     }

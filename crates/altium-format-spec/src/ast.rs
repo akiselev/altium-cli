@@ -9,6 +9,7 @@ pub struct BlockAnnotation {
     pub id: Option<Spanned<String>>,
     pub stable: Option<Spanned<bool>>,
     pub group: Option<Spanned<String>>,
+    pub source_id: Option<Spanned<String>>,
 }
 
 /// Known keys for a `#[annotation(...)]` attribute.
@@ -25,6 +26,7 @@ pub enum AnnotationKey {
     Id,
     Stable,
     Group,
+    SourceId,
 }
 
 /// A parsed spec file.

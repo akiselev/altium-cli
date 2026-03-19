@@ -246,11 +246,8 @@ fn extract_components(
                 },
                 is_through_hole,
                 hole_size_mm: pad.hole_size.to_mms(),
-                // PcbDoc pad records do not carry back-annotated swap group data.
-                // Swap IDs must be provided externally (e.g. from SchLib parameters)
-                // and injected into the IR before building the SwapModel.
-                swap_id_pin: None,
-                swap_id_part: None,
+                swap_id_pin: pad.swap_id_pin.clone(),
+                swap_id_part: pad.swap_id_part.clone(),
             });
 
             // pad_id already assigned above

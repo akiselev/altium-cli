@@ -587,6 +587,8 @@ pub struct PcbDocComponentSpec {
     pub rotation: Option<f64>,
     pub layer: Option<LayerSpec>,
     pub source_library: Option<String>,
+    /// BOM parameters keyed by name.
+    pub parameters: indexmap::IndexMap<String, String>,
 }
 
 pub struct PcbDocPolygonSpec {

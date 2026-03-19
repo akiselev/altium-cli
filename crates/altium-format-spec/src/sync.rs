@@ -7,10 +7,12 @@
 //! spec model. Projection fails hard on invalid input (dangling refs, duplicate
 //! designators) per the fail-fast invariant.
 
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 
 use crate::eval::{SpecError, SpecErrorCode};
-use crate::model::{PcbDocSpec, SchDocSpec, SymbolRef};
+use crate::model::{ComponentSpec, PcbDocSpec, SchDocSpec, SymbolRef};
 
 // ── IR types ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,8 @@ pub struct SyncComponent {
     pub parameters: IndexMap<String, String>,
     pub pins: IndexMap<String, SyncPin>,
     pub annotation_id: Option<String>,
+    /// Altium UNIQUE_ID of the source schematic component (no backslash prefix).
+    pub source_unique_id: Option<String>,
 }
 
 /// A pin entry within a component in the sync snapshot.
@@ -52,6 +56,45 @@ pub struct SyncNet {
     pub annotation_id: Option<String>,
 }
 
+// ── Pin-to-pad resolution ─────────────────────────────────────────────────────
+
+/// Builds a map from pin name (or designator) → pad designator for one component.
+///
+/// Resolution chain:
+/// 1. `PinSpec.name` → `PinSpec.designator` (name-to-designator lookup)
+/// 2. `FootprintMapSpec.maps` → `PinPadMap { pin, pad }` (designator-to-pad lookup)
+/// 3. Implicit 1:1 when `maps` is empty: pin designator IS pad name
+///
+/// Both pin names and pin designators are entered as keys so that callers can
+/// look up either form without knowing which one the schdoc uses.
+fn build_pin_to_pad_map(lib_comp: &ComponentSpec) -> HashMap<String, String> {
+    // Step 1: Build pin_designator → pad_name from FootprintMapSpec.maps.
+    let pin_des_to_pad: HashMap<String, String> = lib_comp
+        .footprints
+        .first()
+        .map(|fp| fp.maps.iter().map(|m| (m.pin.clone(), m.pad.clone())).collect())
+        .unwrap_or_default();
+
+    let mut result: HashMap<String, String> = HashMap::new();
+
+    for pin in &lib_comp.pins {
+        let pad = pin_des_to_pad
+            .get(&pin.designator)
+            .cloned()
+            .unwrap_or_else(|| pin.designator.clone());
+
+        // Map by pin designator.
+        result.insert(pin.designator.clone(), pad.clone());
+
+        // Also map by pin name when present.
+        if let Some(name) = &pin.name {
+            result.insert(name.clone(), pad);
+        }
+    }
+
+    result
+}
+
 // ── Projection: SchDoc ────────────────────────────────────────────────────────
 
 /// Projects a compiled `SchDocSpec` into a `SyncSnapshot`.
@@ -64,6 +107,8 @@ pub fn project_schdoc_spec(
     imported_components: &std::collections::HashMap<String, crate::model::ComponentSpec>,
 ) -> Result<SyncSnapshot, SpecError> {
     let mut snapshot = SyncSnapshot::default();
+    // Keyed by component designator; built in Pass 1 from SchLib data.
+    let mut pin_to_pad_maps: HashMap<String, HashMap<String, String>> = HashMap::new();
 
     // Pass 1: collect all components across sheets.
     for sheet in &spec.sheets {
@@ -85,6 +130,7 @@ pub fn project_schdoc_spec(
                 .collect();
 
             let annotation_id = comp.annotation.as_ref().map(|a| a.id.clone());
+            let source_unique_id = comp.annotation.as_ref().and_then(|a| a.source_id.clone());
 
             // Resolve footprint pattern from imported SchLib component.
             let lib_ref = match &comp.symbol {
@@ -94,6 +140,8 @@ pub fn project_schdoc_spec(
 
             let (footprint, source_library) = match imported_components.get(lib_ref) {
                 Some(lib_comp) => {
+                    let pin_pad_map = build_pin_to_pad_map(lib_comp);
+                    pin_to_pad_maps.insert(comp.designator.clone(), pin_pad_map);
                     let fp = lib_comp.footprints.first().map(|f| f.model_name.clone());
                     (fp, Some(lib_ref.to_string()))
                 }
@@ -110,6 +158,7 @@ pub fn project_schdoc_spec(
                     parameters,
                     pins: IndexMap::new(),
                     annotation_id,
+                    source_unique_id,
                 },
             );
         }
@@ -132,16 +181,22 @@ pub fn project_schdoc_spec(
                     )
                 })?;
 
+                let pad_designator = pin_to_pad_maps
+                    .get(&pin_ref.component)
+                    .and_then(|m| m.get(&pin_ref.pin))
+                    .cloned()
+                    .unwrap_or_else(|| pin_ref.pin.clone());
+
                 let pin_entry = comp
                     .pins
-                    .entry(pin_ref.pin.clone())
+                    .entry(pad_designator.clone())
                     .or_insert_with(|| SyncPin {
-                        designator: pin_ref.pin.clone(),
+                        designator: pad_designator.clone(),
                         net: None,
                     });
                 pin_entry.net = Some(net.name.clone());
 
-                net_pins.push((pin_ref.component.clone(), pin_ref.pin.clone()));
+                net_pins.push((pin_ref.component.clone(), pad_designator));
             }
 
             snapshot.nets.insert(
@@ -170,16 +225,22 @@ pub fn project_schdoc_spec(
                     )
                 })?;
 
+                let pad_designator = pin_to_pad_maps
+                    .get(&pin_ref.component)
+                    .and_then(|m| m.get(&pin_ref.pin))
+                    .cloned()
+                    .unwrap_or_else(|| pin_ref.pin.clone());
+
                 let pin_entry = comp
                     .pins
-                    .entry(pin_ref.pin.clone())
+                    .entry(pad_designator.clone())
                     .or_insert_with(|| SyncPin {
-                        designator: pin_ref.pin.clone(),
+                        designator: pad_designator.clone(),
                         net: None,
                     });
                 pin_entry.net = Some(power.name.clone());
 
-                net_pins.push((pin_ref.component.clone(), pin_ref.pin.clone()));
+                net_pins.push((pin_ref.component.clone(), pad_designator));
             }
 
             // Insert power net; if already present (e.g. net defined earlier in sheet),
@@ -210,20 +271,27 @@ pub fn project_schdoc_spec(
                     crate::model::PinConnectionTarget::NoConnect => continue,
                 };
 
+                // Resolve pin name to pad designator.
+                let pad_designator = pin_to_pad_maps
+                    .get(&comp.designator)
+                    .and_then(|m| m.get(&pin_conn.pin_name))
+                    .cloned()
+                    .unwrap_or_else(|| pin_conn.pin_name.clone());
+
                 // Update the component's pin entry.
                 if let Some(sync_comp) = snapshot.components.get_mut(&comp.designator) {
                     let pin_entry = sync_comp
                         .pins
-                        .entry(pin_conn.pin_name.clone())
+                        .entry(pad_designator.clone())
                         .or_insert_with(|| SyncPin {
-                            designator: pin_conn.pin_name.clone(),
+                            designator: pad_designator.clone(),
                             net: None,
                         });
                     pin_entry.net = Some(net_name.clone());
                 }
 
                 // Insert or merge the net entry.
-                let pin_tuple = (comp.designator.clone(), pin_conn.pin_name.clone());
+                let pin_tuple = (comp.designator.clone(), pad_designator);
                 snapshot
                     .nets
                     .entry(net_name.clone())
@@ -268,6 +336,7 @@ pub fn project_pcbdoc_spec(spec: &PcbDocSpec) -> Result<SyncSnapshot, SpecError>
             }
 
             let annotation_id = comp.annotation.as_ref().map(|a| a.id.clone());
+            let source_unique_id = comp.annotation.as_ref().and_then(|a| a.source_id.clone());
 
             snapshot.components.insert(
                 comp.designator.clone(),
@@ -276,9 +345,10 @@ pub fn project_pcbdoc_spec(spec: &PcbDocSpec) -> Result<SyncSnapshot, SpecError>
                     comment: comp.comment.clone(),
                     footprint: comp.pattern.clone(),
                     source_library: comp.source_library.clone(),
-                    parameters: IndexMap::new(),
+                    parameters: comp.parameters.clone(),
                     pins: IndexMap::new(),
                     annotation_id,
+                    source_unique_id,
                 },
             );
         }
@@ -713,10 +783,15 @@ pub fn apply_sync_changes_to_pcbdoc(
                             comp.source_library = fc.new_value.clone();
                         }
                         field if field.starts_with("parameter:") => {
-                            return Err(SpecError::no_span(
-                                SpecErrorCode::NotSupported,
-                                format!("parameter sync is not supported for PcbDoc specs: PcbDocComponentSpec has no parameters field (field '{field}')"),
-                            ));
+                            let param_name = &field["parameter:".len()..];
+                            match &fc.new_value {
+                                Some(val) => {
+                                    comp.parameters.insert(param_name.to_string(), val.clone());
+                                }
+                                None => {
+                                    comp.parameters.shift_remove(param_name);
+                                }
+                            }
                         }
                         // component_location, rotation, layer: NEVER touched by sync.
                         _ => {}
@@ -759,8 +834,14 @@ pub fn apply_sync_changes_to_pcbdoc(
     for change in changes {
         match change {
             SyncChange::AddComponent { designator, component } => {
+                let annotation = Some(crate::annotation::CompiledAnnotation {
+                    id: crate::annotation::generate_short_id(),
+                    stable: false,
+                    group: None,
+                    source_id: Some(crate::annotation::generate_source_id(designator)),
+                });
                 spec.boards[0].components.push(crate::model::PcbDocComponentSpec {
-                    annotation: None,
+                    annotation,
                     designator: designator.clone(),
                     pattern: component.footprint.clone(),
                     comment: component.comment.clone(),
@@ -768,6 +849,7 @@ pub fn apply_sync_changes_to_pcbdoc(
                     rotation: None,
                     layer: None,
                     source_library: component.source_library.clone(),
+                    parameters: component.parameters.clone(),
                 });
             }
             SyncChange::AddNet { name, .. } => {
@@ -955,10 +1037,8 @@ fn collect_component_update_replacement(
                 overrides.insert("source_library".to_string(), fc.new_value.clone());
             }
             field if field.starts_with("parameter:") => {
-                return Err(SpecError::no_span(
-                    SpecErrorCode::NotSupported,
-                    format!("parameter sync is not supported for PcbDoc specs: PcbDocComponentSpec has no parameters field (field '{field}')"),
-                ));
+                // Parameter sync is handled at the model level; the text rewriter
+                // ignores parameter fields since they are not stored as spec properties.
             }
             _ => {}
         }
@@ -1087,6 +1167,10 @@ pub fn quote_spec_entity_name(name: &str) -> String {
 
 /// Formats a new component declaration for appending.
 fn format_new_component(designator: &str, comp: &SyncComponent) -> String {
+    let id = crate::annotation::generate_short_id();
+    let source_id = crate::annotation::generate_source_id(designator);
+    let annotation_line = format!("#[annotation(id = \"{}\", source_id = \"{}\")]\n", id, source_id);
+
     let mut props: Vec<String> = Vec::new();
 
     if let Some(pattern) = &comp.footprint {
@@ -1100,11 +1184,12 @@ fn format_new_component(designator: &str, comp: &SyncComponent) -> String {
     }
 
     let name_str = quote_spec_entity_name(designator);
-    if props.is_empty() {
+    let body = if props.is_empty() {
         format!("component {} {{}}\n", name_str)
     } else {
         format!("component {} {{ {} }}\n", name_str, props.join(", "))
-    }
+    };
+    format!("{}{}", annotation_line, body)
 }
 
 /// Formats a new net declaration for appending.
@@ -1407,6 +1492,7 @@ mod tests {
                 rotation: None,
                 layer: None,
                 source_library: None,
+                parameters: IndexMap::new(),
             });
         }
         for net_name in ["VCC", "GND"] {
@@ -1453,6 +1539,7 @@ mod tests {
                 rotation: None,
                 layer: None,
                 source_library: None,
+                parameters: IndexMap::new(),
             });
         }
 
@@ -1493,6 +1580,7 @@ mod tests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         }
     }
 
@@ -1890,6 +1978,7 @@ mod tests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         };
 
         let changes = vec![SyncChange::AddComponent {
@@ -1924,6 +2013,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
+        parameters: indexmap::IndexMap::new(),
         });
         board.components.push(PcbDocComponentSpec {
             annotation: None,
@@ -1934,6 +2024,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
+        parameters: indexmap::IndexMap::new(),
         });
 
         let mut spec = PcbDocSpec {
@@ -1969,6 +2060,7 @@ mod tests {
             rotation: Some(90.0),
             layer: None,
             source_library: None,
+        parameters: indexmap::IndexMap::new(),
         });
 
         let mut spec = PcbDocSpec {
@@ -2163,6 +2255,7 @@ mod tests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         };
         let changes = vec![SyncChange::AddComponent {
             designator: "C1".to_string(),
@@ -2226,6 +2319,7 @@ mod tests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         });
         schdoc_snapshot.nets.insert("VCC".to_string(), make_sync_net("VCC"));
 
@@ -2240,6 +2334,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
+        parameters: indexmap::IndexMap::new(),
         });
         let mut spec = PcbDocSpec {
             boards: vec![board],
@@ -2379,6 +2474,7 @@ mod tests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         });
 
         let mut target = SyncSnapshot::default();
@@ -2390,6 +2486,7 @@ mod tests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         });
 
         let changes = diff_snapshots(&source, &target);
@@ -2452,6 +2549,7 @@ mod tests {
                 parameters: IndexMap::new(),
                 pins: IndexMap::new(),
                 annotation_id: None,
+                source_unique_id: None,
             },
         }];
 
@@ -2600,6 +2698,7 @@ mod proptests {
             parameters: IndexMap::new(),
             pins: IndexMap::new(),
             annotation_id: None,
+            source_unique_id: None,
         }
     }
 
@@ -2750,6 +2849,7 @@ mod proptests {
                     rotation: None,
                     layer: None,
                     source_library: None,
+                parameters: indexmap::IndexMap::new(),
                 });
             }
 
