@@ -10,7 +10,7 @@
 use indexmap::IndexMap;
 
 use crate::eval::{SpecError, SpecErrorCode};
-use crate::model::{PcbDocSpec, SchDocSpec};
+use crate::model::{PcbDocSpec, SchDocSpec, SymbolRef};
 
 // ── IR types ─────────────────────────────────────────────────────────────────
 
@@ -59,7 +59,10 @@ pub struct SyncNet {
 /// Fails hard on:
 /// - Duplicate component designators across sheets
 /// - Net or power pin references to non-existent component designators
-pub fn project_schdoc_spec(spec: &SchDocSpec) -> Result<SyncSnapshot, SpecError> {
+pub fn project_schdoc_spec(
+    spec: &SchDocSpec,
+    imported_components: &std::collections::HashMap<String, crate::model::ComponentSpec>,
+) -> Result<SyncSnapshot, SpecError> {
     let mut snapshot = SyncSnapshot::default();
 
     // Pass 1: collect all components across sheets.
@@ -83,13 +86,27 @@ pub fn project_schdoc_spec(spec: &SchDocSpec) -> Result<SyncSnapshot, SpecError>
 
             let annotation_id = comp.annotation.as_ref().map(|a| a.id.clone());
 
+            // Resolve footprint pattern from imported SchLib component.
+            let lib_ref = match &comp.symbol {
+                SymbolRef::Import { name, .. } => name.as_str(),
+                SymbolRef::Literal(name) => name.as_str(),
+            };
+
+            let (footprint, source_library) = match imported_components.get(lib_ref) {
+                Some(lib_comp) => {
+                    let fp = lib_comp.footprints.first().map(|f| f.model_name.clone());
+                    (fp, Some(lib_ref.to_string()))
+                }
+                None => (None, None),
+            };
+
             snapshot.components.insert(
                 comp.designator.clone(),
                 SyncComponent {
                     designator: comp.designator.clone(),
                     comment: comp.description.clone(),
-                    footprint: None,
-                    source_library: None,
+                    footprint,
+                    source_library,
                     parameters,
                     pins: IndexMap::new(),
                     annotation_id,
@@ -179,6 +196,47 @@ pub fn project_schdoc_spec(spec: &SchDocSpec) -> Result<SyncSnapshot, SpecError>
                     pins: net_pins,
                     annotation_id,
                 });
+        }
+    }
+
+    // Pass 3: collect nets from component pin_connections (`pin X -> #NET` syntax).
+    // These may overlap with nets/powers already collected in Pass 2; merge them.
+    for sheet in &spec.sheets {
+        for comp in &sheet.components {
+            for pin_conn in &comp.pin_connections {
+                let net_name = match &pin_conn.target {
+                    crate::model::PinConnectionTarget::Signal(name) => name.clone(),
+                    crate::model::PinConnectionTarget::Power(name) => name.clone(),
+                    crate::model::PinConnectionTarget::NoConnect => continue,
+                };
+
+                // Update the component's pin entry.
+                if let Some(sync_comp) = snapshot.components.get_mut(&comp.designator) {
+                    let pin_entry = sync_comp
+                        .pins
+                        .entry(pin_conn.pin_name.clone())
+                        .or_insert_with(|| SyncPin {
+                            designator: pin_conn.pin_name.clone(),
+                            net: None,
+                        });
+                    pin_entry.net = Some(net_name.clone());
+                }
+
+                // Insert or merge the net entry.
+                let pin_tuple = (comp.designator.clone(), pin_conn.pin_name.clone());
+                snapshot
+                    .nets
+                    .entry(net_name.clone())
+                    .and_modify(|existing| {
+                        existing.pins.push(pin_tuple.clone());
+                    })
+                    .or_insert_with(|| SyncNet {
+                        name: net_name,
+                        color: None,
+                        pins: vec![pin_tuple],
+                        annotation_id: None,
+                    });
+            }
         }
     }
 
@@ -1146,7 +1204,8 @@ pub fn render_eco_report(changes: &[SyncChange]) -> String {
 mod tests {
     use super::*;
     use crate::model::{
-        BoardSpec, NetSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocSpec, PinRef, PowerSpec,
+        BoardSpec, ComponentSpec, FootprintMapSpec, NetSpec, PcbDocComponentSpec, PcbDocNetSpec,
+        PcbDocSpec, PinConnectionSpec, PinConnectionTarget, PinRef, PowerSpec,
         SchDocComponentSpec, SchDocSpec, SheetSpec, SymbolRef,
     };
     use altium_format_types::{CoordPoint, RotationBy90};
@@ -1221,7 +1280,7 @@ mod tests {
     #[test]
     fn test_schdoc_empty_spec() {
         let spec = SchDocSpec { sheets: Vec::new() };
-        let snapshot = project_schdoc_spec(&spec).unwrap();
+        let snapshot = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap();
         assert!(snapshot.components.is_empty());
         assert!(snapshot.nets.is_empty());
     }
@@ -1243,7 +1302,7 @@ mod tests {
         });
 
         let spec = SchDocSpec { sheets: vec![sheet] };
-        let snapshot = project_schdoc_spec(&spec).unwrap();
+        let snapshot = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap();
 
         assert_eq!(snapshot.components.len(), 2);
         assert_eq!(snapshot.nets.len(), 1);
@@ -1277,7 +1336,7 @@ mod tests {
         });
 
         let spec = SchDocSpec { sheets: vec![sheet] };
-        let snapshot = project_schdoc_spec(&spec).unwrap();
+        let snapshot = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap();
 
         let u1 = &snapshot.components["U1"];
         assert_eq!(u1.pins["GND"].net.as_deref(), Some("GND"));
@@ -1297,7 +1356,7 @@ mod tests {
         sheet2.components.push(make_schdoc_component("R1"));
 
         let spec = SchDocSpec { sheets: vec![sheet1, sheet2] };
-        let err = project_schdoc_spec(&spec).unwrap_err();
+        let err = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
         assert!(err.message.contains("R1"), "error should mention designator: {}", err.message);
     }
@@ -1317,7 +1376,7 @@ mod tests {
         });
 
         let spec = SchDocSpec { sheets: vec![sheet] };
-        let err = project_schdoc_spec(&spec).unwrap_err();
+        let err = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::InvalidFieldAccess);
         assert!(err.message.contains("VCC"), "error should mention net name: {}", err.message);
         assert!(err.message.contains("MISSING"), "error should mention component: {}", err.message);
@@ -2216,6 +2275,310 @@ mod tests {
             filtered2
         );
     }
+
+    // ── Footprint resolution: Import symbol → footprint populated ─────────────
+
+    #[test]
+    fn test_schdoc_footprint_resolution() {
+        let mut sheet = make_empty_sheet();
+        let mut comp = make_schdoc_component("U1");
+        comp.symbol = SymbolRef::Import { alias: "mcu".to_string(), name: "ESP32_C6".to_string() };
+        sheet.components.push(comp);
+
+        let spec = SchDocSpec { sheets: vec![sheet] };
+
+        let mut imported = std::collections::HashMap::new();
+        imported.insert("ESP32_C6".to_string(), ComponentSpec {
+            annotation: None,
+            lib_reference: "ESP32_C6".to_string(),
+            designator: None,
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: Vec::new(),
+            parameters: Vec::new(),
+            aliases: Vec::new(),
+            footprints: vec![FootprintMapSpec {
+                model_name: "QFN-48".to_string(),
+                maps: Vec::new(),
+                source: None,
+            }],
+            graphics: Vec::new(),
+            parts: Vec::new(),
+        });
+
+        let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
+        let u1 = &snapshot.components["U1"];
+        assert_eq!(u1.footprint.as_deref(), Some("QFN-48"), "footprint should be resolved from imported SchLib");
+        assert_eq!(u1.source_library.as_deref(), Some("ESP32_C6"), "source_library should be set");
+    }
+
+    // ── Footprint resolution: Literal symbol → footprint populated ─────────────
+
+    #[test]
+    fn test_schdoc_literal_symbol_footprint_resolution() {
+        let mut sheet = make_empty_sheet();
+        let mut comp = make_schdoc_component("R1");
+        comp.symbol = SymbolRef::Literal("RESISTOR".to_string());
+        sheet.components.push(comp);
+
+        let spec = SchDocSpec { sheets: vec![sheet] };
+
+        let mut imported = std::collections::HashMap::new();
+        imported.insert("RESISTOR".to_string(), ComponentSpec {
+            annotation: None,
+            lib_reference: "RESISTOR".to_string(),
+            designator: None,
+            description: None,
+            component_kind: None,
+            part_count: None,
+            show_hidden_pins: None,
+            pins: Vec::new(),
+            parameters: Vec::new(),
+            aliases: Vec::new(),
+            footprints: vec![FootprintMapSpec {
+                model_name: "0603".to_string(),
+                maps: Vec::new(),
+                source: None,
+            }],
+            graphics: Vec::new(),
+            parts: Vec::new(),
+        });
+
+        let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
+        let r1 = &snapshot.components["R1"];
+        assert_eq!(r1.footprint.as_deref(), Some("0603"));
+    }
+
+    // ── Footprint resolution: empty imported_components → footprint None ──────
+
+    #[test]
+    fn test_schdoc_no_imported_components_footprint_none() {
+        let mut sheet = make_empty_sheet();
+        sheet.components.push(make_schdoc_component("R1"));
+
+        let spec = SchDocSpec { sheets: vec![sheet] };
+        let imported = std::collections::HashMap::new();
+
+        let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
+        let r1 = &snapshot.components["R1"];
+        assert_eq!(r1.footprint, None, "footprint should be None when no imported components");
+    }
+
+    // ── Diff: detects footprint difference ───────────────────────────────────
+
+    #[test]
+    fn test_diff_includes_footprint_changes() {
+        let mut source = SyncSnapshot::default();
+        source.components.insert("U1".to_string(), SyncComponent {
+            designator: "U1".to_string(),
+            comment: None,
+            footprint: Some("QFN-48".to_string()),
+            source_library: None,
+            parameters: IndexMap::new(),
+            pins: IndexMap::new(),
+            annotation_id: None,
+        });
+
+        let mut target = SyncSnapshot::default();
+        target.components.insert("U1".to_string(), SyncComponent {
+            designator: "U1".to_string(),
+            comment: None,
+            footprint: None,
+            source_library: None,
+            parameters: IndexMap::new(),
+            pins: IndexMap::new(),
+            annotation_id: None,
+        });
+
+        let changes = diff_snapshots(&source, &target);
+        assert_eq!(changes.len(), 1);
+        match &changes[0] {
+            SyncChange::UpdateComponent { designator, field_changes } => {
+                assert_eq!(designator, "U1");
+                assert!(field_changes.iter().any(|fc| fc.field == "footprint" && fc.new_value.as_deref() == Some("QFN-48")));
+            }
+            _ => panic!("expected UpdateComponent"),
+        }
+    }
+
+    // ── Policy: Forward policy includes footprint changes ────────────────────
+
+    #[test]
+    fn test_forward_sync_policy_includes_footprint() {
+        let changes = vec![SyncChange::UpdateComponent {
+            designator: "U1".to_string(),
+            field_changes: vec![FieldChange {
+                field: "footprint".to_string(),
+                old_value: None,
+                new_value: Some("QFN-48".to_string()),
+            }],
+        }];
+
+        let policy = SyncPolicy {
+            comment: SyncDirection::Forward,
+            footprint: SyncDirection::Forward,
+            source_library: SyncDirection::Forward,
+            parameters: SyncDirection::None,
+            net_name: SyncDirection::Forward,
+            net_color: SyncDirection::None,
+            pin_net_assignment: SyncDirection::None,
+            component_location: SyncDirection::None,
+        };
+
+        let filtered = filter_changes(&changes, &policy, SyncDirection::Forward).unwrap();
+        assert_eq!(filtered.len(), 1);
+        match &filtered[0] {
+            SyncChange::UpdateComponent { field_changes, .. } => {
+                assert!(field_changes.iter().any(|fc| fc.field == "footprint"));
+            }
+            _ => panic!("expected UpdateComponent"),
+        }
+    }
+
+    // ── Rewrite: AddComponent preserves footprint ─────────────────────────────
+
+    #[test]
+    fn test_add_component_includes_footprint_in_rewrite() {
+        let source = "board \"test\" { signal_layer_count: 2 }\n";
+        let changes = vec![SyncChange::AddComponent {
+            designator: "U1".to_string(),
+            component: SyncComponent {
+                designator: "U1".to_string(),
+                comment: Some("MCU".to_string()),
+                footprint: Some("QFN-48".to_string()),
+                source_library: Some("mcu".to_string()),
+                parameters: IndexMap::new(),
+                pins: IndexMap::new(),
+                annotation_id: None,
+            },
+        }];
+
+        let result = rewrite_pcbdoc_spec_with_changes(source, &changes).unwrap();
+        assert!(result.contains("pattern: \"QFN-48\""), "rewritten spec should contain pattern: {:?}", result);
+        assert!(result.contains("comment: \"MCU\""), "rewritten spec should contain comment: {:?}", result);
+        assert!(result.contains("source_library: \"mcu\""), "rewritten spec should contain source_library: {:?}", result);
+    }
+
+    // ── Pin connections: signal and power nets extracted from pin_connections ──
+
+    #[test]
+    fn test_schdoc_pin_connections_create_nets() {
+        let mut sheet = make_empty_sheet();
+        sheet.power_declarations.insert("GND".to_string(), PowerObjectStyle::Circle);
+
+        let mut comp = make_schdoc_component("U1");
+        comp.pin_connections = vec![
+            PinConnectionSpec {
+                pin_name: "GPIO4".to_string(),
+                target: PinConnectionTarget::Signal("SDA".to_string()),
+            },
+            PinConnectionSpec {
+                pin_name: "GPIO5".to_string(),
+                target: PinConnectionTarget::Signal("SCL".to_string()),
+            },
+            PinConnectionSpec {
+                pin_name: "VDD".to_string(),
+                target: PinConnectionTarget::Power("VCC".to_string()),
+            },
+            PinConnectionSpec {
+                pin_name: "GND".to_string(),
+                target: PinConnectionTarget::Power("GND".to_string()),
+            },
+            PinConnectionSpec {
+                pin_name: "NC1".to_string(),
+                target: PinConnectionTarget::NoConnect,
+            },
+        ];
+        sheet.components.push(comp);
+
+        let spec = SchDocSpec { sheets: vec![sheet] };
+        let imported = std::collections::HashMap::new();
+        let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
+
+        // Should have 4 nets: SDA, SCL, VCC, GND (NoConnect is excluded)
+        assert_eq!(snapshot.nets.len(), 4, "nets: {:?}", snapshot.nets.keys().collect::<Vec<_>>());
+        assert!(snapshot.nets.contains_key("SDA"));
+        assert!(snapshot.nets.contains_key("SCL"));
+        assert!(snapshot.nets.contains_key("VCC"));
+        assert!(snapshot.nets.contains_key("GND"));
+
+        // Pin assignments should be set on the component
+        let u1 = &snapshot.components["U1"];
+        assert_eq!(u1.pins["GPIO4"].net.as_deref(), Some("SDA"));
+        assert_eq!(u1.pins["GPIO5"].net.as_deref(), Some("SCL"));
+        assert_eq!(u1.pins["VDD"].net.as_deref(), Some("VCC"));
+        assert_eq!(u1.pins["GND"].net.as_deref(), Some("GND"));
+
+        // NC1 should not have a pin entry
+        assert!(!u1.pins.contains_key("NC1"), "NoConnect pins should not appear in pin map");
+    }
+
+    #[test]
+    fn test_schdoc_pin_connections_merge_with_explicit_nets() {
+        let mut sheet = make_empty_sheet();
+
+        // Explicit net declaration
+        let mut comp1 = make_schdoc_component("R1");
+        comp1.pin_connections = Vec::new();
+        sheet.components.push(comp1);
+
+        let mut comp2 = make_schdoc_component("U1");
+        comp2.pin_connections = vec![
+            PinConnectionSpec {
+                pin_name: "SDA".to_string(),
+                target: PinConnectionTarget::Signal("I2C_SDA".to_string()),
+            },
+        ];
+        sheet.components.push(comp2);
+
+        // Also an explicit net connecting R1 to the same net
+        sheet.nets.push(NetSpec {
+            annotation: None,
+            name: "I2C_SDA".to_string(),
+            pins: vec![PinRef {
+                component: "R1".to_string(),
+                pin: "1".to_string(),
+            }],
+        });
+
+        let spec = SchDocSpec { sheets: vec![sheet] };
+        let imported = std::collections::HashMap::new();
+        let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
+
+        // Should have one merged I2C_SDA net with 2 pin connections
+        let net = &snapshot.nets["I2C_SDA"];
+        assert_eq!(net.pins.len(), 2, "net should have pins from both explicit and pin_connection: {:?}", net.pins);
+        assert!(net.pins.contains(&("R1".to_string(), "1".to_string())));
+        assert!(net.pins.contains(&("U1".to_string(), "SDA".to_string())));
+    }
+
+    #[test]
+    fn test_schdoc_pin_connections_multiple_components_same_net() {
+        let mut sheet = make_empty_sheet();
+
+        let mut comp1 = make_schdoc_component("U1");
+        comp1.pin_connections = vec![PinConnectionSpec {
+            pin_name: "SDA".to_string(),
+            target: PinConnectionTarget::Signal("I2C_SDA".to_string()),
+        }];
+        sheet.components.push(comp1);
+
+        let mut comp2 = make_schdoc_component("U2");
+        comp2.pin_connections = vec![PinConnectionSpec {
+            pin_name: "SDA".to_string(),
+            target: PinConnectionTarget::Signal("I2C_SDA".to_string()),
+        }];
+        sheet.components.push(comp2);
+
+        let spec = SchDocSpec { sheets: vec![sheet] };
+        let imported = std::collections::HashMap::new();
+        let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
+
+        let net = &snapshot.nets["I2C_SDA"];
+        assert_eq!(net.pins.len(), 2);
+    }
 }
 
 #[cfg(feature = "proptest")]
@@ -2338,7 +2701,7 @@ mod proptests {
             }
 
             let spec = SchDocSpec { sheets: vec![sheet] };
-            let snapshot = project_schdoc_spec(&spec).unwrap();
+            let snapshot = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap();
             prop_assert_eq!(snapshot.components.len(), count);
         }
 

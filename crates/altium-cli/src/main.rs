@@ -27,7 +27,7 @@ use altium_format_spec::{
     apply_sync_changes_to_pcbdoc,
     rewrite_pcbdoc_spec_with_changes,
     render_eco_report,
-    SyncPolicy, SyncDirection,
+    SyncPolicy, SyncDirection, SyncChange,
 };
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
@@ -343,6 +343,10 @@ enum SpecSubcommand {
         /// Show changes without writing to disk
         #[arg(long)]
         dry_run: bool,
+        /// Append mode: only add new components/nets, never remove existing ones.
+        /// Use when syncing multiple schematic sheets into one PcbDoc.
+        #[arg(long)]
+        append: bool,
     },
 }
 
@@ -476,7 +480,8 @@ fn run_spec(sub: SpecSubcommand) -> anyhow::Result<()> {
             forward,
             diff,
             dry_run,
-        } => run_spec_sync(&schdoc_spec, &pcbdoc_spec, forward, diff, dry_run),
+            append,
+        } => run_spec_sync(&schdoc_spec, &pcbdoc_spec, forward, diff, dry_run, append),
     }
 }
 
@@ -486,6 +491,7 @@ fn run_spec_sync(
     forward: bool,
     diff_only: bool,
     dry_run: bool,
+    append: bool,
 ) -> anyhow::Result<()> {
     if !forward && !diff_only {
         anyhow::bail!("specify --forward or --diff");
@@ -553,7 +559,7 @@ fn run_spec_sync(
 
     // ── Step 4: Project both specs to SyncSnapshot ────────────────────────────
 
-    let schdoc_snapshot = project_schdoc_spec(&schdoc_spec)
+    let schdoc_snapshot = project_schdoc_spec(&schdoc_spec, &schdoc_result.imported_components)
         .map_err(|e| anyhow::anyhow!("projecting {}: {}", schdoc_name, e.render(&schdoc_name, &schdoc_source)))?;
     let pcbdoc_snapshot = project_pcbdoc_spec(&pcbdoc_spec_model)
         .map_err(|e| anyhow::anyhow!("projecting {}: {}", pcbdoc_name, e.render(&pcbdoc_name, &pcbdoc_source)))?;
@@ -566,8 +572,8 @@ fn run_spec_sync(
 
     let policy = SyncPolicy {
         comment: SyncDirection::Forward,
-        footprint: SyncDirection::None,
-        source_library: SyncDirection::None,
+        footprint: SyncDirection::Forward,
+        source_library: SyncDirection::Forward,
         parameters: SyncDirection::None,
         net_name: SyncDirection::Forward,
         net_color: SyncDirection::None,
@@ -575,8 +581,17 @@ fn run_spec_sync(
         component_location: SyncDirection::None,
     };
 
-    let filtered = filter_changes(&changes, &policy, SyncDirection::Forward)
+    let mut filtered = filter_changes(&changes, &policy, SyncDirection::Forward)
         .map_err(|e| anyhow::anyhow!("filtering sync changes: {}", e.message))?;
+
+    // In append mode, drop all Remove* changes so multi-sheet syncs don't
+    // clobber components/nets from previously synced sheets.
+    if append {
+        filtered.retain(|change| !matches!(
+            change,
+            SyncChange::RemoveComponent { .. } | SyncChange::RemoveNet { .. }
+        ));
+    }
 
     // ── Step 7: Print ECO report ──────────────────────────────────────────────
 
