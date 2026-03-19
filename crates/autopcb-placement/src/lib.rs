@@ -671,10 +671,55 @@ pub fn solve_placement(
     let mut runtimes = Vec::<ComponentRuntime>::with_capacity(ir.components.len());
     let mut designator_to_idx = BTreeMap::<String, usize>::new();
 
-    for (_id, comp) in ir.components.iter() {
+    // Pre-scatter: if components are outside the board or all co-located at the same
+    // point, distribute them on a grid inside the board. This prevents a zero-gradient
+    // Jacobian that causes the LM solver to stall.
+    let margin = config.board_edge_clearance_mm.max(1.0);
+    let scatter_positions = {
+        let n = ir.components.len();
+        let all_same_pos = {
+            let mut iter = ir.components.values();
+            let first = iter.next().map(|c| (c.position.x, c.position.y));
+            first.is_some() && iter.all(|c| {
+                (c.position.x - first.unwrap().0).abs() < 0.01
+                && (c.position.y - first.unwrap().1).abs() < 0.01
+            })
+        };
+        let any_outside = ir.components.values().any(|c| {
+            c.position.x < bounds.min.x || c.position.x > bounds.max.x
+            || c.position.y < bounds.min.y || c.position.y > bounds.max.y
+        });
+        if all_same_pos || any_outside {
+            let cols = (n as f64).sqrt().ceil() as usize;
+            let rows = (n + cols - 1) / cols;
+            let w = (bounds.max.x - bounds.min.x) - 2.0 * margin;
+            let h = (bounds.max.y - bounds.min.y) - 2.0 * margin;
+            let dx = w / cols.max(1) as f64;
+            let dy = h / rows.max(1) as f64;
+            let mut positions = Vec::with_capacity(n);
+            for i in 0..n {
+                let col = i % cols;
+                let row = i / cols;
+                positions.push((
+                    bounds.min.x + margin + dx * (col as f64 + 0.5),
+                    bounds.min.y + margin + dy * (row as f64 + 0.5),
+                ));
+            }
+            Some(positions)
+        } else {
+            None
+        }
+    };
+
+    for (comp_idx, (_id, comp)) in ir.components.iter().enumerate() {
         let eid = system.alloc_entity_id();
-        let x = system.alloc_param(comp.position.x, eid);
-        let y = system.alloc_param(comp.position.y, eid);
+        let (init_x, init_y) = if let Some(ref positions) = scatter_positions {
+            positions[comp_idx]
+        } else {
+            (comp.position.x, comp.position.y)
+        };
+        let x = system.alloc_param(init_x, eid);
+        let y = system.alloc_param(init_y, eid);
         let theta = system.alloc_param(comp.rotation.to_radians(), eid);
         let half_w = comp.local_bounds.width() * 0.5;
         let half_h = comp.local_bounds.height() * 0.5;

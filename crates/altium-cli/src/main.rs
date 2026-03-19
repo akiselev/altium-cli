@@ -2251,6 +2251,29 @@ fn cmd_placement_apply(spec_file: &std::path::Path, target: &std::path::Path) ->
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
     apply_spec_pcbdoc(&spec, &mut doc)
         .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+
+    // Apply placement positions from `place` entries to PcbDoc component records.
+    if let Some(ref placement) = spec.placement {
+        let mut board = doc.board()
+            .map_err(|e| anyhow::anyhow!("failed to read board for placement: {e}"))?;
+        let mut placed = 0usize;
+        for place in &placement.places {
+            if let Some(loc) = place.at {
+                for designator in &place.designators {
+                    if let Some(comp) = board.components.iter_mut().find(|c| &c.designator == designator) {
+                        comp.location = loc;
+                        placed += 1;
+                    }
+                }
+            }
+        }
+        if placed > 0 {
+            doc.update_board(&board)
+                .map_err(|e| anyhow::anyhow!("failed to update board with placement: {e}"))?;
+            eprintln!("Placed {} component(s)", placed);
+        }
+    }
+
     doc.save(target)?;
     println!("Saved: {}", target.display());
     Ok(())
