@@ -938,6 +938,14 @@ fn preserve_region_fields(new: &mut PcbRegion, old: &PcbRegion) {
     new.locked_3d = old.locked_3d;
     new.layer_stack_id = old.layer_stack_id.clone();
     new.unique_id = old.unique_id.clone();
+    // Preserve contour data to maintain the correct binary format (Legacy vs ShapeBased).
+    // build_region_records always produces Contour::Legacy from the public API's Vec<CoordPoint>,
+    // but ShapeBasedRegions6 records require Contour::ShapeBased (TPolySegment format).
+    // Copying the original contours preserves the correct serialization format.
+    new.outline = old.outline.clone();
+    new.holes = old.holes.clone();
+    new.shape_text_segments = old.shape_text_segments.clone();
+    new.hole_shape_text_segments = old.hole_shape_text_segments.clone();
 }
 
 fn preserve_body_fields(new: &mut PcbComponentBody, old: &PcbComponentBody) {
@@ -1094,16 +1102,16 @@ fn replace_wide_strings(doc: &mut PcbDoc, data: WideStringsSectionData) {
     doc.sections.push(PcbDocSection::WideStrings(data));
 }
 
-/// Detect which section kind to write: prefer `modern` if present, else `legacy`.
+/// Detect which section kind to write: prefer `modern` if it contains records, else `legacy`.
 fn detect_section_kind(
     doc: &PcbDoc,
     modern: PrimitiveSectionKind,
     legacy: PrimitiveSectionKind,
 ) -> PrimitiveSectionKind {
-    let has_modern = doc.sections.iter().any(|s| {
-        matches!(s, PcbDocSection::Primitive(p) if p.kind == modern)
+    let has_modern_with_records = doc.sections.iter().any(|s| {
+        matches!(s, PcbDocSection::Primitive(p) if p.kind == modern && !p.records.is_empty())
     });
-    if has_modern {
+    if has_modern_with_records {
         modern
     } else {
         legacy
