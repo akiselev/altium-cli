@@ -6,6 +6,7 @@
 //! existing records matched by position.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
@@ -122,12 +123,18 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     // ── Step 1: Rebuild WideStrings first (needed for text primitive indices) ──
     let (wide_strings_data, wide_indices) = rebuild_wide_strings(&board.texts);
 
-    // ── Step 2: Replace parameter sections ──
-    replace_param_section(doc, ParamSectionKind::Nets6, build_net_records(&board.nets));
-    replace_param_section(
+    // ── Step 2: Merge parameter sections (preserve unknown fields from old records) ──
+    merge_param_section(
+        doc,
+        ParamSectionKind::Nets6,
+        build_net_records(&board.nets),
+        "NAME",
+    );
+    merge_param_section(
         doc,
         ParamSectionKind::Components6,
         build_component_records(&board.components),
+        "SOURCEDESIGNATOR",
     );
     replace_param_section(
         doc,
@@ -225,9 +232,21 @@ fn build_net_records(nets: &[Net]) -> Vec<StandardParamRecord> {
     nets.iter()
         .map(|net| {
             let mut params = ParameterCollection::new();
+            // Standard Altium net fields with sensible defaults.
+            params.insert("SELECTION", "FALSE".to_string());
+            params.insert("LAYER", "MULTILAYER".to_string());
+            params.insert("LOCKED", "FALSE".to_string());
+            params.insert("POLYGONOUTLINE", "FALSE".to_string());
+            params.insert("USERROUTED", "TRUE".to_string());
+            params.insert("KEEPOUT", "FALSE".to_string());
+            params.insert("UNIONINDEX", "0".to_string());
+            params.insert("PRIMITIVELOCK", "FALSE".to_string());
             params.insert("NAME", net.name.clone());
+            params.insert("VISIBLE", net.visible.to_param_value());
             params.insert("COLOR", net.color.to_param_value());
-            params.insert("NETISVISIBLE", net.visible.to_param_value());
+            params.insert("LOOPREMOVAL", "-1".to_string());
+            params.insert("OVERRIDECOLORFORDRAW", "FALSE".to_string());
+            params.insert("UNIQUEID", generate_unique_id());
             StandardParamRecord { params }
         })
         .collect()
@@ -238,9 +257,32 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
         .iter()
         .map(|comp| {
             let mut params = ParameterCollection::new();
-            params.insert("SOURCEDESIGNATOR", comp.designator.clone());
+            // Standard Altium component fields with sensible defaults.
+            // These are written in the order Altium Designer expects.
+            params.insert("SELECTION", "FALSE".to_string());
+            let layer_v6 = comp.layer.to_v6().unwrap_or(V6Layer::TopLayer);
+            params.insert("LAYER", layer_v6.to_string_name().to_uppercase());
+            params.insert("LOCKED", "FALSE".to_string());
+            params.insert("POLYGONOUTLINE", "FALSE".to_string());
+            params.insert("USERROUTED", "TRUE".to_string());
+            params.insert("KEEPOUT", "FALSE".to_string());
+            params.insert("PRIMITIVELOCK", "TRUE".to_string());
+            params.insert("X", MilCoord(comp.location.x).to_param_value());
+            params.insert("Y", MilCoord(comp.location.y).to_param_value());
             params.insert("PATTERN", comp.pattern.clone());
-            params.insert("COMMENT", comp.comment.clone());
+            params.insert("NAMEON", "TRUE".to_string());
+            params.insert("COMMENTON", "FALSE".to_string());
+            params.insert("GROUPNUM", "0".to_string());
+            params.insert("COUNT", "0".to_string());
+            params.insert("ROTATION", format!(" {:.13}", comp.rotation));
+            params.insert("HEIGHT", "0mil".to_string());
+            params.insert("COMMENTAUTOPOSITION", "0".to_string());
+            params.insert("UNIONINDEX", "0".to_string());
+            params.insert("CHANNELOFFSET", "0".to_string());
+            params.insert("SOURCEDESIGNATOR", comp.designator.clone());
+            params.insert("SOURCEUNIQUEID", String::new());
+            params.insert("SOURCEHIERARCHICALPATH", String::new());
+            params.insert("SOURCEFOOTPRINTLIBRARY", String::new());
             params.insert(
                 "SOURCECOMPONENTLIBRARY",
                 comp.source_library.clone(),
@@ -249,14 +291,34 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
                 "SOURCELIBREFERENCE",
                 comp.source_lib_reference.clone(),
             );
-            params.insert("X", MilCoord(comp.location.x).to_param_value());
-            params.insert("Y", MilCoord(comp.location.y).to_param_value());
-            params.insert("ROTATION", comp.rotation.to_param_value());
-            let layer_v6 = comp.layer.to_v6().unwrap_or(V6Layer::TopLayer);
-            params.insert("LAYER", (layer_v6 as u8).to_param_value());
+            params.insert("SOURCEDESCRIPTION", String::new());
+            params.insert("FOOTPRINTDESCRIPTION", String::new());
+            params.insert("COMMENT", comp.comment.clone());
+            // Generate a unique ID for new components.
+            params.insert("UNIQUEID", generate_unique_id());
             StandardParamRecord { params }
         })
         .collect()
+}
+
+/// Generate an 8-character uppercase alphabetic unique ID in the same format
+/// Altium Designer uses (e.g. "OYNEOHXI"). Uses a counter + time-based seed
+/// to ensure uniqueness within a process lifetime.
+fn generate_unique_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seed = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Mix the counter with a time-based component for cross-process uniqueness.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut val = seed.wrapping_mul(6364136223846793005).wrapping_add(now);
+    let mut id = String::with_capacity(8);
+    for _ in 0..8 {
+        id.push((b'A' + (val % 26) as u8) as char);
+        val /= 26;
+    }
+    id
 }
 
 fn build_polygon_records(polygons: &[Polygon], ctx: &WriteContext) -> Vec<StandardParamRecord> {
@@ -1041,6 +1103,66 @@ fn replace_param_section(
             kind,
             records,
         }));
+}
+
+/// Merge new records into a parameter section, preserving all fields from old records
+/// that are not explicitly overwritten by the new records. Records are matched by a
+/// key field (e.g. "SOURCEDESIGNATOR" for components, "NAME" for nets).
+///
+/// For matched records: old params are the base, new params overwrite on top.
+/// For new records (no old match): used as-is.
+/// Old records with no new match are removed.
+fn merge_param_section(
+    doc: &mut PcbDoc,
+    kind: ParamSectionKind,
+    new_records: Vec<StandardParamRecord>,
+    match_key: &str,
+) {
+    // Extract old records from the existing section.
+    let old_records = take_param_records(doc, kind);
+
+    // Build a lookup from match_key value → old record params.
+    let mut old_by_key: HashMap<String, &ParameterCollection> = HashMap::new();
+    for old_rec in &old_records {
+        if let Some(key_val) = old_rec.params.get(match_key) {
+            old_by_key.insert(key_val.to_ascii_uppercase(), &old_rec.params);
+        }
+    }
+
+    // Merge: for each new record, start with old params (if matched), then overlay new.
+    let merged: Vec<StandardParamRecord> = new_records
+        .into_iter()
+        .map(|new_rec| {
+            let key_val = new_rec.params.get(match_key).unwrap_or("");
+            let key_upper = key_val.to_ascii_uppercase();
+
+            if let Some(old_params) = old_by_key.get(&key_upper) {
+                // Start with all old params, then overwrite with new values.
+                let mut merged_params = (*old_params).clone();
+                for (k, v) in new_rec.params.iter() {
+                    merged_params.set(k, v.to_owned());
+                }
+                StandardParamRecord { params: merged_params }
+            } else {
+                // No old record — use new as-is.
+                new_rec
+            }
+        })
+        .collect();
+
+    replace_param_section(doc, kind, merged);
+}
+
+/// Extract records from a parameter section, leaving an empty Vec in place.
+fn take_param_records(doc: &mut PcbDoc, kind: ParamSectionKind) -> Vec<StandardParamRecord> {
+    for section in &mut doc.sections {
+        if let PcbDocSection::Parameter(param) = section {
+            if param.kind == kind {
+                return std::mem::take(&mut param.records);
+            }
+        }
+    }
+    Vec::new()
 }
 
 /// Take primitive records out of a section (replacing with empty Vec).

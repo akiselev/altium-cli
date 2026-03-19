@@ -35,9 +35,31 @@ impl ParameterCollection {
         self.params.is_empty()
     }
 
+    /// Returns the value for a key (case-insensitive lookup), or None if not present.
+    pub(crate) fn get(&self, key: &str) -> Option<&str> {
+        let key_upper = key.to_ascii_uppercase();
+        self.params
+            .iter()
+            .find(|(k, _)| k.to_ascii_uppercase() == key_upper)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Iterates over all (key, value) pairs in insertion order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.params.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
     // Inserts a key=value pair. Does nothing if the key already exists (first-occurrence-wins).
     pub(crate) fn insert(&mut self, key: &str, value: String) {
         self.params.entry(key.to_owned()).or_insert(value);
+    }
+
+    /// Inserts a key=value pair, overwriting any existing value for this key.
+    pub(crate) fn set(&mut self, key: &str, value: String) {
+        // Remove old entry (case-insensitive) then insert new.
+        let key_upper = key.to_ascii_uppercase();
+        self.params.retain(|k, _| k.to_ascii_uppercase() != key_upper);
+        self.params.insert(key.to_owned(), value);
     }
 
     // Inserts a DXP fractional coordinate. Always writes the integer part; writes

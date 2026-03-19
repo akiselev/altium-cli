@@ -396,7 +396,7 @@ run_roundtrip() {
 
     # Semantic diff
     local diff_out
-    diff_out=$($CLI cfb diff --semantic --case-insensitive-keys "$f" "$out_file" 2>&1) && rc=0 || rc=$?
+    diff_out=$($CLI cfb diff --semantic "$f" "$out_file" 2>&1) && rc=0 || rc=$?
     if [ $rc -eq 0 ]; then
       pass=$((pass + 1))
       if $VERBOSE; then
