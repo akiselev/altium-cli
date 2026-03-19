@@ -1,5 +1,5 @@
-pub use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 pub use super::lexer::TemplatePart;
+pub use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 
 /// Sync annotation attached to a block declaration: `#[annotation(id = "...", ...)]`.
 /// This is distinct from `AnnotationBlockDecl`, which represents Altium's designator
@@ -716,13 +716,18 @@ pub fn is_schdoc_object_type(s: &str) -> bool {
 
 /// PcbDoc primitive types at top level.
 pub const PCBDOC_PRIMITIVE_TYPES: &[&str] = &[
-    "track", "arc", "via", "fill", "text", "region", "component_body", "dimension",
+    "track",
+    "arc",
+    "via",
+    "fill",
+    "text",
+    "region",
+    "component_body",
+    "dimension",
 ];
 
 /// PcbDoc named block types at top level.
-pub const PCBDOC_BLOCK_TYPES: &[&str] = &[
-    "polygon", "rule", "class", "differential_pair",
-];
+pub const PCBDOC_BLOCK_TYPES: &[&str] = &["polygon", "rule", "class", "differential_pair"];
 
 pub fn is_pcbdoc_primitive_type(s: &str) -> bool {
     PCBDOC_PRIMITIVE_TYPES.contains(&s)

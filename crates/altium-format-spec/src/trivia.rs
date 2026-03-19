@@ -221,18 +221,13 @@ fn collect_place_spans(ast: &SpecFile) -> Vec<Span> {
 /// and the resulting AST.
 pub fn parse_with_trivia(source: &str) -> Result<(SpecFile, TriviaMap), SpecError> {
     let (tokens, comments) = lex(source).map_err(|e| parse_error_to_spec_error(e))?;
-    let ast = parse_spec_from_tokens(source, tokens)
-        .map_err(|e| parse_error_to_spec_error(e))?;
+    let ast = parse_spec_from_tokens(source, tokens).map_err(|e| parse_error_to_spec_error(e))?;
     let trivia = TriviaMap::build(comments, &ast, source);
     Ok((ast, trivia))
 }
 
 fn parse_error_to_spec_error(e: ParseError) -> SpecError {
-    SpecError::new(
-        SpecErrorCode::ParseError,
-        e.message,
-        Some(e.span),
-    )
+    SpecError::new(SpecErrorCode::ParseError, e.message, Some(e.span))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -427,7 +422,11 @@ place U2 {
 }
 "#;
         let result = parse_with_trivia(source);
-        assert!(result.is_ok(), "parse_with_trivia failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "parse_with_trivia failed: {:?}",
+            result.err()
+        );
         let (ast, _trivia) = result.unwrap();
         assert!(!ast.items.is_empty());
     }

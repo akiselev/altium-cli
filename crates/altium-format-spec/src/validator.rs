@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use crate::eval::{SpecError, SpecErrorCode, Severity};
-use crate::model::{SchDocSpec, PcbDocSpec};
+use crate::eval::{Severity, SpecError, SpecErrorCode};
+use crate::model::{PcbDocSpec, SchDocSpec};
 
 /// Phase 3 consistency checks for a compiled [`SchDocSpec`].
 ///
@@ -32,11 +32,20 @@ pub fn validate_schdoc_spec(spec: &SchDocSpec) -> Result<Vec<SpecError>, Vec<Spe
                         "duplicate designator '{}': first seen in sheet {}, also in sheet {}",
                         des,
                         first_sheet_idx,
-                        spec.sheets.iter().position(|s| std::ptr::eq(s, sheet)).unwrap_or(0),
+                        spec.sheets
+                            .iter()
+                            .position(|s| std::ptr::eq(s, sheet))
+                            .unwrap_or(0),
                     ),
                 ));
             } else {
-                seen_designators.insert(des, spec.sheets.iter().position(|s| std::ptr::eq(s, sheet)).unwrap_or(0));
+                seen_designators.insert(
+                    des,
+                    spec.sheets
+                        .iter()
+                        .position(|s| std::ptr::eq(s, sheet))
+                        .unwrap_or(0),
+                );
             }
         }
     }
@@ -79,24 +88,44 @@ pub fn validate_schdoc_spec(spec: &SchDocSpec) -> Result<Vec<SpecError>, Vec<Spe
     // Check sheet annotations.
     for sheet in &spec.sheets {
         if let Some(ann) = &sheet.annotation {
-            check_annotation_id(ann.id.as_str(), "sheet", &mut seen_annotation_ids, &mut errors);
+            check_annotation_id(
+                ann.id.as_str(),
+                "sheet",
+                &mut seen_annotation_ids,
+                &mut errors,
+            );
         }
         // Check component annotations.
         for component in &sheet.components {
             if let Some(ann) = &component.annotation {
-                check_annotation_id(ann.id.as_str(), &component.designator, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &component.designator,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         // Check net annotations.
         for net in &sheet.nets {
             if let Some(ann) = &net.annotation {
-                check_annotation_id(ann.id.as_str(), &net.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &net.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         // Check power annotations.
         for power in &sheet.powers {
             if let Some(ann) = &power.annotation {
-                check_annotation_id(ann.id.as_str(), &power.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &power.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
     }
@@ -168,36 +197,71 @@ pub fn validate_pcbdoc_spec(spec: &PcbDocSpec) -> Result<Vec<SpecError>, Vec<Spe
 
     for board in &spec.boards {
         if let Some(ann) = &board.annotation {
-            check_annotation_id(ann.id.as_str(), &board.name, &mut seen_annotation_ids, &mut errors);
+            check_annotation_id(
+                ann.id.as_str(),
+                &board.name,
+                &mut seen_annotation_ids,
+                &mut errors,
+            );
         }
         for component in &board.components {
             if let Some(ann) = &component.annotation {
-                check_annotation_id(ann.id.as_str(), &component.designator, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &component.designator,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         for net in &board.nets {
             if let Some(ann) = &net.annotation {
-                check_annotation_id(ann.id.as_str(), &net.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &net.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         for polygon in &board.polygons {
             if let Some(ann) = &polygon.annotation {
-                check_annotation_id(ann.id.as_str(), &polygon.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &polygon.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         for rule in &board.rules {
             if let Some(ann) = &rule.annotation {
-                check_annotation_id(ann.id.as_str(), &rule.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &rule.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         for class in &board.classes {
             if let Some(ann) = &class.annotation {
-                check_annotation_id(ann.id.as_str(), &class.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &class.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
         for dp in &board.differential_pairs {
             if let Some(ann) = &dp.annotation {
-                check_annotation_id(ann.id.as_str(), &dp.name, &mut seen_annotation_ids, &mut errors);
+                check_annotation_id(
+                    ann.id.as_str(),
+                    &dp.name,
+                    &mut seen_annotation_ids,
+                    &mut errors,
+                );
             }
         }
     }
@@ -234,8 +298,8 @@ fn check_annotation_id<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{SchDocSpec, SheetSpec, SchDocComponentSpec, NetSpec, PinRef, SymbolRef};
     use crate::annotation::CompiledAnnotation;
+    use crate::model::{NetSpec, PinRef, SchDocComponentSpec, SchDocSpec, SheetSpec, SymbolRef};
     use altium_format_types::{Coord, CoordPoint};
 
     fn make_component(designator: &str) -> SchDocComponentSpec {
@@ -243,7 +307,10 @@ mod tests {
             annotation: None,
             designator: designator.to_string(),
             symbol: SymbolRef::Literal(designator.to_string()),
-            location: CoordPoint { x: Coord::ZERO, y: Coord::ZERO },
+            location: CoordPoint {
+                x: Coord::ZERO,
+                y: Coord::ZERO,
+            },
             orientation: None,
             is_mirrored: None,
             description: None,
@@ -405,7 +472,8 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|w| w.severity == Severity::Warning && w.code == SpecErrorCode::UnresolvedPinRef),
+                .any(|w| w.severity == Severity::Warning
+                    && w.code == SpecErrorCode::UnresolvedPinRef),
             "expected UnresolvedPinRef warning, got: {:?}",
             warnings,
         );
@@ -423,7 +491,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
-        parameters: indexmap::IndexMap::new(),
+            parameters: indexmap::IndexMap::new(),
         }
     }
 

@@ -11,8 +11,8 @@
 
 use rand::Rng;
 
-use crate::eval::{SpecError, SpecErrorCode};
 use crate::diagnostic::Span;
+use crate::eval::{SpecError, SpecErrorCode};
 
 // ── Short ID alphabet ─────────────────────────────────────────────────────────
 
@@ -137,7 +137,12 @@ pub fn compile_annotation(
     let group = ann.group.as_ref().map(|g| g.node.clone());
     let source_id = ann.source_id.as_ref().map(|s| s.node.clone());
 
-    Ok(CompiledAnnotation { id, stable, group, source_id })
+    Ok(CompiledAnnotation {
+        id,
+        stable,
+        group,
+        source_id,
+    })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -215,7 +220,10 @@ mod tests {
         // With 36^8 ≈ 2.8T combinations this will not flake in practice.
         let a = generate_short_id();
         let b = generate_short_id();
-        assert_ne!(a, b, "two sequential generate_short_id() calls produced the same ID");
+        assert_ne!(
+            a, b,
+            "two sequential generate_short_id() calls produced the same ID"
+        );
     }
 
     // ── compile_annotation ────────────────────────────────────────────────
@@ -227,7 +235,10 @@ mod tests {
 
         let dummy_span = crate::diagnostic::Span { start: 0, end: 10 };
         let ann = BlockAnnotation {
-            id: Some(Spanned { node: "AB12CD34".to_string(), span: dummy_span }),
+            id: Some(Spanned {
+                node: "AB12CD34".to_string(),
+                span: dummy_span,
+            }),
             stable: None,
             group: None,
             source_id: None,
@@ -247,7 +258,10 @@ mod tests {
         let dummy_span = crate::diagnostic::Span { start: 0, end: 10 };
         let ann = BlockAnnotation {
             id: None,
-            stable: Some(Spanned { node: true, span: dummy_span }),
+            stable: Some(Spanned {
+                node: true,
+                span: dummy_span,
+            }),
             group: None,
             source_id: None,
         };
@@ -265,9 +279,15 @@ mod tests {
 
         let dummy_span = crate::diagnostic::Span { start: 0, end: 10 };
         let ann = BlockAnnotation {
-            id: Some(Spanned { node: "AB12CD34".to_string(), span: dummy_span }),
+            id: Some(Spanned {
+                node: "AB12CD34".to_string(),
+                span: dummy_span,
+            }),
             stable: None,
-            group: Some(Spanned { node: "power".to_string(), span: dummy_span }),
+            group: Some(Spanned {
+                node: "power".to_string(),
+                span: dummy_span,
+            }),
             source_id: None,
         };
         let mut seen = HashSet::new();
@@ -282,7 +302,10 @@ mod tests {
 
         let dummy_span = crate::diagnostic::Span { start: 0, end: 10 };
         let ann = BlockAnnotation {
-            id: Some(Spanned { node: "short".to_string(), span: dummy_span }),
+            id: Some(Spanned {
+                node: "short".to_string(),
+                span: dummy_span,
+            }),
             stable: None,
             group: None,
             source_id: None,
@@ -303,7 +326,10 @@ mod tests {
 
         let dummy_span = crate::diagnostic::Span { start: 0, end: 10 };
         let ann = BlockAnnotation {
-            id: Some(Spanned { node: "ab12cd34".to_string(), span: dummy_span }),
+            id: Some(Spanned {
+                node: "ab12cd34".to_string(),
+                span: dummy_span,
+            }),
             stable: None,
             group: None,
             source_id: None,
@@ -324,7 +350,10 @@ mod tests {
 
         let dummy_span = crate::diagnostic::Span { start: 0, end: 10 };
         let ann = BlockAnnotation {
-            id: Some(Spanned { node: "AB12CD34".to_string(), span: dummy_span }),
+            id: Some(Spanned {
+                node: "AB12CD34".to_string(),
+                span: dummy_span,
+            }),
             stable: None,
             group: None,
             source_id: None,
@@ -343,8 +372,8 @@ mod tests {
 
     #[cfg(feature = "proptest")]
     mod proptests {
-        use proptest::prelude::*;
         use super::*;
+        use proptest::prelude::*;
 
         proptest! {
             #[test]

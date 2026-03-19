@@ -505,7 +505,9 @@ fn read_template(input: &str, start_tick: usize) -> Result<(Vec<TemplatePart>, u
                             format!("invalid escape sequence \\{}", esc),
                             Span::new(esc_start as u32, (i + esc.len_utf8()) as u32),
                         )
-                        .with_help("valid escapes in templates: \\\\, \\`, \\n, \\r, \\t, \\{, \\}"));
+                        .with_help(
+                            "valid escapes in templates: \\\\, \\`, \\n, \\r, \\t, \\{, \\}",
+                        ));
                     }
                 };
                 literal.push(mapped);
@@ -704,12 +706,7 @@ mod tests {
     use crate::diagnostic::Unit;
 
     fn lex_kinds(input: &str) -> Vec<TokenKind> {
-        lex(input)
-            .unwrap()
-            .0
-            .into_iter()
-            .map(|t| t.kind)
-            .collect()
+        lex(input).unwrap().0.into_iter().map(|t| t.kind).collect()
     }
 
     fn lex_ok(input: &str) -> Vec<Token> {
@@ -718,92 +715,115 @@ mod tests {
 
     #[test]
     fn test_basic_keywords() {
-        let kinds = lex_kinds("import as component footprint pin pad part parameter alias row column grid board let true false null");
-        assert_eq!(kinds, vec![
-            TokenKind::Import,
-            TokenKind::As,
-            TokenKind::Component,
-            TokenKind::Footprint,
-            TokenKind::Pin,
-            TokenKind::Pad,
-            TokenKind::Part,
-            TokenKind::Parameter,
-            TokenKind::Alias,
-            TokenKind::Row,
-            TokenKind::Column,
-            TokenKind::Grid,
-            TokenKind::Board,
-            TokenKind::Let,
-            TokenKind::True,
-            TokenKind::False,
-            TokenKind::Null,
-            TokenKind::Eof,
-        ]);
+        let kinds = lex_kinds(
+            "import as component footprint pin pad part parameter alias row column grid board let true false null",
+        );
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Import,
+                TokenKind::As,
+                TokenKind::Component,
+                TokenKind::Footprint,
+                TokenKind::Pin,
+                TokenKind::Pad,
+                TokenKind::Part,
+                TokenKind::Parameter,
+                TokenKind::Alias,
+                TokenKind::Row,
+                TokenKind::Column,
+                TokenKind::Grid,
+                TokenKind::Board,
+                TokenKind::Let,
+                TokenKind::True,
+                TokenKind::False,
+                TokenKind::Null,
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_graphic_types_are_idents() {
         // Graphic types are NOT keywords — they lex as Ident
-        let kinds = lex_kinds("line rectangle arc elliptical_arc ellipse polyline polygon bezier pie round_rectangle label text_frame image track fill region text via component_body");
+        let kinds = lex_kinds(
+            "line rectangle arc elliptical_arc ellipse polyline polygon bezier pie round_rectangle label text_frame image track fill region text via component_body",
+        );
         for kind in &kinds[..kinds.len() - 1] {
-            assert!(matches!(kind, TokenKind::Ident(_)), "expected Ident, got {:?}", kind);
+            assert!(
+                matches!(kind, TokenKind::Ident(_)),
+                "expected Ident, got {:?}",
+                kind
+            );
         }
     }
 
     #[test]
     fn test_integer() {
         let kinds = lex_kinds("42 0 100");
-        assert_eq!(kinds, vec![
-            TokenKind::Integer(42),
-            TokenKind::Integer(0),
-            TokenKind::Integer(100),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Integer(42),
+                TokenKind::Integer(0),
+                TokenKind::Integer(100),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_float() {
         let kinds = lex_kinds("3.14 0.5");
-        assert_eq!(kinds, vec![
-            TokenKind::Float(3.14),
-            TokenKind::Float(0.5),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Float(3.14),
+                TokenKind::Float(0.5),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_dim_tokens() {
         let kinds = lex_kinds("20mm 100mil 2.54mm 1in 50dxp 100raw");
-        assert_eq!(kinds, vec![
-            TokenKind::Dim(20.0, Unit::Mm),
-            TokenKind::Dim(100.0, Unit::Mil),
-            TokenKind::Dim(2.54, Unit::Mm),
-            TokenKind::Dim(1.0, Unit::Inch),
-            TokenKind::Dim(50.0, Unit::Dxp),
-            TokenKind::Dim(100.0, Unit::Raw),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Dim(20.0, Unit::Mm),
+                TokenKind::Dim(100.0, Unit::Mil),
+                TokenKind::Dim(2.54, Unit::Mm),
+                TokenKind::Dim(1.0, Unit::Inch),
+                TokenKind::Dim(50.0, Unit::Dxp),
+                TokenKind::Dim(100.0, Unit::Raw),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_dim_disambiguation_space() {
         // "20 mm" should be Integer + Ident, not Dim
         let kinds = lex_kinds("20 mm");
-        assert_eq!(kinds, vec![
-            TokenKind::Integer(20),
-            TokenKind::Ident("mm".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Integer(20),
+                TokenKind::Ident("mm".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_unknown_unit_suffix_on_integer_becomes_ident() {
         // Integer followed by unknown suffix is treated as an identifier, not an error.
         let kinds = lex_kinds("20xyz");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("20xyz".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Ident("20xyz".to_string()), TokenKind::Eof,]
+        );
     }
 
     #[test]
@@ -815,39 +835,39 @@ mod tests {
     #[test]
     fn digit_starting_ident() {
         let kinds = lex_kinds("74LVC1G17");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("74LVC1G17".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Ident("74LVC1G17".to_string()), TokenKind::Eof,]
+        );
     }
 
     #[test]
     fn pure_integer_still_works() {
         let kinds = lex_kinds("42");
-        assert_eq!(kinds, vec![
-            TokenKind::Integer(42),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(kinds, vec![TokenKind::Integer(42), TokenKind::Eof,]);
     }
 
     #[test]
     fn dimension_still_works() {
         let kinds = lex_kinds("100mil");
-        assert_eq!(kinds, vec![
-            TokenKind::Dim(100.0, Unit::Mil),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Dim(100.0, Unit::Mil), TokenKind::Eof,]
+        );
     }
 
     #[test]
     fn test_color() {
         let kinds = lex_kinds("#FF0000 #00ff00 #aAbBcC");
-        assert_eq!(kinds, vec![
-            TokenKind::Color(0xFF, 0x00, 0x00),
-            TokenKind::Color(0x00, 0xFF, 0x00),
-            TokenKind::Color(0xAA, 0xBB, 0xCC),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Color(0xFF, 0x00, 0x00),
+                TokenKind::Color(0x00, 0xFF, 0x00),
+                TokenKind::Color(0xAA, 0xBB, 0xCC),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
@@ -865,22 +885,24 @@ mod tests {
     #[test]
     fn test_hash_token() {
         let kinds = lex_kinds("#[");
-        assert_eq!(kinds, vec![
-            TokenKind::Hash,
-            TokenKind::LBracket,
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Hash, TokenKind::LBracket, TokenKind::Eof,]
+        );
     }
 
     #[test]
     fn test_dollar_ident() {
         let kinds = lex_kinds("$body $fp $p2");
-        assert_eq!(kinds, vec![
-            TokenKind::DollarIdent("body".to_string()),
-            TokenKind::DollarIdent("fp".to_string()),
-            TokenKind::DollarIdent("p2".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::DollarIdent("body".to_string()),
+                TokenKind::DollarIdent("fp".to_string()),
+                TokenKind::DollarIdent("p2".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
@@ -892,20 +914,23 @@ mod tests {
     #[test]
     fn test_string() {
         let kinds = lex_kinds(r#""hello" "world""#);
-        assert_eq!(kinds, vec![
-            TokenKind::String("hello".to_string()),
-            TokenKind::String("world".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::String("hello".to_string()),
+                TokenKind::String("world".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_string_escapes() {
         let kinds = lex_kinds(r#""\n\t\r\"\\""#);
-        assert_eq!(kinds, vec![
-            TokenKind::String("\n\t\r\"\\".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::String("\n\t\r\"\\".to_string()), TokenKind::Eof,]
+        );
     }
 
     #[test]
@@ -957,43 +982,55 @@ mod tests {
     #[test]
     fn test_newline_emitted() {
         let kinds = lex_kinds("a\nb");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("a".to_string()),
-            TokenKind::Newline,
-            TokenKind::Ident("b".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Newline,
+                TokenKind::Ident("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_line_comment_consumed() {
         let kinds = lex_kinds("a // this is a comment\nb");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("a".to_string()),
-            TokenKind::Newline,
-            TokenKind::Ident("b".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Newline,
+                TokenKind::Ident("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_block_comment_consumed() {
         let kinds = lex_kinds("a /* block comment */ b");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("a".to_string()),
-            TokenKind::Ident("b".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Ident("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_nested_block_comment() {
         let kinds = lex_kinds("a /* outer /* inner */ outer */ b");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("a".to_string()),
-            TokenKind::Ident("b".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Ident("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
@@ -1004,44 +1041,53 @@ mod tests {
     #[test]
     fn test_dotdotdot() {
         let kinds = lex_kinds("...smd");
-        assert_eq!(kinds, vec![
-            TokenKind::DotDotDot,
-            TokenKind::Ident("smd".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::DotDotDot,
+                TokenKind::Ident("smd".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_punctuation() {
         let kinds = lex_kinds("{ } ( ) [ ] : , . = + - * /");
-        assert_eq!(kinds, vec![
-            TokenKind::LBrace,
-            TokenKind::RBrace,
-            TokenKind::LParen,
-            TokenKind::RParen,
-            TokenKind::LBracket,
-            TokenKind::RBracket,
-            TokenKind::Colon,
-            TokenKind::Comma,
-            TokenKind::Dot,
-            TokenKind::Eq,
-            TokenKind::Plus,
-            TokenKind::Minus,
-            TokenKind::Star,
-            TokenKind::Slash,
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::Colon,
+                TokenKind::Comma,
+                TokenKind::Dot,
+                TokenKind::Eq,
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_semicolon() {
         let kinds = lex_kinds("a; b");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident("a".to_string()),
-            TokenKind::Semi,
-            TokenKind::Ident("b".to_string()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Semi,
+                TokenKind::Ident("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]

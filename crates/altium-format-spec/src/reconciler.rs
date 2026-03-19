@@ -17,8 +17,8 @@ use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec,
     PcbDocClassSpec, PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec,
-    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PinSpec,
-    PrjPcbSpec, ProjectSpec, SchDocSpec, SchDocObjectSpec, SchLibSpec, PcbLibSpec,
+    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbLibSpec, PinSpec,
+    PrjPcbSpec, ProjectSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -34,11 +34,13 @@ pub fn reconcile_schlib(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> Result<EngineeringChangeOrder, SpecError> {
-    let existing_components = doc.components()
+    let existing_components = doc
+        .components()
         .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
     // Build lookup by lib_reference
-    let existing_map: HashMap<&str, &api::Component> = existing_components.iter()
+    let existing_map: HashMap<&str, &api::Component> = existing_components
+        .iter()
         .map(|c| (c.lib_reference.as_str(), c))
         .collect();
 
@@ -70,11 +72,7 @@ pub fn reconcile_schlib_empty(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
-    let changes: Vec<EntityChange> = spec
-        .components
-        .iter()
-        .map(component_to_add)
-        .collect();
+    let changes: Vec<EntityChange> = spec.components.iter().map(component_to_add).collect();
     let summary = compute_summary(&changes);
     EngineeringChangeOrder {
         library_path,
@@ -141,11 +139,7 @@ pub fn reconcile_pcblib_empty(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
-    let changes: Vec<EntityChange> = spec
-        .footprints
-        .iter()
-        .map(footprint_spec_to_add)
-        .collect();
+    let changes: Vec<EntityChange> = spec.footprints.iter().map(footprint_spec_to_add).collect();
     let summary = compute_summary(&changes);
     EngineeringChangeOrder {
         library_path,
@@ -165,7 +159,8 @@ pub fn reconcile_prjpcb(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> Result<EngineeringChangeOrder, SpecError> {
-    let existing = doc.project()
+    let existing = doc
+        .project()
         .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
     let mut changes = Vec::new();
@@ -189,11 +184,7 @@ pub fn reconcile_prjpcb_empty(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
-    let changes: Vec<EntityChange> = spec
-        .projects
-        .iter()
-        .map(project_to_add)
-        .collect();
+    let changes: Vec<EntityChange> = spec.projects.iter().map(project_to_add).collect();
     let summary = compute_summary(&changes);
     EngineeringChangeOrder {
         library_path,
@@ -208,34 +199,126 @@ fn diff_project(spec: &ProjectSpec, existing: &api::Project) -> EntityChange {
     let mut prop_changes = Vec::new();
 
     // Diff scalar string fields
-    diff_opt_field_vs_str("output_path", &spec.output_path, &existing.output_path, &mut prop_changes);
-    diff_opt_field_vs_str("channel_designator_format", &spec.channel_designator_format, &existing.channel_designator_format, &mut prop_changes);
-    diff_opt_field_vs_str("channel_room_level_separator", &spec.channel_room_level_separator, &existing.channel_room_level_separator, &mut prop_changes);
+    diff_opt_field_vs_str(
+        "output_path",
+        &spec.output_path,
+        &existing.output_path,
+        &mut prop_changes,
+    );
+    diff_opt_field_vs_str(
+        "channel_designator_format",
+        &spec.channel_designator_format,
+        &existing.channel_designator_format,
+        &mut prop_changes,
+    );
+    diff_opt_field_vs_str(
+        "channel_room_level_separator",
+        &spec.channel_room_level_separator,
+        &existing.channel_room_level_separator,
+        &mut prop_changes,
+    );
 
     // Diff scalar bool fields
-    diff_opt_bool("allow_port_net_names", spec.allow_port_net_names, existing.allow_port_net_names, &mut prop_changes);
-    diff_opt_bool("allow_sheet_entry_net_names", spec.allow_sheet_entry_net_names, existing.allow_sheet_entry_net_names, &mut prop_changes);
-    diff_opt_bool("netlist_single_pin_nets", spec.netlist_single_pin_nets, existing.netlist_single_pin_nets, &mut prop_changes);
-    diff_opt_bool("append_sheet_number_to_local_nets", spec.append_sheet_number_to_local_nets, existing.append_sheet_number_to_local_nets, &mut prop_changes);
-    diff_opt_bool("name_nets_hierarchically", spec.name_nets_hierarchically, existing.name_nets_hierarchically, &mut prop_changes);
-    diff_opt_bool("power_port_names_take_priority", spec.power_port_names_take_priority, existing.power_port_names_take_priority, &mut prop_changes);
-    diff_opt_bool("pin_swap_by_netlabel", spec.pin_swap_by_netlabel, existing.pin_swap_by_netlabel, &mut prop_changes);
-    diff_opt_bool("pin_swap_by_pin", spec.pin_swap_by_pin, existing.pin_swap_by_pin, &mut prop_changes);
-    diff_opt_bool("cross_ref_cross_sheets", spec.cross_ref_cross_sheets, existing.cross_ref_cross_sheets, &mut prop_changes);
-    diff_opt_bool("cross_ref_sheet_entries", spec.cross_ref_sheet_entries, existing.cross_ref_sheet_entries, &mut prop_changes);
+    diff_opt_bool(
+        "allow_port_net_names",
+        spec.allow_port_net_names,
+        existing.allow_port_net_names,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "allow_sheet_entry_net_names",
+        spec.allow_sheet_entry_net_names,
+        existing.allow_sheet_entry_net_names,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "netlist_single_pin_nets",
+        spec.netlist_single_pin_nets,
+        existing.netlist_single_pin_nets,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "append_sheet_number_to_local_nets",
+        spec.append_sheet_number_to_local_nets,
+        existing.append_sheet_number_to_local_nets,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "name_nets_hierarchically",
+        spec.name_nets_hierarchically,
+        existing.name_nets_hierarchically,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "power_port_names_take_priority",
+        spec.power_port_names_take_priority,
+        existing.power_port_names_take_priority,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "pin_swap_by_netlabel",
+        spec.pin_swap_by_netlabel,
+        existing.pin_swap_by_netlabel,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "pin_swap_by_pin",
+        spec.pin_swap_by_pin,
+        existing.pin_swap_by_pin,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "cross_ref_cross_sheets",
+        spec.cross_ref_cross_sheets,
+        existing.cross_ref_cross_sheets,
+        &mut prop_changes,
+    );
+    diff_opt_bool(
+        "cross_ref_sheet_entries",
+        spec.cross_ref_sheet_entries,
+        existing.cross_ref_sheet_entries,
+        &mut prop_changes,
+    );
 
     // Diff scalar enum fields
-    diff_opt_enum("hierarchy_mode", spec.hierarchy_mode, existing.hierarchy_mode, &mut prop_changes);
-    diff_opt_enum("channel_room_naming_style", spec.channel_room_naming_style, existing.channel_room_naming_style, &mut prop_changes);
-    diff_opt_enum("cross_ref_sheet_style", spec.cross_ref_sheet_style, existing.cross_ref_sheet_style, &mut prop_changes);
-    diff_opt_enum("cross_ref_location_style", spec.cross_ref_location_style, existing.cross_ref_location_style, &mut prop_changes);
-    diff_opt_enum("cross_ref_ports", spec.cross_ref_ports, existing.cross_ref_ports, &mut prop_changes);
+    diff_opt_enum(
+        "hierarchy_mode",
+        spec.hierarchy_mode,
+        existing.hierarchy_mode,
+        &mut prop_changes,
+    );
+    diff_opt_enum(
+        "channel_room_naming_style",
+        spec.channel_room_naming_style,
+        existing.channel_room_naming_style,
+        &mut prop_changes,
+    );
+    diff_opt_enum(
+        "cross_ref_sheet_style",
+        spec.cross_ref_sheet_style,
+        existing.cross_ref_sheet_style,
+        &mut prop_changes,
+    );
+    diff_opt_enum(
+        "cross_ref_location_style",
+        spec.cross_ref_location_style,
+        existing.cross_ref_location_style,
+        &mut prop_changes,
+    );
+    diff_opt_enum(
+        "cross_ref_ports",
+        spec.cross_ref_ports,
+        existing.cross_ref_ports,
+        &mut prop_changes,
+    );
 
     // Diff children
     let mut children = Vec::new();
 
     // Documents
-    let existing_docs: HashMap<&str, &api::DocumentRef> = existing.documents.iter()
+    let existing_docs: HashMap<&str, &api::DocumentRef> = existing
+        .documents
+        .iter()
         .map(|d| (d.path.as_str(), d))
         .collect();
     for doc_spec in &spec.documents {
@@ -254,7 +337,9 @@ fn diff_project(spec: &ProjectSpec, existing: &api::Project) -> EntityChange {
     }
 
     // Output groups
-    let existing_groups: HashMap<&str, &api::OutputGroup> = existing.output_groups.iter()
+    let existing_groups: HashMap<&str, &api::OutputGroup> = existing
+        .output_groups
+        .iter()
         .map(|g| (g.name.as_str(), g))
         .collect();
     for group_spec in &spec.output_groups {
@@ -272,7 +357,9 @@ fn diff_project(spec: &ProjectSpec, existing: &api::Project) -> EntityChange {
     }
 
     // Variants
-    let existing_variants: HashMap<&str, &api::ProjectVariant> = existing.variants.iter()
+    let existing_variants: HashMap<&str, &api::ProjectVariant> = existing
+        .variants
+        .iter()
         .map(|v| (v.description.as_str(), v))
         .collect();
     for var_spec in &spec.variants {
@@ -349,7 +436,11 @@ fn diff_project(spec: &ProjectSpec, existing: &api::Project) -> EntityChange {
         }
     }
 
-    if prop_changes.is_empty() && children.iter().all(|c| matches!(c, EntityChange::Unchanged { .. })) {
+    if prop_changes.is_empty()
+        && children
+            .iter()
+            .all(|c| matches!(c, EntityChange::Unchanged { .. }))
+    {
         EntityChange::Unchanged {
             kind: EntityKind::Project,
             identity: spec.name.clone(),
@@ -366,15 +457,41 @@ fn diff_project(spec: &ProjectSpec, existing: &api::Project) -> EntityChange {
 
 fn project_to_add(spec: &ProjectSpec) -> EntityChange {
     let mut props = Vec::new();
-    if let Some(ref v) = spec.hierarchy_mode { props.push(PropValue { field: "hierarchy_mode".into(), value: v.to_string() }); }
-    if let Some(ref v) = spec.output_path { props.push(PropValue { field: "output_path".into(), value: v.clone() }); }
-    if let Some(v) = spec.allow_port_net_names { props.push(PropValue { field: "allow_port_net_names".into(), value: v.to_string() }); }
-    if let Some(v) = spec.allow_sheet_entry_net_names { props.push(PropValue { field: "allow_sheet_entry_net_names".into(), value: v.to_string() }); }
+    if let Some(ref v) = spec.hierarchy_mode {
+        props.push(PropValue {
+            field: "hierarchy_mode".into(),
+            value: v.to_string(),
+        });
+    }
+    if let Some(ref v) = spec.output_path {
+        props.push(PropValue {
+            field: "output_path".into(),
+            value: v.clone(),
+        });
+    }
+    if let Some(v) = spec.allow_port_net_names {
+        props.push(PropValue {
+            field: "allow_port_net_names".into(),
+            value: v.to_string(),
+        });
+    }
+    if let Some(v) = spec.allow_sheet_entry_net_names {
+        props.push(PropValue {
+            field: "allow_sheet_entry_net_names".into(),
+            value: v.to_string(),
+        });
+    }
 
     let mut children = Vec::new();
-    for doc in &spec.documents { children.push(document_to_add(doc)); }
-    for group in &spec.output_groups { children.push(output_group_to_add(group)); }
-    for var in &spec.variants { children.push(variant_to_add(var)); }
+    for doc in &spec.documents {
+        children.push(document_to_add(doc));
+    }
+    for group in &spec.output_groups {
+        children.push(output_group_to_add(group));
+    }
+    for var in &spec.variants {
+        children.push(variant_to_add(var));
+    }
 
     EntityChange::Add {
         kind: EntityKind::Project,
@@ -386,8 +503,18 @@ fn project_to_add(spec: &ProjectSpec) -> EntityChange {
 
 fn document_to_add(spec: &crate::model::DocumentSpec) -> EntityChange {
     let mut props = Vec::new();
-    if let Some(v) = spec.annotation_enabled { props.push(PropValue { field: "annotation_enabled".into(), value: v.to_string() }); }
-    if let Some(v) = spec.annotate_start_value { props.push(PropValue { field: "annotate_start_value".into(), value: v.to_string() }); }
+    if let Some(v) = spec.annotation_enabled {
+        props.push(PropValue {
+            field: "annotation_enabled".into(),
+            value: v.to_string(),
+        });
+    }
+    if let Some(v) = spec.annotate_start_value {
+        props.push(PropValue {
+            field: "annotate_start_value".into(),
+            value: v.to_string(),
+        });
+    }
     EntityChange::Add {
         kind: EntityKind::Document,
         identity: spec.path.clone(),
@@ -398,18 +525,37 @@ fn document_to_add(spec: &crate::model::DocumentSpec) -> EntityChange {
 
 fn output_group_to_add(spec: &crate::model::OutputGroupSpec) -> EntityChange {
     let mut props = Vec::new();
-    if let Some(ref v) = spec.description { props.push(PropValue { field: "description".into(), value: v.clone() }); }
-    let children: Vec<EntityChange> = spec.outputs.iter().map(|out| {
-        let mut out_props = Vec::new();
-        if let Some(ref v) = out.output_type { out_props.push(PropValue { field: "output_type".into(), value: v.clone() }); }
-        if let Some(ref v) = out.document_path { out_props.push(PropValue { field: "document_path".into(), value: v.clone() }); }
-        EntityChange::Add {
-            kind: EntityKind::OutputJob,
-            identity: out.name.clone(),
-            props: out_props,
-            children: vec![],
-        }
-    }).collect();
+    if let Some(ref v) = spec.description {
+        props.push(PropValue {
+            field: "description".into(),
+            value: v.clone(),
+        });
+    }
+    let children: Vec<EntityChange> = spec
+        .outputs
+        .iter()
+        .map(|out| {
+            let mut out_props = Vec::new();
+            if let Some(ref v) = out.output_type {
+                out_props.push(PropValue {
+                    field: "output_type".into(),
+                    value: v.clone(),
+                });
+            }
+            if let Some(ref v) = out.document_path {
+                out_props.push(PropValue {
+                    field: "document_path".into(),
+                    value: v.clone(),
+                });
+            }
+            EntityChange::Add {
+                kind: EntityKind::OutputJob,
+                identity: out.name.clone(),
+                props: out_props,
+                children: vec![],
+            }
+        })
+        .collect();
     EntityChange::Add {
         kind: EntityKind::OutputGroup,
         identity: spec.name.clone(),
@@ -420,12 +566,27 @@ fn output_group_to_add(spec: &crate::model::OutputGroupSpec) -> EntityChange {
 
 fn variant_to_add(spec: &crate::model::VariantSpec) -> EntityChange {
     let mut props = Vec::new();
-    if let Some(ref v) = spec.description { props.push(PropValue { field: "description".into(), value: v.clone() }); }
+    if let Some(ref v) = spec.description {
+        props.push(PropValue {
+            field: "description".into(),
+            value: v.clone(),
+        });
+    }
     let mut children = Vec::new();
     for var in &spec.variations {
         let mut var_props = Vec::new();
-        if let Some(ref k) = var.kind { var_props.push(PropValue { field: "kind".into(), value: k.to_string() }); }
-        if let Some(ref v) = var.alternate_part { var_props.push(PropValue { field: "alternate_part".into(), value: v.clone() }); }
+        if let Some(ref k) = var.kind {
+            var_props.push(PropValue {
+                field: "kind".into(),
+                value: k.to_string(),
+            });
+        }
+        if let Some(ref v) = var.alternate_part {
+            var_props.push(PropValue {
+                field: "alternate_part".into(),
+                value: v.clone(),
+            });
+        }
         children.push(EntityChange::Add {
             kind: EntityKind::Variation,
             identity: var.designator.clone(),
@@ -453,7 +614,12 @@ fn diff_opt_bool(name: &str, spec_val: Option<bool>, existing: bool, out: &mut V
     }
 }
 
-fn diff_opt_enum<T: PartialEq + std::fmt::Display>(name: &str, spec_val: Option<T>, existing: T, out: &mut Vec<PropChange>) {
+fn diff_opt_enum<T: PartialEq + std::fmt::Display>(
+    name: &str,
+    spec_val: Option<T>,
+    existing: T,
+    out: &mut Vec<PropChange>,
+) {
     if let Some(sv) = spec_val {
         if sv != existing {
             out.push(PropChange {
@@ -468,10 +634,16 @@ fn diff_opt_enum<T: PartialEq + std::fmt::Display>(name: &str, spec_val: Option<
 fn footprint_spec_to_add(spec: &FootprintSpec) -> EntityChange {
     let mut props = Vec::new();
     if let Some(ref desc) = spec.description {
-        props.push(PropValue { field: "description".to_string(), value: desc.clone() });
+        props.push(PropValue {
+            field: "description".to_string(),
+            value: desc.clone(),
+        });
     }
     if let Some(ref pattern) = spec.pattern {
-        props.push(PropValue { field: "pattern".to_string(), value: pattern.clone() });
+        props.push(PropValue {
+            field: "pattern".to_string(),
+            value: pattern.clone(),
+        });
     }
 
     let children: Vec<EntityChange> = spec.pads.iter().map(pad_spec_to_add).collect();
@@ -491,25 +663,46 @@ fn pad_spec_to_add(spec: &PadSpec) -> EntityChange {
         value: format!("{},{}", spec.at.x.to_mils(), spec.at.y.to_mils()),
     });
     if let Some(shape) = spec.shape {
-        props.push(PropValue { field: "shape".to_string(), value: format!("{shape:?}") });
+        props.push(PropValue {
+            field: "shape".to_string(),
+            value: format!("{shape:?}"),
+        });
     }
     if let Some(x_size) = spec.x_size {
-        props.push(PropValue { field: "x_size_mils".to_string(), value: x_size.to_mils().to_string() });
+        props.push(PropValue {
+            field: "x_size_mils".to_string(),
+            value: x_size.to_mils().to_string(),
+        });
     }
     if let Some(y_size) = spec.y_size {
-        props.push(PropValue { field: "y_size_mils".to_string(), value: y_size.to_mils().to_string() });
+        props.push(PropValue {
+            field: "y_size_mils".to_string(),
+            value: y_size.to_mils().to_string(),
+        });
     }
     if let Some(hole_size) = spec.hole_size {
-        props.push(PropValue { field: "hole_size_mils".to_string(), value: hole_size.to_mils().to_string() });
+        props.push(PropValue {
+            field: "hole_size_mils".to_string(),
+            value: hole_size.to_mils().to_string(),
+        });
     }
     if let Some(is_plated) = spec.is_plated {
-        props.push(PropValue { field: "is_plated".to_string(), value: is_plated.to_string() });
+        props.push(PropValue {
+            field: "is_plated".to_string(),
+            value: is_plated.to_string(),
+        });
     }
     if let Some(ref layer) = spec.layer {
-        props.push(PropValue { field: "layer".to_string(), value: format_layer_spec(layer) });
+        props.push(PropValue {
+            field: "layer".to_string(),
+            value: format_layer_spec(layer),
+        });
     }
     if let Some(rotation) = spec.rotation {
-        props.push(PropValue { field: "rotation".to_string(), value: rotation.to_string() });
+        props.push(PropValue {
+            field: "rotation".to_string(),
+            value: rotation.to_string(),
+        });
     }
 
     EntityChange::Add {
@@ -528,8 +721,18 @@ fn diff_footprint(spec: &FootprintSpec, existing: &api::Footprint) -> EntityChan
     let mut children = Vec::new();
 
     // Top-level field diffs
-    diff_opt_field_vs_str("description", &spec.description, &existing.description, &mut prop_changes);
-    diff_opt_field_vs_str("pattern", &spec.pattern, &existing.pattern, &mut prop_changes);
+    diff_opt_field_vs_str(
+        "description",
+        &spec.description,
+        &existing.description,
+        &mut prop_changes,
+    );
+    diff_opt_field_vs_str(
+        "pattern",
+        &spec.pattern,
+        &existing.pattern,
+        &mut prop_changes,
+    );
     if let Some(h) = spec.height {
         if h != existing.height {
             prop_changes.push(PropChange {
@@ -546,7 +749,11 @@ fn diff_footprint(spec: &FootprintSpec, existing: &api::Footprint) -> EntityChan
     // Diff graphics by unique_id
     diff_pcb_graphics(&spec.graphics, &existing.graphics, &mut children);
 
-    if prop_changes.is_empty() && children.iter().all(|c| matches!(c, EntityChange::Unchanged { .. })) {
+    if prop_changes.is_empty()
+        && children
+            .iter()
+            .all(|c| matches!(c, EntityChange::Unchanged { .. }))
+    {
         EntityChange::Unchanged {
             kind: EntityKind::Footprint,
             identity: spec.display_name.clone(),
@@ -571,8 +778,16 @@ fn diff_pcb_pads(spec_pads: &[PadSpec], existing: &[api::Pad], out: &mut Vec<Ent
                 if spec_pad.at != existing_pad.location {
                     prop_changes.push(PropChange {
                         field: "location".to_string(),
-                        old_value: format!("{},{}", existing_pad.location.x.to_mils(), existing_pad.location.y.to_mils()),
-                        new_value: format!("{},{}", spec_pad.at.x.to_mils(), spec_pad.at.y.to_mils()),
+                        old_value: format!(
+                            "{},{}",
+                            existing_pad.location.x.to_mils(),
+                            existing_pad.location.y.to_mils()
+                        ),
+                        new_value: format!(
+                            "{},{}",
+                            spec_pad.at.x.to_mils(),
+                            spec_pad.at.y.to_mils()
+                        ),
                     });
                 }
                 if let Some(shape) = spec_pad.shape {
@@ -669,7 +884,8 @@ fn diff_pcb_graphics(
 ) {
     for spec_graphic in spec_graphics {
         let found = existing.iter().any(|g| {
-            g.unique_id().map_or(false, |uid| uid == spec_graphic.unique_id)
+            g.unique_id()
+                .map_or(false, |uid| uid == spec_graphic.unique_id)
         });
         if found {
             // Graphic exists — report as unchanged
@@ -700,8 +916,18 @@ fn diff_component(spec: &ComponentSpec, existing: &api::Component) -> EntityChan
     let mut children = Vec::new();
 
     // Top-level field diffs
-    diff_opt_field("designator", &spec.designator, &existing.designator, &mut prop_changes);
-    diff_opt_field("description", &spec.description, &existing.description, &mut prop_changes);
+    diff_opt_field(
+        "designator",
+        &spec.designator,
+        &existing.designator,
+        &mut prop_changes,
+    );
+    diff_opt_field(
+        "description",
+        &spec.description,
+        &existing.description,
+        &mut prop_changes,
+    );
     if let Some(pc) = spec.part_count {
         if pc != existing.part_count {
             prop_changes.push(PropChange {
@@ -728,7 +954,11 @@ fn diff_component(spec: &ComponentSpec, existing: &api::Component) -> EntityChan
     diff_graphics(&spec.all_graphics(), &existing.graphics, &mut children);
     diff_aliases(&spec.aliases, &existing.aliases, &mut children);
 
-    if prop_changes.is_empty() && children.iter().all(|c| matches!(c, EntityChange::Unchanged { .. })) {
+    if prop_changes.is_empty()
+        && children
+            .iter()
+            .all(|c| matches!(c, EntityChange::Unchanged { .. }))
+    {
         EntityChange::Unchanged {
             kind: EntityKind::Component,
             identity: spec.lib_reference.clone(),
@@ -747,10 +977,18 @@ fn diff_component(spec: &ComponentSpec, existing: &api::Component) -> EntityChan
 
 fn diff_pins(spec_pins: &[&PinSpec], existing: &[api::Pin], out: &mut Vec<EntityChange>) {
     for spec_pin in spec_pins {
-        match existing.iter().find(|p| p.designator == spec_pin.designator) {
+        match existing
+            .iter()
+            .find(|p| p.designator == spec_pin.designator)
+        {
             Some(existing_pin) => {
                 let mut prop_changes = Vec::new();
-                diff_opt_field_vs_str("name", &spec_pin.name, &existing_pin.name, &mut prop_changes);
+                diff_opt_field_vs_str(
+                    "name",
+                    &spec_pin.name,
+                    &existing_pin.name,
+                    &mut prop_changes,
+                );
                 if let Some(elec) = spec_pin.electrical {
                     if elec != existing_pin.electrical {
                         prop_changes.push(PropChange {
@@ -781,8 +1019,16 @@ fn diff_pins(spec_pins: &[&PinSpec], existing: &[api::Pin], out: &mut Vec<Entity
                 if spec_pin.location != existing_pin.location {
                     prop_changes.push(PropChange {
                         field: "location".to_string(),
-                        old_value: format!("{},{}", existing_pin.location.x.to_mils(), existing_pin.location.y.to_mils()),
-                        new_value: format!("{},{}", spec_pin.location.x.to_mils(), spec_pin.location.y.to_mils()),
+                        old_value: format!(
+                            "{},{}",
+                            existing_pin.location.x.to_mils(),
+                            existing_pin.location.y.to_mils()
+                        ),
+                        new_value: format!(
+                            "{},{}",
+                            spec_pin.location.x.to_mils(),
+                            spec_pin.location.y.to_mils()
+                        ),
                     });
                 }
                 if spec_pin.orientation != existing_pin.orientation {
@@ -814,7 +1060,11 @@ fn diff_pins(spec_pins: &[&PinSpec], existing: &[api::Pin], out: &mut Vec<Entity
     }
 }
 
-fn diff_params(spec_params: &[crate::model::ParameterSpec], existing: &[api::Parameter], out: &mut Vec<EntityChange>) {
+fn diff_params(
+    spec_params: &[crate::model::ParameterSpec],
+    existing: &[api::Parameter],
+    out: &mut Vec<EntityChange>,
+) {
     for spec_param in spec_params {
         match existing.iter().find(|p| p.name == spec_param.name) {
             Some(existing_param) => {
@@ -854,7 +1104,10 @@ fn diff_params(spec_params: &[crate::model::ParameterSpec], existing: &[api::Par
                 out.push(EntityChange::Add {
                     kind: EntityKind::Parameter,
                     identity: spec_param.name.clone(),
-                    props: vec![PropValue { field: "text".to_string(), value: spec_param.text.clone() }],
+                    props: vec![PropValue {
+                        field: "text".to_string(),
+                        value: spec_param.text.clone(),
+                    }],
                     children: vec![],
                 });
             }
@@ -862,15 +1115,23 @@ fn diff_params(spec_params: &[crate::model::ParameterSpec], existing: &[api::Par
     }
 }
 
-fn diff_footprints(spec_fps: &[FootprintMapSpec], existing: &[api::FootprintMap], out: &mut Vec<EntityChange>) {
+fn diff_footprints(
+    spec_fps: &[FootprintMapSpec],
+    existing: &[api::FootprintMap],
+    out: &mut Vec<EntityChange>,
+) {
     for spec_fp in spec_fps {
         match existing.iter().find(|f| f.model_name == spec_fp.model_name) {
             Some(existing_fp) => {
                 // Compare pin-pad maps
-                let spec_maps: Vec<(&str, &str)> = spec_fp.maps.iter()
+                let spec_maps: Vec<(&str, &str)> = spec_fp
+                    .maps
+                    .iter()
                     .map(|m| (m.pin.as_str(), m.pad.as_str()))
                     .collect();
-                let existing_maps: Vec<(&str, &str)> = existing_fp.pin_pad_maps.iter()
+                let existing_maps: Vec<(&str, &str)> = existing_fp
+                    .pin_pad_maps
+                    .iter()
                     .map(|m| (m.pin.as_str(), m.pad.as_str()))
                     .collect();
 
@@ -899,10 +1160,15 @@ fn diff_footprints(spec_fps: &[FootprintMapSpec], existing: &[api::FootprintMap]
     }
 }
 
-fn diff_graphics(spec_graphics: &[&GraphicSpec], existing: &[api::Graphic], out: &mut Vec<EntityChange>) {
+fn diff_graphics(
+    spec_graphics: &[&GraphicSpec],
+    existing: &[api::Graphic],
+    out: &mut Vec<EntityChange>,
+) {
     for spec_graphic in spec_graphics {
         let found = existing.iter().any(|g| {
-            g.unique_id().map_or(false, |uid| uid == spec_graphic.unique_id)
+            g.unique_id()
+                .map_or(false, |uid| uid == spec_graphic.unique_id)
         });
         if found {
             // Graphic exists — for now, report as unchanged
@@ -939,7 +1205,12 @@ fn diff_aliases(spec_aliases: &[String], existing: &[String], out: &mut Vec<Enti
 
 /// Diff an optional spec field against an optional existing field.
 /// Only produces a PropChange if the spec provides a value AND it differs.
-fn diff_opt_field(name: &str, spec_val: &Option<String>, existing: &Option<String>, out: &mut Vec<PropChange>) {
+fn diff_opt_field(
+    name: &str,
+    spec_val: &Option<String>,
+    existing: &Option<String>,
+    out: &mut Vec<PropChange>,
+) {
     if let Some(sv) = spec_val {
         let ev = existing.as_deref().unwrap_or("");
         if sv != ev {
@@ -953,7 +1224,12 @@ fn diff_opt_field(name: &str, spec_val: &Option<String>, existing: &Option<Strin
 }
 
 /// Diff an optional spec string field against a concrete existing string.
-fn diff_opt_field_vs_str(name: &str, spec_val: &Option<String>, existing: &str, out: &mut Vec<PropChange>) {
+fn diff_opt_field_vs_str(
+    name: &str,
+    spec_val: &Option<String>,
+    existing: &str,
+    out: &mut Vec<PropChange>,
+) {
     if let Some(sv) = spec_val {
         if sv != existing {
             out.push(PropChange {
@@ -970,13 +1246,22 @@ fn diff_opt_field_vs_str(name: &str, spec_val: &Option<String>, existing: &str, 
 pub fn component_to_add(spec: &ComponentSpec) -> EntityChange {
     let mut props = Vec::new();
     if let Some(ref d) = spec.designator {
-        props.push(PropValue { field: "designator".to_string(), value: d.clone() });
+        props.push(PropValue {
+            field: "designator".to_string(),
+            value: d.clone(),
+        });
     }
     if let Some(ref d) = spec.description {
-        props.push(PropValue { field: "description".to_string(), value: d.clone() });
+        props.push(PropValue {
+            field: "description".to_string(),
+            value: d.clone(),
+        });
     }
     if let Some(pc) = spec.part_count {
-        props.push(PropValue { field: "part_count".to_string(), value: pc.to_string() });
+        props.push(PropValue {
+            field: "part_count".to_string(),
+            value: pc.to_string(),
+        });
     }
 
     let mut children: Vec<EntityChange> = Vec::new();
@@ -996,7 +1281,10 @@ pub fn component_to_add(spec: &ComponentSpec) -> EntityChange {
         children.push(EntityChange::Add {
             kind: EntityKind::Parameter,
             identity: param.name.clone(),
-            props: vec![PropValue { field: "text".to_string(), value: param.text.clone() }],
+            props: vec![PropValue {
+                field: "text".to_string(),
+                value: param.text.clone(),
+            }],
             children: vec![],
         });
     }
@@ -1029,10 +1317,16 @@ pub fn component_to_add(spec: &ComponentSpec) -> EntityChange {
 fn pin_to_add(spec: &PinSpec) -> EntityChange {
     let mut props = Vec::new();
     if let Some(ref name) = spec.name {
-        props.push(PropValue { field: "name".to_string(), value: name.clone() });
+        props.push(PropValue {
+            field: "name".to_string(),
+            value: name.clone(),
+        });
     }
     if let Some(ref elec) = spec.electrical {
-        props.push(PropValue { field: "electrical".to_string(), value: format!("{elec:?}") });
+        props.push(PropValue {
+            field: "electrical".to_string(),
+            value: format!("{elec:?}"),
+        });
     }
     if let Some(len) = spec.length {
         props.push(PropValue {
@@ -1052,12 +1346,10 @@ fn graphic_to_add(spec: &GraphicSpec) -> EntityChange {
     EntityChange::Add {
         kind: EntityKind::Graphic,
         identity: spec.unique_id.clone(),
-        props: vec![
-            PropValue {
-                field: "type".to_string(),
-                value: format!("{:?}", spec.graphic_type),
-            },
-        ],
+        props: vec![PropValue {
+            field: "type".to_string(),
+            value: format!("{:?}", spec.graphic_type),
+        }],
         children: vec![],
     }
 }
@@ -1066,12 +1358,10 @@ fn footprint_to_add(spec: &FootprintMapSpec) -> EntityChange {
     EntityChange::Add {
         kind: EntityKind::Footprint,
         identity: spec.model_name.clone(),
-        props: vec![
-            PropValue {
-                field: "maps".to_string(),
-                value: format!("{} pin-pad maps", spec.maps.len()),
-            },
-        ],
+        props: vec![PropValue {
+            field: "maps".to_string(),
+            value: format!("{} pin-pad maps", spec.maps.len()),
+        }],
         children: vec![],
     }
 }
@@ -1119,14 +1409,16 @@ pub fn reconcile_schdoc(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> Result<EngineeringChangeOrder, SpecError> {
-    let sheet = doc.sheet()
+    let sheet = doc
+        .sheet()
         .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
     let mut changes = Vec::new();
 
     for sheet_spec in &spec.sheets {
         // Diff components by designator
-        let existing_map: HashMap<&str, &api::SchDocComponent> = sheet.components()
+        let existing_map: HashMap<&str, &api::SchDocComponent> = sheet
+            .components()
             .into_iter()
             .map(|c| (c.designator.as_str(), c))
             .collect();
@@ -1173,7 +1465,9 @@ pub fn reconcile_schdoc(
                 identity: net_spec.name.clone(),
                 props: vec![PropValue {
                     field: "pins".to_string(),
-                    value: net_spec.pins.iter()
+                    value: net_spec
+                        .pins
+                        .iter()
                         .map(|p| format!("{}.{}", p.component, p.pin))
                         .collect::<Vec<_>>()
                         .join(", "),
@@ -1187,7 +1481,9 @@ pub fn reconcile_schdoc(
                 identity: power_spec.name.clone(),
                 props: vec![PropValue {
                     field: "pins".to_string(),
-                    value: power_spec.pins.iter()
+                    value: power_spec
+                        .pins
+                        .iter()
                         .map(|p| format!("{}.{}", p.component, p.pin))
                         .collect::<Vec<_>>()
                         .join(", "),
@@ -1228,7 +1524,9 @@ pub fn reconcile_schdoc_empty(
                 identity: net_spec.name.clone(),
                 props: vec![PropValue {
                     field: "pins".to_string(),
-                    value: net_spec.pins.iter()
+                    value: net_spec
+                        .pins
+                        .iter()
                         .map(|p| format!("{}.{}", p.component, p.pin))
                         .collect::<Vec<_>>()
                         .join(", "),
@@ -1242,7 +1540,9 @@ pub fn reconcile_schdoc_empty(
                 identity: power_spec.name.clone(),
                 props: vec![PropValue {
                     field: "pins".to_string(),
-                    value: power_spec.pins.iter()
+                    value: power_spec
+                        .pins
+                        .iter()
                         .map(|p| format!("{}.{}", p.component, p.pin))
                         .collect::<Vec<_>>()
                         .join(", "),
@@ -1288,7 +1588,9 @@ fn schdoc_component_to_add(spec: &crate::model::SchDocComponentSpec) -> EntityCh
         }
     }
     if !spec.pin_connections.is_empty() {
-        let conn_summary = spec.pin_connections.iter()
+        let conn_summary = spec
+            .pin_connections
+            .iter()
             .map(|c| {
                 let target = match &c.target {
                     crate::model::PinConnectionTarget::Signal(net) => format!("#{net}"),
@@ -1316,34 +1618,65 @@ fn schdoc_object_to_add(spec: &SchDocObjectSpec) -> EntityChange {
     let (kind, identity, props) = match spec {
         SchDocObjectSpec::Wire(w) => (
             EntityKind::Wire,
-            format!("wire@{}", w.vertices.first().map(|v| format!("{v}")).unwrap_or_default()),
+            format!(
+                "wire@{}",
+                w.vertices
+                    .first()
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_default()
+            ),
             vec![PropValue {
                 field: "vertices".to_string(),
-                value: w.vertices.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", "),
+                value: w
+                    .vertices
+                    .iter()
+                    .map(|v| format!("{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
             }],
         ),
         SchDocObjectSpec::Bus(b) => (
             EntityKind::Bus,
-            format!("bus@{}", b.vertices.first().map(|v| format!("{v}")).unwrap_or_default()),
+            format!(
+                "bus@{}",
+                b.vertices
+                    .first()
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_default()
+            ),
             vec![PropValue {
                 field: "vertices".to_string(),
-                value: b.vertices.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(", "),
+                value: b
+                    .vertices
+                    .iter()
+                    .map(|v| format!("{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
             }],
         ),
         SchDocObjectSpec::NetLabel(n) => (
             EntityKind::NetLabel,
             n.text.clone(),
-            vec![PropValue { field: "location".to_string(), value: format!("{}", n.location) }],
+            vec![PropValue {
+                field: "location".to_string(),
+                value: format!("{}", n.location),
+            }],
         ),
         SchDocObjectSpec::PowerObject(p) => (
             EntityKind::PowerObject,
             p.text.clone(),
-            vec![PropValue { field: "location".to_string(), value: format!("{}", p.location) }],
+            vec![PropValue {
+                field: "location".to_string(),
+                value: format!("{}", p.location),
+            }],
         ),
         SchDocObjectSpec::Port(p) => (
             EntityKind::Port,
             p.name.clone(),
-            vec![PropValue { field: "location".to_string(), value: format!("{}", p.location) }],
+            vec![PropValue {
+                field: "location".to_string(),
+                value: format!("{}", p.location),
+            }],
         ),
         SchDocObjectSpec::Junction(j) => (
             EntityKind::Junction,
@@ -1358,47 +1691,60 @@ fn schdoc_object_to_add(spec: &SchDocObjectSpec) -> EntityChange {
         SchDocObjectSpec::BusEntry(b) => (
             EntityKind::BusEntry,
             format!("bus_entry@{}", b.location),
-            vec![PropValue { field: "corner".to_string(), value: format!("{}", b.corner) }],
+            vec![PropValue {
+                field: "corner".to_string(),
+                value: format!("{}", b.corner),
+            }],
         ),
         SchDocObjectSpec::SheetSymbol(s) => (
             EntityKind::SheetSymbol,
             s.sheet_name.clone(),
-            vec![PropValue { field: "location".to_string(), value: format!("{}", s.location) }],
+            vec![PropValue {
+                field: "location".to_string(),
+                value: format!("{}", s.location),
+            }],
         ),
-        SchDocObjectSpec::ParameterSet(p) => (
-            EntityKind::ParameterSet,
-            p.name.clone(),
-            vec![],
-        ),
+        SchDocObjectSpec::ParameterSet(p) => (EntityKind::ParameterSet, p.name.clone(), vec![]),
         SchDocObjectSpec::Note(n) => (
             EntityKind::Note,
             format!("note@{}", n.location),
-            vec![PropValue { field: "text".to_string(), value: n.text.clone() }],
+            vec![PropValue {
+                field: "text".to_string(),
+                value: n.text.clone(),
+            }],
         ),
         SchDocObjectSpec::Probe(p) => (
             EntityKind::Probe,
             p.name.clone(),
-            vec![PropValue { field: "location".to_string(), value: format!("{}", p.location) }],
+            vec![PropValue {
+                field: "location".to_string(),
+                value: format!("{}", p.location),
+            }],
         ),
         SchDocObjectSpec::CompileMask(c) => (
             EntityKind::CompileMask,
             format!("compile_mask@{}", c.location),
-            vec![PropValue { field: "corner".to_string(), value: format!("{}", c.corner) }],
+            vec![PropValue {
+                field: "corner".to_string(),
+                value: format!("{}", c.corner),
+            }],
         ),
         SchDocObjectSpec::Blanket(b) => (
             EntityKind::Blanket,
             format!("blanket@{}", b.location),
-            vec![PropValue { field: "corner".to_string(), value: format!("{}", b.corner) }],
+            vec![PropValue {
+                field: "corner".to_string(),
+                value: format!("{}", b.corner),
+            }],
         ),
-        SchDocObjectSpec::Graphic(g) => (
-            EntityKind::Graphic,
-            g.unique_id.clone(),
-            vec![],
-        ),
+        SchDocObjectSpec::Graphic(g) => (EntityKind::Graphic, g.unique_id.clone(), vec![]),
         SchDocObjectSpec::Parameter(p) => (
             EntityKind::Parameter,
             p.name.clone(),
-            vec![PropValue { field: "text".to_string(), value: p.text.clone() }],
+            vec![PropValue {
+                field: "text".to_string(),
+                value: p.text.clone(),
+            }],
         ),
         SchDocObjectSpec::HarnessConnector(h) => (
             EntityKind::HarnessConnector,
@@ -1407,11 +1753,22 @@ fn schdoc_object_to_add(spec: &SchDocObjectSpec) -> EntityChange {
         ),
         SchDocObjectSpec::SignalHarness(s) => (
             EntityKind::SignalHarness,
-            format!("signal_harness@{}", s.vertices.first().map(|v| format!("{v}")).unwrap_or_default()),
+            format!(
+                "signal_harness@{}",
+                s.vertices
+                    .first()
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_default()
+            ),
             vec![],
         ),
     };
-    EntityChange::Add { kind, identity, props, children: vec![] }
+    EntityChange::Add {
+        kind,
+        identity,
+        props,
+        children: vec![],
+    }
 }
 
 // ── PcbDoc reconciler ─────────────────────────────────────────────────────────
@@ -1426,7 +1783,8 @@ pub fn reconcile_pcbdoc(
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> Result<EngineeringChangeOrder, SpecError> {
-    let board = doc.board()
+    let board = doc
+        .board()
         .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
     let mut changes = Vec::new();
@@ -1506,7 +1864,9 @@ pub fn reconcile_pcbdoc_empty(
         }
 
         // Primitives
-        for prim in board_spec.tracks.iter()
+        for prim in board_spec
+            .tracks
+            .iter()
             .chain(&board_spec.arcs)
             .chain(&board_spec.vias)
             .chain(&board_spec.pads)
@@ -1596,9 +1956,8 @@ fn diff_pcbdoc_nets(
     specs: &[PcbDocNetSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::Net> = board.nets.iter()
-        .map(|n| (n.name.as_str(), n))
-        .collect();
+    let existing_map: HashMap<&str, &api::Net> =
+        board.nets.iter().map(|n| (n.name.as_str(), n)).collect();
 
     for spec in specs {
         if let Some(existing) = existing_map.get(spec.name.as_str()) {
@@ -1645,7 +2004,9 @@ fn diff_pcbdoc_components(
     specs: &[PcbDocComponentSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::PcbDocComponent> = board.components.iter()
+    let existing_map: HashMap<&str, &api::PcbDocComponent> = board
+        .components
+        .iter()
         .map(|c| (c.designator.as_str(), c))
         .collect();
 
@@ -1703,7 +2064,9 @@ fn diff_pcbdoc_polygons(
     specs: &[PcbDocPolygonSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::Polygon> = board.polygons.iter()
+    let existing_map: HashMap<&str, &api::Polygon> = board
+        .polygons
+        .iter()
         .map(|p| (p.name.as_str(), p))
         .collect();
 
@@ -1725,9 +2088,8 @@ fn diff_pcbdoc_rules(
     specs: &[PcbDocRuleSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::DesignRule> = board.rules.iter()
-        .map(|r| (r.name.as_str(), r))
-        .collect();
+    let existing_map: HashMap<&str, &api::DesignRule> =
+        board.rules.iter().map(|r| (r.name.as_str(), r)).collect();
 
     for spec in specs {
         if let Some(existing) = existing_map.get(spec.name.as_str()) {
@@ -1774,9 +2136,8 @@ fn diff_pcbdoc_classes(
     specs: &[PcbDocClassSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::NetClass> = board.classes.iter()
-        .map(|c| (c.name.as_str(), c))
-        .collect();
+    let existing_map: HashMap<&str, &api::NetClass> =
+        board.classes.iter().map(|c| (c.name.as_str(), c)).collect();
 
     for spec in specs {
         if existing_map.contains_key(spec.name.as_str()) {
@@ -1795,7 +2156,9 @@ fn diff_pcbdoc_diff_pairs(
     specs: &[PcbDocDifferentialPairSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::DifferentialPair> = board.differential_pairs.iter()
+    let existing_map: HashMap<&str, &api::DifferentialPair> = board
+        .differential_pairs
+        .iter()
         .map(|dp| (dp.name.as_str(), dp))
         .collect();
 
@@ -1846,19 +2209,38 @@ fn diff_pcbdoc_tracks(
     specs: &[PcbDocPrimitiveSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_by_id: HashMap<&str, &api::Track> = board.tracks.iter()
-        .map(|t| (t.id.as_str(), t))
-        .collect();
+    let existing_by_id: HashMap<&str, &api::Track> =
+        board.tracks.iter().map(|t| (t.id.as_str(), t)).collect();
 
     for spec in specs {
         if let Some(existing) = existing_by_id.get(spec.id.as_str()) {
             let mut prop_changes = Vec::new();
-            check_coord_prop(&spec.properties, "from", &format!("{}", existing.start), &mut prop_changes, "start");
-            check_coord_prop(&spec.properties, "to", &format!("{}", existing.end), &mut prop_changes, "end");
+            check_coord_prop(
+                &spec.properties,
+                "from",
+                &format!("{}", existing.start),
+                &mut prop_changes,
+                "start",
+            );
+            check_coord_prop(
+                &spec.properties,
+                "to",
+                &format!("{}", existing.end),
+                &mut prop_changes,
+                "end",
+            );
             if prop_changes.is_empty() {
-                changes.push(EntityChange::Unchanged { kind: EntityKind::Track, identity: spec.id.clone() });
+                changes.push(EntityChange::Unchanged {
+                    kind: EntityKind::Track,
+                    identity: spec.id.clone(),
+                });
             } else {
-                changes.push(EntityChange::Update { kind: EntityKind::Track, identity: spec.id.clone(), prop_changes, children: vec![] });
+                changes.push(EntityChange::Update {
+                    kind: EntityKind::Track,
+                    identity: spec.id.clone(),
+                    prop_changes,
+                    children: vec![],
+                });
             }
         } else {
             changes.push(pcbdoc_primitive_to_add(spec));
@@ -1871,13 +2253,15 @@ fn diff_pcbdoc_arcs(
     specs: &[PcbDocPrimitiveSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_by_id: HashMap<&str, &api::Arc> = board.arcs.iter()
-        .map(|a| (a.id.as_str(), a))
-        .collect();
+    let existing_by_id: HashMap<&str, &api::Arc> =
+        board.arcs.iter().map(|a| (a.id.as_str(), a)).collect();
 
     for spec in specs {
         if existing_by_id.contains_key(spec.id.as_str()) {
-            changes.push(EntityChange::Unchanged { kind: EntityKind::Arc, identity: spec.id.clone() });
+            changes.push(EntityChange::Unchanged {
+                kind: EntityKind::Arc,
+                identity: spec.id.clone(),
+            });
         } else {
             changes.push(pcbdoc_primitive_to_add(spec));
         }
@@ -1889,13 +2273,15 @@ fn diff_pcbdoc_vias(
     specs: &[PcbDocPrimitiveSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_by_id: HashMap<&str, &api::Via> = board.vias.iter()
-        .map(|v| (v.id.as_str(), v))
-        .collect();
+    let existing_by_id: HashMap<&str, &api::Via> =
+        board.vias.iter().map(|v| (v.id.as_str(), v)).collect();
 
     for spec in specs {
         if existing_by_id.contains_key(spec.id.as_str()) {
-            changes.push(EntityChange::Unchanged { kind: EntityKind::Via, identity: spec.id.clone() });
+            changes.push(EntityChange::Unchanged {
+                kind: EntityKind::Via,
+                identity: spec.id.clone(),
+            });
         } else {
             changes.push(pcbdoc_primitive_to_add(spec));
         }
@@ -1907,13 +2293,15 @@ fn diff_pcbdoc_fills(
     specs: &[PcbDocPrimitiveSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_by_id: HashMap<&str, &api::Fill> = board.fills.iter()
-        .map(|f| (f.id.as_str(), f))
-        .collect();
+    let existing_by_id: HashMap<&str, &api::Fill> =
+        board.fills.iter().map(|f| (f.id.as_str(), f)).collect();
 
     for spec in specs {
         if existing_by_id.contains_key(spec.id.as_str()) {
-            changes.push(EntityChange::Unchanged { kind: EntityKind::Fill, identity: spec.id.clone() });
+            changes.push(EntityChange::Unchanged {
+                kind: EntityKind::Fill,
+                identity: spec.id.clone(),
+            });
         } else {
             changes.push(pcbdoc_primitive_to_add(spec));
         }
@@ -1925,13 +2313,15 @@ fn diff_pcbdoc_texts(
     specs: &[PcbDocPrimitiveSpec],
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_by_id: HashMap<&str, &api::PcbDocText> = board.texts.iter()
-        .map(|t| (t.id.as_str(), t))
-        .collect();
+    let existing_by_id: HashMap<&str, &api::PcbDocText> =
+        board.texts.iter().map(|t| (t.id.as_str(), t)).collect();
 
     for spec in specs {
         if existing_by_id.contains_key(spec.id.as_str()) {
-            changes.push(EntityChange::Unchanged { kind: EntityKind::Text, identity: spec.id.clone() });
+            changes.push(EntityChange::Unchanged {
+                kind: EntityKind::Text,
+                identity: spec.id.clone(),
+            });
         } else {
             changes.push(pcbdoc_primitive_to_add(spec));
         }
@@ -1950,7 +2340,10 @@ fn check_coord_prop(
         let new_str = match val {
             Value::CoordPoint(x, y) => {
                 use altium_format_types::Coord;
-                format!("{}", altium_format_types::CoordPoint::new(Coord::new(*x), Coord::new(*y)))
+                format!(
+                    "{}",
+                    altium_format_types::CoordPoint::new(Coord::new(*x), Coord::new(*y))
+                )
             }
             other => format!("{:?}", other),
         };
@@ -1988,7 +2381,9 @@ fn diff_placement_positions(
     placement: &crate::model::PlacementSpec,
     changes: &mut Vec<EntityChange>,
 ) {
-    let existing_map: HashMap<&str, &api::PcbDocComponent> = board.components.iter()
+    let existing_map: HashMap<&str, &api::PcbDocComponent> = board
+        .components
+        .iter()
         .map(|c| (c.designator.as_str(), c))
         .collect();
 
@@ -2058,20 +2453,30 @@ fn diff_placement_positions(
 fn board_settings_props(spec: &BoardSpec) -> Vec<PropValue> {
     let mut props = Vec::new();
     if let Some(count) = spec.signal_layer_count {
-        props.push(PropValue { field: "signal_layer_count".to_string(), value: count.to_string() });
+        props.push(PropValue {
+            field: "signal_layer_count".to_string(),
+            value: count.to_string(),
+        });
     }
     if let Some(ref unit) = spec.display_unit {
-        props.push(PropValue { field: "display_unit".to_string(), value: unit.clone() });
+        props.push(PropValue {
+            field: "display_unit".to_string(),
+            value: unit.clone(),
+        });
     }
     props
 }
 
 fn pcbdoc_net_to_add(spec: &PcbDocNetSpec) -> EntityChange {
-    let mut props = vec![
-        PropValue { field: "name".to_string(), value: spec.name.clone() },
-    ];
+    let mut props = vec![PropValue {
+        field: "name".to_string(),
+        value: spec.name.clone(),
+    }];
     if let Some(visible) = spec.visible {
-        props.push(PropValue { field: "visible".to_string(), value: visible.to_string() });
+        props.push(PropValue {
+            field: "visible".to_string(),
+            value: visible.to_string(),
+        });
     }
     EntityChange::Add {
         kind: EntityKind::PcbDocNet,
@@ -2082,14 +2487,21 @@ fn pcbdoc_net_to_add(spec: &PcbDocNetSpec) -> EntityChange {
 }
 
 fn pcbdoc_component_to_add(spec: &PcbDocComponentSpec) -> EntityChange {
-    let mut props = vec![
-        PropValue { field: "designator".to_string(), value: spec.designator.clone() },
-    ];
+    let mut props = vec![PropValue {
+        field: "designator".to_string(),
+        value: spec.designator.clone(),
+    }];
     if let Some(ref pattern) = spec.pattern {
-        props.push(PropValue { field: "pattern".to_string(), value: pattern.clone() });
+        props.push(PropValue {
+            field: "pattern".to_string(),
+            value: pattern.clone(),
+        });
     }
     if let Some(loc) = spec.location {
-        props.push(PropValue { field: "location".to_string(), value: format!("{}", loc) });
+        props.push(PropValue {
+            field: "location".to_string(),
+            value: format!("{}", loc),
+        });
     }
     EntityChange::Add {
         kind: EntityKind::PcbDocComponent,
@@ -2100,11 +2512,15 @@ fn pcbdoc_component_to_add(spec: &PcbDocComponentSpec) -> EntityChange {
 }
 
 fn pcbdoc_polygon_to_add(spec: &PcbDocPolygonSpec) -> EntityChange {
-    let mut props = vec![
-        PropValue { field: "name".to_string(), value: spec.name.clone() },
-    ];
+    let mut props = vec![PropValue {
+        field: "name".to_string(),
+        value: spec.name.clone(),
+    }];
     if let Some(ref net) = spec.net {
-        props.push(PropValue { field: "net".to_string(), value: net.clone() });
+        props.push(PropValue {
+            field: "net".to_string(),
+            value: net.clone(),
+        });
     }
     EntityChange::Add {
         kind: EntityKind::Polygon,
@@ -2115,11 +2531,15 @@ fn pcbdoc_polygon_to_add(spec: &PcbDocPolygonSpec) -> EntityChange {
 }
 
 fn pcbdoc_rule_to_add(spec: &PcbDocRuleSpec) -> EntityChange {
-    let mut props = vec![
-        PropValue { field: "name".to_string(), value: spec.name.clone() },
-    ];
+    let mut props = vec![PropValue {
+        field: "name".to_string(),
+        value: spec.name.clone(),
+    }];
     if let Some(ref kind) = spec.kind {
-        props.push(PropValue { field: "kind".to_string(), value: kind.clone() });
+        props.push(PropValue {
+            field: "kind".to_string(),
+            value: kind.clone(),
+        });
     }
     EntityChange::Add {
         kind: EntityKind::Rule,
@@ -2130,11 +2550,15 @@ fn pcbdoc_rule_to_add(spec: &PcbDocRuleSpec) -> EntityChange {
 }
 
 fn pcbdoc_class_to_add(spec: &PcbDocClassSpec) -> EntityChange {
-    let mut props = vec![
-        PropValue { field: "name".to_string(), value: spec.name.clone() },
-    ];
+    let mut props = vec![PropValue {
+        field: "name".to_string(),
+        value: spec.name.clone(),
+    }];
     if let Some(ref kind) = spec.kind {
-        props.push(PropValue { field: "kind".to_string(), value: kind.clone() });
+        props.push(PropValue {
+            field: "kind".to_string(),
+            value: kind.clone(),
+        });
     }
     EntityChange::Add {
         kind: EntityKind::Class,
@@ -2145,14 +2569,21 @@ fn pcbdoc_class_to_add(spec: &PcbDocClassSpec) -> EntityChange {
 }
 
 fn pcbdoc_diff_pair_to_add(spec: &PcbDocDifferentialPairSpec) -> EntityChange {
-    let mut props = vec![
-        PropValue { field: "name".to_string(), value: spec.name.clone() },
-    ];
+    let mut props = vec![PropValue {
+        field: "name".to_string(),
+        value: spec.name.clone(),
+    }];
     if let Some(ref pos) = spec.positive_net {
-        props.push(PropValue { field: "positive_net".to_string(), value: pos.clone() });
+        props.push(PropValue {
+            field: "positive_net".to_string(),
+            value: pos.clone(),
+        });
     }
     if let Some(ref neg) = spec.negative_net {
-        props.push(PropValue { field: "negative_net".to_string(), value: neg.clone() });
+        props.push(PropValue {
+            field: "negative_net".to_string(),
+            value: neg.clone(),
+        });
     }
     EntityChange::Add {
         kind: EntityKind::DifferentialPair,
@@ -2175,8 +2606,13 @@ fn pcbdoc_primitive_to_add(spec: &PcbDocPrimitiveSpec) -> EntityChange {
         "dimension" => EntityKind::Dimension,
         _ => EntityKind::Track, // fallback
     };
-    let props: Vec<PropValue> = spec.properties.iter()
-        .map(|(k, v)| PropValue { field: k.clone(), value: format!("{:?}", v) })
+    let props: Vec<PropValue> = spec
+        .properties
+        .iter()
+        .map(|(k, v)| PropValue {
+            field: k.clone(),
+            value: format!("{:?}", v),
+        })
         .collect();
     EntityChange::Add {
         kind,
@@ -2191,11 +2627,11 @@ fn pcbdoc_primitive_to_add(spec: &PcbDocPrimitiveSpec) -> EntityChange {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::apply_spec_schlib;
     use crate::model::{
         ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SchLibSpec,
     };
-    use crate::executor::apply_spec_schlib;
-    use altium_format_types::{CoordPoint, Coord, RotationBy90};
+    use altium_format_types::{Coord, CoordPoint, RotationBy90};
 
     fn make_coord(x_mils: i32, y_mils: i32) -> CoordPoint {
         CoordPoint {
@@ -2266,14 +2702,28 @@ mod tests {
 
         assert_eq!(eco.changes.len(), 2);
         for change in &eco.changes {
-            assert!(matches!(change, EntityChange::Add { kind: EntityKind::Component, .. }));
+            assert!(matches!(
+                change,
+                EntityChange::Add {
+                    kind: EntityKind::Component,
+                    ..
+                }
+            ));
         }
 
         // Check children are Add too
         if let EntityChange::Add { children, .. } = &eco.changes[0] {
             let pin_adds = children
                 .iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Pin, .. }))
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Pin,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(pin_adds, 2);
         } else {
@@ -2283,9 +2733,10 @@ mod tests {
 
     #[test]
     fn empty_doc_summary_counts() {
-        let spec = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0), make_pin("2", 0)]),
-        ]);
+        let spec = make_spec(vec![make_component(
+            "R_0603",
+            vec![make_pin("1", 0), make_pin("2", 0)],
+        )]);
 
         let eco = reconcile_schlib_empty(
             &spec,
@@ -2313,19 +2764,23 @@ mod tests {
             part_count: None,
             show_hidden_pins: None,
             pins: vec![],
-            parameters: vec![
-                ParameterSpec {
-                    name: "MFG".to_string(),
-                    text: "ACME".to_string(),
-                    is_hidden: None,
-                },
-            ],
+            parameters: vec![ParameterSpec {
+                name: "MFG".to_string(),
+                text: "ACME".to_string(),
+                is_hidden: None,
+            }],
             aliases: vec!["RES".to_string()],
             footprints: vec![FootprintMapSpec {
                 model_name: "0603".to_string(),
                 maps: vec![
-                    PinPadMap { pin: "1".to_string(), pad: "1".to_string() },
-                    PinPadMap { pin: "2".to_string(), pad: "2".to_string() },
+                    PinPadMap {
+                        pin: "1".to_string(),
+                        pad: "1".to_string(),
+                    },
+                    PinPadMap {
+                        pin: "2".to_string(),
+                        pad: "2".to_string(),
+                    },
                 ],
                 source: None,
             }],
@@ -2343,19 +2798,43 @@ mod tests {
         if let EntityChange::Add { children, .. } = &eco.changes[0] {
             let param_adds = children
                 .iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Parameter, .. }))
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Parameter,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(param_adds, 1);
 
             let alias_adds = children
                 .iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Alias, .. }))
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Alias,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(alias_adds, 1);
 
             let fp_adds = children
                 .iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Footprint, .. }))
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Footprint,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(fp_adds, 1);
         } else {
@@ -2410,9 +2889,10 @@ mod tests {
     #[test]
     fn reconcile_existing_unchanged() {
         // Apply a spec, then reconcile with the same spec → all Unchanged
-        let spec = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0), make_pin("2", 0)]),
-        ]);
+        let spec = make_spec(vec![make_component(
+            "R_0603",
+            vec![make_pin("1", 0), make_pin("2", 0)],
+        )]);
         let mut doc = blank_doc();
         apply_spec_schlib(&spec, &mut doc).unwrap();
 
@@ -2421,17 +2901,18 @@ mod tests {
             &doc,
             PathBuf::from("test.SchLib"),
             PathBuf::from("test.schlib-spec"),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(eco.changes.len(), 1);
-        assert!(matches!(&eco.changes[0], EntityChange::Unchanged { kind: EntityKind::Component, identity } if identity == "R_0603"));
+        assert!(
+            matches!(&eco.changes[0], EntityChange::Unchanged { kind: EntityKind::Component, identity } if identity == "R_0603")
+        );
     }
 
     #[test]
     fn reconcile_detects_new_component() {
-        let spec1 = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0)]),
-        ]);
+        let spec1 = make_spec(vec![make_component("R_0603", vec![make_pin("1", 0)])]);
         let mut doc = blank_doc();
         apply_spec_schlib(&spec1, &mut doc).unwrap();
 
@@ -2446,18 +2927,19 @@ mod tests {
             &doc,
             PathBuf::from("test.SchLib"),
             PathBuf::from("test.schlib-spec"),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(eco.changes.len(), 2);
         assert!(matches!(&eco.changes[0], EntityChange::Unchanged { .. }));
-        assert!(matches!(&eco.changes[1], EntityChange::Add { kind: EntityKind::Component, identity, .. } if identity == "C_0805"));
+        assert!(
+            matches!(&eco.changes[1], EntityChange::Add { kind: EntityKind::Component, identity, .. } if identity == "C_0805")
+        );
     }
 
     #[test]
     fn reconcile_detects_description_change() {
-        let spec1 = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0)]),
-        ]);
+        let spec1 = make_spec(vec![make_component("R_0603", vec![make_pin("1", 0)])]);
         let mut doc = blank_doc();
         apply_spec_schlib(&spec1, &mut doc).unwrap();
 
@@ -2482,11 +2964,15 @@ mod tests {
             &doc,
             PathBuf::from("test.SchLib"),
             PathBuf::from("test.schlib-spec"),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(eco.changes.len(), 1);
         if let EntityChange::Update { prop_changes, .. } = &eco.changes[0] {
-            let desc_change = prop_changes.iter().find(|pc| pc.field == "description").unwrap();
+            let desc_change = prop_changes
+                .iter()
+                .find(|pc| pc.field == "description")
+                .unwrap();
             assert_eq!(desc_change.old_value, "A resistor");
             assert_eq!(desc_change.new_value, "Updated description");
         } else {
@@ -2496,31 +2982,49 @@ mod tests {
 
     #[test]
     fn reconcile_detects_new_pin() {
-        let spec1 = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0)]),
-        ]);
+        let spec1 = make_spec(vec![make_component("R_0603", vec![make_pin("1", 0)])]);
         let mut doc = blank_doc();
         apply_spec_schlib(&spec1, &mut doc).unwrap();
 
         // Spec with an additional pin
-        let spec2 = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0), make_pin("2", 0)]),
-        ]);
+        let spec2 = make_spec(vec![make_component(
+            "R_0603",
+            vec![make_pin("1", 0), make_pin("2", 0)],
+        )]);
 
         let eco = reconcile_schlib(
             &spec2,
             &doc,
             PathBuf::from("test.SchLib"),
             PathBuf::from("test.schlib-spec"),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(eco.changes.len(), 1);
         if let EntityChange::Update { children, .. } = &eco.changes[0] {
-            let pin_unchanged = children.iter()
-                .filter(|c| matches!(c, EntityChange::Unchanged { kind: EntityKind::Pin, .. }))
+            let pin_unchanged = children
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Unchanged {
+                            kind: EntityKind::Pin,
+                            ..
+                        }
+                    )
+                })
                 .count();
-            let pin_adds = children.iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Pin, .. }))
+            let pin_adds = children
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Pin,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(pin_unchanged, 1); // pin "1"
             assert_eq!(pin_adds, 1); // pin "2"
@@ -2540,9 +3044,11 @@ mod tests {
             part_count: None,
             show_hidden_pins: None,
             pins: vec![],
-            parameters: vec![
-                ParameterSpec { name: "MFG".to_string(), text: "ACME".to_string(), is_hidden: None },
-            ],
+            parameters: vec![ParameterSpec {
+                name: "MFG".to_string(),
+                text: "ACME".to_string(),
+                is_hidden: None,
+            }],
             aliases: vec![],
             footprints: vec![],
             graphics: vec![],
@@ -2562,8 +3068,16 @@ mod tests {
             show_hidden_pins: None,
             pins: vec![],
             parameters: vec![
-                ParameterSpec { name: "MFG".to_string(), text: "ACME".to_string(), is_hidden: None },
-                ParameterSpec { name: "VALUE".to_string(), text: "10K".to_string(), is_hidden: None },
+                ParameterSpec {
+                    name: "MFG".to_string(),
+                    text: "ACME".to_string(),
+                    is_hidden: None,
+                },
+                ParameterSpec {
+                    name: "VALUE".to_string(),
+                    text: "10K".to_string(),
+                    is_hidden: None,
+                },
             ],
             aliases: vec![],
             footprints: vec![],
@@ -2576,15 +3090,34 @@ mod tests {
             &doc,
             PathBuf::from("test.SchLib"),
             PathBuf::from("test.schlib-spec"),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(eco.changes.len(), 1);
         if let EntityChange::Update { children, .. } = &eco.changes[0] {
-            let param_unchanged = children.iter()
-                .filter(|c| matches!(c, EntityChange::Unchanged { kind: EntityKind::Parameter, .. }))
+            let param_unchanged = children
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Unchanged {
+                            kind: EntityKind::Parameter,
+                            ..
+                        }
+                    )
+                })
                 .count();
-            let param_adds = children.iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Parameter, .. }))
+            let param_adds = children
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Parameter,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(param_unchanged, 1); // MFG
             assert_eq!(param_adds, 1); // VALUE
@@ -2639,7 +3172,14 @@ mod tests {
     #[test]
     fn pcblib_empty_doc_all_add() {
         let spec = make_pcblib_spec(vec![
-            make_footprint("SOT23", vec![make_pad("1", -50, 0), make_pad("2", 50, 0), make_pad("3", 0, 80)]),
+            make_footprint(
+                "SOT23",
+                vec![
+                    make_pad("1", -50, 0),
+                    make_pad("2", 50, 0),
+                    make_pad("3", 0, 80),
+                ],
+            ),
             make_footprint("0603", vec![make_pad("1", -70, 0), make_pad("2", 70, 0)]),
         ]);
 
@@ -2651,7 +3191,13 @@ mod tests {
 
         assert_eq!(eco.changes.len(), 2);
         for change in &eco.changes {
-            assert!(matches!(change, EntityChange::Add { kind: EntityKind::Footprint, .. }));
+            assert!(matches!(
+                change,
+                EntityChange::Add {
+                    kind: EntityKind::Footprint,
+                    ..
+                }
+            ));
         }
     }
 
@@ -2659,7 +3205,11 @@ mod tests {
     fn pcblib_empty_doc_pad_children() {
         let spec = make_pcblib_spec(vec![make_footprint(
             "SOT23",
-            vec![make_pad("1", -50, 0), make_pad("2", 50, 0), make_pad("3", 0, 80)],
+            vec![
+                make_pad("1", -50, 0),
+                make_pad("2", 50, 0),
+                make_pad("3", 0, 80),
+            ],
         )]);
 
         let eco = reconcile_pcblib_empty(
@@ -2672,7 +3222,15 @@ mod tests {
         if let EntityChange::Add { children, .. } = &eco.changes[0] {
             let pad_adds = children
                 .iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Pad, .. }))
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Pad,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(pad_adds, 3);
         } else {
@@ -2703,10 +3261,7 @@ mod tests {
 
     #[test]
     fn pcblib_pad_props_encoded() {
-        let spec = make_pcblib_spec(vec![make_footprint(
-            "DO35",
-            vec![make_pad("K", -100, 0)],
-        )]);
+        let spec = make_pcblib_spec(vec![make_footprint("DO35", vec![make_pad("K", -100, 0)])]);
 
         let eco = reconcile_pcblib_empty(
             &spec,
@@ -2715,13 +3270,22 @@ mod tests {
         );
 
         if let EntityChange::Add { children, .. } = &eco.changes[0] {
-            if let EntityChange::Add { kind: EntityKind::Pad, identity, props, .. } = &children[0] {
+            if let EntityChange::Add {
+                kind: EntityKind::Pad,
+                identity,
+                props,
+                ..
+            } = &children[0]
+            {
                 assert_eq!(identity, "K");
                 // at should be encoded
                 let at_prop = props.iter().find(|p| p.field == "at").expect("at prop");
                 assert!(at_prop.value.contains("-100"), "at.x should encode -100");
                 // shape encoded
-                let shape_prop = props.iter().find(|p| p.field == "shape").expect("shape prop");
+                let shape_prop = props
+                    .iter()
+                    .find(|p| p.field == "shape")
+                    .expect("shape prop");
                 assert_eq!(shape_prop.value, "Round");
             } else {
                 panic!("expected Pad Add");
@@ -2742,9 +3306,10 @@ mod tests {
 
     #[test]
     fn pcblib_reconcile_unchanged() {
-        let spec = make_pcblib_spec(vec![
-            make_footprint("SOT23", vec![make_pad("1", -50, 0), make_pad("2", 50, 0)]),
-        ]);
+        let spec = make_pcblib_spec(vec![make_footprint(
+            "SOT23",
+            vec![make_pad("1", -50, 0), make_pad("2", 50, 0)],
+        )]);
         let mut lib = blank_pcblib();
         apply_spec_pcblib(&spec, &mut lib).unwrap();
 
@@ -2758,14 +3323,14 @@ mod tests {
         );
 
         assert_eq!(eco.changes.len(), 1);
-        assert!(matches!(&eco.changes[0], EntityChange::Unchanged { kind: EntityKind::Footprint, identity } if identity == "SOT23"));
+        assert!(
+            matches!(&eco.changes[0], EntityChange::Unchanged { kind: EntityKind::Footprint, identity } if identity == "SOT23")
+        );
     }
 
     #[test]
     fn pcblib_reconcile_detects_new_footprint() {
-        let spec1 = make_pcblib_spec(vec![
-            make_footprint("SOT23", vec![make_pad("1", 0, 0)]),
-        ]);
+        let spec1 = make_pcblib_spec(vec![make_footprint("SOT23", vec![make_pad("1", 0, 0)])]);
         let mut lib = blank_pcblib();
         apply_spec_pcblib(&spec1, &mut lib).unwrap();
 
@@ -2785,14 +3350,14 @@ mod tests {
 
         assert_eq!(eco.changes.len(), 2);
         assert!(matches!(&eco.changes[0], EntityChange::Unchanged { .. }));
-        assert!(matches!(&eco.changes[1], EntityChange::Add { kind: EntityKind::Footprint, identity, .. } if identity == "0603"));
+        assert!(
+            matches!(&eco.changes[1], EntityChange::Add { kind: EntityKind::Footprint, identity, .. } if identity == "0603")
+        );
     }
 
     #[test]
     fn pcblib_reconcile_detects_description_change() {
-        let spec1 = make_pcblib_spec(vec![
-            make_footprint("0805", vec![make_pad("1", 0, 0)]),
-        ]);
+        let spec1 = make_pcblib_spec(vec![make_footprint("0805", vec![make_pad("1", 0, 0)])]);
         let mut lib = blank_pcblib();
         apply_spec_pcblib(&spec1, &mut lib).unwrap();
 
@@ -2817,7 +3382,10 @@ mod tests {
 
         assert_eq!(eco.changes.len(), 1);
         if let EntityChange::Update { prop_changes, .. } = &eco.changes[0] {
-            let desc_change = prop_changes.iter().find(|pc| pc.field == "description").unwrap();
+            let desc_change = prop_changes
+                .iter()
+                .find(|pc| pc.field == "description")
+                .unwrap();
             assert_eq!(desc_change.old_value, "Test footprint");
             assert_eq!(desc_change.new_value, "Updated 0805");
         } else {
@@ -2827,18 +3395,17 @@ mod tests {
 
     #[test]
     fn pcblib_reconcile_detects_new_pad() {
-        let spec1 = make_pcblib_spec(vec![
-            make_footprint("QFP", vec![make_pad("1", 0, 0)]),
-        ]);
+        let spec1 = make_pcblib_spec(vec![make_footprint("QFP", vec![make_pad("1", 0, 0)])]);
         let mut lib = blank_pcblib();
         apply_spec_pcblib(&spec1, &mut lib).unwrap();
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         lib.save(tmp.path()).unwrap();
 
-        let spec2 = make_pcblib_spec(vec![
-            make_footprint("QFP", vec![make_pad("1", 0, 0), make_pad("2", 100, 0)]),
-        ]);
+        let spec2 = make_pcblib_spec(vec![make_footprint(
+            "QFP",
+            vec![make_pad("1", 0, 0), make_pad("2", 100, 0)],
+        )]);
 
         let eco = reconcile_pcblib(
             &spec2,
@@ -2848,11 +3415,29 @@ mod tests {
 
         assert_eq!(eco.changes.len(), 1);
         if let EntityChange::Update { children, .. } = &eco.changes[0] {
-            let pad_unchanged = children.iter()
-                .filter(|c| matches!(c, EntityChange::Unchanged { kind: EntityKind::Pad, .. }))
+            let pad_unchanged = children
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Unchanged {
+                            kind: EntityKind::Pad,
+                            ..
+                        }
+                    )
+                })
                 .count();
-            let pad_adds = children.iter()
-                .filter(|c| matches!(c, EntityChange::Add { kind: EntityKind::Pad, .. }))
+            let pad_adds = children
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        EntityChange::Add {
+                            kind: EntityKind::Pad,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(pad_unchanged, 1); // pad "1"
             assert_eq!(pad_adds, 1); // pad "2"
@@ -2863,16 +3448,16 @@ mod tests {
 
     // ── Tests: diff_placement_positions ──────────────────────────────────────
 
-    use altium_format::api::{
-        PcbDocBoard, PcbDocComponent, BoardSettings, BoardGeometry, LayerStack,
-    };
-    use altium_format_types::common::Unit;
-    use altium_format_types::pcb::{LayerRef, V6Layer};
-    use altium_format_types::LayerStackStyle;
     use crate::model::{
-        PlacementSpec, PlacementPlaceSpec, PlacementOptimizeSpec, PlacementClearanceSpec,
+        PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementSpec,
         UnplacedStrategy,
     };
+    use altium_format::api::{
+        BoardGeometry, BoardSettings, LayerStack, PcbDocBoard, PcbDocComponent,
+    };
+    use altium_format_types::LayerStackStyle;
+    use altium_format_types::common::Unit;
+    use altium_format_types::pcb::{LayerRef, V6Layer};
 
     fn make_coord_mm(x_mm: f64, y_mm: f64) -> CoordPoint {
         CoordPoint {
@@ -2921,7 +3506,12 @@ mod tests {
         }
     }
 
-    fn make_pcbdoc_component(designator: &str, x_mm: f64, y_mm: f64, rotation: f64) -> PcbDocComponent {
+    fn make_pcbdoc_component(
+        designator: &str,
+        x_mm: f64,
+        y_mm: f64,
+        rotation: f64,
+    ) -> PcbDocComponent {
         PcbDocComponent {
             id: designator.to_string(),
             designator: designator.to_string(),
@@ -2944,8 +3534,14 @@ mod tests {
             target: None,
             places,
             constraints: vec![],
-            optimize: PlacementOptimizeSpec { ratsnest: true, ratsnest_weight: 1.0 },
-            clearance: PlacementClearanceSpec { all: None, edge: None },
+            optimize: PlacementOptimizeSpec {
+                ratsnest: true,
+                ratsnest_weight: 1.0,
+            },
+            clearance: PlacementClearanceSpec {
+                all: None,
+                edge: None,
+            },
             autoplace_config: None,
             unplaced: UnplacedStrategy::default(),
             allow_pin_swap: false,
@@ -2978,12 +3574,9 @@ mod tests {
     #[test]
     fn placement_component_moved_emits_update() {
         // Spec says U1 at (10mm, 20mm), PcbDoc has U1 at (5mm, 5mm) → MOVE ECO
-        let board = make_board_with_components(vec![
-            make_pcbdoc_component("U1", 5.0, 5.0, 0.0),
-        ]);
-        let placement = make_placement_spec(vec![
-            make_place_at(vec!["U1".to_string()], 10.0, 20.0),
-        ]);
+        let board = make_board_with_components(vec![make_pcbdoc_component("U1", 5.0, 5.0, 0.0)]);
+        let placement =
+            make_placement_spec(vec![make_place_at(vec!["U1".to_string()], 10.0, 20.0)]);
 
         let mut changes = Vec::new();
         diff_placement_positions(&board, &placement, &mut changes);
@@ -3004,12 +3597,9 @@ mod tests {
     #[test]
     fn placement_component_at_same_position_unchanged() {
         // Spec says U1 at (10mm, 20mm), PcbDoc has U1 at (10mm, 20mm) → no change
-        let board = make_board_with_components(vec![
-            make_pcbdoc_component("U1", 10.0, 20.0, 0.0),
-        ]);
-        let placement = make_placement_spec(vec![
-            make_place_at(vec!["U1".to_string()], 10.0, 20.0),
-        ]);
+        let board = make_board_with_components(vec![make_pcbdoc_component("U1", 10.0, 20.0, 0.0)]);
+        let placement =
+            make_placement_spec(vec![make_place_at(vec!["U1".to_string()], 10.0, 20.0)]);
 
         let mut changes = Vec::new();
         diff_placement_positions(&board, &placement, &mut changes);
@@ -3028,19 +3618,23 @@ mod tests {
     #[test]
     fn placement_within_tolerance_unchanged() {
         // Spec says U1 at (10mm, 20mm), PcbDoc at (10.005mm, 20.005mm) → within 0.01mm → no change
-        let board = make_board_with_components(vec![
-            make_pcbdoc_component("U1", 10.005, 20.005, 0.0),
-        ]);
-        let placement = make_placement_spec(vec![
-            make_place_at(vec!["U1".to_string()], 10.0, 20.0),
-        ]);
+        let board =
+            make_board_with_components(vec![make_pcbdoc_component("U1", 10.005, 20.005, 0.0)]);
+        let placement =
+            make_placement_spec(vec![make_place_at(vec!["U1".to_string()], 10.0, 20.0)]);
 
         let mut changes = Vec::new();
         diff_placement_positions(&board, &placement, &mut changes);
 
         assert_eq!(changes.len(), 1);
         assert!(
-            matches!(&changes[0], EntityChange::Unchanged { kind: EntityKind::PcbDocComponent, .. }),
+            matches!(
+                &changes[0],
+                EntityChange::Unchanged {
+                    kind: EntityKind::PcbDocComponent,
+                    ..
+                }
+            ),
             "expected Unchanged within 0.005mm tolerance, got {:?}",
             changes[0]
         );
@@ -3049,9 +3643,7 @@ mod tests {
     #[test]
     fn placement_place_without_at_skipped() {
         // PlacementPlaceSpec without `at:` → no placement comparison
-        let board = make_board_with_components(vec![
-            make_pcbdoc_component("U1", 5.0, 5.0, 0.0),
-        ]);
+        let board = make_board_with_components(vec![make_pcbdoc_component("U1", 5.0, 5.0, 0.0)]);
         let placement = make_placement_spec(vec![PlacementPlaceSpec {
             annotation: None,
             designators: vec!["U1".to_string()],
@@ -3079,9 +3671,7 @@ mod tests {
     #[test]
     fn placement_designator_not_in_pcbdoc_skipped() {
         // U2 in spec but not in PcbDoc → warning (via eprintln), no ECO entry
-        let board = make_board_with_components(vec![
-            make_pcbdoc_component("U1", 10.0, 20.0, 0.0),
-        ]);
+        let board = make_board_with_components(vec![make_pcbdoc_component("U1", 10.0, 20.0, 0.0)]);
         let placement = make_placement_spec(vec![
             make_place_at(vec!["U2".to_string()], 10.0, 20.0), // U2 absent from PcbDoc
         ]);
@@ -3089,7 +3679,11 @@ mod tests {
         let mut changes = Vec::new();
         diff_placement_positions(&board, &placement, &mut changes);
 
-        assert_eq!(changes.len(), 0, "missing designator should produce no ECO entry");
+        assert_eq!(
+            changes.len(),
+            0,
+            "missing designator should produce no ECO entry"
+        );
     }
 
     #[test]
@@ -3099,14 +3693,22 @@ mod tests {
             make_pcbdoc_component("C1", 0.0, 0.0, 0.0),
             make_pcbdoc_component("C2", 1.0, 1.0, 0.0),
         ]);
-        let placement = make_placement_spec(vec![
-            make_place_at(vec!["C1".to_string(), "C2".to_string()], 10.0, 20.0),
-        ]);
+        let placement = make_placement_spec(vec![make_place_at(
+            vec!["C1".to_string(), "C2".to_string()],
+            10.0,
+            20.0,
+        )]);
 
         let mut changes = Vec::new();
         diff_placement_positions(&board, &placement, &mut changes);
 
         assert_eq!(changes.len(), 2);
-        assert!(changes.iter().all(|c| matches!(c, EntityChange::Update { kind: EntityKind::PcbDocComponent, .. })));
+        assert!(changes.iter().all(|c| matches!(
+            c,
+            EntityChange::Update {
+                kind: EntityKind::PcbDocComponent,
+                ..
+            }
+        )));
     }
 }

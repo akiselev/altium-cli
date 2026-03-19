@@ -2,37 +2,30 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
-use autopcb_graph_import_altium::{import_pcblib, import_schlib};
-use autopcb_graph_spec::{create_workspace_bundle, save_workspace, validate_workspace};
-use autopcb_ir::PcbIr;
-use autopcb_placement::{
-    Direction, PlacementConfig, PlacementEdge, RectRegion, UserConstraint,
-    named_region_from_board, solve_placement,
-};
 use altium_format_query::{eval_query, parse_query};
-use altium_format_spec::{
-    FormatConfig, SpecDomain, compile_spec_with_resolved, compile_imported_schlibs,
-    dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
-    dump_placement_block,
-    format_spec,
-    PlacementConstraintSpec, PlacementPlaceSpec,
-    reconcile_pcbdoc, reconcile_pcbdoc_empty,
-    reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
-    reconcile_schdoc, reconcile_schdoc_empty,
-    reconcile_schlib, reconcile_schlib_empty, resolve_imports,
-    apply_spec_pcbdoc, apply_spec_schlib, apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc,
-    validate_schdoc_spec, validate_pcbdoc_spec,
-    project_schdoc_spec, project_pcbdoc_spec,
-    diff_snapshots, filter_changes,
-    apply_sync_changes_to_pcbdoc,
-    rewrite_pcbdoc_spec_with_changes,
-    render_eco_report,
-    SyncPolicy, SyncDirection, SyncChange,
-};
 use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
 };
 use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_schlib_component};
+use altium_format_spec::{
+    FormatConfig, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
+    SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb,
+    apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_schlibs,
+    compile_spec_with_resolved, diff_snapshots, dump_intlib, dump_pcbdoc, dump_pcblib,
+    dump_placement_block, dump_prjpcb, dump_schdoc, dump_schlib, filter_changes, format_spec,
+    project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc, reconcile_pcbdoc_empty,
+    reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
+    reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib, reconcile_schlib_empty,
+    render_eco_report, resolve_imports, rewrite_pcbdoc_spec_with_changes, validate_pcbdoc_spec,
+    validate_schdoc_spec,
+};
+use autopcb_graph_import_altium::{import_pcblib, import_schlib};
+use autopcb_graph_spec::{create_workspace_bundle, save_workspace, validate_workspace};
+use autopcb_ir::PcbIr;
+use autopcb_placement::{
+    Direction, PlacementConfig, PlacementEdge, RectRegion, UserConstraint, named_region_from_board,
+    solve_placement,
+};
 use clap::{Parser, Subcommand};
 
 mod cfb;
@@ -401,21 +394,36 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Plan { spec_file, target, json, all } => {
-            match run_plan(&spec_file, target.as_ref(), json, all) {
-                Ok(has_changes) => {
-                    if has_changes {
-                        return ExitCode::from(1);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
+        Commands::Plan {
+            spec_file,
+            target,
+            json,
+            all,
+        } => match run_plan(&spec_file, target.as_ref(), json, all) {
+            Ok(has_changes) => {
+                if has_changes {
+                    return ExitCode::from(1);
                 }
             }
-        }
-        Commands::Apply { spec_file, target, output, report_json, all } => {
-            if let Err(e) = run_apply(&spec_file, target.as_ref(), output.as_ref(), report_json, all) {
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        Commands::Apply {
+            spec_file,
+            target,
+            output,
+            report_json,
+            all,
+        } => {
+            if let Err(e) = run_apply(
+                &spec_file,
+                target.as_ref(),
+                output.as_ref(),
+                report_json,
+                all,
+            ) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -438,7 +446,12 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Query { path, query, format, limit } => {
+        Commands::Query {
+            path,
+            query,
+            format,
+            limit,
+        } => {
             if let Err(e) = run_query(&path, &query, &format, limit) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
@@ -456,15 +469,17 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Format { files, check, stdout } => {
-            match run_format(files, check, stdout) {
-                Ok(code) => return code,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return ExitCode::FAILURE;
-                }
+        Commands::Format {
+            files,
+            check,
+            stdout,
+        } => match run_format(files, check, stdout) {
+            Ok(code) => return code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
             }
-        }
+        },
         Commands::Spec { sub } => {
             if let Err(e) = run_spec(sub) {
                 eprintln!("Error: {e}");
@@ -510,18 +525,22 @@ fn run_spec_sync(
 
     // ── Step 2: Parse and compile both specs ──────────────────────────────────
 
-    let schdoc_result =
-        compile_and_resolve(&schdoc_source, schdoc_spec_path, &SpecDomain::SchDoc)?;
-    let pcbdoc_result =
-        compile_and_resolve(&pcbdoc_source, pcbdoc_spec_path, &SpecDomain::PcbDoc)?;
+    let schdoc_result = compile_and_resolve(&schdoc_source, schdoc_spec_path, &SpecDomain::SchDoc)?;
+    let pcbdoc_result = compile_and_resolve(&pcbdoc_source, pcbdoc_spec_path, &SpecDomain::PcbDoc)?;
 
     let schdoc_spec = match schdoc_result.model {
         altium_format_spec::model::SpecModel::SchDoc(spec) => spec,
-        _ => anyhow::bail!("{} is not a valid .schdoc-spec file", schdoc_spec_path.display()),
+        _ => anyhow::bail!(
+            "{} is not a valid .schdoc-spec file",
+            schdoc_spec_path.display()
+        ),
     };
     let pcbdoc_spec_model = match pcbdoc_result.model {
         altium_format_spec::model::SpecModel::PcbDoc(spec) => spec,
-        _ => anyhow::bail!("{} is not a valid .pcbdoc-spec file", pcbdoc_spec_path.display()),
+        _ => anyhow::bail!(
+            "{} is not a valid .pcbdoc-spec file",
+            pcbdoc_spec_path.display()
+        ),
     };
 
     // ── Step 3: Validate both specs ───────────────────────────────────────────
@@ -536,12 +555,11 @@ fn run_spec_sync(
             }
         }
         Err(errors) => {
-            let msgs: Vec<String> = errors.iter().map(|e| e.render(&schdoc_name, &schdoc_source)).collect();
-            anyhow::bail!(
-                "validation errors in {}: {}",
-                schdoc_name,
-                msgs.join("; ")
-            );
+            let msgs: Vec<String> = errors
+                .iter()
+                .map(|e| e.render(&schdoc_name, &schdoc_source))
+                .collect();
+            anyhow::bail!("validation errors in {}: {}", schdoc_name, msgs.join("; "));
         }
     }
 
@@ -552,21 +570,31 @@ fn run_spec_sync(
             }
         }
         Err(errors) => {
-            let msgs: Vec<String> = errors.iter().map(|e| e.render(&pcbdoc_name, &pcbdoc_source)).collect();
-            anyhow::bail!(
-                "validation errors in {}: {}",
-                pcbdoc_name,
-                msgs.join("; ")
-            );
+            let msgs: Vec<String> = errors
+                .iter()
+                .map(|e| e.render(&pcbdoc_name, &pcbdoc_source))
+                .collect();
+            anyhow::bail!("validation errors in {}: {}", pcbdoc_name, msgs.join("; "));
         }
     }
 
     // ── Step 4: Project both specs to SyncSnapshot ────────────────────────────
 
     let schdoc_snapshot = project_schdoc_spec(&schdoc_spec, &schdoc_result.imported_components)
-        .map_err(|e| anyhow::anyhow!("projecting {}: {}", schdoc_name, e.render(&schdoc_name, &schdoc_source)))?;
-    let pcbdoc_snapshot = project_pcbdoc_spec(&pcbdoc_spec_model)
-        .map_err(|e| anyhow::anyhow!("projecting {}: {}", pcbdoc_name, e.render(&pcbdoc_name, &pcbdoc_source)))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "projecting {}: {}",
+                schdoc_name,
+                e.render(&schdoc_name, &schdoc_source)
+            )
+        })?;
+    let pcbdoc_snapshot = project_pcbdoc_spec(&pcbdoc_spec_model).map_err(|e| {
+        anyhow::anyhow!(
+            "projecting {}: {}",
+            pcbdoc_name,
+            e.render(&pcbdoc_name, &pcbdoc_source)
+        )
+    })?;
 
     // ── Step 5: Diff snapshots ────────────────────────────────────────────────
 
@@ -591,10 +619,12 @@ fn run_spec_sync(
     // In append mode, drop all Remove* changes so multi-sheet syncs don't
     // clobber components/nets from previously synced sheets.
     if append {
-        filtered.retain(|change| !matches!(
-            change,
-            SyncChange::RemoveComponent { .. } | SyncChange::RemoveNet { .. }
-        ));
+        filtered.retain(|change| {
+            !matches!(
+                change,
+                SyncChange::RemoveComponent { .. } | SyncChange::RemoveNet { .. }
+            )
+        });
     }
 
     // ── Step 7: Print ECO report ──────────────────────────────────────────────
@@ -996,25 +1026,36 @@ fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
         Some("pcblib-spec") => Ok(SpecDomain::PcbLib),
         Some("prjpcb-spec") => Ok(SpecDomain::PrjPcb),
         Some("pcbdoc-spec") => Ok(SpecDomain::PcbDoc),
-        Some(ext) => anyhow::bail!("unknown spec file extension .{ext} (supported: .schlib-spec, .schdoc-spec, .pcblib-spec, .prjpcb-spec, .pcbdoc-spec)"),
+        Some(ext) => anyhow::bail!(
+            "unknown spec file extension .{ext} (supported: .schlib-spec, .schdoc-spec, .pcblib-spec, .prjpcb-spec, .pcbdoc-spec)"
+        ),
         None => anyhow::bail!("spec file has no extension: {}", path.display()),
     }
 }
 
 fn detect_document_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match ext.as_str() {
         "schlib" => Ok(SpecDomain::SchLib),
         "schdoc" => Ok(SpecDomain::SchDoc),
         "pcblib" => Ok(SpecDomain::PcbLib),
         "prjpcb" => Ok(SpecDomain::PrjPcb),
         "pcbdoc" => Ok(SpecDomain::PcbDoc),
-        _ => anyhow::bail!("unknown document extension .{ext} (supported: .schlib, .schdoc, .pcblib, .prjpcb, .pcbdoc)"),
+        _ => anyhow::bail!(
+            "unknown document extension .{ext} (supported: .schlib, .schdoc, .pcblib, .prjpcb, .pcbdoc)"
+        ),
     }
 }
 
 fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf {
-    let stem = spec_file.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let stem = spec_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     let ext = match domain {
         SpecDomain::SchLib => "SchLib",
         SpecDomain::SchDoc => "SchDoc",
@@ -1063,7 +1104,10 @@ fn run_plan(
     } else {
         println!("{}", eco.render_text());
     }
-    let mut has_changes = eco.summary.by_kind.values()
+    let mut has_changes = eco
+        .summary
+        .by_kind
+        .values()
         .any(|k| k.adds > 0 || k.updates > 0);
 
     // Process imports with --all.
@@ -1083,7 +1127,10 @@ fn run_plan(
             } else {
                 println!("{}", eco.render_text());
             }
-            has_changes |= eco.summary.by_kind.values()
+            has_changes |= eco
+                .summary
+                .by_kind
+                .values()
                 .any(|k| k.adds > 0 || k.updates > 0);
         }
     }
@@ -1105,8 +1152,9 @@ fn plan_for_model(
         altium_format_spec::model::SpecModel::SchLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
-                let doc = SchLib::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                let doc = SchLib::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?;
                 reconcile_schlib(spec_lib, &doc, library_path, spec_path)
                     .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
             } else {
@@ -1124,8 +1172,9 @@ fn plan_for_model(
         altium_format_spec::model::SpecModel::PrjPcb(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
-                let doc = AltiumProject::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                let doc = AltiumProject::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?;
                 reconcile_prjpcb(spec, &doc, library_path, spec_path)
                     .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
             } else {
@@ -1135,8 +1184,9 @@ fn plan_for_model(
         altium_format_spec::model::SpecModel::SchDoc(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
-                let doc = SchDoc::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                let doc = SchDoc::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?;
                 reconcile_schdoc(spec, &doc, library_path, spec_path)
                     .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
             } else {
@@ -1146,8 +1196,9 @@ fn plan_for_model(
         altium_format_spec::model::SpecModel::PcbDoc(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
-                let doc = PcbDoc::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+                let doc = PcbDoc::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?;
                 reconcile_pcbdoc(spec, &doc, library_path, spec_path)
                     .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?
             } else {
@@ -1179,7 +1230,15 @@ fn run_apply(
     let result = compile_and_resolve(&source, spec_file, &domain)?;
 
     // Apply root spec.
-    apply_for_model(&result.model, target, output, spec_file, &domain, &result.imported_components, &result.import_paths)?;
+    apply_for_model(
+        &result.model,
+        target,
+        output,
+        spec_file,
+        &domain,
+        &result.imported_components,
+        &result.import_paths,
+    )?;
 
     // Apply imports with --all.
     if all {
@@ -1188,7 +1247,15 @@ fn run_apply(
             let import_source = std::fs::read_to_string(import_path)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", import_path.display()))?;
             let import_result = compile_and_resolve(&import_source, import_path, &import_domain)?;
-            apply_for_model(&import_result.model, None, None, import_path, &import_domain, &import_result.imported_components, &import_result.import_paths)?;
+            apply_for_model(
+                &import_result.model,
+                None,
+                None,
+                import_path,
+                &import_domain,
+                &import_result.imported_components,
+                &import_result.import_paths,
+            )?;
         }
     }
 
@@ -1202,7 +1269,10 @@ fn apply_for_model(
     output: Option<&PathBuf>,
     spec_file: &PathBuf,
     domain: &SpecDomain,
-    imported_components: &std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
+    imported_components: &std::collections::HashMap<
+        String,
+        altium_format_spec::model::ComponentSpec,
+    >,
     import_paths: &[PathBuf],
 ) -> anyhow::Result<()> {
     let library_path = default_output_for_spec(spec_file, domain);
@@ -1211,8 +1281,9 @@ fn apply_for_model(
         altium_format_spec::model::SpecModel::SchLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
-                SchLib::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+                SchLib::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?
             } else {
                 let mut lib = SchLib::new_blank_ad26()?;
                 // Remove the default placeholder component from blank libraries
@@ -1231,8 +1302,9 @@ fn apply_for_model(
         altium_format_spec::model::SpecModel::PcbLib(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut lib = if resolved_target.exists() {
-                PcbLib::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+                PcbLib::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?
             } else {
                 PcbLib::new_blank_ad26()?
             };
@@ -1248,16 +1320,16 @@ fn apply_for_model(
         altium_format_spec::model::SpecModel::PrjPcb(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
-                AltiumProject::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+                AltiumProject::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?
             } else {
                 AltiumProject::new_blank_ad26()
             };
 
             let out_path = output.cloned().unwrap_or(library_path);
 
-            apply_spec_prjpcb(spec, &mut doc)
-                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+            apply_spec_prjpcb(spec, &mut doc).map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
@@ -1265,8 +1337,9 @@ fn apply_for_model(
         altium_format_spec::model::SpecModel::SchDoc(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
-                SchDoc::open(&resolved_target)
-                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?
+                SchDoc::open(&resolved_target).map_err(|e| {
+                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+                })?
             } else {
                 SchDoc::new_blank_ad26()
             };
@@ -1287,16 +1360,21 @@ fn apply_for_model(
                     resolved_target.display()
                 );
             }
-            let mut doc = PcbDoc::open(&resolved_target)
-                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", resolved_target.display()))?;
+            let mut doc = PcbDoc::open(&resolved_target).map_err(|e| {
+                anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
+            })?;
 
             let out_path = output.cloned().unwrap_or(library_path);
 
-            apply_spec_pcbdoc(spec, &mut doc)
-                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+            apply_spec_pcbdoc(spec, &mut doc).map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
             let pad_net_map = build_pad_net_map(spec_file)?;
-            instantiate_footprint_primitives(&mut doc, import_paths, &pad_net_map, imported_components)?;
+            instantiate_footprint_primitives(
+                &mut doc,
+                import_paths,
+                &pad_net_map,
+                imported_components,
+            )?;
 
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
@@ -1407,7 +1485,10 @@ fn instantiate_footprint_primitives(
     doc: &mut PcbDoc,
     import_paths: &[PathBuf],
     pad_net_map: &std::collections::HashMap<(String, String), String>,
-    imported_components: &std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
+    imported_components: &std::collections::HashMap<
+        String,
+        altium_format_spec::model::ComponentSpec,
+    >,
 ) -> anyhow::Result<()> {
     use altium_format_types::coord::{Coord, CoordPoint};
 
@@ -1426,7 +1507,8 @@ fn instantiate_footprint_primitives(
         return Ok(());
     }
 
-    let mut board = doc.board()
+    let mut board = doc
+        .board()
         .map_err(|e| anyhow::anyhow!("failed to read board for primitive instantiation: {e}"))?;
 
     // Remove all primitives currently associated with a component; they will be
@@ -1542,12 +1624,9 @@ fn instantiate_footprint_primitives(
             for graphic in &fp.graphics {
                 match graphic {
                     altium_format::api::PcbGraphic::Track(track) => {
-                        let start = transform_point(
-                            track.start, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
-                        let end = transform_point(
-                            track.end, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
+                        let start =
+                            transform_point(track.start, comp_x_f64, comp_y_f64, cos_r, sin_r);
+                        let end = transform_point(track.end, comp_x_f64, comp_y_f64, cos_r, sin_r);
                         board.tracks.push(altium_format::api::Track {
                             id: format!("{}-track-{}", comp.designator, track_counter),
                             layer: track.layer.clone(),
@@ -1560,9 +1639,8 @@ fn instantiate_footprint_primitives(
                         track_counter += 1;
                     }
                     altium_format::api::PcbGraphic::Arc(arc) => {
-                        let center = transform_point(
-                            arc.center, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
+                        let center =
+                            transform_point(arc.center, comp_x_f64, comp_y_f64, cos_r, sin_r);
                         board.arcs.push(altium_format::api::Arc {
                             id: format!("{}-arc-{}", comp.designator, arc_counter),
                             layer: arc.layer.clone(),
@@ -1577,12 +1655,10 @@ fn instantiate_footprint_primitives(
                         arc_counter += 1;
                     }
                     altium_format::api::PcbGraphic::Fill(fill) => {
-                        let corner1 = transform_point(
-                            fill.corner1, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
-                        let corner2 = transform_point(
-                            fill.corner2, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
+                        let corner1 =
+                            transform_point(fill.corner1, comp_x_f64, comp_y_f64, cos_r, sin_r);
+                        let corner2 =
+                            transform_point(fill.corner2, comp_x_f64, comp_y_f64, cos_r, sin_r);
                         board.fills.push(altium_format::api::Fill {
                             id: format!("{}-fill-{}", comp.designator, fill_counter),
                             layer: fill.layer.clone(),
@@ -1595,15 +1671,13 @@ fn instantiate_footprint_primitives(
                         fill_counter += 1;
                     }
                     altium_format::api::PcbGraphic::Text(text) => {
-                        let location = transform_point(
-                            text.location, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
-                        let text_str =
-                            if text.text == ".Designator" || text.text == ".DESIGNATOR" {
-                                comp.designator.clone()
-                            } else {
-                                text.text.clone()
-                            };
+                        let location =
+                            transform_point(text.location, comp_x_f64, comp_y_f64, cos_r, sin_r);
+                        let text_str = if text.text == ".Designator" || text.text == ".DESIGNATOR" {
+                            comp.designator.clone()
+                        } else {
+                            text.text.clone()
+                        };
                         board.texts.push(altium_format::api::PcbDocText {
                             id: format!("{}-text-{}", comp.designator, text_counter),
                             layer: text.layer.clone(),
@@ -1622,7 +1696,11 @@ fn instantiate_footprint_primitives(
                     }
                     altium_format::api::PcbGraphic::Region(region) => {
                         let outline = transform_contour(
-                            &region.outline, comp_x_f64, comp_y_f64, cos_r, sin_r,
+                            &region.outline,
+                            comp_x_f64,
+                            comp_y_f64,
+                            cos_r,
+                            sin_r,
                         );
                         let holes: Vec<Vec<CoordPoint>> = region
                             .holes
@@ -1647,20 +1725,21 @@ fn instantiate_footprint_primitives(
                         // separately if needed.
                     }
                     altium_format::api::PcbGraphic::ComponentBody(body) => {
-                        let outline = transform_contour(
-                            &body.outline, comp_x_f64, comp_y_f64, cos_r, sin_r,
-                        );
-                        board.component_bodies.push(altium_format::api::ComponentBody {
-                            id: format!("{}-body-{}", comp.designator, body_counter),
-                            layer: body.layer.clone(),
-                            component: Some(comp.designator.clone()),
-                            standoff_height: body.standoff_height,
-                            overall_height: body.overall_height,
-                            body_color_3d: body.body_color_3d,
-                            body_opacity_3d: body.body_opacity_3d,
-                            model_name: body.model_name.clone(),
-                            outline,
-                        });
+                        let outline =
+                            transform_contour(&body.outline, comp_x_f64, comp_y_f64, cos_r, sin_r);
+                        board
+                            .component_bodies
+                            .push(altium_format::api::ComponentBody {
+                                id: format!("{}-body-{}", comp.designator, body_counter),
+                                layer: body.layer.clone(),
+                                component: Some(comp.designator.clone()),
+                                standoff_height: body.standoff_height,
+                                overall_height: body.overall_height,
+                                body_color_3d: body.body_color_3d,
+                                body_opacity_3d: body.body_opacity_3d,
+                                model_name: body.model_name.clone(),
+                                outline,
+                            });
                         body_counter += 1;
                     }
                 }
@@ -1681,22 +1760,27 @@ fn instantiate_footprint_primitives(
 /// If the output file already exists and can be parsed, merges the fresh dump
 /// with the existing content to preserve comments and annotation IDs.
 /// Falls back to overwriting if the existing file can't be parsed.
-fn write_spec_merged(out_path: &std::path::Path, spec_source: &str, document: &PathBuf) -> anyhow::Result<()> {
+fn write_spec_merged(
+    out_path: &std::path::Path,
+    spec_source: &str,
+    document: &PathBuf,
+) -> anyhow::Result<()> {
     if out_path.exists() {
         match std::fs::read_to_string(out_path) {
-            Ok(old_text) => {
-                match spec_merge::merge_spec(&old_text, spec_source) {
-                    Some(merged) => {
-                        std::fs::write(out_path, &merged)
-                            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-                        println!("Merged: {} -> {}", document.display(), out_path.display());
-                        return Ok(());
-                    }
-                    None => {
-                        eprintln!("Warning: existing spec file has parse errors, overwriting without merge");
-                    }
+            Ok(old_text) => match spec_merge::merge_spec(&old_text, spec_source) {
+                Some(merged) => {
+                    std::fs::write(out_path, &merged).map_err(|e| {
+                        anyhow::anyhow!("failed to write {}: {e}", out_path.display())
+                    })?;
+                    println!("Merged: {} -> {}", document.display(), out_path.display());
+                    return Ok(());
                 }
-            }
+                None => {
+                    eprintln!(
+                        "Warning: existing spec file has parse errors, overwriting without merge"
+                    );
+                }
+            },
             Err(_) => {
                 // Can't read existing file — just overwrite.
             }
@@ -1721,7 +1805,9 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
     }
 
     let domain = detect_document_domain(document)?;
-    let out_path = output.cloned().unwrap_or_else(|| default_spec_for_document(document, &domain));
+    let out_path = output
+        .cloned()
+        .unwrap_or_else(|| default_spec_for_document(document, &domain));
 
     match domain {
         SpecDomain::SchLib => {
@@ -1747,8 +1833,7 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
         SpecDomain::PrjPcb => {
             let doc = AltiumProject::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
-            let spec_source = dump_prjpcb(&doc)
-                .map_err(|e| anyhow::anyhow!("dump failed: {e}"))?;
+            let spec_source = dump_prjpcb(&doc).map_err(|e| anyhow::anyhow!("dump failed: {e}"))?;
             write_spec_merged(&out_path, &spec_source, document)?;
         }
         SpecDomain::PcbDoc => {
@@ -1776,7 +1861,10 @@ fn run_dump_intlib(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Resu
 
     let out_dir = match output {
         Some(p) if p.is_dir() => p.clone(),
-        Some(p) => p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf(),
+        Some(p) => p
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf(),
         None => document
             .parent()
             .unwrap_or(std::path::Path::new("."))
@@ -1795,10 +1883,7 @@ fn run_dump_intlib(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Resu
         wrote_any = true;
     }
     if !wrote_any {
-        anyhow::bail!(
-            "{} contains no SchLib or PcbLib data",
-            document.display()
-        );
+        anyhow::bail!("{} contains no SchLib or PcbLib data", document.display());
     }
 
     Ok(())
@@ -1812,7 +1897,8 @@ struct CompileResult {
     import_paths: Vec<PathBuf>,
     /// Compiled SchLib components from imports, keyed by lib_reference.
     /// Used by SchDoc apply to resolve pin positions.
-    imported_components: std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
+    imported_components:
+        std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
 }
 
 fn compile_and_resolve(
@@ -1823,13 +1909,15 @@ fn compile_and_resolve(
     use altium_format_spec::parser::parse_spec;
 
     let source_name = spec_file.display().to_string();
-    let file = parse_spec(source)
-        .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
+    let file =
+        parse_spec(source).map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
     // Resolve imports: validates cycles, cross-domain rules, alias uniqueness,
     // and file existence. We do NOT merge bare imports into the root AST —
     // each file is compiled independently (reference semantics).
-    let spec_path_canonical = spec_file.canonicalize().unwrap_or_else(|_| spec_file.clone());
+    let spec_path_canonical = spec_file
+        .canonicalize()
+        .unwrap_or_else(|_| spec_file.clone());
     let resolved = resolve_imports(&spec_path_canonical, file.clone())
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
@@ -1837,18 +1925,17 @@ fn compile_and_resolve(
     // Two callees need the imported-components map: compile_spec_with_resolved for symbol
     // validation and apply_spec_schdoc for pin position resolution. Build it twice since
     // ComponentSpec does not implement Clone.
-    let imported_components_for_exec = compile_imported_schlibs(&resolved)
-        .map_err(|(path, e)| {
+    let imported_components_for_exec =
+        compile_imported_schlibs(&resolved).map_err(|(path, e)| {
             let import_source = std::fs::read_to_string(&path).unwrap_or_default();
             let import_name = path.display().to_string();
             anyhow::anyhow!("{}", e.render(&import_name, &import_source))
         })?;
-    let imported_components = compile_imported_schlibs(&resolved)
-        .map_err(|(path, e)| {
-            let import_source = std::fs::read_to_string(&path).unwrap_or_default();
-            let import_name = path.display().to_string();
-            anyhow::anyhow!("{}", e.render(&import_name, &import_source))
-        })?;
+    let imported_components = compile_imported_schlibs(&resolved).map_err(|(path, e)| {
+        let import_source = std::fs::read_to_string(&path).unwrap_or_default();
+        let import_name = path.display().to_string();
+        anyhow::anyhow!("{}", e.render(&import_name, &import_source))
+    })?;
     let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
@@ -1860,7 +1947,11 @@ fn compile_and_resolve(
         .chain(resolved.named_imports.values().map(|(p, _)| p.clone()))
         .collect();
 
-    Ok(CompileResult { model, import_paths, imported_components: imported_components_for_exec })
+    Ok(CompileResult {
+        model,
+        import_paths,
+        imported_components: imported_components_for_exec,
+    })
 }
 
 fn run_info(path: &std::path::Path, format: &str) -> anyhow::Result<()> {
@@ -1954,12 +2045,16 @@ fn run_info_schdoc(
     }
 
     if format == "json" {
-        let symbols_json: Vec<serde_json::Value> = sheet.sheet_symbols().iter().map(|s| {
-            serde_json::json!({
-                "file_name": s.file_name,
-                "sheet_name": s.sheet_name,
+        let symbols_json: Vec<serde_json::Value> = sheet
+            .sheet_symbols()
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "file_name": s.file_name,
+                    "sheet_name": s.sheet_name,
+                })
             })
-        }).collect();
+            .collect();
 
         let info = serde_json::json!({
             "document": path.display().to_string(),
@@ -2046,11 +2141,7 @@ fn run_info_schdoc(
     Ok(())
 }
 
-fn run_info_schlib(
-    path: &std::path::Path,
-    lib: &SchLib,
-    format: &str,
-) -> anyhow::Result<()> {
+fn run_info_schlib(path: &std::path::Path, lib: &SchLib, format: &str) -> anyhow::Result<()> {
     let names = lib.component_names();
     if format == "json" {
         let info = serde_json::json!({
@@ -2072,11 +2163,7 @@ fn run_info_schlib(
     Ok(())
 }
 
-fn run_info_pcblib(
-    path: &std::path::Path,
-    lib: &PcbLib,
-    format: &str,
-) -> anyhow::Result<()> {
+fn run_info_pcblib(path: &std::path::Path, lib: &PcbLib, format: &str) -> anyhow::Result<()> {
     let names = lib.footprint_names();
     if format == "json" {
         let info = serde_json::json!({
@@ -2171,9 +2258,7 @@ fn run_query(
     limit: Option<usize>,
 ) -> anyhow::Result<()> {
     // Parse the query
-    let query = parse_query(query_str).map_err(|e| {
-        anyhow::anyhow!("{}", e.render(query_str))
-    })?;
+    let query = parse_query(query_str).map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?;
 
     // Open the document based on file extension
     let ext = path
@@ -2185,23 +2270,19 @@ fn run_query(
     let results = match ext.as_str() {
         "schlib" => {
             let lib = SchLib::open(path)?;
-            eval_query(&query, &lib)
-                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+            eval_query(&query, &lib).map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
         "pcblib" => {
             let lib = PcbLib::open(path)?;
-            eval_query(&query, &lib)
-                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+            eval_query(&query, &lib).map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
         "schdoc" => {
             let doc = SchDoc::open(path)?;
-            eval_query(&query, &doc)
-                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+            eval_query(&query, &doc).map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
         "pcbdoc" => {
             let doc = PcbDoc::open(path)?;
-            eval_query(&query, &doc)
-                .map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
+            eval_query(&query, &doc).map_err(|e| anyhow::anyhow!("{}", e.render(query_str)))?
         }
         _ => {
             anyhow::bail!(
@@ -2238,7 +2319,11 @@ fn run_query(
             if results.is_empty() {
                 println!("No matches.");
             } else {
-                println!("{} match{}:", results.len(), if results.len() == 1 { "" } else { "es" });
+                println!(
+                    "{} match{}:",
+                    results.len(),
+                    if results.len() == 1 { "" } else { "es" }
+                );
                 for m in &results {
                     let type_name = format!("{:?}", m.node.type_selector());
                     println!("  [{type_name}] {}", m.node.display_name());
@@ -2259,10 +2344,7 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
         InspectSubcommand::Summary => {
             let b = &ir.board.bounds;
             println!("Board: {:.2} x {:.2} mm", b.width(), b.height());
-            println!(
-                "  Origin: ({:.2}, {:.2}) mm",
-                b.min.x, b.min.y
-            );
+            println!("  Origin: ({:.2}, {:.2}) mm", b.min.x, b.min.y);
             println!("  Layers: {} copper", ir.layer_stack.copper_layer_count);
             println!("  Components: {}", ir.components.len());
             println!("  Nets: {}", ir.nets.len());
@@ -2300,15 +2382,14 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
             println!("\n{} components total", ir.components.len());
         }
         InspectSubcommand::Nets => {
-            println!(
-                "{:<30} {:>6} {:>6}",
-                "NET NAME", "PINS", "COMPS"
-            );
+            println!("{:<30} {:>6} {:>6}", "NET NAME", "PINS", "COMPS");
             println!("{}", "-".repeat(44));
             for (_id, net) in ir.nets.iter() {
                 println!(
                     "{:<30} {:>6} {:>6}",
-                    net.name, net.pins.len(), net.component_count
+                    net.name,
+                    net.pins.len(),
+                    net.component_count
                 );
             }
             println!("\n{} nets total", ir.nets.len());
@@ -2363,7 +2444,12 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
             max_iters,
             sa,
         } => {
-            let mut cfg = PlacementConfig { gamma_start, gamma_end, max_iters, ..PlacementConfig::default() };
+            let mut cfg = PlacementConfig {
+                gamma_start,
+                gamma_end,
+                max_iters,
+                ..PlacementConfig::default()
+            };
             if sa {
                 cfg.sa_config = Some(autopcb_placement::simulated_annealing::SAConfig::default());
             }
@@ -2451,8 +2537,9 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
             }
             cfg.ratsnest_weight = placement.optimize.ratsnest_weight;
 
-            let user_constraints = build_user_constraints(&ir, &placement.places, &placement.constraints)?;
-            let result = solve_placement(&ir, &user_constraints, &cfg)
+            let user_constraints =
+                build_user_constraints(&ir, &placement.places, &placement.constraints)?;
+            let result = solve_placement(&ir, &user_constraints, &cfg, &[])
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             if let Some(path) = iterations_out {
@@ -2575,6 +2662,44 @@ pub fn autoplace_spec(
         if let Some(gs) = ac.grid_snap {
             cfg.grid_snap_mm = Some(gs.to_mms());
         }
+        if let Some(auto_cluster) = ac.auto_cluster {
+            cfg.auto_cluster = auto_cluster;
+        }
+        if let Some(target_size) = ac.cluster_target_size {
+            cfg.cluster_target_size = target_size.max(2);
+        }
+        if let Some(max_depth) = ac.cluster_max_depth {
+            cfg.cluster_max_depth = max_depth.max(1);
+        }
+        if ac.sa_cooling.is_some()
+            || ac.sa_moves_per_temp.is_some()
+            || ac.sa_max_steps.is_some()
+            || ac.congestion_weight.is_some()
+            || ac.congestion_cell.is_some()
+            || ac.critical_net_boost.is_some()
+        {
+            let sa_cfg = cfg
+                .sa_config
+                .get_or_insert_with(autopcb_placement::simulated_annealing::SAConfig::default);
+            if let Some(cooling) = ac.sa_cooling {
+                sa_cfg.cooling_rate = cooling;
+            }
+            if let Some(moves) = ac.sa_moves_per_temp {
+                sa_cfg.moves_per_temp = moves;
+            }
+            if let Some(max_steps) = ac.sa_max_steps {
+                sa_cfg.max_steps = max_steps;
+            }
+            if let Some(weight) = ac.congestion_weight {
+                sa_cfg.congestion_weight = weight.max(0.0);
+            }
+            if let Some(cell) = ac.congestion_cell {
+                sa_cfg.congestion_cell_mm = cell.to_mms().max(0.5);
+            }
+            if let Some(boost) = ac.critical_net_boost {
+                sa_cfg.critical_net_boost = boost.max(1.0);
+            }
+        }
     }
 
     // Build constraints and collect autoplace designator list.
@@ -2585,14 +2710,21 @@ pub fn autoplace_spec(
     let autoplace_count = autoplace_designators.len();
 
     // Run solver.
-    let result = solve_placement(&ir, &user_constraints, &cfg)
+    let placement_groups: Vec<Vec<String>> = placement
+        .groups
+        .iter()
+        .map(|group| group.components.clone())
+        .collect();
+
+    let result = solve_placement(&ir, &user_constraints, &cfg, &placement_groups)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let hpwl_mm = result.hpwl_estimate_mm;
     let duration_ms = result.duration_ms;
 
     // Rewrite spec text.
-    let rewrite = spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators)?;
+    let rewrite =
+        spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators)?;
 
     // Determine output path.
     let out_path = output_path
@@ -2640,7 +2772,10 @@ fn cmd_placement_plan(spec_file: &std::path::Path, target: &std::path::Path) -> 
     Ok(())
 }
 
-fn cmd_placement_apply(spec_file: &std::path::Path, target: &std::path::Path) -> anyhow::Result<()> {
+fn cmd_placement_apply(
+    spec_file: &std::path::Path,
+    target: &std::path::Path,
+) -> anyhow::Result<()> {
     let spec_file_buf = spec_file.to_path_buf();
     let source = std::fs::read_to_string(spec_file)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
@@ -2651,18 +2786,22 @@ fn cmd_placement_apply(spec_file: &std::path::Path, target: &std::path::Path) ->
     };
     let mut doc = PcbDoc::open(target)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-    apply_spec_pcbdoc(&spec, &mut doc)
-        .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
+    apply_spec_pcbdoc(&spec, &mut doc).map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
 
     // Apply placement positions from `place` entries to PcbDoc component records.
     if let Some(ref placement) = spec.placement {
-        let mut board = doc.board()
+        let mut board = doc
+            .board()
             .map_err(|e| anyhow::anyhow!("failed to read board for placement: {e}"))?;
         let mut placed = 0usize;
         for place in &placement.places {
             if let Some(loc) = place.at {
                 for designator in &place.designators {
-                    if let Some(comp) = board.components.iter_mut().find(|c| &c.designator == designator) {
+                    if let Some(comp) = board
+                        .components
+                        .iter_mut()
+                        .find(|c| &c.designator == designator)
+                    {
                         comp.location = loc;
                         placed += 1;
                     }
@@ -2691,9 +2830,8 @@ fn build_user_constraints(
     for place in places {
         for d in &place.designators {
             if let Some(edge) = &place.edge {
-                let edge = parse_edge(edge).ok_or_else(|| {
-                    anyhow::anyhow!("invalid edge value '{edge}' for place {d}")
-                })?;
+                let edge = parse_edge(edge)
+                    .ok_or_else(|| anyhow::anyhow!("invalid edge value '{edge}' for place {d}"))?;
                 out.push(UserConstraint::EdgePlacement {
                     designator: d.clone(),
                     edge,
@@ -2750,18 +2888,22 @@ fn build_user_constraints(
 
     for c in constraints {
         match c {
-            PlacementConstraintSpec::LeftOf { a, b, gap } => out.push(UserConstraint::Directional {
-                a: a.clone(),
-                b: b.clone(),
-                direction: Direction::LeftOf,
-                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
-            }),
-            PlacementConstraintSpec::RightOf { a, b, gap } => out.push(UserConstraint::Directional {
-                a: a.clone(),
-                b: b.clone(),
-                direction: Direction::RightOf,
-                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
-            }),
+            PlacementConstraintSpec::LeftOf { a, b, gap } => {
+                out.push(UserConstraint::Directional {
+                    a: a.clone(),
+                    b: b.clone(),
+                    direction: Direction::LeftOf,
+                    gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
+                })
+            }
+            PlacementConstraintSpec::RightOf { a, b, gap } => {
+                out.push(UserConstraint::Directional {
+                    a: a.clone(),
+                    b: b.clone(),
+                    direction: Direction::RightOf,
+                    gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
+                })
+            }
             PlacementConstraintSpec::Above { a, b, gap } => out.push(UserConstraint::Directional {
                 a: a.clone(),
                 b: b.clone(),

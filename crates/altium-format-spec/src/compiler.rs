@@ -16,47 +16,48 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
-use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
-    PlaneConnectionStyle, RotationBy90,
-};
 use altium_format_types::sch::{
     HorizontalAlign, LeftRightSide, LineStyle, PenWidth, PortArrowStyle, PortIoType,
     PowerObjectStyle, TextJustification,
 };
+use altium_format_types::{
+    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
+    PlaneConnectionStyle, RotationBy90,
+};
 
+use crate::annotation::{CompiledAnnotation, compile_annotation};
 use crate::ast::{
     AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem, ConstraintDecl,
     DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
     GraphicDecl, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
     PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
-    PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem,
-    RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem, RuleDecl,
+    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
 };
-use crate::annotation::{compile_annotation, CompiledAnnotation};
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
-    AnnotationMatchParamSpec, AnnotationSpec, BlanketSpec, BoardSpec, BusEntrySpec, BusSpec,
-    ClassGenSpec, ComparisonRuleSpec, CompileMaskSpec, ComponentSpec, ConstraintKind,
-    ConstraintSpec, DocumentSpec, ErcLevelOverride, ErcMatrixOverride, FontSpec, FootprintMapSpec,
-    FootprintSpec, GraphicProperties, GraphicSpec, GraphicType, HarnessConnectorSpec,
-    JunctionSpec, LayerSpec, LibraryUpdateSpec, NetLabelSpec, NetSpec, NoConnectSpec, NoteSpec,
-    OutputGroupSpec, OutputSpec, PadSpec, ParamVariationSpec, ParameterSetSpec, ParameterSpec,
-    PartSpec, PcbDocClassSpec, PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec,
-    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties,
-    PcbGraphicSpec, PcbGraphicType, PinPadMap, PinRef, PinSpec, PlacementClearanceSpec,
-    PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
-    PlacementRuleSpec, PlacementSpec, AutoplaceConfig, UnplacedStrategy, PortSpec,
+    AnnotationMatchParamSpec, AnnotationSpec, AutoplaceConfig, BlanketSpec, BoardSpec,
+    BusEntrySpec, BusSpec, ClassGenSpec, ComparisonRuleSpec, CompileMaskSpec, ComponentSpec,
+    ConstraintKind, ConstraintSpec, DocumentSpec, ErcLevelOverride, ErcMatrixOverride, FontSpec,
+    FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec, GraphicType,
+    HarnessConnectorSpec, JunctionSpec, LayerSpec, LibraryUpdateSpec, NetLabelSpec, NetSpec,
+    NoConnectSpec, NoteSpec, OutputGroupSpec, OutputSpec, PadSpec, ParamVariationSpec,
+    ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec, PcbDocComponentSpec,
+    PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec, PcbDocPrimitiveSpec,
+    PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType, PinPadMap,
+    PinRef, PinSpec, PlacementClearanceSpec, PlacementConstraintSpec, PlacementGroupSpec,
+    PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec, PortSpec,
     PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec, SchDocComponentSpec,
     SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec,
-    SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, VariantSpec, VariationSpec, WireSpec,
+    SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, UnplacedStrategy, VariantSpec,
+    VariationSpec, WireSpec,
 };
 
+use crate::diagnostic::Spanned;
 use altium_format_types::project::{
     ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
     CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
 };
-use crate::diagnostic::Spanned;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -107,7 +108,13 @@ pub fn compile_spec_with_resolved(
         }
         // ImportObject stores the alias with entries so field access on `$alias.Name`
         // returns ImportRef, preserving import provenance for symbol validation.
-        compiler.named_import_objects.insert(alias.clone(), Value::ImportObject { alias: alias.clone(), entries });
+        compiler.named_import_objects.insert(
+            alias.clone(),
+            Value::ImportObject {
+                alias: alias.clone(),
+                entries,
+            },
+        );
     }
     compiler.compile(&resolved.root)
 }
@@ -184,14 +191,13 @@ fn build_component_binding(
     let is_mirrored = comp.is_mirrored.unwrap_or(false);
 
     for pin in &lib_comp.pins {
-        let transformed = transform_pin_position(
-            pin.location,
-            comp.location,
-            orientation,
-            is_mirrored,
-        );
+        let transformed =
+            transform_pin_position(pin.location, comp.location, orientation, is_mirrored);
         let pin_key = format!("pin{}", pin.designator);
-        fields.insert(pin_key, Value::CoordPoint(transformed.x.raw(), transformed.y.raw()));
+        fields.insert(
+            pin_key,
+            Value::CoordPoint(transformed.x.raw(), transformed.y.raw()),
+        );
     }
 
     Value::Object(fields)
@@ -217,8 +223,8 @@ pub fn transform_pin_position(
     }
 
     let (rx, ry) = match orientation {
-        RotationBy90::Rotate0   => (x, y),
-        RotationBy90::Rotate90  => (-y, x),
+        RotationBy90::Rotate0 => (x, y),
+        RotationBy90::Rotate90 => (-y, x),
         RotationBy90::Rotate180 => (-x, -y),
         RotationBy90::Rotate270 => (y, -x),
         _ => (x, y),
@@ -276,7 +282,8 @@ impl SpecCompiler {
         match ann {
             None => Ok(None),
             Some(spanned) => {
-                let compiled = compile_annotation(&spanned.node, &mut self.seen_ids, Some(spanned.span))?;
+                let compiled =
+                    compile_annotation(&spanned.node, &mut self.seen_ids, Some(spanned.span))?;
                 Ok(Some(compiled))
             }
         }
@@ -292,25 +299,31 @@ impl SpecCompiler {
         }
 
         // Collect and evaluate file-level let bindings (forward-visible).
-        let file_lets: Vec<_> = file.items.iter().filter_map(|item| {
-            match &item.node {
+        let file_lets: Vec<_> = file
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
                 SpecItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&file_lets, &mut self.scope)?;
 
         // Register file-level swap_group declarations in scope.
         for item in &file.items {
             if let SpecItem::SwapGroup(decl) = &item.node {
                 let sg_name = decl.name.node.as_str();
-                let binding_name = decl.binding.as_ref()
+                let binding_name = decl
+                    .binding
+                    .as_ref()
                     .map(|b| b.node.clone())
                     .unwrap_or_else(|| sg_name.clone());
-                self.scope.define(binding_name.clone(), Value::SwapGroup(sg_name.clone()));
+                self.scope
+                    .define(binding_name.clone(), Value::SwapGroup(sg_name.clone()));
                 // If an explicit binding was provided, also register under the entity name.
                 if decl.binding.is_some() && binding_name != sg_name {
-                    self.scope.define(sg_name.clone(), Value::SwapGroup(sg_name.clone()));
+                    self.scope
+                        .define(sg_name.clone(), Value::SwapGroup(sg_name.clone()));
                 }
             }
         }
@@ -372,35 +385,39 @@ impl SpecCompiler {
         self.scope.push();
 
         // Collect and evaluate component-level let bindings.
-        let comp_lets: Vec<_> = decl.body.iter().filter_map(|item| {
-            match &item.node {
+        let comp_lets: Vec<_> = decl
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 ComponentItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&comp_lets, &mut self.scope)?;
 
         // Register component-level swap_group declarations in scope.
         for item in &decl.body {
             if let ComponentItem::SwapGroup(sg_decl) = &item.node {
                 let sg_name = sg_decl.name.node.as_str();
-                let binding_name = sg_decl.binding.as_ref()
+                let binding_name = sg_decl
+                    .binding
+                    .as_ref()
                     .map(|b| b.node.clone())
                     .unwrap_or_else(|| sg_name.clone());
-                self.scope.define(binding_name.clone(), Value::SwapGroup(sg_name.clone()));
+                self.scope
+                    .define(binding_name.clone(), Value::SwapGroup(sg_name.clone()));
                 if sg_decl.binding.is_some() && binding_name != sg_name {
-                    self.scope.define(sg_name.clone(), Value::SwapGroup(sg_name.clone()));
+                    self.scope
+                        .define(sg_name.clone(), Value::SwapGroup(sg_name.clone()));
                 }
             }
         }
 
         // Collect component-level properties from Property items.
         let props = collect_object_properties_from_items(
-            decl.body.iter().filter_map(|item| {
-                match &item.node {
-                    ComponentItem::Property(p) => Some(p),
-                    _ => None,
-                }
+            decl.body.iter().filter_map(|item| match &item.node {
+                ComponentItem::Property(p) => Some(p),
+                _ => None,
             }),
             &self.scope,
         )?;
@@ -416,7 +433,11 @@ impl SpecCompiler {
         // expose named edges that pins can reference via `on: $body.left` etc.
         let (mut binding_map, auto_sized) = build_graphic_binding_map(
             decl.body.iter().filter_map(|item| {
-                if let ComponentItem::Graphic(g) = &item.node { Some(g) } else { None }
+                if let ComponentItem::Graphic(g) = &item.node {
+                    Some(g)
+                } else {
+                    None
+                }
             }),
             &self.scope,
         )?;
@@ -425,11 +446,21 @@ impl SpecCompiler {
         // We need to resolve after:/before: chains before producing final PinSpecs.
         // For single-part components (part_count absent or 1), all items belong to part 1.
         // For multi-part components, component-level items are shared (part 0).
-        let default_owner_part_id = if part_count.unwrap_or(1) <= 1 { 1i32 } else { 0i32 };
+        let default_owner_part_id = if part_count.unwrap_or(1) <= 1 {
+            1i32
+        } else {
+            0i32
+        };
 
-        let all_pin_decls_at_level: Vec<(&PinDecl, i32)> = decl.body.iter()
+        let all_pin_decls_at_level: Vec<(&PinDecl, i32)> = decl
+            .body
+            .iter()
             .filter_map(|item| {
-                if let ComponentItem::Pin(p) = &item.node { Some((p, default_owner_part_id)) } else { None }
+                if let ComponentItem::Pin(p) = &item.node {
+                    Some((p, default_owner_part_id))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -439,7 +470,11 @@ impl SpecCompiler {
                 &auto_sized,
                 &all_pin_decls_at_level,
                 decl.body.iter().filter_map(|item| {
-                    if let ComponentItem::Graphic(g) = &item.node { Some(g) } else { None }
+                    if let ComponentItem::Graphic(g) = &item.node {
+                        Some(g)
+                    } else {
+                        None
+                    }
                 }),
                 &mut binding_map,
                 &self.scope,
@@ -557,12 +592,19 @@ impl SpecCompiler {
         for item in &file.items {
             match &item.node {
                 SpecItem::Sheet(sheet_decl) => {
-                    sheet_annotation = self.compile_opt_annotation(sheet_decl.annotation.as_ref())?;
+                    sheet_annotation =
+                        self.compile_opt_annotation(sheet_decl.annotation.as_ref())?;
                     self.compile_sheet_metadata(
-                        sheet_decl, &mut fonts,
-                        &mut custom_width, &mut custom_height,
-                        &mut snap_grid_on, &mut visible_grid_on, &mut hot_spot_grid_on,
-                        &mut show_hidden_pins, &mut border_on, &mut title_block_on,
+                        sheet_decl,
+                        &mut fonts,
+                        &mut custom_width,
+                        &mut custom_height,
+                        &mut snap_grid_on,
+                        &mut visible_grid_on,
+                        &mut hot_spot_grid_on,
+                        &mut show_hidden_pins,
+                        &mut border_on,
+                        &mut title_block_on,
                         &mut constraints,
                     )?;
                 }
@@ -581,11 +623,18 @@ impl SpecCompiler {
                 SpecItem::SchDocObject(obj_decl) => {
                     objects.push(self.compile_schdoc_object(obj_decl)?);
                 }
-                SpecItem::Import(_) | SpecItem::LetBinding(_) | SpecItem::SwapGroup(_)
-                | SpecItem::Footprint(_) | SpecItem::Project(_)
-                | SpecItem::Board(_) | SpecItem::PcbDocPrimitive(_)
-                | SpecItem::Placement(_) | SpecItem::Polygon(_) | SpecItem::Rule(_)
-                | SpecItem::Class(_) | SpecItem::DifferentialPair(_) => {
+                SpecItem::Import(_)
+                | SpecItem::LetBinding(_)
+                | SpecItem::SwapGroup(_)
+                | SpecItem::Footprint(_)
+                | SpecItem::Project(_)
+                | SpecItem::Board(_)
+                | SpecItem::PcbDocPrimitive(_)
+                | SpecItem::Placement(_)
+                | SpecItem::Polygon(_)
+                | SpecItem::Rule(_)
+                | SpecItem::Class(_)
+                | SpecItem::DifferentialPair(_) => {
                     // Imports, let bindings, swap groups, and other-domain items silently skipped.
                 }
             }
@@ -616,7 +665,9 @@ impl SpecCompiler {
             constraints,
         };
 
-        Ok(SchDocSpec { sheets: vec![sheet] })
+        Ok(SchDocSpec {
+            sheets: vec![sheet],
+        })
     }
 
     fn compile_sheet_metadata(
@@ -643,14 +694,30 @@ impl SpecCompiler {
                 SheetItem::Property(prop) => {
                     let val = eval_expr(&prop.value, &self.scope)?;
                     match prop.key.node.as_str() {
-                        "custom_width" => *custom_width = Some(value_to_coord(&val, Some(prop.value.span))?),
-                        "custom_height" => *custom_height = Some(value_to_coord(&val, Some(prop.value.span))?),
-                        "snap_grid_on" => *snap_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?),
-                        "visible_grid_on" => *visible_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?),
-                        "hot_spot_grid_on" => *hot_spot_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?),
-                        "show_hidden_pins" => *show_hidden_pins = Some(value_to_bool(&val, Some(prop.value.span))?),
-                        "border_on" => *border_on = Some(value_to_bool(&val, Some(prop.value.span))?),
-                        "title_block_on" => *title_block_on = Some(value_to_bool(&val, Some(prop.value.span))?),
+                        "custom_width" => {
+                            *custom_width = Some(value_to_coord(&val, Some(prop.value.span))?)
+                        }
+                        "custom_height" => {
+                            *custom_height = Some(value_to_coord(&val, Some(prop.value.span))?)
+                        }
+                        "snap_grid_on" => {
+                            *snap_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?)
+                        }
+                        "visible_grid_on" => {
+                            *visible_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?)
+                        }
+                        "hot_spot_grid_on" => {
+                            *hot_spot_grid_on = Some(value_to_bool(&val, Some(prop.value.span))?)
+                        }
+                        "show_hidden_pins" => {
+                            *show_hidden_pins = Some(value_to_bool(&val, Some(prop.value.span))?)
+                        }
+                        "border_on" => {
+                            *border_on = Some(value_to_bool(&val, Some(prop.value.span))?)
+                        }
+                        "title_block_on" => {
+                            *title_block_on = Some(value_to_bool(&val, Some(prop.value.span))?)
+                        }
                         other => {
                             return Err(SpecError::new(
                                 SpecErrorCode::AltiumFormat,
@@ -689,7 +756,11 @@ impl SpecCompiler {
         for (k, v) in raw_props {
             properties.insert(k, value_to_string_repr(&v));
         }
-        Ok(ConstraintSpec { annotation, kind, properties })
+        Ok(ConstraintSpec {
+            annotation,
+            kind,
+            properties,
+        })
     }
 
     fn compile_font(&mut self, decl: &crate::ast::FontDecl) -> Result<FontSpec, SpecError> {
@@ -725,20 +796,20 @@ impl SpecCompiler {
         self.scope.push();
 
         // Evaluate component-level let bindings.
-        let comp_lets: Vec<_> = decl.body.iter().filter_map(|item| {
-            match &item.node {
+        let comp_lets: Vec<_> = decl
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 ComponentItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&comp_lets, &mut self.scope)?;
 
         let props = collect_object_properties_from_items(
-            decl.body.iter().filter_map(|item| {
-                match &item.node {
-                    ComponentItem::Property(p) => Some(p),
-                    _ => None,
-                }
+            decl.body.iter().filter_map(|item| match &item.node {
+                ComponentItem::Property(p) => Some(p),
+                _ => None,
             }),
             &self.scope,
         )?;
@@ -750,10 +821,8 @@ impl SpecCompiler {
                     let alias = alias.clone();
                     let name = name.clone();
                     if !self.imported_components.contains_key(&name) {
-                        let available: Vec<String> = self.imported_components
-                            .keys()
-                            .cloned()
-                            .collect();
+                        let available: Vec<String> =
+                            self.imported_components.keys().cloned().collect();
                         return Err(SpecError::no_span(
                             SpecErrorCode::AltiumFormat,
                             format!(
@@ -855,7 +924,11 @@ impl SpecCompiler {
 
         let pins = self.compile_pin_refs(&props, decl.body.span)?;
 
-        Ok(NetSpec { annotation, name, pins })
+        Ok(NetSpec {
+            annotation,
+            name,
+            pins,
+        })
     }
 
     fn compile_power(&mut self, decl: &crate::ast::PowerDecl) -> Result<PowerSpec, SpecError> {
@@ -869,7 +942,14 @@ impl SpecCompiler {
         let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
         let pins = self.compile_pin_refs(&props, decl.body.span)?;
 
-        Ok(PowerSpec { annotation, name, style, pins, show_net_name, orientation })
+        Ok(PowerSpec {
+            annotation,
+            name,
+            style,
+            pins,
+            show_net_name,
+            orientation,
+        })
     }
 
     /// Parse a `pins: [U1.14, C1.1]` array into PinRef values.
@@ -885,21 +965,25 @@ impl SpecCompiler {
 
         let arr = match pins_val {
             Value::Array(a) => a,
-            _ => return Err(SpecError::new(
-                SpecErrorCode::TypeMismatch,
-                "'pins' must be an array".to_string(),
-                Some(span),
-            )),
+            _ => {
+                return Err(SpecError::new(
+                    SpecErrorCode::TypeMismatch,
+                    "'pins' must be an array".to_string(),
+                    Some(span),
+                ));
+            }
         };
 
         let mut refs = Vec::new();
         for item in arr {
             let s = match item {
                 Value::String(s) => s.clone(),
-                _ => return Err(SpecError::no_span(
-                    SpecErrorCode::TypeMismatch,
-                    "pin ref must be a string like \"U1.14\"".to_string(),
-                )),
+                _ => {
+                    return Err(SpecError::no_span(
+                        SpecErrorCode::TypeMismatch,
+                        "pin ref must be a string like \"U1.14\"".to_string(),
+                    ));
+                }
             };
             let (component, pin) = s.split_once('.').ok_or_else(|| {
                 SpecError::no_span(
@@ -944,7 +1028,11 @@ impl SpecCompiler {
                     let props = self.collect_schdoc_object_props(decl)?;
                     let properties = compile_graphic_properties(&props, decl.object_type.span)?;
                     let unique_id = self.make_unique_id(None, other);
-                    Ok(SchDocObjectSpec::Graphic(GraphicSpec { unique_id, graphic_type, properties }))
+                    Ok(SchDocObjectSpec::Graphic(GraphicSpec {
+                        unique_id,
+                        graphic_type,
+                        properties,
+                    }))
                 } else {
                     Err(SpecError::new(
                         SpecErrorCode::AltiumFormat,
@@ -971,13 +1059,21 @@ impl SpecCompiler {
         Ok(props)
     }
 
-    fn compile_wire_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_wire_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let vertices = get_coord_point_array(&props, "vertices")?;
         let color = get_color_opt(&props, "color");
         let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
         let line_style = get_enum_opt(&props, "line_style", parse_line_style)?;
-        Ok(SchDocObjectSpec::Wire(WireSpec { vertices, color, line_width, line_style }))
+        Ok(SchDocObjectSpec::Wire(WireSpec {
+            vertices,
+            color,
+            line_width,
+            line_style,
+        }))
     }
 
     fn compile_bus_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
@@ -985,11 +1081,22 @@ impl SpecCompiler {
         let vertices = get_coord_point_array(&props, "vertices")?;
         let color = get_color_opt(&props, "color");
         let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
-        Ok(SchDocObjectSpec::Bus(BusSpec { vertices, color, line_width }))
+        Ok(SchDocObjectSpec::Bus(BusSpec {
+            vertices,
+            color,
+            line_width,
+        }))
     }
 
-    fn compile_net_label_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let text = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_net_label_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let text = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
@@ -998,12 +1105,25 @@ impl SpecCompiler {
         let color = get_color_opt(&props, "color");
         let is_mirrored = get_bool_opt(&props, "is_mirrored");
         Ok(SchDocObjectSpec::NetLabel(NetLabelSpec {
-            text, location, orientation, justification, font_id, color, is_mirrored,
+            text,
+            location,
+            orientation,
+            justification,
+            font_id,
+            color,
+            is_mirrored,
         }))
     }
 
-    fn compile_power_object_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let text = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_power_object_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let text = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
@@ -1013,12 +1133,26 @@ impl SpecCompiler {
         let color = get_color_opt(&props, "color");
         let is_cross_sheet_connector = get_bool_opt(&props, "is_cross_sheet_connector");
         Ok(SchDocObjectSpec::PowerObject(PowerObjectSpec {
-            text, location, orientation, style, show_net_name, font_id, color, is_cross_sheet_connector,
+            text,
+            location,
+            orientation,
+            style,
+            show_net_name,
+            font_id,
+            color,
+            is_cross_sheet_connector,
         }))
     }
 
-    fn compile_port_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_port_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let io_type = get_enum_opt(&props, "io_type", parse_port_io_type)?;
@@ -1031,36 +1165,71 @@ impl SpecCompiler {
         let font_id = get_integer_opt(&props, "font_id");
         let alignment = get_enum_opt(&props, "alignment", parse_horizontal_align)?;
         Ok(SchDocObjectSpec::Port(PortSpec {
-            name, location, io_type, style, width, height, color, area_color, text_color, font_id, alignment,
+            name,
+            location,
+            io_type,
+            style,
+            width,
+            height,
+            color,
+            area_color,
+            text_color,
+            font_id,
+            alignment,
         }))
     }
 
-    fn compile_junction_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_junction_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let color = get_color_opt(&props, "color");
         Ok(SchDocObjectSpec::Junction(JunctionSpec { location, color }))
     }
 
-    fn compile_no_connect_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_no_connect_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let color = get_color_opt(&props, "color");
         let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?;
-        Ok(SchDocObjectSpec::NoConnect(NoConnectSpec { location, color, orientation }))
+        Ok(SchDocObjectSpec::NoConnect(NoConnectSpec {
+            location,
+            color,
+            orientation,
+        }))
     }
 
-    fn compile_bus_entry_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_bus_entry_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let corner = get_coord_point_required(&props, "corner")?;
         let color = get_color_opt(&props, "color");
         let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
-        Ok(SchDocObjectSpec::BusEntry(BusEntrySpec { location, corner, color, line_width }))
+        Ok(SchDocObjectSpec::BusEntry(BusEntrySpec {
+            location,
+            corner,
+            color,
+            line_width,
+        }))
     }
 
-    fn compile_sheet_symbol_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let sheet_name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_sheet_symbol_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let sheet_name = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let file_name = get_string_opt(&props, "file_name");
@@ -1078,21 +1247,43 @@ impl SpecCompiler {
         }
 
         Ok(SchDocObjectSpec::SheetSymbol(SheetSymbolSpec {
-            sheet_name, file_name, location, x_size, y_size, color, area_color, entries,
+            sheet_name,
+            file_name,
+            location,
+            x_size,
+            y_size,
+            color,
+            area_color,
+            entries,
         }))
     }
 
-    fn compile_sheet_entry(&mut self, decl: &crate::ast::EntryDecl) -> Result<SheetEntrySpec, SpecError> {
+    fn compile_sheet_entry(
+        &mut self,
+        decl: &crate::ast::EntryDecl,
+    ) -> Result<SheetEntrySpec, SpecError> {
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
         let io_type = get_enum_opt(&props, "io_type", parse_port_io_type)?;
         let side = get_enum_opt(&props, "side", parse_left_right_side)?;
         let distance_from_top = get_coord_opt(&props, "distance")?;
-        Ok(SheetEntrySpec { name, io_type, side, distance_from_top })
+        Ok(SheetEntrySpec {
+            name,
+            io_type,
+            side,
+            distance_from_top,
+        })
     }
 
-    fn compile_parameter_set_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_parameter_set_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let location = if let Some(v) = props.get("at") {
             Some(value_to_coord_point(v, None)?)
@@ -1107,36 +1298,70 @@ impl SpecCompiler {
             }
         }
 
-        Ok(SchDocObjectSpec::ParameterSet(ParameterSetSpec { name, location, parameters }))
+        Ok(SchDocObjectSpec::ParameterSet(ParameterSetSpec {
+            name,
+            location,
+            parameters,
+        }))
     }
 
-    fn compile_note_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_note_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let text = get_string_opt(&props, "text").unwrap_or_default();
         let color = get_color_opt(&props, "color");
         let area_color = get_color_opt(&props, "area_color");
         let font_id = get_integer_opt(&props, "font_id");
-        Ok(SchDocObjectSpec::Note(NoteSpec { location, text, color, area_color, font_id }))
+        Ok(SchDocObjectSpec::Note(NoteSpec {
+            location,
+            text,
+            color,
+            area_color,
+            font_id,
+        }))
     }
 
-    fn compile_probe_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_probe_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let color = get_color_opt(&props, "color");
-        Ok(SchDocObjectSpec::Probe(ProbeSpec { name, location, color }))
+        Ok(SchDocObjectSpec::Probe(ProbeSpec {
+            name,
+            location,
+            color,
+        }))
     }
 
-    fn compile_compile_mask_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_compile_mask_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let corner = get_coord_point_required(&props, "corner")?;
         let color = get_color_opt(&props, "color");
-        Ok(SchDocObjectSpec::CompileMask(CompileMaskSpec { location, corner, color }))
+        Ok(SchDocObjectSpec::CompileMask(CompileMaskSpec {
+            location,
+            corner,
+            color,
+        }))
     }
 
-    fn compile_blanket_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_blanket_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let corner = get_coord_point_required(&props, "corner")?;
@@ -1146,10 +1371,18 @@ impl SpecCompiler {
             None
         };
         let color = get_color_opt(&props, "color");
-        Ok(SchDocObjectSpec::Blanket(BlanketSpec { location, corner, vertices, color }))
+        Ok(SchDocObjectSpec::Blanket(BlanketSpec {
+            location,
+            corner,
+            vertices,
+            color,
+        }))
     }
 
-    fn compile_harness_connector_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_harness_connector_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let location = get_coord_point_required(&props, "at")?;
         let x_size = get_coord_opt(&props, "x_size")?;
@@ -1157,20 +1390,38 @@ impl SpecCompiler {
         let color = get_color_opt(&props, "color");
         let area_color = get_color_opt(&props, "area_color");
         Ok(SchDocObjectSpec::HarnessConnector(HarnessConnectorSpec {
-            location, x_size, y_size, color, area_color,
+            location,
+            x_size,
+            y_size,
+            color,
+            area_color,
         }))
     }
 
-    fn compile_signal_harness_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
+    fn compile_signal_harness_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
         let props = self.collect_schdoc_object_props(decl)?;
         let vertices = get_coord_point_array(&props, "vertices")?;
         let color = get_color_opt(&props, "color");
         let line_width = get_enum_opt(&props, "line_width", parse_pen_width)?;
-        Ok(SchDocObjectSpec::SignalHarness(SignalHarnessSpec { vertices, color, line_width }))
+        Ok(SchDocObjectSpec::SignalHarness(SignalHarnessSpec {
+            vertices,
+            color,
+            line_width,
+        }))
     }
 
-    fn compile_parameter_object_spec(&mut self, decl: &SchDocObjectDecl) -> Result<SchDocObjectSpec, SpecError> {
-        let name = decl.name.as_ref().map(|n| n.node.as_str()).unwrap_or_default();
+    fn compile_parameter_object_spec(
+        &mut self,
+        decl: &SchDocObjectDecl,
+    ) -> Result<SchDocObjectSpec, SpecError> {
+        let name = decl
+            .name
+            .as_ref()
+            .map(|n| n.node.as_str())
+            .unwrap_or_default();
         let props = self.collect_schdoc_object_props(decl)?;
         let text = get_string_opt(&props, "value").unwrap_or_default();
         let is_hidden = get_bool_opt(&props, "is_hidden");
@@ -1197,18 +1448,24 @@ impl SpecCompiler {
 
         self.scope.push();
 
-        let part_lets: Vec<_> = part_block.body.iter().filter_map(|item| {
-            match &item.node {
+        let part_lets: Vec<_> = part_block
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 PartItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&part_lets, &mut self.scope)?;
 
         // Part-level graphic bindings (may shadow component-level ones).
         let (mut part_binding_map, part_auto_sized) = {
             let part_graphics = part_block.body.iter().filter_map(|item| {
-                if let PartItem::Graphic(g) = &item.node { Some(g) } else { None }
+                if let PartItem::Graphic(g) = &item.node {
+                    Some(g)
+                } else {
+                    None
+                }
             });
             let (mut m, auto_s) = build_graphic_binding_map(part_graphics, &self.scope)?;
             // Merge component-level map (part-level takes precedence).
@@ -1218,9 +1475,15 @@ impl SpecCompiler {
             (m, auto_s)
         };
 
-        let part_pin_decls: Vec<(&PinDecl, i32)> = part_block.body.iter()
+        let part_pin_decls: Vec<(&PinDecl, i32)> = part_block
+            .body
+            .iter()
             .filter_map(|item| {
-                if let PartItem::Pin(p) = &item.node { Some((p, part_number)) } else { None }
+                if let PartItem::Pin(p) = &item.node {
+                    Some((p, part_number))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -1230,7 +1493,11 @@ impl SpecCompiler {
                 &part_auto_sized,
                 &part_pin_decls,
                 part_block.body.iter().filter_map(|item| {
-                    if let PartItem::Graphic(g) = &item.node { Some(g) } else { None }
+                    if let PartItem::Graphic(g) = &item.node {
+                        Some(g)
+                    } else {
+                        None
+                    }
                 }),
                 &mut part_binding_map,
                 &self.scope,
@@ -1293,16 +1560,16 @@ impl SpecCompiler {
         self.scope.pop();
         self.part_context = None;
 
-        Ok(PartSpec { part_number, pins, graphics })
+        Ok(PartSpec {
+            part_number,
+            pins,
+            graphics,
+        })
     }
 
     // ── Pin compilation ────────────────────────────────────────────────────
 
-    fn compile_pin(
-        &mut self,
-        decl: &PinDecl,
-        owner_part_id: i32,
-    ) -> Result<PinSpec, SpecError> {
+    fn compile_pin(&mut self, decl: &PinDecl, owner_part_id: i32) -> Result<PinSpec, SpecError> {
         let designator = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
@@ -1321,7 +1588,8 @@ impl SpecCompiler {
             value_to_coord_point(v, Some(decl.body.span))?
         } else if let Some(x_val) = props.get("x") {
             let x = value_to_coord(x_val, Some(decl.body.span))?;
-            let y = props.get("y")
+            let y = props
+                .get("y")
                 .map(|v| value_to_coord(v, Some(decl.body.span)))
                 .transpose()?
                 .unwrap_or(Coord::ZERO);
@@ -1357,7 +1625,11 @@ impl SpecCompiler {
             .unwrap_or_default();
         let is_hidden = get_bool_opt(&props, "is_hidden");
 
-        Ok(ParameterSpec { name, text, is_hidden })
+        Ok(ParameterSpec {
+            name,
+            text,
+            is_hidden,
+        })
     }
 
     // ── Alias compilation ──────────────────────────────────────────────────
@@ -1410,7 +1682,10 @@ impl SpecCompiler {
                     // Resolve pin dollar path to its designator string
                     let pin_val = self.resolve_dollar_path_to_string(&pair.pin)?;
                     let pad_val = self.resolve_dollar_path_to_string(&pair.pad)?;
-                    maps.push(PinPadMap { pin: pin_val, pad: pad_val });
+                    maps.push(PinPadMap {
+                        pin: pin_val,
+                        pad: pad_val,
+                    });
                 }
                 Ok(FootprintMapSpec {
                     model_name,
@@ -1435,7 +1710,10 @@ impl SpecCompiler {
             Value::Float(f) => Ok(f.to_string()),
             _ => Err(SpecError::at(
                 SpecErrorCode::TypeMismatch,
-                format!("expected string or number for pin/pad reference, got {:?}", val),
+                format!(
+                    "expected string or number for pin/pad reference, got {:?}",
+                    val
+                ),
                 path.span,
             )),
         }
@@ -1443,31 +1721,33 @@ impl SpecCompiler {
 
     // ── Schematic graphic compilation ──────────────────────────────────────
 
-    fn compile_sch_graphic(
-        &mut self,
-        decl: &GraphicDecl,
-    ) -> Result<GraphicSpec, SpecError> {
-        let graphic_type = parse_sch_graphic_type(&decl.graphic_type.node)
-            .ok_or_else(|| SpecError::at(
+    fn compile_sch_graphic(&mut self, decl: &GraphicDecl) -> Result<GraphicSpec, SpecError> {
+        let graphic_type = parse_sch_graphic_type(&decl.graphic_type.node).ok_or_else(|| {
+            SpecError::at(
                 SpecErrorCode::TypeMismatch,
-                format!("unknown schematic graphic type: '{}'", decl.graphic_type.node),
+                format!(
+                    "unknown schematic graphic type: '{}'",
+                    decl.graphic_type.node
+                ),
                 decl.graphic_type.span,
-            ))?;
+            )
+        })?;
 
         let unique_id = self.make_unique_id(decl.binding.as_ref(), &decl.graphic_type.node);
 
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
         let properties = compile_graphic_properties(&props, decl.body.span)?;
 
-        Ok(GraphicSpec { unique_id, graphic_type, properties })
+        Ok(GraphicSpec {
+            unique_id,
+            graphic_type,
+            properties,
+        })
     }
 
     // ── Footprint compilation (PcbLib) ─────────────────────────────────────
 
-    fn compile_footprint(
-        &mut self,
-        decl: &FootprintDecl,
-    ) -> Result<FootprintSpec, SpecError> {
+    fn compile_footprint(&mut self, decl: &FootprintDecl) -> Result<FootprintSpec, SpecError> {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let display_name = decl.name.node.as_str();
         self.context_name = display_name.clone();
@@ -1476,20 +1756,20 @@ impl SpecCompiler {
 
         self.scope.push();
 
-        let fp_lets: Vec<_> = decl.body.iter().filter_map(|item| {
-            match &item.node {
+        let fp_lets: Vec<_> = decl
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 FootprintItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&fp_lets, &mut self.scope)?;
 
         let props = collect_object_properties_from_items(
-            decl.body.iter().filter_map(|item| {
-                match &item.node {
-                    FootprintItem::Property(p) => Some(p),
-                    _ => None,
-                }
+            decl.body.iter().filter_map(|item| match &item.node {
+                FootprintItem::Property(p) => Some(p),
+                _ => None,
             }),
             &self.scope,
         )?;
@@ -1502,7 +1782,9 @@ impl SpecCompiler {
         let mut graphics = Vec::new();
 
         // First pass: collect explicit pads for override lookup.
-        let explicit_pads: HashMap<String, &PadDecl> = decl.body.iter()
+        let explicit_pads: HashMap<String, &PadDecl> = decl
+            .body
+            .iter()
             .filter_map(|item| {
                 if let FootprintItem::Pad(pd) = &item.node {
                     Some((pd.name.node.as_str(), pd))
@@ -1513,7 +1795,8 @@ impl SpecCompiler {
             .collect();
 
         // Track which explicit pad names were claimed by layout expansion.
-        let mut claimed_by_layout: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut claimed_by_layout: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for item in &decl.body {
             match &item.node {
@@ -1528,8 +1811,13 @@ impl SpecCompiler {
                     for mut pad in generated {
                         let name = pad.pad_name.clone();
                         if let Some(explicit) = explicit_pads.get(&name) {
-                            let explicit_props = eval_object_to_map(&explicit.body.node, &self.scope)?;
-                            merge_pad_override_from_props(&mut pad, &explicit_props, explicit.body.span)?;
+                            let explicit_props =
+                                eval_object_to_map(&explicit.body.node, &self.scope)?;
+                            merge_pad_override_from_props(
+                                &mut pad,
+                                &explicit_props,
+                                explicit.body.span,
+                            )?;
                             claimed_by_layout.insert(name);
                         }
                         pads.push(pad);
@@ -1540,8 +1828,13 @@ impl SpecCompiler {
                     for mut pad in generated {
                         let name = pad.pad_name.clone();
                         if let Some(explicit) = explicit_pads.get(&name) {
-                            let explicit_props = eval_object_to_map(&explicit.body.node, &self.scope)?;
-                            merge_pad_override_from_props(&mut pad, &explicit_props, explicit.body.span)?;
+                            let explicit_props =
+                                eval_object_to_map(&explicit.body.node, &self.scope)?;
+                            merge_pad_override_from_props(
+                                &mut pad,
+                                &explicit_props,
+                                explicit.body.span,
+                            )?;
                             claimed_by_layout.insert(name);
                         }
                         pads.push(pad);
@@ -1584,7 +1877,8 @@ impl SpecCompiler {
             value_to_coord_point(v, Some(decl.body.span))?
         } else if let Some(x_val) = props.get("x") {
             let x = value_to_coord(x_val, Some(decl.body.span))?;
-            let y = props.get("y")
+            let y = props
+                .get("y")
                 .map(|v| value_to_coord(v, Some(decl.body.span)))
                 .transpose()?
                 .unwrap_or(Coord::ZERO);
@@ -1630,32 +1924,30 @@ impl SpecCompiler {
 
     // ── PCB graphic compilation ────────────────────────────────────────────
 
-    fn compile_pcb_graphic(
-        &mut self,
-        decl: &GraphicDecl,
-    ) -> Result<PcbGraphicSpec, SpecError> {
-        let graphic_type = parse_pcb_graphic_type(&decl.graphic_type.node)
-            .ok_or_else(|| SpecError::at(
+    fn compile_pcb_graphic(&mut self, decl: &GraphicDecl) -> Result<PcbGraphicSpec, SpecError> {
+        let graphic_type = parse_pcb_graphic_type(&decl.graphic_type.node).ok_or_else(|| {
+            SpecError::at(
                 SpecErrorCode::TypeMismatch,
                 format!("unknown PCB graphic type: '{}'", decl.graphic_type.node),
                 decl.graphic_type.span,
-            ))?;
+            )
+        })?;
 
         let unique_id = self.make_unique_id(decl.binding.as_ref(), &decl.graphic_type.node);
 
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
         let properties = compile_pcb_graphic_properties(&props, decl.body.span)?;
 
-        Ok(PcbGraphicSpec { unique_id, graphic_type, properties })
+        Ok(PcbGraphicSpec {
+            unique_id,
+            graphic_type,
+            properties,
+        })
     }
 
     // ── unique_id generation ───────────────────────────────────────────────
 
-    fn make_unique_id(
-        &mut self,
-        binding: Option<&Spanned<String>>,
-        type_name: &str,
-    ) -> String {
+    fn make_unique_id(&mut self, binding: Option<&Spanned<String>>, type_name: &str) -> String {
         if let Some(b) = binding {
             // Named binding: spec:{context}[:part_context]:{name}
             if let Some(ref part_ctx) = self.part_context.clone() {
@@ -1672,7 +1964,10 @@ impl SpecCompiler {
             };
             let n = self.unnamed_counters.entry(counter_key).or_insert(0);
             let id = if let Some(ref part_ctx) = self.part_context.clone() {
-                format!("spec:{}:{}:{}_{}", self.context_name, part_ctx, type_name, n)
+                format!(
+                    "spec:{}:{}:{}_{}",
+                    self.context_name, part_ctx, type_name, n
+                )
             } else {
                 format!("spec:{}:{}_{}", self.context_name, type_name, n)
             };
@@ -1755,9 +2050,15 @@ impl SpecCompiler {
             pads: primitives_by_type.shift_remove("pad").unwrap_or_default(),
             fills: primitives_by_type.shift_remove("fill").unwrap_or_default(),
             texts: primitives_by_type.shift_remove("text").unwrap_or_default(),
-            regions: primitives_by_type.shift_remove("region").unwrap_or_default(),
-            component_bodies: primitives_by_type.shift_remove("component_body").unwrap_or_default(),
-            dimensions: primitives_by_type.shift_remove("dimension").unwrap_or_default(),
+            regions: primitives_by_type
+                .shift_remove("region")
+                .unwrap_or_default(),
+            component_bodies: primitives_by_type
+                .shift_remove("component_body")
+                .unwrap_or_default(),
+            dimensions: primitives_by_type
+                .shift_remove("dimension")
+                .unwrap_or_default(),
             polygons,
             rules,
             classes,
@@ -1776,21 +2077,21 @@ impl SpecCompiler {
         decl: &BoardDecl,
     ) -> Result<IndexMap<String, Value>, SpecError> {
         // Evaluate let bindings in board body.
-        let board_lets: Vec<_> = decl.body.iter().filter_map(|item| {
-            match &item.node {
+        let board_lets: Vec<_> = decl
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 BoardItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         self.scope.push();
         eval_let_bindings_slice(&board_lets, &mut self.scope)?;
 
         let props = collect_object_properties_from_items(
-            decl.body.iter().filter_map(|item| {
-                match &item.node {
-                    BoardItem::Property(p) => Some(p),
-                    _ => None,
-                }
+            decl.body.iter().filter_map(|item| match &item.node {
+                BoardItem::Property(p) => Some(p),
+                _ => None,
             }),
             &self.scope,
         )?;
@@ -1807,12 +2108,18 @@ impl SpecCompiler {
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
-        let color = props.get("color")
+        let color = props
+            .get("color")
             .map(|v| value_to_color(v, Some(decl.body.span)))
             .transpose()?;
         let visible = get_bool_opt(&props, "visible");
 
-        Ok(PcbDocNetSpec { annotation, name, color, visible })
+        Ok(PcbDocNetSpec {
+            annotation,
+            name,
+            color,
+            visible,
+        })
     }
 
     fn compile_pcbdoc_component(
@@ -1824,18 +2131,17 @@ impl SpecCompiler {
 
         // Collect properties from component body items.
         let props = collect_object_properties_from_items(
-            decl.body.iter().filter_map(|item| {
-                match &item.node {
-                    ComponentItem::Property(p) => Some(p),
-                    _ => None,
-                }
+            decl.body.iter().filter_map(|item| match &item.node {
+                ComponentItem::Property(p) => Some(p),
+                _ => None,
             }),
             &self.scope,
         )?;
 
         let pattern = get_string_opt(&props, "pattern");
         let comment = get_string_opt(&props, "comment");
-        let location = props.get("at")
+        let location = props
+            .get("at")
             .map(|v| value_to_coord_point(v, None))
             .transpose()?;
         let rotation = get_float_opt(&props, "rotation");
@@ -1911,10 +2217,7 @@ impl SpecCompiler {
         })
     }
 
-    fn compile_pcbdoc_rule(
-        &mut self,
-        decl: &RuleDecl,
-    ) -> Result<PcbDocRuleSpec, SpecError> {
+    fn compile_pcbdoc_rule(&mut self, decl: &RuleDecl) -> Result<PcbDocRuleSpec, SpecError> {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let raw = eval_object_to_map(&decl.body.node, &self.scope)?;
@@ -1951,10 +2254,7 @@ impl SpecCompiler {
         })
     }
 
-    fn compile_pcbdoc_class(
-        &mut self,
-        decl: &ClassDecl,
-    ) -> Result<PcbDocClassSpec, SpecError> {
+    fn compile_pcbdoc_class(&mut self, decl: &ClassDecl) -> Result<PcbDocClassSpec, SpecError> {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
@@ -1995,12 +2295,14 @@ impl SpecCompiler {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         // placement-level lets
         self.scope.push();
-        let placement_lets: Vec<_> = decl.body.iter().filter_map(|item| {
-            match &item.node {
+        let placement_lets: Vec<_> = decl
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 PlacementItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&placement_lets, &mut self.scope)?;
 
         let mut target = None;
@@ -2023,36 +2325,39 @@ impl SpecCompiler {
 
         for item in &decl.body {
             match &item.node {
-                PlacementItem::Property(p) => {
-                    match p.key.node.as_str() {
-                        "target" => {
-                            target = Some(self.expr_to_string(&p.value.node, p.value.span)?);
-                        }
-                        "unplaced" => {
-                            let s = self.expr_to_string(&p.value.node, p.value.span)?;
-                            unplaced = match s.as_str() {
-                                "autoplace" => UnplacedStrategy::Autoplace,
-                                "ignore" => UnplacedStrategy::Ignore,
-                                "error" => UnplacedStrategy::Error,
-                                _ => return Err(SpecError::at(
-                                    SpecErrorCode::TypeMismatch,
-                                    format!("invalid unplaced strategy '{}'; expected autoplace, ignore, or error", s),
-                                    p.value.span,
-                                )),
-                            };
-                        }
-                        "allow_pin_swap" => {
-                            allow_pin_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
-                        }
-                        "allow_part_swap" => {
-                            allow_part_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
-                        }
-                        "allow_gate_swap" => {
-                            allow_gate_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
-                        }
-                        _ => {}
+                PlacementItem::Property(p) => match p.key.node.as_str() {
+                    "target" => {
+                        target = Some(self.expr_to_string(&p.value.node, p.value.span)?);
                     }
-                }
+                    "unplaced" => {
+                        let s = self.expr_to_string(&p.value.node, p.value.span)?;
+                        unplaced = match s.as_str() {
+                            "autoplace" => UnplacedStrategy::Autoplace,
+                            "ignore" => UnplacedStrategy::Ignore,
+                            "error" => UnplacedStrategy::Error,
+                            _ => {
+                                return Err(SpecError::at(
+                                    SpecErrorCode::TypeMismatch,
+                                    format!(
+                                        "invalid unplaced strategy '{}'; expected autoplace, ignore, or error",
+                                        s
+                                    ),
+                                    p.value.span,
+                                ));
+                            }
+                        };
+                    }
+                    "allow_pin_swap" => {
+                        allow_pin_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
+                    }
+                    "allow_part_swap" => {
+                        allow_part_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
+                    }
+                    "allow_gate_swap" => {
+                        allow_gate_swap = self.expr_to_bool(&p.value.node, p.value.span)?;
+                    }
+                    _ => {}
+                },
                 PlacementItem::Place(place) => places.push(self.compile_placement_place(place)?),
                 PlacementItem::Constraint(c) => {
                     if let Some(cspec) = self.compile_placement_constraint(c)? {
@@ -2109,13 +2414,12 @@ impl SpecCompiler {
         })
     }
 
-    fn compile_placement_place(&mut self, decl: &PlaceDecl) -> Result<PlacementPlaceSpec, SpecError> {
+    fn compile_placement_place(
+        &mut self,
+        decl: &PlaceDecl,
+    ) -> Result<PlacementPlaceSpec, SpecError> {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
-        let designators = decl
-            .designators
-            .iter()
-            .map(|d| d.node.as_str())
-            .collect();
+        let designators = decl.designators.iter().map(|d| d.node.as_str()).collect();
         let props = self.object_expr_map(&decl.body.node)?;
 
         let mut region_name = None;
@@ -2127,7 +2431,9 @@ impl SpecCompiler {
                 }
                 crate::ast::Expr::Object(obj) => {
                     let region_props = self.object_expr_map(obj)?;
-                    if let (Some(from), Some(to)) = (region_props.get("from"), region_props.get("to")) {
+                    if let (Some(from), Some(to)) =
+                        (region_props.get("from"), region_props.get("to"))
+                    {
                         region_rect = Some((
                             self.expr_to_coord_point(from.0, from.1)?,
                             self.expr_to_coord_point(to.0, to.1)?,
@@ -2244,6 +2550,18 @@ impl SpecCompiler {
             Some((expr, span)) => Some(self.expr_to_bool(expr, *span)?),
             None => None,
         };
+        let congestion_weight = match props.get("congestion_weight") {
+            Some((expr, span)) => Some(self.expr_to_f64(expr, *span)?),
+            None => None,
+        };
+        let congestion_cell = match props.get("congestion_cell") {
+            Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
+            None => None,
+        };
+        let critical_net_boost = match props.get("critical_net_boost") {
+            Some((expr, span)) => Some(self.expr_to_f64(expr, *span)?),
+            None => None,
+        };
         let default_clearance = match props.get("default_clearance") {
             Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
             None => None,
@@ -2260,16 +2578,29 @@ impl SpecCompiler {
             Some((expr, span)) => Some(self.expr_to_bool(expr, *span)?),
             None => None,
         };
+        let cluster_target_size = match props.get("cluster_target_size") {
+            Some((expr, span)) => Some(self.expr_to_i32(expr, *span)? as usize),
+            None => None,
+        };
+        let cluster_max_depth = match props.get("cluster_max_depth") {
+            Some((expr, span)) => Some(self.expr_to_i32(expr, *span)? as usize),
+            None => None,
+        };
         Ok(AutoplaceConfig {
             algorithm,
             sa_cooling,
             sa_moves_per_temp,
             sa_max_steps,
             enable_net_crossings,
+            congestion_weight,
+            congestion_cell,
+            critical_net_boost,
             default_clearance,
             board_edge_clearance,
             grid_snap,
             auto_cluster,
+            cluster_target_size,
+            cluster_max_depth,
         })
     }
 
@@ -2308,26 +2639,34 @@ impl SpecCompiler {
         };
 
         match decl {
-            PlacementConstraintDecl::LeftOf { a, b, body } => Ok(Some(PlacementConstraintSpec::LeftOf {
-                a: a.node.root.node.clone(),
-                b: b.node.root.node.clone(),
-                gap: gap_from_obj(body)?,
-            })),
-            PlacementConstraintDecl::RightOf { a, b, body } => Ok(Some(PlacementConstraintSpec::RightOf {
-                a: a.node.root.node.clone(),
-                b: b.node.root.node.clone(),
-                gap: gap_from_obj(body)?,
-            })),
-            PlacementConstraintDecl::Above { a, b, body } => Ok(Some(PlacementConstraintSpec::Above {
-                a: a.node.root.node.clone(),
-                b: b.node.root.node.clone(),
-                gap: gap_from_obj(body)?,
-            })),
-            PlacementConstraintDecl::Below { a, b, body } => Ok(Some(PlacementConstraintSpec::Below {
-                a: a.node.root.node.clone(),
-                b: b.node.root.node.clone(),
-                gap: gap_from_obj(body)?,
-            })),
+            PlacementConstraintDecl::LeftOf { a, b, body } => {
+                Ok(Some(PlacementConstraintSpec::LeftOf {
+                    a: a.node.root.node.clone(),
+                    b: b.node.root.node.clone(),
+                    gap: gap_from_obj(body)?,
+                }))
+            }
+            PlacementConstraintDecl::RightOf { a, b, body } => {
+                Ok(Some(PlacementConstraintSpec::RightOf {
+                    a: a.node.root.node.clone(),
+                    b: b.node.root.node.clone(),
+                    gap: gap_from_obj(body)?,
+                }))
+            }
+            PlacementConstraintDecl::Above { a, b, body } => {
+                Ok(Some(PlacementConstraintSpec::Above {
+                    a: a.node.root.node.clone(),
+                    b: b.node.root.node.clone(),
+                    gap: gap_from_obj(body)?,
+                }))
+            }
+            PlacementConstraintDecl::Below { a, b, body } => {
+                Ok(Some(PlacementConstraintSpec::Below {
+                    a: a.node.root.node.clone(),
+                    b: b.node.root.node.clone(),
+                    gap: gap_from_obj(body)?,
+                }))
+            }
         }
     }
 
@@ -2353,7 +2692,11 @@ impl SpecCompiler {
         Ok(map)
     }
 
-    fn expr_to_string(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<String, SpecError> {
+    fn expr_to_string(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<String, SpecError> {
         match expr {
             crate::ast::Expr::String(s) | crate::ast::Expr::Ident(s) => Ok(s.clone()),
             crate::ast::Expr::Integer(i) => Ok(i.to_string()),
@@ -2382,12 +2725,20 @@ impl SpecCompiler {
         }
     }
 
-    fn expr_to_bool(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<bool, SpecError> {
+    fn expr_to_bool(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<bool, SpecError> {
         let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
         value_to_bool(&val, Some(span))
     }
 
-    fn expr_to_i32(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<i32, SpecError> {
+    fn expr_to_i32(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<i32, SpecError> {
         let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
         match val {
             Value::Integer(i) => Ok(i),
@@ -2400,7 +2751,11 @@ impl SpecCompiler {
         }
     }
 
-    fn expr_to_f64(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<f64, SpecError> {
+    fn expr_to_f64(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<f64, SpecError> {
         let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
         match val {
             Value::Integer(i) => Ok(i as f64),
@@ -2413,7 +2768,11 @@ impl SpecCompiler {
         }
     }
 
-    fn expr_to_coord(&self, expr: &crate::ast::Expr, span: crate::diagnostic::Span) -> Result<Coord, SpecError> {
+    fn expr_to_coord(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<Coord, SpecError> {
         let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
         value_to_coord(&val, Some(span))
     }
@@ -2438,40 +2797,50 @@ impl SpecCompiler {
         self.scope.push();
 
         // Collect and evaluate project-level let bindings.
-        let proj_lets: Vec<_> = decl.body.iter().filter_map(|item| {
-            match &item.node {
+        let proj_lets: Vec<_> = decl
+            .body
+            .iter()
+            .filter_map(|item| match &item.node {
                 ProjectItem::LetBinding(lb) => Some((&*lb.name.node, &lb.value)),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         eval_let_bindings_slice(&proj_lets, &mut self.scope)?;
 
         // Collect project-level properties from Property items.
         let props = collect_object_properties_from_items(
-            decl.body.iter().filter_map(|item| {
-                match &item.node {
-                    ProjectItem::Property(p) => Some(p),
-                    _ => None,
-                }
+            decl.body.iter().filter_map(|item| match &item.node {
+                ProjectItem::Property(p) => Some(p),
+                _ => None,
             }),
             &self.scope,
         )?;
 
         // Extract scalar fields.
         let hierarchy_mode = get_enum_opt(&props, "hierarchy_mode", parse_flatten_mode)?;
-        let channel_room_naming_style = get_enum_opt(&props, "channel_room_naming_style", parse_channel_room_naming_style)?;
+        let channel_room_naming_style = get_enum_opt(
+            &props,
+            "channel_room_naming_style",
+            parse_channel_room_naming_style,
+        )?;
         let channel_designator_format = get_string_opt(&props, "channel_designator_format");
         let channel_room_level_separator = get_string_opt(&props, "channel_room_level_separator");
         let allow_port_net_names = get_bool_opt(&props, "allow_port_net_names");
         let allow_sheet_entry_net_names = get_bool_opt(&props, "allow_sheet_entry_net_names");
         let netlist_single_pin_nets = get_bool_opt(&props, "netlist_single_pin_nets");
-        let append_sheet_number_to_local_nets = get_bool_opt(&props, "append_sheet_number_to_local_nets");
+        let append_sheet_number_to_local_nets =
+            get_bool_opt(&props, "append_sheet_number_to_local_nets");
         let name_nets_hierarchically = get_bool_opt(&props, "name_nets_hierarchically");
         let power_port_names_take_priority = get_bool_opt(&props, "power_port_names_take_priority");
         let pin_swap_by_netlabel = get_bool_opt(&props, "pin_swap_by_netlabel");
         let pin_swap_by_pin = get_bool_opt(&props, "pin_swap_by_pin");
-        let cross_ref_sheet_style = get_enum_opt(&props, "cross_ref_sheet_style", parse_cross_ref_sheet_style)?;
-        let cross_ref_location_style = get_enum_opt(&props, "cross_ref_location_style", parse_cross_ref_location_style)?;
+        let cross_ref_sheet_style =
+            get_enum_opt(&props, "cross_ref_sheet_style", parse_cross_ref_sheet_style)?;
+        let cross_ref_location_style = get_enum_opt(
+            &props,
+            "cross_ref_location_style",
+            parse_cross_ref_location_style,
+        )?;
         let cross_ref_ports = get_enum_opt(&props, "cross_ref_ports", parse_cross_ref_ports)?;
         let cross_ref_cross_sheets = get_bool_opt(&props, "cross_ref_cross_sheets");
         let cross_ref_sheet_entries = get_bool_opt(&props, "cross_ref_sheet_entries");
@@ -2523,7 +2892,10 @@ impl SpecCompiler {
                         &self.scope,
                     )?;
                     class_gen = Some(ClassGenSpec {
-                        generate_component_classes: get_bool_opt(&cg_props, "generate_component_classes"),
+                        generate_component_classes: get_bool_opt(
+                            &cg_props,
+                            "generate_component_classes",
+                        ),
                         generate_net_classes: get_bool_opt(&cg_props, "generate_net_classes"),
                     });
                 }
@@ -2577,12 +2949,13 @@ impl SpecCompiler {
         })
     }
 
-    fn compile_document(&mut self, doc: &crate::ast::DocumentBlockDecl) -> Result<DocumentSpec, SpecError> {
+    fn compile_document(
+        &mut self,
+        doc: &crate::ast::DocumentBlockDecl,
+    ) -> Result<DocumentSpec, SpecError> {
         let path = doc.path.node.as_str();
-        let props = collect_object_properties_from_items(
-            doc.body.iter().map(|p| &p.node),
-            &self.scope,
-        )?;
+        let props =
+            collect_object_properties_from_items(doc.body.iter().map(|p| &p.node), &self.scope)?;
         Ok(DocumentSpec {
             path,
             annotation_enabled: get_bool_opt(&props, "annotation_enabled"),
@@ -2592,7 +2965,10 @@ impl SpecCompiler {
         })
     }
 
-    fn compile_annotation(&mut self, ann: &crate::ast::AnnotationBlockDecl) -> Result<AnnotationSpec, SpecError> {
+    fn compile_annotation(
+        &mut self,
+        ann: &crate::ast::AnnotationBlockDecl,
+    ) -> Result<AnnotationSpec, SpecError> {
         let props = collect_object_properties_from_items(
             ann.properties.iter().map(|p| &p.node),
             &self.scope,
@@ -2620,7 +2996,10 @@ impl SpecCompiler {
         })
     }
 
-    fn compile_erc_matrix_entry(&self, entry: &crate::ast::ErcMatrixEntryDecl) -> Result<ErcMatrixOverride, SpecError> {
+    fn compile_erc_matrix_entry(
+        &self,
+        entry: &crate::ast::ErcMatrixEntryDecl,
+    ) -> Result<ErcMatrixOverride, SpecError> {
         let row = parse_connection_code(&entry.row.node).ok_or_else(|| {
             SpecError::new(
                 SpecErrorCode::TypeMismatch,
@@ -2638,14 +3017,20 @@ impl SpecCompiler {
         let level = parse_error_level(&entry.level.node).ok_or_else(|| {
             SpecError::new(
                 SpecErrorCode::TypeMismatch,
-                format!("unknown error level: '{}' (expected no_report, warning, error, fatal)", entry.level.node),
+                format!(
+                    "unknown error level: '{}' (expected no_report, warning, error, fatal)",
+                    entry.level.node
+                ),
                 Some(entry.level.span),
             )
         })?;
         Ok(ErcMatrixOverride { row, col, level })
     }
 
-    fn compile_erc_level_entry(&self, entry: &crate::ast::ErcLevelEntryDecl) -> Result<ErcLevelOverride, SpecError> {
+    fn compile_erc_level_entry(
+        &self,
+        entry: &crate::ast::ErcLevelEntryDecl,
+    ) -> Result<ErcLevelOverride, SpecError> {
         let level_val = eval_expr(&entry.level, &self.scope)?;
         let level_str = match &level_val {
             Value::String(s) => s.clone(),
@@ -2664,7 +3049,10 @@ impl SpecCompiler {
             other => {
                 return Err(SpecError::new(
                     SpecErrorCode::TypeMismatch,
-                    format!("expected error level string or integer, got {}", other.kind_name()),
+                    format!(
+                        "expected error level string or integer, got {}",
+                        other.kind_name()
+                    ),
                     Some(entry.level.span),
                 ));
             }
@@ -2672,14 +3060,23 @@ impl SpecCompiler {
         let level = parse_error_level(&level_str).ok_or_else(|| {
             SpecError::new(
                 SpecErrorCode::TypeMismatch,
-                format!("unknown error level: '{}' (expected no_report, warning, error, fatal)", level_str),
+                format!(
+                    "unknown error level: '{}' (expected no_report, warning, error, fatal)",
+                    level_str
+                ),
                 Some(entry.level.span),
             )
         })?;
-        Ok(ErcLevelOverride { name: entry.name.node.clone(), level })
+        Ok(ErcLevelOverride {
+            name: entry.name.node.clone(),
+            level,
+        })
     }
 
-    fn compile_output_group(&mut self, group: &crate::ast::OutputGroupBlockDecl) -> Result<OutputGroupSpec, SpecError> {
+    fn compile_output_group(
+        &mut self,
+        group: &crate::ast::OutputGroupBlockDecl,
+    ) -> Result<OutputGroupSpec, SpecError> {
         let name = group.name.node.as_str();
         let props = collect_object_properties_from_items(
             group.properties.iter().map(|p| &p.node),
@@ -2701,10 +3098,17 @@ impl SpecCompiler {
             });
         }
 
-        Ok(OutputGroupSpec { name, description, outputs })
+        Ok(OutputGroupSpec {
+            name,
+            description,
+            outputs,
+        })
     }
 
-    fn compile_comparison_rule(&self, rule: &crate::ast::ComparisonRuleDecl) -> Result<ComparisonRuleSpec, SpecError> {
+    fn compile_comparison_rule(
+        &self,
+        rule: &crate::ast::ComparisonRuleDecl,
+    ) -> Result<ComparisonRuleSpec, SpecError> {
         let kind = rule.kind.node.as_str();
         let obj_map = eval_object_to_map(&rule.body.node, &self.scope)?;
         let mut properties = IndexMap::new();
@@ -2714,7 +3118,10 @@ impl SpecCompiler {
         Ok(ComparisonRuleSpec { kind, properties })
     }
 
-    fn compile_variant(&mut self, var: &crate::ast::VariantBlockDecl) -> Result<VariantSpec, SpecError> {
+    fn compile_variant(
+        &mut self,
+        var: &crate::ast::VariantBlockDecl,
+    ) -> Result<VariantSpec, SpecError> {
         let name = var.name.node.as_str();
         let props = collect_object_properties_from_items(
             var.properties.iter().map(|p| &p.node),
@@ -2737,10 +3144,8 @@ impl SpecCompiler {
         let mut param_variations = Vec::new();
         for pv in &var.param_variations {
             let pv_map = eval_object_to_map(&pv.node.body.node, &self.scope)?;
-            let parameter = get_string_opt(&pv_map, "parameter")
-                .unwrap_or_default();
-            let value = get_string_opt(&pv_map, "value")
-                .unwrap_or_default();
+            let parameter = get_string_opt(&pv_map, "parameter").unwrap_or_default();
+            let value = get_string_opt(&pv_map, "value").unwrap_or_default();
             param_variations.push(ParamVariationSpec {
                 designator: pv.node.designator.node.as_str(),
                 parameter,
@@ -2748,7 +3153,12 @@ impl SpecCompiler {
             });
         }
 
-        Ok(VariantSpec { name, description, variations, param_variations })
+        Ok(VariantSpec {
+            name,
+            description,
+            variations,
+            param_variations,
+        })
     }
 }
 
@@ -2883,10 +3293,7 @@ fn eval_let_bindings_slice(
 // ── Object evaluation helpers ─────────────────────────────────────────────────
 
 /// Evaluate an [`Object`] AST node into an `IndexMap<String, Value>`.
-fn eval_object_to_map(
-    obj: &Object,
-    scope: &ScopeStack,
-) -> EvalResult<IndexMap<String, Value>> {
+fn eval_object_to_map(obj: &Object, scope: &ScopeStack) -> EvalResult<IndexMap<String, Value>> {
     let mut result: IndexMap<String, Value> = IndexMap::new();
     for item in &obj.items {
         match &item.node {
@@ -2984,7 +3391,10 @@ fn get_swap_group_opt(
         Some(Value::String(s)) => Ok(Some(s.clone())),
         Some(other) => Err(SpecError::no_span(
             SpecErrorCode::TypeMismatch,
-            format!("{key}: expected swap_group reference or string, got {}", other.kind_name()),
+            format!(
+                "{key}: expected swap_group reference or string, got {}",
+                other.kind_name()
+            ),
         )),
         None => Ok(None),
     }
@@ -3012,10 +3422,7 @@ fn get_float_opt(props: &IndexMap<String, Value>, key: &str) -> Option<f64> {
     })
 }
 
-fn get_coord_opt(
-    props: &IndexMap<String, Value>,
-    key: &str,
-) -> Result<Option<Coord>, SpecError> {
+fn get_coord_opt(props: &IndexMap<String, Value>, key: &str) -> Result<Option<Coord>, SpecError> {
     match props.get(key) {
         None => Ok(None),
         Some(v) => {
@@ -3035,21 +3442,24 @@ where
 {
     match props.get(key) {
         None => Ok(None),
-        Some(Value::String(s)) => {
-            parse(s.as_str()).map(Some).ok_or_else(|| SpecError::no_span(
+        Some(Value::String(s)) => parse(s.as_str()).map(Some).ok_or_else(|| {
+            SpecError::no_span(
                 SpecErrorCode::TypeMismatch,
                 format!("invalid enum value '{}' for key '{key}'", s),
-            ))
-        }
-        Some(Value::Integer(n)) => {
-            parse(&n.to_string()).map(Some).ok_or_else(|| SpecError::no_span(
+            )
+        }),
+        Some(Value::Integer(n)) => parse(&n.to_string()).map(Some).ok_or_else(|| {
+            SpecError::no_span(
                 SpecErrorCode::TypeMismatch,
                 format!("invalid enum integer {n} for key '{key}'"),
-            ))
-        }
+            )
+        }),
         Some(other) => Err(SpecError::no_span(
             SpecErrorCode::TypeMismatch,
-            format!("expected string for enum key '{key}', got {}", other.kind_name()),
+            format!(
+                "expected string for enum key '{key}', got {}",
+                other.kind_name()
+            ),
         )),
     }
 }
@@ -3064,7 +3474,10 @@ fn get_string_value_key(
         Some(Value::Integer(n)) => Ok(n.to_string()),
         Some(other) => Err(SpecError::at(
             SpecErrorCode::TypeMismatch,
-            format!("expected string/integer for '{key}', got {}", other.kind_name()),
+            format!(
+                "expected string/integer for '{key}', got {}",
+                other.kind_name()
+            ),
             span,
         )),
         None => Err(SpecError::at(
@@ -3401,25 +3814,47 @@ fn compile_graphic_properties(
     props: &IndexMap<String, Value>,
     span: crate::diagnostic::Span,
 ) -> Result<GraphicProperties, SpecError> {
-    let from = props.get("from")
+    let from = props
+        .get("from")
         .map(|v| value_to_coord_point(v, Some(span)))
         .transpose()?;
-    let to = props.get("to")
+    let to = props
+        .get("to")
         .map(|v| value_to_coord_point(v, Some(span)))
         .transpose()?;
-    let center = props.get("center")
+    let center = props
+        .get("center")
         .map(|v| value_to_coord_point(v, Some(span)))
         .transpose()?;
-    let at = props.get("at")
+    let at = props
+        .get("at")
         .map(|v| value_to_coord_point(v, Some(span)))
         .transpose()?;
 
-    let radius = props.get("radius").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let secondary_radius = props.get("secondary_radius").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let line_width = props.get("line_width").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let width = props.get("width").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let corner_x_radius = props.get("corner_x_radius").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let corner_y_radius = props.get("corner_y_radius").map(|v| value_to_coord(v, Some(span))).transpose()?;
+    let radius = props
+        .get("radius")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let secondary_radius = props
+        .get("secondary_radius")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let line_width = props
+        .get("line_width")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let width = props
+        .get("width")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let corner_x_radius = props
+        .get("corner_x_radius")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let corner_y_radius = props
+        .get("corner_y_radius")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
 
     let start_angle = get_float_opt(props, "start_angle");
     let end_angle = get_float_opt(props, "end_angle");
@@ -3430,14 +3865,17 @@ fn compile_graphic_properties(
     let text = get_string_opt(props, "text");
     let file_name = get_string_opt(props, "file_name");
 
-    let color = props.get("color")
+    let color = props
+        .get("color")
         .map(|v| value_to_color(v, Some(span)))
         .transpose()?;
-    let area_color = props.get("area_color")
+    let area_color = props
+        .get("area_color")
         .map(|v| value_to_color(v, Some(span)))
         .transpose()?;
 
-    let points = props.get("points")
+    let points = props
+        .get("points")
         .map(|v| value_to_points(v, Some(span)))
         .transpose()?;
 
@@ -3483,15 +3921,39 @@ fn compile_pcb_graphic_properties(
     span: crate::diagnostic::Span,
 ) -> Result<PcbGraphicProperties, SpecError> {
     let layer = get_enum_opt(props, "layer", parse_layer_spec)?;
-    let width = props.get("width").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let from = props.get("from").map(|v| value_to_coord_point(v, Some(span))).transpose()?;
-    let to = props.get("to").map(|v| value_to_coord_point(v, Some(span))).transpose()?;
-    let center = props.get("center").map(|v| value_to_coord_point(v, Some(span))).transpose()?;
-    let at = props.get("at").map(|v| value_to_coord_point(v, Some(span))).transpose()?;
+    let width = props
+        .get("width")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let from = props
+        .get("from")
+        .map(|v| value_to_coord_point(v, Some(span)))
+        .transpose()?;
+    let to = props
+        .get("to")
+        .map(|v| value_to_coord_point(v, Some(span)))
+        .transpose()?;
+    let center = props
+        .get("center")
+        .map(|v| value_to_coord_point(v, Some(span)))
+        .transpose()?;
+    let at = props
+        .get("at")
+        .map(|v| value_to_coord_point(v, Some(span)))
+        .transpose()?;
 
-    let radius = props.get("radius").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let hole_size = props.get("hole_size").map(|v| value_to_coord(v, Some(span))).transpose()?;
-    let diameter = props.get("diameter").map(|v| value_to_coord(v, Some(span))).transpose()?;
+    let radius = props
+        .get("radius")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let hole_size = props
+        .get("hole_size")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let diameter = props
+        .get("diameter")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
 
     let start_angle = get_float_opt(props, "start_angle");
     let end_angle = get_float_opt(props, "end_angle");
@@ -3499,7 +3961,8 @@ fn compile_pcb_graphic_properties(
     let is_solid = get_bool_opt(props, "is_solid");
     let text = get_string_opt(props, "text");
 
-    let points = props.get("points")
+    let points = props
+        .get("points")
         .map(|v| value_to_points(v, Some(span)))
         .transpose()?;
 
@@ -3554,9 +4017,7 @@ fn base64_decode_simple(input: &str) -> Vec<u8> {
                 out.push(n as u8);
             }
             3 => {
-                let n = (chunk[0] as u32) << 18
-                    | (chunk[1] as u32) << 12
-                    | (chunk[2] as u32) << 6;
+                let n = (chunk[0] as u32) << 18 | (chunk[1] as u32) << 12 | (chunk[2] as u32) << 6;
                 out.push((n >> 16) as u8);
                 out.push((n >> 8) as u8);
             }
@@ -3594,18 +4055,18 @@ impl EdgeSide {
     fn forward_direction(self) -> i32 {
         // +1 = increasing coordinate along the edge's varying axis.
         match self {
-            EdgeSide::Left => -1,  // top to bottom: decreasing Y
-            EdgeSide::Right => 1,  // bottom to top: increasing Y
-            EdgeSide::Top => 1,    // left to right: increasing X
-            EdgeSide::Bottom => -1,// right to left: decreasing X
+            EdgeSide::Left => -1,   // top to bottom: decreasing Y
+            EdgeSide::Right => 1,   // bottom to top: increasing Y
+            EdgeSide::Top => 1,     // left to right: increasing X
+            EdgeSide::Bottom => -1, // right to left: decreasing X
         }
     }
 
     fn auto_orientation(self) -> RotationBy90 {
         match self {
-            EdgeSide::Left => RotationBy90::Rotate0,    // pin points right
+            EdgeSide::Left => RotationBy90::Rotate0, // pin points right
             EdgeSide::Right => RotationBy90::Rotate180, // pin points left
-            EdgeSide::Top => RotationBy90::Rotate270,   // pin points down
+            EdgeSide::Top => RotationBy90::Rotate270, // pin points down
             EdgeSide::Bottom => RotationBy90::Rotate90, // pin points up
         }
     }
@@ -3636,13 +4097,19 @@ impl Edge {
         let dir = self.side.forward_direction();
         match at_pos {
             AnchorPosition::Start => {
-                if dir > 0 { min } else { max }
+                if dir > 0 {
+                    min
+                } else {
+                    max
+                }
             }
-            AnchorPosition::Center => {
-                Coord::new((min.raw() + max.raw()) / 2)
-            }
+            AnchorPosition::Center => Coord::new((min.raw() + max.raw()) / 2),
             AnchorPosition::End => {
-                if dir > 0 { max } else { min }
+                if dir > 0 {
+                    max
+                } else {
+                    min
+                }
             }
         }
     }
@@ -3685,25 +4152,41 @@ impl BoxGeometry {
         let x = Coord::new(self.from.x.raw().min(self.to.x.raw()));
         let y_min = Coord::new(self.from.y.raw().min(self.to.y.raw()));
         let y_max = Coord::new(self.from.y.raw().max(self.to.y.raw()));
-        Edge { position: x, range: (y_min, y_max), side: EdgeSide::Left }
+        Edge {
+            position: x,
+            range: (y_min, y_max),
+            side: EdgeSide::Left,
+        }
     }
     fn right_edge(&self) -> Edge {
         let x = Coord::new(self.from.x.raw().max(self.to.x.raw()));
         let y_min = Coord::new(self.from.y.raw().min(self.to.y.raw()));
         let y_max = Coord::new(self.from.y.raw().max(self.to.y.raw()));
-        Edge { position: x, range: (y_min, y_max), side: EdgeSide::Right }
+        Edge {
+            position: x,
+            range: (y_min, y_max),
+            side: EdgeSide::Right,
+        }
     }
     fn top_edge(&self) -> Edge {
         let y = Coord::new(self.from.y.raw().max(self.to.y.raw()));
         let x_min = Coord::new(self.from.x.raw().min(self.to.x.raw()));
         let x_max = Coord::new(self.from.x.raw().max(self.to.x.raw()));
-        Edge { position: y, range: (x_min, x_max), side: EdgeSide::Top }
+        Edge {
+            position: y,
+            range: (x_min, x_max),
+            side: EdgeSide::Top,
+        }
     }
     fn bottom_edge(&self) -> Edge {
         let y = Coord::new(self.from.y.raw().min(self.to.y.raw()));
         let x_min = Coord::new(self.from.x.raw().min(self.to.x.raw()));
         let x_max = Coord::new(self.from.x.raw().max(self.to.x.raw()));
-        Edge { position: y, range: (x_min, x_max), side: EdgeSide::Bottom }
+        Edge {
+            position: y,
+            range: (x_min, x_max),
+            side: EdgeSide::Bottom,
+        }
     }
     fn center(&self) -> CoordPoint {
         CoordPoint::new(
@@ -3719,7 +4202,11 @@ impl BoxGeometry {
             EdgeSide::Top => self.top_edge(),
             EdgeSide::Bottom => self.bottom_edge(),
         };
-        let varying_coord = edge.point_at(if start { AnchorPosition::Start } else { AnchorPosition::End });
+        let varying_coord = edge.point_at(if start {
+            AnchorPosition::Start
+        } else {
+            AnchorPosition::End
+        });
         match edge.axis() {
             Axis::X => CoordPoint::new(edge.position, varying_coord),
             Axis::Y => CoordPoint::new(varying_coord, edge.position),
@@ -3838,7 +4325,10 @@ fn extract_sequence_ref(obj: &crate::ast::Object, key: &str) -> Option<String> {
 }
 
 /// Parse an `at:` string enum from the raw object (for anchor mode: "start", "center", "end").
-fn extract_at_position(obj: &crate::ast::Object, scope: &ScopeStack) -> Result<Option<AnchorPosition>, SpecError> {
+fn extract_at_position(
+    obj: &crate::ast::Object,
+    scope: &ScopeStack,
+) -> Result<Option<AnchorPosition>, SpecError> {
     for item in &obj.items {
         if let crate::ast::ObjectItem::Property(p) = &item.node {
             if p.key.node == "at" {
@@ -3848,7 +4338,10 @@ fn extract_at_position(obj: &crate::ast::Object, scope: &ScopeStack) -> Result<O
                         return Ok(Some(parse_anchor_position(s).ok_or_else(|| {
                             SpecError::no_span(
                                 SpecErrorCode::TypeMismatch,
-                                format!("invalid anchor position '{}': expected start, center, or end", s),
+                                format!(
+                                    "invalid anchor position '{}': expected start, center, or end",
+                                    s
+                                ),
                             )
                         })?));
                     }
@@ -3859,7 +4352,10 @@ fn extract_at_position(obj: &crate::ast::Object, scope: &ScopeStack) -> Result<O
                     other => {
                         return Err(SpecError::no_span(
                             SpecErrorCode::TypeMismatch,
-                            format!("at: expected string position or coord point, got {}", other.kind_name()),
+                            format!(
+                                "at: expected string position or coord point, got {}",
+                                other.kind_name()
+                            ),
                         ));
                     }
                 }
@@ -3921,15 +4417,9 @@ enum PinAnchorMode {
         gap: i32,
     },
     /// No `on:`, but `after: $ref` present — binding+field will be inferred from the chain.
-    InferredAfter {
-        after_ref: String,
-        gap: i32,
-    },
+    InferredAfter { after_ref: String, gap: i32 },
     /// No `on:`, but `before: $ref` present — binding+field will be inferred from the chain.
-    InferredBefore {
-        before_ref: String,
-        gap: i32,
-    },
+    InferredBefore { before_ref: String, gap: i32 },
 }
 
 /// Auto-size rectangle bounds from pin extents.
@@ -3969,11 +4459,24 @@ fn compute_auto_size_bounds<'a>(
         }
         let props = eval_object_to_map(&decl.body.node, scope)?;
         // padding: space from body edge to first/last pin (default 20mil = 200,000)
-        let padding = get_coord_opt(&props, "padding")?.map(|c| c.raw()).unwrap_or(200_000);
+        let padding = get_coord_opt(&props, "padding")?
+            .map(|c| c.raw())
+            .unwrap_or(200_000);
         // min dimensions (default 50mil × 50mil = 500,000)
-        let min_width = get_coord_opt(&props, "min_width")?.map(|c| c.raw()).unwrap_or(500_000);
-        let min_height = get_coord_opt(&props, "min_height")?.map(|c| c.raw()).unwrap_or(500_000);
-        rect_props_map.insert(binding_name, RectProps { padding, min_width, min_height });
+        let min_width = get_coord_opt(&props, "min_width")?
+            .map(|c| c.raw())
+            .unwrap_or(500_000);
+        let min_height = get_coord_opt(&props, "min_height")?
+            .map(|c| c.raw())
+            .unwrap_or(500_000);
+        rect_props_map.insert(
+            binding_name,
+            RectProps {
+                padding,
+                min_width,
+                min_height,
+            },
+        );
     }
 
     // For each auto-sized binding, accumulate extent per edge.
@@ -3989,7 +4492,9 @@ fn compute_auto_size_bounds<'a>(
         for (decl, _) in pin_decls {
             let on_ref = extract_on_ref(&decl.body.node);
             let field = if let Some((ref b, ref f)) = on_ref {
-                if b != binding_name { continue; }
+                if b != binding_name {
+                    continue;
+                }
                 f.clone()
             } else {
                 // Inferred — need to follow chain; we handle this after initial pass.
@@ -4002,19 +4507,25 @@ fn compute_auto_size_bounds<'a>(
             } else {
                 1_000_000
             };
-            let pin_binding = decl.binding.as_ref().map(|b| b.node.clone())
+            let pin_binding = decl
+                .binding
+                .as_ref()
+                .map(|b| b.node.clone())
                 .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
 
-            edge_pins.entry(field).or_default().push(EdgePin { pin_binding, gap });
+            edge_pins
+                .entry(field)
+                .or_default()
+                .push(EdgePin { pin_binding, gap });
         }
 
         // Also include inferred pins — walk each inferred pin's chain to find its edge.
         // Build a name -> (on_ref, field) lookup from the direct pins we already have.
-        let pin_field_lookup: HashMap<String, String> = edge_pins.iter()
+        let pin_field_lookup: HashMap<String, String> = edge_pins
+            .iter()
             .flat_map(|(field, pins)| {
-                pins.iter().filter_map(move |p| {
-                    p.pin_binding.as_ref().map(|b| (b.clone(), field.clone()))
-                })
+                pins.iter()
+                    .filter_map(move |p| p.pin_binding.as_ref().map(|b| (b.clone(), field.clone())))
             })
             .collect();
 
@@ -4034,14 +4545,19 @@ fn compute_auto_size_bounds<'a>(
                 let mut cur = chain_ref.clone();
                 let mut found: Option<String> = None;
                 loop {
-                    if !visited.insert(cur.clone()) { break; } // cycle
+                    if !visited.insert(cur.clone()) {
+                        break;
+                    } // cycle
                     if let Some(f) = pin_field_lookup.get(&cur) {
                         found = Some(f.clone());
                         break;
                     }
                     // Look up in pin_decls to follow chain.
                     let next = pin_decls.iter().find_map(|(d, _)| {
-                        let bn = d.binding.as_ref().map(|b| b.node.clone())
+                        let bn = d
+                            .binding
+                            .as_ref()
+                            .map(|b| b.node.clone())
                             .unwrap_or_else(|| format!("pin{}", d.name.node.as_str()));
                         if bn == cur {
                             extract_sequence_ref(&d.body.node, "after")
@@ -4067,10 +4583,16 @@ fn compute_auto_size_bounds<'a>(
             } else {
                 1_000_000
             };
-            let pin_binding = decl.binding.as_ref().map(|b| b.node.clone())
+            let pin_binding = decl
+                .binding
+                .as_ref()
+                .map(|b| b.node.clone())
                 .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
 
-            edge_pins.entry(field).or_default().push(EdgePin { pin_binding, gap });
+            edge_pins
+                .entry(field)
+                .or_default()
+                .push(EdgePin { pin_binding, gap });
         }
 
         // Compute extent for each edge: padding + (n-1) * gaps + padding.
@@ -4095,7 +4617,9 @@ fn compute_auto_size_bounds<'a>(
         let top_extent = extent_for_edge("top");
         let bottom_extent = extent_for_edge("bottom");
 
-        let rp = rect_props_map.get(binding_name).map(|r| (r.padding, r.min_width, r.min_height))
+        let rp = rect_props_map
+            .get(binding_name)
+            .map(|r| (r.padding, r.min_width, r.min_height))
             .unwrap_or((200_000, 500_000, 500_000));
         let (_padding, min_width, min_height) = rp;
 
@@ -4122,16 +4646,22 @@ fn compute_auto_size_bounds<'a>(
 /// promote the inferred pin to `After`/`Before` with the resolved binding+field.
 fn resolve_inferred_edges(pending: &mut Vec<PendingPin>) -> Result<(), SpecError> {
     // Build name→index map.
-    let name_to_idx: HashMap<String, usize> = pending.iter().enumerate()
+    let name_to_idx: HashMap<String, usize> = pending
+        .iter()
+        .enumerate()
         .filter_map(|(i, p)| p.binding_name.as_ref().map(|b| (b.clone(), i)))
         .collect();
 
     // Collect the indices that are currently Inferred*.
-    let inferred_indices: Vec<usize> = pending.iter().enumerate()
-        .filter(|(_, p)| matches!(
-            &p.anchor_mode,
-            PinAnchorMode::InferredAfter { .. } | PinAnchorMode::InferredBefore { .. }
-        ))
+    let inferred_indices: Vec<usize> = pending
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            matches!(
+                &p.anchor_mode,
+                PinAnchorMode::InferredAfter { .. } | PinAnchorMode::InferredBefore { .. }
+            )
+        })
         .map(|(i, _)| i)
         .collect();
 
@@ -4141,7 +4671,10 @@ fn resolve_inferred_edges(pending: &mut Vec<PendingPin>) -> Result<(), SpecError
         let mut current = start_idx;
 
         // The is_after flag follows whether each hop in the chain is "after" or "before".
-        let is_after = matches!(&pending[start_idx].anchor_mode, PinAnchorMode::InferredAfter { .. });
+        let is_after = matches!(
+            &pending[start_idx].anchor_mode,
+            PinAnchorMode::InferredAfter { .. }
+        );
 
         loop {
             if !visited.insert(current) {
@@ -4165,8 +4698,12 @@ fn resolve_inferred_edges(pending: &mut Vec<PendingPin>) -> Result<(), SpecError
                     let field = field.clone();
                     // Now patch the start_idx pin.
                     let (orig_ref, gap) = match &pending[start_idx].anchor_mode {
-                        PinAnchorMode::InferredAfter { after_ref, gap } => (after_ref.clone(), *gap),
-                        PinAnchorMode::InferredBefore { before_ref, gap } => (before_ref.clone(), *gap),
+                        PinAnchorMode::InferredAfter { after_ref, gap } => {
+                            (after_ref.clone(), *gap)
+                        }
+                        PinAnchorMode::InferredBefore { before_ref, gap } => {
+                            (before_ref.clone(), *gap)
+                        }
                         _ => unreachable!(),
                     };
                     if is_after {
@@ -4252,9 +4789,19 @@ fn resolve_anchor_pins(
             };
 
             if let Some(after_ref) = after {
-                PinAnchorMode::After { binding, field, after_ref, gap }
+                PinAnchorMode::After {
+                    binding,
+                    field,
+                    after_ref,
+                    gap,
+                }
             } else if let Some(before_ref) = before {
-                PinAnchorMode::Before { binding, field, before_ref: before_ref, gap }
+                PinAnchorMode::Before {
+                    binding,
+                    field,
+                    before_ref: before_ref,
+                    gap,
+                }
             } else {
                 PinAnchorMode::AtPosition {
                     binding,
@@ -4285,10 +4832,17 @@ fn resolve_anchor_pins(
         // Otherwise, auto-generate an implicit binding from the designator:
         //   pin 1   -> $pin1
         //   pin SDA -> $pinSDA
-        let binding_name = decl.binding.as_ref()
+        let binding_name = decl
+            .binding
+            .as_ref()
             .map(|b| b.node.clone())
             .or_else(|| Some(format!("pin{}", decl.name.node.as_str())));
-        pending.push(PendingPin { decl, owner_part_id: *owner_part_id, binding_name, anchor_mode: mode });
+        pending.push(PendingPin {
+            decl,
+            owner_part_id: *owner_part_id,
+            binding_name,
+            anchor_mode: mode,
+        });
     }
 
     // Resolve InferredAfter/InferredBefore chains — walk until finding a pin with
@@ -4300,7 +4854,9 @@ fn resolve_anchor_pins(
     // We need to resolve sequenced pins in topo order, then compile all.
 
     // Map: pin binding name → index in pending
-    let binding_index: HashMap<String, usize> = pending.iter().enumerate()
+    let binding_index: HashMap<String, usize> = pending
+        .iter()
+        .enumerate()
         .filter_map(|(i, p)| p.binding_name.as_ref().map(|b| (b.clone(), i)))
         .collect();
 
@@ -4350,7 +4906,12 @@ fn topo_sort_pins(
 
     for (i, p) in pending.iter().enumerate() {
         match &p.anchor_mode {
-            PinAnchorMode::After { after_ref, binding, field, .. } => {
+            PinAnchorMode::After {
+                after_ref,
+                binding,
+                field,
+                ..
+            } => {
                 if let Some(&dep_idx) = binding_index.get(after_ref) {
                     // Validate same edge.
                     if let Some(dep_edge) = get_dep_edge(&pending[dep_idx], binding) {
@@ -4373,7 +4934,12 @@ fn topo_sort_pins(
                     ));
                 }
             }
-            PinAnchorMode::Before { before_ref, binding, field, .. } => {
+            PinAnchorMode::Before {
+                before_ref,
+                binding,
+                field,
+                ..
+            } => {
                 if let Some(&dep_idx) = binding_index.get(before_ref) {
                     if let Some(dep_edge) = get_dep_edge(&pending[dep_idx], binding) {
                         if !same_edge(field, &dep_edge) {
@@ -4418,7 +4984,9 @@ fn topo_sort_pins(
                 "circular after:/before: dependency detected",
             ));
         }
-        if visited[i] { return Ok(()); }
+        if visited[i] {
+            return Ok(());
+        }
         in_stack[i] = true;
         for &dep in &deps[i] {
             dfs_pins(dep, deps, visited, in_stack, order)?;
@@ -4479,7 +5047,8 @@ fn compile_one_pin(
                 value_to_coord_point(v, Some(decl.body.span))?
             } else if let Some(x_val) = props.get("x") {
                 let x = value_to_coord(x_val, Some(decl.body.span))?;
-                let y = props.get("y")
+                let y = props
+                    .get("y")
                     .map(|v| value_to_coord(v, Some(decl.body.span)))
                     .transpose()?
                     .unwrap_or(Coord::ZERO);
@@ -4489,19 +5058,31 @@ fn compile_one_pin(
             };
             Ok(PinSpec {
                 designator: decl.name.node.as_str(),
-                name, electrical, length, location, orientation, is_hidden, hidden_net_name,
+                name,
+                electrical,
+                length,
+                location,
+                orientation,
+                is_hidden,
+                hidden_net_name,
                 owner_part_id: p.owner_part_id,
                 swap_group: swap_group.clone(),
                 part_swap_group: part_swap_group.clone(),
                 pair_swap_group: pair_swap_group.clone(),
             })
         }
-        PinAnchorMode::AtPosition { binding, field, at_pos } => {
-            let geom = binding_map.get(binding).ok_or_else(|| SpecError::at(
-                SpecErrorCode::UndefinedBinding,
-                format!("no bound graphic named '${}'", binding),
-                decl.body.span,
-            ))?;
+        PinAnchorMode::AtPosition {
+            binding,
+            field,
+            at_pos,
+        } => {
+            let geom = binding_map.get(binding).ok_or_else(|| {
+                SpecError::at(
+                    SpecErrorCode::UndefinedBinding,
+                    format!("no bound graphic named '${}'", binding),
+                    decl.body.span,
+                )
+            })?;
             let edge = geom_field_to_edge(geom, field).ok_or_else(|| SpecError::at(
                 SpecErrorCode::TypeMismatch,
                 format!("'{}' is not a valid edge name for anchor placement (use left/right/top/bottom)", field),
@@ -4509,32 +5090,54 @@ fn compile_one_pin(
             ))?;
             let side = get_enum_opt(&props, "side", parse_placement_side)?
                 .unwrap_or(PlacementSide::Outside);
-            let gap = get_coord_opt(&props, "gap")?.map(|c| c.raw()).unwrap_or(500_000);
+            let gap = get_coord_opt(&props, "gap")?
+                .map(|c| c.raw())
+                .unwrap_or(500_000);
             let offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
             let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (location, orientation) = resolve_anchor_placement(
-                &edge, *at_pos, side, Coord::new(gap), pin_length, offset,
+                &edge,
+                *at_pos,
+                side,
+                Coord::new(gap),
+                pin_length,
+                offset,
             )?;
             Ok(PinSpec {
                 designator: decl.name.node.as_str(),
-                name, electrical, length, location, orientation, is_hidden, hidden_net_name,
+                name,
+                electrical,
+                length,
+                location,
+                orientation,
+                is_hidden,
+                hidden_net_name,
                 owner_part_id: p.owner_part_id,
                 swap_group: swap_group.clone(),
                 part_swap_group: part_swap_group.clone(),
                 pair_swap_group: pair_swap_group.clone(),
             })
         }
-        PinAnchorMode::After { binding, field, after_ref, gap } => {
-            let geom = binding_map.get(binding).ok_or_else(|| SpecError::at(
-                SpecErrorCode::UndefinedBinding,
-                format!("no bound graphic named '${}'", binding),
-                decl.body.span,
-            ))?;
-            let edge = geom_field_to_edge(geom, field).ok_or_else(|| SpecError::at(
-                SpecErrorCode::TypeMismatch,
-                format!("'{}' is not a valid edge name", field),
-                decl.body.span,
-            ))?;
+        PinAnchorMode::After {
+            binding,
+            field,
+            after_ref,
+            gap,
+        } => {
+            let geom = binding_map.get(binding).ok_or_else(|| {
+                SpecError::at(
+                    SpecErrorCode::UndefinedBinding,
+                    format!("no bound graphic named '${}'", binding),
+                    decl.body.span,
+                )
+            })?;
+            let edge = geom_field_to_edge(geom, field).ok_or_else(|| {
+                SpecError::at(
+                    SpecErrorCode::TypeMismatch,
+                    format!("'{}' is not a valid edge name", field),
+                    decl.body.span,
+                )
+            })?;
             let prev_pos = position_cache.get(after_ref).copied().ok_or_else(|| {
                 SpecError::no_span(
                     SpecErrorCode::UndefinedBinding,
@@ -4553,7 +5156,12 @@ fn compile_one_pin(
             let extra_offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
             let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (mut location, orientation) = resolve_anchor_placement(
-                &edge, at_pos, side, Coord::ZERO, pin_length, extra_offset,
+                &edge,
+                at_pos,
+                side,
+                Coord::ZERO,
+                pin_length,
+                extra_offset,
             )?;
             // Override the along-edge coordinate with the computed absolute position.
             match edge.axis() {
@@ -4568,24 +5176,39 @@ fn compile_one_pin(
             }
             Ok(PinSpec {
                 designator: decl.name.node.as_str(),
-                name, electrical, length, location, orientation, is_hidden, hidden_net_name,
+                name,
+                electrical,
+                length,
+                location,
+                orientation,
+                is_hidden,
+                hidden_net_name,
                 owner_part_id: p.owner_part_id,
                 swap_group: swap_group.clone(),
                 part_swap_group: part_swap_group.clone(),
                 pair_swap_group: pair_swap_group.clone(),
             })
         }
-        PinAnchorMode::Before { binding, field, before_ref, gap } => {
-            let geom = binding_map.get(binding).ok_or_else(|| SpecError::at(
-                SpecErrorCode::UndefinedBinding,
-                format!("no bound graphic named '${}'", binding),
-                decl.body.span,
-            ))?;
-            let edge = geom_field_to_edge(geom, field).ok_or_else(|| SpecError::at(
-                SpecErrorCode::TypeMismatch,
-                format!("'{}' is not a valid edge name", field),
-                decl.body.span,
-            ))?;
+        PinAnchorMode::Before {
+            binding,
+            field,
+            before_ref,
+            gap,
+        } => {
+            let geom = binding_map.get(binding).ok_or_else(|| {
+                SpecError::at(
+                    SpecErrorCode::UndefinedBinding,
+                    format!("no bound graphic named '${}'", binding),
+                    decl.body.span,
+                )
+            })?;
+            let edge = geom_field_to_edge(geom, field).ok_or_else(|| {
+                SpecError::at(
+                    SpecErrorCode::TypeMismatch,
+                    format!("'{}' is not a valid edge name", field),
+                    decl.body.span,
+                )
+            })?;
             let next_pos = position_cache.get(before_ref).copied().ok_or_else(|| {
                 SpecError::no_span(
                     SpecErrorCode::UndefinedBinding,
@@ -4604,7 +5227,12 @@ fn compile_one_pin(
             let extra_offset = get_coord_point_opt(&props, "offset", decl.body.span)?;
             let pin_length = length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord"));
             let (mut location, orientation) = resolve_anchor_placement(
-                &edge, AnchorPosition::Center, side, Coord::ZERO, pin_length, extra_offset,
+                &edge,
+                AnchorPosition::Center,
+                side,
+                Coord::ZERO,
+                pin_length,
+                extra_offset,
             )?;
             match edge.axis() {
                 Axis::X => location.y = along,
@@ -4617,7 +5245,13 @@ fn compile_one_pin(
             }
             Ok(PinSpec {
                 designator: decl.name.node.as_str(),
-                name, electrical, length, location, orientation, is_hidden, hidden_net_name,
+                name,
+                electrical,
+                length,
+                location,
+                orientation,
+                is_hidden,
+                hidden_net_name,
                 owner_part_id: p.owner_part_id,
                 swap_group: swap_group.clone(),
                 part_swap_group: part_swap_group.clone(),
@@ -4771,11 +5405,14 @@ fn extract_pad_template(
 /// Extract a skip list (array of strings/integers) from props.
 fn extract_skip_list(props: &IndexMap<String, Value>) -> Vec<String> {
     match props.get("skip") {
-        Some(Value::Array(arr)) => arr.iter().filter_map(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            Value::Integer(n) => Some(n.to_string()),
-            _ => None,
-        }).collect(),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Integer(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect(),
         _ => vec![],
     }
 }
@@ -4908,17 +5545,21 @@ fn expand_row(decl: &crate::ast::RowDecl, scope: &ScopeStack) -> Result<Vec<PadS
         }
 
         // Resolve anchor position (start/center/end) from `at:` string.
-        let at_pos = extract_at_position_from_props(&props)
-            .unwrap_or(AnchorPosition::Center);
+        let at_pos = extract_at_position_from_props(&props).unwrap_or(AnchorPosition::Center);
 
         // We need the box geometry from the scope. Since we don't have access to the
         // binding map here, we resolve it inline via scope DollarIdent lookup.
         let geom = resolve_binding_geometry_from_scope(&binding, scope, span)?;
-        let edge = geom_field_to_edge(&geom, &field).ok_or_else(|| SpecError::at(
-            SpecErrorCode::TypeMismatch,
-            format!("'{}' is not a valid edge field (use left/right/top/bottom)", field),
-            span,
-        ))?;
+        let edge = geom_field_to_edge(&geom, &field).ok_or_else(|| {
+            SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                format!(
+                    "'{}' is not a valid edge field (use left/right/top/bottom)",
+                    field
+                ),
+                span,
+            )
+        })?;
 
         // Compute center position along edge.
         let center_along = edge.point_at(at_pos);
@@ -4929,18 +5570,25 @@ fn expand_row(decl: &crate::ast::RowDecl, scope: &ScopeStack) -> Result<Vec<PadS
         let first_offset = Coord::new(-total_span.raw() / 2);
 
         // Apply direction: forward follows edge natural direction.
-        let dir = if direction_reverse { -edge.side.forward_direction() } else { edge.side.forward_direction() };
+        let dir = if direction_reverse {
+            -edge.side.forward_direction()
+        } else {
+            edge.side.forward_direction()
+        };
 
         let mut pads = Vec::with_capacity(count);
         let mut pad_counter = 0i32;
         for i in 0..count {
-            let along = Coord::new(center_along.raw() + first_offset.raw() + dir * pitch.raw() * i as i32);
+            let along =
+                Coord::new(center_along.raw() + first_offset.raw() + dir * pitch.raw() * i as i32);
             let at = match edge.axis() {
                 Axis::X => CoordPoint::new(edge.position, along),
                 Axis::Y => CoordPoint::new(along, edge.position),
             };
             let name = generate_pad_name(start, &mut pad_counter, &skip);
-            if name.is_empty() { continue; }
+            if name.is_empty() {
+                continue;
+            }
             pads.push(pad_from_template(name, at, &template, span)?);
         }
         Ok(pads)
@@ -4952,18 +5600,25 @@ fn expand_row(decl: &crate::ast::RowDecl, scope: &ScopeStack) -> Result<Vec<PadS
         };
 
         let dir_str = get_string_opt(&props, "direction").unwrap_or_else(|| "right".to_string());
-        let abs_dir = parse_abs_direction(&dir_str).ok_or_else(|| SpecError::at(
-            SpecErrorCode::TypeMismatch,
-            format!("invalid direction '{}': expected up/down/left/right for absolute rows", dir_str),
-            span,
-        ))?;
+        let abs_dir = parse_abs_direction(&dir_str).ok_or_else(|| {
+            SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                format!(
+                    "invalid direction '{}': expected up/down/left/right for absolute rows",
+                    dir_str
+                ),
+                span,
+            )
+        })?;
 
         let mut pads = Vec::with_capacity(count);
         let mut pad_counter = 0i32;
         for i in 0..count {
             let at = abs_direction_step(first_at, abs_dir, pitch, i);
             let name = generate_pad_name(start, &mut pad_counter, &skip);
-            if name.is_empty() { continue; }
+            if name.is_empty() {
+                continue;
+            }
             pads.push(pad_from_template(name, at, &template, span)?);
         }
         Ok(pads)
@@ -4971,13 +5626,18 @@ fn expand_row(decl: &crate::ast::RowDecl, scope: &ScopeStack) -> Result<Vec<PadS
 }
 
 /// Step from first position by abs_direction * pitch * step_index.
-fn abs_direction_step(first: CoordPoint, dir: AbsDirection, pitch: Coord, step: usize) -> CoordPoint {
+fn abs_direction_step(
+    first: CoordPoint,
+    dir: AbsDirection,
+    pitch: Coord,
+    step: usize,
+) -> CoordPoint {
     let n = step as i32;
     match dir {
         AbsDirection::Right => CoordPoint::new(first.x + pitch * n, first.y),
-        AbsDirection::Left  => CoordPoint::new(Coord::new(first.x.raw() - pitch.raw() * n), first.y),
-        AbsDirection::Up    => CoordPoint::new(first.x, first.y + pitch * n),
-        AbsDirection::Down  => CoordPoint::new(first.x, Coord::new(first.y.raw() - pitch.raw() * n)),
+        AbsDirection::Left => CoordPoint::new(Coord::new(first.x.raw() - pitch.raw() * n), first.y),
+        AbsDirection::Up => CoordPoint::new(first.x, first.y + pitch * n),
+        AbsDirection::Down => CoordPoint::new(first.x, Coord::new(first.y.raw() - pitch.raw() * n)),
     }
 }
 
@@ -5002,37 +5662,49 @@ fn resolve_binding_geometry_from_scope(
     scope: &ScopeStack,
     span: crate::diagnostic::Span,
 ) -> Result<BoxGeometry, SpecError> {
-    let val = scope.lookup_dollar(binding)
-        .ok_or_else(|| SpecError::at(
-            SpecErrorCode::UndefinedBinding,
-            format!("no binding '${binding}' in scope"),
-            span,
-        ))?
+    let val = scope
+        .lookup_dollar(binding)
+        .ok_or_else(|| {
+            SpecError::at(
+                SpecErrorCode::UndefinedBinding,
+                format!("no binding '${binding}' in scope"),
+                span,
+            )
+        })?
         .map_err(|e| e)?
         .clone();
     let map = match val {
         Value::Object(m) => m,
-        ref other => return Err(SpecError::at(
-            SpecErrorCode::TypeMismatch,
-            format!("binding '${binding}' must be an object with from/to, got {}", other.kind_name()),
-            span,
-        )),
+        ref other => {
+            return Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                format!(
+                    "binding '${binding}' must be an object with from/to, got {}",
+                    other.kind_name()
+                ),
+                span,
+            ));
+        }
     };
     let from = match map.get("from") {
         Some(v) => value_to_coord_point(v, Some(span))?,
-        None => return Err(SpecError::at(
-            SpecErrorCode::TypeMismatch,
-            format!("binding '${binding}' has no 'from' field"),
-            span,
-        )),
+        None => {
+            return Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                format!("binding '${binding}' has no 'from' field"),
+                span,
+            ));
+        }
     };
     let to = match map.get("to") {
         Some(v) => value_to_coord_point(v, Some(span))?,
-        None => return Err(SpecError::at(
-            SpecErrorCode::TypeMismatch,
-            format!("binding '${binding}' has no 'to' field"),
-            span,
-        )),
+        None => {
+            return Err(SpecError::at(
+                SpecErrorCode::TypeMismatch,
+                format!("binding '${binding}' has no 'to' field"),
+                span,
+            ));
+        }
     };
     Ok(BoxGeometry { from, to })
 }
@@ -5107,9 +5779,8 @@ fn extract_at_position_from_props(props: &IndexMap<String, Value>) -> Option<Anc
 
 /// BGA row letters: A–Z skipping I, O, Q, S, X, Z.
 const BGA_LETTERS: &[char] = &[
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-    'J', 'K', 'L', 'M', 'N', 'P', 'R', 'T',
-    'U', 'V', 'W', 'Y',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'R', 'T', 'U', 'V', 'W',
+    'Y',
 ];
 
 /// Generate the nth (0-indexed) BGA row letter sequence.
@@ -5157,8 +5828,7 @@ fn expand_grid(decl: &crate::ast::GridDecl, scope: &ScopeStack) -> Result<Vec<Pa
         None => CoordPoint::zero(),
     };
 
-    let naming = get_enum_opt(&props, "naming", parse_grid_naming)?
-        .unwrap_or(GridNaming::Numeric);
+    let naming = get_enum_opt(&props, "naming", parse_grid_naming)?.unwrap_or(GridNaming::Numeric);
     let perimeter_only = get_bool_opt(&props, "perimeter_only").unwrap_or(false);
     let skip = extract_skip_list(&props);
     let template = extract_pad_template(&props, span)?;
@@ -5183,10 +5853,14 @@ fn expand_grid(decl: &crate::ast::GridDecl, scope: &ScopeStack) -> Result<Vec<Pa
             // Skip interior pads if perimeter_only.
             if perimeter_only {
                 let on_edge = row == 0 || row == rows - 1 || col == 0 || col == cols - 1;
-                if !on_edge { continue; }
+                if !on_edge {
+                    continue;
+                }
             }
 
-            if skip.contains(&name) { continue; }
+            if skip.contains(&name) {
+                continue;
+            }
 
             // x = origin.x + (col - (cols-1)/2.0) * pitch_x
             // y = origin.y + (row - (rows-1)/2.0) * pitch_y  (row 0 = top)
@@ -5546,16 +6220,31 @@ mod tests {
 
     #[test]
     fn pin_electrical_type_parsing() {
-        assert!(matches!(parse_pin_electrical_type("input"), Some(PinElectricalType::Input)));
-        assert!(matches!(parse_pin_electrical_type("passive"), Some(PinElectricalType::Passive)));
-        assert!(matches!(parse_pin_electrical_type("io"), Some(PinElectricalType::InputOutput)));
-        assert!(matches!(parse_pin_electrical_type("power"), Some(PinElectricalType::Power)));
+        assert!(matches!(
+            parse_pin_electrical_type("input"),
+            Some(PinElectricalType::Input)
+        ));
+        assert!(matches!(
+            parse_pin_electrical_type("passive"),
+            Some(PinElectricalType::Passive)
+        ));
+        assert!(matches!(
+            parse_pin_electrical_type("io"),
+            Some(PinElectricalType::InputOutput)
+        ));
+        assert!(matches!(
+            parse_pin_electrical_type("power"),
+            Some(PinElectricalType::Power)
+        ));
         assert!(parse_pin_electrical_type("unknown").is_none());
     }
 
     #[test]
     fn pad_shape_parsing() {
-        assert!(matches!(parse_pad_shape("rectangular"), Some(PadShape::Rectangular)));
+        assert!(matches!(
+            parse_pad_shape("rectangular"),
+            Some(PadShape::Rectangular)
+        ));
         assert!(matches!(parse_pad_shape("round"), Some(PadShape::Round)));
         assert!(matches!(parse_pad_shape("circle"), Some(PadShape::Round)));
         assert!(parse_pad_shape("invalid").is_none());
@@ -5723,9 +6412,9 @@ mod tests {
         let spec = compile_schlib(src).unwrap();
         let pins = &spec.components[0].pins;
         assert_eq!(pins[0].designator, "start_pin");
-        assert_eq!(pins[0].location.y, Coord::new(100_000));   // start = top
+        assert_eq!(pins[0].location.y, Coord::new(100_000)); // start = top
         assert_eq!(pins[1].designator, "end_pin");
-        assert_eq!(pins[1].location.y, Coord::new(-100_000));  // end = bottom
+        assert_eq!(pins[1].location.y, Coord::new(-100_000)); // end = bottom
     }
 
     #[test]
@@ -5742,8 +6431,8 @@ mod tests {
         "#;
         let spec = compile_schlib(src).unwrap();
         let pins = &spec.components[0].pins;
-        assert_eq!(pins[0].location.x, Coord::new(-200_000));  // start = left
-        assert_eq!(pins[1].location.x, Coord::new(200_000));   // end = right
+        assert_eq!(pins[0].location.x, Coord::new(-200_000)); // start = left
+        assert_eq!(pins[1].location.x, Coord::new(200_000)); // end = right
     }
 
     // ── Anchor placement: side: inside / center ────────────────────────────
@@ -5925,20 +6614,23 @@ mod tests {
             component_kind: None,
             part_count: None,
             show_hidden_pins: None,
-            pins: pins.iter().map(|(des, x, y)| PinSpec {
-                designator: des.to_string(),
-                name: None,
-                electrical: None,
-                length: None,
-                location: CoordPoint::new(Coord::new(*x), Coord::new(*y)),
-                orientation: RotationBy90::Rotate0,
-                is_hidden: None,
-                hidden_net_name: None,
-                owner_part_id: 0,
-                swap_group: None,
-                part_swap_group: None,
-                pair_swap_group: None,
-            }).collect(),
+            pins: pins
+                .iter()
+                .map(|(des, x, y)| PinSpec {
+                    designator: des.to_string(),
+                    name: None,
+                    electrical: None,
+                    length: None,
+                    location: CoordPoint::new(Coord::new(*x), Coord::new(*y)),
+                    orientation: RotationBy90::Rotate0,
+                    is_hidden: None,
+                    hidden_net_name: None,
+                    owner_part_id: 0,
+                    swap_group: None,
+                    part_swap_group: None,
+                    pair_swap_group: None,
+                })
+                .collect(),
             parameters: vec![],
             aliases: vec![],
             footprints: vec![],
@@ -5950,10 +6642,10 @@ mod tests {
     #[test]
     fn rich_component_binding_pin_access() {
         let mut imports = HashMap::new();
-        imports.insert("MCU".to_string(), make_test_component("MCU", vec![
-            ("1", -2_000_000, 0),
-            ("2", 2_000_000, 0),
-        ]));
+        imports.insert(
+            "MCU".to_string(),
+            make_test_component("MCU", vec![("1", -2_000_000, 0), ("2", 2_000_000, 0)]),
+        );
 
         let src = r#"
             component "U1" { lib_reference: "MCU", at: (1000mil, 500mil) }
@@ -5967,10 +6659,10 @@ mod tests {
     #[test]
     fn rich_binding_pin_reference_in_expression() {
         let mut imports = HashMap::new();
-        imports.insert("MCU".to_string(), make_test_component("MCU", vec![
-            ("1", -2_000_000, 0),
-            ("2", 2_000_000, 0),
-        ]));
+        imports.insert(
+            "MCU".to_string(),
+            make_test_component("MCU", vec![("1", -2_000_000, 0), ("2", 2_000_000, 0)]),
+        );
 
         let src = r#"
             component "U1" { lib_reference: "MCU", at: (1000mil, 500mil) }
@@ -5987,9 +6679,10 @@ mod tests {
     #[test]
     fn rich_binding_rotation_90() {
         let mut imports = HashMap::new();
-        imports.insert("MCU".to_string(), make_test_component("MCU", vec![
-            ("1", 1_000_000, 0),
-        ]));
+        imports.insert(
+            "MCU".to_string(),
+            make_test_component("MCU", vec![("1", 1_000_000, 0)]),
+        );
 
         let src = r#"
             component "U1" { lib_reference: "MCU", at: (500mil, 500mil), orientation: "rotate90" }
@@ -6194,11 +6887,20 @@ mod tests {
         assert_eq!(fp.pads.len(), 3);
         // Pad 1: round from template
         assert_eq!(fp.pads[0].shape, Some(PadShape::Round));
-        assert_eq!(fp.pads[0].x_size, Some(Coord::from_mils(50).expect("test coord")));
+        assert_eq!(
+            fp.pads[0].x_size,
+            Some(Coord::from_mils(50).expect("test coord"))
+        );
         // Pad 2: overridden to rectangular with explicit size
         assert_eq!(fp.pads[1].shape, Some(PadShape::Rectangular));
-        assert_eq!(fp.pads[1].x_size, Some(Coord::from_mils(80).expect("test coord")));
-        assert_eq!(fp.pads[1].y_size, Some(Coord::from_mils(30).expect("test coord")));
+        assert_eq!(
+            fp.pads[1].x_size,
+            Some(Coord::from_mils(80).expect("test coord"))
+        );
+        assert_eq!(
+            fp.pads[1].y_size,
+            Some(Coord::from_mils(30).expect("test coord"))
+        );
         // Position from layout, not from explicit pad
         assert_eq!(fp.pads[1].at.x, Coord::from_mils(100).expect("test coord"));
         // Pad 3: round from template
@@ -6391,34 +7093,46 @@ mod tests {
         let comp = &spec.components[0];
 
         // All part-1 pins should have part_swap_group = "A"
-        let part1_pins: Vec<_> = comp.parts.iter()
+        let part1_pins: Vec<_> = comp
+            .parts
+            .iter()
             .find(|p| p.part_number == 1)
             .map(|p| &p.pins)
             .into_iter()
             .flatten()
             .collect();
         assert!(!part1_pins.is_empty(), "part 1 should have pins");
-        assert!(part1_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("A")),
-            "part 1 pins should all have part_swap_group = A");
+        assert!(
+            part1_pins
+                .iter()
+                .all(|p| p.part_swap_group.as_deref() == Some("A")),
+            "part 1 pins should all have part_swap_group = A"
+        );
 
         // Part-2 pins should also have part_swap_group = "A"
-        let part2_pins: Vec<_> = comp.parts.iter()
+        let part2_pins: Vec<_> = comp
+            .parts
+            .iter()
             .find(|p| p.part_number == 2)
             .map(|p| &p.pins)
             .into_iter()
             .flatten()
             .collect();
         assert!(!part2_pins.is_empty(), "part 2 should have pins");
-        assert!(part2_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("A")),
-            "part 2 pins should all have part_swap_group = A");
+        assert!(
+            part2_pins
+                .iter()
+                .all(|p| p.part_swap_group.as_deref() == Some("A")),
+            "part 2 pins should all have part_swap_group = A"
+        );
 
         // Component-level pins (owner_part_id 0) should NOT have part_swap_group
-        let level0_pins: Vec<_> = comp.pins.iter()
-            .filter(|p| p.owner_part_id == 0)
-            .collect();
+        let level0_pins: Vec<_> = comp.pins.iter().filter(|p| p.owner_part_id == 0).collect();
         assert!(!level0_pins.is_empty(), "component-level pins should exist");
-        assert!(level0_pins.iter().all(|p| p.part_swap_group.is_none()),
-            "component-level pins should not have part_swap_group");
+        assert!(
+            level0_pins.iter().all(|p| p.part_swap_group.is_none()),
+            "component-level pins should not have part_swap_group"
+        );
     }
 
     // ── swap_group block declaration tests ───────────────────────────────────
@@ -6434,8 +7148,14 @@ mod tests {
             }
         "#;
         let spec = compile_schlib(src).unwrap();
-        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("digital"));
-        assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("digital"));
+        assert_eq!(
+            spec.components[0].pins[0].swap_group.as_deref(),
+            Some("digital")
+        );
+        assert_eq!(
+            spec.components[0].pins[1].swap_group.as_deref(),
+            Some("digital")
+        );
     }
 
     #[test]
@@ -6463,23 +7183,35 @@ mod tests {
         let spec = compile_schlib(src).unwrap();
         let comp = &spec.components[0];
 
-        let part1_pins: Vec<_> = comp.parts.iter()
+        let part1_pins: Vec<_> = comp
+            .parts
+            .iter()
             .find(|p| p.part_number == 1)
             .map(|p| &p.pins)
             .into_iter()
             .flatten()
             .collect();
         assert!(!part1_pins.is_empty());
-        assert!(part1_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("opamp")));
+        assert!(
+            part1_pins
+                .iter()
+                .all(|p| p.part_swap_group.as_deref() == Some("opamp"))
+        );
 
-        let part2_pins: Vec<_> = comp.parts.iter()
+        let part2_pins: Vec<_> = comp
+            .parts
+            .iter()
             .find(|p| p.part_number == 2)
             .map(|p| &p.pins)
             .into_iter()
             .flatten()
             .collect();
         assert!(!part2_pins.is_empty());
-        assert!(part2_pins.iter().all(|p| p.part_swap_group.as_deref() == Some("opamp")));
+        assert!(
+            part2_pins
+                .iter()
+                .all(|p| p.part_swap_group.as_deref() == Some("opamp"))
+        );
 
         let lvl0_pins: Vec<_> = comp.pins.iter().filter(|p| p.owner_part_id == 0).collect();
         assert!(lvl0_pins.iter().all(|p| p.part_swap_group.is_none()));
@@ -6507,8 +7239,14 @@ mod tests {
             }
         "#;
         let spec = compile_schlib(src).unwrap();
-        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("my_group"));
-        assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("my_group"));
+        assert_eq!(
+            spec.components[0].pins[0].swap_group.as_deref(),
+            Some("my_group")
+        );
+        assert_eq!(
+            spec.components[0].pins[1].swap_group.as_deref(),
+            Some("my_group")
+        );
     }
 
     #[test]
@@ -6520,7 +7258,10 @@ mod tests {
             }
         "#;
         let spec = compile_schlib(src).unwrap();
-        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("legacy"));
+        assert_eq!(
+            spec.components[0].pins[0].swap_group.as_deref(),
+            Some("legacy")
+        );
     }
 
     #[test]
@@ -6534,8 +7275,14 @@ mod tests {
             }
         "#;
         let spec = compile_schlib(src).unwrap();
-        assert_eq!(spec.components[0].pins[0].swap_group.as_deref(), Some("digital"));
-        assert_eq!(spec.components[0].pins[1].swap_group.as_deref(), Some("digital"));
+        assert_eq!(
+            spec.components[0].pins[0].swap_group.as_deref(),
+            Some("digital")
+        );
+        assert_eq!(
+            spec.components[0].pins[1].swap_group.as_deref(),
+            Some("digital")
+        );
     }
 
     // ── Autoplace model compilation tests ──────────────────────────────────
@@ -6543,98 +7290,167 @@ mod tests {
     fn compile_placement(src: &str) -> Result<PlacementSpec, SpecError> {
         let file = parse_spec(src).expect("parse must succeed for compiler tests");
         match compile_spec(&file, SpecDomain::PcbDoc)? {
-            SpecModel::PcbDoc(spec) => {
-                spec.placement.ok_or_else(|| SpecError::no_span(
+            SpecModel::PcbDoc(spec) => spec.placement.ok_or_else(|| {
+                SpecError::no_span(
                     SpecErrorCode::TypeMismatch,
                     "no placement block found in test input",
-                ))
-            }
+                )
+            }),
             other => panic!("expected PcbDoc, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
     #[test]
     fn autoplace_place_flag_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     place U1 { autoplace: true, region: center }
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert!(spec.places[0].autoplace);
     }
 
     #[test]
     fn autoplace_block_algorithm_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     autoplace { algorithm: full_pipeline, grid_snap: 0.5mm }
 }
-"#).unwrap();
-        let config = spec.autoplace_config.as_ref().expect("expected autoplace_config");
+"#,
+        )
+        .unwrap();
+        let config = spec
+            .autoplace_config
+            .as_ref()
+            .expect("expected autoplace_config");
         assert_eq!(config.algorithm.as_deref(), Some("full_pipeline"));
         assert!(config.grid_snap.is_some());
     }
 
     #[test]
+    fn autoplace_block_congestion_and_clustering_compile() {
+        let spec = compile_placement(
+            r#"
+placement {
+    autoplace {
+        congestion_weight: 0.2
+        congestion_cell: 4mm
+        critical_net_boost: 3.0
+        auto_cluster: true
+        cluster_target_size: 10
+        cluster_max_depth: 4
+    }
+}
+"#,
+        )
+        .unwrap();
+        let config = spec
+            .autoplace_config
+            .as_ref()
+            .expect("expected autoplace_config");
+        assert_eq!(config.congestion_weight, Some(0.2));
+        assert!(
+            config
+                .congestion_cell
+                .map(|c| (c.to_mms() - 4.0).abs() < 1e-3)
+                .unwrap_or(false)
+        );
+        assert_eq!(config.critical_net_boost, Some(3.0));
+        assert_eq!(config.auto_cluster, Some(true));
+        assert_eq!(config.cluster_target_size, Some(10));
+        assert_eq!(config.cluster_max_depth, Some(4));
+    }
+
+    #[test]
     fn autoplace_block_empty_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     autoplace {}
 }
-"#).unwrap();
-        assert!(spec.autoplace_config.is_some(), "empty autoplace block should produce Some(AutoplaceConfig)");
+"#,
+        )
+        .unwrap();
+        assert!(
+            spec.autoplace_config.is_some(),
+            "empty autoplace block should produce Some(AutoplaceConfig)"
+        );
     }
 
     #[test]
     fn unplaced_strategy_autoplace_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     unplaced: autoplace
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert_eq!(spec.unplaced, UnplacedStrategy::Autoplace);
     }
 
     #[test]
     fn unplaced_strategy_ignore_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     unplaced: ignore
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert_eq!(spec.unplaced, UnplacedStrategy::Ignore);
     }
 
     #[test]
     fn unplaced_strategy_error_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     unplaced: error
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert_eq!(spec.unplaced, UnplacedStrategy::Error);
     }
 
     #[test]
     fn unplaced_strategy_invalid_value_produces_error() {
-        let result = compile_placement(r#"
+        let result = compile_placement(
+            r#"
 placement {
     unplaced: invalid_value
 }
-"#);
-        assert!(result.is_err(), "invalid unplaced strategy should produce an error");
+"#,
+        );
+        assert!(
+            result.is_err(),
+            "invalid unplaced strategy should produce an error"
+        );
         let msg = result.err().unwrap().to_string();
-        assert!(msg.contains("invalid_value") || msg.contains("invalid unplaced strategy"),
-            "error message should mention the invalid value: {}", msg);
+        assert!(
+            msg.contains("invalid_value") || msg.contains("invalid unplaced strategy"),
+            "error message should mention the invalid value: {}",
+            msg
+        );
     }
 
     #[test]
     fn group_decl_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     group analog { components: [U5, R10, C20] }
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert_eq!(spec.groups.len(), 1);
         assert_eq!(spec.groups[0].name, "analog");
         assert_eq!(spec.groups[0].components, vec!["U5", "R10", "C20"]);
@@ -6642,24 +7458,30 @@ placement {
 
     #[test]
     fn no_pin_swap_list_compiles() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     place U1 { no_pin_swap: [A, B], no_part_swap: true }
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert_eq!(spec.places[0].no_pin_swap, vec!["A", "B"]);
         assert!(spec.places[0].no_part_swap);
     }
 
     #[test]
     fn allow_swap_flags_compile() {
-        let spec = compile_placement(r#"
+        let spec = compile_placement(
+            r#"
 placement {
     allow_pin_swap: true
     allow_part_swap: false
     allow_gate_swap: true
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         assert!(spec.allow_pin_swap);
         assert!(!spec.allow_part_swap);
         assert!(spec.allow_gate_swap);
@@ -6724,7 +7546,10 @@ component U1 {
         assert_eq!(comp.pin_connections.len(), 1);
         let conn = &comp.pin_connections[0];
         assert_eq!(conn.pin_name, "NC1");
-        assert!(matches!(conn.target, crate::model::PinConnectionTarget::NoConnect));
+        assert!(matches!(
+            conn.target,
+            crate::model::PinConnectionTarget::NoConnect
+        ));
     }
 
     #[test]
@@ -6755,12 +7580,21 @@ component U1 {
         let spec = compile_schdoc(src).unwrap();
         let comp = &spec.sheets[0].components[0];
         assert_eq!(comp.pin_connections.len(), 3);
-        assert!(matches!(&comp.pin_connections[0].target, crate::model::PinConnectionTarget::Signal(n) if n == "SDA"),
-            "expected Signal(SDA) for pin A");
-        assert!(matches!(&comp.pin_connections[1].target, crate::model::PinConnectionTarget::Power(n) if n == "GND"),
-            "expected Power(GND) for pin B");
-        assert!(matches!(&comp.pin_connections[2].target, crate::model::PinConnectionTarget::NoConnect),
-            "expected NoConnect for pin C");
+        assert!(
+            matches!(&comp.pin_connections[0].target, crate::model::PinConnectionTarget::Signal(n) if n == "SDA"),
+            "expected Signal(SDA) for pin A"
+        );
+        assert!(
+            matches!(&comp.pin_connections[1].target, crate::model::PinConnectionTarget::Power(n) if n == "GND"),
+            "expected Power(GND) for pin B"
+        );
+        assert!(
+            matches!(
+                &comp.pin_connections[2].target,
+                crate::model::PinConnectionTarget::NoConnect
+            ),
+            "expected NoConnect for pin C"
+        );
     }
 
     // ── Validated symbol reference (ImportRef) ─────────────────────────────
@@ -6810,7 +7644,10 @@ component U1 {
         // (set via compile_spec_with_resolved). Here we just verify that when imported_components
         // contains the name, a SymbolRef::Literal still works (regression check).
         let mut imported = HashMap::new();
-        imported.insert("ESP32_C6".to_string(), make_minimal_component_spec("ESP32_C6"));
+        imported.insert(
+            "ESP32_C6".to_string(),
+            make_minimal_component_spec("ESP32_C6"),
+        );
         let src = r#"
 component U1 {
     at: (0mil, 0mil)
@@ -6860,7 +7697,10 @@ component ESP32_C6 {
 
         // imported_components has ESP32_C6 but NOT TYPO → validation fails.
         let mut imported = HashMap::new();
-        imported.insert("ESP32_C6".to_string(), make_minimal_component_spec("ESP32_C6"));
+        imported.insert(
+            "ESP32_C6".to_string(),
+            make_minimal_component_spec("ESP32_C6"),
+        );
 
         let result = compile_spec_with_resolved(&resolved, SpecDomain::SchDoc, imported);
         let err = match result {
@@ -6868,9 +7708,21 @@ component ESP32_C6 {
             Ok(_) => panic!("expected compile error for unknown import symbol"),
         };
         assert_eq!(err.code, SpecErrorCode::AltiumFormat);
-        assert!(err.message.contains("TYPO"), "error should mention symbol name: {}", err.message);
-        assert!(err.message.contains("mcu"), "error should mention import alias: {}", err.message);
-        assert!(err.message.contains("ESP32_C6"), "error should list available symbols: {}", err.message);
+        assert!(
+            err.message.contains("TYPO"),
+            "error should mention symbol name: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("mcu"),
+            "error should mention import alias: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("ESP32_C6"),
+            "error should list available symbols: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -6906,7 +7758,10 @@ component ESP32_C6 {
         };
 
         let mut imported = HashMap::new();
-        imported.insert("ESP32_C6".to_string(), make_minimal_component_spec("ESP32_C6"));
+        imported.insert(
+            "ESP32_C6".to_string(),
+            make_minimal_component_spec("ESP32_C6"),
+        );
 
         let spec = compile_spec_with_resolved(&resolved, SpecDomain::SchDoc, imported)
             .expect("compile should succeed");
@@ -6920,7 +7775,10 @@ component ESP32_C6 {
                 assert_eq!(alias, "mcu");
                 assert_eq!(name, "ESP32_C6");
             }
-            other => panic!("expected SymbolRef::Import, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected SymbolRef::Import, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -6939,7 +7797,8 @@ component ESP32_C6 {
         assert_eq!(conn.pin_name, "1");
         assert!(
             matches!(&conn.target, crate::model::PinConnectionTarget::Power(n) if n == "GND"),
-            "expected Power(\"GND\"), got {:?}", conn.target
+            "expected Power(\"GND\"), got {:?}",
+            conn.target
         );
     }
 
@@ -6955,7 +7814,8 @@ component ESP32_C6 {
         assert_eq!(conn.pin_name, "1");
         assert!(
             matches!(&conn.target, crate::model::PinConnectionTarget::Signal(n) if n == "SDA"),
-            "expected Signal(\"SDA\"), got {:?}", conn.target
+            "expected Signal(\"SDA\"), got {:?}",
+            conn.target
         );
     }
 
@@ -6971,7 +7831,8 @@ component ESP32_C6 {
         assert_eq!(conn.pin_name, "NC");
         assert!(
             matches!(&conn.target, crate::model::PinConnectionTarget::NoConnect),
-            "expected NoConnect, got {:?}", conn.target
+            "expected NoConnect, got {:?}",
+            conn.target
         );
     }
 }

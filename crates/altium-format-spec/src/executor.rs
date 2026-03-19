@@ -7,24 +7,25 @@ use altium_format::api;
 use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
 
 use altium_format_types::color::Color;
-use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::common::{ComponentKind, RotationBy90};
+use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::sch::{
-    IeeeSymbol, LeftRightSide, LineStyle, PenWidth, ParameterReadOnlyState, ParameterType,
-    PinElectricalType, PortArrowStyle, PortIoType, PowerObjectStyle, SheetSymbolType,
-    StdLogicState, TextJustification, LineShape, HorizontalAlign,
+    HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape, LineStyle, ParameterReadOnlyState,
+    ParameterType, PenWidth, PinElectricalType, PortArrowStyle, PortIoType, PowerObjectStyle,
+    SheetSymbolType, StdLogicState, TextJustification,
 };
 
 use altium_format_types::common::Unit;
 use altium_format_types::pcb::{LayerRef, PadShape, PcbFlags, RegionKind, V6Layer};
 
-use crate::eval::{SpecError, SpecErrorCode};
 use crate::eval::Value;
+use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
     PadSpec, ParameterSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocPolygonSpec,
-    PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinSpec,
-    PinConnectionTarget, PrjPcbSpec, SchLibSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
+    PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec,
+    PinConnectionTarget, PinSpec, PrjPcbSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec,
+    SchLibSpec, SheetSpec, SymbolRef,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -36,10 +37,7 @@ use crate::model::{
 ///   spec fields over the existing component (additive-only: `Option::Some`
 ///   overrides, `None` preserves existing).
 /// - If the component doesn't exist, create it from the spec with defaults.
-pub fn apply_spec_schlib(
-    spec: &SchLibSpec,
-    doc: &mut SchLib,
-) -> Result<(), SpecError> {
+pub fn apply_spec_schlib(spec: &SchLibSpec, doc: &mut SchLib) -> Result<(), SpecError> {
     for comp_spec in &spec.components {
         match doc.component(&comp_spec.lib_reference) {
             Ok(existing) => {
@@ -64,10 +62,7 @@ pub fn apply_spec_schlib(
 ///   spec fields over the existing footprint (additive-only: `Option::Some`
 ///   overrides, `None` preserves existing).
 /// - If the footprint doesn't exist, create it from the spec with defaults.
-pub fn apply_spec_pcblib(
-    spec: &PcbLibSpec,
-    lib: &mut PcbLib,
-) -> Result<(), SpecError> {
+pub fn apply_spec_pcblib(spec: &PcbLibSpec, lib: &mut PcbLib) -> Result<(), SpecError> {
     for fp_spec in &spec.footprints {
         match lib.footprint(&fp_spec.display_name) {
             Ok(existing) => {
@@ -90,10 +85,7 @@ pub fn apply_spec_pcblib(
 /// Merges spec fields into the project's `[Design]` section:
 /// `Some` overrides the existing value, `None` preserves it.
 /// ERC matrix and ERC level overrides are applied sparsely.
-pub fn apply_spec_prjpcb(
-    spec: &PrjPcbSpec,
-    doc: &mut AltiumProject,
-) -> Result<(), SpecError> {
+pub fn apply_spec_prjpcb(spec: &PrjPcbSpec, doc: &mut AltiumProject) -> Result<(), SpecError> {
     use altium_format_types::project::ConnectionCode;
 
     for proj_spec in &spec.projects {
@@ -194,12 +186,10 @@ pub fn apply_spec_prjpcb(
 ///
 /// For primitives (tracks, arcs, vias, etc.): additive — spec primitives are
 /// appended to the board. Matching is deferred to the reconciler.
-pub fn apply_spec_pcbdoc(
-    spec: &PcbDocSpec,
-    doc: &mut PcbDoc,
-) -> Result<(), SpecError> {
+pub fn apply_spec_pcbdoc(spec: &PcbDocSpec, doc: &mut PcbDoc) -> Result<(), SpecError> {
     for board_spec in &spec.boards {
-        let mut board = doc.board()
+        let mut board = doc
+            .board()
             .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
         // Board settings
@@ -219,10 +209,7 @@ pub fn apply_spec_pcbdoc(
     Ok(())
 }
 
-fn apply_pcbdoc_board_settings(
-    settings: &mut api::BoardSettings,
-    spec: &BoardSpec,
-) {
+fn apply_pcbdoc_board_settings(settings: &mut api::BoardSettings, spec: &BoardSpec) {
     if let Some(count) = spec.signal_layer_count {
         settings.signal_layer_count = count;
     }
@@ -261,12 +248,13 @@ fn apply_pcbdoc_nets(board: &mut api::PcbDocBoard, specs: &[PcbDocNetSpec]) {
     }
 }
 
-fn apply_pcbdoc_components(
-    board: &mut api::PcbDocBoard,
-    specs: &[PcbDocComponentSpec],
-) {
+fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponentSpec]) {
     for spec in specs {
-        if let Some(existing) = board.components.iter_mut().find(|c| c.designator == spec.designator) {
+        if let Some(existing) = board
+            .components
+            .iter_mut()
+            .find(|c| c.designator == spec.designator)
+        {
             if let Some(ref pattern) = spec.pattern {
                 existing.pattern = pattern.clone();
             }
@@ -301,25 +289,31 @@ fn apply_pcbdoc_components(
                 comment: spec.comment.clone().unwrap_or_default(),
                 location: spec.location.unwrap_or_default(),
                 rotation: spec.rotation.unwrap_or(0.0),
-                layer: spec.layer.as_ref().map(resolve_layer_spec)
+                layer: spec
+                    .layer
+                    .as_ref()
+                    .map(resolve_layer_spec)
                     .unwrap_or(LayerRef::from_v6(V6Layer::TopLayer)),
                 source_library: spec.source_library.clone().unwrap_or_default(),
                 source_lib_reference: String::new(),
-                source_unique_id: spec.annotation.as_ref()
+                source_unique_id: spec
+                    .annotation
+                    .as_ref()
                     .and_then(|a| a.source_id.as_ref())
                     .map(|sid| format!("\\{}", sid))
                     .unwrap_or_default(),
                 source_hierarchical_path: String::new(),
-                parameters: spec.parameters.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                parameters: spec
+                    .parameters
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
             });
         }
     }
 }
 
-fn apply_pcbdoc_polygons(
-    board: &mut api::PcbDocBoard,
-    specs: &[PcbDocPolygonSpec],
-) {
+fn apply_pcbdoc_polygons(board: &mut api::PcbDocBoard, specs: &[PcbDocPolygonSpec]) {
     for spec in specs {
         if let Some(existing) = board.polygons.iter_mut().find(|p| p.name == spec.name) {
             if let Some(ref net) = spec.net {
@@ -377,7 +371,10 @@ fn apply_pcbdoc_primitives(
 // ── Primitive → API type converters ──────────────────────────────────────────
 
 fn prop_coord(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<Coord> {
-    props.get(key).and_then(|v| v.to_dim(None).ok()).map(Coord::new)
+    props
+        .get(key)
+        .and_then(|v| v.to_dim(None).ok())
+        .map(Coord::new)
 }
 
 fn prop_coord_point(props: &indexmap::IndexMap<String, Value>, key: &str) -> Option<CoordPoint> {
@@ -554,7 +551,8 @@ pub fn apply_spec_schdoc(
     imported_components: &std::collections::HashMap<String, ComponentSpec>,
 ) -> Result<(), SpecError> {
     for sheet_spec in &spec.sheets {
-        let mut sheet = doc.sheet()
+        let mut sheet = doc
+            .sheet()
             .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
         // 1. Sheet metadata
@@ -591,16 +589,20 @@ pub fn apply_spec_schdoc(
 
 fn apply_sheet_metadata(sheet: &mut api::SchDocSheet, spec: &SheetSpec) {
     if !spec.fonts.is_empty() {
-        sheet.fonts = spec.fonts.iter().map(|f| api::Font {
-            id: f.id,
-            name: f.name.clone(),
-            size: f.size,
-            bold: f.bold.unwrap_or(false),
-            italic: f.italic.unwrap_or(false),
-            underline: f.underline.unwrap_or(false),
-            strikeout: f.strikeout.unwrap_or(false),
-            rotation: f.rotation.unwrap_or(0),
-        }).collect();
+        sheet.fonts = spec
+            .fonts
+            .iter()
+            .map(|f| api::Font {
+                id: f.id,
+                name: f.name.clone(),
+                size: f.size,
+                bold: f.bold.unwrap_or(false),
+                italic: f.italic.unwrap_or(false),
+                underline: f.underline.unwrap_or(false),
+                strikeout: f.strikeout.unwrap_or(false),
+                rotation: f.rotation.unwrap_or(0),
+            })
+            .collect();
     }
     if let Some(w) = spec.custom_width {
         sheet.use_custom_sheet = true;
@@ -610,12 +612,24 @@ fn apply_sheet_metadata(sheet: &mut api::SchDocSheet, spec: &SheetSpec) {
         sheet.use_custom_sheet = true;
         sheet.custom_height = h;
     }
-    if let Some(v) = spec.snap_grid_on { sheet.snap_grid_on = v; }
-    if let Some(v) = spec.visible_grid_on { sheet.visible_grid_on = v; }
-    if let Some(v) = spec.hot_spot_grid_on { sheet.hot_spot_grid_on = v; }
-    if let Some(v) = spec.show_hidden_pins { sheet.show_hidden_pins = v; }
-    if let Some(v) = spec.border_on { sheet.border_on = v; }
-    if let Some(v) = spec.title_block_on { sheet.title_block_on = v; }
+    if let Some(v) = spec.snap_grid_on {
+        sheet.snap_grid_on = v;
+    }
+    if let Some(v) = spec.visible_grid_on {
+        sheet.visible_grid_on = v;
+    }
+    if let Some(v) = spec.hot_spot_grid_on {
+        sheet.hot_spot_grid_on = v;
+    }
+    if let Some(v) = spec.show_hidden_pins {
+        sheet.show_hidden_pins = v;
+    }
+    if let Some(v) = spec.border_on {
+        sheet.border_on = v;
+    }
+    if let Some(v) = spec.title_block_on {
+        sheet.title_block_on = v;
+    }
 }
 
 fn apply_schdoc_component(
@@ -680,7 +694,10 @@ fn generate_pin_connection_stubs(
     sheet: &mut api::SchDocSheet,
     comp_spec: &SchDocComponentSpec,
     imported_components: &std::collections::HashMap<String, ComponentSpec>,
-    power_declarations: &std::collections::HashMap<String, altium_format_types::sch::PowerObjectStyle>,
+    power_declarations: &std::collections::HashMap<
+        String,
+        altium_format_types::sch::PowerObjectStyle,
+    >,
 ) -> Result<(), SpecError> {
     // Resolve the SchLib ComponentSpec for this placed component.
     let lib_ref = match &comp_spec.symbol {
@@ -715,7 +732,8 @@ fn generate_pin_connection_stubs(
         );
 
         // Transform pin orientation from symbol space to schematic space.
-        let transformed_orient = transform_pin_orientation(pin.orientation, comp_orient, is_mirrored);
+        let transformed_orient =
+            transform_pin_orientation(pin.orientation, comp_orient, is_mirrored);
 
         match &conn.target {
             PinConnectionTarget::NoConnect => {
@@ -788,19 +806,29 @@ fn generate_pin_connection_stubs(
 fn resolve_pin<'a>(lib_comp: &'a ComponentSpec, pin_name: &str) -> Result<&'a PinSpec, SpecError> {
     // Try matching pin name field first (across all pin sources).
     // Name match is preferred: names are human-readable (GPIO4, VDD); designators are positional (1, 2).
-    for pin in lib_comp.pins.iter().chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter())) {
+    for pin in lib_comp
+        .pins
+        .iter()
+        .chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter()))
+    {
         if pin.name.as_deref() == Some(pin_name) {
             return Ok(pin);
         }
     }
     // Fallback: match by designator (across all pin sources).
-    for pin in lib_comp.pins.iter().chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter())) {
+    for pin in lib_comp
+        .pins
+        .iter()
+        .chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter()))
+    {
         if pin.designator == pin_name {
             return Ok(pin);
         }
     }
     // Neither name nor designator matched; build the available-pins list for the diagnostic.
-    let available: Vec<String> = lib_comp.pins.iter()
+    let available: Vec<String> = lib_comp
+        .pins
+        .iter()
         .chain(lib_comp.parts.iter().flat_map(|p| p.pins.iter()))
         .map(|p| p.name.clone().unwrap_or_else(|| p.designator.clone()))
         .collect();
@@ -922,8 +950,12 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
             location: p.location,
             io_type: p.io_type.unwrap_or(PortIoType::Unspecified),
             style: p.style.unwrap_or(PortArrowStyle::None),
-            width: p.width.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
-            height: p.height.unwrap_or_else(|| Coord::from_mils(20).expect("20 mils fits Coord")),
+            width: p
+                .width
+                .unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+            height: p
+                .height
+                .unwrap_or_else(|| Coord::from_mils(20).expect("20 mils fits Coord")),
             color: p.color.unwrap_or(DARK_RED),
             area_color: p.area_color.unwrap_or(WHITE),
             text_color: p.text_color.unwrap_or(DARK_RED),
@@ -958,8 +990,12 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
         SchDocObjectSpec::SheetSymbol(s) => api::SheetObject::SheetSymbol(api::SheetSymbol {
             unique_id: String::new(),
             location: s.location,
-            x_size: s.x_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
-            y_size: s.y_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+            x_size: s
+                .x_size
+                .unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+            y_size: s
+                .y_size
+                .unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
             color: s.color.unwrap_or(DARK_RED),
             area_color: s.area_color.unwrap_or(WHITE),
             line_width: PenWidth::Small,
@@ -967,20 +1003,24 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
             symbol_type: SheetSymbolType::Normal,
             sheet_name: s.sheet_name.clone(),
             file_name: s.file_name.clone().unwrap_or_default(),
-            children: s.entries.iter().map(|e| {
-                api::SheetSymbolChild::Entry(api::SheetEntry {
-                    unique_id: String::new(),
-                    name: e.name.clone(),
-                    io_type: e.io_type.unwrap_or(PortIoType::Unspecified),
-                    side: e.side.unwrap_or(LeftRightSide::Left),
-                    distance_from_top: e.distance_from_top.unwrap_or(Coord::ZERO),
-                    style: PortArrowStyle::None,
-                    color: DARK_RED,
-                    area_color: WHITE,
-                    text_color: DARK_RED,
-                    text_font_id: 1,
+            children: s
+                .entries
+                .iter()
+                .map(|e| {
+                    api::SheetSymbolChild::Entry(api::SheetEntry {
+                        unique_id: String::new(),
+                        name: e.name.clone(),
+                        io_type: e.io_type.unwrap_or(PortIoType::Unspecified),
+                        side: e.side.unwrap_or(LeftRightSide::Left),
+                        distance_from_top: e.distance_from_top.unwrap_or(Coord::ZERO),
+                        style: PortArrowStyle::None,
+                        color: DARK_RED,
+                        area_color: WHITE,
+                        text_color: DARK_RED,
+                        text_font_id: 1,
+                    })
                 })
-            }).collect(),
+                .collect(),
         }),
         SchDocObjectSpec::ParameterSet(p) => api::SheetObject::ParameterSet(api::ParameterSet {
             unique_id: String::new(),
@@ -1056,22 +1096,24 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
             api::SheetObject::HarnessConnector(api::HarnessConnector {
                 unique_id: String::new(),
                 location: h.location,
-                x_size: h.x_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
-                y_size: h.y_size.unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+                x_size: h
+                    .x_size
+                    .unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
+                y_size: h
+                    .y_size
+                    .unwrap_or_else(|| Coord::from_mils(100).expect("100 mils fits Coord")),
                 color: h.color.unwrap_or(DARK_RED),
                 area_color: h.area_color.unwrap_or(WHITE),
                 line_width: PenWidth::Small,
                 children: Vec::new(),
             })
         }
-        SchDocObjectSpec::SignalHarness(s) => {
-            api::SheetObject::SignalHarness(api::SignalHarness {
-                unique_id: String::new(),
-                vertices: s.vertices.clone(),
-                color: s.color.unwrap_or(DARK_RED),
-                line_width: s.line_width.unwrap_or(PenWidth::Small),
-            })
-        }
+        SchDocObjectSpec::SignalHarness(s) => api::SheetObject::SignalHarness(api::SignalHarness {
+            unique_id: String::new(),
+            vertices: s.vertices.clone(),
+            color: s.color.unwrap_or(DARK_RED),
+            line_width: s.line_width.unwrap_or(PenWidth::Small),
+        }),
     }
 }
 
@@ -1090,11 +1132,17 @@ fn component_from_spec(spec: &ComponentSpec) -> api::Component {
     let part_count = spec.part_count.unwrap_or(1);
     let default_owner_part_id = if part_count <= 1 { 1 } else { 0 };
 
-    let mut graphics: Vec<api::Graphic> = spec.graphics.iter()
+    let mut graphics: Vec<api::Graphic> = spec
+        .graphics
+        .iter()
         .filter_map(|g| graphic_from_spec(g, default_owner_part_id))
         .collect();
     for part in &spec.parts {
-        graphics.extend(part.graphics.iter().filter_map(|g| graphic_from_spec(g, part.part_number)));
+        graphics.extend(
+            part.graphics
+                .iter()
+                .filter_map(|g| graphic_from_spec(g, part.part_number)),
+        );
     }
 
     api::Component {
@@ -1172,7 +1220,10 @@ fn merge_spec_into_component(existing: &api::Component, spec: &ComponentSpec) ->
 
 fn merge_pins(existing: &mut Vec<api::Pin>, spec_pins: &[PinSpec]) {
     for spec_pin in spec_pins {
-        if let Some(pin) = existing.iter_mut().find(|p| p.designator == spec_pin.designator) {
+        if let Some(pin) = existing
+            .iter_mut()
+            .find(|p| p.designator == spec_pin.designator)
+        {
             apply_pin_spec(pin, spec_pin);
         } else {
             existing.push(pin_from_spec(spec_pin));
@@ -1217,22 +1268,34 @@ fn merge_params(existing: &mut Vec<api::Parameter>, spec_params: &[ParameterSpec
 
 fn merge_footprints(existing: &mut Vec<api::FootprintMap>, spec_fps: &[FootprintMapSpec]) {
     for spec_fp in spec_fps {
-        if let Some(fp) = existing.iter_mut().find(|f| f.model_name == spec_fp.model_name) {
+        if let Some(fp) = existing
+            .iter_mut()
+            .find(|f| f.model_name == spec_fp.model_name)
+        {
             // Update pin-pad maps
-            fp.pin_pad_maps = spec_fp.maps.iter().map(|m| api::PinPadMap {
-                pin: m.pin.clone(),
-                pad: m.pad.clone(),
-            }).collect();
+            fp.pin_pad_maps = spec_fp
+                .maps
+                .iter()
+                .map(|m| api::PinPadMap {
+                    pin: m.pin.clone(),
+                    pad: m.pad.clone(),
+                })
+                .collect();
         } else {
             existing.push(footprint_from_spec(spec_fp));
         }
     }
 }
 
-fn merge_graphics(existing: &mut Vec<api::Graphic>, spec_graphics: &[GraphicSpec], owner_part_id: i32) {
+fn merge_graphics(
+    existing: &mut Vec<api::Graphic>,
+    spec_graphics: &[GraphicSpec],
+    owner_part_id: i32,
+) {
     for spec_graphic in spec_graphics {
         if let Some(pos) = existing.iter().position(|g| {
-            g.unique_id().map_or(false, |uid| uid == spec_graphic.unique_id)
+            g.unique_id()
+                .map_or(false, |uid| uid == spec_graphic.unique_id)
         }) {
             // Replace the existing graphic with the new one from spec
             if let Some(new_graphic) = graphic_from_spec(spec_graphic, owner_part_id) {
@@ -1252,7 +1315,9 @@ fn pin_from_spec(spec: &PinSpec) -> api::Pin {
         name: spec.name.clone().unwrap_or_else(|| spec.designator.clone()),
         electrical: spec.electrical.unwrap_or(PinElectricalType::Passive),
         location: spec.location,
-        length: spec.length.unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord")),
+        length: spec
+            .length
+            .unwrap_or(Coord::from_mils(25).expect("25 mils fits Coord")),
         orientation: spec.orientation,
         is_hidden: spec.is_hidden.unwrap_or(false),
         hidden_net_name: spec.hidden_net_name.clone().unwrap_or_default(),
@@ -1312,10 +1377,14 @@ fn footprint_from_spec(spec: &FootprintMapSpec) -> api::FootprintMap {
         model_name: spec.model_name.clone(),
         description: String::new(),
         is_current: false,
-        pin_pad_maps: spec.maps.iter().map(|m| api::PinPadMap {
-            pin: m.pin.clone(),
-            pad: m.pad.clone(),
-        }).collect(),
+        pin_pad_maps: spec
+            .maps
+            .iter()
+            .map(|m| api::PinPadMap {
+                pin: m.pin.clone(),
+                pad: m.pad.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -1345,18 +1414,20 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             is_solid: props.is_solid.unwrap_or(true),
             transparent: false,
         })),
-        GraphicType::RoundRectangle => Some(api::Graphic::RoundRectangle(api::RoundRectangleGraphic {
-            unique_id: spec.unique_id.clone(),
-            owner_part_id,
-            location: props.from.unwrap_or_default(),
-            corner: props.to.unwrap_or_default(),
-            corner_x_radius: props.corner_x_radius.unwrap_or_default(),
-            corner_y_radius: props.corner_y_radius.unwrap_or_default(),
-            line_width: PenWidth::default(),
-            color: props.color.unwrap_or_default(),
-            area_color: props.area_color.unwrap_or_default(),
-            is_solid: props.is_solid.unwrap_or(true),
-        })),
+        GraphicType::RoundRectangle => {
+            Some(api::Graphic::RoundRectangle(api::RoundRectangleGraphic {
+                unique_id: spec.unique_id.clone(),
+                owner_part_id,
+                location: props.from.unwrap_or_default(),
+                corner: props.to.unwrap_or_default(),
+                corner_x_radius: props.corner_x_radius.unwrap_or_default(),
+                corner_y_radius: props.corner_y_radius.unwrap_or_default(),
+                line_width: PenWidth::default(),
+                color: props.color.unwrap_or_default(),
+                area_color: props.area_color.unwrap_or_default(),
+                is_solid: props.is_solid.unwrap_or(true),
+            }))
+        }
         GraphicType::Arc => Some(api::Graphic::Arc(api::ArcGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
@@ -1367,17 +1438,19 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
         })),
-        GraphicType::EllipticalArc => Some(api::Graphic::EllipticalArc(api::EllipticalArcGraphic {
-            unique_id: spec.unique_id.clone(),
-            owner_part_id,
-            location: props.center.unwrap_or_default(),
-            radius: props.radius.unwrap_or_default(),
-            secondary_radius: props.secondary_radius.unwrap_or_default(),
-            start_angle: api::SchAngle(props.start_angle.unwrap_or(0.0)),
-            end_angle: props.end_angle.map(api::SchAngle),
-            line_width: PenWidth::default(),
-            color: props.color.unwrap_or_default(),
-        })),
+        GraphicType::EllipticalArc => {
+            Some(api::Graphic::EllipticalArc(api::EllipticalArcGraphic {
+                unique_id: spec.unique_id.clone(),
+                owner_part_id,
+                location: props.center.unwrap_or_default(),
+                radius: props.radius.unwrap_or_default(),
+                secondary_radius: props.secondary_radius.unwrap_or_default(),
+                start_angle: api::SchAngle(props.start_angle.unwrap_or(0.0)),
+                end_angle: props.end_angle.map(api::SchAngle),
+                line_width: PenWidth::default(),
+                color: props.color.unwrap_or_default(),
+            }))
+        }
         GraphicType::Ellipse => Some(api::Graphic::Ellipse(api::EllipseGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
@@ -1484,10 +1557,17 @@ fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
     api::Footprint {
         display_name: spec.display_name.clone(),
         description: spec.description.clone().unwrap_or_default(),
-        pattern: spec.pattern.clone().unwrap_or_else(|| spec.display_name.clone()),
+        pattern: spec
+            .pattern
+            .clone()
+            .unwrap_or_else(|| spec.display_name.clone()),
         height: spec.height.unwrap_or(Coord::ZERO),
         pads: spec.pads.iter().map(pad_from_pcblib_spec).collect(),
-        graphics: spec.graphics.iter().filter_map(pcb_graphic_from_spec).collect(),
+        graphics: spec
+            .graphics
+            .iter()
+            .filter_map(pcb_graphic_from_spec)
+            .collect(),
     }
 }
 
@@ -1496,10 +1576,8 @@ fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
 fn resolve_layer_spec(spec: &LayerSpec) -> LayerRef {
     match spec {
         LayerSpec::Resolved(lr) => lr.clone(),
-        LayerSpec::NamedLayer(name) => {
-            LayerRef::from_string_name(name)
-                .unwrap_or_else(|| LayerRef::from_v6(V6Layer::NoLayer).with_name(name.clone()))
-        }
+        LayerSpec::NamedLayer(name) => LayerRef::from_string_name(name)
+            .unwrap_or_else(|| LayerRef::from_v6(V6Layer::NoLayer).with_name(name.clone())),
         LayerSpec::CopperPosition(_) => {
             // Cannot resolve without a board stack; fall back to MultiLayer
             LayerRef::from_v6(V6Layer::MultiLayer)
@@ -1516,8 +1594,12 @@ fn resolve_layer_spec_opt(spec: &Option<LayerSpec>, default: V6Layer) -> LayerRe
 
 fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
     let shape = spec.shape.unwrap_or(PadShape::Rectangular);
-    let x_size = spec.x_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
-    let y_size = spec.y_size.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
+    let x_size = spec
+        .x_size
+        .unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
+    let y_size = spec
+        .y_size
+        .unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord"));
     api::Pad {
         pad_name: spec.pad_name.clone(),
         unique_id: None,
@@ -1595,7 +1677,9 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             location: props.at.unwrap_or_default(),
             text: props.text.clone().unwrap_or_default(),
             rotation: props.rotation.unwrap_or(0.0),
-            height: props.width.unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
+            height: props
+                .width
+                .unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
             width: Coord::ZERO,
             color: altium_format_types::color::Color::default(),
             font_name: String::new(),
@@ -1606,8 +1690,12 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             layer: LayerRef::from_v6(V6Layer::MultiLayer),
             flags,
             location: props.center.unwrap_or_default(),
-            diameter: props.diameter.unwrap_or_else(|| Coord::from_mils(50).expect("50 mils fits Coord")),
-            hole_size: props.hole_size.unwrap_or_else(|| Coord::from_mils(28).expect("28 mils fits Coord")),
+            diameter: props
+                .diameter
+                .unwrap_or_else(|| Coord::from_mils(50).expect("50 mils fits Coord")),
+            hole_size: props
+                .hole_size
+                .unwrap_or_else(|| Coord::from_mils(28).expect("28 mils fits Coord")),
             from_layer: LayerRef::from_v6(V6Layer::TopLayer),
             to_layer: LayerRef::from_v6(V6Layer::BottomLayer),
             is_testpoint_top: false,
@@ -1645,7 +1733,11 @@ fn merge_spec_into_footprint(existing: &api::Footprint, spec: &FootprintSpec) ->
 
     // Merge pads by pad_name
     for pad_spec in &spec.pads {
-        if let Some(pad) = result.pads.iter_mut().find(|p| p.pad_name == pad_spec.pad_name) {
+        if let Some(pad) = result
+            .pads
+            .iter_mut()
+            .find(|p| p.pad_name == pad_spec.pad_name)
+        {
             apply_pad_spec(pad, pad_spec);
         } else {
             result.pads.push(pad_from_pcblib_spec(pad_spec));
@@ -1655,7 +1747,8 @@ fn merge_spec_into_footprint(existing: &api::Footprint, spec: &FootprintSpec) ->
     // Merge graphics by unique_id
     for graphic_spec in &spec.graphics {
         if let Some(pos) = result.graphics.iter().position(|g| {
-            g.unique_id().map_or(false, |uid| uid == graphic_spec.unique_id)
+            g.unique_id()
+                .map_or(false, |uid| uid == graphic_spec.unique_id)
         }) {
             if let Some(new_graphic) = pcb_graphic_from_spec(graphic_spec) {
                 result.graphics[pos] = new_graphic;
@@ -1670,20 +1763,48 @@ fn merge_spec_into_footprint(existing: &api::Footprint, spec: &FootprintSpec) ->
 
 fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
     pad.location = spec.at;
-    if let Some(shape) = spec.shape { pad.shape = shape; }
-    if let Some(x) = spec.x_size { pad.x_size = x; }
-    if let Some(y) = spec.y_size { pad.y_size = y; }
-    if let Some(r) = spec.rotation { pad.rotation = r; }
-    if let Some(h) = spec.hole_size { pad.hole_size = h; }
-    if let Some(p) = spec.is_plated { pad.is_plated = p; }
-    if let Some(l) = &spec.layer { pad.layer = resolve_layer_spec(l); }
-    if let Some(m) = spec.pad_mode { pad.pad_mode = m; }
-    if let Some(s) = spec.solder_mask_expansion { pad.solder_mask_expansion = s; }
-    if let Some(p) = spec.paste_mask_expansion { pad.paste_mask_expansion = p; }
-    if let Some(c) = spec.plane_connection { pad.plane_connection = c; }
-    if let Some(w) = spec.relief_conductor_width { pad.relief_conductor_width = w; }
-    if let Some(e) = spec.relief_entries { pad.relief_entries = e; }
-    if let Some(g) = spec.relief_air_gap { pad.relief_air_gap = g; }
+    if let Some(shape) = spec.shape {
+        pad.shape = shape;
+    }
+    if let Some(x) = spec.x_size {
+        pad.x_size = x;
+    }
+    if let Some(y) = spec.y_size {
+        pad.y_size = y;
+    }
+    if let Some(r) = spec.rotation {
+        pad.rotation = r;
+    }
+    if let Some(h) = spec.hole_size {
+        pad.hole_size = h;
+    }
+    if let Some(p) = spec.is_plated {
+        pad.is_plated = p;
+    }
+    if let Some(l) = &spec.layer {
+        pad.layer = resolve_layer_spec(l);
+    }
+    if let Some(m) = spec.pad_mode {
+        pad.pad_mode = m;
+    }
+    if let Some(s) = spec.solder_mask_expansion {
+        pad.solder_mask_expansion = s;
+    }
+    if let Some(p) = spec.paste_mask_expansion {
+        pad.paste_mask_expansion = p;
+    }
+    if let Some(c) = spec.plane_connection {
+        pad.plane_connection = c;
+    }
+    if let Some(w) = spec.relief_conductor_width {
+        pad.relief_conductor_width = w;
+    }
+    if let Some(e) = spec.relief_entries {
+        pad.relief_entries = e;
+    }
+    if let Some(g) = spec.relief_air_gap {
+        pad.relief_air_gap = g;
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1692,8 +1813,7 @@ fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
 mod tests {
     use super::*;
     use crate::model::{
-        ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec,
-        SchLibSpec,
+        ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SchLibSpec,
     };
     use altium_format_types::{Coord, CoordPoint, RotationBy90};
 
@@ -1753,9 +1873,10 @@ mod tests {
 
     #[test]
     fn apply_to_blank_adds_components() {
-        let spec = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0), make_pin("2", 0)]),
-        ]);
+        let spec = make_spec(vec![make_component(
+            "R_0603",
+            vec![make_pin("1", 0), make_pin("2", 0)],
+        )]);
         let mut doc = blank_doc();
 
         apply_spec_schlib(&spec, &mut doc).unwrap();
@@ -1788,9 +1909,7 @@ mod tests {
     #[test]
     fn apply_updates_existing_component() {
         // First, add a component
-        let spec1 = make_spec(vec![
-            make_component("R_0603", vec![make_pin("1", 0)]),
-        ]);
+        let spec1 = make_spec(vec![make_component("R_0603", vec![make_pin("1", 0)])]);
         let mut doc = blank_doc();
         apply_spec_schlib(&spec1, &mut doc).unwrap();
 
@@ -1834,19 +1953,23 @@ mod tests {
             part_count: None,
             show_hidden_pins: None,
             pins: vec![],
-            parameters: vec![
-                ParameterSpec {
-                    name: "MFG".to_string(),
-                    text: "ACME".to_string(),
-                    is_hidden: None,
-                },
-            ],
+            parameters: vec![ParameterSpec {
+                name: "MFG".to_string(),
+                text: "ACME".to_string(),
+                is_hidden: None,
+            }],
             aliases: vec!["RES".to_string()],
             footprints: vec![FootprintMapSpec {
                 model_name: "0603".to_string(),
                 maps: vec![
-                    PinPadMap { pin: "1".to_string(), pad: "1".to_string() },
-                    PinPadMap { pin: "2".to_string(), pad: "2".to_string() },
+                    PinPadMap {
+                        pin: "1".to_string(),
+                        pad: "1".to_string(),
+                    },
+                    PinPadMap {
+                        pin: "2".to_string(),
+                        pad: "2".to_string(),
+                    },
                 ],
                 source: None,
             }],
@@ -1919,9 +2042,11 @@ mod tests {
             part_count: None,
             show_hidden_pins: None,
             pins: vec![make_pin("1", 0), make_pin("2", 0)],
-            parameters: vec![
-                ParameterSpec { name: "MFG".to_string(), text: "ACME".to_string(), is_hidden: None },
-            ],
+            parameters: vec![ParameterSpec {
+                name: "MFG".to_string(),
+                text: "ACME".to_string(),
+                is_hidden: None,
+            }],
             aliases: vec!["RES".to_string()],
             footprints: vec![],
             graphics: vec![],
@@ -1953,9 +2078,11 @@ mod tests {
                 part_swap_group: None,
                 pair_swap_group: None,
             }],
-            parameters: vec![
-                ParameterSpec { name: "VALUE".to_string(), text: "10K".to_string(), is_hidden: None },
-            ],
+            parameters: vec![ParameterSpec {
+                name: "VALUE".to_string(),
+                text: "10K".to_string(),
+                is_hidden: None,
+            }],
             aliases: vec!["RESISTOR".to_string()],
             footprints: vec![],
             graphics: vec![],
@@ -1980,7 +2107,10 @@ mod tests {
     fn make_pad_spec(name: &str) -> PadSpec {
         PadSpec {
             pad_name: name.to_string(),
-            at: CoordPoint { x: Coord::from_mils(0).expect("0 mils fits Coord"), y: Coord::from_mils(0).expect("0 mils fits Coord") },
+            at: CoordPoint {
+                x: Coord::from_mils(0).expect("0 mils fits Coord"),
+                y: Coord::from_mils(0).expect("0 mils fits Coord"),
+            },
             shape: None,
             x_size: None,
             y_size: None,
@@ -2013,9 +2143,10 @@ mod tests {
     #[test]
     fn executor_pcblib_add_to_blank() {
         let spec = PcbLibSpec {
-            footprints: vec![
-                make_footprint_spec("R0603", vec![make_pad_spec("1"), make_pad_spec("2")]),
-            ],
+            footprints: vec![make_footprint_spec(
+                "R0603",
+                vec![make_pad_spec("1"), make_pad_spec("2")],
+            )],
         };
         let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
 
@@ -2030,11 +2161,19 @@ mod tests {
 
     // ── Pin connection stub generation tests ──────────────────────────────────
 
-    use crate::model::{PinConnectionSpec, PinConnectionTarget as ConnTarget, SchDocComponentSpec, SchDocSpec, SheetSpec, SymbolRef};
+    use crate::model::{
+        PinConnectionSpec, PinConnectionTarget as ConnTarget, SchDocComponentSpec, SchDocSpec,
+        SheetSpec, SymbolRef,
+    };
     use altium_format_types::sch::PowerObjectStyle;
     use std::collections::HashMap;
 
-    fn make_pin_named(designator: &str, name: &str, location: CoordPoint, orientation: RotationBy90) -> PinSpec {
+    fn make_pin_named(
+        designator: &str,
+        name: &str,
+        location: CoordPoint,
+        orientation: RotationBy90,
+    ) -> PinSpec {
         PinSpec {
             designator: designator.to_string(),
             name: Some(name.to_string()),
@@ -2090,7 +2229,10 @@ mod tests {
         }
     }
 
-    fn make_sheet_spec(components: Vec<SchDocComponentSpec>, power_declarations: HashMap<String, PowerObjectStyle>) -> SchDocSpec {
+    fn make_sheet_spec(
+        components: Vec<SchDocComponentSpec>,
+        power_declarations: HashMap<String, PowerObjectStyle>,
+    ) -> SchDocSpec {
         SchDocSpec {
             sheets: vec![SheetSpec {
                 annotation: None,
@@ -2123,15 +2265,26 @@ mod tests {
         // Pin orientation 0° → stub extends rightward (+X).
         let pin_loc = make_coord(100, 0);
         let comp_loc = make_coord(0, 0);
-        let lib_comp = make_lib_component("IC1", vec![
-            make_pin_named("1", "GPIO4", pin_loc, RotationBy90::Rotate0),
-        ]);
+        let lib_comp = make_lib_component(
+            "IC1",
+            vec![make_pin_named("1", "GPIO4", pin_loc, RotationBy90::Rotate0)],
+        );
         let mut imported: HashMap<String, ComponentSpec> = HashMap::new();
         imported.insert("IC1".to_string(), lib_comp);
 
-        let conn = PinConnectionSpec { pin_name: "GPIO4".to_string(), target: ConnTarget::Signal("SDA".to_string()) };
+        let conn = PinConnectionSpec {
+            pin_name: "GPIO4".to_string(),
+            target: ConnTarget::Signal("SDA".to_string()),
+        };
         let spec = make_sheet_spec(
-            vec![make_schdoc_comp("U1", "IC1", comp_loc, None, None, vec![conn])],
+            vec![make_schdoc_comp(
+                "U1",
+                "IC1",
+                comp_loc,
+                None,
+                None,
+                vec![conn],
+            )],
             HashMap::new(),
         );
         let mut doc = blank_schdoc();
@@ -2139,8 +2292,16 @@ mod tests {
 
         let sheet = doc.sheet().unwrap();
         // Should have: 1 component + 1 wire + 1 net label
-        let wires: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::Wire(_))).collect();
-        let labels: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::NetLabel(_))).collect();
+        let wires: Vec<_> = sheet
+            .objects
+            .iter()
+            .filter(|o| matches!(o, api::SheetObject::Wire(_)))
+            .collect();
+        let labels: Vec<_> = sheet
+            .objects
+            .iter()
+            .filter(|o| matches!(o, api::SheetObject::NetLabel(_)))
+            .collect();
         assert_eq!(wires.len(), 1, "expected 1 wire stub");
         assert_eq!(labels.len(), 1, "expected 1 net label");
 
@@ -2151,7 +2312,11 @@ mod tests {
             let end = w.vertices[1];
             assert_eq!(tip.x.raw(), make_coord(100, 0).x.raw());
             assert_eq!(tip.y.raw(), make_coord(100, 0).y.raw());
-            assert_eq!(end.x.raw(), make_coord(300, 0).x.raw(), "stub should extend +200mil in X");
+            assert_eq!(
+                end.x.raw(),
+                make_coord(300, 0).x.raw(),
+                "stub should extend +200mil in X"
+            );
             assert_eq!(end.y.raw(), make_coord(0, 0).y.raw());
         }
 
@@ -2166,23 +2331,42 @@ mod tests {
     fn pin_connection_no_connect() {
         let pin_loc = make_coord(50, 0);
         let comp_loc = make_coord(0, 0);
-        let lib_comp = make_lib_component("IC1", vec![
-            make_pin_named("1", "NC1", pin_loc, RotationBy90::Rotate0),
-        ]);
+        let lib_comp = make_lib_component(
+            "IC1",
+            vec![make_pin_named("1", "NC1", pin_loc, RotationBy90::Rotate0)],
+        );
         let mut imported: HashMap<String, ComponentSpec> = HashMap::new();
         imported.insert("IC1".to_string(), lib_comp);
 
-        let conn = PinConnectionSpec { pin_name: "NC1".to_string(), target: ConnTarget::NoConnect };
+        let conn = PinConnectionSpec {
+            pin_name: "NC1".to_string(),
+            target: ConnTarget::NoConnect,
+        };
         let spec = make_sheet_spec(
-            vec![make_schdoc_comp("U1", "IC1", comp_loc, None, None, vec![conn])],
+            vec![make_schdoc_comp(
+                "U1",
+                "IC1",
+                comp_loc,
+                None,
+                None,
+                vec![conn],
+            )],
             HashMap::new(),
         );
         let mut doc = blank_schdoc();
         apply_spec_schdoc(&spec, &mut doc, &imported).unwrap();
 
         let sheet = doc.sheet().unwrap();
-        let ncs: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::NoConnect(_))).collect();
-        let wires: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::Wire(_))).collect();
+        let ncs: Vec<_> = sheet
+            .objects
+            .iter()
+            .filter(|o| matches!(o, api::SheetObject::NoConnect(_)))
+            .collect();
+        let wires: Vec<_> = sheet
+            .objects
+            .iter()
+            .filter(|o| matches!(o, api::SheetObject::Wire(_)))
+            .collect();
         assert_eq!(ncs.len(), 1, "expected 1 no-connect marker");
         assert_eq!(wires.len(), 0, "no wire for no-connect");
 
@@ -2195,26 +2379,45 @@ mod tests {
     fn pin_connection_power_stub() {
         let pin_loc = make_coord(0, 100);
         let comp_loc = make_coord(0, 0);
-        let lib_comp = make_lib_component("IC1", vec![
-            make_pin_named("1", "VDD", pin_loc, RotationBy90::Rotate90),
-        ]);
+        let lib_comp = make_lib_component(
+            "IC1",
+            vec![make_pin_named("1", "VDD", pin_loc, RotationBy90::Rotate90)],
+        );
         let mut imported: HashMap<String, ComponentSpec> = HashMap::new();
         imported.insert("IC1".to_string(), lib_comp);
 
         let mut power_decls: HashMap<String, PowerObjectStyle> = HashMap::new();
         power_decls.insert("VCC".to_string(), PowerObjectStyle::Bar);
 
-        let conn = PinConnectionSpec { pin_name: "VDD".to_string(), target: ConnTarget::Power("VCC".to_string()) };
+        let conn = PinConnectionSpec {
+            pin_name: "VDD".to_string(),
+            target: ConnTarget::Power("VCC".to_string()),
+        };
         let spec = make_sheet_spec(
-            vec![make_schdoc_comp("U1", "IC1", comp_loc, None, None, vec![conn])],
+            vec![make_schdoc_comp(
+                "U1",
+                "IC1",
+                comp_loc,
+                None,
+                None,
+                vec![conn],
+            )],
             power_decls,
         );
         let mut doc = blank_schdoc();
         apply_spec_schdoc(&spec, &mut doc, &imported).unwrap();
 
         let sheet = doc.sheet().unwrap();
-        let wires: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::Wire(_))).collect();
-        let powers: Vec<_> = sheet.objects.iter().filter(|o| matches!(o, api::SheetObject::PowerObject(_))).collect();
+        let wires: Vec<_> = sheet
+            .objects
+            .iter()
+            .filter(|o| matches!(o, api::SheetObject::Wire(_)))
+            .collect();
+        let powers: Vec<_> = sheet
+            .objects
+            .iter()
+            .filter(|o| matches!(o, api::SheetObject::PowerObject(_)))
+            .collect();
         assert_eq!(wires.len(), 1);
         assert_eq!(powers.len(), 1);
 
@@ -2228,20 +2431,44 @@ mod tests {
     #[test]
     fn transform_pin_orientation_all_rotations() {
         // No mirror, pin at 0°: rotation adds
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate0, false), RotationBy90::Rotate0);
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate90, false), RotationBy90::Rotate90);
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate180, false), RotationBy90::Rotate180);
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate270, false), RotationBy90::Rotate270);
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate0, false),
+            RotationBy90::Rotate0
+        );
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate90, false),
+            RotationBy90::Rotate90
+        );
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate180, false),
+            RotationBy90::Rotate180
+        );
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate270, false),
+            RotationBy90::Rotate270
+        );
     }
 
     #[test]
     fn transform_pin_orientation_mirrored() {
         // Mirror flips 0↔180
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate0, true), RotationBy90::Rotate180);
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate180, RotationBy90::Rotate0, true), RotationBy90::Rotate0);
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate0, RotationBy90::Rotate0, true),
+            RotationBy90::Rotate180
+        );
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate180, RotationBy90::Rotate0, true),
+            RotationBy90::Rotate0
+        );
         // 90/270 unchanged by mirror
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate90, RotationBy90::Rotate0, true), RotationBy90::Rotate90);
-        assert_eq!(transform_pin_orientation(RotationBy90::Rotate270, RotationBy90::Rotate0, true), RotationBy90::Rotate270);
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate90, RotationBy90::Rotate0, true),
+            RotationBy90::Rotate90
+        );
+        assert_eq!(
+            transform_pin_orientation(RotationBy90::Rotate270, RotationBy90::Rotate0, true),
+            RotationBy90::Rotate270
+        );
     }
 
     #[test]
@@ -2278,42 +2505,72 @@ mod tests {
 
     #[test]
     fn remap_label_orient_convention() {
-        assert_eq!(remap_label_orient(RotationBy90::Rotate0), RotationBy90::Rotate0);
-        assert_eq!(remap_label_orient(RotationBy90::Rotate90), RotationBy90::Rotate90);
+        assert_eq!(
+            remap_label_orient(RotationBy90::Rotate0),
+            RotationBy90::Rotate0
+        );
+        assert_eq!(
+            remap_label_orient(RotationBy90::Rotate90),
+            RotationBy90::Rotate90
+        );
         // 180° and 270° map to 0° and 90° respectively (readability convention)
-        assert_eq!(remap_label_orient(RotationBy90::Rotate180), RotationBy90::Rotate0);
-        assert_eq!(remap_label_orient(RotationBy90::Rotate270), RotationBy90::Rotate90);
+        assert_eq!(
+            remap_label_orient(RotationBy90::Rotate180),
+            RotationBy90::Rotate0
+        );
+        assert_eq!(
+            remap_label_orient(RotationBy90::Rotate270),
+            RotationBy90::Rotate90
+        );
     }
 
     #[test]
     fn resolve_pin_by_name_first() {
-        let lib_comp = make_lib_component("IC", vec![
-            make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
-            make_pin_named("2", "GND", make_coord(-100, 0), RotationBy90::Rotate180),
-        ]);
+        let lib_comp = make_lib_component(
+            "IC",
+            vec![
+                make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
+                make_pin_named("2", "GND", make_coord(-100, 0), RotationBy90::Rotate180),
+            ],
+        );
         let pin = resolve_pin(&lib_comp, "GPIO4").unwrap();
         assert_eq!(pin.designator, "1");
     }
 
     #[test]
     fn resolve_pin_by_designator_fallback() {
-        let lib_comp = make_lib_component("IC", vec![
-            make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
-        ]);
+        let lib_comp = make_lib_component(
+            "IC",
+            vec![make_pin_named(
+                "1",
+                "GPIO4",
+                make_coord(100, 0),
+                RotationBy90::Rotate0,
+            )],
+        );
         let pin = resolve_pin(&lib_comp, "1").unwrap();
         assert_eq!(pin.name.as_deref(), Some("GPIO4"));
     }
 
     #[test]
     fn resolve_pin_not_found_error() {
-        let lib_comp = make_lib_component("ESP32", vec![
-            make_pin_named("1", "GPIO4", make_coord(100, 0), RotationBy90::Rotate0),
-        ]);
+        let lib_comp = make_lib_component(
+            "ESP32",
+            vec![make_pin_named(
+                "1",
+                "GPIO4",
+                make_coord(100, 0),
+                RotationBy90::Rotate0,
+            )],
+        );
         let result = resolve_pin(&lib_comp, "NONEXISTENT");
         assert!(result.is_err(), "expected error for missing pin");
         let err = result.err().unwrap();
         let msg = format!("{err}");
-        assert!(msg.contains("NONEXISTENT"), "error should name the missing pin");
+        assert!(
+            msg.contains("NONEXISTENT"),
+            "error should name the missing pin"
+        );
         assert!(msg.contains("ESP32"), "error should name the symbol");
         assert!(msg.contains("GPIO4"), "error should list available pins");
     }
@@ -2324,7 +2581,12 @@ mod tests {
         let mut lib_comp = make_lib_component("IC", vec![]);
         lib_comp.parts.push(PartSpec {
             part_number: 1,
-            pins: vec![make_pin_named("A1", "IN+", make_coord(0, 50), RotationBy90::Rotate180)],
+            pins: vec![make_pin_named(
+                "A1",
+                "IN+",
+                make_coord(0, 50),
+                RotationBy90::Rotate180,
+            )],
             graphics: vec![],
         });
         let pin = resolve_pin(&lib_comp, "IN+").unwrap();
@@ -2334,16 +2596,29 @@ mod tests {
     #[test]
     fn missing_symbol_in_imports_error() {
         let imported: HashMap<String, ComponentSpec> = HashMap::new();
-        let conn = PinConnectionSpec { pin_name: "GPIO4".to_string(), target: ConnTarget::Signal("SDA".to_string()) };
+        let conn = PinConnectionSpec {
+            pin_name: "GPIO4".to_string(),
+            target: ConnTarget::Signal("SDA".to_string()),
+        };
         let spec = make_sheet_spec(
-            vec![make_schdoc_comp("U1", "MISSING_IC", make_coord(0, 0), None, None, vec![conn])],
+            vec![make_schdoc_comp(
+                "U1",
+                "MISSING_IC",
+                make_coord(0, 0),
+                None,
+                None,
+                vec![conn],
+            )],
             HashMap::new(),
         );
         let mut doc = blank_schdoc();
         let err = apply_spec_schdoc(&spec, &mut doc, &imported).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("U1"), "error should identify the designator");
-        assert!(msg.contains("MISSING_IC"), "error should identify the missing symbol");
+        assert!(
+            msg.contains("MISSING_IC"),
+            "error should identify the missing symbol"
+        );
     }
 
     #[test]

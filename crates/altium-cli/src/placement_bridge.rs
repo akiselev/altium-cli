@@ -8,7 +8,9 @@ use std::collections::HashSet;
 
 use altium_format_spec::{PlacementConstraintSpec, PlacementSpec, UnplacedStrategy};
 use autopcb_ir::PcbIr;
-use autopcb_placement::{Direction, PlacementEdge, RectRegion, UserConstraint, named_region_from_board};
+use autopcb_placement::{
+    Direction, PlacementEdge, RectRegion, UserConstraint, named_region_from_board,
+};
 
 /// Translate a [`PlacementSpec`] into solver constraints and an autoplace designator list.
 ///
@@ -194,8 +196,7 @@ pub fn placement_spec_to_constraints(
     if !unmentioned.is_empty() {
         match spec.unplaced {
             UnplacedStrategy::Error => {
-                let names: Vec<&str> =
-                    unmentioned.iter().map(|c| c.designator.as_str()).collect();
+                let names: Vec<&str> = unmentioned.iter().map(|c| c.designator.as_str()).collect();
                 anyhow::bail!(
                     "PcbIr component(s) not mentioned in spec (unplaced: error): {}",
                     names.join(", ")
@@ -234,13 +235,11 @@ fn parse_edge(s: &str) -> Option<PlacementEdge> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_spec::{
-        PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
-    };
+    use altium_format_spec::{PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec};
     use altium_format_types::coord::{Coord, CoordPoint};
     use autopcb_ir::{
-        BoardSide, BoundingBoxMm, ComponentId, FreeCopperGeometry, IrBoardGeometry, IrComponent,
-        IrLayerStack, IdMap, PointMm,
+        BoardSide, BoundingBoxMm, ComponentId, FreeCopperGeometry, IdMap, IrBoardGeometry,
+        IrComponent, IrLayerStack, PointMm,
     };
 
     fn make_coord(mils: f64) -> Coord {
@@ -248,14 +247,16 @@ mod tests {
     }
 
     fn make_point(x_mils: f64, y_mils: f64) -> CoordPoint {
-        CoordPoint { x: make_coord(x_mils), y: make_coord(y_mils) }
+        CoordPoint {
+            x: make_coord(x_mils),
+            y: make_coord(y_mils),
+        }
     }
 
     fn minimal_ir(designators: &[(&str, f64, f64)]) -> PcbIr {
         let mut components: IdMap<ComponentId, IrComponent> = IdMap::new();
         for (i, &(d, x, y)) in designators.iter().enumerate() {
-            let zero_bb =
-                BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(1.0, 1.0));
+            let zero_bb = BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(1.0, 1.0));
             let id = ComponentId::from(i as u32);
             components.push(IrComponent {
                 id,
@@ -271,8 +272,7 @@ mod tests {
             });
         }
 
-        let board_bounds =
-            BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(100.0, 100.0));
+        let board_bounds = BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(100.0, 100.0));
         PcbIr {
             board: IrBoardGeometry {
                 outline: vec![
@@ -285,7 +285,10 @@ mod tests {
                 bounds: board_bounds,
                 keepouts: vec![],
             },
-            layer_stack: IrLayerStack { copper_layers: vec![], copper_layer_count: 0 },
+            layer_stack: IrLayerStack {
+                copper_layers: vec![],
+                copper_layer_count: 0,
+            },
             components,
             nets: IdMap::new(),
             rules: IdMap::new(),
@@ -294,17 +297,20 @@ mod tests {
         }
     }
 
-    fn empty_spec(
-        places: Vec<PlacementPlaceSpec>,
-        unplaced: UnplacedStrategy,
-    ) -> PlacementSpec {
+    fn empty_spec(places: Vec<PlacementPlaceSpec>, unplaced: UnplacedStrategy) -> PlacementSpec {
         PlacementSpec {
             annotation: None,
             target: None,
             places,
             constraints: vec![],
-            optimize: PlacementOptimizeSpec { ratsnest: true, ratsnest_weight: 0.01 },
-            clearance: PlacementClearanceSpec { all: None, edge: None },
+            optimize: PlacementOptimizeSpec {
+                ratsnest: true,
+                ratsnest_weight: 0.01,
+            },
+            clearance: PlacementClearanceSpec {
+                all: None,
+                edge: None,
+            },
             autoplace_config: None,
             unplaced,
             allow_pin_swap: false,
@@ -362,10 +368,17 @@ mod tests {
             UnplacedStrategy::Ignore,
         );
         let (constraints, autoplace) = placement_spec_to_constraints(&spec, &ir).unwrap();
-        assert!(autoplace.is_empty(), "locked component must not be in autoplace set");
+        assert!(
+            autoplace.is_empty(),
+            "locked component must not be in autoplace set"
+        );
         assert_eq!(constraints.len(), 1);
         match &constraints[0] {
-            UserConstraint::FixedPosition { designator, x_mm, y_mm } => {
+            UserConstraint::FixedPosition {
+                designator,
+                x_mm,
+                y_mm,
+            } => {
                 assert_eq!(designator, "U1");
                 assert!((x_mm - make_coord(1000.0).to_mms()).abs() < 1e-6);
                 assert!((y_mm - make_coord(2000.0).to_mms()).abs() < 1e-6);
@@ -385,7 +398,9 @@ mod tests {
         assert!(autoplace.is_empty());
         assert_eq!(constraints.len(), 2);
         assert!(
-            constraints.iter().all(|c| matches!(c, UserConstraint::FixedPosition { .. }))
+            constraints
+                .iter()
+                .all(|c| matches!(c, UserConstraint::FixedPosition { .. }))
         );
     }
 
@@ -395,7 +410,10 @@ mod tests {
         let spec = empty_spec(vec![autoplace_place("C1")], UnplacedStrategy::Ignore);
         let (constraints, autoplace) = placement_spec_to_constraints(&spec, &ir).unwrap();
         assert_eq!(autoplace, vec!["C1"]);
-        assert!(constraints.is_empty(), "no sub-constraints for plain autoplace");
+        assert!(
+            constraints.is_empty(),
+            "no sub-constraints for plain autoplace"
+        );
     }
 
     #[test]
@@ -410,7 +428,11 @@ mod tests {
         assert_eq!(autoplace, vec!["C1"]);
         assert_eq!(constraints.len(), 1);
         match &constraints[0] {
-            UserConstraint::EdgePlacement { designator, edge, inset_mm } => {
+            UserConstraint::EdgePlacement {
+                designator,
+                edge,
+                inset_mm,
+            } => {
                 assert_eq!(designator, "C1");
                 assert!(matches!(edge, PlacementEdge::Top));
                 assert!((inset_mm - make_coord(78.74).to_mms()).abs() < 1e-3);
@@ -429,10 +451,16 @@ mod tests {
         let spec = empty_spec(vec![place], UnplacedStrategy::Autoplace);
         let (constraints, autoplace) = placement_spec_to_constraints(&spec, &ir).unwrap();
         assert!(autoplace.contains(&"C1".to_string()));
-        let near = constraints.iter().find(|c| matches!(c, UserConstraint::Near { .. }));
+        let near = constraints
+            .iter()
+            .find(|c| matches!(c, UserConstraint::Near { .. }));
         assert!(near.is_some(), "expected Near constraint");
         match near.unwrap() {
-            UserConstraint::Near { a, b, max_distance_mm } => {
+            UserConstraint::Near {
+                a,
+                b,
+                max_distance_mm,
+            } => {
                 assert_eq!(a, "C1");
                 assert_eq!(b, "U1");
                 assert!((max_distance_mm - make_coord(196.85).to_mms()).abs() < 1e-3);
@@ -456,7 +484,10 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, UserConstraint::FixedPosition { designator, .. } if designator == "R99"))
             .collect();
-        assert!(r99_constraints.is_empty(), "R99 not in IR should not produce a constraint");
+        assert!(
+            r99_constraints.is_empty(),
+            "R99 not in IR should not produce a constraint"
+        );
         assert!(autoplace.is_empty());
     }
 
@@ -464,24 +495,24 @@ mod tests {
     fn unplaced_error_with_missing_component_returns_error() {
         let ir = minimal_ir(&[("U1", 0.0, 0.0), ("U2", 5.0, 0.0)]);
         // Only U1 in spec; unplaced: error → U2 triggers error.
-        let spec = empty_spec(
-            vec![locked_place("U1", 0.0, 0.0)],
-            UnplacedStrategy::Error,
-        );
+        let spec = empty_spec(vec![locked_place("U1", 0.0, 0.0)], UnplacedStrategy::Error);
         let result = placement_spec_to_constraints(&spec, &ir);
-        assert!(result.is_err(), "expected error for unmentioned component with unplaced: error");
+        assert!(
+            result.is_err(),
+            "expected error for unmentioned component with unplaced: error"
+        );
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("U2"), "error message should name the missing component");
+        assert!(
+            msg.contains("U2"),
+            "error message should name the missing component"
+        );
     }
 
     #[test]
     fn unplaced_error_with_unknown_spec_designator_returns_error() {
         let ir = minimal_ir(&[("U1", 0.0, 0.0)]);
         // R99 in spec but not in IR, with unplaced: error → returns error.
-        let spec = empty_spec(
-            vec![locked_place("R99", 0.0, 0.0)],
-            UnplacedStrategy::Error,
-        );
+        let spec = empty_spec(vec![locked_place("R99", 0.0, 0.0)], UnplacedStrategy::Error);
         let result = placement_spec_to_constraints(&spec, &ir);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -492,17 +523,14 @@ mod tests {
     fn unplaced_ignore_adds_fixed_position_for_unmentioned() {
         let ir = minimal_ir(&[("U1", 0.0, 0.0), ("U2", 10.0, 20.0)]);
         // Only U1 in spec; unplaced: ignore → U2 gets FixedPosition at IR coords.
-        let spec = empty_spec(
-            vec![locked_place("U1", 0.0, 0.0)],
-            UnplacedStrategy::Ignore,
-        );
+        let spec = empty_spec(vec![locked_place("U1", 0.0, 0.0)], UnplacedStrategy::Ignore);
         let (constraints, autoplace) = placement_spec_to_constraints(&spec, &ir).unwrap();
         assert!(autoplace.is_empty());
         // 2 constraints: U1 locked + U2 fixed at current pos
         assert_eq!(constraints.len(), 2);
-        let u2_fixed = constraints.iter().find(|c| {
-            matches!(c, UserConstraint::FixedPosition { designator, .. } if designator == "U2")
-        });
+        let u2_fixed = constraints.iter().find(
+            |c| matches!(c, UserConstraint::FixedPosition { designator, .. } if designator == "U2"),
+        );
         assert!(u2_fixed.is_some());
         match u2_fixed.unwrap() {
             UserConstraint::FixedPosition { x_mm, y_mm, .. } => {
@@ -534,10 +562,17 @@ mod tests {
             gap: Some(make_coord(394.0)), // ~10 mm
         }];
         let (constraints, _) = placement_spec_to_constraints(&spec, &ir).unwrap();
-        let dir = constraints.iter().find(|c| matches!(c, UserConstraint::Directional { .. }));
+        let dir = constraints
+            .iter()
+            .find(|c| matches!(c, UserConstraint::Directional { .. }));
         assert!(dir.is_some());
         match dir.unwrap() {
-            UserConstraint::Directional { a, b, direction, gap_mm } => {
+            UserConstraint::Directional {
+                a,
+                b,
+                direction,
+                gap_mm,
+            } => {
                 assert_eq!(a, "U1");
                 assert_eq!(b, "U2");
                 assert!(matches!(direction, Direction::LeftOf));

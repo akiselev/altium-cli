@@ -4,26 +4,25 @@
 //! Generated output uses absolute placement only (`at: (x, y)`, explicit
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
+use altium_format::api::{
+    BoardGeometry, ContourSegment, Footprint, LayerStack, Pad as PcbLibPad, PadStack, PcbContour,
+    PcbDocBoard, PcbGraphic, RuleParams, StackLayer,
+};
+use altium_format::api::{
+    Component, ComponentChild, FootprintMap, Graphic, Parameter, Pin, SheetObject, SheetSymbolChild,
+};
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
-use altium_format::api::{
-    Component, Pin, Parameter, FootprintMap, Graphic,
-    SheetObject, ComponentChild, SheetSymbolChild,
-};
-use altium_format::api::{
-    PcbDocBoard, LayerStack, StackLayer, RuleParams, BoardGeometry, ContourSegment,
-    Footprint, Pad as PcbLibPad, PcbGraphic, PcbContour, PadStack,
-};
-use altium_format_types::coord::Coord;
 use altium_format_types::common::Unit;
+use altium_format_types::coord::Coord;
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, PadShape, PadStackMode, PlaneConnectionStyle, RegionKind,
     RuleKind,
 };
-use altium_format_types::{DielectricType, LayerStackStyle};
 use altium_format_types::project::{
-    ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle,
-    ErrorLevel, FlattenMode,
+    ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle, ErrorLevel,
+    FlattenMode,
 };
+use altium_format_types::{DielectricType, LayerStackStyle};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
@@ -131,62 +130,119 @@ pub fn dump_intlib(lib: &IntLib) -> Result<IntLibDump, altium_format::AltiumForm
 ///
 /// Returns `Err` if the project cannot be parsed into its typed representation.
 pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError> {
-    let project = doc.project()
-        .map_err(|e| crate::eval::SpecError::no_span(
-            crate::eval::SpecErrorCode::AltiumFormat,
-            e.to_string(),
-        ))?;
+    let project = doc.project().map_err(|e| {
+        crate::eval::SpecError::no_span(crate::eval::SpecErrorCode::AltiumFormat, e.to_string())
+    })?;
 
     let mut out = String::new();
-    out.push_str(&format!("project {} {{\n", quote_entity_name(&project.name)));
+    out.push_str(&format!(
+        "project {} {{\n",
+        quote_entity_name(&project.name)
+    ));
 
     // [Design] scalar properties — only emit non-default values
     if project.hierarchy_mode != FlattenMode::Smart {
-        out.push_str(&format!("    hierarchy_mode: {}\n", flatten_mode_to_spec(project.hierarchy_mode)?));
+        out.push_str(&format!(
+            "    hierarchy_mode: {}\n",
+            flatten_mode_to_spec(project.hierarchy_mode)?
+        ));
     }
     if project.channel_room_naming_style != ChannelRoomNamingStyle::FlatNumericWithNames {
-        out.push_str(&format!("    channel_room_naming_style: {}\n", channel_room_naming_to_spec(project.channel_room_naming_style)?));
+        out.push_str(&format!(
+            "    channel_room_naming_style: {}\n",
+            channel_room_naming_to_spec(project.channel_room_naming_style)?
+        ));
     }
     if !project.channel_designator_format.is_empty() {
-        out.push_str(&format!("    channel_designator_format: {}\n", quote_string(&project.channel_designator_format)));
+        out.push_str(&format!(
+            "    channel_designator_format: {}\n",
+            quote_string(&project.channel_designator_format)
+        ));
     }
     if !project.channel_room_level_separator.is_empty() {
-        out.push_str(&format!("    channel_room_level_separator: {}\n", quote_string(&project.channel_room_level_separator)));
+        out.push_str(&format!(
+            "    channel_room_level_separator: {}\n",
+            quote_string(&project.channel_room_level_separator)
+        ));
     }
-    if project.allow_port_net_names { out.push_str("    allow_port_net_names: true\n"); }
-    if project.allow_sheet_entry_net_names { out.push_str("    allow_sheet_entry_net_names: true\n"); }
-    if project.netlist_single_pin_nets { out.push_str("    netlist_single_pin_nets: true\n"); }
-    if project.append_sheet_number_to_local_nets { out.push_str("    append_sheet_number_to_local_nets: true\n"); }
-    if project.name_nets_hierarchically { out.push_str("    name_nets_hierarchically: true\n"); }
-    if project.power_port_names_take_priority { out.push_str("    power_port_names_take_priority: true\n"); }
-    if project.pin_swap_by_netlabel { out.push_str("    pin_swap_by_netlabel: true\n"); }
-    if project.pin_swap_by_pin { out.push_str("    pin_swap_by_pin: true\n"); }
+    if project.allow_port_net_names {
+        out.push_str("    allow_port_net_names: true\n");
+    }
+    if project.allow_sheet_entry_net_names {
+        out.push_str("    allow_sheet_entry_net_names: true\n");
+    }
+    if project.netlist_single_pin_nets {
+        out.push_str("    netlist_single_pin_nets: true\n");
+    }
+    if project.append_sheet_number_to_local_nets {
+        out.push_str("    append_sheet_number_to_local_nets: true\n");
+    }
+    if project.name_nets_hierarchically {
+        out.push_str("    name_nets_hierarchically: true\n");
+    }
+    if project.power_port_names_take_priority {
+        out.push_str("    power_port_names_take_priority: true\n");
+    }
+    if project.pin_swap_by_netlabel {
+        out.push_str("    pin_swap_by_netlabel: true\n");
+    }
+    if project.pin_swap_by_pin {
+        out.push_str("    pin_swap_by_pin: true\n");
+    }
     if project.cross_ref_sheet_style != CrossRefSheetStyle::None {
-        out.push_str(&format!("    cross_ref_sheet_style: {}\n", cross_ref_sheet_to_spec(project.cross_ref_sheet_style)?));
+        out.push_str(&format!(
+            "    cross_ref_sheet_style: {}\n",
+            cross_ref_sheet_to_spec(project.cross_ref_sheet_style)?
+        ));
     }
     if project.cross_ref_location_style != CrossRefLocationStyle::None {
-        out.push_str(&format!("    cross_ref_location_style: {}\n", cross_ref_location_to_spec(project.cross_ref_location_style)?));
+        out.push_str(&format!(
+            "    cross_ref_location_style: {}\n",
+            cross_ref_location_to_spec(project.cross_ref_location_style)?
+        ));
     }
     if project.cross_ref_ports != CrossRefPorts::Disabled {
-        out.push_str(&format!("    cross_ref_ports: {}\n", cross_ref_ports_to_spec(project.cross_ref_ports)?));
+        out.push_str(&format!(
+            "    cross_ref_ports: {}\n",
+            cross_ref_ports_to_spec(project.cross_ref_ports)?
+        ));
     }
-    if project.cross_ref_cross_sheets { out.push_str("    cross_ref_cross_sheets: true\n"); }
-    if project.cross_ref_sheet_entries { out.push_str("    cross_ref_sheet_entries: true\n"); }
+    if project.cross_ref_cross_sheets {
+        out.push_str("    cross_ref_cross_sheets: true\n");
+    }
+    if project.cross_ref_sheet_entries {
+        out.push_str("    cross_ref_sheet_entries: true\n");
+    }
     if !project.output_path.is_empty() {
-        out.push_str(&format!("    output_path: {}\n", quote_string(&project.output_path)));
+        out.push_str(&format!(
+            "    output_path: {}\n",
+            quote_string(&project.output_path)
+        ));
     }
 
     out.push('\n');
 
     // Documents
     for doc_ref in &project.documents {
-        out.push_str(&format!("    document {} {{\n", quote_string(&doc_ref.path)));
-        if doc_ref.annotation_enabled { out.push_str("        annotation_enabled: true\n"); }
-        if doc_ref.annotate_start_value != 0 {
-            out.push_str(&format!("        annotate_start_value: {}\n", doc_ref.annotate_start_value));
+        out.push_str(&format!(
+            "    document {} {{\n",
+            quote_string(&doc_ref.path)
+        ));
+        if doc_ref.annotation_enabled {
+            out.push_str("        annotation_enabled: true\n");
         }
-        if doc_ref.do_library_update { out.push_str("        do_library_update: true\n"); }
-        if doc_ref.do_database_update { out.push_str("        do_database_update: true\n"); }
+        if doc_ref.annotate_start_value != 0 {
+            out.push_str(&format!(
+                "        annotate_start_value: {}\n",
+                doc_ref.annotate_start_value
+            ));
+        }
+        if doc_ref.do_library_update {
+            out.push_str("        do_library_update: true\n");
+        }
+        if doc_ref.do_database_update {
+            out.push_str("        do_database_update: true\n");
+        }
         out.push_str("    }\n\n");
     }
 
@@ -212,17 +268,32 @@ pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError
 
     // Output groups
     for group in &project.output_groups {
-        out.push_str(&format!("    output_group {} {{\n", quote_string(&group.name)));
+        out.push_str(&format!(
+            "    output_group {} {{\n",
+            quote_string(&group.name)
+        ));
         if !group.description.is_empty() {
-            out.push_str(&format!("        description: {}\n", quote_string(&group.description)));
+            out.push_str(&format!(
+                "        description: {}\n",
+                quote_string(&group.description)
+            ));
         }
         for output in &group.outputs {
-            out.push_str(&format!("        output {} {{\n", quote_string(&output.name)));
+            out.push_str(&format!(
+                "        output {} {{\n",
+                quote_string(&output.name)
+            ));
             if !output.output_type.is_empty() {
-                out.push_str(&format!("            output_type: {}\n", quote_string(&output.output_type)));
+                out.push_str(&format!(
+                    "            output_type: {}\n",
+                    quote_string(&output.output_type)
+                ));
             }
             if !output.document_path.is_empty() {
-                out.push_str(&format!("            document_path: {}\n", quote_string(&output.document_path)));
+                out.push_str(&format!(
+                    "            document_path: {}\n",
+                    quote_string(&output.document_path)
+                ));
             }
             out.push_str("        }\n");
         }
@@ -231,19 +302,40 @@ pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError
 
     // Variants
     for var in &project.variants {
-        out.push_str(&format!("    variant {} {{\n", quote_string(&var.description)));
+        out.push_str(&format!(
+            "    variant {} {{\n",
+            quote_string(&var.description)
+        ));
         for v in &var.variations {
-            out.push_str(&format!("        variation {} {{\n", quote_entity_name(&v.designator)));
-            out.push_str(&format!("            kind: {}\n", variation_kind_to_spec(v.kind)?));
+            out.push_str(&format!(
+                "        variation {} {{\n",
+                quote_entity_name(&v.designator)
+            ));
+            out.push_str(&format!(
+                "            kind: {}\n",
+                variation_kind_to_spec(v.kind)?
+            ));
             if !v.alternate_part.is_empty() {
-                out.push_str(&format!("            alternate_part: {}\n", quote_string(&v.alternate_part)));
+                out.push_str(&format!(
+                    "            alternate_part: {}\n",
+                    quote_string(&v.alternate_part)
+                ));
             }
             out.push_str("        }\n");
         }
         for pv in &var.param_variations {
-            out.push_str(&format!("        param_variation {} {{\n", quote_entity_name(&pv.designator)));
-            out.push_str(&format!("            parameter: {}\n", quote_string(&pv.parameter_name)));
-            out.push_str(&format!("            value: {}\n", quote_string(&pv.variant_value)));
+            out.push_str(&format!(
+                "        param_variation {} {{\n",
+                quote_entity_name(&pv.designator)
+            ));
+            out.push_str(&format!(
+                "            parameter: {}\n",
+                quote_string(&pv.parameter_name)
+            ));
+            out.push_str(&format!(
+                "            value: {}\n",
+                quote_string(&pv.variant_value)
+            ));
             out.push_str("        }\n");
         }
         out.push_str("    }\n\n");
@@ -266,12 +358,26 @@ pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatEr
         for f in &sheet.fonts {
             let mut props = vec![format!("name: {}", quote_string(&f.name))];
             props.push(format!("size: {}", f.size));
-            if f.bold { props.push("bold: true".to_owned()); }
-            if f.italic { props.push("italic: true".to_owned()); }
-            if f.underline { props.push("underline: true".to_owned()); }
-            if f.strikeout { props.push("strikeout: true".to_owned()); }
-            if f.rotation != 0 { props.push(format!("rotation: {}", f.rotation)); }
-            out.push_str(&format!("        font {} {{ {} }}\n", f.id, props.join(", ")));
+            if f.bold {
+                props.push("bold: true".to_owned());
+            }
+            if f.italic {
+                props.push("italic: true".to_owned());
+            }
+            if f.underline {
+                props.push("underline: true".to_owned());
+            }
+            if f.strikeout {
+                props.push("strikeout: true".to_owned());
+            }
+            if f.rotation != 0 {
+                props.push(format!("rotation: {}", f.rotation));
+            }
+            out.push_str(&format!(
+                "        font {} {{ {} }}\n",
+                f.id,
+                props.join(", ")
+            ));
         }
         out.push_str("    }\n\n");
     }
@@ -281,12 +387,24 @@ pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatEr
         out.push_str(&format!("    custom_width: {}\n", sheet.custom_width));
         out.push_str(&format!("    custom_height: {}\n", sheet.custom_height));
     }
-    if !sheet.snap_grid_on { out.push_str("    snap_grid_on: false\n"); }
-    if !sheet.visible_grid_on { out.push_str("    visible_grid_on: false\n"); }
-    if !sheet.hot_spot_grid_on { out.push_str("    hot_spot_grid_on: false\n"); }
-    if sheet.show_hidden_pins { out.push_str("    show_hidden_pins: true\n"); }
-    if !sheet.border_on { out.push_str("    border_on: false\n"); }
-    if !sheet.title_block_on { out.push_str("    title_block_on: false\n"); }
+    if !sheet.snap_grid_on {
+        out.push_str("    snap_grid_on: false\n");
+    }
+    if !sheet.visible_grid_on {
+        out.push_str("    visible_grid_on: false\n");
+    }
+    if !sheet.hot_spot_grid_on {
+        out.push_str("    hot_spot_grid_on: false\n");
+    }
+    if sheet.show_hidden_pins {
+        out.push_str("    show_hidden_pins: true\n");
+    }
+    if !sheet.border_on {
+        out.push_str("    border_on: false\n");
+    }
+    if !sheet.title_block_on {
+        out.push_str("    title_block_on: false\n");
+    }
 
     out.push_str("}\n");
 
@@ -305,11 +423,9 @@ pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatEr
 ///
 /// This is informational only (no roundtrip compiler/reconciler).
 pub fn dump_pcbdoc(doc: &PcbDoc) -> Result<String, crate::eval::SpecError> {
-    let board = doc.board()
-        .map_err(|e| crate::eval::SpecError::no_span(
-            crate::eval::SpecErrorCode::AltiumFormat,
-            e.to_string(),
-        ))?;
+    let board = doc.board().map_err(|e| {
+        crate::eval::SpecError::no_span(crate::eval::SpecErrorCode::AltiumFormat, e.to_string())
+    })?;
     let mut out = String::new();
     dump_pcbdoc_board(&mut out, &board);
     Ok(out)
@@ -317,11 +433,26 @@ pub fn dump_pcbdoc(doc: &PcbDoc) -> Result<String, crate::eval::SpecError> {
 
 fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     // Board settings
-    out.push_str(&format!("board {} {{\n", quote_entity_name(&board.settings.document_name)));
-    out.push_str(&format!("    signal_layer_count: {}\n", board.settings.signal_layer_count));
-    out.push_str(&format!("    snap_grid_size: {}\n", board.settings.snap_grid_size));
-    out.push_str(&format!("    visible_grid_size: {}\n", board.settings.visible_grid_size));
-    out.push_str(&format!("    display_unit: \"{}\"\n", unit_to_spec_string(board.settings.display_unit)));
+    out.push_str(&format!(
+        "board {} {{\n",
+        quote_entity_name(&board.settings.document_name)
+    ));
+    out.push_str(&format!(
+        "    signal_layer_count: {}\n",
+        board.settings.signal_layer_count
+    ));
+    out.push_str(&format!(
+        "    snap_grid_size: {}\n",
+        board.settings.snap_grid_size
+    ));
+    out.push_str(&format!(
+        "    visible_grid_size: {}\n",
+        board.settings.visible_grid_size
+    ));
+    out.push_str(&format!(
+        "    display_unit: \"{}\"\n",
+        unit_to_spec_string(board.settings.display_unit)
+    ));
     out.push_str("}\n\n");
 
     // Layer stack
@@ -336,18 +467,26 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         out.push_str(&format!(
             "net {} {{ color: #{:02X}{:02X}{:02X}, visible: {} }}\n",
             quote_entity_name(&net.name),
-            net.color.r(), net.color.g(), net.color.b(),
+            net.color.r(),
+            net.color.g(),
+            net.color.b(),
             net.visible
         ));
     }
-    if !board.nets.is_empty() { out.push('\n'); }
+    if !board.nets.is_empty() {
+        out.push('\n');
+    }
 
     // Components
     for comp in &board.components {
         let sid = if comp.source_unique_id.is_empty() {
             None
         } else {
-            Some(comp.source_unique_id.strip_prefix('\\').unwrap_or(&comp.source_unique_id))
+            Some(
+                comp.source_unique_id
+                    .strip_prefix('\\')
+                    .unwrap_or(&comp.source_unique_id),
+            )
         };
         emit_annotation_line(out, "", sid);
         out.push_str(&format!(
@@ -359,19 +498,25 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
             comp.rotation
         ));
     }
-    if !board.components.is_empty() { out.push('\n'); }
+    if !board.components.is_empty() {
+        out.push('\n');
+    }
 
     // Primitives
-    let has_primitives = !board.tracks.is_empty() || !board.arcs.is_empty()
-        || !board.vias.is_empty() || !board.pads.is_empty()
-        || !board.fills.is_empty() || !board.texts.is_empty()
-        || !board.regions.is_empty() || !board.component_bodies.is_empty();
+    let has_primitives = !board.tracks.is_empty()
+        || !board.arcs.is_empty()
+        || !board.vias.is_empty()
+        || !board.pads.is_empty()
+        || !board.fills.is_empty()
+        || !board.texts.is_empty()
+        || !board.regions.is_empty()
+        || !board.component_bodies.is_empty();
 
     for track in &board.tracks {
-        let mut props = vec![
-            format!("layer: {}", track.layer),
-        ];
-        if let Some(net) = &track.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        let mut props = vec![format!("layer: {}", track.layer)];
+        if let Some(net) = &track.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
         props.push(format!("from: {}", track.start));
         props.push(format!("to: {}", track.end));
         props.push(format!("width: {}", track.width));
@@ -379,10 +524,10 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     }
 
     for arc in &board.arcs {
-        let mut props = vec![
-            format!("layer: {}", arc.layer),
-        ];
-        if let Some(net) = &arc.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        let mut props = vec![format!("layer: {}", arc.layer)];
+        if let Some(net) = &arc.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
         props.push(format!("center: {}", arc.center));
         props.push(format!("radius: {}", arc.radius));
         props.push(format!("start_angle: {}", arc.start_angle));
@@ -393,7 +538,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
 
     for via in &board.vias {
         let mut props = Vec::new();
-        if let Some(net) = &via.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        if let Some(net) = &via.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
         props.push(format!("at: {}", via.location));
         props.push(format!("diameter: {}", via.diameter));
         props.push(format!("hole_size: {}", via.hole_size));
@@ -404,11 +551,18 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
 
     for pad in &board.pads {
         let mut props = Vec::new();
-        if let Some(net) = &pad.net { props.push(format!("net: {}", quote_entity_name(net))); }
-        if let Some(comp) = &pad.component { props.push(format!("component: {}", quote_entity_name(comp))); }
+        if let Some(net) = &pad.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
+        if let Some(comp) = &pad.component {
+            props.push(format!("component: {}", quote_entity_name(comp)));
+        }
         props.push(format!("at: {}", pad.location));
         props.push(format!("layer: {}", pad.layer));
-        props.push(format!("shape: \"{}\"", pad_shape_to_spec_string(pad.shape)));
+        props.push(format!(
+            "shape: \"{}\"",
+            pad_shape_to_spec_string(pad.shape)
+        ));
         props.push(format!("x_size: {}", pad.x_size));
         props.push(format!("y_size: {}", pad.y_size));
         props.push(format!("pad_mode: \"{:?}\"", pad.pad_mode));
@@ -416,20 +570,36 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         if pad.pad_mode != PadStackMode::Simple {
             props.push(format!(
                 "stack_top: \"{}\" {}x{}, stack_mid: \"{}\" {}x{}, stack_bot: \"{}\" {}x{}",
-                pad_shape_to_spec_string(pad.stack.top.shape), pad.stack.top.x_size, pad.stack.top.y_size,
-                pad_shape_to_spec_string(pad.stack.mid.shape), pad.stack.mid.x_size, pad.stack.mid.y_size,
-                pad_shape_to_spec_string(pad.stack.bot.shape), pad.stack.bot.x_size, pad.stack.bot.y_size,
+                pad_shape_to_spec_string(pad.stack.top.shape),
+                pad.stack.top.x_size,
+                pad.stack.top.y_size,
+                pad_shape_to_spec_string(pad.stack.mid.shape),
+                pad.stack.mid.x_size,
+                pad.stack.mid.y_size,
+                pad_shape_to_spec_string(pad.stack.bot.shape),
+                pad.stack.bot.x_size,
+                pad.stack.bot.y_size,
             ));
         }
         if pad.stack.hole_shape != PadShape::Round {
-            props.push(format!("hole_shape: \"{}\", slot_size: {}", pad_shape_to_spec_string(pad.stack.hole_shape), pad.stack.slot_size));
+            props.push(format!(
+                "hole_shape: \"{}\", slot_size: {}",
+                pad_shape_to_spec_string(pad.stack.hole_shape),
+                pad.stack.slot_size
+            ));
         }
-        out.push_str(&format!("pad {} {{ {} }}\n", quote_entity_name(&pad.pad_name), props.join(", ")));
+        out.push_str(&format!(
+            "pad {} {{ {} }}\n",
+            quote_entity_name(&pad.pad_name),
+            props.join(", ")
+        ));
     }
 
     for fill in &board.fills {
         let mut props = vec![format!("layer: {}", fill.layer)];
-        if let Some(net) = &fill.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        if let Some(net) = &fill.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
         props.push(format!("corner1: {}", fill.corner1));
         props.push(format!("corner2: {}", fill.corner2));
         props.push(format!("rotation: {}", fill.rotation));
@@ -446,31 +616,53 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
 
     for region in &board.regions {
         let mut props = vec![format!("layer: {}", region.layer)];
-        if let Some(net) = &region.net { props.push(format!("net: {}", quote_entity_name(net))); }
-        props.push(format!("kind: \"{}\"", region_kind_to_spec_string(region.kind)));
+        if let Some(net) = &region.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
+        props.push(format!(
+            "kind: \"{}\"",
+            region_kind_to_spec_string(region.kind)
+        ));
         out.push_str(&format!("region {{ {} }}\n", props.join(", ")));
     }
 
     for body in &board.component_bodies {
         let mut props = vec![format!("layer: {}", body.layer)];
-        if let Some(comp) = &body.component { props.push(format!("component: {}", quote_entity_name(comp))); }
-        if !body.model_name.is_empty() { props.push(format!("model: {}", quote_string(&body.model_name))); }
+        if let Some(comp) = &body.component {
+            props.push(format!("component: {}", quote_entity_name(comp)));
+        }
+        if !body.model_name.is_empty() {
+            props.push(format!("model: {}", quote_string(&body.model_name)));
+        }
         out.push_str(&format!("component_body {{ {} }}\n", props.join(", ")));
     }
 
-    if has_primitives { out.push('\n'); }
+    if has_primitives {
+        out.push('\n');
+    }
 
     // Polygons
     for poly in &board.polygons {
         let mut props = Vec::new();
-        if let Some(net) = &poly.net { props.push(format!("net: {}", quote_entity_name(net))); }
+        if let Some(net) = &poly.net {
+            props.push(format!("net: {}", quote_entity_name(net)));
+        }
         props.push(format!("layer: {}", poly.layer));
-        props.push(format!("connect_style: \"{}\"", plane_connection_to_spec_string(poly.connect_style)));
+        props.push(format!(
+            "connect_style: \"{}\"",
+            plane_connection_to_spec_string(poly.connect_style)
+        ));
         props.push(format!("pour_order: {}", poly.pour_order));
         emit_annotation_line(out, "", None);
-        out.push_str(&format!("polygon {} {{ {} }}\n", quote_entity_name(&poly.name), props.join(", ")));
+        out.push_str(&format!(
+            "polygon {} {{ {} }}\n",
+            quote_entity_name(&poly.name),
+            props.join(", ")
+        ));
     }
-    if !board.polygons.is_empty() { out.push('\n'); }
+    if !board.polygons.is_empty() {
+        out.push('\n');
+    }
 
     // Design rules
     for rule in &board.rules {
@@ -487,7 +679,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
             props.join(", "),
         ));
     }
-    if !board.rules.is_empty() { out.push('\n'); }
+    if !board.rules.is_empty() {
+        out.push('\n');
+    }
 
     // Net/component classes
     for class in &board.classes {
@@ -497,7 +691,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
             class_member_kind_to_spec_string(class.kind)
         ));
     }
-    if !board.classes.is_empty() { out.push('\n'); }
+    if !board.classes.is_empty() {
+        out.push('\n');
+    }
 
     // Dimensions
     for dim in &board.dimensions {
@@ -507,7 +703,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
             dim.layer
         ));
     }
-    if !board.dimensions.is_empty() { out.push('\n'); }
+    if !board.dimensions.is_empty() {
+        out.push('\n');
+    }
 
     // Differential pairs
     for dp in &board.differential_pairs {
@@ -607,12 +805,18 @@ fn dump_board_geometry(out: &mut String, geom: &BoardGeometry) {
         out.push_str("    }\n");
     }
     for (i, cutout) in geom.cutouts.iter().enumerate() {
-        out.push_str(&format!("    cutout #{} {{ {} segments }}\n", i, cutout.segments.len()));
+        out.push_str(&format!(
+            "    cutout #{} {{ {} segments }}\n",
+            i,
+            cutout.segments.len()
+        ));
     }
     for (i, keepout) in geom.keepouts.iter().enumerate() {
         out.push_str(&format!(
             "    keepout #{} {{ layer: {}, {} segments }}\n",
-            i, keepout.layer, keepout.outline.segments.len()
+            i,
+            keepout.layer,
+            keepout.outline.segments.len()
         ));
     }
     out.push_str("}\n\n");
@@ -625,7 +829,11 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::Clearance { gap, .. } => {
             props.push(format!("gap: {gap}"));
         }
-        RuleParams::Width { min, max, preferred } => {
+        RuleParams::Width {
+            min,
+            max,
+            preferred,
+        } => {
             props.push(format!("min: {min}, max: {max}, preferred: {preferred}"));
         }
         RuleParams::Length { min, max } => {
@@ -643,7 +851,9 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::ShortCircuit { allowed } => {
             props.push(format!("allowed: {allowed}"));
         }
-        RuleParams::BrokenNets { check_bad_connections } => {
+        RuleParams::BrokenNets {
+            check_bad_connections,
+        } => {
             props.push(format!("check_bad_connections: {check_bad_connections}"));
         }
         RuleParams::ViasUnderSmd { allowed } => {
@@ -664,10 +874,18 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::MaxMinHoleSize { min, max } => {
             props.push(format!("min: {min}, max: {max}"));
         }
-        RuleParams::SolderMaskExpansion { expansion, is_tenting_top, is_tenting_bottom } => {
+        RuleParams::SolderMaskExpansion {
+            expansion,
+            is_tenting_top,
+            is_tenting_bottom,
+        } => {
             props.push(format!("expansion: {expansion}"));
-            if *is_tenting_top { props.push("tenting_top: true".into()); }
-            if *is_tenting_bottom { props.push("tenting_bottom: true".into()); }
+            if *is_tenting_top {
+                props.push("tenting_top: true".into());
+            }
+            if *is_tenting_bottom {
+                props.push("tenting_bottom: true".into());
+            }
         }
         RuleParams::PasteMaskExpansion { expansion, percent } => {
             props.push(format!("expansion: {expansion}, percent: {percent:.1}"));
@@ -675,13 +893,34 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::PowerPlaneClearance { clearance } => {
             props.push(format!("clearance: {clearance}"));
         }
-        RuleParams::PowerPlaneConnectStyle { connect_style, relief_conductor_width, relief_entries, relief_air_gap } => {
-            props.push(format!("connect_style: \"{}\", relief_width: {}, relief_entries: {}, relief_air_gap: {}",
-                plane_connection_to_spec_string(*connect_style), relief_conductor_width, relief_entries, relief_air_gap));
+        RuleParams::PowerPlaneConnectStyle {
+            connect_style,
+            relief_conductor_width,
+            relief_entries,
+            relief_air_gap,
+        } => {
+            props.push(format!(
+                "connect_style: \"{}\", relief_width: {}, relief_entries: {}, relief_air_gap: {}",
+                plane_connection_to_spec_string(*connect_style),
+                relief_conductor_width,
+                relief_entries,
+                relief_air_gap
+            ));
         }
-        RuleParams::PolygonConnectStyle { connect_style, relief_conductor_width, relief_entries, air_gap_width, .. } => {
-            props.push(format!("connect_style: \"{}\", relief_width: {}, relief_entries: {}, air_gap: {}",
-                plane_connection_to_spec_string(*connect_style), relief_conductor_width, relief_entries, air_gap_width));
+        RuleParams::PolygonConnectStyle {
+            connect_style,
+            relief_conductor_width,
+            relief_entries,
+            air_gap_width,
+            ..
+        } => {
+            props.push(format!(
+                "connect_style: \"{}\", relief_width: {}, relief_entries: {}, air_gap: {}",
+                plane_connection_to_spec_string(*connect_style),
+                relief_conductor_width,
+                relief_entries,
+                air_gap_width
+            ));
         }
         RuleParams::RoutingTopology { topology } => {
             props.push(format!("topology: \"{topology:?}\""));
@@ -692,17 +931,36 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::RoutingCornerStyle { corner_style, .. } => {
             props.push(format!("corner_style: \"{corner_style:?}\""));
         }
-        RuleParams::RoutingViaStyle { min_width, max_width, preferred_width, min_hole_width, max_hole_width, preferred_hole_width, .. } => {
+        RuleParams::RoutingViaStyle {
+            min_width,
+            max_width,
+            preferred_width,
+            min_hole_width,
+            max_hole_width,
+            preferred_hole_width,
+            ..
+        } => {
             props.push(format!("width: {min_width}..{max_width} (pref {preferred_width}), hole: {min_hole_width}..{max_hole_width} (pref {preferred_hole_width})"));
         }
         RuleParams::ComponentClearance { gap, .. } => {
             props.push(format!("gap: {gap}"));
         }
-        RuleParams::DiffPairsRouting { min_gap, max_gap, preferred_gap, max_uncoupled_length } => {
+        RuleParams::DiffPairsRouting {
+            min_gap,
+            max_gap,
+            preferred_gap,
+            max_uncoupled_length,
+        } => {
             props.push(format!("gap: {min_gap}..{max_gap} (pref {preferred_gap}), max_uncoupled: {max_uncoupled_length}"));
         }
-        RuleParams::MaxMinHeight { min_height, max_height, .. } => {
-            props.push(format!("min_height: {min_height}, max_height: {max_height}"));
+        RuleParams::MaxMinHeight {
+            min_height,
+            max_height,
+            ..
+        } => {
+            props.push(format!(
+                "min_height: {min_height}, max_height: {max_height}"
+            ));
         }
         RuleParams::MinimumSolderMaskSliver { min_width } => {
             props.push(format!("min_width: {min_width}"));
@@ -719,8 +977,14 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::SmdNeckDown { percent } => {
             props.push(format!("percent: {percent:.1}"));
         }
-        RuleParams::SmdEntry { side, corner, any_angle } => {
-            props.push(format!("side: {side}, corner: {corner}, any_angle: {any_angle}"));
+        RuleParams::SmdEntry {
+            side,
+            corner,
+            any_angle,
+        } => {
+            props.push(format!(
+                "side: {side}, corner: {corner}, any_angle: {any_angle}"
+            ));
         }
         RuleParams::UnpouredPolygon { allow_unpoured } => {
             props.push(format!("allow_unpoured: {allow_unpoured}"));
@@ -829,16 +1093,27 @@ fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {
         SheetObject::Component(comp) => dump_schdoc_component(out, comp, indent),
         SheetObject::Wire(w) => {
             let verts: Vec<String> = w.vertices.iter().map(|v| format!("{}", v)).collect();
-            out.push_str(&format!("{}wire {{ vertices: [{}] }}\n", pad, verts.join(", ")));
+            out.push_str(&format!(
+                "{}wire {{ vertices: [{}] }}\n",
+                pad,
+                verts.join(", ")
+            ));
         }
         SheetObject::Bus(b) => {
             let verts: Vec<String> = b.vertices.iter().map(|v| format!("{}", v)).collect();
-            out.push_str(&format!("{}bus {{ vertices: [{}] }}\n", pad, verts.join(", ")));
+            out.push_str(&format!(
+                "{}bus {{ vertices: [{}] }}\n",
+                pad,
+                verts.join(", ")
+            ));
         }
         SheetObject::NetLabel(n) => {
             out.push_str(&format!(
                 "{}net_label {} {{ at: {}, orientation: {} }}\n",
-                pad, quote_entity_name(&n.text), n.location, n.orientation
+                pad,
+                quote_entity_name(&n.text),
+                n.location,
+                n.orientation
             ));
         }
         SheetObject::PowerObject(p) => {
@@ -846,16 +1121,22 @@ fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {
                 format!("at: {}", p.location),
                 format!("orientation: {}", p.orientation),
             ];
-            if p.show_net_name { props.push("show_net_name: true".to_owned()); }
+            if p.show_net_name {
+                props.push("show_net_name: true".to_owned());
+            }
             out.push_str(&format!(
                 "{}power_object {} {{ {} }}\n",
-                pad, quote_entity_name(&p.text), props.join(", ")
+                pad,
+                quote_entity_name(&p.text),
+                props.join(", ")
             ));
         }
         SheetObject::Port(p) => {
             out.push_str(&format!(
                 "{}port {} {{ at: {} }}\n",
-                pad, quote_entity_name(&p.name), p.location
+                pad,
+                quote_entity_name(&p.name),
+                p.location
             ));
         }
         SheetObject::Junction(j) => {
@@ -872,7 +1153,11 @@ fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {
         }
         SheetObject::SheetSymbol(ss) => dump_schdoc_sheet_symbol(out, ss, indent),
         SheetObject::ParameterSet(ps) => {
-            out.push_str(&format!("{}parameter_set {} {{\n", pad, quote_entity_name(&ps.name)));
+            out.push_str(&format!(
+                "{}parameter_set {} {{\n",
+                pad,
+                quote_entity_name(&ps.name)
+            ));
             for param in &ps.parameters {
                 dump_parameter(out, param, indent + 4);
             }
@@ -881,13 +1166,17 @@ fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {
         SheetObject::Note(n) => {
             out.push_str(&format!(
                 "{}note {{ at: {}, text: {} }}\n",
-                pad, n.location, quote_string(&n.text)
+                pad,
+                n.location,
+                quote_string(&n.text)
             ));
         }
         SheetObject::Probe(p) => {
             out.push_str(&format!(
                 "{}probe {} {{ at: {} }}\n",
-                pad, quote_entity_name(&p.name), p.location
+                pad,
+                quote_entity_name(&p.name),
+                p.location
             ));
         }
         SheetObject::CompileMask(c) => {
@@ -900,32 +1189,54 @@ fn dump_sheet_object(out: &mut String, obj: &SheetObject, indent: usize) {
             let verts: Vec<String> = b.vertices.iter().map(|v| format!("{}", v)).collect();
             out.push_str(&format!(
                 "{}blanket {{ at: {}, corner: {}, vertices: [{}] }}\n",
-                pad, b.location, b.corner, verts.join(", ")
+                pad,
+                b.location,
+                b.corner,
+                verts.join(", ")
             ));
         }
         SheetObject::Graphic(g) => dump_graphic(out, g, indent),
         SheetObject::Parameter(p) => dump_parameter(out, p, indent),
         SheetObject::HarnessConnector(hc) => {
-            out.push_str(&format!("{}harness_connector {{ at: {} }}\n", pad, hc.location));
+            out.push_str(&format!(
+                "{}harness_connector {{ at: {} }}\n",
+                pad, hc.location
+            ));
         }
         SheetObject::SignalHarness(sh) => {
             let verts: Vec<String> = sh.vertices.iter().map(|v| format!("{}", v)).collect();
-            out.push_str(&format!("{}signal_harness {{ vertices: [{}] }}\n", pad, verts.join(", ")));
+            out.push_str(&format!(
+                "{}signal_harness {{ vertices: [{}] }}\n",
+                pad,
+                verts.join(", ")
+            ));
         }
     }
 }
 
-fn dump_schdoc_component(out: &mut String, comp: &altium_format::api::SchDocComponent, indent: usize) {
+fn dump_schdoc_component(
+    out: &mut String,
+    comp: &altium_format::api::SchDocComponent,
+    indent: usize,
+) {
     let pad = " ".repeat(indent);
     let name = if !comp.designator.is_empty() {
         quote_entity_name(&comp.designator)
     } else {
         quote_entity_name(&comp.lib_reference)
     };
-    let sid = if comp.unique_id.is_empty() { None } else { Some(comp.unique_id.as_str()) };
+    let sid = if comp.unique_id.is_empty() {
+        None
+    } else {
+        Some(comp.unique_id.as_str())
+    };
     emit_annotation_line(out, &pad, sid);
     out.push_str(&format!("{}component {} {{\n", pad, name));
-    out.push_str(&format!("{}    lib_reference: {}\n", pad, quote_string(&comp.lib_reference)));
+    out.push_str(&format!(
+        "{}    lib_reference: {}\n",
+        pad,
+        quote_string(&comp.lib_reference)
+    ));
     out.push_str(&format!("{}    at: {}\n", pad, comp.location));
     if comp.orientation != altium_format_types::RotationBy90::Rotate0 {
         out.push_str(&format!("{}    orientation: {}\n", pad, comp.orientation));
@@ -953,8 +1264,16 @@ fn dump_schdoc_component(out: &mut String, comp: &altium_format::api::SchDocComp
 
 fn dump_schdoc_sheet_symbol(out: &mut String, ss: &altium_format::api::SheetSymbol, indent: usize) {
     let pad = " ".repeat(indent);
-    out.push_str(&format!("{}sheet_symbol {} {{\n", pad, quote_string(&ss.sheet_name)));
-    out.push_str(&format!("{}    file_name: {}\n", pad, quote_string(&ss.file_name)));
+    out.push_str(&format!(
+        "{}sheet_symbol {} {{\n",
+        pad,
+        quote_string(&ss.sheet_name)
+    ));
+    out.push_str(&format!(
+        "{}    file_name: {}\n",
+        pad,
+        quote_string(&ss.file_name)
+    ));
     out.push_str(&format!("{}    at: {}\n", pad, ss.location));
     out.push_str(&format!("{}    x_size: {}\n", pad, ss.x_size));
     out.push_str(&format!("{}    y_size: {}\n", pad, ss.y_size));
@@ -964,7 +1283,10 @@ fn dump_schdoc_sheet_symbol(out: &mut String, ss: &altium_format::api::SheetSymb
             SheetSymbolChild::Entry(e) => {
                 out.push_str(&format!(
                     "{}    entry {} {{ side: {:?}, io_type: {:?} }}\n",
-                    pad, quote_entity_name(&e.name), e.side, e.io_type
+                    pad,
+                    quote_entity_name(&e.name),
+                    e.side,
+                    e.io_type
                 ));
             }
             SheetSymbolChild::Parameter(p) => dump_parameter(out, p, indent + 4),
@@ -1000,7 +1322,10 @@ fn channel_room_naming_to_spec(v: ChannelRoomNamingStyle) -> Result<&'static str
         ChannelRoomNamingStyle::FullyQualified => Ok("fully_qualified"),
         ChannelRoomNamingStyle::FullyQualifiedShort => Ok("fully_qualified_short"),
         ChannelRoomNamingStyle::MixedNamePath => Ok("mixed_name_path"),
-        _ => Err(spec_err(format!("unknown ChannelRoomNamingStyle variant: {:?}", v))),
+        _ => Err(spec_err(format!(
+            "unknown ChannelRoomNamingStyle variant: {:?}",
+            v
+        ))),
     }
 }
 
@@ -1009,7 +1334,10 @@ fn cross_ref_sheet_to_spec(v: CrossRefSheetStyle) -> Result<&'static str, SpecEr
         CrossRefSheetStyle::None => Ok("none"),
         CrossRefSheetStyle::Name => Ok("name"),
         CrossRefSheetStyle::Number => Ok("number"),
-        _ => Err(spec_err(format!("unknown CrossRefSheetStyle variant: {:?}", v))),
+        _ => Err(spec_err(format!(
+            "unknown CrossRefSheetStyle variant: {:?}",
+            v
+        ))),
     }
 }
 
@@ -1018,7 +1346,10 @@ fn cross_ref_location_to_spec(v: CrossRefLocationStyle) -> Result<&'static str, 
         CrossRefLocationStyle::None => Ok("none"),
         CrossRefLocationStyle::Zone => Ok("zone"),
         CrossRefLocationStyle::XY => Ok("xy"),
-        _ => Err(spec_err(format!("unknown CrossRefLocationStyle variant: {:?}", v))),
+        _ => Err(spec_err(format!(
+            "unknown CrossRefLocationStyle variant: {:?}",
+            v
+        ))),
     }
 }
 
@@ -1061,11 +1392,16 @@ fn connection_code_to_spec(idx: usize) -> Result<&'static str, SpecError> {
         14 => Ok("port_input"),
         15 => Ok("port_output"),
         16 => Ok("unconnected"),
-        _ => Err(spec_err(format!("unknown ERC connection code index: {}", idx))),
+        _ => Err(spec_err(format!(
+            "unknown ERC connection code index: {}",
+            idx
+        ))),
     }
 }
 
-fn variation_kind_to_spec(v: altium_format_types::project::VariationKind) -> Result<&'static str, SpecError> {
+fn variation_kind_to_spec(
+    v: altium_format_types::project::VariationKind,
+) -> Result<&'static str, SpecError> {
     match v {
         altium_format_types::project::VariationKind::None => Ok("none"),
         altium_format_types::project::VariationKind::NotFitted => Ok("not_fitted"),
@@ -1078,10 +1414,16 @@ fn variation_kind_to_spec(v: altium_format_types::project::VariationKind) -> Res
 
 fn dump_footprint(out: &mut String, fp: &Footprint) {
     emit_annotation_line(out, "", None);
-    out.push_str(&format!("footprint {} {{\n", quote_entity_name(&fp.display_name)));
+    out.push_str(&format!(
+        "footprint {} {{\n",
+        quote_entity_name(&fp.display_name)
+    ));
 
     if !fp.description.is_empty() {
-        out.push_str(&format!("    description: {}\n", quote_string(&fp.description)));
+        out.push_str(&format!(
+            "    description: {}\n",
+            quote_string(&fp.description)
+        ));
     }
 
     for pad in &fp.pads {
@@ -1108,7 +1450,10 @@ fn dump_pcb_pad(out: &mut String, pad: &PcbLibPad, indent: usize) {
 
     // Default is Rectangular; only emit shape when it differs.
     if pad.shape != PadShape::Rectangular {
-        parts.push(format!("shape: {}", format!("{:?}", pad.shape).to_lowercase()));
+        parts.push(format!(
+            "shape: {}",
+            format!("{:?}", pad.shape).to_lowercase()
+        ));
     }
     if pad.x_size != Coord::ZERO {
         parts.push(format!("x_size: {}", coord_to_spec(pad.x_size)));
@@ -1133,7 +1478,10 @@ fn dump_pcb_pad(out: &mut String, pad: &PcbLibPad, indent: usize) {
 
     // Emit pad stack info for non-Simple modes
     if pad.pad_mode != PadStackMode::Simple {
-        parts.push(format!("pad_mode: {}", format!("{:?}", pad.pad_mode).to_lowercase()));
+        parts.push(format!(
+            "pad_mode: {}",
+            format!("{:?}", pad.pad_mode).to_lowercase()
+        ));
         dump_pad_stack_inline(&pad.stack, &mut parts);
     }
 
@@ -1169,7 +1517,10 @@ fn dump_pad_stack_inline(stack: &PadStack, parts: &mut Vec<String>) {
         ));
     }
     if stack.hole_shape != PadShape::Round {
-        parts.push(format!("hole_shape: {}", format!("{:?}", stack.hole_shape).to_lowercase()));
+        parts.push(format!(
+            "hole_shape: {}",
+            format!("{:?}", stack.hole_shape).to_lowercase()
+        ));
     }
     if stack.slot_size != Coord::ZERO {
         parts.push(format!("slot_size: {}", coord_to_spec(stack.slot_size)));
@@ -1261,15 +1612,15 @@ fn dump_pcb_graphic(out: &mut String, g: &PcbGraphic, indent: usize) {
                 let verts = dump_contour_segments(&r.outline);
                 out.push_str(&format!(
                     "{}region {{ layer: {}, outline: [{}] }}\n",
-                    p, quote_entity_name(layer), verts
+                    p,
+                    quote_entity_name(layer),
+                    verts
                 ));
             }
         }
         PcbGraphic::ComponentBody(b) => {
             let layer = b.layer.display_name().unwrap_or("Unknown");
-            let mut props = vec![
-                format!("layer: {}", quote_entity_name(layer)),
-            ];
+            let mut props = vec![format!("layer: {}", quote_entity_name(layer))];
             if b.overall_height != Coord::ZERO {
                 props.push(format!("height: {}", coord_to_spec(b.overall_height)));
             }
@@ -1286,22 +1637,37 @@ fn dump_pcb_graphic(out: &mut String, g: &PcbGraphic, indent: usize) {
 
 /// Format contour segments for spec output, preserving arc geometry.
 fn dump_contour_segments(contour: &PcbContour) -> String {
-    let segs: Vec<String> = contour.segments.iter().map(|seg| {
-        match seg {
+    let segs: Vec<String> = contour
+        .segments
+        .iter()
+        .map(|seg| match seg {
             ContourSegment::Line { endpoint } => {
-                format!("({}, {})", coord_to_spec(endpoint.x), coord_to_spec(endpoint.y))
-            }
-            ContourSegment::Arc { endpoint, center, radius, start_angle, end_angle } => {
                 format!(
-                    "arc({}, {}, center: ({}, {}), radius: {}, {}-{})",
-                    coord_to_spec(endpoint.x), coord_to_spec(endpoint.y),
-                    coord_to_spec(center.x), coord_to_spec(center.y),
-                    coord_to_spec(*radius),
-                    format_float(*start_angle), format_float(*end_angle),
+                    "({}, {})",
+                    coord_to_spec(endpoint.x),
+                    coord_to_spec(endpoint.y)
                 )
             }
-        }
-    }).collect();
+            ContourSegment::Arc {
+                endpoint,
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => {
+                format!(
+                    "arc({}, {}, center: ({}, {}), radius: {}, {}-{})",
+                    coord_to_spec(endpoint.x),
+                    coord_to_spec(endpoint.y),
+                    coord_to_spec(center.x),
+                    coord_to_spec(center.y),
+                    coord_to_spec(*radius),
+                    format_float(*start_angle),
+                    format_float(*end_angle),
+                )
+            }
+        })
+        .collect();
     segs.join(", ")
 }
 
@@ -1309,7 +1675,10 @@ fn dump_contour_segments(contour: &PcbContour) -> String {
 
 fn dump_component(out: &mut String, comp: &Component) {
     emit_annotation_line(out, "", None);
-    out.push_str(&format!("component {} {{\n", quote_entity_name(&comp.lib_reference)));
+    out.push_str(&format!(
+        "component {} {{\n",
+        quote_entity_name(&comp.lib_reference)
+    ));
 
     if let Some(desc) = &comp.description {
         if !desc.is_empty() {
@@ -1343,9 +1712,11 @@ fn dump_component(out: &mut String, comp: &Component) {
             if !is_valid_ident(sg) {
                 continue;
             }
-            let count = comp.pins.iter().filter(|p| {
-                p.swap_id_pin == *sg || p.swap_id_part == *sg || p.swap_id_pair == *sg
-            }).count();
+            let count = comp
+                .pins
+                .iter()
+                .filter(|p| p.swap_id_pin == *sg || p.swap_id_part == *sg || p.swap_id_pair == *sg)
+                .count();
             if count >= 2 {
                 out.push_str(&format!("    swap_group {} {{}}\n", quote_entity_name(sg)));
                 declared.insert(sg.clone());
@@ -1356,13 +1727,16 @@ fn dump_component(out: &mut String, comp: &Component) {
 
     // Group pins and graphics by owner_part_id > 0 into part blocks
     let part_ids: Vec<i32> = {
-        let mut ids: Vec<i32> = comp.pins.iter()
+        let mut ids: Vec<i32> = comp
+            .pins
+            .iter()
             .filter(|p| p.owner_part_id > 0)
             .map(|p| p.owner_part_id)
             .chain(
-                comp.graphics.iter()
+                comp.graphics
+                    .iter()
                     .filter(|g| g.owner_part_id() > 0)
-                    .map(|g| g.owner_part_id())
+                    .map(|g| g.owner_part_id()),
             )
             .collect();
         ids.sort_unstable();
@@ -1398,12 +1772,18 @@ fn dump_component(out: &mut String, comp: &Component) {
         for part_id in &part_ids {
             // Check if all pins in this part share the same swap_id_part.
             // If so, emit it as a part-level property instead of per-pin.
-            let part_pins: Vec<&Pin> = comp.pins.iter()
+            let part_pins: Vec<&Pin> = comp
+                .pins
+                .iter()
                 .filter(|p| p.owner_part_id == *part_id)
                 .collect();
             let uniform_part_swap: Option<&str> = {
                 let first = part_pins.first().and_then(|p| {
-                    if p.swap_id_part.is_empty() { None } else { Some(p.swap_id_part.as_str()) }
+                    if p.swap_id_part.is_empty() {
+                        None
+                    } else {
+                        Some(p.swap_id_part.as_str())
+                    }
                 });
                 if let Some(val) = first {
                     if part_pins.iter().all(|p| p.swap_id_part == val) {
@@ -1418,7 +1798,10 @@ fn dump_component(out: &mut String, comp: &Component) {
 
             out.push_str(&format!("    part {} {{\n", part_id));
             if let Some(sg) = uniform_part_swap {
-                out.push_str(&format!("        swap_group: {}\n", swap_group_ref(sg, &declared_swap_groups)));
+                out.push_str(&format!(
+                    "        swap_group: {}\n",
+                    swap_group_ref(sg, &declared_swap_groups)
+                ));
             }
             for graphic in &comp.graphics {
                 if graphic.owner_part_id() == *part_id {
@@ -1429,7 +1812,10 @@ fn dump_component(out: &mut String, comp: &Component) {
                 if pin.owner_part_id == *part_id {
                     // If part_swap_group was emitted at part level, suppress it on pins
                     dump_pin_with_part_swap_override(
-                        out, pin, 8, &declared_swap_groups,
+                        out,
+                        pin,
+                        8,
+                        &declared_swap_groups,
                         uniform_part_swap.is_some(),
                     );
                 }
@@ -1486,16 +1872,28 @@ fn dump_pin_with_part_swap_override(
         parts.push("is_hidden: true".to_owned());
     }
     if !pin.hidden_net_name.is_empty() {
-        parts.push(format!("hidden_net_name: {}", quote_string(&pin.hidden_net_name)));
+        parts.push(format!(
+            "hidden_net_name: {}",
+            quote_string(&pin.hidden_net_name)
+        ));
     }
     if !pin.swap_id_pin.is_empty() {
-        parts.push(format!("swap_group: {}", swap_group_ref(&pin.swap_id_pin, declared_groups)));
+        parts.push(format!(
+            "swap_group: {}",
+            swap_group_ref(&pin.swap_id_pin, declared_groups)
+        ));
     }
     if !suppress_part_swap && !pin.swap_id_part.is_empty() {
-        parts.push(format!("part_swap_group: {}", swap_group_ref(&pin.swap_id_part, declared_groups)));
+        parts.push(format!(
+            "part_swap_group: {}",
+            swap_group_ref(&pin.swap_id_part, declared_groups)
+        ));
     }
     if !pin.swap_id_pair.is_empty() {
-        parts.push(format!("pair_swap_group: {}", swap_group_ref(&pin.swap_id_pair, declared_groups)));
+        parts.push(format!(
+            "pair_swap_group: {}",
+            swap_group_ref(&pin.swap_id_pair, declared_groups)
+        ));
     }
     out.push_str(&format!(
         "{}pin {} {{ {} }}\n",
@@ -1524,11 +1922,7 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             if r.is_solid {
                 props.push("is_solid: true".to_owned());
             }
-            out.push_str(&format!(
-                "{}rectangle {{ {} }}\n",
-                pad,
-                props.join(", ")
-            ));
+            out.push_str(&format!("{}rectangle {{ {} }}\n", pad, props.join(", ")));
         }
         Graphic::RoundRectangle(r) => {
             let mut props = vec![
@@ -1567,7 +1961,11 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             if let Some(ea) = a.end_angle {
                 props.push(format!("end_angle: {}", ea));
             }
-            out.push_str(&format!("{}elliptical_arc {{ {} }}\n", pad, props.join(", ")));
+            out.push_str(&format!(
+                "{}elliptical_arc {{ {} }}\n",
+                pad,
+                props.join(", ")
+            ));
         }
         Graphic::Ellipse(e) => {
             let mut props = vec![
@@ -1592,9 +1990,7 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             out.push_str(&format!("{}pie {{ {} }}\n", pad, props.join(", ")));
         }
         Graphic::Polyline(pl) => {
-            let verts: Vec<String> = pl.vertices.iter()
-                .map(|v| format!("{}", v))
-                .collect();
+            let verts: Vec<String> = pl.vertices.iter().map(|v| format!("{}", v)).collect();
             out.push_str(&format!(
                 "{}polyline {{ vertices: [{}] }}\n",
                 pad,
@@ -1602,9 +1998,7 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             ));
         }
         Graphic::Polygon(pg) => {
-            let verts: Vec<String> = pg.vertices.iter()
-                .map(|v| format!("{}", v))
-                .collect();
+            let verts: Vec<String> = pg.vertices.iter().map(|v| format!("{}", v)).collect();
             let mut props = vec![format!("vertices: [{}]", verts.join(", "))];
             if pg.is_solid {
                 props.push("is_solid: true".to_owned());
@@ -1612,9 +2006,7 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             out.push_str(&format!("{}polygon {{ {} }}\n", pad, props.join(", ")));
         }
         Graphic::Bezier(b) => {
-            let verts: Vec<String> = b.vertices.iter()
-                .map(|v| format!("{}", v))
-                .collect();
+            let verts: Vec<String> = b.vertices.iter().map(|v| format!("{}", v)).collect();
             out.push_str(&format!(
                 "{}bezier {{ vertices: [{}] }}\n",
                 pad,
@@ -1624,19 +2016,27 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
         Graphic::Label(l) => {
             out.push_str(&format!(
                 "{}label {{ at: {}, text: {} }}\n",
-                pad, l.location, quote_string(&l.text)
+                pad,
+                l.location,
+                quote_string(&l.text)
             ));
         }
         Graphic::TextFrame(tf) => {
             out.push_str(&format!(
                 "{}text_frame {{ location: {}, corner: {}, text: {} }}\n",
-                pad, tf.location, tf.corner, quote_string(&tf.text)
+                pad,
+                tf.location,
+                tf.corner,
+                quote_string(&tf.text)
             ));
         }
         Graphic::Image(img) => {
             out.push_str(&format!(
                 "{}image {{ location: {}, corner: {}, file: {} }}\n",
-                pad, img.location, img.corner, quote_string(&img.file_name)
+                pad,
+                img.location,
+                img.corner,
+                quote_string(&img.file_name)
             ));
         }
     }
@@ -1646,8 +2046,16 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
 
 fn dump_parameter(out: &mut String, param: &Parameter, indent: usize) {
     let pad = " ".repeat(indent);
-    out.push_str(&format!("{}parameter {} {{\n", pad, quote_entity_name(&param.name)));
-    out.push_str(&format!("{}    value: {}\n", pad, quote_string(&param.text)));
+    out.push_str(&format!(
+        "{}parameter {} {{\n",
+        pad,
+        quote_entity_name(&param.name)
+    ));
+    out.push_str(&format!(
+        "{}    value: {}\n",
+        pad,
+        quote_string(&param.text)
+    ));
     if param.is_hidden {
         out.push_str(&format!("{}    is_hidden: true\n", pad));
     }
@@ -1766,7 +2174,11 @@ fn designator_key(s: &str) -> (String, Option<u64>, String) {
     // Find where the trailing digit run starts.
     let split = s.len() - s.trim_end_matches(|c: char| c.is_ascii_digit()).len();
     let (prefix, suffix) = s.split_at(split);
-    (prefix.to_lowercase(), suffix.parse::<u64>().ok(), suffix.to_string())
+    (
+        prefix.to_lowercase(),
+        suffix.parse::<u64>().ok(),
+        suffix.to_string(),
+    )
 }
 
 /// Format a `CoordPoint` as an `(x, y)` tuple for use in `at:` properties.
@@ -1827,7 +2239,10 @@ fn dump_placement_block_from_parts(
     out.push_str("placement {\n");
 
     if let Some(gap) = clearance_gap {
-        out.push_str(&format!("    clearance {{ all: {} }}\n\n", coord_to_spec(gap)));
+        out.push_str(&format!(
+            "    clearance {{ all: {} }}\n\n",
+            coord_to_spec(gap)
+        ));
     }
 
     for comp in &comps {
@@ -2022,7 +2437,11 @@ mod tests {
 
         // The generated spec should parse without errors.
         let result = crate::parser::parse_spec(&out);
-        assert!(result.is_ok(), "Placement spec failed to parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Placement spec failed to parse: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -2030,14 +2449,20 @@ mod tests {
         let components = vec![make_test_component("R1", 0, 0, 270.0)];
         let mut out = String::new();
         dump_placement_block_from_parts(&mut out, &components, None);
-        assert!(out.contains("rotation: 270"), "270° rotation not serialized correctly");
+        assert!(
+            out.contains("rotation: 270"),
+            "270° rotation not serialized correctly"
+        );
     }
 
     #[test]
     fn test_dump_placement_block_empty() {
         let mut out = String::new();
         dump_placement_block_from_parts(&mut out, &[], None);
-        assert!(out.is_empty(), "empty component list should produce no placement block");
+        assert!(
+            out.is_empty(),
+            "empty component list should produce no placement block"
+        );
     }
 
     #[test]
@@ -2081,7 +2506,8 @@ mod tests {
         let id = &out[id_start..id_end];
         assert_eq!(id.len(), 8, "annotation ID must be 8 chars, got {:?}", id);
         assert!(
-            id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            id.chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
             "annotation ID must be [A-Z0-9], got {:?}",
             id
         );
@@ -2106,11 +2532,17 @@ mod tests {
         let mut out = String::new();
         emit_annotation_line(&mut out, "", None);
         out.push_str("component R {}\n");
-        assert!(out.contains("#[annotation(id = \""), "annotation must be present");
+        assert!(
+            out.contains("#[annotation(id = \""),
+            "annotation must be present"
+        );
         // The annotation must appear on the line before the component keyword.
         let ann_pos = out.find("#[annotation").unwrap();
         let comp_pos = out.find("component").unwrap();
-        assert!(ann_pos < comp_pos, "annotation must precede component keyword");
+        assert!(
+            ann_pos < comp_pos,
+            "annotation must precede component keyword"
+        );
     }
 
     #[test]
@@ -2158,9 +2590,10 @@ component C {
         // Parse original
         let ast1 = crate::parser::parse_spec(spec).expect("parse original");
         // Format (re-emit)
-        let formatted = crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
-            .expect("format")
-            .output;
+        let formatted =
+            crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
+                .expect("format")
+                .output;
         // Parse formatted
         let ast2 = crate::parser::parse_spec(&formatted).expect("parse formatted");
 
@@ -2181,7 +2614,10 @@ component C {
 
         let ids1 = extract_annotation_ids(&ast1);
         let ids2 = extract_annotation_ids(&ast2);
-        assert_eq!(ids1, ids2, "annotation IDs must be preserved across format round-trip");
+        assert_eq!(
+            ids1, ids2,
+            "annotation IDs must be preserved across format round-trip"
+        );
         assert_eq!(ids1, vec!["AB12CD34", "EF56GH78"]);
     }
 
@@ -2218,21 +2654,36 @@ component C {
         let mut ids = std::collections::HashSet::new();
         for item in &ast.items {
             if let crate::ast::SpecItem::Component(decl) = &item.node {
-                let ann = decl.annotation.as_ref().expect("every component must have an annotation");
-                let id = ann.node.id.as_ref().expect("annotation must have an id").node.clone();
+                let ann = decl
+                    .annotation
+                    .as_ref()
+                    .expect("every component must have an annotation");
+                let id = ann
+                    .node
+                    .id
+                    .as_ref()
+                    .expect("annotation must have an id")
+                    .node
+                    .clone();
                 ids.insert(id);
             }
         }
-        assert_eq!(ids.len(), 3, "3 components must have 3 unique annotation IDs, got: {:?}", ids);
+        assert_eq!(
+            ids.len(),
+            3,
+            "3 components must have 3 unique annotation IDs, got: {:?}",
+            ids
+        );
     }
 
     #[test]
     fn test_empty_document_emits_no_annotations() {
         // An empty spec (no items) produces no output from the formatter.
         let spec = "";
-        let formatted = crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
-            .expect("format empty")
-            .output;
+        let formatted =
+            crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
+                .expect("format empty")
+                .output;
         assert!(
             !formatted.contains("#[annotation"),
             "empty document must produce no annotations"
@@ -2243,9 +2694,10 @@ component C {
     fn test_formatter_preserves_annotation_before_component() {
         // The formatter must emit the annotation line immediately before the block.
         let spec = "#[annotation(id = \"AB12CD34\")]\ncomponent R {}\n";
-        let formatted = crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
-            .expect("format")
-            .output;
+        let formatted =
+            crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
+                .expect("format")
+                .output;
 
         // annotation must be present
         assert!(
@@ -2265,10 +2717,12 @@ component C {
     #[test]
     fn test_formatter_annotation_all_fields() {
         // stable = true and group should be emitted when present.
-        let spec = "#[annotation(id = \"AB12CD34\", stable = true, group = \"power\")]\ncomponent R {}\n";
-        let formatted = crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
-            .expect("format")
-            .output;
+        let spec =
+            "#[annotation(id = \"AB12CD34\", stable = true, group = \"power\")]\ncomponent R {}\n";
+        let formatted =
+            crate::formatter::format_spec(spec, &crate::formatter::FormatConfig::default())
+                .expect("format")
+                .output;
         assert!(
             formatted.contains("stable = true"),
             "stable = true missing from formatted output:\n{}",

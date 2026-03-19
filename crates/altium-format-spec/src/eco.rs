@@ -297,12 +297,7 @@ fn render_header(out: &mut String, eco: &EngineeringChangeOrder) {
     writeln!(out, "║  ENGINEERING CHANGE ORDER{:>44}║", "").unwrap();
     writeln!(out, "║  Library: {:<60}║", eco.library_path.display()).unwrap();
     writeln!(out, "║  Spec:    {:<60}║", eco.spec_path.display()).unwrap();
-    writeln!(
-        out,
-        "║  Date:    {:<60}║",
-        format_timestamp(eco.timestamp)
-    )
-    .unwrap();
+    writeln!(out, "║  Date:    {:<60}║", format_timestamp(eco.timestamp)).unwrap();
     writeln!(out, "╚{border}╝").unwrap();
 }
 
@@ -364,12 +359,7 @@ fn render_change(out: &mut String, change: &EntityChange, indent: &str, _is_top:
             props,
             children,
         } => {
-            writeln!(
-                out,
-                "{indent}+ ADD {} \"{identity}\"",
-                kind_label(*kind)
-            )
-            .unwrap();
+            writeln!(out, "{indent}+ ADD {} \"{identity}\"", kind_label(*kind)).unwrap();
             let prop_indent = format!("{indent}│ ");
             for prop in props {
                 writeln!(out, "{prop_indent}{}: \"{}\"", prop.field, prop.value).unwrap();
@@ -382,12 +372,7 @@ fn render_change(out: &mut String, change: &EntityChange, indent: &str, _is_top:
             prop_changes,
             children,
         } => {
-            writeln!(
-                out,
-                "{indent}~ UPDATE {} \"{identity}\"",
-                kind_label(*kind)
-            )
-            .unwrap();
+            writeln!(out, "{indent}~ UPDATE {} \"{identity}\"", kind_label(*kind)).unwrap();
             let prop_indent = format!("{indent}│ ");
             for pc in prop_changes {
                 writeln!(
@@ -428,7 +413,11 @@ fn render_children(out: &mut String, children: &[EntityChange], parent_indent: &
     let child_indent = format!("{parent_indent}    ");
 
     for (i, child) in shown.iter().enumerate() {
-        let connector = if i + 1 < total { "├──" } else { "└──" };
+        let connector = if i + 1 < total {
+            "├──"
+        } else {
+            "└──"
+        };
         let prefix = format!("{parent_indent}{connector} ");
         write!(out, "{prefix}").unwrap();
         render_child_inline(out, child, &child_indent);
@@ -470,12 +459,7 @@ fn render_child_inline(out: &mut String, change: &EntityChange, _indent: &str) {
         } => {
             write!(out, "~ {} \"{identity}\"", kind_label(*kind)).unwrap();
             for pc in prop_changes {
-                write!(
-                    out,
-                    " {}: {:?}→{:?}",
-                    pc.field, pc.old_value, pc.new_value
-                )
-                .unwrap();
+                write!(out, " {}: {:?}→{:?}", pc.field, pc.old_value, pc.new_value).unwrap();
             }
             writeln!(out).unwrap();
         }
@@ -642,9 +626,10 @@ mod tests {
             children: vec![],
         }];
         let eco = make_eco(changes);
-        let json = eco.render_json().expect("JSON serialization should succeed");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&json).expect("Valid JSON");
+        let json = eco
+            .render_json()
+            .expect("JSON serialization should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("Valid JSON");
         assert_eq!(parsed["changes"][0]["change"], "add");
         assert_eq!(parsed["changes"][0]["identity"], "C1");
         assert_eq!(parsed["changes"][0]["kind"], "component");

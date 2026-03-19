@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
-use crate::diagnostic::Span;
 use crate::ast::{SpecFile, SpecItem};
+use crate::diagnostic::Span;
 use crate::eval::{SpecError, SpecErrorCode};
 use crate::parser::parse_spec;
 
@@ -32,10 +32,7 @@ pub struct ResolvedSpec {
 /// Parses all referenced files, detects cycles, validates cross-domain rules,
 /// checks alias uniqueness and bare-import collisions, then builds a
 /// [`ResolvedSpec`].
-pub fn resolve_imports(
-    root_path: &Path,
-    root_ast: SpecFile,
-) -> Result<ResolvedSpec, SpecError> {
+pub fn resolve_imports(root_path: &Path, root_ast: SpecFile) -> Result<ResolvedSpec, SpecError> {
     let root_path = root_path
         .canonicalize()
         .map_err(|e| SpecError::no_span(SpecErrorCode::FileNotFound, format!("{e}")))?;
@@ -303,10 +300,7 @@ fn dfs(
 /// `foo.schlib-spec` it returns `"spec"`.  We therefore match on the
 /// full file name suffix.
 fn file_domain(path: &Path) -> FileDomain {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.ends_with(".schlib-spec") {
         FileDomain::SchLib
     } else if name.ends_with(".pcblib-spec") {
@@ -329,11 +323,7 @@ enum FileDomain {
     Unknown,
 }
 
-fn validate_cross_domain(
-    _from_path: &Path,
-    _to_path: &Path,
-    _span: Span,
-) -> Result<(), SpecError> {
+fn validate_cross_domain(_from_path: &Path, _to_path: &Path, _span: Span) -> Result<(), SpecError> {
     // All cross-domain imports are allowed. The spec language permits any
     // spec file to import any other spec file type (e.g. SchLib importing
     // PcbLib for typed footprint references).
@@ -345,15 +335,18 @@ fn validate_cross_domain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{Span, Spanned};
     use crate::ast::{ImportDecl, SpecFile, SpecItem};
+    use crate::diagnostic::{Span, Spanned};
 
     fn zero_span() -> Span {
         Span { start: 0, end: 1 }
     }
 
     fn spanned<T>(node: T) -> Spanned<T> {
-        Spanned { node, span: zero_span() }
+        Spanned {
+            node,
+            span: zero_span(),
+        }
     }
 
     fn import_decl(path: &str, alias: Option<&str>) -> ImportDecl {
@@ -449,7 +442,11 @@ mod tests {
 
         let err = resolve_imports(&a_path, a_ast).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::CircularImport);
-        assert!(err.message.contains("circular import"), "got: {}", err.message);
+        assert!(
+            err.message.contains("circular import"),
+            "got: {}",
+            err.message
+        );
     }
 
     // ── Test: duplicate alias ─────────────────────────────────────────────────

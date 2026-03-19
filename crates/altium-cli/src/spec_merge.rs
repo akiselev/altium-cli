@@ -9,9 +9,7 @@
 
 use std::collections::HashMap;
 
-use altium_format_spec::ast::{
-    BlockAnnotation, EntityName, SpecItem,
-};
+use altium_format_spec::ast::{BlockAnnotation, EntityName, SpecItem};
 use altium_format_spec::diagnostic::Spanned;
 use altium_format_spec::extract_top_level_trivia;
 use altium_format_spec::parser::parse_spec;
@@ -41,7 +39,11 @@ pub fn merge_spec(old_text: &str, new_text: &str) -> Option<String> {
         .map(|(i, item)| {
             let identity = extract_identity(&item.node);
             let trivia = old_trivia.get(i).cloned().unwrap_or_default();
-            OldBlock { identity, trivia, index: i }
+            OldBlock {
+                identity,
+                trivia,
+                index: i,
+            }
         })
         .collect();
 
@@ -51,11 +53,13 @@ pub fn merge_spec(old_text: &str, new_text: &str) -> Option<String> {
 
     for (i, block) in old_blocks.iter().enumerate() {
         if let Some(ref sid) = block.identity.source_id {
-            source_id_map.entry((block.identity.item_type, sid.as_str()))
+            source_id_map
+                .entry((block.identity.item_type, sid.as_str()))
                 .or_insert(i);
         }
         if let Some(ref key) = block.identity.natural_key {
-            natural_key_map.entry((block.identity.item_type, key.as_str()))
+            natural_key_map
+                .entry((block.identity.item_type, key.as_str()))
                 .or_insert(i);
         }
     }
@@ -72,7 +76,13 @@ pub fn merge_spec(old_text: &str, new_text: &str) -> Option<String> {
     let mut old_consumed: Vec<bool> = vec![false; old_blocks.len()];
 
     for new_id in &new_identities {
-        let matched = find_match(new_id, &source_id_map, &natural_key_map, &old_blocks, &old_consumed);
+        let matched = find_match(
+            new_id,
+            &source_id_map,
+            &natural_key_map,
+            &old_blocks,
+            &old_consumed,
+        );
         if let Some(old_idx) = matched {
             old_consumed[old_idx] = true;
         }
@@ -115,7 +125,11 @@ pub fn merge_spec(old_text: &str, new_text: &str) -> Option<String> {
     let eof_text = if !old_ast.items.is_empty() {
         let last_end = old_ast.items.last().unwrap().span.end as usize;
         let tail = &old_text[last_end..];
-        if tail.trim().is_empty() { None } else { Some(tail) }
+        if tail.trim().is_empty() {
+            None
+        } else {
+            Some(tail)
+        }
     } else {
         None
     };
@@ -229,7 +243,9 @@ struct OutputItem<'a> {
     old_annotation_id: Option<&'a str>,
 }
 
-fn extract_annotation_fields(ann: &Option<Spanned<BlockAnnotation>>) -> (Option<String>, Option<String>) {
+fn extract_annotation_fields(
+    ann: &Option<Spanned<BlockAnnotation>>,
+) -> (Option<String>, Option<String>) {
     match ann {
         Some(spanned) => {
             let id = spanned.node.id.as_ref().map(|s| s.node.clone());
@@ -403,7 +419,9 @@ fn find_match(
 
     // Singleton types (Sheet, Placement) — match by type alone.
     // These have no natural key, so we find the first unconsumed old item of the same type.
-    if new_id.natural_key.is_none() && matches!(new_id.item_type, ItemType::Sheet | ItemType::Placement) {
+    if new_id.natural_key.is_none()
+        && matches!(new_id.item_type, ItemType::Sheet | ItemType::Placement)
+    {
         for (i, block) in old_blocks.iter().enumerate() {
             if block.identity.item_type == new_id.item_type && !old_consumed[i] {
                 return Some(i);
@@ -475,7 +493,10 @@ mod tests {
     #[test]
     fn test_no_old_file_returns_none_on_parse_error() {
         // Garbage old text should return None (fall back to overwrite).
-        let result = merge_spec("this is not valid spec syntax {{{", "component \"X\" {\n}\n");
+        let result = merge_spec(
+            "this is not valid spec syntax {{{",
+            "component \"X\" {\n}\n",
+        );
         assert!(result.is_none());
     }
 
@@ -504,11 +525,20 @@ component \"CAP100\" {
 ";
         let result = merge_spec(old_text, new_text).unwrap();
         // Comment should be preserved.
-        assert!(result.contains("// This is a capacitor bank"), "comment lost: {result}");
+        assert!(
+            result.contains("// This is a capacitor bank"),
+            "comment lost: {result}"
+        );
         // Old annotation ID should be preserved.
-        assert!(result.contains("OLDID001"), "old annotation ID lost: {result}");
+        assert!(
+            result.contains("OLDID001"),
+            "old annotation ID lost: {result}"
+        );
         // New content should be used.
-        assert!(result.contains("100nF capacitor updated"), "new content missing: {result}");
+        assert!(
+            result.contains("100nF capacitor updated"),
+            "new content missing: {result}"
+        );
     }
 
     #[test]
@@ -526,8 +556,14 @@ component \"R1\" {
 }
 ";
         let result = merge_spec(old_text, new_text).unwrap();
-        assert!(result.contains("AAAAAAAA"), "old ID not preserved: {result}");
-        assert!(!result.contains("ZZZZZZZZ"), "new random ID leaked: {result}");
+        assert!(
+            result.contains("AAAAAAAA"),
+            "old ID not preserved: {result}"
+        );
+        assert!(
+            !result.contains("ZZZZZZZZ"),
+            "new random ID leaked: {result}"
+        );
     }
 
     #[test]
@@ -553,8 +589,14 @@ component \"C1\" {
         // R1 should keep old ID.
         assert!(result.contains("AAAAAAAA"), "old ID lost: {result}");
         // C1 should appear with its fresh ID.
-        assert!(result.contains("component \"C1\""), "new block missing: {result}");
-        assert!(result.contains("CCCCCCCC"), "new block ID missing: {result}");
+        assert!(
+            result.contains("component \"C1\""),
+            "new block missing: {result}"
+        );
+        assert!(
+            result.contains("CCCCCCCC"),
+            "new block ID missing: {result}"
+        );
     }
 
     #[test]
@@ -580,11 +622,17 @@ component \"C1\" {
 ";
         let result = merge_spec(old_text, new_text).unwrap();
         // R1 should be gone.
-        assert!(!result.contains("component \"R1\""), "deleted block survived: {result}");
+        assert!(
+            !result.contains("component \"R1\""),
+            "deleted block survived: {result}"
+        );
         // C1 should exist with old ID.
         assert!(result.contains("BBBBBBBB"), "old ID for C1 lost: {result}");
         // Comment on C1 preserved.
-        assert!(result.contains("// comment on C1"), "comment on C1 lost: {result}");
+        assert!(
+            result.contains("// comment on C1"),
+            "comment on C1 lost: {result}"
+        );
     }
 
     #[test]
@@ -656,7 +704,10 @@ component \"X\" {
 }
 ";
         let result = merge_spec(old_text, new_text).unwrap();
-        assert!(result.contains("// power section"), "trailing comment lost: {result}");
+        assert!(
+            result.contains("// power section"),
+            "trailing comment lost: {result}"
+        );
     }
 
     #[test]
@@ -676,8 +727,14 @@ component \"X\" {
 }
 ";
         let result = merge_spec(old_text, new_text).unwrap();
-        assert!(result.contains("// Auto-generated spec file"), "header comment lost: {result}");
-        assert!(result.contains("// Do not edit the annotations"), "second header comment lost: {result}");
+        assert!(
+            result.contains("// Auto-generated spec file"),
+            "header comment lost: {result}"
+        );
+        assert!(
+            result.contains("// Do not edit the annotations"),
+            "second header comment lost: {result}"
+        );
     }
 
     #[test]
@@ -696,10 +753,19 @@ component \"NewName\" {
 ";
         let result = merge_spec(old_text, new_text).unwrap();
         // Should match by source_id despite name change.
-        assert!(result.contains("OLDID001"), "old annotation ID lost on source_id match: {result}");
-        assert!(result.contains("// important comment"), "comment lost: {result}");
+        assert!(
+            result.contains("OLDID001"),
+            "old annotation ID lost on source_id match: {result}"
+        );
+        assert!(
+            result.contains("// important comment"),
+            "comment lost: {result}"
+        );
         // Content should be from new dump (has NewName).
-        assert!(result.contains("component \"NewName\""), "new content missing: {result}");
+        assert!(
+            result.contains("component \"NewName\""),
+            "new content missing: {result}"
+        );
     }
 
     #[test]
@@ -720,6 +786,9 @@ track { layer: TopLayer, from: (0mm, 0mm), to: (2mm, 2mm), width: 0.5mm }
 ";
         let result = merge_spec(old_text, new_text).unwrap();
         // New track content should be used.
-        assert!(result.contains("to: (2mm, 2mm)"), "new primitive content missing: {result}");
+        assert!(
+            result.contains("to: (2mm, 2mm)"),
+            "new primitive content missing: {result}"
+        );
     }
 }

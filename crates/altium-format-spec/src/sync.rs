@@ -72,7 +72,12 @@ fn build_pin_to_pad_map(lib_comp: &ComponentSpec) -> HashMap<String, String> {
     let pin_des_to_pad: HashMap<String, String> = lib_comp
         .footprints
         .first()
-        .map(|fp| fp.maps.iter().map(|m| (m.pin.clone(), m.pad.clone())).collect())
+        .map(|fp| {
+            fp.maps
+                .iter()
+                .map(|m| (m.pin.clone(), m.pad.clone()))
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut result: HashMap<String, String> = HashMap::new();
@@ -171,15 +176,18 @@ pub fn project_schdoc_spec(
             let mut net_pins: Vec<(String, String)> = Vec::new();
 
             for pin_ref in &net.pins {
-                let comp = snapshot.components.get_mut(&pin_ref.component).ok_or_else(|| {
-                    SpecError::no_span(
-                        SpecErrorCode::InvalidFieldAccess,
-                        format!(
-                            "net '{}' references non-existent component '{}'",
-                            net.name, pin_ref.component
-                        ),
-                    )
-                })?;
+                let comp = snapshot
+                    .components
+                    .get_mut(&pin_ref.component)
+                    .ok_or_else(|| {
+                        SpecError::no_span(
+                            SpecErrorCode::InvalidFieldAccess,
+                            format!(
+                                "net '{}' references non-existent component '{}'",
+                                net.name, pin_ref.component
+                            ),
+                        )
+                    })?;
 
                 let pad_designator = pin_to_pad_maps
                     .get(&pin_ref.component)
@@ -187,13 +195,13 @@ pub fn project_schdoc_spec(
                     .cloned()
                     .unwrap_or_else(|| pin_ref.pin.clone());
 
-                let pin_entry = comp
-                    .pins
-                    .entry(pad_designator.clone())
-                    .or_insert_with(|| SyncPin {
-                        designator: pad_designator.clone(),
-                        net: None,
-                    });
+                let pin_entry =
+                    comp.pins
+                        .entry(pad_designator.clone())
+                        .or_insert_with(|| SyncPin {
+                            designator: pad_designator.clone(),
+                            net: None,
+                        });
                 pin_entry.net = Some(net.name.clone());
 
                 net_pins.push((pin_ref.component.clone(), pad_designator));
@@ -215,15 +223,18 @@ pub fn project_schdoc_spec(
             let mut net_pins: Vec<(String, String)> = Vec::new();
 
             for pin_ref in &power.pins {
-                let comp = snapshot.components.get_mut(&pin_ref.component).ok_or_else(|| {
-                    SpecError::no_span(
-                        SpecErrorCode::InvalidFieldAccess,
-                        format!(
-                            "power net '{}' references non-existent component '{}'",
-                            power.name, pin_ref.component
-                        ),
-                    )
-                })?;
+                let comp = snapshot
+                    .components
+                    .get_mut(&pin_ref.component)
+                    .ok_or_else(|| {
+                        SpecError::no_span(
+                            SpecErrorCode::InvalidFieldAccess,
+                            format!(
+                                "power net '{}' references non-existent component '{}'",
+                                power.name, pin_ref.component
+                            ),
+                        )
+                    })?;
 
                 let pad_designator = pin_to_pad_maps
                     .get(&pin_ref.component)
@@ -231,13 +242,13 @@ pub fn project_schdoc_spec(
                     .cloned()
                     .unwrap_or_else(|| pin_ref.pin.clone());
 
-                let pin_entry = comp
-                    .pins
-                    .entry(pad_designator.clone())
-                    .or_insert_with(|| SyncPin {
-                        designator: pad_designator.clone(),
-                        net: None,
-                    });
+                let pin_entry =
+                    comp.pins
+                        .entry(pad_designator.clone())
+                        .or_insert_with(|| SyncPin {
+                            designator: pad_designator.clone(),
+                            net: None,
+                        });
                 pin_entry.net = Some(power.name.clone());
 
                 net_pins.push((pin_ref.component.clone(), pad_designator));
@@ -280,13 +291,14 @@ pub fn project_schdoc_spec(
 
                 // Update the component's pin entry.
                 if let Some(sync_comp) = snapshot.components.get_mut(&comp.designator) {
-                    let pin_entry = sync_comp
-                        .pins
-                        .entry(pad_designator.clone())
-                        .or_insert_with(|| SyncPin {
-                            designator: pad_designator.clone(),
-                            net: None,
-                        });
+                    let pin_entry =
+                        sync_comp
+                            .pins
+                            .entry(pad_designator.clone())
+                            .or_insert_with(|| SyncPin {
+                                designator: pad_designator.clone(),
+                                net: None,
+                            });
                     pin_entry.net = Some(net_name.clone());
                 }
 
@@ -392,15 +404,42 @@ pub struct FieldChange {
 /// A change produced by `diff_snapshots`, describing what the target must do to match the source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncChange {
-    AddComponent { designator: String, component: SyncComponent },
-    RemoveComponent { designator: String },
-    UpdateComponent { designator: String, field_changes: Vec<FieldChange> },
-    AddNet { name: String, net: SyncNet },
-    RemoveNet { name: String },
-    UpdateNet { name: String, field_changes: Vec<FieldChange> },
-    AddPin { component_designator: String, pin_designator: String, pin: SyncPin },
-    RemovePin { component_designator: String, pin_designator: String },
-    UpdatePin { component_designator: String, pin_designator: String, field_changes: Vec<FieldChange> },
+    AddComponent {
+        designator: String,
+        component: SyncComponent,
+    },
+    RemoveComponent {
+        designator: String,
+    },
+    UpdateComponent {
+        designator: String,
+        field_changes: Vec<FieldChange>,
+    },
+    AddNet {
+        name: String,
+        net: SyncNet,
+    },
+    RemoveNet {
+        name: String,
+    },
+    UpdateNet {
+        name: String,
+        field_changes: Vec<FieldChange>,
+    },
+    AddPin {
+        component_designator: String,
+        pin_designator: String,
+        pin: SyncPin,
+    },
+    RemovePin {
+        component_designator: String,
+        pin_designator: String,
+    },
+    UpdatePin {
+        component_designator: String,
+        pin_designator: String,
+        field_changes: Vec<FieldChange>,
+    },
 }
 
 /// Sync direction for a policy property.
@@ -739,13 +778,12 @@ pub fn apply_sync_changes_to_pcbdoc(
             SyncChange::RemoveNet { name } => {
                 spec.boards[0].nets.retain(|n| &n.name != name);
             }
-            SyncChange::AddPin { .. } | SyncChange::RemovePin { .. } | SyncChange::UpdatePin { .. } => {
+            SyncChange::AddPin { .. }
+            | SyncChange::RemovePin { .. }
+            | SyncChange::UpdatePin { .. } => {
                 return Err(SpecError::no_span(
                     SpecErrorCode::NotSupported,
-                    format!(
-                        "pin-level sync not supported (change: {:?})",
-                        change
-                    ),
+                    format!("pin-level sync not supported (change: {:?})", change),
                 ));
             }
             _ => {}
@@ -755,7 +793,10 @@ pub fn apply_sync_changes_to_pcbdoc(
     // Phase 2: Updates.
     for change in changes {
         match change {
-            SyncChange::UpdateComponent { designator, field_changes } => {
+            SyncChange::UpdateComponent {
+                designator,
+                field_changes,
+            } => {
                 let comp = spec.boards[0]
                     .components
                     .iter_mut()
@@ -798,7 +839,10 @@ pub fn apply_sync_changes_to_pcbdoc(
                     }
                 }
             }
-            SyncChange::UpdateNet { name, field_changes } => {
+            SyncChange::UpdateNet {
+                name,
+                field_changes,
+            } => {
                 let net = spec.boards[0]
                     .nets
                     .iter_mut()
@@ -833,24 +877,29 @@ pub fn apply_sync_changes_to_pcbdoc(
     // Phase 3: Adds.
     for change in changes {
         match change {
-            SyncChange::AddComponent { designator, component } => {
+            SyncChange::AddComponent {
+                designator,
+                component,
+            } => {
                 let annotation = Some(crate::annotation::CompiledAnnotation {
                     id: crate::annotation::generate_short_id(),
                     stable: false,
                     group: None,
                     source_id: Some(crate::annotation::generate_source_id(designator)),
                 });
-                spec.boards[0].components.push(crate::model::PcbDocComponentSpec {
-                    annotation,
-                    designator: designator.clone(),
-                    pattern: component.footprint.clone(),
-                    comment: component.comment.clone(),
-                    location: None,
-                    rotation: None,
-                    layer: None,
-                    source_library: component.source_library.clone(),
-                    parameters: component.parameters.clone(),
-                });
+                spec.boards[0]
+                    .components
+                    .push(crate::model::PcbDocComponentSpec {
+                        annotation,
+                        designator: designator.clone(),
+                        pattern: component.footprint.clone(),
+                        comment: component.comment.clone(),
+                        location: None,
+                        rotation: None,
+                        layer: None,
+                        source_library: component.source_library.clone(),
+                        parameters: component.parameters.clone(),
+                    });
             }
             SyncChange::AddNet { name, .. } => {
                 spec.boards[0].nets.push(crate::model::PcbDocNetSpec {
@@ -886,8 +935,8 @@ pub fn rewrite_pcbdoc_spec_with_changes(
     source: &str,
     changes: &[SyncChange],
 ) -> Result<String, SpecError> {
-    use crate::parser::parse_spec;
     use crate::ast::SpecItem;
+    use crate::parser::parse_spec;
 
     let file = parse_spec(source).map_err(|e| {
         SpecError::no_span(
@@ -914,13 +963,22 @@ pub fn rewrite_pcbdoc_spec_with_changes(
             SyncChange::RemoveNet { name } => {
                 removes_net.insert(name.clone());
             }
-            SyncChange::UpdateComponent { designator, field_changes } => {
+            SyncChange::UpdateComponent {
+                designator,
+                field_changes,
+            } => {
                 updates_comp.insert(designator.clone(), field_changes.as_slice());
             }
-            SyncChange::UpdateNet { name, field_changes } => {
+            SyncChange::UpdateNet {
+                name,
+                field_changes,
+            } => {
                 updates_net.insert(name.clone(), field_changes.as_slice());
             }
-            SyncChange::AddComponent { designator, component } => {
+            SyncChange::AddComponent {
+                designator,
+                component,
+            } => {
                 adds_comp.push((designator.as_str(), component));
             }
             SyncChange::AddNet { name, .. } => {
@@ -941,7 +999,11 @@ pub fn rewrite_pcbdoc_spec_with_changes(
                     collect_remove_replacement(source, item, &mut replacements);
                 } else if let Some(field_changes) = updates_comp.get(&name) {
                     collect_component_update_replacement(
-                        source, item, decl, field_changes, &mut replacements,
+                        source,
+                        item,
+                        decl,
+                        field_changes,
+                        &mut replacements,
                     )?;
                 }
             }
@@ -951,7 +1013,11 @@ pub fn rewrite_pcbdoc_spec_with_changes(
                     collect_remove_replacement(source, item, &mut replacements);
                 } else if let Some(field_changes) = updates_net.get(&name) {
                     collect_net_update_replacement(
-                        source, item, decl, field_changes, &mut replacements,
+                        source,
+                        item,
+                        decl,
+                        field_changes,
+                        &mut replacements,
                     );
                 }
             }
@@ -1158,7 +1224,11 @@ pub fn quote_spec_string(s: &str) -> String {
 /// Quote an entity name (identifier or quoted string) for use in spec declarations.
 pub fn quote_spec_entity_name(name: &str) -> String {
     // Use a quoted string if the name contains spaces or special characters.
-    if name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') && !name.is_empty() {
+    if name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+        && !name.is_empty()
+    {
         name.to_string()
     } else {
         format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
@@ -1169,7 +1239,10 @@ pub fn quote_spec_entity_name(name: &str) -> String {
 fn format_new_component(designator: &str, comp: &SyncComponent) -> String {
     let id = crate::annotation::generate_short_id();
     let source_id = crate::annotation::generate_source_id(designator);
-    let annotation_line = format!("#[annotation(id = \"{}\", source_id = \"{}\")]\n", id, source_id);
+    let annotation_line = format!(
+        "#[annotation(id = \"{}\", source_id = \"{}\")]\n",
+        id, source_id
+    );
 
     let mut props: Vec<String> = Vec::new();
 
@@ -1226,7 +1299,10 @@ pub fn render_eco_report(changes: &[SyncChange]) -> String {
 
     for change in changes {
         match change {
-            SyncChange::AddComponent { designator, component } => {
+            SyncChange::AddComponent {
+                designator,
+                component,
+            } => {
                 component_adds += 1;
                 out.push_str(&format!(
                     "  + component {} (pattern: {})\n",
@@ -1238,7 +1314,10 @@ pub fn render_eco_report(changes: &[SyncChange]) -> String {
                 component_removes += 1;
                 out.push_str(&format!("  - component {}\n", designator));
             }
-            SyncChange::UpdateComponent { designator, field_changes } => {
+            SyncChange::UpdateComponent {
+                designator,
+                field_changes,
+            } => {
                 component_updates += 1;
                 out.push_str(&format!("  ~ component {}\n", designator));
                 for fc in field_changes {
@@ -1258,7 +1337,10 @@ pub fn render_eco_report(changes: &[SyncChange]) -> String {
                 net_removes += 1;
                 out.push_str(&format!("  - net {}\n", name));
             }
-            SyncChange::UpdateNet { name, field_changes } => {
+            SyncChange::UpdateNet {
+                name,
+                field_changes,
+            } => {
                 net_updates += 1;
                 out.push_str(&format!("  ~ net {}\n", name));
                 for fc in field_changes {
@@ -1270,15 +1352,25 @@ pub fn render_eco_report(changes: &[SyncChange]) -> String {
                     ));
                 }
             }
-            SyncChange::AddPin { .. } | SyncChange::RemovePin { .. } | SyncChange::UpdatePin { .. } => {
+            SyncChange::AddPin { .. }
+            | SyncChange::RemovePin { .. }
+            | SyncChange::UpdatePin { .. } => {
                 unreachable!("pin changes should have been filtered by filter_changes")
             }
         }
     }
 
-    let total = component_adds + component_removes + component_updates
-        + net_adds + net_removes + net_updates;
-    let mut header = format!("ECO ({} change{}):\n", total, if total == 1 { "" } else { "s" });
+    let total = component_adds
+        + component_removes
+        + component_updates
+        + net_adds
+        + net_removes
+        + net_updates;
+    let mut header = format!(
+        "ECO ({} change{}):\n",
+        total,
+        if total == 1 { "" } else { "s" }
+    );
     header.push_str(&out);
     header
 }
@@ -1290,11 +1382,11 @@ mod tests {
     use super::*;
     use crate::model::{
         BoardSpec, ComponentSpec, FootprintMapSpec, NetSpec, PcbDocComponentSpec, PcbDocNetSpec,
-        PcbDocSpec, PinConnectionSpec, PinConnectionTarget, PinRef, PowerSpec,
-        SchDocComponentSpec, SchDocSpec, SheetSpec, SymbolRef,
+        PcbDocSpec, PinConnectionSpec, PinConnectionTarget, PinRef, PowerSpec, SchDocComponentSpec,
+        SchDocSpec, SheetSpec, SymbolRef,
     };
-    use altium_format_types::{CoordPoint, RotationBy90};
     use altium_format_types::sch::PowerObjectStyle;
+    use altium_format_types::{CoordPoint, RotationBy90};
 
     fn make_schdoc_component(designator: &str) -> SchDocComponentSpec {
         SchDocComponentSpec {
@@ -1381,12 +1473,20 @@ mod tests {
             annotation: None,
             name: "VCC".to_string(),
             pins: vec![
-                PinRef { component: "R1".to_string(), pin: "1".to_string() },
-                PinRef { component: "C1".to_string(), pin: "1".to_string() },
+                PinRef {
+                    component: "R1".to_string(),
+                    pin: "1".to_string(),
+                },
+                PinRef {
+                    component: "C1".to_string(),
+                    pin: "1".to_string(),
+                },
             ],
         });
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let snapshot = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap();
 
         assert_eq!(snapshot.components.len(), 2);
@@ -1415,12 +1515,17 @@ mod tests {
             annotation: None,
             name: "GND".to_string(),
             style: PowerObjectStyle::Circle,
-            pins: vec![PinRef { component: "U1".to_string(), pin: "GND".to_string() }],
+            pins: vec![PinRef {
+                component: "U1".to_string(),
+                pin: "GND".to_string(),
+            }],
             show_net_name: None,
             orientation: None,
         });
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let snapshot = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap();
 
         let u1 = &snapshot.components["U1"];
@@ -1440,10 +1545,16 @@ mod tests {
         let mut sheet2 = make_empty_sheet();
         sheet2.components.push(make_schdoc_component("R1"));
 
-        let spec = SchDocSpec { sheets: vec![sheet1, sheet2] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet1, sheet2],
+        };
         let err = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
-        assert!(err.message.contains("R1"), "error should mention designator: {}", err.message);
+        assert!(
+            err.message.contains("R1"),
+            "error should mention designator: {}",
+            err.message
+        );
     }
 
     // ── SchDoc: net references non-existent component → error ─────────────────
@@ -1455,23 +1566,38 @@ mod tests {
         sheet.nets.push(NetSpec {
             annotation: None,
             name: "VCC".to_string(),
-            pins: vec![
-                PinRef { component: "MISSING".to_string(), pin: "1".to_string() },
-            ],
+            pins: vec![PinRef {
+                component: "MISSING".to_string(),
+                pin: "1".to_string(),
+            }],
         });
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let err = project_schdoc_spec(&spec, &std::collections::HashMap::new()).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::InvalidFieldAccess);
-        assert!(err.message.contains("VCC"), "error should mention net name: {}", err.message);
-        assert!(err.message.contains("MISSING"), "error should mention component: {}", err.message);
+        assert!(
+            err.message.contains("VCC"),
+            "error should mention net name: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("MISSING"),
+            "error should mention component: {}",
+            err.message
+        );
     }
 
     // ── PcbDoc: empty spec → empty snapshot ──────────────────────────────────
 
     #[test]
     fn test_pcbdoc_empty_spec() {
-        let spec = PcbDocSpec { boards: Vec::new(), placement: None, placement_rules: Vec::new() };
+        let spec = PcbDocSpec {
+            boards: Vec::new(),
+            placement: None,
+            placement_rules: Vec::new(),
+        };
         let snapshot = project_pcbdoc_spec(&spec).unwrap();
         assert!(snapshot.components.is_empty());
         assert!(snapshot.nets.is_empty());
@@ -1504,7 +1630,11 @@ mod tests {
             });
         }
 
-        let spec = PcbDocSpec { boards: vec![board], placement: None, placement_rules: Vec::new() };
+        let spec = PcbDocSpec {
+            boards: vec![board],
+            placement: None,
+            placement_rules: Vec::new(),
+        };
         let snapshot = project_pcbdoc_spec(&spec).unwrap();
 
         assert_eq!(snapshot.components.len(), 3);
@@ -1543,10 +1673,18 @@ mod tests {
             });
         }
 
-        let spec = PcbDocSpec { boards: vec![board], placement: None, placement_rules: Vec::new() };
+        let spec = PcbDocSpec {
+            boards: vec![board],
+            placement: None,
+            placement_rules: Vec::new(),
+        };
         let err = project_pcbdoc_spec(&spec).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
-        assert!(err.message.contains("U1"), "error should mention designator: {}", err.message);
+        assert!(
+            err.message.contains("U1"),
+            "error should mention designator: {}",
+            err.message
+        );
     }
 
     // ── PcbDoc: duplicate net names → error ──────────────────────────────────
@@ -1563,10 +1701,18 @@ mod tests {
             });
         }
 
-        let spec = PcbDocSpec { boards: vec![board], placement: None, placement_rules: Vec::new() };
+        let spec = PcbDocSpec {
+            boards: vec![board],
+            placement: None,
+            placement_rules: Vec::new(),
+        };
         let err = project_pcbdoc_spec(&spec).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
-        assert!(err.message.contains("VCC"), "error should mention net name: {}", err.message);
+        assert!(
+            err.message.contains("VCC"),
+            "error should mention net name: {}",
+            err.message
+        );
     }
 
     // ── Diff helpers ──────────────────────────────────────────────────────────
@@ -1615,11 +1761,18 @@ mod tests {
     #[test]
     fn test_diff_identical_snapshots_empty() {
         let mut snapshot = make_empty_snapshot();
-        snapshot.components.insert("R1".to_string(), make_sync_component("R1"));
-        snapshot.nets.insert("VCC".to_string(), make_sync_net("VCC"));
+        snapshot
+            .components
+            .insert("R1".to_string(), make_sync_component("R1"));
+        snapshot
+            .nets
+            .insert("VCC".to_string(), make_sync_net("VCC"));
 
         let changes = diff_snapshots(&snapshot, &snapshot);
-        assert!(changes.is_empty(), "identical snapshots should produce no changes");
+        assert!(
+            changes.is_empty(),
+            "identical snapshots should produce no changes"
+        );
     }
 
     // ── Diff: source has extra component → AddComponent ──────────────────────
@@ -1627,11 +1780,17 @@ mod tests {
     #[test]
     fn test_diff_source_extra_component_add() {
         let mut source = make_empty_snapshot();
-        source.components.insert("R1".to_string(), make_sync_component("R1"));
-        source.components.insert("C1".to_string(), make_sync_component("C1"));
+        source
+            .components
+            .insert("R1".to_string(), make_sync_component("R1"));
+        source
+            .components
+            .insert("C1".to_string(), make_sync_component("C1"));
 
         let mut target = make_empty_snapshot();
-        target.components.insert("R1".to_string(), make_sync_component("R1"));
+        target
+            .components
+            .insert("R1".to_string(), make_sync_component("R1"));
 
         let changes = diff_snapshots(&source, &target);
         assert_eq!(changes.len(), 1);
@@ -1647,11 +1806,17 @@ mod tests {
     #[test]
     fn test_diff_target_extra_component_remove() {
         let mut source = make_empty_snapshot();
-        source.components.insert("R1".to_string(), make_sync_component("R1"));
+        source
+            .components
+            .insert("R1".to_string(), make_sync_component("R1"));
 
         let mut target = make_empty_snapshot();
-        target.components.insert("R1".to_string(), make_sync_component("R1"));
-        target.components.insert("C1".to_string(), make_sync_component("C1"));
+        target
+            .components
+            .insert("R1".to_string(), make_sync_component("R1"));
+        target
+            .components
+            .insert("C1".to_string(), make_sync_component("C1"));
 
         let changes = diff_snapshots(&source, &target);
         assert_eq!(changes.len(), 1);
@@ -1682,7 +1847,10 @@ mod tests {
         assert_eq!(changes.len(), 1);
 
         match &changes[0] {
-            SyncChange::UpdateComponent { designator, field_changes } => {
+            SyncChange::UpdateComponent {
+                designator,
+                field_changes,
+            } => {
                 assert_eq!(designator, "R1");
                 assert_eq!(field_changes.len(), 1);
                 assert_eq!(field_changes[0].field, "footprint");
@@ -1718,10 +1886,22 @@ mod tests {
     #[test]
     fn test_diff_pin_net_difference_update_pin() {
         let mut src_comp = make_sync_component("R1");
-        src_comp.pins.insert("1".to_string(), SyncPin { designator: "1".to_string(), net: Some("VCC".to_string()) });
+        src_comp.pins.insert(
+            "1".to_string(),
+            SyncPin {
+                designator: "1".to_string(),
+                net: Some("VCC".to_string()),
+            },
+        );
 
         let mut tgt_comp = make_sync_component("R1");
-        tgt_comp.pins.insert("1".to_string(), SyncPin { designator: "1".to_string(), net: Some("GND".to_string()) });
+        tgt_comp.pins.insert(
+            "1".to_string(),
+            SyncPin {
+                designator: "1".to_string(),
+                net: Some("GND".to_string()),
+            },
+        );
 
         let mut source = make_empty_snapshot();
         source.components.insert("R1".to_string(), src_comp);
@@ -1744,11 +1924,13 @@ mod tests {
     #[test]
     fn test_diff_inverse_symmetry() {
         let mut a = make_empty_snapshot();
-        a.components.insert("R1".to_string(), make_sync_component("R1"));
+        a.components
+            .insert("R1".to_string(), make_sync_component("R1"));
         a.nets.insert("VCC".to_string(), make_sync_net("VCC"));
 
         let mut b = make_empty_snapshot();
-        b.components.insert("C1".to_string(), make_sync_component("C1"));
+        b.components
+            .insert("C1".to_string(), make_sync_component("C1"));
         b.nets.insert("GND".to_string(), make_sync_net("GND"));
 
         let changes_ab = diff_snapshots(&a, &b);
@@ -1756,16 +1938,37 @@ mod tests {
 
         // a→b: add R1, remove C1, add VCC, remove GND
         // b→a: add C1, remove R1, add GND, remove VCC
-        assert_eq!(changes_ab.len(), changes_ba.len(),
-            "diff(a,b) and diff(b,a) should have same change count");
+        assert_eq!(
+            changes_ab.len(),
+            changes_ba.len(),
+            "diff(a,b) and diff(b,a) should have same change count"
+        );
 
-        let adds_ab = changes_ab.iter().filter(|c| matches!(c, SyncChange::AddComponent { .. })).count();
-        let removes_ab = changes_ab.iter().filter(|c| matches!(c, SyncChange::RemoveComponent { .. })).count();
-        let adds_ba = changes_ba.iter().filter(|c| matches!(c, SyncChange::AddComponent { .. })).count();
-        let removes_ba = changes_ba.iter().filter(|c| matches!(c, SyncChange::RemoveComponent { .. })).count();
+        let adds_ab = changes_ab
+            .iter()
+            .filter(|c| matches!(c, SyncChange::AddComponent { .. }))
+            .count();
+        let removes_ab = changes_ab
+            .iter()
+            .filter(|c| matches!(c, SyncChange::RemoveComponent { .. }))
+            .count();
+        let adds_ba = changes_ba
+            .iter()
+            .filter(|c| matches!(c, SyncChange::AddComponent { .. }))
+            .count();
+        let removes_ba = changes_ba
+            .iter()
+            .filter(|c| matches!(c, SyncChange::RemoveComponent { .. }))
+            .count();
 
-        assert_eq!(adds_ab, removes_ba, "adds in a→b should equal removes in b→a");
-        assert_eq!(removes_ab, adds_ba, "removes in a→b should equal adds in b→a");
+        assert_eq!(
+            adds_ab, removes_ba,
+            "adds in a→b should equal removes in b→a"
+        );
+        assert_eq!(
+            removes_ab, adds_ba,
+            "removes in a→b should equal adds in b→a"
+        );
     }
 
     // ── Policy filtering: SyncDirection::None suppresses changes ─────────────
@@ -1801,7 +2004,9 @@ mod tests {
         let filtered = filter_changes(&changes, &policy, SyncDirection::Forward).unwrap();
         // UpdateComponent with only footprint change filtered → no UpdateComponent remains
         assert!(
-            filtered.iter().all(|c| !matches!(c, SyncChange::UpdateComponent { .. })),
+            filtered
+                .iter()
+                .all(|c| !matches!(c, SyncChange::UpdateComponent { .. })),
             "footprint UpdateComponent should be filtered out: {:?}",
             filtered
         );
@@ -1814,7 +2019,10 @@ mod tests {
         let changes = vec![SyncChange::AddPin {
             component_designator: "R1".to_string(),
             pin_designator: "1".to_string(),
-            pin: SyncPin { designator: "1".to_string(), net: None },
+            pin: SyncPin {
+                designator: "1".to_string(),
+                net: None,
+            },
         }];
 
         let policy = SyncPolicy {
@@ -1828,7 +2036,10 @@ mod tests {
             component_location: SyncDirection::Forward,
         };
         let result = filter_changes(&changes, &policy, SyncDirection::Forward).unwrap();
-        assert!(result.is_empty(), "AddPin should be silently dropped when pin_net_assignment is None");
+        assert!(
+            result.is_empty(),
+            "AddPin should be silently dropped when pin_net_assignment is None"
+        );
     }
 
     #[test]
@@ -1849,7 +2060,10 @@ mod tests {
             component_location: SyncDirection::Forward,
         };
         let result = filter_changes(&changes, &policy, SyncDirection::Forward).unwrap();
-        assert!(result.is_empty(), "RemovePin should be silently dropped when pin_net_assignment is None");
+        assert!(
+            result.is_empty(),
+            "RemovePin should be silently dropped when pin_net_assignment is None"
+        );
     }
 
     #[test]
@@ -1875,7 +2089,10 @@ mod tests {
             component_location: SyncDirection::Forward,
         };
         let result = filter_changes(&changes, &policy, SyncDirection::Forward).unwrap();
-        assert!(result.is_empty(), "UpdatePin should be silently dropped when pin_net_assignment is None");
+        assert!(
+            result.is_empty(),
+            "UpdatePin should be silently dropped when pin_net_assignment is None"
+        );
     }
 
     // ── Policy filtering: error on pin variants when pin_net_assignment is non-None ──
@@ -1885,12 +2102,18 @@ mod tests {
         let changes = vec![SyncChange::AddPin {
             component_designator: "R1".to_string(),
             pin_designator: "1".to_string(),
-            pin: SyncPin { designator: "1".to_string(), net: None },
+            pin: SyncPin {
+                designator: "1".to_string(),
+                net: None,
+            },
         }];
 
         let policy = all_forward_policy();
         let result = filter_changes(&changes, &policy, SyncDirection::Forward);
-        assert!(result.is_err(), "filter_changes should error on AddPin when pin_net_assignment is Forward");
+        assert!(
+            result.is_err(),
+            "filter_changes should error on AddPin when pin_net_assignment is Forward"
+        );
         let err = result.unwrap_err();
         assert!(
             err.message.contains("pin-level sync is not supported"),
@@ -1908,7 +2131,10 @@ mod tests {
 
         let policy = all_forward_policy();
         let result = filter_changes(&changes, &policy, SyncDirection::Forward);
-        assert!(result.is_err(), "filter_changes should error on RemovePin when pin_net_assignment is Forward");
+        assert!(
+            result.is_err(),
+            "filter_changes should error on RemovePin when pin_net_assignment is Forward"
+        );
     }
 
     #[test]
@@ -1925,7 +2151,10 @@ mod tests {
 
         let policy = all_forward_policy();
         let result = filter_changes(&changes, &policy, SyncDirection::Forward);
-        assert!(result.is_err(), "filter_changes should error on UpdatePin when pin_net_assignment is Forward");
+        assert!(
+            result.is_err(),
+            "filter_changes should error on UpdatePin when pin_net_assignment is Forward"
+        );
     }
 
     // ── apply: empty boards → error ───────────────────────────────────────────
@@ -1933,7 +2162,11 @@ mod tests {
     #[test]
     fn test_apply_empty_boards_error() {
         let changes = vec![];
-        let mut spec = PcbDocSpec { boards: Vec::new(), placement: None, placement_rules: Vec::new() };
+        let mut spec = PcbDocSpec {
+            boards: Vec::new(),
+            placement: None,
+            placement_rules: Vec::new(),
+        };
         let err = apply_sync_changes_to_pcbdoc(&changes, &mut spec).unwrap_err();
         assert!(
             err.message.contains("at least one board block"),
@@ -2013,7 +2246,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
-        parameters: indexmap::IndexMap::new(),
+            parameters: indexmap::IndexMap::new(),
         });
         board.components.push(PcbDocComponentSpec {
             annotation: None,
@@ -2024,7 +2257,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
-        parameters: indexmap::IndexMap::new(),
+            parameters: indexmap::IndexMap::new(),
         });
 
         let mut spec = PcbDocSpec {
@@ -2033,7 +2266,9 @@ mod tests {
             placement_rules: Vec::new(),
         };
 
-        let changes = vec![SyncChange::RemoveComponent { designator: "R1".to_string() }];
+        let changes = vec![SyncChange::RemoveComponent {
+            designator: "R1".to_string(),
+        }];
         apply_sync_changes_to_pcbdoc(&changes, &mut spec).unwrap();
 
         assert_eq!(spec.boards[0].components.len(), 1);
@@ -2060,7 +2295,7 @@ mod tests {
             rotation: Some(90.0),
             layer: None,
             source_library: None,
-        parameters: indexmap::IndexMap::new(),
+            parameters: indexmap::IndexMap::new(),
         });
 
         let mut spec = PcbDocSpec {
@@ -2141,7 +2376,9 @@ mod tests {
             placement_rules: Vec::new(),
         };
 
-        let changes = vec![SyncChange::RemoveNet { name: "VCC".to_string() }];
+        let changes = vec![SyncChange::RemoveNet {
+            name: "VCC".to_string(),
+        }];
         apply_sync_changes_to_pcbdoc(&changes, &mut spec).unwrap();
 
         assert_eq!(spec.boards[0].nets.len(), 1);
@@ -2161,7 +2398,10 @@ mod tests {
         let changes = vec![SyncChange::AddPin {
             component_designator: "R1".to_string(),
             pin_designator: "1".to_string(),
-            pin: SyncPin { designator: "1".to_string(), net: None },
+            pin: SyncPin {
+                designator: "1".to_string(),
+                net: None,
+            },
         }];
 
         let err = apply_sync_changes_to_pcbdoc(&changes, &mut spec).unwrap_err();
@@ -2188,7 +2428,10 @@ mod tests {
         let result = rewrite_pcbdoc_spec_with_changes(source, &changes).unwrap();
 
         // Exactly one annotation line.
-        let annotation_count = result.lines().filter(|l| l.contains("#[annotation")).count();
+        let annotation_count = result
+            .lines()
+            .filter(|l| l.contains("#[annotation"))
+            .count();
         assert_eq!(
             annotation_count, 1,
             "output must have exactly one annotation line, got:\n{result}"
@@ -2218,7 +2461,9 @@ mod tests {
             "#[annotation(id = \"ABCD1234\")] component R1 { comment: \"keep\" }\n",
             "component C1 {}\n",
         );
-        let changes = vec![SyncChange::RemoveComponent { designator: "R1".to_string() }];
+        let changes = vec![SyncChange::RemoveComponent {
+            designator: "R1".to_string(),
+        }];
         let result = rewrite_pcbdoc_spec_with_changes(source, &changes).unwrap();
 
         // R1 and its annotation must be gone.
@@ -2311,17 +2556,22 @@ mod tests {
     fn test_apply_idempotency() {
         // Build a SchDoc snapshot with R1 and VCC.
         let mut schdoc_snapshot = SyncSnapshot::default();
-        schdoc_snapshot.components.insert("R1".to_string(), SyncComponent {
-            designator: "R1".to_string(),
-            comment: Some("100R".to_string()),
-            footprint: None, // SchDoc has no footprint
-            source_library: None,
-            parameters: IndexMap::new(),
-            pins: IndexMap::new(),
-            annotation_id: None,
-            source_unique_id: None,
-        });
-        schdoc_snapshot.nets.insert("VCC".to_string(), make_sync_net("VCC"));
+        schdoc_snapshot.components.insert(
+            "R1".to_string(),
+            SyncComponent {
+                designator: "R1".to_string(),
+                comment: Some("100R".to_string()),
+                footprint: None, // SchDoc has no footprint
+                source_library: None,
+                parameters: IndexMap::new(),
+                pins: IndexMap::new(),
+                annotation_id: None,
+                source_unique_id: None,
+            },
+        );
+        schdoc_snapshot
+            .nets
+            .insert("VCC".to_string(), make_sync_net("VCC"));
 
         // Build a PcbDoc spec with C1 (extra) and no VCC net.
         let mut board = make_empty_board("Main");
@@ -2334,7 +2584,7 @@ mod tests {
             rotation: None,
             layer: None,
             source_library: None,
-        parameters: indexmap::IndexMap::new(),
+            parameters: indexmap::IndexMap::new(),
         });
         let mut spec = PcbDocSpec {
             boards: vec![board],
@@ -2377,36 +2627,52 @@ mod tests {
     fn test_schdoc_footprint_resolution() {
         let mut sheet = make_empty_sheet();
         let mut comp = make_schdoc_component("U1");
-        comp.symbol = SymbolRef::Import { alias: "mcu".to_string(), name: "ESP32_C6".to_string() };
+        comp.symbol = SymbolRef::Import {
+            alias: "mcu".to_string(),
+            name: "ESP32_C6".to_string(),
+        };
         sheet.components.push(comp);
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         let mut imported = std::collections::HashMap::new();
-        imported.insert("ESP32_C6".to_string(), ComponentSpec {
-            annotation: None,
-            lib_reference: "ESP32_C6".to_string(),
-            designator: None,
-            description: None,
-            component_kind: None,
-            part_count: None,
-            show_hidden_pins: None,
-            pins: Vec::new(),
-            parameters: Vec::new(),
-            aliases: Vec::new(),
-            footprints: vec![FootprintMapSpec {
-                model_name: "QFN-48".to_string(),
-                maps: Vec::new(),
-                source: None,
-            }],
-            graphics: Vec::new(),
-            parts: Vec::new(),
-        });
+        imported.insert(
+            "ESP32_C6".to_string(),
+            ComponentSpec {
+                annotation: None,
+                lib_reference: "ESP32_C6".to_string(),
+                designator: None,
+                description: None,
+                component_kind: None,
+                part_count: None,
+                show_hidden_pins: None,
+                pins: Vec::new(),
+                parameters: Vec::new(),
+                aliases: Vec::new(),
+                footprints: vec![FootprintMapSpec {
+                    model_name: "QFN-48".to_string(),
+                    maps: Vec::new(),
+                    source: None,
+                }],
+                graphics: Vec::new(),
+                parts: Vec::new(),
+            },
+        );
 
         let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
         let u1 = &snapshot.components["U1"];
-        assert_eq!(u1.footprint.as_deref(), Some("QFN-48"), "footprint should be resolved from imported SchLib");
-        assert_eq!(u1.source_library.as_deref(), Some("ESP32_C6"), "source_library should be set");
+        assert_eq!(
+            u1.footprint.as_deref(),
+            Some("QFN-48"),
+            "footprint should be resolved from imported SchLib"
+        );
+        assert_eq!(
+            u1.source_library.as_deref(),
+            Some("ESP32_C6"),
+            "source_library should be set"
+        );
     }
 
     // ── Footprint resolution: Literal symbol → footprint populated ─────────────
@@ -2418,28 +2684,33 @@ mod tests {
         comp.symbol = SymbolRef::Literal("RESISTOR".to_string());
         sheet.components.push(comp);
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         let mut imported = std::collections::HashMap::new();
-        imported.insert("RESISTOR".to_string(), ComponentSpec {
-            annotation: None,
-            lib_reference: "RESISTOR".to_string(),
-            designator: None,
-            description: None,
-            component_kind: None,
-            part_count: None,
-            show_hidden_pins: None,
-            pins: Vec::new(),
-            parameters: Vec::new(),
-            aliases: Vec::new(),
-            footprints: vec![FootprintMapSpec {
-                model_name: "0603".to_string(),
-                maps: Vec::new(),
-                source: None,
-            }],
-            graphics: Vec::new(),
-            parts: Vec::new(),
-        });
+        imported.insert(
+            "RESISTOR".to_string(),
+            ComponentSpec {
+                annotation: None,
+                lib_reference: "RESISTOR".to_string(),
+                designator: None,
+                description: None,
+                component_kind: None,
+                part_count: None,
+                show_hidden_pins: None,
+                pins: Vec::new(),
+                parameters: Vec::new(),
+                aliases: Vec::new(),
+                footprints: vec![FootprintMapSpec {
+                    model_name: "0603".to_string(),
+                    maps: Vec::new(),
+                    source: None,
+                }],
+                graphics: Vec::new(),
+                parts: Vec::new(),
+            },
+        );
 
         let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
         let r1 = &snapshot.components["R1"];
@@ -2453,12 +2724,17 @@ mod tests {
         let mut sheet = make_empty_sheet();
         sheet.components.push(make_schdoc_component("R1"));
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let imported = std::collections::HashMap::new();
 
         let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
         let r1 = &snapshot.components["R1"];
-        assert_eq!(r1.footprint, None, "footprint should be None when no imported components");
+        assert_eq!(
+            r1.footprint, None,
+            "footprint should be None when no imported components"
+        );
     }
 
     // ── Diff: detects footprint difference ───────────────────────────────────
@@ -2466,35 +2742,49 @@ mod tests {
     #[test]
     fn test_diff_includes_footprint_changes() {
         let mut source = SyncSnapshot::default();
-        source.components.insert("U1".to_string(), SyncComponent {
-            designator: "U1".to_string(),
-            comment: None,
-            footprint: Some("QFN-48".to_string()),
-            source_library: None,
-            parameters: IndexMap::new(),
-            pins: IndexMap::new(),
-            annotation_id: None,
-            source_unique_id: None,
-        });
+        source.components.insert(
+            "U1".to_string(),
+            SyncComponent {
+                designator: "U1".to_string(),
+                comment: None,
+                footprint: Some("QFN-48".to_string()),
+                source_library: None,
+                parameters: IndexMap::new(),
+                pins: IndexMap::new(),
+                annotation_id: None,
+                source_unique_id: None,
+            },
+        );
 
         let mut target = SyncSnapshot::default();
-        target.components.insert("U1".to_string(), SyncComponent {
-            designator: "U1".to_string(),
-            comment: None,
-            footprint: None,
-            source_library: None,
-            parameters: IndexMap::new(),
-            pins: IndexMap::new(),
-            annotation_id: None,
-            source_unique_id: None,
-        });
+        target.components.insert(
+            "U1".to_string(),
+            SyncComponent {
+                designator: "U1".to_string(),
+                comment: None,
+                footprint: None,
+                source_library: None,
+                parameters: IndexMap::new(),
+                pins: IndexMap::new(),
+                annotation_id: None,
+                source_unique_id: None,
+            },
+        );
 
         let changes = diff_snapshots(&source, &target);
         assert_eq!(changes.len(), 1);
         match &changes[0] {
-            SyncChange::UpdateComponent { designator, field_changes } => {
+            SyncChange::UpdateComponent {
+                designator,
+                field_changes,
+            } => {
                 assert_eq!(designator, "U1");
-                assert!(field_changes.iter().any(|fc| fc.field == "footprint" && fc.new_value.as_deref() == Some("QFN-48")));
+                assert!(
+                    field_changes
+                        .iter()
+                        .any(|fc| fc.field == "footprint"
+                            && fc.new_value.as_deref() == Some("QFN-48"))
+                );
             }
             _ => panic!("expected UpdateComponent"),
         }
@@ -2554,9 +2844,21 @@ mod tests {
         }];
 
         let result = rewrite_pcbdoc_spec_with_changes(source, &changes).unwrap();
-        assert!(result.contains("pattern: \"QFN-48\""), "rewritten spec should contain pattern: {:?}", result);
-        assert!(result.contains("comment: \"MCU\""), "rewritten spec should contain comment: {:?}", result);
-        assert!(result.contains("source_library: \"mcu\""), "rewritten spec should contain source_library: {:?}", result);
+        assert!(
+            result.contains("pattern: \"QFN-48\""),
+            "rewritten spec should contain pattern: {:?}",
+            result
+        );
+        assert!(
+            result.contains("comment: \"MCU\""),
+            "rewritten spec should contain comment: {:?}",
+            result
+        );
+        assert!(
+            result.contains("source_library: \"mcu\""),
+            "rewritten spec should contain source_library: {:?}",
+            result
+        );
     }
 
     // ── Pin connections: signal and power nets extracted from pin_connections ──
@@ -2564,7 +2866,9 @@ mod tests {
     #[test]
     fn test_schdoc_pin_connections_create_nets() {
         let mut sheet = make_empty_sheet();
-        sheet.power_declarations.insert("GND".to_string(), PowerObjectStyle::Circle);
+        sheet
+            .power_declarations
+            .insert("GND".to_string(), PowerObjectStyle::Circle);
 
         let mut comp = make_schdoc_component("U1");
         comp.pin_connections = vec![
@@ -2591,12 +2895,19 @@ mod tests {
         ];
         sheet.components.push(comp);
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let imported = std::collections::HashMap::new();
         let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
 
         // Should have 4 nets: SDA, SCL, VCC, GND (NoConnect is excluded)
-        assert_eq!(snapshot.nets.len(), 4, "nets: {:?}", snapshot.nets.keys().collect::<Vec<_>>());
+        assert_eq!(
+            snapshot.nets.len(),
+            4,
+            "nets: {:?}",
+            snapshot.nets.keys().collect::<Vec<_>>()
+        );
         assert!(snapshot.nets.contains_key("SDA"));
         assert!(snapshot.nets.contains_key("SCL"));
         assert!(snapshot.nets.contains_key("VCC"));
@@ -2610,7 +2921,10 @@ mod tests {
         assert_eq!(u1.pins["GND"].net.as_deref(), Some("GND"));
 
         // NC1 should not have a pin entry
-        assert!(!u1.pins.contains_key("NC1"), "NoConnect pins should not appear in pin map");
+        assert!(
+            !u1.pins.contains_key("NC1"),
+            "NoConnect pins should not appear in pin map"
+        );
     }
 
     #[test]
@@ -2623,12 +2937,10 @@ mod tests {
         sheet.components.push(comp1);
 
         let mut comp2 = make_schdoc_component("U1");
-        comp2.pin_connections = vec![
-            PinConnectionSpec {
-                pin_name: "SDA".to_string(),
-                target: PinConnectionTarget::Signal("I2C_SDA".to_string()),
-            },
-        ];
+        comp2.pin_connections = vec![PinConnectionSpec {
+            pin_name: "SDA".to_string(),
+            target: PinConnectionTarget::Signal("I2C_SDA".to_string()),
+        }];
         sheet.components.push(comp2);
 
         // Also an explicit net connecting R1 to the same net
@@ -2641,13 +2953,20 @@ mod tests {
             }],
         });
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let imported = std::collections::HashMap::new();
         let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
 
         // Should have one merged I2C_SDA net with 2 pin connections
         let net = &snapshot.nets["I2C_SDA"];
-        assert_eq!(net.pins.len(), 2, "net should have pins from both explicit and pin_connection: {:?}", net.pins);
+        assert_eq!(
+            net.pins.len(),
+            2,
+            "net should have pins from both explicit and pin_connection: {:?}",
+            net.pins
+        );
         assert!(net.pins.contains(&("R1".to_string(), "1".to_string())));
         assert!(net.pins.contains(&("U1".to_string(), "SDA".to_string())));
     }
@@ -2670,7 +2989,9 @@ mod tests {
         }];
         sheet.components.push(comp2);
 
-        let spec = SchDocSpec { sheets: vec![sheet] };
+        let spec = SchDocSpec {
+            sheets: vec![sheet],
+        };
         let imported = std::collections::HashMap::new();
         let snapshot = project_schdoc_spec(&spec, &imported).unwrap();
 
@@ -2681,13 +3002,13 @@ mod tests {
 
 #[cfg(feature = "proptest")]
 mod proptests {
-    use proptest::prelude::*;
     use super::*;
     use crate::model::{
-        BoardSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocSpec, SchDocComponentSpec,
-        SchDocSpec, SheetSpec, SymbolRef,
+        BoardSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocSpec, SchDocComponentSpec, SchDocSpec,
+        SheetSpec, SymbolRef,
     };
     use altium_format_types::{CoordPoint, RotationBy90};
+    use proptest::prelude::*;
 
     fn arb_sync_component(designator: String) -> SyncComponent {
         SyncComponent {

@@ -5,14 +5,15 @@ use super::ast::{
     ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, ConstraintDecl, ConstraintKind,
     DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl,
     ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl, FootprintItem,
-    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding, PinConnectionDecl, PinConnectionTarget,
+    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
     MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl,
-    PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PcbDocPrimitiveDecl, PinDecl,
-    PinPadPair, PlaceDecl, PlacementConstraintDecl, PlacementDecl, PlacementGroupDecl,
-    PlacementItem, PlacementSeparateDecl, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem,
-    Property, RowDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem,
-    SpecFile, SpecItem, SwapGroupDecl, VariantBlockDecl, VariationDecl, is_graphic_type,
-    is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
+    PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PcbDocPrimitiveDecl,
+    PinConnectionDecl, PinConnectionTarget, PinDecl, PinPadPair, PlaceDecl,
+    PlacementConstraintDecl, PlacementDecl, PlacementGroupDecl, PlacementItem,
+    PlacementSeparateDecl, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property, RowDecl,
+    RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    SwapGroupDecl, VariantBlockDecl, VariationDecl, is_graphic_type, is_pcbdoc_block_type,
+    is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
 
@@ -126,7 +127,10 @@ impl<'a> SpecParser<'a> {
     }
 
     fn eat_separator(&mut self) -> bool {
-        if self.eat(&TokenKind::Comma) || self.eat(&TokenKind::Newline) || self.eat(&TokenKind::Semi) {
+        if self.eat(&TokenKind::Comma)
+            || self.eat(&TokenKind::Newline)
+            || self.eat(&TokenKind::Semi)
+        {
             self.skip_separators();
             true
         } else {
@@ -174,9 +178,21 @@ impl<'a> SpecParser<'a> {
             // Annotation keys may coincide with lexer keywords (e.g. `group`).
             // Accept any keyword or identifier as a potential key string.
             let key_str_node = match self.current_kind().clone() {
-                TokenKind::Ident(s) => { self.bump(); s }
-                TokenKind::Group => { self.bump(); "group".to_string() }
-                _ => return Err(ParseError::new(ParseErrorCode::E1002, "expected annotation key", key_span)),
+                TokenKind::Ident(s) => {
+                    self.bump();
+                    s
+                }
+                TokenKind::Group => {
+                    self.bump();
+                    "group".to_string()
+                }
+                _ => {
+                    return Err(ParseError::new(
+                        ParseErrorCode::E1002,
+                        "expected annotation key",
+                        key_span,
+                    ));
+                }
             };
             let key_str = Spanned::new(key_str_node, key_span);
             let annotation_key = match key_str.node.as_str() {
@@ -196,7 +212,8 @@ impl<'a> SpecParser<'a> {
             self.skip_newlines();
             match annotation_key {
                 AnnotationKey::Id => {
-                    let val = self.expect_string("expected string value for annotation key 'id'")?;
+                    let val =
+                        self.expect_string("expected string value for annotation key 'id'")?;
                     id = Some(val);
                 }
                 AnnotationKey::Stable => {
@@ -241,7 +258,12 @@ impl<'a> SpecParser<'a> {
 
         let end = self.prev_span();
         Ok(Some(Spanned::new(
-            BlockAnnotation { id, stable, group, source_id },
+            BlockAnnotation {
+                id,
+                stable,
+                group,
+                source_id,
+            },
             start.merge(end),
         )))
     }
@@ -398,7 +420,10 @@ impl<'a> SpecParser<'a> {
         if self.at(&TokenKind::Pad) {
             let decl = self.parse_pcbdoc_primitive_from_keyword("pad")?;
             let end = self.prev_span();
-            return Ok(Spanned::new(SpecItem::PcbDocPrimitive(decl), start.merge(end)));
+            return Ok(Spanned::new(
+                SpecItem::PcbDocPrimitive(decl),
+                start.merge(end),
+            ));
         }
 
         // Handle: parameter NAME { ... } at top level (SchDoc sheet-level parameter)
@@ -498,7 +523,10 @@ impl<'a> SpecParser<'a> {
             if is_pcbdoc_primitive_type(name) {
                 let decl = self.parse_pcbdoc_primitive()?;
                 let end = self.prev_span();
-                return Ok(Spanned::new(SpecItem::PcbDocPrimitive(decl), start.merge(end)));
+                return Ok(Spanned::new(
+                    SpecItem::PcbDocPrimitive(decl),
+                    start.merge(end),
+                ));
             }
         }
 
@@ -537,7 +565,11 @@ impl<'a> SpecParser<'a> {
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(SwapGroupDecl { binding, name, body })
+        Ok(SwapGroupDecl {
+            binding,
+            name,
+            body,
+        })
     }
 
     // ── Component ─────────────────────────────────────────────────────────
@@ -553,7 +585,12 @@ impl<'a> SpecParser<'a> {
         self.expect(&TokenKind::LBrace, "expected '{' after component name")?;
         let body = self.parse_component_body()?;
         self.expect(&TokenKind::RBrace, "expected '}' to close component body")?;
-        Ok(ComponentDecl { annotation, binding, name, body })
+        Ok(ComponentDecl {
+            annotation,
+            binding,
+            name,
+            body,
+        })
     }
 
     fn parse_component_body(&mut self) -> Result<Vec<Spanned<ComponentItem>>, ParseError> {
@@ -590,7 +627,9 @@ impl<'a> SpecParser<'a> {
                     TokenKind::Ident(_) | TokenKind::Integer(_) | TokenKind::String(_)
                 );
                 name_is_scalar
-                    && self.peek_ahead(after_name_offset).same_variant(&TokenKind::Arrow)
+                    && self
+                        .peek_ahead(after_name_offset)
+                        .same_variant(&TokenKind::Arrow)
             };
             if is_pin_connection {
                 let start = self.current_span();
@@ -632,8 +671,14 @@ impl<'a> SpecParser<'a> {
                     }
                 };
                 let end = self.prev_span();
-                let decl = PinConnectionDecl { pin_name: pin_name_str, target };
-                return Ok(Spanned::new(ComponentItem::PinConnection(decl), start.merge(end)));
+                let decl = PinConnectionDecl {
+                    pin_name: pin_name_str,
+                    target,
+                };
+                return Ok(Spanned::new(
+                    ComponentItem::PinConnection(decl),
+                    start.merge(end),
+                ));
             }
             let decl = self.parse_pin(None)?;
             let end = self.prev_span();
@@ -644,7 +689,10 @@ impl<'a> SpecParser<'a> {
         if self.at(&TokenKind::Parameter) {
             let decl = self.parse_parameter(None)?;
             let end = self.prev_span();
-            return Ok(Spanned::new(ComponentItem::Parameter(decl), start.merge(end)));
+            return Ok(Spanned::new(
+                ComponentItem::Parameter(decl),
+                start.merge(end),
+            ));
         }
 
         // alias declaration
@@ -682,11 +730,17 @@ impl<'a> SpecParser<'a> {
                 // It's a property: swap_group: value
                 let prop = self.parse_property()?;
                 let end = self.prev_span();
-                return Ok(Spanned::new(ComponentItem::Property(prop), start.merge(end)));
+                return Ok(Spanned::new(
+                    ComponentItem::Property(prop),
+                    start.merge(end),
+                ));
             }
             let decl = self.parse_swap_group_decl(None)?;
             let end = self.prev_span();
-            return Ok(Spanned::new(ComponentItem::SwapGroup(decl), start.merge(end)));
+            return Ok(Spanned::new(
+                ComponentItem::SwapGroup(decl),
+                start.merge(end),
+            ));
         }
 
         // IDENT-led items: property, let binding, or graphic / bound entity
@@ -713,14 +767,12 @@ impl<'a> SpecParser<'a> {
 
                 match self.current_kind().clone() {
                     TokenKind::Pin => {
-                        let decl =
-                            self.parse_pin(Some(Spanned::new(name, name_span)))?;
+                        let decl = self.parse_pin(Some(Spanned::new(name, name_span)))?;
                         let end = self.prev_span();
                         return Ok(Spanned::new(ComponentItem::Pin(decl), start.merge(end)));
                     }
                     TokenKind::Parameter => {
-                        let decl =
-                            self.parse_parameter(Some(Spanned::new(name, name_span)))?;
+                        let decl = self.parse_parameter(Some(Spanned::new(name, name_span)))?;
                         let end = self.prev_span();
                         return Ok(Spanned::new(
                             ComponentItem::Parameter(decl),
@@ -728,18 +780,14 @@ impl<'a> SpecParser<'a> {
                         ));
                     }
                     TokenKind::Part => {
-                        let block =
-                            self.parse_part_block(Some(Spanned::new(name, name_span)))?;
+                        let block = self.parse_part_block(Some(Spanned::new(name, name_span)))?;
                         let end = self.prev_span();
                         return Ok(Spanned::new(ComponentItem::Part(block), start.merge(end)));
                     }
                     TokenKind::Ident(ref graphic) if is_graphic_type(graphic) => {
                         let decl = self.parse_graphic(Some(Spanned::new(name, name_span)))?;
                         let end = self.prev_span();
-                        return Ok(Spanned::new(
-                            ComponentItem::Graphic(decl),
-                            start.merge(end),
-                        ));
+                        return Ok(Spanned::new(ComponentItem::Graphic(decl), start.merge(end)));
                     }
                     TokenKind::SwapGroup => {
                         let decl =
@@ -791,7 +839,11 @@ impl<'a> SpecParser<'a> {
         self.expect(&TokenKind::LBrace, "expected '{' after part number")?;
         let body = self.parse_part_body()?;
         self.expect(&TokenKind::RBrace, "expected '}' to close part body")?;
-        Ok(PartBlock { binding, number, body })
+        Ok(PartBlock {
+            binding,
+            number,
+            body,
+        })
     }
 
     fn parse_part_body(&mut self) -> Result<Vec<Spanned<PartItem>>, ParseError> {
@@ -817,7 +869,10 @@ impl<'a> SpecParser<'a> {
         if self.at(&TokenKind::Let) {
             let binding = self.parse_let_binding()?;
             let end = self.prev_span();
-            return Ok(Spanned::new(PartItem::LetBinding(binding), start.merge(end)));
+            return Ok(Spanned::new(
+                PartItem::LetBinding(binding),
+                start.merge(end),
+            ));
         }
 
         // swap_group: $ref inside a part block is a property.
@@ -841,8 +896,7 @@ impl<'a> SpecParser<'a> {
                         return Ok(Spanned::new(PartItem::Pin(decl), start.merge(end)));
                     }
                     TokenKind::Ident(ref graphic) if is_graphic_type(graphic) => {
-                        let decl =
-                            self.parse_graphic(Some(Spanned::new(name, name_span)))?;
+                        let decl = self.parse_graphic(Some(Spanned::new(name, name_span)))?;
                         let end = self.prev_span();
                         return Ok(Spanned::new(PartItem::Graphic(decl), start.merge(end)));
                     }
@@ -890,7 +944,11 @@ impl<'a> SpecParser<'a> {
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(PinDecl { binding, name, body })
+        Ok(PinDecl {
+            binding,
+            name,
+            body,
+        })
     }
 
     // ── Parameter ─────────────────────────────────────────────────────────
@@ -903,7 +961,11 @@ impl<'a> SpecParser<'a> {
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(ParameterDecl { binding, name, body })
+        Ok(ParameterDecl {
+            binding,
+            name,
+            body,
+        })
     }
 
     // ── Alias ──────────────────────────────────────────────────────────────
@@ -947,7 +1009,10 @@ impl<'a> SpecParser<'a> {
         while !self.at(&TokenKind::RBrace) && !self.at_eof() {
             let pair_start = self.current_span();
             let pin = self.parse_dollar_path_reference()?;
-            self.expect(&TokenKind::Colon, "expected ':' after pin reference in footprint mapping")?;
+            self.expect(
+                &TokenKind::Colon,
+                "expected ':' after pin reference in footprint mapping",
+            )?;
             self.skip_newlines();
             let pad = self.parse_dollar_path_reference()?;
             let pair_end = self.prev_span();
@@ -958,7 +1023,10 @@ impl<'a> SpecParser<'a> {
             self.skip_separators();
         }
         self.expect(&TokenKind::RBrace, "expected '}' to close footprint body")?;
-        Ok(FootprintMapDecl { name, maps: Some(pairs) })
+        Ok(FootprintMapDecl {
+            name,
+            maps: Some(pairs),
+        })
     }
 
     // ── Footprint declaration (top-level) ─────────────────────────────────
@@ -974,7 +1042,12 @@ impl<'a> SpecParser<'a> {
         self.expect(&TokenKind::LBrace, "expected '{' after footprint name")?;
         let body = self.parse_footprint_body()?;
         self.expect(&TokenKind::RBrace, "expected '}' to close footprint body")?;
-        Ok(FootprintDecl { annotation, binding, name, body })
+        Ok(FootprintDecl {
+            annotation,
+            binding,
+            name,
+            body,
+        })
     }
 
     fn parse_footprint_body(&mut self) -> Result<Vec<Spanned<FootprintItem>>, ParseError> {
@@ -1062,13 +1135,9 @@ impl<'a> SpecParser<'a> {
                         return Ok(Spanned::new(FootprintItem::Pad(decl), start.merge(end)));
                     }
                     TokenKind::Ident(ref graphic) if is_graphic_type(graphic) => {
-                        let decl =
-                            self.parse_graphic(Some(Spanned::new(name, name_span)))?;
+                        let decl = self.parse_graphic(Some(Spanned::new(name, name_span)))?;
                         let end = self.prev_span();
-                        return Ok(Spanned::new(
-                            FootprintItem::Graphic(decl),
-                            start.merge(end),
-                        ));
+                        return Ok(Spanned::new(FootprintItem::Graphic(decl), start.merge(end)));
                     }
                     _ => {
                         let value = self.parse_expr()?;
@@ -1109,7 +1178,11 @@ impl<'a> SpecParser<'a> {
         self.expect(&TokenKind::LBrace, "expected '{' after project name")?;
         let body = self.parse_project_body()?;
         self.expect(&TokenKind::RBrace, "expected '}' to close project body")?;
-        Ok(ProjectDecl { binding, name, body })
+        Ok(ProjectDecl {
+            binding,
+            name,
+            body,
+        })
     }
 
     fn parse_project_body(&mut self) -> Result<Vec<Spanned<ProjectItem>>, ParseError> {
@@ -1144,10 +1217,7 @@ impl<'a> SpecParser<'a> {
             if self.peek_ahead(1).same_variant(&TokenKind::Colon) {
                 let prop = self.parse_property()?;
                 let end = self.prev_span();
-                return Ok(Spanned::new(
-                    ProjectItem::Property(prop),
-                    start.merge(end),
-                ));
+                return Ok(Spanned::new(ProjectItem::Property(prop), start.merge(end)));
             }
 
             // let binding without `let` keyword: IDENT = expr
@@ -1172,10 +1242,7 @@ impl<'a> SpecParser<'a> {
                     self.bump();
                     let decl = self.parse_document_block()?;
                     let end = self.prev_span();
-                    return Ok(Spanned::new(
-                        ProjectItem::Document(decl),
-                        start.merge(end),
-                    ));
+                    return Ok(Spanned::new(ProjectItem::Document(decl), start.merge(end)));
                 }
                 "annotation" => {
                     self.bump();
@@ -1226,10 +1293,7 @@ impl<'a> SpecParser<'a> {
                     self.bump();
                     let props = self.parse_property_block()?;
                     let end = self.prev_span();
-                    return Ok(Spanned::new(
-                        ProjectItem::ClassGen(props),
-                        start.merge(end),
-                    ));
+                    return Ok(Spanned::new(ProjectItem::ClassGen(props), start.merge(end)));
                 }
                 "library_update" => {
                     self.bump();
@@ -1244,10 +1308,7 @@ impl<'a> SpecParser<'a> {
                     self.bump();
                     let decl = self.parse_variant_block()?;
                     let end = self.prev_span();
-                    return Ok(Spanned::new(
-                        ProjectItem::Variant(decl),
-                        start.merge(end),
-                    ));
+                    return Ok(Spanned::new(ProjectItem::Variant(decl), start.merge(end)));
                 }
                 _ => {}
             }
@@ -1332,7 +1393,8 @@ impl<'a> SpecParser<'a> {
             self.expect(&TokenKind::RParen, "expected ')' after col")?;
             self.expect(&TokenKind::Colon, "expected ':' after (row, col)")?;
             self.skip_newlines();
-            let level = self.expect_ident("expected error level (no_report, warning, error, fatal)")?;
+            let level =
+                self.expect_ident("expected error level (no_report, warning, error, fatal)")?;
             let entry_end = self.prev_span();
             entries.push(Spanned::new(
                 ErcMatrixEntryDecl { row, col, level },
@@ -1412,7 +1474,10 @@ impl<'a> SpecParser<'a> {
             properties.push(Spanned::new(prop, prop_start.merge(prop_end)));
             self.skip_separators();
         }
-        self.expect(&TokenKind::RBrace, "expected '}' to close output_group block")?;
+        self.expect(
+            &TokenKind::RBrace,
+            "expected '}' to close output_group block",
+        )?;
         Ok(OutputGroupBlockDecl {
             name,
             properties,
@@ -1530,14 +1595,21 @@ impl<'a> SpecParser<'a> {
     // ── PcbDoc: board, primitives, named blocks ────────────────────────────
 
     /// Parse `board NAME { ... }` — board settings block.
-    fn parse_board(&mut self, annotation: Option<Spanned<BlockAnnotation>>) -> Result<BoardDecl, ParseError> {
+    fn parse_board(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<BoardDecl, ParseError> {
         self.expect(&TokenKind::Board, "expected 'board'")?;
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         self.expect(&TokenKind::LBrace, "expected '{' after board name")?;
         let body = self.parse_board_body()?;
         self.expect(&TokenKind::RBrace, "expected '}' to close board block")?;
-        Ok(BoardDecl { annotation, name, body })
+        Ok(BoardDecl {
+            annotation,
+            name,
+            body,
+        })
     }
 
     fn parse_board_body(&mut self) -> Result<Vec<Spanned<BoardItem>>, ParseError> {
@@ -1550,7 +1622,10 @@ impl<'a> SpecParser<'a> {
             if self.at(&TokenKind::Let) {
                 let binding = self.parse_let_binding()?;
                 let end = self.prev_span();
-                items.push(Spanned::new(BoardItem::LetBinding(binding), start.merge(end)));
+                items.push(Spanned::new(
+                    BoardItem::LetBinding(binding),
+                    start.merge(end),
+                ));
                 self.skip_separators();
                 continue;
             }
@@ -1565,7 +1640,10 @@ impl<'a> SpecParser<'a> {
     }
 
     /// Parse `placement { ... }` top-level block.
-    fn parse_placement(&mut self, annotation: Option<Spanned<BlockAnnotation>>) -> Result<PlacementDecl, ParseError> {
+    fn parse_placement(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<PlacementDecl, ParseError> {
         match self.current_kind() {
             TokenKind::Ident(s) if s == "placement" => {
                 self.bump();
@@ -1605,7 +1683,8 @@ impl<'a> SpecParser<'a> {
                     }
                     "left_of" | "right_of" | "above" | "below" => {
                         if item_annotation.is_some() {
-                            return Err(self.err("expected 'place' after annotation inside placement block"));
+                            return Err(self
+                                .err("expected 'place' after annotation inside placement block"));
                         }
                         let c = self.parse_placement_directional_constraint()?;
                         let end = self.prev_span();
@@ -1615,7 +1694,8 @@ impl<'a> SpecParser<'a> {
                     }
                     "optimize" => {
                         if item_annotation.is_some() {
-                            return Err(self.err("expected 'place' after annotation inside placement block"));
+                            return Err(self
+                                .err("expected 'place' after annotation inside placement block"));
                         }
                         self.bump();
                         self.skip_newlines();
@@ -1627,19 +1707,24 @@ impl<'a> SpecParser<'a> {
                     }
                     "clearance" => {
                         if item_annotation.is_some() {
-                            return Err(self.err("expected 'place' after annotation inside placement block"));
+                            return Err(self
+                                .err("expected 'place' after annotation inside placement block"));
                         }
                         self.bump();
                         self.skip_newlines();
                         let obj = self.parse_object()?;
                         let end = self.prev_span();
-                        body.push(Spanned::new(PlacementItem::Clearance(obj), start.merge(end)));
+                        body.push(Spanned::new(
+                            PlacementItem::Clearance(obj),
+                            start.merge(end),
+                        ));
                         self.skip_separators();
                         continue;
                     }
                     _ => {
                         if item_annotation.is_some() {
-                            return Err(self.err("expected 'place' after annotation inside placement block"));
+                            return Err(self
+                                .err("expected 'place' after annotation inside placement block"));
                         }
                     }
                 }
@@ -1652,7 +1737,10 @@ impl<'a> SpecParser<'a> {
             if self.at(&TokenKind::Group) {
                 let decl = self.parse_placement_group()?;
                 let end = self.prev_span();
-                body.push(Spanned::new(PlacementItem::GroupDecl(decl), start.merge(end)));
+                body.push(Spanned::new(
+                    PlacementItem::GroupDecl(decl),
+                    start.merge(end),
+                ));
                 self.skip_separators();
                 continue;
             }
@@ -1660,7 +1748,10 @@ impl<'a> SpecParser<'a> {
             if self.at(&TokenKind::Separate) {
                 let decl = self.parse_placement_separate()?;
                 let end = self.prev_span();
-                body.push(Spanned::new(PlacementItem::SeparateDecl(decl), start.merge(end)));
+                body.push(Spanned::new(
+                    PlacementItem::SeparateDecl(decl),
+                    start.merge(end),
+                ));
                 self.skip_separators();
                 continue;
             }
@@ -1670,14 +1761,20 @@ impl<'a> SpecParser<'a> {
                 self.skip_newlines();
                 let obj = self.parse_object()?;
                 let end = self.prev_span();
-                body.push(Spanned::new(PlacementItem::AutoplaceBlock(obj), start.merge(end)));
+                body.push(Spanned::new(
+                    PlacementItem::AutoplaceBlock(obj),
+                    start.merge(end),
+                ));
                 self.skip_separators();
                 continue;
             }
 
             let prop = self.parse_property()?;
             let end = self.prev_span();
-            body.push(Spanned::new(PlacementItem::Property(prop), start.merge(end)));
+            body.push(Spanned::new(
+                PlacementItem::Property(prop),
+                start.merge(end),
+            ));
             self.skip_separators();
         }
 
@@ -1685,7 +1782,10 @@ impl<'a> SpecParser<'a> {
         Ok(PlacementDecl { annotation, body })
     }
 
-    fn parse_placement_place(&mut self, annotation: Option<Spanned<BlockAnnotation>>) -> Result<PlaceDecl, ParseError> {
+    fn parse_placement_place(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<PlaceDecl, ParseError> {
         match self.current_kind() {
             TokenKind::Ident(s) if s == "place" => {
                 self.bump();
@@ -1707,10 +1807,16 @@ impl<'a> SpecParser<'a> {
 
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(PlaceDecl { annotation, designators, body })
+        Ok(PlaceDecl {
+            annotation,
+            designators,
+            body,
+        })
     }
 
-    fn parse_placement_directional_constraint(&mut self) -> Result<PlacementConstraintDecl, ParseError> {
+    fn parse_placement_directional_constraint(
+        &mut self,
+    ) -> Result<PlacementConstraintDecl, ParseError> {
         let kind = match self.current_kind().clone() {
             TokenKind::Ident(s) => {
                 self.bump();
@@ -1721,7 +1827,10 @@ impl<'a> SpecParser<'a> {
         self.skip_newlines();
         let a = self.parse_dollar_path_reference()?;
         self.skip_newlines();
-        self.expect(&TokenKind::Comma, "expected ',' between placement references")?;
+        self.expect(
+            &TokenKind::Comma,
+            "expected ',' between placement references",
+        )?;
         self.skip_newlines();
         let b = self.parse_dollar_path_reference()?;
         self.skip_newlines();
@@ -1809,11 +1918,18 @@ impl<'a> SpecParser<'a> {
         };
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(PcbDocPrimitiveDecl { primitive_type: type_name, name, body })
+        Ok(PcbDocPrimitiveDecl {
+            primitive_type: type_name,
+            name,
+            body,
+        })
     }
 
     /// Parse a PcbDoc primitive from a keyword token (e.g. `pad NAME { ... }` at top level).
-    fn parse_pcbdoc_primitive_from_keyword(&mut self, keyword: &str) -> Result<PcbDocPrimitiveDecl, ParseError> {
+    fn parse_pcbdoc_primitive_from_keyword(
+        &mut self,
+        keyword: &str,
+    ) -> Result<PcbDocPrimitiveDecl, ParseError> {
         let type_start = self.current_span();
         self.bump(); // consume the keyword token
         self.skip_newlines();
@@ -1832,7 +1948,11 @@ impl<'a> SpecParser<'a> {
     }
 
     /// Parse a PcbDoc named block: `polygon NAME { ... }`, `rule NAME { ... }`, etc.
-    fn parse_pcbdoc_named_block(&mut self, start: Span, annotation: Option<Spanned<BlockAnnotation>>) -> Result<Spanned<SpecItem>, ParseError> {
+    fn parse_pcbdoc_named_block(
+        &mut self,
+        start: Span,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<Spanned<SpecItem>, ParseError> {
         let type_name = match self.current_kind().clone() {
             TokenKind::Ident(s) => {
                 self.bump();
@@ -1847,28 +1967,52 @@ impl<'a> SpecParser<'a> {
                 self.skip_newlines();
                 let body = self.parse_object()?;
                 let end = self.prev_span();
-                Ok(Spanned::new(SpecItem::Polygon(PolygonDecl { annotation, name, body }), start.merge(end)))
+                Ok(Spanned::new(
+                    SpecItem::Polygon(PolygonDecl {
+                        annotation,
+                        name,
+                        body,
+                    }),
+                    start.merge(end),
+                ))
             }
             "rule" => {
                 let name = self.parse_entity_name()?;
                 self.skip_newlines();
                 let body = self.parse_object()?;
                 let end = self.prev_span();
-                Ok(Spanned::new(SpecItem::Rule(RuleDecl { annotation, name, body }), start.merge(end)))
+                Ok(Spanned::new(
+                    SpecItem::Rule(RuleDecl {
+                        annotation,
+                        name,
+                        body,
+                    }),
+                    start.merge(end),
+                ))
             }
             "class" => {
                 let name = self.parse_entity_name()?;
                 self.skip_newlines();
                 let body = self.parse_object()?;
                 let end = self.prev_span();
-                Ok(Spanned::new(SpecItem::Class(ClassDecl { annotation, name, body }), start.merge(end)))
+                Ok(Spanned::new(
+                    SpecItem::Class(ClassDecl {
+                        annotation,
+                        name,
+                        body,
+                    }),
+                    start.merge(end),
+                ))
             }
             "differential_pair" => {
                 let name = self.parse_entity_name()?;
                 self.skip_newlines();
                 let body = self.parse_object()?;
                 let end = self.prev_span();
-                Ok(Spanned::new(SpecItem::DifferentialPair(DifferentialPairDecl { name, body }), start.merge(end)))
+                Ok(Spanned::new(
+                    SpecItem::DifferentialPair(DifferentialPairDecl { name, body }),
+                    start.merge(end),
+                ))
             }
             _ => unreachable!("guarded by is_pcbdoc_block_type"),
         }
@@ -1881,13 +2025,20 @@ impl<'a> SpecParser<'a> {
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(PadDecl { binding, name, body })
+        Ok(PadDecl {
+            binding,
+            name,
+            body,
+        })
     }
 
     // ── SchDoc: sheet, net, power, objects ────────────────────────────────
 
     /// Parse `sheet { ... }` — sheet metadata block (no name).
-    fn parse_sheet(&mut self, annotation: Option<Spanned<BlockAnnotation>>) -> Result<SheetDecl, ParseError> {
+    fn parse_sheet(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<SheetDecl, ParseError> {
         self.expect(&TokenKind::Sheet, "expected 'sheet'")?;
         self.skip_newlines();
         self.expect(&TokenKind::LBrace, "expected '{' after 'sheet'")?;
@@ -1899,7 +2050,10 @@ impl<'a> SpecParser<'a> {
             self.skip_separators();
         }
         self.expect(&TokenKind::RBrace, "expected '}' to close sheet block")?;
-        Ok(SheetDecl { annotation, body: items })
+        Ok(SheetDecl {
+            annotation,
+            body: items,
+        })
     }
 
     fn parse_sheet_item(&mut self) -> Result<Spanned<SheetItem>, ParseError> {
@@ -1909,7 +2063,10 @@ impl<'a> SpecParser<'a> {
         if self.at(&TokenKind::Let) {
             let binding = self.parse_let_binding()?;
             let end = self.prev_span();
-            return Ok(Spanned::new(SheetItem::LetBinding(binding), start.merge(end)));
+            return Ok(Spanned::new(
+                SheetItem::LetBinding(binding),
+                start.merge(end),
+            ));
         }
 
         // Optional block annotation before constraint blocks.
@@ -1957,7 +2114,9 @@ impl<'a> SpecParser<'a> {
     ) -> Result<ConstraintDecl, ParseError> {
         // consume "constraint" ident
         match self.current_kind().clone() {
-            TokenKind::Ident(ref s) if s == "constraint" => { self.bump(); }
+            TokenKind::Ident(ref s) if s == "constraint" => {
+                self.bump();
+            }
             _ => return Err(self.err("expected 'constraint'")),
         }
 
@@ -1976,7 +2135,10 @@ impl<'a> SpecParser<'a> {
             other => {
                 return Err(ParseError::new(
                     crate::diagnostic::ParseErrorCode::E1002,
-                    format!("unknown constraint kind '{}'; expected one of: edge_placement, directional, near, region, fixed_position", other),
+                    format!(
+                        "unknown constraint kind '{}'; expected one of: edge_placement, directional, near, region, fixed_position",
+                        other
+                    ),
                     kind_span,
                 ));
             }
@@ -1986,7 +2148,11 @@ impl<'a> SpecParser<'a> {
         self.skip_newlines();
         let body = self.parse_object()?;
 
-        Ok(ConstraintDecl { annotation, kind: kind_spanned, body })
+        Ok(ConstraintDecl {
+            annotation,
+            kind: kind_spanned,
+            body,
+        })
     }
 
     /// Parse `fonts { font N { ... } ... }`
@@ -2012,7 +2178,9 @@ impl<'a> SpecParser<'a> {
     fn parse_font_decl(&mut self) -> Result<FontDecl, ParseError> {
         // expect "font" as ident
         match self.current_kind().clone() {
-            TokenKind::Ident(ref s) if s == "font" => { self.bump(); }
+            TokenKind::Ident(ref s) if s == "font" => {
+                self.bump();
+            }
             _ => return Err(self.err("expected 'font' keyword")),
         }
         let id = self.expect_integer("expected font id number")?;
@@ -2022,21 +2190,35 @@ impl<'a> SpecParser<'a> {
     }
 
     /// Parse `net NAME { pins: [...] }`
-    fn parse_net(&mut self, annotation: Option<Spanned<BlockAnnotation>>) -> Result<NetDecl, ParseError> {
+    fn parse_net(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<NetDecl, ParseError> {
         self.expect(&TokenKind::Net, "expected 'net'")?;
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(NetDecl { annotation, name, body })
+        Ok(NetDecl {
+            annotation,
+            name,
+            body,
+        })
     }
 
     /// Parse `power NAME { style: ..., pins: [...] }`
-    fn parse_power(&mut self, annotation: Option<Spanned<BlockAnnotation>>) -> Result<PowerDecl, ParseError> {
+    fn parse_power(
+        &mut self,
+        annotation: Option<Spanned<BlockAnnotation>>,
+    ) -> Result<PowerDecl, ParseError> {
         self.expect(&TokenKind::Power, "expected 'power'")?;
         let name = self.parse_entity_name()?;
         self.skip_newlines();
         let body = self.parse_object()?;
-        Ok(PowerDecl { annotation, name, body })
+        Ok(PowerDecl {
+            annotation,
+            name,
+            body,
+        })
     }
 
     /// Parse a SchDoc object whose type name is a keyword (e.g., `parameter`).
@@ -2044,7 +2226,10 @@ impl<'a> SpecParser<'a> {
     /// This works identically to `parse_schdoc_object` but accepts the type name
     /// as a string rather than reading an identifier token — needed because
     /// `parameter` is a keyword (`TokenKind::Parameter`) rather than a plain ident.
-    fn parse_schdoc_object_keyword(&mut self, type_name: &str) -> Result<SchDocObjectDecl, ParseError> {
+    fn parse_schdoc_object_keyword(
+        &mut self,
+        type_name: &str,
+    ) -> Result<SchDocObjectDecl, ParseError> {
         let type_start = self.current_span();
         self.bump(); // consume the keyword token
 
@@ -2108,7 +2293,11 @@ impl<'a> SpecParser<'a> {
             self.skip_separators();
         }
         self.expect(&TokenKind::RBrace, "expected '}' to close SchDoc object")?;
-        Ok(SchDocObjectDecl { object_type, name, body: items })
+        Ok(SchDocObjectDecl {
+            object_type,
+            name,
+            body: items,
+        })
     }
 
     fn parse_schdoc_object_item(&mut self) -> Result<Spanned<SchDocObjectItem>, ParseError> {
@@ -2169,7 +2358,9 @@ impl<'a> SpecParser<'a> {
     fn parse_entry(&mut self) -> Result<EntryDecl, ParseError> {
         // consume "entry" ident
         match self.current_kind().clone() {
-            TokenKind::Ident(ref s) if s == "entry" => { self.bump(); }
+            TokenKind::Ident(ref s) if s == "entry" => {
+                self.bump();
+            }
             _ => return Err(self.err("expected 'entry'")),
         }
         let name = self.parse_entity_name()?;
@@ -2180,7 +2371,10 @@ impl<'a> SpecParser<'a> {
 
     // ── Graphic declaration ────────────────────────────────────────────────
 
-    fn parse_graphic(&mut self, binding: Option<Spanned<String>>) -> Result<GraphicDecl, ParseError> {
+    fn parse_graphic(
+        &mut self,
+        binding: Option<Spanned<String>>,
+    ) -> Result<GraphicDecl, ParseError> {
         let type_start = self.current_span();
         let graphic_type = match self.current_kind().clone() {
             TokenKind::Ident(s) if is_graphic_type(&s) => {
@@ -2278,7 +2472,10 @@ impl<'a> SpecParser<'a> {
         if self.at(&TokenKind::Let) {
             let binding = self.parse_let_binding()?;
             let end = self.prev_span();
-            return Ok(Spanned::new(ObjectItem::LetBinding(binding), start.merge(end)));
+            return Ok(Spanned::new(
+                ObjectItem::LetBinding(binding),
+                start.merge(end),
+            ));
         }
 
         // Any identifier-like token followed by ":" is a property.
@@ -2300,11 +2497,15 @@ impl<'a> SpecParser<'a> {
                 // let binding: name = value
                 let binding = self.parse_let_binding()?;
                 let end = self.prev_span();
-                return Ok(Spanned::new(ObjectItem::LetBinding(binding), start.merge(end)));
+                return Ok(Spanned::new(
+                    ObjectItem::LetBinding(binding),
+                    start.merge(end),
+                ));
             }
         }
 
-        Err(self.err("expected object item (property 'key: value', spread '...expr', or let binding)"))
+        Err(self
+            .err("expected object item (property 'key: value', spread '...expr', or let binding)"))
     }
 
     /// Eat an identifier or keyword token as a property key string.
@@ -2342,7 +2543,9 @@ impl<'a> SpecParser<'a> {
 
     // ── Dollar path ────────────────────────────────────────────────────────
 
-    fn parse_dollar_path_reference(&mut self) -> Result<Spanned<super::ast::DollarPath>, ParseError> {
+    fn parse_dollar_path_reference(
+        &mut self,
+    ) -> Result<Spanned<super::ast::DollarPath>, ParseError> {
         let start = self.current_span();
         let (root, root_span) = match self.current_kind().clone() {
             TokenKind::DollarIdent(s) => {
@@ -2367,10 +2570,7 @@ impl<'a> SpecParser<'a> {
             if self.eat(&TokenKind::Dot) {
                 let field = self.expect_ident("expected field name after '.'")?;
                 let span = field.span;
-                steps.push(Spanned::new(
-                    super::ast::PathStep::Field(field.node),
-                    span,
-                ));
+                steps.push(Spanned::new(super::ast::PathStep::Field(field.node), span));
             } else if self.eat(&TokenKind::LBracket) {
                 let key_start = self.current_span();
                 let expr = self.parse_expr()?;
@@ -2435,10 +2635,7 @@ impl<'a> SpecParser<'a> {
                     let end = self.current_span();
                     self.expect(&TokenKind::RBracket, "expected ']'")?;
                     let span = lhs_span.merge(end);
-                    Spanned::new(
-                        Expr::Index(Box::new(lhs), Box::new(idx)),
-                        span,
-                    )
+                    Spanned::new(Expr::Index(Box::new(lhs), Box::new(idx)), span)
                 }
                 InfixOp::Add => {
                     let rhs = self.parse_pratt_expr(right_bp)?;
@@ -2635,7 +2832,10 @@ impl<'a> SpecParser<'a> {
                 self.bump();
                 let operand = self.parse_pratt_expr(70)?;
                 let end = operand.span;
-                Ok(Spanned::new(Expr::UnaryNeg(Box::new(operand)), start.merge(end)))
+                Ok(Spanned::new(
+                    Expr::UnaryNeg(Box::new(operand)),
+                    start.merge(end),
+                ))
             }
 
             // Parenthesized expression or 2-tuple (coord)
@@ -2711,8 +2911,8 @@ enum InfixOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::Unit;
     use crate::ast::*;
+    use crate::diagnostic::Unit;
 
     fn parse(src: &str) -> SpecFile {
         parse_spec(src).unwrap_or_else(|e| panic!("parse error: {}", e))
@@ -2930,12 +3130,14 @@ mod tests {
 
     #[test]
     fn test_component_with_properties() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     designator: "R?"
     description: "Resistor"
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             assert_eq!(c.body.len(), 2);
             if let ComponentItem::Property(p) = &c.body[0].node {
@@ -2946,11 +3148,13 @@ component R {
 
     #[test]
     fn test_component_with_pin() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     pin 1 { electrical: passive }
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             assert_eq!(c.body.len(), 1);
             if let ComponentItem::Pin(p) = &c.body[0].node {
@@ -2962,11 +3166,13 @@ component R {
 
     #[test]
     fn test_component_pin_with_binding() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     p1 = pin 1 { electrical: passive }
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::Pin(p) = &c.body[0].node {
                 assert_eq!(p.binding.as_ref().unwrap().node, "p1");
@@ -2999,11 +3205,13 @@ component R {
     #[test]
     fn test_component_with_footprint_map_implicit() {
         // Implicit 1:1 mapping — no body
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     footprint R0805
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::FootprintMap(fm) = &c.body[0].node {
                 assert!(fm.maps.is_none());
@@ -3019,14 +3227,16 @@ component R {
     #[test]
     fn test_component_with_footprint_map_explicit() {
         // Explicit remapping with $pin: $ref.pad pairs
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     footprint $fp.DIP8 {
         $pin1: $fp.DIP8.pad2
         $pin2: $fp.DIP8.pad1
     }
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::FootprintMap(fm) = &c.body[0].node {
                 assert!(matches!(&fm.name.node, FootprintRef::DollarPath(_)));
@@ -3040,11 +3250,13 @@ component R {
 
     #[test]
     fn test_footprint_map_dollar_path_implicit() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     footprint $fp.DIP8
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::FootprintMap(fm) = &c.body[0].node {
                 assert!(matches!(&fm.name.node, FootprintRef::DollarPath(_)));
@@ -3057,11 +3269,13 @@ component R {
 
     #[test]
     fn test_component_with_graphic() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component R {
     body = rectangle { from: (-20mil, -10mil), to: (20mil, 10mil) }
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             if let ComponentItem::Graphic(g) = &c.body[0].node {
                 assert_eq!(g.graphic_type.node, "rectangle");
@@ -3074,7 +3288,8 @@ component R {
 
     #[test]
     fn test_component_with_part_block() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 component LM358 {
     part 1 {
         pin 1 { electrical: output }
@@ -3083,7 +3298,8 @@ component LM358 {
         pin 5 { electrical: output }
     }
 }
-"#);
+"#,
+        );
         if let SpecItem::Component(c) = &f.items[0].node {
             assert_eq!(c.body.len(), 2);
             if let ComponentItem::Part(pb) = &c.body[0].node {
@@ -3108,11 +3324,13 @@ component LM358 {
 
     #[test]
     fn test_footprint_with_pad() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 footprint SOT23 {
     pad 1 { at: (-0.95mm, -1mm), shape: rectangular }
 }
-"#);
+"#,
+        );
         if let SpecItem::Footprint(fp) = &f.items[0].node {
             if let FootprintItem::Pad(p) = &fp.body[0].node {
                 assert_eq!(p.name.node.as_str(), "1");
@@ -3124,11 +3342,13 @@ footprint SOT23 {
 
     #[test]
     fn test_footprint_with_row() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 footprint QFP32 {
     row { on: $body.left, at: center, pitch: 0.5mm, count: 8, start: 1 }
 }
-"#);
+"#,
+        );
         if let SpecItem::Footprint(fp) = &f.items[0].node {
             assert!(matches!(&fp.body[0].node, FootprintItem::Row(_)));
         }
@@ -3144,7 +3364,8 @@ footprint QFP32 {
 
     #[test]
     fn test_footprint_with_grid() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 footprint BGA256 {
     grid {
         origin: (0, 0)
@@ -3152,7 +3373,8 @@ footprint BGA256 {
         pitch: 1mm
     }
 }
-"#);
+"#,
+        );
         if let SpecItem::Footprint(fp) = &f.items[0].node {
             assert!(matches!(&fp.body[0].node, FootprintItem::Grid(_)));
         }
@@ -3335,11 +3557,13 @@ component LM358 {
 
     #[test]
     fn placement_autoplace_property_in_place_block() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     place U1 { autoplace: true, region: center }
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             if let PlacementItem::Place(place) = &p.body[0].node {
                 assert_eq!(place.designators.len(), 1);
@@ -3364,14 +3588,18 @@ placement {
 
     #[test]
     fn placement_autoplace_block_full_pipeline() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     autoplace { algorithm: full_pipeline, grid_snap: 0.5mm }
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             assert!(
-                p.body.iter().any(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))),
+                p.body
+                    .iter()
+                    .any(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))),
                 "expected AutoplaceBlock item"
             );
         } else {
@@ -3381,14 +3609,18 @@ placement {
 
     #[test]
     fn placement_autoplace_block_empty() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     autoplace {}
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             assert!(
-                p.body.iter().any(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))),
+                p.body
+                    .iter()
+                    .any(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))),
                 "expected AutoplaceBlock item even when empty"
             );
         } else {
@@ -3398,11 +3630,13 @@ placement {
 
     #[test]
     fn placement_unplaced_strategy_autoplace() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     unplaced: autoplace
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             let found = p.body.iter().any(|item| {
                 if let PlacementItem::Property(prop) = &item.node {
@@ -3419,11 +3653,13 @@ placement {
 
     #[test]
     fn placement_group_decl() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     group analog { components: [U5, R10, C20] }
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             let found = p.body.iter().any(|item| {
                 if let PlacementItem::GroupDecl(g) = &item.node {
@@ -3440,11 +3676,13 @@ placement {
 
     #[test]
     fn placement_separate_decl() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     separate $analog, $digital { gap: 8mm }
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             let found = p.body.iter().any(|item| {
                 if let PlacementItem::SeparateDecl(s) = &item.node {
@@ -3461,11 +3699,13 @@ placement {
 
     #[test]
     fn placement_no_pin_swap_in_place_block() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 placement {
     place U1 { no_pin_swap: [A, B], no_part_swap: true }
 }
-"#);
+"#,
+        );
         if let SpecItem::Placement(p) = &f.items[0].node {
             if let PlacementItem::Place(place) = &p.body[0].node {
                 let has_no_pin_swap = place.body.node.items.iter().any(|item| {
@@ -3503,13 +3743,29 @@ placement {
 "#;
         let f = parse(src);
         if let SpecItem::Placement(p) = &f.items[0].node {
-            let group_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::GroupDecl(_))).count();
+            let group_count = p
+                .body
+                .iter()
+                .filter(|item| matches!(item.node, PlacementItem::GroupDecl(_)))
+                .count();
             assert_eq!(group_count, 2, "expected 2 group declarations");
-            let place_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::Place(_))).count();
+            let place_count = p
+                .body
+                .iter()
+                .filter(|item| matches!(item.node, PlacementItem::Place(_)))
+                .count();
             assert_eq!(place_count, 3, "expected 3 place declarations");
-            let autoplace_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_))).count();
+            let autoplace_count = p
+                .body
+                .iter()
+                .filter(|item| matches!(item.node, PlacementItem::AutoplaceBlock(_)))
+                .count();
             assert_eq!(autoplace_count, 1, "expected 1 autoplace block");
-            let separate_count = p.body.iter().filter(|item| matches!(item.node, PlacementItem::SeparateDecl(_))).count();
+            let separate_count = p
+                .body
+                .iter()
+                .filter(|item| matches!(item.node, PlacementItem::SeparateDecl(_)))
+                .count();
             assert_eq!(separate_count, 1, "expected 1 separate declaration");
         } else {
             panic!("expected Placement");
@@ -3533,7 +3789,8 @@ placement {
 
     #[test]
     fn test_annotation_all_keys() {
-        let f = parse(r#"#[annotation(id = "AB12CD34", stable = true, group = "power")] net VCC {}"#);
+        let f =
+            parse(r#"#[annotation(id = "AB12CD34", stable = true, group = "power")] net VCC {}"#);
         if let SpecItem::Net(n) = &f.items[0].node {
             let ann = n.annotation.as_ref().expect("expected annotation");
             assert_eq!(ann.node.id.as_ref().unwrap().node, "AB12CD34");
@@ -3641,16 +3898,38 @@ placement {
 
     #[test]
     fn test_multiple_annotations_in_sequence() {
-        let f = parse(r#"
+        let f = parse(
+            r#"
 #[annotation(id = "COMP0001")] component R1 {}
 #[annotation(id = "COMP0002")] component R2 {}
-"#);
+"#,
+        );
         assert_eq!(f.items.len(), 2);
         if let SpecItem::Component(c1) = &f.items[0].node {
-            assert_eq!(c1.annotation.as_ref().unwrap().node.id.as_ref().unwrap().node, "COMP0001");
+            assert_eq!(
+                c1.annotation
+                    .as_ref()
+                    .unwrap()
+                    .node
+                    .id
+                    .as_ref()
+                    .unwrap()
+                    .node,
+                "COMP0001"
+            );
         }
         if let SpecItem::Component(c2) = &f.items[1].node {
-            assert_eq!(c2.annotation.as_ref().unwrap().node.id.as_ref().unwrap().node, "COMP0002");
+            assert_eq!(
+                c2.annotation
+                    .as_ref()
+                    .unwrap()
+                    .node
+                    .id
+                    .as_ref()
+                    .unwrap()
+                    .node,
+                "COMP0002"
+            );
         }
     }
 
@@ -3668,7 +3947,11 @@ placement {
     #[test]
     fn test_annotation_unknown_key_error() {
         let err = parse_err(r#"#[annotation(unknown_key = "x")] component R1 {}"#);
-        assert!(err.message.contains("unknown annotation key 'unknown_key'"), "got: {}", err.message);
+        assert!(
+            err.message.contains("unknown annotation key 'unknown_key'"),
+            "got: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -3840,7 +4123,11 @@ placement {
         "#;
         let f = parse(src);
         if let SpecItem::Sheet(s) = &f.items[0].node {
-            assert!(s.body.iter().all(|i| !matches!(i.node, SheetItem::Constraint(_))));
+            assert!(
+                s.body
+                    .iter()
+                    .all(|i| !matches!(i.node, SheetItem::Constraint(_)))
+            );
         } else {
             panic!("expected Sheet");
         }

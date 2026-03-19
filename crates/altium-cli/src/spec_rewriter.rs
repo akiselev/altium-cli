@@ -43,22 +43,28 @@ pub fn rewrite_spec_with_placement(
     result: &PlacementResult,
     autoplace_designators: &[String],
 ) -> anyhow::Result<RewriteResult> {
-    let autoplace_set: HashSet<&str> =
-        autoplace_designators.iter().map(|s| s.as_str()).collect();
+    let autoplace_set: HashSet<&str> = autoplace_designators.iter().map(|s| s.as_str()).collect();
 
-    let state_map: HashMap<&str, &PlacementComponentState> =
-        result.components.iter().map(|c| (c.designator.as_str(), c)).collect();
+    let state_map: HashMap<&str, &PlacementComponentState> = result
+        .components
+        .iter()
+        .map(|c| (c.designator.as_str(), c))
+        .collect();
 
-    let solvable: HashSet<&str> =
-        autoplace_set.iter().copied().filter(|d| state_map.contains_key(d)).collect();
+    let solvable: HashSet<&str> = autoplace_set
+        .iter()
+        .copied()
+        .filter(|d| state_map.contains_key(d))
+        .collect();
 
     let (ast, trivia_map) = parse_with_trivia(original_spec_text)
         .map_err(|e| anyhow::anyhow!("failed to parse spec for rewriting: {e}"))?;
 
     // Find the PlacementDecl in the AST.
-    let placement_item = ast.items.iter().find(|item| {
-        matches!(&item.node, SpecItem::Placement(_))
-    });
+    let placement_item = ast
+        .items
+        .iter()
+        .find(|item| matches!(&item.node, SpecItem::Placement(_)));
 
     let placement_item = match placement_item {
         Some(p) => p,
@@ -87,13 +93,11 @@ pub fn rewrite_spec_with_placement(
             continue;
         };
 
-        let block_desigs: Vec<String> = place.designators.iter()
-            .map(|d| d.node.as_str())
-            .collect();
+        let block_desigs: Vec<String> = place.designators.iter().map(|d| d.node.as_str()).collect();
 
-        let has_any_autoplace_desig = block_desigs.iter().any(|d| {
-            solvable.contains(d.as_str()) && has_autoplace(place)
-        });
+        let has_any_autoplace_desig = block_desigs
+            .iter()
+            .any(|d| solvable.contains(d.as_str()) && has_autoplace(place));
 
         if !has_any_autoplace_desig {
             continue;
@@ -187,7 +191,11 @@ pub fn rewrite_spec_with_placement(
         }
     }
 
-    Ok(RewriteResult { text: output, rewritten_in_place, appended })
+    Ok(RewriteResult {
+        text: output,
+        rewritten_in_place,
+        appended,
+    })
 }
 
 // ── AST helpers ───────────────────────────────────────────────────────────────
@@ -221,12 +229,25 @@ fn build_replacement_text(
     place_span: Span,
 ) -> String {
     match state {
-        Some(state) => {
-            build_solved_replacement(designator, place, state, source, indent, inner_indent, trivia, place_span)
-        }
-        None => {
-            build_unsolved_replacement(designator, place, source, indent, inner_indent, trivia, place_span)
-        }
+        Some(state) => build_solved_replacement(
+            designator,
+            place,
+            state,
+            source,
+            indent,
+            inner_indent,
+            trivia,
+            place_span,
+        ),
+        None => build_unsolved_replacement(
+            designator,
+            place,
+            source,
+            indent,
+            inner_indent,
+            trivia,
+            place_span,
+        ),
     }
 }
 
@@ -285,7 +306,10 @@ fn build_solved_replacement(
         "{}at: ({:.4}mm, {:.4}mm)\n",
         inner_indent, state.x_mm, state.y_mm
     ));
-    out.push_str(&format!("{}rotation: {:.1}\n", inner_indent, state.rotation_deg));
+    out.push_str(&format!(
+        "{}rotation: {:.1}\n",
+        inner_indent, state.rotation_deg
+    ));
 
     // Solved annotation.
     out.push_str(&format!("{}// autoplace: solved\n", inner_indent));
@@ -505,9 +529,18 @@ placement {
             rw.text
         );
         assert!(rw.text.contains("rotation: 0.0"), "expected rotation line");
-        assert!(!rw.text.contains("autoplace: true"), "autoplace: true must be removed");
-        assert!(rw.text.contains("region: center"), "other properties must be preserved");
-        assert!(rw.text.contains("// autoplace: solved"), "solved comment must be present");
+        assert!(
+            !rw.text.contains("autoplace: true"),
+            "autoplace: true must be removed"
+        );
+        assert!(
+            rw.text.contains("region: center"),
+            "other properties must be preserved"
+        );
+        assert!(
+            rw.text.contains("// autoplace: solved"),
+            "solved comment must be present"
+        );
     }
 
     #[test]
@@ -526,10 +559,19 @@ placement {
         let result = make_result(vec![("U2", 15.0, 25.0, 0.0)]);
         let rw = rewrite(spec, result, vec!["U2"]);
         // U1 locked block preserved verbatim.
-        assert!(rw.text.contains("at: (5.0mm, 5.0mm)"), "U1 at: must be preserved");
-        assert!(rw.text.contains("rotation: 90.0"), "U1 rotation must be preserved");
+        assert!(
+            rw.text.contains("at: (5.0mm, 5.0mm)"),
+            "U1 at: must be preserved"
+        );
+        assert!(
+            rw.text.contains("rotation: 90.0"),
+            "U1 rotation must be preserved"
+        );
         // U2 solved.
-        assert!(rw.text.contains("at: (15.0000mm, 25.0000mm)"), "U2 must have solved position");
+        assert!(
+            rw.text.contains("at: (15.0000mm, 25.0000mm)"),
+            "U2 must have solved position"
+        );
         assert!(rw.rewritten_in_place.contains(&"U2".to_string()));
     }
 
@@ -546,8 +588,14 @@ placement {
         let rw = rewrite(spec, result, vec!["R1"]);
         assert!(rw.appended.contains(&"R1".to_string()));
         assert!(rw.text.contains("place R1"), "R1 block must be appended");
-        assert!(rw.text.contains("at: (30.0000mm, 40.0000mm)"), "R1 position must be correct");
-        assert!(rw.text.contains("rotation: 90.0"), "R1 rotation must be correct");
+        assert!(
+            rw.text.contains("at: (30.0000mm, 40.0000mm)"),
+            "R1 position must be correct"
+        );
+        assert!(
+            rw.text.contains("rotation: 90.0"),
+            "R1 rotation must be correct"
+        );
     }
 
     #[test]
@@ -568,7 +616,10 @@ placement {
         assert!(rw.text.contains("place C1"), "C1 individual block required");
         assert!(rw.text.contains("place C2"), "C2 individual block required");
         assert!(rw.text.contains("place C3"), "C3 individual block required");
-        assert!(!rw.text.contains("C1, C2"), "multi-designator block must not remain");
+        assert!(
+            !rw.text.contains("C1, C2"),
+            "multi-designator block must not remain"
+        );
         assert!(rw.rewritten_in_place.contains(&"C1".to_string()));
         assert!(rw.rewritten_in_place.contains(&"C2".to_string()));
         assert!(rw.rewritten_in_place.contains(&"C3".to_string()));
@@ -591,10 +642,22 @@ placement {
 "#;
         let result = make_result(vec![("U1", 10.0, 10.0, 0.0)]);
         let rw = rewrite(spec, result, vec!["U1"]);
-        assert!(rw.text.contains("clearance {"), "clearance block must be preserved");
-        assert!(rw.text.contains("all: 0.5mm"), "clearance value must be preserved");
-        assert!(rw.text.contains("optimize {"), "optimize block must be preserved");
-        assert!(rw.text.contains("ratsnest: true"), "optimize content must be preserved");
+        assert!(
+            rw.text.contains("clearance {"),
+            "clearance block must be preserved"
+        );
+        assert!(
+            rw.text.contains("all: 0.5mm"),
+            "clearance value must be preserved"
+        );
+        assert!(
+            rw.text.contains("optimize {"),
+            "optimize block must be preserved"
+        );
+        assert!(
+            rw.text.contains("ratsnest: true"),
+            "optimize content must be preserved"
+        );
     }
 
     #[test]
@@ -608,7 +671,10 @@ placement {
 "#;
         let result = make_result(vec![("Q1", 5.0, 8.0, 270.0)]);
         let rw = rewrite(spec, result, vec!["Q1"]);
-        assert!(rw.text.contains("rotation: 270.0"), "rotation must be 270.0");
+        assert!(
+            rw.text.contains("rotation: 270.0"),
+            "rotation must be 270.0"
+        );
         assert!(rw.text.contains("at: (5.0000mm, 8.0000mm)"));
     }
 
@@ -640,7 +706,10 @@ place U1 {
 }"#;
         let result = make_result(vec![("U1", 1.0, 2.0, 0.0)]);
         let rw = rewrite(spec, result, vec!["U1"]);
-        assert!(rw.text.contains("region: center"), "region property must be preserved");
+        assert!(
+            rw.text.contains("region: center"),
+            "region property must be preserved"
+        );
         assert!(
             rw.text.contains("// this resistor must be near U2"),
             "intra-body comment must be preserved:\n{}",
@@ -665,7 +734,10 @@ place U1 {
         let spec = "component FOO {\n    value: \"bar\"\n}\n";
         let result = make_result(vec![("U1", 1.0, 2.0, 0.0)]);
         let rw = rewrite(spec, result, vec!["U1"]);
-        assert_eq!(rw.text, spec, "output must equal input when no placement block");
+        assert_eq!(
+            rw.text, spec,
+            "output must equal input when no placement block"
+        );
         assert!(rw.rewritten_in_place.is_empty());
         assert!(rw.appended.is_empty());
     }
@@ -682,7 +754,10 @@ placement {
 "#;
         let result = make_result(vec![]);
         let rw = rewrite(spec, result, vec![]);
-        assert_eq!(rw.text, spec, "output must equal input when all components locked");
+        assert_eq!(
+            rw.text, spec,
+            "output must equal input when all components locked"
+        );
         assert!(rw.rewritten_in_place.is_empty());
         assert!(rw.appended.is_empty());
     }

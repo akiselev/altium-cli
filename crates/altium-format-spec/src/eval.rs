@@ -13,8 +13,8 @@ use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
 
-use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 use crate::ast::{Expr, Object, ObjectItem, TemplatePart};
+use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 
 // ── Error types ──────────────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ impl SpecError {
     /// Falls back to a plain `error[Code]: message` when no span is available.
     /// Prefixes with `warning[...]` when severity is [`Severity::Warning`].
     pub fn render(&self, source_name: &str, source: &str) -> String {
-        use crate::diagnostic::{locate_line, caret_len};
+        use crate::diagnostic::{caret_len, locate_line};
 
         let prefix = match self.severity {
             Severity::Error => "error",
@@ -163,10 +163,16 @@ pub enum Value {
     SwapGroup(String),
     /// An import object — maps entity names to their string names.
     /// Stores provenance (alias) so field access can return ImportRef.
-    ImportObject { alias: String, entries: IndexMap<String, Value> },
+    ImportObject {
+        alias: String,
+        entries: IndexMap<String, Value>,
+    },
     /// A resolved `$alias.Name` reference; carries the import alias for error
     /// reporting and symbol validation.
-    ImportRef { alias: String, name: String },
+    ImportRef {
+        alias: String,
+        name: String,
+    },
 }
 
 impl Value {
@@ -229,7 +235,11 @@ impl Value {
         match self {
             Value::Dim(raw) => Ok(*raw),
             Value::Integer(n) => Ok(n.checked_mul(10_000).ok_or_else(|| {
-                SpecError::new(SpecErrorCode::ArithmeticOverflow, "integer overflow in mil conversion", span)
+                SpecError::new(
+                    SpecErrorCode::ArithmeticOverflow,
+                    "integer overflow in mil conversion",
+                    span,
+                )
             })?),
             Value::Float(f) => Ok((*f * 10_000.0).round() as i32),
             other => Err(SpecError::new(
@@ -379,17 +389,15 @@ pub fn eval_expr(expr: &Spanned<Expr>, scope: &ScopeStack) -> EvalResult<Value> 
                 None => Ok(Value::String(name.clone())),
             }
         }
-        Expr::DollarIdent(name) => {
-            match scope.lookup_dollar(name) {
-                Some(Ok(v)) => Ok(v.clone()),
-                Some(Err(e)) => Err(e),
-                None => Err(SpecError::at(
-                    SpecErrorCode::UndefinedBinding,
-                    format!("undefined binding '${name}'"),
-                    span,
-                )),
-            }
-        }
+        Expr::DollarIdent(name) => match scope.lookup_dollar(name) {
+            Some(Ok(v)) => Ok(v.clone()),
+            Some(Err(e)) => Err(e),
+            None => Err(SpecError::at(
+                SpecErrorCode::UndefinedBinding,
+                format!("undefined binding '${name}'"),
+                span,
+            )),
+        },
 
         // ── Field access: expr.field ───────────────────────────────────────
         Expr::Path(base_expr, field) => {
@@ -457,7 +465,10 @@ fn eval_template(parts: &[TemplatePart], scope: &ScopeStack, span: Span) -> Eval
 
 /// Parse a token slice (from a template interpolation) into a `Spanned<Expr>`.
 /// This requires re-running the spec parser on the sub-token list.
-fn parse_template_expr(tokens: &[crate::lexer::Token], _outer_span: Span) -> EvalResult<Spanned<Expr>> {
+fn parse_template_expr(
+    tokens: &[crate::lexer::Token],
+    _outer_span: Span,
+) -> EvalResult<Spanned<Expr>> {
     use crate::parser::parse_spec;
 
     // Build a minimal source string for error reporting.
@@ -468,26 +479,42 @@ fn parse_template_expr(tokens: &[crate::lexer::Token], _outer_span: Span) -> Eva
     let synthetic = tokens_to_source(tokens);
     // Parse as a value expression by wrapping in a let-binding assignment
     let wrapped = format!("component _dummy {{ let _t = {synthetic} }}");
-    let ast = parse_spec(&wrapped).map_err(|e| SpecError::no_span(
-        SpecErrorCode::TypeMismatch,
-        format!("failed to parse template expression: {e}"),
-    ))?;
+    let ast = parse_spec(&wrapped).map_err(|e| {
+        SpecError::no_span(
+            SpecErrorCode::TypeMismatch,
+            format!("failed to parse template expression: {e}"),
+        )
+    })?;
 
     // Extract the let binding value from the dummy component.
-    use crate::ast::{SpecItem, ComponentItem};
-    let comp = ast.items.into_iter()
+    use crate::ast::{ComponentItem, SpecItem};
+    let comp = ast
+        .items
+        .into_iter()
         .find_map(|item| match item.node {
             SpecItem::Component(c) => Some(c),
             _ => None,
         })
-        .ok_or_else(|| SpecError::no_span(SpecErrorCode::TypeMismatch, "template parse: expected component"))?;
+        .ok_or_else(|| {
+            SpecError::no_span(
+                SpecErrorCode::TypeMismatch,
+                "template parse: expected component",
+            )
+        })?;
 
-    let let_binding = comp.body.into_iter()
+    let let_binding = comp
+        .body
+        .into_iter()
         .find_map(|item| match item.node {
             ComponentItem::LetBinding(lb) => Some(lb),
             _ => None,
         })
-        .ok_or_else(|| SpecError::no_span(SpecErrorCode::TypeMismatch, "template parse: expected let binding"))?;
+        .ok_or_else(|| {
+            SpecError::no_span(
+                SpecErrorCode::TypeMismatch,
+                "template parse: expected let binding",
+            )
+        })?;
 
     Ok(let_binding.value)
 }
@@ -502,10 +529,21 @@ fn tokens_to_source(tokens: &[crate::lexer::Token]) -> String {
         }
         match &tok.kind {
             TokenKind::Ident(s) => out.push_str(s),
-            TokenKind::DollarIdent(s) => { out.push('$'); out.push_str(s); }
-            TokenKind::String(s) => { out.push('"'); out.push_str(&s.replace('\\', "\\\\").replace('"', "\\\"")); out.push('"'); }
-            TokenKind::Integer(n) => { write!(&mut out, "{n}").unwrap(); }
-            TokenKind::Float(f) => { write!(&mut out, "{f}").unwrap(); }
+            TokenKind::DollarIdent(s) => {
+                out.push('$');
+                out.push_str(s);
+            }
+            TokenKind::String(s) => {
+                out.push('"');
+                out.push_str(&s.replace('\\', "\\\\").replace('"', "\\\""));
+                out.push('"');
+            }
+            TokenKind::Integer(n) => {
+                write!(&mut out, "{n}").unwrap();
+            }
+            TokenKind::Float(f) => {
+                write!(&mut out, "{f}").unwrap();
+            }
             TokenKind::Dim(v, u) => {
                 let suffix = match u {
                     Unit::Mil => "mil",
@@ -516,7 +554,9 @@ fn tokens_to_source(tokens: &[crate::lexer::Token]) -> String {
                 };
                 write!(&mut out, "{v}{suffix}").unwrap();
             }
-            TokenKind::Color(r, g, b) => { write!(&mut out, "#{r:02X}{g:02X}{b:02X}").unwrap(); }
+            TokenKind::Color(r, g, b) => {
+                write!(&mut out, "#{r:02X}{g:02X}{b:02X}").unwrap();
+            }
             TokenKind::True => out.push_str("true"),
             TokenKind::False => out.push_str("false"),
             TokenKind::Null => out.push_str("null"),
@@ -577,18 +617,30 @@ fn eval_binop(left: Value, op: BinOp, right: Value, span: Span) -> EvalResult<Va
         // dim op dim → dim
         (Value::Dim(a), BinOp::Add, Value::Dim(b)) => {
             Ok(Value::Dim(a.checked_add(*b).ok_or_else(|| {
-                SpecError::at(SpecErrorCode::ArithmeticOverflow, "overflow in dim + dim", span)
+                SpecError::at(
+                    SpecErrorCode::ArithmeticOverflow,
+                    "overflow in dim + dim",
+                    span,
+                )
             })?))
         }
         (Value::Dim(a), BinOp::Sub, Value::Dim(b)) => {
             Ok(Value::Dim(a.checked_sub(*b).ok_or_else(|| {
-                SpecError::at(SpecErrorCode::ArithmeticOverflow, "overflow in dim - dim", span)
+                SpecError::at(
+                    SpecErrorCode::ArithmeticOverflow,
+                    "overflow in dim - dim",
+                    span,
+                )
             })?))
         }
         // dim * number → dim (scale)
         (Value::Dim(a), BinOp::Mul, Value::Integer(b)) => {
             Ok(Value::Dim(a.checked_mul(*b).ok_or_else(|| {
-                SpecError::at(SpecErrorCode::ArithmeticOverflow, "overflow in dim * int", span)
+                SpecError::at(
+                    SpecErrorCode::ArithmeticOverflow,
+                    "overflow in dim * int",
+                    span,
+                )
             })?))
         }
         (Value::Dim(a), BinOp::Mul, Value::Float(b)) => {
@@ -597,7 +649,11 @@ fn eval_binop(left: Value, op: BinOp, right: Value, span: Span) -> EvalResult<Va
         // number * dim → dim
         (Value::Integer(a), BinOp::Mul, Value::Dim(b)) => {
             Ok(Value::Dim(a.checked_mul(*b).ok_or_else(|| {
-                SpecError::at(SpecErrorCode::ArithmeticOverflow, "overflow in int * dim", span)
+                SpecError::at(
+                    SpecErrorCode::ArithmeticOverflow,
+                    "overflow in int * dim",
+                    span,
+                )
             })?))
         }
         (Value::Float(a), BinOp::Mul, Value::Dim(b)) => {
@@ -606,13 +662,21 @@ fn eval_binop(left: Value, op: BinOp, right: Value, span: Span) -> EvalResult<Va
         // dim / number → dim
         (Value::Dim(a), BinOp::Div, Value::Integer(b)) => {
             if *b == 0 {
-                return Err(SpecError::at(SpecErrorCode::DivisionByZero, "division by zero", span));
+                return Err(SpecError::at(
+                    SpecErrorCode::DivisionByZero,
+                    "division by zero",
+                    span,
+                ));
             }
             Ok(Value::Dim(a / b))
         }
         (Value::Dim(a), BinOp::Div, Value::Float(b)) => {
             if *b == 0.0 {
-                return Err(SpecError::at(SpecErrorCode::DivisionByZero, "division by zero", span));
+                return Err(SpecError::at(
+                    SpecErrorCode::DivisionByZero,
+                    "division by zero",
+                    span,
+                ));
             }
             Ok(Value::Dim((*a as f64 / b).round() as i32))
         }
@@ -635,7 +699,11 @@ fn eval_binop(left: Value, op: BinOp, right: Value, span: Span) -> EvalResult<Va
         }
         (Value::Integer(a), BinOp::Div, Value::Integer(b)) => {
             if *b == 0 {
-                return Err(SpecError::at(SpecErrorCode::DivisionByZero, "division by zero", span));
+                return Err(SpecError::at(
+                    SpecErrorCode::DivisionByZero,
+                    "division by zero",
+                    span,
+                ));
             }
             Ok(Value::Integer(a / b))
         }
@@ -646,7 +714,11 @@ fn eval_binop(left: Value, op: BinOp, right: Value, span: Span) -> EvalResult<Va
         (Value::Float(a), BinOp::Mul, Value::Float(b)) => Ok(Value::Float(a * b)),
         (Value::Float(a), BinOp::Div, Value::Float(b)) => {
             if *b == 0.0 {
-                return Err(SpecError::at(SpecErrorCode::DivisionByZero, "division by zero", span));
+                return Err(SpecError::at(
+                    SpecErrorCode::DivisionByZero,
+                    "division by zero",
+                    span,
+                ));
             }
             Ok(Value::Float(a / b))
         }
@@ -658,13 +730,21 @@ fn eval_binop(left: Value, op: BinOp, right: Value, span: Span) -> EvalResult<Va
         (Value::Float(a), BinOp::Mul, Value::Integer(b)) => Ok(Value::Float(a * *b as f64)),
         (Value::Integer(a), BinOp::Div, Value::Float(b)) => {
             if *b == 0.0 {
-                return Err(SpecError::at(SpecErrorCode::DivisionByZero, "division by zero", span));
+                return Err(SpecError::at(
+                    SpecErrorCode::DivisionByZero,
+                    "division by zero",
+                    span,
+                ));
             }
             Ok(Value::Float(*a as f64 / b))
         }
         (Value::Float(a), BinOp::Div, Value::Integer(b)) => {
             if *b == 0 {
-                return Err(SpecError::at(SpecErrorCode::DivisionByZero, "division by zero", span));
+                return Err(SpecError::at(
+                    SpecErrorCode::DivisionByZero,
+                    "division by zero",
+                    span,
+                ));
             }
             Ok(Value::Float(a / *b as f64))
         }
@@ -699,24 +779,25 @@ fn eval_unary_neg(val: Value, span: Span) -> EvalResult<Value> {
 
 fn eval_field_access(base: Value, field: &str, span: Option<Span>) -> EvalResult<Value> {
     match base {
-        Value::Object(map) => {
-            map.get(field).cloned().ok_or_else(|| SpecError::new(
+        Value::Object(map) => map.get(field).cloned().ok_or_else(|| {
+            SpecError::new(
                 SpecErrorCode::InvalidFieldAccess,
                 format!("no field '{field}' on object"),
                 span,
-            ))
-        }
-        Value::ImportObject { alias, entries } => {
-            match entries.get(field) {
-                Some(Value::String(name)) => Ok(Value::ImportRef { alias, name: name.clone() }),
-                Some(other) => Ok(other.clone()),
-                None => Err(SpecError::new(
-                    SpecErrorCode::InvalidFieldAccess,
-                    format!("no entity '{field}' in import '{alias}'"),
-                    span,
-                )),
-            }
-        }
+            )
+        }),
+        Value::ImportObject { alias, entries } => match entries.get(field) {
+            Some(Value::String(name)) => Ok(Value::ImportRef {
+                alias,
+                name: name.clone(),
+            }),
+            Some(other) => Ok(other.clone()),
+            None => Err(SpecError::new(
+                SpecErrorCode::InvalidFieldAccess,
+                format!("no entity '{field}' in import '{alias}'"),
+                span,
+            )),
+        },
         Value::CoordPoint(x, y) => match field {
             "x" => Ok(Value::Dim(x)),
             "y" => Ok(Value::Dim(y)),
@@ -742,38 +823,43 @@ fn eval_index_access(base: Value, idx: Value, span: Option<Span>) -> EvalResult<
             } else {
                 Some(n as usize)
             };
-            i.and_then(|i| arr.get(i)).cloned().ok_or_else(|| SpecError::new(
-                SpecErrorCode::IndexNotArray,
-                format!("array index {n} out of bounds"),
-                span,
-            ))
+            i.and_then(|i| arr.get(i)).cloned().ok_or_else(|| {
+                SpecError::new(
+                    SpecErrorCode::IndexNotArray,
+                    format!("array index {n} out of bounds"),
+                    span,
+                )
+            })
         }
-        (Value::Object(map), Value::String(key)) => {
-            map.get(&key).cloned().ok_or_else(|| SpecError::new(
+        (Value::Object(map), Value::String(key)) => map.get(&key).cloned().ok_or_else(|| {
+            SpecError::new(
                 SpecErrorCode::InvalidFieldAccess,
                 format!("no field '{key}' on object"),
                 span,
-            ))
-        }
+            )
+        }),
         (Value::Object(map), Value::Integer(n)) => {
             let key = n.to_string();
-            map.get(&key).cloned().ok_or_else(|| SpecError::new(
-                SpecErrorCode::InvalidFieldAccess,
-                format!("no field '{key}' on object"),
-                span,
-            ))
-        }
-        (Value::ImportObject { alias, entries }, Value::String(key)) => {
-            match entries.get(&key) {
-                Some(Value::String(name)) => Ok(Value::ImportRef { alias, name: name.clone() }),
-                Some(other) => Ok(other.clone()),
-                None => Err(SpecError::new(
+            map.get(&key).cloned().ok_or_else(|| {
+                SpecError::new(
                     SpecErrorCode::InvalidFieldAccess,
-                    format!("no entity '{key}' in import '{alias}'"),
+                    format!("no field '{key}' on object"),
                     span,
-                )),
-            }
+                )
+            })
         }
+        (Value::ImportObject { alias, entries }, Value::String(key)) => match entries.get(&key) {
+            Some(Value::String(name)) => Ok(Value::ImportRef {
+                alias,
+                name: name.clone(),
+            }),
+            Some(other) => Ok(other.clone()),
+            None => Err(SpecError::new(
+                SpecErrorCode::InvalidFieldAccess,
+                format!("no entity '{key}' in import '{alias}'"),
+                span,
+            )),
+        },
         (base, idx) => Err(SpecError::new(
             SpecErrorCode::InvalidFieldAccess,
             format!("cannot index {} with {}", base.kind_name(), idx.kind_name()),
@@ -811,8 +897,8 @@ pub fn eval_let_bindings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{BinOp, Span, Spanned, Unit};
     use crate::ast::Expr;
+    use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 
     fn span() -> Span {
         Span::new(0, 0)
@@ -909,7 +995,13 @@ mod tests {
             Box::new(right),
         ));
         let result = eval_expr(&expr, &make_scope());
-        assert!(matches!(result, Err(SpecError { code: SpecErrorCode::DivisionByZero, .. })));
+        assert!(matches!(
+            result,
+            Err(SpecError {
+                code: SpecErrorCode::DivisionByZero,
+                ..
+            })
+        ));
     }
 
     // ── Spread evaluation ──────────────────────────────────────────────────
@@ -927,7 +1019,9 @@ mod tests {
         defaults_map.insert("x_size".to_string(), Value::Dim(600_000));
         scope.define("defaults".to_string(), Value::Object(defaults_map));
 
-        let spread_item = spanned(ObjectItem::Spread(spanned(Expr::Ident("defaults".to_string()))));
+        let spread_item = spanned(ObjectItem::Spread(spanned(Expr::Ident(
+            "defaults".to_string(),
+        ))));
         let override_item = spanned(ObjectItem::Property(Property {
             key: spanned("shape".to_string()),
             value: spanned(Expr::String("rectangular".to_string())),
@@ -941,7 +1035,10 @@ mod tests {
         let val = eval_expr(&expr, &scope).unwrap();
         match val {
             Value::Object(map) => {
-                assert_eq!(map.get("shape"), Some(&Value::String("rectangular".to_string())));
+                assert_eq!(
+                    map.get("shape"),
+                    Some(&Value::String("rectangular".to_string()))
+                );
                 assert_eq!(map.get("x_size"), Some(&Value::Dim(600_000)));
             }
             _ => panic!("expected object"),
@@ -989,7 +1086,13 @@ mod tests {
 
         let expr = spanned(Expr::Ident("a".to_string()));
         let result = eval_expr(&expr, &scope);
-        assert!(matches!(result, Err(SpecError { code: SpecErrorCode::CircularBinding, .. })));
+        assert!(matches!(
+            result,
+            Err(SpecError {
+                code: SpecErrorCode::CircularBinding,
+                ..
+            })
+        ));
     }
 
     // ── Type coercion ──────────────────────────────────────────────────────
@@ -1049,7 +1152,13 @@ mod tests {
         let scope = make_scope();
         let expr = spanned(Expr::DollarIdent("nonexistent".to_string()));
         let result = eval_expr(&expr, &scope);
-        assert!(matches!(result, Err(SpecError { code: SpecErrorCode::UndefinedBinding, .. })));
+        assert!(matches!(
+            result,
+            Err(SpecError {
+                code: SpecErrorCode::UndefinedBinding,
+                ..
+            })
+        ));
     }
 
     // ── Tuple (coord) ──────────────────────────────────────────────────────
@@ -1061,10 +1170,13 @@ mod tests {
         let expr = spanned(Expr::Tuple(Box::new(x), Box::new(y)));
         let val = eval_expr(&expr, &make_scope()).unwrap();
         // 10mm = 3_937_010 internal units, 5mm = 1_968_505
-        assert_eq!(val, Value::CoordPoint(
-            (10.0_f64 * 393_701.0).round() as i32,
-            (5.0_f64 * 393_701.0).round() as i32,
-        ));
+        assert_eq!(
+            val,
+            Value::CoordPoint(
+                (10.0_f64 * 393_701.0).round() as i32,
+                (5.0_f64 * 393_701.0).round() as i32,
+            )
+        );
     }
 
     // ── Unit conversion ────────────────────────────────────────────────────
@@ -1103,7 +1215,14 @@ mod tests {
         ];
         let expr = spanned(Expr::Array(elems));
         let val = eval_expr(&expr, &make_scope()).unwrap();
-        assert_eq!(val, Value::Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        assert_eq!(
+            val,
+            Value::Array(vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3)
+            ])
+        );
     }
 
     #[test]
@@ -1156,7 +1275,10 @@ mod tests {
         let val = eval_expr(&expr, &scope).unwrap();
         match val {
             Value::Object(map) => {
-                assert_eq!(map.get("electrical"), Some(&Value::String("passive".to_string())));
+                assert_eq!(
+                    map.get("electrical"),
+                    Some(&Value::String("passive".to_string()))
+                );
                 assert_eq!(map.get("side"), Some(&Value::String("outside".to_string())));
             }
             _ => panic!("expected object"),
@@ -1179,6 +1301,12 @@ mod tests {
         let scope = make_scope();
         let expr = spanned(Expr::DollarIdent("nonexistent".to_string()));
         let result = eval_expr(&expr, &scope);
-        assert!(matches!(result, Err(SpecError { code: SpecErrorCode::UndefinedBinding, .. })));
+        assert!(matches!(
+            result,
+            Err(SpecError {
+                code: SpecErrorCode::UndefinedBinding,
+                ..
+            })
+        ));
     }
 }

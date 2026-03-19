@@ -116,7 +116,7 @@ pub fn resolve_schdoc_spec(
 mod tests {
     use super::*;
     use crate::model::{
-        SchDocSpec, SchLibSpec, SheetSpec, SchDocComponentSpec, ComponentSpec, FootprintMapSpec,
+        ComponentSpec, FootprintMapSpec, SchDocComponentSpec, SchDocSpec, SchLibSpec, SheetSpec,
         SymbolRef,
     };
     use altium_format_types::{Coord, CoordPoint};
@@ -147,7 +147,10 @@ mod tests {
             annotation: None,
             designator: designator.to_string(),
             symbol: SymbolRef::Literal(lib_ref.to_string()),
-            location: CoordPoint { x: Coord::ZERO, y: Coord::ZERO },
+            location: CoordPoint {
+                x: Coord::ZERO,
+                y: Coord::ZERO,
+            },
             orientation: None,
             is_mirrored: None,
             description: None,
@@ -168,7 +171,10 @@ mod tests {
                 alias: alias.to_string(),
                 name: name.to_string(),
             },
-            location: CoordPoint { x: Coord::ZERO, y: Coord::ZERO },
+            location: CoordPoint {
+                x: Coord::ZERO,
+                y: Coord::ZERO,
+            },
             orientation: None,
             is_mirrored: None,
             description: None,
@@ -206,24 +212,39 @@ mod tests {
     #[test]
     fn resolver_with_library_populates_footprint_map() {
         let mut sheet = empty_sheet();
-        sheet.components.push(make_schdoc_component("R1", "Resistor"));
-        let model = SchDocSpec { sheets: vec![sheet] };
+        sheet
+            .components
+            .push(make_schdoc_component("R1", "Resistor"));
+        let model = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         let lib = make_schlib(vec![make_schlib_component("Resistor", "0402")]);
         let result = resolve_schdoc_spec(&model, &[lib]);
         assert!(result.is_ok(), "expected Ok, got {:?}", result.err());
         let resolved = result.unwrap();
-        assert_eq!(resolved.footprint_map.get("R1").map(|s| s.as_str()), Some("0402"));
+        assert_eq!(
+            resolved.footprint_map.get("R1").map(|s| s.as_str()),
+            Some("0402")
+        );
     }
 
     #[test]
     fn resolver_without_library_produces_empty_map_no_error() {
         let mut sheet = empty_sheet();
-        sheet.components.push(make_schdoc_component("R1", "Resistor"));
-        let model = SchDocSpec { sheets: vec![sheet] };
+        sheet
+            .components
+            .push(make_schdoc_component("R1", "Resistor"));
+        let model = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         let result = resolve_schdoc_spec(&model, &[]);
-        assert!(result.is_ok(), "expected Ok with empty map, got {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "expected Ok with empty map, got {:?}",
+            result.err()
+        );
         let resolved = result.unwrap();
         assert!(
             resolved.footprint_map.is_empty(),
@@ -238,13 +259,18 @@ mod tests {
         sheet
             .components
             .push(make_schdoc_component_import("U1", "mylib", "OpAmp"));
-        let model = SchDocSpec { sheets: vec![sheet] };
+        let model = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         let lib = make_schlib(vec![make_schlib_component("OpAmp", "SOIC8")]);
         let result = resolve_schdoc_spec(&model, &[lib]);
         assert!(result.is_ok());
         let resolved = result.unwrap();
-        assert_eq!(resolved.footprint_map.get("U1").map(|s| s.as_str()), Some("SOIC8"));
+        assert_eq!(
+            resolved.footprint_map.get("U1").map(|s| s.as_str()),
+            Some("SOIC8")
+        );
     }
 
     #[test]
@@ -253,7 +279,9 @@ mod tests {
         sheet
             .components
             .push(make_schdoc_component_import("U1", "missing_lib", "OpAmp"));
-        let model = SchDocSpec { sheets: vec![sheet] };
+        let model = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         // Libraries provided but don't contain "OpAmp"
         let lib = make_schlib(vec![make_schlib_component("Resistor", "0402")]);
@@ -283,7 +311,9 @@ mod tests {
         sheet
             .components
             .push(make_schdoc_component_import("U1", "second_lib", "OpAmp"));
-        let model = SchDocSpec { sheets: vec![sheet] };
+        let model = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         let first_lib = make_schlib(vec![make_schlib_component("OpAmp", "SOIC8")]);
         let second_lib = make_schlib(vec![make_schlib_component("OpAmp", "DIP8")]);
@@ -303,8 +333,12 @@ mod tests {
     #[test]
     fn resolver_component_without_footprint_in_library_is_not_mapped() {
         let mut sheet = empty_sheet();
-        sheet.components.push(make_schdoc_component("R1", "Resistor"));
-        let model = SchDocSpec { sheets: vec![sheet] };
+        sheet
+            .components
+            .push(make_schdoc_component("R1", "Resistor"));
+        let model = SchDocSpec {
+            sheets: vec![sheet],
+        };
 
         // Library component has no footprints
         let lib = make_schlib(vec![ComponentSpec {

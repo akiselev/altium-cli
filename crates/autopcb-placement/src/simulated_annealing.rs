@@ -31,6 +31,12 @@ pub struct SAConfig {
     pub min_acceptance_steps: usize,
     /// Record a viewer snapshot every this many temperature steps (default 50).
     pub snapshot_interval: usize,
+    /// Additional cost weight for coarse congestion overflow penalty.
+    pub congestion_weight: f64,
+    /// Congestion grid cell size in mm.
+    pub congestion_cell_mm: f64,
+    /// Bias multiplier for nets/components with high HPWL contribution.
+    pub critical_net_boost: f64,
 }
 
 impl Default for SAConfig {
@@ -43,6 +49,9 @@ impl Default for SAConfig {
             t_frozen: 0.001,
             min_acceptance_steps: 5,
             snapshot_interval: 50,
+            congestion_weight: 0.0,
+            congestion_cell_mm: 5.0,
+            critical_net_boost: 2.0,
         }
     }
 }
@@ -72,12 +81,29 @@ struct Placement {
     net_component_index: NetComponentIndex,
     spatial_grid: SpatialGrid,
     board_bounds: (f64, f64, f64, f64),
+    congestion_weight: f64,
+    congestion_cell_mm: f64,
+    congestion_capacity: f64,
+    congestion_enabled: bool,
     /// Candidate pin swap pairs: (comp_idx, pad_idx_a, pad_idx_b).
     /// Two pads may be swapped only if they are in the same swap group on the same component.
     pin_swap_opportunities: Vec<(usize, usize, usize)>,
     /// Candidate part swap pairs: (comp_idx_a, comp_idx_b).
     /// The two components must be in the same part swap group.
     part_swap_opportunities: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone)]
+struct MoveBiasContext {
+    component_weights: Vec<f64>,
+    pin_swap_weights: Vec<f64>,
+    part_swap_weights: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct CongestionMetrics {
+    penalty: f64,
+    component_scores: Vec<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -373,6 +399,224 @@ fn total_hpwl(index: &NetComponentIndex, components: &[ComponentState]) -> f64 {
         .sum()
 }
 
+fn net_hpwl_values(index: &NetComponentIndex, components: &[ComponentState]) -> Vec<f64> {
+    (0..index.net_to_comps.len())
+        .map(|net_idx| hpwl_for_net(net_idx, index, components))
+        .collect()
+}
+
+fn component_criticality(placement: &Placement, config: &SAConfig) -> Vec<f64> {
+    let net_hpwl = net_hpwl_values(&placement.net_component_index, &placement.components);
+    let max_hpwl = net_hpwl.iter().copied().fold(0.0, f64::max).max(1.0);
+    let mut scores = vec![0.0; placement.components.len()];
+    for (comp_idx, nets) in placement
+        .net_component_index
+        .comp_to_nets
+        .iter()
+        .enumerate()
+    {
+        let mut score = 1.0;
+        for &net_idx in nets {
+            let fanout = placement
+                .net_component_index
+                .net_to_comps
+                .get(net_idx)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            if fanout < 2 {
+                continue;
+            }
+            let capped_fanout = fanout.min(8) as f64;
+            let normalized = net_hpwl.get(net_idx).copied().unwrap_or(0.0) / max_hpwl;
+            score += normalized * config.critical_net_boost / capped_fanout.sqrt();
+        }
+        if !placement.components[comp_idx].is_movable {
+            score = 0.0;
+        }
+        scores[comp_idx] = score.max(0.0);
+    }
+    scores
+}
+
+fn compute_congestion_metrics(
+    placement: &Placement,
+    components: &[ComponentState],
+) -> CongestionMetrics {
+    if components.is_empty() {
+        return CongestionMetrics {
+            penalty: 0.0,
+            component_scores: Vec::new(),
+        };
+    }
+
+    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
+    let cell_size = placement.congestion_cell_mm.max(0.5);
+    let cols = (((x_max - x_min) / cell_size).ceil().max(1.0)) as usize;
+    let rows = (((y_max - y_min) / cell_size).ceil().max(1.0)) as usize;
+    let mut cells = vec![0.0; rows * cols];
+    let mut net_component_sets: Vec<Vec<usize>> =
+        vec![Vec::new(); placement.net_component_index.net_to_comps.len()];
+    let mut net_overflow = vec![0.0; placement.net_component_index.net_to_comps.len()];
+
+    for net_idx in 0..placement.net_component_index.net_to_comps.len() {
+        let comp_indices = match placement.net_component_index.net_to_comps.get(net_idx) {
+            Some(v) if v.len() >= 2 => v,
+            _ => continue,
+        };
+
+        let mut min_px = f64::INFINITY;
+        let mut min_py = f64::INFINITY;
+        let mut max_px = f64::NEG_INFINITY;
+        let mut max_py = f64::NEG_INFINITY;
+        let mut unique_components = Vec::new();
+        let mut pin_count = 0usize;
+
+        for &ci in comp_indices {
+            let comp = &components[ci];
+            let (sin_t, cos_t) = comp.rotation.to_radians().sin_cos();
+            for &(pad_net, lx, ly) in &comp.pads {
+                if pad_net != net_idx {
+                    continue;
+                }
+                let wx = comp.x + lx * cos_t - ly * sin_t;
+                let wy = comp.y + lx * sin_t + ly * cos_t;
+                min_px = min_px.min(wx);
+                min_py = min_py.min(wy);
+                max_px = max_px.max(wx);
+                max_py = max_py.max(wy);
+                pin_count += 1;
+                if !unique_components.contains(&ci) {
+                    unique_components.push(ci);
+                }
+            }
+        }
+
+        if pin_count < 2 || !min_px.is_finite() {
+            continue;
+        }
+
+        let span_w = (max_px - min_px).max(cell_size * 0.5);
+        let span_h = (max_py - min_py).max(cell_size * 0.5);
+        let demand = (span_w + span_h) / (span_w * span_h).max(cell_size * cell_size * 0.25);
+        let col0 = (((min_px - x_min) / cell_size).floor() as isize).clamp(0, cols as isize - 1);
+        let col1 = (((max_px - x_min) / cell_size).floor() as isize).clamp(0, cols as isize - 1);
+        let row0 = (((min_py - y_min) / cell_size).floor() as isize).clamp(0, rows as isize - 1);
+        let row1 = (((max_py - y_min) / cell_size).floor() as isize).clamp(0, rows as isize - 1);
+        let covered = ((row1 - row0 + 1) * (col1 - col0 + 1)).max(1) as f64;
+        for row in row0..=row1 {
+            for col in col0..=col1 {
+                cells[row as usize * cols + col as usize] += demand / covered;
+            }
+        }
+        net_component_sets[net_idx] = unique_components;
+    }
+
+    let mut penalty = 0.0;
+    for demand in &cells {
+        penalty += (*demand - placement.congestion_capacity).max(0.0).powi(2);
+    }
+
+    for net_idx in 0..placement.net_component_index.net_to_comps.len() {
+        let comps = &net_component_sets[net_idx];
+        if comps.is_empty() {
+            continue;
+        }
+        let comp_indices = match placement.net_component_index.net_to_comps.get(net_idx) {
+            Some(v) if v.len() >= 2 => v,
+            _ => continue,
+        };
+        let mut min_px = f64::INFINITY;
+        let mut min_py = f64::INFINITY;
+        let mut max_px = f64::NEG_INFINITY;
+        let mut max_py = f64::NEG_INFINITY;
+        for &ci in comp_indices {
+            let comp = &components[ci];
+            let (sin_t, cos_t) = comp.rotation.to_radians().sin_cos();
+            for &(pad_net, lx, ly) in &comp.pads {
+                if pad_net != net_idx {
+                    continue;
+                }
+                let wx = comp.x + lx * cos_t - ly * sin_t;
+                let wy = comp.y + lx * sin_t + ly * cos_t;
+                min_px = min_px.min(wx);
+                min_py = min_py.min(wy);
+                max_px = max_px.max(wx);
+                max_py = max_py.max(wy);
+            }
+        }
+        if !min_px.is_finite() {
+            continue;
+        }
+        let col0 = (((min_px - x_min) / cell_size).floor() as isize).clamp(0, cols as isize - 1);
+        let col1 = (((max_px - x_min) / cell_size).floor() as isize).clamp(0, cols as isize - 1);
+        let row0 = (((min_py - y_min) / cell_size).floor() as isize).clamp(0, rows as isize - 1);
+        let row1 = (((max_py - y_min) / cell_size).floor() as isize).clamp(0, rows as isize - 1);
+        let mut overflow_sum = 0.0;
+        for row in row0..=row1 {
+            for col in col0..=col1 {
+                overflow_sum += (cells[row as usize * cols + col as usize]
+                    - placement.congestion_capacity)
+                    .max(0.0);
+            }
+        }
+        net_overflow[net_idx] = overflow_sum;
+    }
+
+    let mut component_scores = vec![0.0; components.len()];
+    for (net_idx, comps) in net_component_sets.into_iter().enumerate() {
+        let overflow = net_overflow[net_idx];
+        if overflow <= 0.0 {
+            continue;
+        }
+        for comp_idx in comps {
+            component_scores[comp_idx] += overflow;
+        }
+    }
+
+    CongestionMetrics {
+        penalty,
+        component_scores,
+    }
+}
+
+fn build_move_bias_context(placement: &Placement, config: &SAConfig) -> MoveBiasContext {
+    let criticality = component_criticality(placement, config);
+    let congestion = compute_congestion_metrics(placement, &placement.components);
+    let component_weights: Vec<f64> = placement
+        .components
+        .iter()
+        .enumerate()
+        .map(|(idx, component)| {
+            if !component.is_movable {
+                return 0.0;
+            }
+            let congestion_bias = if placement.congestion_enabled {
+                congestion.component_scores.get(idx).copied().unwrap_or(0.0)
+                    * config.congestion_weight
+            } else {
+                0.0
+            };
+            (criticality[idx] + congestion_bias).max(1e-6)
+        })
+        .collect();
+    let pin_swap_weights = placement
+        .pin_swap_opportunities
+        .iter()
+        .map(|(comp_idx, _, _)| component_weights[*comp_idx].max(1e-6))
+        .collect();
+    let part_swap_weights = placement
+        .part_swap_opportunities
+        .iter()
+        .map(|(comp_a, comp_b)| (component_weights[*comp_a] + component_weights[*comp_b]).max(1e-6))
+        .collect();
+
+    MoveBiasContext {
+        component_weights,
+        pin_swap_weights,
+        part_swap_weights,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Overlap penalty (AABB)
 
@@ -459,7 +703,60 @@ fn movable_indices(components: &[ComponentState]) -> Vec<usize> {
         .collect()
 }
 
-fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) -> Option<Move> {
+fn sample_weighted_index(weights: &[f64], rng: &mut impl Rng) -> Option<usize> {
+    let total: f64 = weights.iter().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut draw = rng.random_range(0.0..total);
+    for (idx, weight) in weights.iter().enumerate() {
+        draw -= *weight;
+        if draw <= 0.0 {
+            return Some(idx);
+        }
+    }
+    weights.iter().rposition(|weight| *weight > 0.0)
+}
+
+fn sample_component_index(
+    movable: &[usize],
+    weights: &[f64],
+    weighted: bool,
+    rng: &mut impl Rng,
+) -> Option<usize> {
+    if movable.is_empty() {
+        return None;
+    }
+    if weighted {
+        let local_weights: Vec<f64> = movable.iter().map(|&idx| weights[idx]).collect();
+        if let Some(local_idx) = sample_weighted_index(&local_weights, rng) {
+            return Some(movable[local_idx]);
+        }
+    }
+    Some(movable[rng.random_range(0..movable.len())])
+}
+
+fn sample_second_component(
+    movable: &[usize],
+    weights: &[f64],
+    exclude: usize,
+    weighted: bool,
+    rng: &mut impl Rng,
+) -> Option<usize> {
+    let filtered: Vec<usize> = movable
+        .iter()
+        .copied()
+        .filter(|idx| *idx != exclude)
+        .collect();
+    sample_component_index(&filtered, weights, weighted, rng)
+}
+
+fn generate_move(
+    placement: &Placement,
+    temperature: f64,
+    bias: &MoveBiasContext,
+    rng: &mut impl Rng,
+) -> Option<Move> {
     let movable = movable_indices(&placement.components);
     if movable.is_empty() {
         return None;
@@ -473,11 +770,12 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
     // At T=1.0 → up to 20% of board dimension; scales linearly with T.
     let t_clamped = temperature.min(1.0).max(0.0);
     let max_disp = 0.2 * board_w.max(board_h) * (t_clamped + 0.05);
+    let weighted = rng.random::<f64>() < 0.80;
 
     let roll: f64 = rng.random();
     if roll < 0.45 {
         // Displace (45%).
-        let ci = movable[rng.random_range(0..movable.len())];
+        let ci = sample_component_index(&movable, &bias.component_weights, weighted, rng)?;
         let dx = rng.random_range(-max_disp..=max_disp);
         let dy = rng.random_range(-max_disp..=max_disp);
         Some(Move::Displace {
@@ -488,7 +786,7 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
     } else if roll < 0.70 {
         // Positional Swap (25%).
         if movable.len() < 2 {
-            let ci = movable[rng.random_range(0..movable.len())];
+            let ci = sample_component_index(&movable, &bias.component_weights, weighted, rng)?;
             let dx = rng.random_range(-max_disp..=max_disp);
             let dy = rng.random_range(-max_disp..=max_disp);
             return Some(Move::Displace {
@@ -497,18 +795,13 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
                 dy,
             });
         }
-        let ai = rng.random_range(0..movable.len());
-        let mut bi = rng.random_range(0..movable.len() - 1);
-        if bi >= ai {
-            bi += 1;
-        }
-        Some(Move::Swap {
-            comp_a: movable[ai],
-            comp_b: movable[bi],
-        })
+        let comp_a = sample_component_index(&movable, &bias.component_weights, weighted, rng)?;
+        let comp_b =
+            sample_second_component(&movable, &bias.component_weights, comp_a, weighted, rng)?;
+        Some(Move::Swap { comp_a, comp_b })
     } else if roll < 0.85 {
         // Rotate (15%) — snap to 0/90/180/270.
-        let ci = movable[rng.random_range(0..movable.len())];
+        let ci = sample_component_index(&movable, &bias.component_weights, weighted, rng)?;
         let angles = [0.0_f64, 90.0, 180.0, 270.0];
         let current = placement.components[ci].rotation.rem_euclid(360.0);
         let candidates: Vec<f64> = angles
@@ -522,7 +815,12 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
         })
     } else if roll < 0.925 && !placement.pin_swap_opportunities.is_empty() {
         // PinSwap (7.5% when opportunities exist).
-        let idx = rng.random_range(0..placement.pin_swap_opportunities.len());
+        let idx = if weighted {
+            sample_weighted_index(&bias.pin_swap_weights, rng)
+                .unwrap_or_else(|| rng.random_range(0..placement.pin_swap_opportunities.len()))
+        } else {
+            rng.random_range(0..placement.pin_swap_opportunities.len())
+        };
         let (comp_idx, pad_a, pad_b) = placement.pin_swap_opportunities[idx];
         Some(Move::PinSwap {
             comp_idx,
@@ -531,12 +829,17 @@ fn generate_move(placement: &Placement, temperature: f64, rng: &mut impl Rng) ->
         })
     } else if !placement.part_swap_opportunities.is_empty() {
         // PartSwap (remaining, ~7.5% when opportunities exist; fallback: Displace).
-        let idx = rng.random_range(0..placement.part_swap_opportunities.len());
+        let idx = if weighted {
+            sample_weighted_index(&bias.part_swap_weights, rng)
+                .unwrap_or_else(|| rng.random_range(0..placement.part_swap_opportunities.len()))
+        } else {
+            rng.random_range(0..placement.part_swap_opportunities.len())
+        };
         let (comp_a, comp_b) = placement.part_swap_opportunities[idx];
         Some(Move::PartSwap { comp_a, comp_b })
     } else {
         // No swap opportunities: fall back to Displace.
-        let ci = movable[rng.random_range(0..movable.len())];
+        let ci = sample_component_index(&movable, &bias.component_weights, weighted, rng)?;
         let dx = rng.random_range(-max_disp..=max_disp);
         let dy = rng.random_range(-max_disp..=max_disp);
         Some(Move::Displace {
@@ -699,11 +1002,74 @@ fn rebuild_net_index_for_swap(
     }
 }
 
+fn components_after_move(placement: &Placement, m: &Move) -> Vec<ComponentState> {
+    let mut components = placement.components.clone();
+    match *m {
+        Move::Displace { comp_idx, dx, dy } => {
+            components[comp_idx].x += dx;
+            components[comp_idx].y += dy;
+        }
+        Move::Swap { comp_a, comp_b } => {
+            let (ax, ay) = (components[comp_a].x, components[comp_a].y);
+            let (bx, by) = (components[comp_b].x, components[comp_b].y);
+            components[comp_a].x = bx;
+            components[comp_a].y = by;
+            components[comp_b].x = ax;
+            components[comp_b].y = ay;
+        }
+        Move::Rotate {
+            comp_idx,
+            new_rotation,
+        } => {
+            components[comp_idx].rotation = new_rotation;
+        }
+        Move::PinSwap {
+            comp_idx,
+            pad_a,
+            pad_b,
+        } => {
+            if pad_a < components[comp_idx].pads.len() && pad_b < components[comp_idx].pads.len() {
+                let net_a = components[comp_idx].pads[pad_a].0;
+                let net_b = components[comp_idx].pads[pad_b].0;
+                components[comp_idx].pads[pad_a].0 = net_b;
+                components[comp_idx].pads[pad_b].0 = net_a;
+            }
+        }
+        Move::PartSwap { comp_a, comp_b } => {
+            let (ax, ay, arot) = (
+                components[comp_a].x,
+                components[comp_a].y,
+                components[comp_a].rotation,
+            );
+            let (bx, by, brot) = (
+                components[comp_b].x,
+                components[comp_b].y,
+                components[comp_b].rotation,
+            );
+            components[comp_a].x = bx;
+            components[comp_a].y = by;
+            components[comp_a].rotation = brot;
+            components[comp_b].x = ax;
+            components[comp_b].y = ay;
+            components[comp_b].rotation = arot;
+        }
+    }
+    components
+}
+
 // ---------------------------------------------------------------------------
 // Incremental cost delta
 
 /// Cost delta for `m` on the given placement.
 fn delta_cost(placement: &Placement, m: &Move) -> f64 {
+    let congestion_delta = if placement.congestion_enabled {
+        let before = compute_congestion_metrics(placement, &placement.components).penalty;
+        let simulated = components_after_move(placement, m);
+        let after = compute_congestion_metrics(placement, &simulated).penalty;
+        (after - before) * placement.congestion_weight
+    } else {
+        0.0
+    };
     match *m {
         Move::Displace { comp_idx, dx, dy } => {
             let before_hpwl = hpwl_for_component_nets(
@@ -726,7 +1092,7 @@ fn delta_cost(placement: &Placement, m: &Move) -> f64 {
                 cost_after_displace(comp_idx, new_x, new_y, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            after - before
+            (after - before) + congestion_delta
         }
         Move::Swap { comp_a, comp_b } => {
             // Affected nets: union of nets for both components.
@@ -762,7 +1128,7 @@ fn delta_cost(placement: &Placement, m: &Move) -> f64 {
                 cost_after_swap(comp_a, comp_b, &affected, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            after - before
+            (after - before) + congestion_delta
         }
         Move::Rotate {
             comp_idx,
@@ -782,7 +1148,7 @@ fn delta_cost(placement: &Placement, m: &Move) -> f64 {
             let after_contain = contain_after_rotate(comp_idx, new_rotation, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            after - before
+            (after - before) + congestion_delta
         }
         Move::PinSwap {
             comp_idx,
@@ -811,7 +1177,7 @@ fn delta_cost(placement: &Placement, m: &Move) -> f64 {
                 hpwl_for_net_with_swap(net_a, net_b, comp_idx, pad_a, pad_b, placement)
                     + hpwl_for_net_with_swap(net_b, net_a, comp_idx, pad_b, pad_a, placement);
 
-            after_hpwl - before_hpwl
+            (after_hpwl - before_hpwl) + congestion_delta
         }
         Move::PartSwap { comp_a, comp_b } => {
             let nets_a: Vec<usize> = placement
@@ -846,7 +1212,7 @@ fn delta_cost(placement: &Placement, m: &Move) -> f64 {
                 cost_after_part_swap(comp_a, comp_b, &affected, placement);
             let after = after_hpwl + after_overlap + after_contain;
 
-            after - before
+            (after - before) + congestion_delta
         }
     }
 }
@@ -1250,9 +1616,10 @@ fn cost_after_part_swap(
 fn auto_init_temperature(placement: &Placement, config: &SAConfig, rng: &mut impl Rng) -> f64 {
     let n_samples = 100usize;
     let t_probe = 1.0; // arbitrary non-zero temperature for sampling
+    let bias = build_move_bias_context(placement, config);
     let mut deltas: Vec<f64> = Vec::with_capacity(n_samples);
     for _ in 0..n_samples {
-        if let Some(m) = generate_move(placement, t_probe, rng) {
+        if let Some(m) = generate_move(placement, t_probe, &bias, rng) {
             let dc = delta_cost(placement, &m);
             deltas.push(dc.abs());
         }
@@ -1362,14 +1729,24 @@ pub fn refine_with_sa(
     let (pin_swap_opportunities, part_swap_opportunities) =
         build_swap_opportunities(ir, &comp_designators);
 
+    let congestion_cell_mm = config.congestion_cell_mm.max(0.5);
+    let congestion_capacity = ir.layer_stack.copper_layer_count.max(1) as f64 * congestion_cell_mm;
+
     let mut placement = Placement {
         components,
         net_component_index,
         spatial_grid,
         board_bounds,
+        congestion_weight: config.congestion_weight.max(0.0),
+        congestion_cell_mm,
+        congestion_capacity,
+        congestion_enabled: false,
         pin_swap_opportunities,
         part_swap_opportunities,
     };
+
+    let initial_congestion = compute_congestion_metrics(&placement, &placement.components).penalty;
+    placement.congestion_enabled = placement.congestion_weight > 0.0 && initial_congestion > 0.0;
 
     // Auto-initialize temperature.
     let mut rng = rand::rng();
@@ -1389,11 +1766,12 @@ pub fn refine_with_sa(
             break;
         }
 
+        let bias = build_move_bias_context(&placement, config);
         let mut accepted = 0usize;
         let mut attempted = 0usize;
 
         for _ in 0..config.moves_per_temp {
-            let m = match generate_move(&placement, temperature, &mut rng) {
+            let m = match generate_move(&placement, temperature, &bias, &mut rng) {
                 Some(m) => m,
                 None => break,
             };
@@ -1422,7 +1800,15 @@ pub fn refine_with_sa(
 
         // Snapshot.
         if step % config.snapshot_interval == 0 {
-            let note = Some(format!("SA step {} T={:.4}", step, temperature));
+            let congestion = if placement.congestion_enabled {
+                compute_congestion_metrics(&placement, &placement.components).penalty
+            } else {
+                0.0
+            };
+            let note = Some(format!(
+                "SA step {} T={:.4} congestion={:.3}",
+                step, temperature, congestion
+            ));
             snapshots.push(snapshot_from_placement(
                 "sa_refine",
                 &placement.components,
@@ -1644,6 +2030,10 @@ mod tests {
             components,
             spatial_grid,
             board_bounds,
+            congestion_weight: 0.0,
+            congestion_cell_mm: 5.0,
+            congestion_capacity: 10.0,
+            congestion_enabled: false,
             pin_swap_opportunities: Vec::new(),
             part_swap_opportunities: Vec::new(),
         }
@@ -1957,6 +2347,110 @@ mod tests {
                 placement.components[1].rotation
             ),
             (1.0, 2.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn congestion_metrics_detects_overflow() {
+        let mut placement = placement_for_test(
+            vec![
+                ComponentState {
+                    designator: "U1".into(),
+                    x: 1.0,
+                    y: 1.0,
+                    rotation: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: vec![(0, 0.0, 0.0)],
+                },
+                ComponentState {
+                    designator: "U2".into(),
+                    x: 2.0,
+                    y: 1.0,
+                    rotation: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: vec![(0, 0.0, 0.0)],
+                },
+                ComponentState {
+                    designator: "U3".into(),
+                    x: 3.0,
+                    y: 1.0,
+                    rotation: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: vec![(0, 0.0, 0.0)],
+                },
+            ],
+            (0.0, 0.0, 4.0, 4.0),
+        );
+        placement.net_component_index = NetComponentIndex {
+            comp_to_nets: vec![vec![0], vec![0], vec![0]],
+            net_to_comps: vec![vec![0, 1, 2]],
+        };
+        placement.congestion_cell_mm = 0.5;
+        placement.congestion_capacity = 0.05;
+
+        let metrics = compute_congestion_metrics(&placement, &placement.components);
+        assert!(metrics.penalty > 0.0);
+        assert!(metrics.component_scores.iter().any(|score| *score > 0.0));
+    }
+
+    #[test]
+    fn move_bias_prefers_critical_components() {
+        let mut placement = placement_for_test(
+            vec![
+                ComponentState {
+                    designator: "U1".into(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: vec![(0, 0.0, 0.0), (1, 0.0, 0.0)],
+                },
+                ComponentState {
+                    designator: "U2".into(),
+                    x: 20.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: vec![(0, 0.0, 0.0)],
+                },
+                ComponentState {
+                    designator: "U3".into(),
+                    x: 1.0,
+                    y: 1.0,
+                    rotation: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    is_movable: true,
+                    pads: vec![(1, 0.0, 0.0)],
+                },
+            ],
+            (0.0, 0.0, 25.0, 10.0),
+        );
+        placement.net_component_index = NetComponentIndex {
+            comp_to_nets: vec![vec![0, 1], vec![0], vec![1]],
+            net_to_comps: vec![vec![0, 1], vec![0, 2]],
+        };
+
+        let bias = build_move_bias_context(
+            &placement,
+            &SAConfig {
+                critical_net_boost: 3.0,
+                ..SAConfig::default()
+            },
+        );
+        assert!(
+            bias.component_weights[0] > bias.component_weights[2],
+            "expected multi-net hub to get higher weight"
         );
     }
 }

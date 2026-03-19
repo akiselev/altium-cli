@@ -401,7 +401,10 @@ impl<'a> Printer<'a> {
                 let prev = &tokens[i - 1].kind;
                 let cur = &tok.kind;
                 let no_space = matches!(prev, TokenKind::Dot | TokenKind::LBracket)
-                    || matches!(cur, TokenKind::Dot | TokenKind::RBracket | TokenKind::LBracket);
+                    || matches!(
+                        cur,
+                        TokenKind::Dot | TokenKind::RBracket | TokenKind::LBracket
+                    );
                 if !no_space {
                     self.push(" ");
                 }
@@ -471,7 +474,9 @@ impl<'a> Printer<'a> {
         if obj.items.len() > self.config.max_inline_items {
             return false;
         }
-        obj.items.iter().all(|item| is_simple_object_item(&item.node))
+        obj.items
+            .iter()
+            .all(|item| is_simple_object_item(&item.node))
     }
 
     fn render_object_inline(&self, obj: &Object) -> String {
@@ -1327,8 +1332,12 @@ fn pretty_print(
     // Handle files with no AST items (comment-only files).
     if ast.items.is_empty() {
         let all_trivia = scan_trivia_lines(source);
-        let first_comment = all_trivia.iter().position(|l| !matches!(l, TriviaLine::Blank));
-        let last_comment = all_trivia.iter().rposition(|l| !matches!(l, TriviaLine::Blank));
+        let first_comment = all_trivia
+            .iter()
+            .position(|l| !matches!(l, TriviaLine::Blank));
+        let last_comment = all_trivia
+            .iter()
+            .rposition(|l| !matches!(l, TriviaLine::Blank));
         if let (Some(s), Some(e)) = (first_comment, last_comment) {
             for line in &all_trivia[s..=e] {
                 match line {
@@ -1347,9 +1356,7 @@ fn pretty_print(
     let last_end = ast.items.last().unwrap().span.end as usize;
     let tail = &source[last_end..];
     let tail_trivia = scan_trivia_lines(tail);
-    let has_trailing_comment = tail_trivia
-        .iter()
-        .any(|l| !matches!(l, TriviaLine::Blank));
+    let has_trailing_comment = tail_trivia.iter().any(|l| !matches!(l, TriviaLine::Blank));
     if has_trailing_comment {
         for line in &tail_trivia {
             match line {
@@ -1431,14 +1438,17 @@ let b = 2
             "expected inline object in:\n{}",
             output
         );
-        assert!(!output.contains("{\n"), "unexpected multi-line in:\n{}", output);
+        assert!(
+            !output.contains("{\n"),
+            "unexpected multi-line in:\n{}",
+            output
+        );
     }
 
     #[test]
     fn test_multiline_object() {
         // 5 items > max_inline_items(4) → multi-line.
-        let input =
-            "let x = { a: 1, b: 2, c: 3, d: 4, e: 5 }\n";
+        let input = "let x = { a: 1, b: 2, c: 3, d: 4, e: 5 }\n";
         let output = fmt(input);
         assert!(
             output.contains("{\n"),
@@ -1536,10 +1546,6 @@ let b = 2
     fn test_dim_fractional_keeps_decimal() {
         let input = "let x = 2.54mm\n";
         let output = fmt(input);
-        assert!(
-            output.contains("2.54mm"),
-            "expected 2.54mm in:\n{}",
-            output
-        );
+        assert!(output.contains("2.54mm"), "expected 2.54mm in:\n{}", output);
     }
 }

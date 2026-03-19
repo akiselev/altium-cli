@@ -2,17 +2,17 @@ use std::path::PathBuf;
 
 use crate::annotation::CompiledAnnotation;
 
-use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
-    PlaneConnectionStyle, RotationBy90,
+use altium_format_types::project::{
+    ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
+    CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
 };
 use altium_format_types::sch::{
     HorizontalAlign, LeftRightSide, LineStyle, PenWidth, PortArrowStyle, PortIoType,
     PowerObjectStyle, TextJustification,
 };
-use altium_format_types::project::{
-    ChannelRoomNamingStyle, ConnectionCode, CrossRefLocationStyle, CrossRefPorts,
-    CrossRefSheetStyle, ErrorLevel, FlattenMode, SortLocation, SortOrder, VariationKind,
+use altium_format_types::{
+    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
+    PlaneConnectionStyle, RotationBy90,
 };
 
 /// A layer specification in the spec language.
@@ -676,10 +676,15 @@ pub struct AutoplaceConfig {
     pub sa_moves_per_temp: Option<usize>,
     pub sa_max_steps: Option<usize>,
     pub enable_net_crossings: Option<bool>,
+    pub congestion_weight: Option<f64>,
+    pub congestion_cell: Option<Coord>,
+    pub critical_net_boost: Option<f64>,
     pub default_clearance: Option<Coord>,
     pub board_edge_clearance: Option<Coord>,
     pub grid_snap: Option<Coord>,
     pub auto_cluster: Option<bool>,
+    pub cluster_target_size: Option<usize>,
+    pub cluster_max_depth: Option<usize>,
 }
 
 /// A named group of components for placement solver grouping.
@@ -689,10 +694,26 @@ pub struct PlacementGroupSpec {
 }
 
 pub enum PlacementConstraintSpec {
-    LeftOf { a: String, b: String, gap: Option<Coord> },
-    RightOf { a: String, b: String, gap: Option<Coord> },
-    Above { a: String, b: String, gap: Option<Coord> },
-    Below { a: String, b: String, gap: Option<Coord> },
+    LeftOf {
+        a: String,
+        b: String,
+        gap: Option<Coord>,
+    },
+    RightOf {
+        a: String,
+        b: String,
+        gap: Option<Coord>,
+    },
+    Above {
+        a: String,
+        b: String,
+        gap: Option<Coord>,
+    },
+    Below {
+        a: String,
+        b: String,
+        gap: Option<Coord>,
+    },
 }
 
 pub struct PlacementOptimizeSpec {
