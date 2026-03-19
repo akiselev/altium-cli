@@ -277,6 +277,9 @@ enum PlacementSubcommand {
         gamma_end: f64,
         #[arg(long, default_value_t = 250)]
         max_iters: usize,
+        /// Enable simulated annealing refinement after analytical placement
+        #[arg(long, default_value_t = false)]
+        sa: bool,
     },
     /// Dump current component positions from a PcbDoc as a placement spec
     Dump {
@@ -2073,8 +2076,12 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
             gamma_start,
             gamma_end,
             max_iters,
+            sa,
         } => {
-            let cfg = PlacementConfig { gamma_start, gamma_end, max_iters, ..PlacementConfig::default() };
+            let mut cfg = PlacementConfig { gamma_start, gamma_end, max_iters, ..PlacementConfig::default() };
+            if sa {
+                cfg.sa_config = Some(autopcb_placement::simulated_annealing::SAConfig::default());
+            }
             let report = autoplace_spec(
                 &spec_file,
                 target.as_deref(),
