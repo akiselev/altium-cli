@@ -574,6 +574,21 @@ fn extract_rules(
                     // See: docs/routing/rules6-audit.md § SilkToBoardRegionClearance
                     IrRuleParams::SilkToBoardRegionClearance { clearance_mm: 0.0 }
                 }
+                // The following DRC-checkable rules lack typed RuleParams upstream.
+                // Default values are used until altium-format exposes their parameters.
+                RuleKind::PowerPlaneClearance => {
+                    IrRuleParams::PowerPlaneClearance { gap_mm: 0.0 }
+                }
+                RuleKind::PolygonConnectStyle => IrRuleParams::PolygonConnectStyle,
+                RuleKind::Creepage => {
+                    IrRuleParams::Creepage { min_mm: 0.0 }
+                }
+                RuleKind::MaxMinHeight => {
+                    IrRuleParams::MaxMinHeight { min_mm: 0.0, max_mm: f64::MAX }
+                }
+                RuleKind::ZAxisClearance => {
+                    IrRuleParams::ZAxisClearance { min_mm: 0.0 }
+                }
                 _ => IrRuleParams::Other { kind: r.kind },
             },
         };

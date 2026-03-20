@@ -19,6 +19,7 @@ use super::diff_pair::check_diff_pairs;
 use super::board::check_board;
 use super::manufacturing::check_manufacturing;
 use super::topology::check_topology;
+use super::{board, geometry, via};
 
 /// CPU-based DRC engine.
 pub struct CpuDrcEngine {
@@ -62,7 +63,16 @@ impl DrcEngine for CpuDrcEngine {
         violations.extend(check_board(solution, ir, &self.policy));
         violations.extend(check_manufacturing(solution, ir, &self.policy));
         violations.extend(check_topology(solution, &self.policy));
-        Ok(DrcReport::new(violations))
+        violations.extend(geometry::check_parallel_segments(solution, &self.policy));
+        violations.extend(via::check_vias_under_smd(solution, ir));
+        violations.extend(board::check_component_clearance(solution, ir, &self.policy));
+        violations.extend(board::check_creepage(solution, ir, &self.policy));
+        let report = DrcReport::new(violations)
+            .with_audit(
+                11,
+                self.policy.skipped_rules.clone(),
+            );
+        Ok(report)
     }
 }
 

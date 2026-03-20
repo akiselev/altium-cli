@@ -12,15 +12,25 @@ use super::{DrcViolation, DrcViolationKind};
 #[derive(Debug, Clone)]
 pub struct DrcReport {
     pub violations: Vec<DrcViolation>,
+    pub checked_rule_count: u32,
+    pub skipped_rule_count: u32,
+    pub skipped_rule_kinds: Vec<RuleKind>,
 }
 
 impl DrcReport {
     pub fn new(violations: Vec<DrcViolation>) -> Self {
-        Self { violations }
+        Self { violations, checked_rule_count: 0, skipped_rule_count: 0, skipped_rule_kinds: Vec::new() }
     }
 
     pub fn empty() -> Self {
-        Self { violations: Vec::new() }
+        Self { violations: Vec::new(), checked_rule_count: 0, skipped_rule_count: 0, skipped_rule_kinds: Vec::new() }
+    }
+
+    pub fn with_audit(mut self, checked: u32, skipped_kinds: Vec<RuleKind>) -> Self {
+        self.checked_rule_count = checked;
+        self.skipped_rule_count = skipped_kinds.len() as u32;
+        self.skipped_rule_kinds = skipped_kinds;
+        self
     }
 
     pub fn total_count(&self) -> usize {
@@ -91,6 +101,13 @@ impl DrcReport {
         for (kind, count) in &counts {
             lines.push(format!("  {:<35} {:>5}", format!("{:?}", kind), count));
         }
+        if !self.skipped_rule_kinds.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("  Skipped rules ({}):", self.skipped_rule_count));
+            for kind in &self.skipped_rule_kinds {
+                lines.push(format!("    {:?}", kind));
+            }
+        }
         lines.join("\n")
     }
 
@@ -122,6 +139,9 @@ impl DrcReport {
         serde_json::json!({
             "pass": self.is_clean(),
             "total_violations": self.total_count(),
+            "checked_rule_count": self.checked_rule_count,
+            "skipped_rule_count": self.skipped_rule_count,
+            "skipped_rule_kinds": self.skipped_rule_kinds.iter().map(|k| format!("{:?}", k)).collect::<Vec<_>>(),
             "violations": self.violations.iter().map(|v| {
                 serde_json::json!({
                     "kind": v.kind.to_string(),

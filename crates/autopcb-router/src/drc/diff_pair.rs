@@ -10,7 +10,7 @@
 //!
 //! For each pair identified via `IrNet::diff_pair_partner` the check:
 //! 1. Flags skew exceeding `max_uncoupled_length_mm`.
-//! 2. Flags average width mismatch between the two nets (`DiffPairWidthMismatch`).
+//! 2. Flags average width mismatch between the two nets (`DiffPairWidthViolation`).
 //! 3. For each segment in net_a, finds the nearest segment in net_b on the
 //!    same layer, computes center-to-center distance, subtracts half the sum
 //!    of the two widths to get the gap, and flags if gap is outside
@@ -60,7 +60,7 @@ fn segment_min_distance(a: &autopcb_routes::TraceSegment, b: &autopcb_routes::Tr
 /// For each pair of nets linked by `IrNet::diff_pair_partner`, this function:
 /// 1. Computes the routed length of both nets and checks skew against
 ///    `policy.diff_pair.max_uncoupled_length_mm`.
-/// 2. Compares average segment width of both nets; flags `DiffPairWidthMismatch`
+/// 2. Compares average segment width of both nets; flags `DiffPairWidthViolation`
 ///    if the difference exceeds 1 % of the larger width.
 /// 3. For each segment in net_a, finds the nearest segment in net_b on the same
 ///    layer; computes center-to-center distance minus half the summed widths to
@@ -172,7 +172,7 @@ pub fn check_diff_pairs(
                         position: net_midpoint(solution, net_b),
                     });
                 violations.push(DrcViolation {
-                    kind: DrcViolationKind::DiffPairWidthMismatch,
+                    kind: DrcViolationKind::DiffPairWidthViolation,
                     rule_kind: RuleKind::DifferentialPairsRouting,
                     rule_name: "DifferentialPairsRouting".to_string(),
                     object_a: obj_a,
@@ -494,9 +494,9 @@ mod tests {
         let violations = check_diff_pairs(&solution, &policy, &ir);
         let width_viols: Vec<_> = violations
             .iter()
-            .filter(|v| v.kind == DrcViolationKind::DiffPairWidthMismatch)
+            .filter(|v| v.kind == DrcViolationKind::DiffPairWidthViolation)
             .collect();
-        assert_eq!(width_viols.len(), 1, "expected 1 DiffPairWidthMismatch, got {:?}", violations);
+        assert_eq!(width_viols.len(), 1, "expected 1 DiffPairWidthViolation, got {:?}", violations);
         assert!((width_viols[0].actual_mm - 0.1).abs() < 1e-6,
             "width diff should be 0.1 mm, got {}", width_viols[0].actual_mm);
     }
@@ -521,7 +521,7 @@ mod tests {
         let violations = check_diff_pairs(&solution, &policy, &ir);
         let width_viols: Vec<_> = violations
             .iter()
-            .filter(|v| v.kind == DrcViolationKind::DiffPairWidthMismatch)
+            .filter(|v| v.kind == DrcViolationKind::DiffPairWidthViolation)
             .collect();
         assert!(width_viols.is_empty(), "equal widths should not produce width-mismatch: {:?}", violations);
     }

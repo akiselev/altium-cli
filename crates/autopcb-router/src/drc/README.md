@@ -75,10 +75,10 @@ from `.routes` files without depending on this crate.
 | Clearance | `clearance.rs` | `ClearanceViolation`, `BoardOutlineClearance` | Yes | No (planned) |
 | Short circuit | `shorts.rs` | `ShortCircuit` | Yes | No (planned) |
 | Width | `width.rs` | `WidthBelowMinimum`, `WidthAboveMaximum` | Yes | No |
-| Via | `via.rs` | `HoleSizeBelowMinimum`, `HoleSizeAboveMaximum`, `AnnularRingBelowMinimum`, `ViaCountExceeded`, `HoleToHoleClearance` | Yes | No |
+| Via | `via.rs` | `HoleSizeBelowMinimum`, `HoleSizeAboveMaximum`, `AnnularRingBelowMinimum`, `MaximumViaCountExceeded`, `HoleToHoleClearance` | Yes | No |
 | Geometry | `geometry.rs` | `AcuteAngle` | Yes | No |
 | Connectivity | `connectivity.rs` | `BrokenNet` | Yes | No |
-| Length | `length.rs` | `MatchedLengthExceeded` | Yes | No |
+| Length | `length.rs` | `MatchedLengthOutOfTolerance`, `NetLengthBelowMinimum`, `NetLengthAboveMaximum` | Yes | No |
 | Diff pair | `diff_pair.rs` | `DiffPairSkew` | Yes | No |
 | Board outline | `board.rs` | `BoardOutlineClearance` | Yes | No |
 | Manufacturing | `manufacturing.rs` | _(placeholder — returns empty)_ | — | — |
@@ -90,8 +90,9 @@ segment-to-via, via-to-via, and segment-to-board-edge (via
 of all segment endpoints; `clearance.rs` checks actual polyline distance to the
 board outline polygon when `ir.board.outline` is non-empty.
 
-`check_routing()` runs only `shorts`. `check_full()` runs all implemented
-modules sequentially and collects their violations into a single `DrcReport`.
+`check_routing()` runs clearance and shorts checks. `check_full()` runs all
+implemented modules sequentially and collects their violations into a single
+`DrcReport`.
 
 ### Geometry notes
 

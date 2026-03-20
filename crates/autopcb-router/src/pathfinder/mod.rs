@@ -295,7 +295,10 @@ pub fn pathfinder_route(
         });
 
         // -- 4h. Convergence check ------------------------------------------
-        if conflict_count == 0 && final_failed.is_empty() {
+        let drc_clean = !drc_config.enabled
+            || _iteration < drc_config.start_iteration
+            || last_drc_violation_count == 0;
+        if conflict_count == 0 && final_failed.is_empty() && drc_clean {
             break;
         }
     }

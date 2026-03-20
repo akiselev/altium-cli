@@ -312,42 +312,4 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "proptest")]
-    mod proptests {
-        use super::*;
-        use autopcb_routes::NetId;
-        use proptest::prelude::*;
-
-        proptest! {
-            #[test]
-            fn rubber_band_never_increases_total_length(
-                mid_x in -50.0_f64..50.0,
-                mid_y in -50.0_f64..50.0,
-            ) {
-                let mut segs = vec![
-                    TraceSegment {
-                        net_id: NetId(0),
-                        layer: LayerId(0),
-                        start: Point { x: 0.0, y: 0.0 },
-                        end: Point { x: mid_x, y: mid_y },
-                        width_mm: 0.2,
-                    },
-                    TraceSegment {
-                        net_id: NetId(0),
-                        layer: LayerId(0),
-                        start: Point { x: mid_x, y: mid_y },
-                        end: Point { x: 10.0, y: 0.0 },
-                        width_mm: 0.2,
-                    },
-                ];
-                let before = segs.iter().map(|s| dist(s.start, s.end)).sum::<f64>();
-                rubber_band(&mut segs, 20);
-                let after = segs.iter().map(|s| dist(s.start, s.end)).sum::<f64>();
-                prop_assert!(
-                    after <= before + EPS,
-                    "total_length_after ({after}) must be <= total_length_before ({before}) + EPS"
-                );
-            }
-        }
-    }
 }

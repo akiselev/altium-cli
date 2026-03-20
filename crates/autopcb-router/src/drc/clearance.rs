@@ -1,9 +1,14 @@
 //! CPU clearance checking: segment-to-segment, segment-to-via, segment-to-board-edge,
 //! segment-to-pad, and segment-to-keepout.
 //!
-//! Uses an O(n²) candidate scan (same layer, different net). The spec notes an
-//! R-tree optimisation for the future; this initial implementation is correct and
-//! deterministic first.
+//! Uses an O(n²) candidate scan (same layer, different net).
+//!
+//! TODO(performance): Replace O(n²) loops with R-tree envelope queries.
+//! Build a temporary `rstar::RTree` from the solution's routed segments,
+//! then for each segment query all objects within `max_clearance + max_half_width`
+//! of the segment's bounding box. The workspace `SpatialIndex` contains only
+//! pre-routed obstacles, not the current solution, so a separate tree is needed.
+//! This optimization becomes critical at >5K segments per layer.
 //!
 //! Width matters: the actual gap between two traces is the centerline distance
 //! minus half the widths of each trace. If that net gap is less than the required
@@ -324,7 +329,7 @@ fn segments_intersect(
 ///
 /// The polyline edges are the pairs `(outline[i], outline[i+1])` plus the
 /// closing edge `(outline[last], outline[0])`.
-fn segment_to_polyline_distance(
+pub(crate) fn segment_to_polyline_distance(
     a: autopcb_routes::Point,
     b: autopcb_routes::Point,
     outline: &[PointMm],

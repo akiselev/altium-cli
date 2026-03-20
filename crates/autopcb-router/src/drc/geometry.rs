@@ -123,7 +123,7 @@ pub fn check_geometry(
                             let actual = dist - pad_radius;
                             if actual < required {
                                 violations.push(DrcViolation {
-                                    kind: DrcViolationKind::SmdToCorner,
+                                    kind: DrcViolationKind::SmdToCornerTooClose,
                                     rule_kind: RuleKind::SmdToCorner,
                                     rule_name: "SmdToCorner".to_string(),
                                     object_a: DrcObject::Segment(seg_i.clone()),
@@ -152,6 +152,18 @@ pub fn check_geometry(
 fn points_equal(a: &Point, b: &Point) -> bool {
     const EPS: f64 = 1e-9;
     (a.x - b.x).abs() < EPS && (a.y - b.y).abs() < EPS
+}
+
+/// Check for parallel segments with excessive run length.
+///
+/// STUB: Not yet implemented. Requires iterating all same-layer segment
+/// pairs to find parallel runs exceeding policy thresholds. Will emit
+/// `DrcViolationKind::ParallelSegment` when implemented.
+pub fn check_parallel_segments(
+    _solution: &RouteSolution,
+    _policy: &DrcPolicy,
+) -> Vec<DrcViolation> {
+    Vec::new()
 }
 
 // ---------------------------------------------------------------------------
@@ -431,7 +443,7 @@ mod tests {
         let violations = check_geometry(&solution, &policy, &ir);
         let smd_corners: Vec<_> = violations
             .iter()
-            .filter(|v| v.kind == DrcViolationKind::SmdToCorner)
+            .filter(|v| v.kind == DrcViolationKind::SmdToCornerTooClose)
             .collect();
         assert!(!smd_corners.is_empty(), "expected SmdToCorner violation");
         assert!(smd_corners[0].actual_mm < smd_corners[0].required_mm,

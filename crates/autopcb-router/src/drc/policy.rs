@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use altium_format_types::pcb::RuleKind;
 use autopcb_ir::{IrDesignRule, IrRuleParams, PcbIr};
 use autopcb_routes::LayerId;
 
@@ -115,6 +116,11 @@ pub struct DrcPolicy {
     pub acute_angle_min_deg: f64,
     /// Minimum clearance from a trace corner (bend) to an SMD pad edge, in mm.
     pub smd_to_corner_clearance_mm: f64,
+    pub parallel_segment_gap_mm: f64,
+    pub parallel_segment_max_length_mm: f64,
+    pub creepage_distance_mm: f64,
+    pub daisy_chain_stub_max_mm: f64,
+    pub skipped_rules: Vec<RuleKind>,
 }
 
 impl DrcPolicy {
@@ -283,6 +289,44 @@ impl DrcPolicy {
             })
             .unwrap_or(0.0);
 
+        // Parallel segment constraints.
+        let (parallel_segment_gap_mm, parallel_segment_max_length_mm) = sorted_rules
+            .iter()
+            .find_map(|r| match &r.params {
+                IrRuleParams::ParallelSegment { max_run_mm, check_gap_mm } => {
+                    Some((*check_gap_mm, *max_run_mm))
+                }
+                _ => None,
+            })
+            .unwrap_or((0.0, f64::MAX));
+
+        // Creepage distance.
+        let creepage_distance_mm = sorted_rules
+            .iter()
+            .find_map(|r| match &r.params {
+                IrRuleParams::Creepage { min_mm } => Some(*min_mm),
+                _ => None,
+            })
+            .unwrap_or(0.0);
+
+        // Daisy chain stub max length.
+        let daisy_chain_stub_max_mm = sorted_rules
+            .iter()
+            .find_map(|r| match &r.params {
+                IrRuleParams::DaisyChainStubLength { max_mm } => Some(*max_mm),
+                _ => None,
+            })
+            .unwrap_or(f64::MAX);
+
+        // Collect skipped rules (rules with Other params).
+        let skipped_rules: Vec<RuleKind> = sorted_rules
+            .iter()
+            .filter_map(|r| match &r.params {
+                IrRuleParams::Other { kind } => Some(*kind),
+                _ => None,
+            })
+            .collect();
+
         Ok(DrcPolicy {
             clearance_matrix,
             width_constraints,
@@ -296,6 +340,11 @@ impl DrcPolicy {
             paste_mask_expansion_mm,
             acute_angle_min_deg,
             smd_to_corner_clearance_mm,
+            parallel_segment_gap_mm,
+            parallel_segment_max_length_mm,
+            creepage_distance_mm,
+            daisy_chain_stub_max_mm,
+            skipped_rules,
         })
     }
 
@@ -317,7 +366,7 @@ impl DrcPolicy {
     }
 
     /// Get via bounds for a net class.
-    pub fn via_bounds(&self) -> &DrcViaBounds {
+    pub fn via_bounds(&self, _net_class: Option<&str>) -> &DrcViaBounds {
         &self.via_bounds
     }
 }

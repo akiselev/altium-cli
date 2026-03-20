@@ -65,7 +65,7 @@ pub fn check_lengths(solution: &RouteSolution, policy: &DrcPolicy) -> Vec<DrcVio
                 .unwrap();
 
             violations.push(DrcViolation {
-                kind: DrcViolationKind::MatchedLengthExceeded,
+                kind: DrcViolationKind::MatchedLengthOutOfTolerance,
                 rule_kind: RuleKind::MatchedLengths,
                 rule_name: "MatchedLengths".to_string(),
                 object_a: DrcObject::Segment(
@@ -90,7 +90,7 @@ pub fn check_lengths(solution: &RouteSolution, policy: &DrcPolicy) -> Vec<DrcVio
             if length < constraint.min_mm {
                 let loc = net_midpoint(solution, net_id);
                 violations.push(DrcViolation {
-                    kind: DrcViolationKind::LengthBelowMinimum,
+                    kind: DrcViolationKind::NetLengthBelowMinimum,
                     rule_kind: RuleKind::Length,
                     rule_name: "Length".to_string(),
                     object_a: DrcObject::Segment(
@@ -106,7 +106,7 @@ pub fn check_lengths(solution: &RouteSolution, policy: &DrcPolicy) -> Vec<DrcVio
             if length > constraint.max_mm {
                 let loc = net_midpoint(solution, net_id);
                 violations.push(DrcViolation {
-                    kind: DrcViolationKind::LengthAboveMaximum,
+                    kind: DrcViolationKind::NetLengthAboveMaximum,
                     rule_kind: RuleKind::Length,
                     rule_name: "Length".to_string(),
                     object_a: DrcObject::Segment(
@@ -266,7 +266,7 @@ mod tests {
         let violations = check_lengths(&solution, &policy);
         assert_eq!(violations.len(), 1, "expected 1 MatchedLengthExceeded violation");
         let v = &violations[0];
-        assert_eq!(v.kind, DrcViolationKind::MatchedLengthExceeded);
+        assert_eq!(v.kind, DrcViolationKind::MatchedLengthOutOfTolerance);
         assert_eq!(v.rule_kind, AltRuleKind::MatchedLengths);
         // actual_mm is the spread; required_mm is the tolerance.
         assert!(
@@ -319,7 +319,7 @@ mod tests {
         let violations = check_lengths(&solution, &policy);
         let below: Vec<_> = violations
             .iter()
-            .filter(|v| v.kind == DrcViolationKind::LengthBelowMinimum)
+            .filter(|v| v.kind == DrcViolationKind::NetLengthBelowMinimum)
             .collect();
         assert_eq!(below.len(), 1, "expected 1 LengthBelowMinimum, got {:?}", violations);
         assert_eq!(below[0].rule_kind, AltRuleKind::Length);
@@ -346,7 +346,7 @@ mod tests {
         let violations = check_lengths(&solution, &policy);
         let above: Vec<_> = violations
             .iter()
-            .filter(|v| v.kind == DrcViolationKind::LengthAboveMaximum)
+            .filter(|v| v.kind == DrcViolationKind::NetLengthAboveMaximum)
             .collect();
         assert_eq!(above.len(), 1, "expected 1 LengthAboveMaximum, got {:?}", violations);
         assert_eq!(above[0].rule_kind, AltRuleKind::Length);
@@ -373,8 +373,8 @@ mod tests {
         let bounds_viols: Vec<_> = violations
             .iter()
             .filter(|v| {
-                v.kind == DrcViolationKind::LengthBelowMinimum
-                    || v.kind == DrcViolationKind::LengthAboveMaximum
+                v.kind == DrcViolationKind::NetLengthBelowMinimum
+                    || v.kind == DrcViolationKind::NetLengthAboveMaximum
             })
             .collect();
         assert!(bounds_viols.is_empty(), "length within bounds should not violate: {:?}", violations);
@@ -391,8 +391,8 @@ mod tests {
         let bounds_viols: Vec<_> = violations
             .iter()
             .filter(|v| {
-                v.kind == DrcViolationKind::LengthBelowMinimum
-                    || v.kind == DrcViolationKind::LengthAboveMaximum
+                v.kind == DrcViolationKind::NetLengthBelowMinimum
+                    || v.kind == DrcViolationKind::NetLengthAboveMaximum
             })
             .collect();
         assert!(bounds_viols.is_empty(), "no length rule should produce no bounds violations");

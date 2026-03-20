@@ -3090,7 +3090,7 @@ fn cmd_routing_inspect(path: &std::path::Path, verbose: bool, json: bool) -> any
     println!("  Total vias:     {}", m.total_vias);
     println!("  Total length:   {:.4} mm", m.total_length_mm);
     println!("  Completion:     {:.1}%", m.completion_pct);
-    println!("  DRC violations: {}", m.drc_violations);
+    println!("  DRC violations: {} (from stored records)", m.drc_violations);
     println!("  Iterations:     {}", iteration_count);
 
     if !solution.unrouted.is_empty() {

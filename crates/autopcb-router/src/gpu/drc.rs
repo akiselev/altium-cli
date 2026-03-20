@@ -155,6 +155,9 @@ mod tests {
 
     #[test]
     fn gpu_drc_matches_cpu_drc() {
+        // NOTE: GPU shaders are stubs. This test verifies that the GPU engine's
+        // CPU fallback produces identical results to the standalone CPU engine.
+        // It does NOT validate GPU compute correctness.
         let Some(ctx) = GpuContext::try_new() else {
             return; // No GPU available — graceful skip.
         };

@@ -45,8 +45,8 @@ pub fn check_connectivity(
     let mut violations = Vec::new();
 
     // Build a flat map from IR net id → pad positions for antenna detection.
-    let mut pad_positions: std::collections::HashMap<NetId, Vec<(f64, f64)>> =
-        std::collections::HashMap::new();
+    let mut pad_positions: std::collections::BTreeMap<NetId, Vec<(f64, f64)>> =
+        std::collections::BTreeMap::new();
     for (_ir_net_id, ir_net) in ir.nets.iter() {
         let routes_net_id = NetId(ir_net.id.raw());
         let positions: Vec<(f64, f64)> = ir_net

@@ -1,8 +1,9 @@
 //! Board outline clearance checks.
 //!
 //! Verifies that all copper objects in the route solution maintain the required
-//! clearance from the board edge. Uses a simplified rectangular bounds check;
-//! full polygon outline distance would use point-to-polygon-edge distance.
+//! clearance from the board edge. When `ir.board.outline` has at least 3 points,
+//! uses polygon-based distance (point to nearest outline edge). Falls back to
+//! rectangular bounding-box distance when no polygon outline is available.
 
 use altium_format_types::pcb::RuleKind;
 use autopcb_ir::{types::PointMm, PcbIr};
@@ -10,24 +11,62 @@ use autopcb_routes::{RouteSolution, TraceSegment};
 
 use super::{policy::DrcPolicy, DrcObject, DrcViolation, DrcViolationKind};
 
+/// Minimum distance from point `p` to the nearest edge of a closed polygon
+/// outline. Returns `f64::MAX` when the outline has fewer than 2 points.
+fn point_to_outline_distance(p: &autopcb_routes::Point, outline: &[PointMm]) -> f64 {
+    if outline.len() < 2 {
+        return f64::MAX;
+    }
+    let mut min_dist = f64::MAX;
+    for i in 0..outline.len() {
+        let j = (i + 1) % outline.len();
+        let a = autopcb_routes::Point { x: outline[i].x, y: outline[i].y };
+        let b = autopcb_routes::Point { x: outline[j].x, y: outline[j].y };
+        let d = super::clearance::point_to_segment_distance(*p, a, b);
+        if d < min_dist {
+            min_dist = d;
+        }
+    }
+    min_dist
+}
+
 /// Check board outline clearance for all routed segments.
 ///
-/// All copper endpoints must be at least `policy.board_outline_clearance_mm`
-/// inside the rectangular board bounds. This is a simplified rectangular check;
-/// a full implementation would compute point-to-polygon-edge distance.
+/// When `ir.board.outline` has at least 3 vertices, each segment endpoint is
+/// checked against the polygon outline using point-to-nearest-edge distance.
+/// Otherwise falls back to rectangular bounding-box distance.
 pub fn check_board(
     solution: &RouteSolution,
     ir: &PcbIr,
     policy: &DrcPolicy,
 ) -> Vec<DrcViolation> {
-    let bounds = &ir.board.bounds;
     let clearance = policy.board_outline_clearance_mm;
     let mut violations = Vec::new();
 
     for net in solution.nets.values() {
         for seg in &net.segments {
-            check_segment_endpoint(seg, &seg.start, bounds, clearance, &mut violations);
-            check_segment_endpoint(seg, &seg.end, bounds, clearance, &mut violations);
+            if ir.board.outline.len() >= 3 {
+                for endpoint in [&seg.start, &seg.end] {
+                    let dist = point_to_outline_distance(endpoint, &ir.board.outline);
+                    if dist < clearance {
+                        violations.push(DrcViolation {
+                            kind: DrcViolationKind::BoardOutlineClearance,
+                            rule_kind: RuleKind::BoardOutlineClearance,
+                            rule_name: "Board Outline Clearance".to_string(),
+                            object_a: DrcObject::Segment(seg.clone()),
+                            object_b: Some(DrcObject::BoardEdge),
+                            location: PointMm { x: endpoint.x, y: endpoint.y },
+                            layer: Some(seg.layer),
+                            actual_mm: dist,
+                            required_mm: clearance,
+                        });
+                    }
+                }
+            } else {
+                let bounds = &ir.board.bounds;
+                check_segment_endpoint(seg, &seg.start, bounds, clearance, &mut violations);
+                check_segment_endpoint(seg, &seg.end, bounds, clearance, &mut violations);
+            }
         }
     }
 
@@ -70,6 +109,31 @@ fn check_segment_endpoint(
             required_mm: clearance,
         });
     }
+}
+
+/// Check component courtyard overlap.
+///
+/// STUB: Not yet implemented. Requires component courtyard/bounding-box
+/// data from PcbIr. Will iterate all component pairs and check overlap
+/// against `policy.component_clearance_mm`.
+pub fn check_component_clearance(
+    _solution: &autopcb_routes::RouteSolution,
+    _ir: &autopcb_ir::PcbIr,
+    _policy: &super::policy::DrcPolicy,
+) -> Vec<super::DrcViolation> {
+    Vec::new()
+}
+
+/// Check creepage distance (minimum surface-path distance for high voltage).
+///
+/// STUB: Requires surface-path distance computation. Will emit
+/// `DrcViolationKind::CreepageViolation` when implemented.
+pub fn check_creepage(
+    _solution: &autopcb_routes::RouteSolution,
+    _ir: &autopcb_ir::PcbIr,
+    _policy: &super::policy::DrcPolicy,
+) -> Vec<super::DrcViolation> {
+    Vec::new()
 }
 
 // ---------------------------------------------------------------------------

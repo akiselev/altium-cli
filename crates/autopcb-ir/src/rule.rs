@@ -115,6 +115,21 @@ pub enum IrRuleParams {
     SilkToBoardRegionClearance {
         clearance_mm: f64,
     },
+    PowerPlaneClearance {
+        gap_mm: f64,
+    },
+    /// Thermal relief pattern validation for polygon connections.
+    PolygonConnectStyle,
+    Creepage {
+        min_mm: f64,
+    },
+    MaxMinHeight {
+        min_mm: f64,
+        max_mm: f64,
+    },
+    ZAxisClearance {
+        min_mm: f64,
+    },
     /// Rule kind not yet given a typed IR representation.
     Other {
         kind: RuleKind,

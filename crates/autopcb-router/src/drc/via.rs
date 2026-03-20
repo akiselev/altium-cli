@@ -19,7 +19,7 @@ pub fn check_vias(
     policy: &DrcPolicy,
 ) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
-    let bounds = policy.via_bounds();
+    let bounds = policy.via_bounds(None);
 
     // Collect all vias across all nets for pair-checking.
     let all_vias: Vec<_> = solution
@@ -88,7 +88,7 @@ pub fn check_vias(
                     y: representative_via.position.y,
                 };
                 violations.push(DrcViolation {
-                    kind: DrcViolationKind::ViaCountExceeded,
+                    kind: DrcViolationKind::MaximumViaCountExceeded,
                     rule_kind: RuleKind::MaximumViaCount,
                     rule_name: "MaximumViaCount".to_string(),
                     object_a: DrcObject::Via(representative_via.clone()),
@@ -136,6 +136,17 @@ pub fn check_vias(
     }
 
     violations
+}
+
+/// Check for vias placed directly under SMD pads.
+///
+/// STUB: Not yet implemented. Requires SMD pad identification in PcbIr
+/// (pad type: SMD vs through-hole) which is not yet extracted.
+pub fn check_vias_under_smd(
+    _solution: &autopcb_routes::RouteSolution,
+    _ir: &autopcb_ir::PcbIr,
+) -> Vec<super::DrcViolation> {
+    Vec::new()
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +286,7 @@ mod tests {
         let violations = check_vias(&solution, &policy);
         let count_violations: Vec<_> = violations
             .iter()
-            .filter(|v| v.kind == DrcViolationKind::ViaCountExceeded)
+            .filter(|v| v.kind == DrcViolationKind::MaximumViaCountExceeded)
             .collect();
         assert_eq!(count_violations.len(), 1);
         assert!((count_violations[0].actual_mm - 3.0).abs() < f64::EPSILON);
