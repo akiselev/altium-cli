@@ -161,6 +161,8 @@ struct PcbComponentEntity {
     designator: String,
     half_w: f64,
     half_h: f64,
+    center_dx: f64,
+    center_dy: f64,
 }
 
 impl Entity for PcbComponentEntity {
@@ -211,6 +213,50 @@ fn world_half_extents_derivative_at(half_w: f64, half_h: f64, theta: f64) -> (f6
     )
 }
 
+fn rotated_offset_at(dx: f64, dy: f64, theta: f64) -> (f64, f64) {
+    let (sin_t, cos_t) = theta.sin_cos();
+    (dx * cos_t - dy * sin_t, dx * sin_t + dy * cos_t)
+}
+
+fn rotated_offset_derivative_at(dx: f64, dy: f64, theta: f64) -> (f64, f64) {
+    let (sin_t, cos_t) = theta.sin_cos();
+    (-dx * sin_t - dy * cos_t, dx * cos_t - dy * sin_t)
+}
+
+fn world_box_center_at(x: f64, y: f64, center_dx: f64, center_dy: f64, theta: f64) -> (f64, f64) {
+    let (off_x, off_y) = rotated_offset_at(center_dx, center_dy, theta);
+    (x + off_x, y + off_y)
+}
+
+fn world_box_center_derivative_at(center_dx: f64, center_dy: f64, theta: f64) -> (f64, f64) {
+    rotated_offset_derivative_at(center_dx, center_dy, theta)
+}
+
+fn origin_from_world_box_center_at(
+    center_x: f64,
+    center_y: f64,
+    center_dx: f64,
+    center_dy: f64,
+    theta: f64,
+) -> (f64, f64) {
+    let (off_x, off_y) = rotated_offset_at(center_dx, center_dy, theta);
+    (center_x - off_x, center_y - off_y)
+}
+
+fn world_box_at(
+    x: f64,
+    y: f64,
+    half_w: f64,
+    half_h: f64,
+    center_dx: f64,
+    center_dy: f64,
+    theta: f64,
+) -> (f64, f64, f64, f64) {
+    let (cx, cy) = world_box_center_at(x, y, center_dx, center_dy, theta);
+    let (hw, hh) = world_half_extents_at(half_w, half_h, theta);
+    (cx - hw, cx + hw, cy - hh, cy + hh)
+}
+
 #[derive(Debug, Clone)]
 struct BoardContainment {
     id: ConstraintId,
@@ -221,6 +267,8 @@ struct BoardContainment {
     s: [ParamId; 4],
     half_w: f64,
     half_h: f64,
+    center_dx: f64,
+    center_dy: f64,
     clearance: f64,
     min_x: f64,
     min_y: f64,
@@ -249,14 +297,20 @@ impl Constraint for BoardContainment {
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
         let x = store.get(self.x);
         let y = store.get(self.y);
-        let (world_hw, world_hh) =
-            world_half_extents_at(self.half_w, self.half_h, store.get(self.theta));
-        let world_hw = world_hw + self.clearance;
-        let world_hh = world_hh + self.clearance;
-        let g0 = (x - world_hw) - self.min_x;
-        let g1 = self.max_x - (x + world_hw);
-        let g2 = (y - world_hh) - self.min_y;
-        let g3 = self.max_y - (y + world_hh);
+        let theta = store.get(self.theta);
+        let (min_x, max_x, min_y, max_y) = world_box_at(
+            x,
+            y,
+            self.half_w,
+            self.half_h,
+            self.center_dx,
+            self.center_dy,
+            theta,
+        );
+        let g0 = min_x - (self.min_x + self.clearance);
+        let g1 = (self.max_x - self.clearance) - max_x;
+        let g2 = min_y - (self.min_y + self.clearance);
+        let g3 = (self.max_y - self.clearance) - max_y;
         vec![
             g0 - store.get(self.s[0]).powi(2),
             g1 - store.get(self.s[1]).powi(2),
@@ -266,20 +320,23 @@ impl Constraint for BoardContainment {
     }
 
     fn jacobian(&self, store: &ParamStore) -> Vec<(usize, ParamId, f64)> {
+        let theta = store.get(self.theta);
         let (d_hw_d_theta, d_hh_d_theta) =
-            world_half_extents_derivative_at(self.half_w, self.half_h, store.get(self.theta));
+            world_half_extents_derivative_at(self.half_w, self.half_h, theta);
+        let (d_cx_d_theta, d_cy_d_theta) =
+            world_box_center_derivative_at(self.center_dx, self.center_dy, theta);
         vec![
             (0, self.x, 1.0),
-            (0, self.theta, -d_hw_d_theta),
+            (0, self.theta, d_cx_d_theta - d_hw_d_theta),
             (0, self.s[0], -2.0 * store.get(self.s[0])),
             (1, self.x, -1.0),
-            (1, self.theta, -d_hw_d_theta),
+            (1, self.theta, -(d_cx_d_theta + d_hw_d_theta)),
             (1, self.s[1], -2.0 * store.get(self.s[1])),
             (2, self.y, 1.0),
-            (2, self.theta, -d_hh_d_theta),
+            (2, self.theta, d_cy_d_theta - d_hh_d_theta),
             (2, self.s[2], -2.0 * store.get(self.s[2])),
             (3, self.y, -1.0),
-            (3, self.theta, -d_hh_d_theta),
+            (3, self.theta, -(d_cy_d_theta + d_hh_d_theta)),
             (3, self.s[3], -2.0 * store.get(self.s[3])),
         ]
     }
@@ -298,8 +355,12 @@ struct ComponentClearance {
     s: ParamId,
     half_w1: f64,
     half_h1: f64,
+    center_dx1: f64,
+    center_dy1: f64,
     half_w2: f64,
     half_h2: f64,
+    center_dx2: f64,
+    center_dy2: f64,
     clearance: f64,
     params: [ParamId; 7],
 }
@@ -322,10 +383,26 @@ impl Constraint for ComponentClearance {
     }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
-        let dx = store.get(self.x2) - store.get(self.x1);
-        let dy = store.get(self.y2) - store.get(self.y1);
-        let (hw1, hh1) = world_half_extents_at(self.half_w1, self.half_h1, store.get(self.theta1));
-        let (hw2, hh2) = world_half_extents_at(self.half_w2, self.half_h2, store.get(self.theta2));
+        let theta1 = store.get(self.theta1);
+        let theta2 = store.get(self.theta2);
+        let (cx1, cy1) = world_box_center_at(
+            store.get(self.x1),
+            store.get(self.y1),
+            self.center_dx1,
+            self.center_dy1,
+            theta1,
+        );
+        let (cx2, cy2) = world_box_center_at(
+            store.get(self.x2),
+            store.get(self.y2),
+            self.center_dx2,
+            self.center_dy2,
+            theta2,
+        );
+        let dx = cx2 - cx1;
+        let dy = cy2 - cy1;
+        let (hw1, hh1) = world_half_extents_at(self.half_w1, self.half_h1, theta1);
+        let (hw2, hh2) = world_half_extents_at(self.half_w2, self.half_h2, theta2);
         let combined_hw = hw1 + hw2 + self.clearance;
         let combined_hh = hh1 + hh2 + self.clearance;
         let g = (dx / combined_hw).powi(2) + (dy / combined_hh).powi(2) - 1.0;
@@ -333,21 +410,49 @@ impl Constraint for ComponentClearance {
     }
 
     fn jacobian(&self, store: &ParamStore) -> Vec<(usize, ParamId, f64)> {
-        let dx = store.get(self.x2) - store.get(self.x1);
-        let dy = store.get(self.y2) - store.get(self.y1);
-        let (hw1, hh1) = world_half_extents_at(self.half_w1, self.half_h1, store.get(self.theta1));
-        let (hw2, hh2) = world_half_extents_at(self.half_w2, self.half_h2, store.get(self.theta2));
+        let theta1 = store.get(self.theta1);
+        let theta2 = store.get(self.theta2);
+        let (cx1, cy1) = world_box_center_at(
+            store.get(self.x1),
+            store.get(self.y1),
+            self.center_dx1,
+            self.center_dy1,
+            theta1,
+        );
+        let (cx2, cy2) = world_box_center_at(
+            store.get(self.x2),
+            store.get(self.y2),
+            self.center_dx2,
+            self.center_dy2,
+            theta2,
+        );
+        let dx = cx2 - cx1;
+        let dy = cy2 - cy1;
+        let (hw1, hh1) = world_half_extents_at(self.half_w1, self.half_h1, theta1);
+        let (hw2, hh2) = world_half_extents_at(self.half_w2, self.half_h2, theta2);
         let (d_hw1_d_theta, d_hh1_d_theta) =
-            world_half_extents_derivative_at(self.half_w1, self.half_h1, store.get(self.theta1));
+            world_half_extents_derivative_at(self.half_w1, self.half_h1, theta1);
         let (d_hw2_d_theta, d_hh2_d_theta) =
-            world_half_extents_derivative_at(self.half_w2, self.half_h2, store.get(self.theta2));
+            world_half_extents_derivative_at(self.half_w2, self.half_h2, theta2);
+        let (d_cx1_d_theta, d_cy1_d_theta) =
+            world_box_center_derivative_at(self.center_dx1, self.center_dy1, theta1);
+        let (d_cx2_d_theta, d_cy2_d_theta) =
+            world_box_center_derivative_at(self.center_dx2, self.center_dy2, theta2);
         let combined_hw = hw1 + hw2 + self.clearance;
         let combined_hh = hh1 + hh2 + self.clearance;
         let combined_hw_sq = combined_hw * combined_hw;
         let combined_hh_sq = combined_hh * combined_hh;
-        let d_g_d_theta1 = -2.0 * dx * dx * d_hw1_d_theta / combined_hw.powi(3)
+        let d_dx_d_theta1 = -d_cx1_d_theta;
+        let d_dy_d_theta1 = -d_cy1_d_theta;
+        let d_dx_d_theta2 = d_cx2_d_theta;
+        let d_dy_d_theta2 = d_cy2_d_theta;
+        let d_g_d_theta1 = 2.0 * dx * d_dx_d_theta1 / combined_hw_sq
+            + 2.0 * dy * d_dy_d_theta1 / combined_hh_sq
+            - 2.0 * dx * dx * d_hw1_d_theta / combined_hw.powi(3)
             - 2.0 * dy * dy * d_hh1_d_theta / combined_hh.powi(3);
-        let d_g_d_theta2 = -2.0 * dx * dx * d_hw2_d_theta / combined_hw.powi(3)
+        let d_g_d_theta2 = 2.0 * dx * d_dx_d_theta2 / combined_hw_sq
+            + 2.0 * dy * d_dy_d_theta2 / combined_hh_sq
+            - 2.0 * dx * dx * d_hw2_d_theta / combined_hw.powi(3)
             - 2.0 * dy * dy * d_hh2_d_theta / combined_hh.powi(3);
         vec![
             (0, self.x1, -2.0 * dx / combined_hw_sq),
@@ -372,6 +477,8 @@ struct EdgePlacementConstraint {
     inset: f64,
     half_w: f64,
     half_h: f64,
+    center_dx: f64,
+    center_dy: f64,
     min_x: f64,
     min_y: f64,
     max_x: f64,
@@ -397,27 +504,48 @@ impl Constraint for EdgePlacementConstraint {
     }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
-        let x = store.get(self.x);
-        let y = store.get(self.y);
-        let (world_hw, world_hh) =
-            world_half_extents_at(self.half_w, self.half_h, store.get(self.theta));
+        let theta = store.get(self.theta);
+        let (min_x, max_x, min_y, max_y) = world_box_at(
+            store.get(self.x),
+            store.get(self.y),
+            self.half_w,
+            self.half_h,
+            self.center_dx,
+            self.center_dy,
+            theta,
+        );
         let r = match self.edge {
-            PlacementEdge::Top => y + world_hh - (self.max_y - self.inset),
-            PlacementEdge::Bottom => y - world_hh - (self.min_y + self.inset),
-            PlacementEdge::Left => x - world_hw - (self.min_x + self.inset),
-            PlacementEdge::Right => x + world_hw - (self.max_x - self.inset),
+            PlacementEdge::Top => max_y - (self.max_y - self.inset),
+            PlacementEdge::Bottom => min_y - (self.min_y + self.inset),
+            PlacementEdge::Left => min_x - (self.min_x + self.inset),
+            PlacementEdge::Right => max_x - (self.max_x - self.inset),
         };
         vec![r]
     }
 
     fn jacobian(&self, store: &ParamStore) -> Vec<(usize, ParamId, f64)> {
+        let theta = store.get(self.theta);
         let (d_hw_d_theta, d_hh_d_theta) =
-            world_half_extents_derivative_at(self.half_w, self.half_h, store.get(self.theta));
+            world_half_extents_derivative_at(self.half_w, self.half_h, theta);
+        let (d_cx_d_theta, d_cy_d_theta) =
+            world_box_center_derivative_at(self.center_dx, self.center_dy, theta);
         match self.edge {
-            PlacementEdge::Top => vec![(0, self.y, 1.0), (0, self.theta, d_hh_d_theta)],
-            PlacementEdge::Bottom => vec![(0, self.y, 1.0), (0, self.theta, -d_hh_d_theta)],
-            PlacementEdge::Left => vec![(0, self.x, 1.0), (0, self.theta, -d_hw_d_theta)],
-            PlacementEdge::Right => vec![(0, self.x, 1.0), (0, self.theta, d_hw_d_theta)],
+            PlacementEdge::Top => vec![
+                (0, self.y, 1.0),
+                (0, self.theta, d_cy_d_theta + d_hh_d_theta),
+            ],
+            PlacementEdge::Bottom => vec![
+                (0, self.y, 1.0),
+                (0, self.theta, d_cy_d_theta - d_hh_d_theta),
+            ],
+            PlacementEdge::Left => vec![
+                (0, self.x, 1.0),
+                (0, self.theta, d_cx_d_theta - d_hw_d_theta),
+            ],
+            PlacementEdge::Right => vec![
+                (0, self.x, 1.0),
+                (0, self.theta, d_cx_d_theta + d_hw_d_theta),
+            ],
         }
     }
 }
@@ -437,8 +565,12 @@ struct DirectionalOrderingConstraint {
     gap: f64,
     a_half_w: f64,
     a_half_h: f64,
+    a_center_dx: f64,
+    a_center_dy: f64,
     b_half_w: f64,
     b_half_h: f64,
+    b_center_dx: f64,
+    b_center_dy: f64,
     params: [ParamId; 7],
 }
 
@@ -460,53 +592,71 @@ impl Constraint for DirectionalOrderingConstraint {
     }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
-        let ax = store.get(self.a_x);
-        let ay = store.get(self.a_y);
-        let bx = store.get(self.b_x);
-        let by = store.get(self.b_y);
-        let (a_hw, a_hh) =
-            world_half_extents_at(self.a_half_w, self.a_half_h, store.get(self.a_theta));
-        let (b_hw, b_hh) =
-            world_half_extents_at(self.b_half_w, self.b_half_h, store.get(self.b_theta));
+        let a_theta = store.get(self.a_theta);
+        let b_theta = store.get(self.b_theta);
+        let (a_min_x, a_max_x, a_min_y, a_max_y) = world_box_at(
+            store.get(self.a_x),
+            store.get(self.a_y),
+            self.a_half_w,
+            self.a_half_h,
+            self.a_center_dx,
+            self.a_center_dy,
+            a_theta,
+        );
+        let (b_min_x, b_max_x, b_min_y, b_max_y) = world_box_at(
+            store.get(self.b_x),
+            store.get(self.b_y),
+            self.b_half_w,
+            self.b_half_h,
+            self.b_center_dx,
+            self.b_center_dy,
+            b_theta,
+        );
         let g = match self.direction {
-            Direction::LeftOf => (bx - b_hw) - (ax + a_hw) - self.gap,
-            Direction::RightOf => (ax - a_hw) - (bx + b_hw) - self.gap,
-            Direction::Above => (ay - a_hh) - (by + b_hh) - self.gap,
-            Direction::Below => (by - b_hh) - (ay + a_hh) - self.gap,
+            Direction::LeftOf => b_min_x - a_max_x - self.gap,
+            Direction::RightOf => a_min_x - b_max_x - self.gap,
+            Direction::Above => a_min_y - b_max_y - self.gap,
+            Direction::Below => b_min_y - a_max_y - self.gap,
         };
         vec![g - store.get(self.slack).powi(2)]
     }
 
     fn jacobian(&self, store: &ParamStore) -> Vec<(usize, ParamId, f64)> {
         let mut j = vec![(0, self.slack, -2.0 * store.get(self.slack))];
+        let a_theta = store.get(self.a_theta);
+        let b_theta = store.get(self.b_theta);
         let (d_a_hw_d_theta, d_a_hh_d_theta) =
-            world_half_extents_derivative_at(self.a_half_w, self.a_half_h, store.get(self.a_theta));
+            world_half_extents_derivative_at(self.a_half_w, self.a_half_h, a_theta);
         let (d_b_hw_d_theta, d_b_hh_d_theta) =
-            world_half_extents_derivative_at(self.b_half_w, self.b_half_h, store.get(self.b_theta));
+            world_half_extents_derivative_at(self.b_half_w, self.b_half_h, b_theta);
+        let (d_a_cx_d_theta, d_a_cy_d_theta) =
+            world_box_center_derivative_at(self.a_center_dx, self.a_center_dy, a_theta);
+        let (d_b_cx_d_theta, d_b_cy_d_theta) =
+            world_box_center_derivative_at(self.b_center_dx, self.b_center_dy, b_theta);
         match self.direction {
             Direction::LeftOf => {
                 j.push((0, self.a_x, -1.0));
                 j.push((0, self.b_x, 1.0));
-                j.push((0, self.a_theta, -d_a_hw_d_theta));
-                j.push((0, self.b_theta, -d_b_hw_d_theta));
+                j.push((0, self.a_theta, -(d_a_cx_d_theta + d_a_hw_d_theta)));
+                j.push((0, self.b_theta, d_b_cx_d_theta - d_b_hw_d_theta));
             }
             Direction::RightOf => {
                 j.push((0, self.a_x, 1.0));
                 j.push((0, self.b_x, -1.0));
-                j.push((0, self.a_theta, -d_a_hw_d_theta));
-                j.push((0, self.b_theta, -d_b_hw_d_theta));
+                j.push((0, self.a_theta, d_a_cx_d_theta - d_a_hw_d_theta));
+                j.push((0, self.b_theta, -(d_b_cx_d_theta + d_b_hw_d_theta)));
             }
             Direction::Above => {
                 j.push((0, self.a_y, 1.0));
                 j.push((0, self.b_y, -1.0));
-                j.push((0, self.a_theta, -d_a_hh_d_theta));
-                j.push((0, self.b_theta, -d_b_hh_d_theta));
+                j.push((0, self.a_theta, d_a_cy_d_theta - d_a_hh_d_theta));
+                j.push((0, self.b_theta, -(d_b_cy_d_theta + d_b_hh_d_theta)));
             }
             Direction::Below => {
                 j.push((0, self.a_y, -1.0));
                 j.push((0, self.b_y, 1.0));
-                j.push((0, self.a_theta, -d_a_hh_d_theta));
-                j.push((0, self.b_theta, -d_b_hh_d_theta));
+                j.push((0, self.a_theta, -(d_a_cy_d_theta + d_a_hh_d_theta)));
+                j.push((0, self.b_theta, d_b_cy_d_theta - d_b_hh_d_theta));
             }
         }
         j
@@ -1126,6 +1276,8 @@ fn solve_flat_placement(
         let theta = system.alloc_param(init_theta, eid);
         let half_w = comp.local_bounds.width() * 0.5;
         let half_h = comp.local_bounds.height() * 0.5;
+        let center_dx = (comp.local_bounds.min.x + comp.local_bounds.max.x) * 0.5;
+        let center_dy = (comp.local_bounds.min.y + comp.local_bounds.max.y) * 0.5;
         let entity = PcbComponentEntity {
             id: eid,
             x,
@@ -1135,6 +1287,8 @@ fn solve_flat_placement(
             designator: comp.designator.clone(),
             half_w,
             half_h,
+            center_dx,
+            center_dy,
         };
         system.add_entity(Box::new(entity.clone()));
 
@@ -1168,6 +1322,8 @@ fn solve_flat_placement(
             s: [s0, s1, s2, s3],
             half_w: comp.entity.half_w,
             half_h: comp.entity.half_h,
+            center_dx: comp.entity.center_dx,
+            center_dy: comp.entity.center_dy,
             clearance: config.board_edge_clearance_mm,
             min_x: bounds.min.x,
             min_y: bounds.min.y,
@@ -1209,6 +1365,8 @@ fn solve_flat_placement(
                     inset: *inset_mm,
                     half_w: comp.half_w,
                     half_h: comp.half_h,
+                    center_dx: comp.center_dx,
+                    center_dy: comp.center_dy,
                     min_x: bounds.min.x,
                     min_y: bounds.min.y,
                     max_x: bounds.max.x,
@@ -1246,8 +1404,12 @@ fn solve_flat_placement(
                     gap: *gap_mm,
                     a_half_w: ca.half_w,
                     a_half_h: ca.half_h,
+                    a_center_dx: ca.center_dx,
+                    a_center_dy: ca.center_dy,
                     b_half_w: cb.half_w,
                     b_half_h: cb.half_h,
+                    b_center_dx: cb.center_dx,
+                    b_center_dy: cb.center_dy,
                     params: [ca.x, ca.y, ca.theta, cb.x, cb.y, cb.theta, slack],
                 }));
             }
@@ -1630,8 +1792,12 @@ fn add_component_clearance_constraint(
         s: slack,
         half_w1: a.half_w,
         half_h1: a.half_h,
+        center_dx1: a.center_dx,
+        center_dy1: a.center_dy,
         half_w2: b.half_w,
         half_h2: b.half_h,
+        center_dx2: b.center_dx,
+        center_dy2: b.center_dy,
         clearance,
         params: [a.x, a.y, a.theta, b.x, b.y, b.theta, slack],
     }))
@@ -1650,7 +1816,9 @@ fn select_sparse_clearance_pairs(
         let a = &runtimes[i].entity;
         let ax = system.get_param(a.x);
         let ay = system.get_param(a.y);
-        let (a_hw, a_hh) = world_half_extents_at(a.half_w, a.half_h, system.get_param(a.theta));
+        let a_theta = system.get_param(a.theta);
+        let (acx, acy) = world_box_center_at(ax, ay, a.center_dx, a.center_dy, a_theta);
+        let (a_hw, a_hh) = world_half_extents_at(a.half_w, a.half_h, a_theta);
 
         let mut candidates = Vec::<ClearanceCandidatePair>::new();
         for (j, runtime) in runtimes.iter().enumerate() {
@@ -1660,9 +1828,11 @@ fn select_sparse_clearance_pairs(
             let b = &runtime.entity;
             let bx = system.get_param(b.x);
             let by = system.get_param(b.y);
-            let (b_hw, b_hh) = world_half_extents_at(b.half_w, b.half_h, system.get_param(b.theta));
-            let sep_x = (ax - bx).abs() - (a_hw + b_hw + clearance);
-            let sep_y = (ay - by).abs() - (a_hh + b_hh + clearance);
+            let b_theta = system.get_param(b.theta);
+            let (bcx, bcy) = world_box_center_at(bx, by, b.center_dx, b.center_dy, b_theta);
+            let (b_hw, b_hh) = world_half_extents_at(b.half_w, b.half_h, b_theta);
+            let sep_x = (acx - bcx).abs() - (a_hw + b_hw + clearance);
+            let sep_y = (acy - bcy).abs() - (a_hh + b_hh + clearance);
             let score_mm = sep_x.max(sep_y);
             if score_mm <= activation_margin_mm {
                 candidates.push(ClearanceCandidatePair {
@@ -2171,11 +2341,12 @@ fn best_legalizer_candidate(
                 board_clearance,
             ),
         );
+        let (off_x, off_y) = rotated_offset_at(comp.center_dx, comp.center_dy, theta);
         let (hw, hh) = world_half_extents_at(comp.half_w, comp.half_h, theta);
-        let left_x = min_x + board_clearance + hw;
-        let right_x = max_x - board_clearance - hw;
-        let bottom_y = min_y + board_clearance + hh;
-        let top_y = max_y - board_clearance - hh;
+        let left_x = min_x + board_clearance + hw - off_x;
+        let right_x = max_x - board_clearance - hw - off_x;
+        let bottom_y = min_y + board_clearance + hh - off_y;
+        let top_y = max_y - board_clearance - hh - off_y;
         push_candidate(
             &mut candidates,
             clamp_pose_to_board(
@@ -2241,17 +2412,43 @@ fn best_legalizer_candidate(
             let ox = system.get_param(other.x);
             let oy = system.get_param(other.y);
             let other_theta = system.get_param(other.theta);
+            let (ocx, ocy) =
+                world_box_center_at(ox, oy, other.center_dx, other.center_dy, other_theta);
             let (other_hw, other_hh) =
                 world_half_extents_at(other.half_w, other.half_h, other_theta);
-            let left = ox - (other_hw + hw + clearance);
-            let right = ox + (other_hw + hw + clearance);
-            let below = oy - (other_hh + hh + clearance);
-            let above = oy + (other_hh + hh + clearance);
+            let (left, aligned_y) = origin_from_world_box_center_at(
+                ocx - (other_hw + hw + clearance),
+                ocy,
+                comp.center_dx,
+                comp.center_dy,
+                theta,
+            );
+            let (right, _) = origin_from_world_box_center_at(
+                ocx + (other_hw + hw + clearance),
+                ocy,
+                comp.center_dx,
+                comp.center_dy,
+                theta,
+            );
+            let (aligned_x, below) = origin_from_world_box_center_at(
+                ocx,
+                ocy - (other_hh + hh + clearance),
+                comp.center_dx,
+                comp.center_dy,
+                theta,
+            );
+            let (_, above) = origin_from_world_box_center_at(
+                ocx,
+                ocy + (other_hh + hh + clearance),
+                comp.center_dx,
+                comp.center_dy,
+                theta,
+            );
             push_candidate(
                 &mut candidates,
                 clamp_pose_to_board(
                     left,
-                    oy,
+                    aligned_y,
                     theta,
                     comp,
                     min_x,
@@ -2265,7 +2462,7 @@ fn best_legalizer_candidate(
                 &mut candidates,
                 clamp_pose_to_board(
                     right,
-                    oy,
+                    aligned_y,
                     theta,
                     comp,
                     min_x,
@@ -2278,7 +2475,7 @@ fn best_legalizer_candidate(
             push_candidate(
                 &mut candidates,
                 clamp_pose_to_board(
-                    ox,
+                    aligned_x,
                     below,
                     theta,
                     comp,
@@ -2292,7 +2489,7 @@ fn best_legalizer_candidate(
             push_candidate(
                 &mut candidates,
                 clamp_pose_to_board(
-                    ox,
+                    aligned_x,
                     above,
                     theta,
                     comp,
@@ -2388,20 +2585,23 @@ fn clamp_pose_to_board(
     max_y: f64,
     board_clearance: f64,
 ) -> LegalizerPose {
+    let (off_x, off_y) = rotated_offset_at(comp.center_dx, comp.center_dy, theta);
     let (hw, hh) = world_half_extents_at(comp.half_w, comp.half_h, theta);
     let min_cx = min_x + board_clearance + hw;
     let max_cx = max_x - board_clearance - hw;
     let min_cy = min_y + board_clearance + hh;
     let max_cy = max_y - board_clearance - hh;
+    let current_cx = x + off_x;
+    let current_cy = y + off_y;
     let clamped_x = if min_cx <= max_cx {
-        x.clamp(min_cx, max_cx)
+        current_cx.clamp(min_cx, max_cx) - off_x
     } else {
-        (min_x + max_x) * 0.5
+        ((min_x + max_x) * 0.5) - off_x
     };
     let clamped_y = if min_cy <= max_cy {
-        y.clamp(min_cy, max_cy)
+        current_cy.clamp(min_cy, max_cy) - off_y
     } else {
-        (min_y + max_y) * 0.5
+        ((min_y + max_y) * 0.5) - off_y
     };
     LegalizerPose {
         x: clamped_x,
@@ -2513,16 +2713,29 @@ fn component_overlap_area(
     b: &PcbComponentEntity,
     clearance: f64,
 ) -> f64 {
-    let ax = system.get_param(a.x);
-    let ay = system.get_param(a.y);
-    let bx = system.get_param(b.x);
-    let by = system.get_param(b.y);
-    let (a_hw, a_hh) = world_half_extents_at(a.half_w, a.half_h, system.get_param(a.theta));
-    let (b_hw, b_hh) = world_half_extents_at(b.half_w, b.half_h, system.get_param(b.theta));
-    let dx = (ax - bx).abs();
-    let dy = (ay - by).abs();
-    let ox = (a_hw + b_hw + clearance) - dx;
-    let oy = (a_hh + b_hh + clearance) - dy;
+    let (a_min_x, a_max_x, a_min_y, a_max_y) = world_box_at(
+        system.get_param(a.x),
+        system.get_param(a.y),
+        a.half_w,
+        a.half_h,
+        a.center_dx,
+        a.center_dy,
+        system.get_param(a.theta),
+    );
+    let (b_min_x, b_max_x, b_min_y, b_max_y) = world_box_at(
+        system.get_param(b.x),
+        system.get_param(b.y),
+        b.half_w,
+        b.half_h,
+        b.center_dx,
+        b.center_dy,
+        system.get_param(b.theta),
+    );
+    let half_clearance = clearance * 0.5;
+    let ox = (a_max_x + half_clearance).min(b_max_x + half_clearance)
+        - (a_min_x - half_clearance).max(b_min_x - half_clearance);
+    let oy = (a_max_y + half_clearance).min(b_max_y + half_clearance)
+        - (a_min_y - half_clearance).max(b_min_y - half_clearance);
     if ox > 0.0 && oy > 0.0 { ox * oy } else { 0.0 }
 }
 
@@ -2535,13 +2748,19 @@ fn component_board_overflow(
     max_y: f64,
     board_clearance: f64,
 ) -> f64 {
-    let x = system.get_param(comp.x);
-    let y = system.get_param(comp.y);
-    let (hw, hh) = world_half_extents_at(comp.half_w, comp.half_h, system.get_param(comp.theta));
-    let lo_x = (min_x + board_clearance + hw - x).max(0.0);
-    let hi_x = (x + hw + board_clearance - max_x).max(0.0);
-    let lo_y = (min_y + board_clearance + hh - y).max(0.0);
-    let hi_y = (y + hh + board_clearance - max_y).max(0.0);
+    let (box_min_x, box_max_x, box_min_y, box_max_y) = world_box_at(
+        system.get_param(comp.x),
+        system.get_param(comp.y),
+        comp.half_w,
+        comp.half_h,
+        comp.center_dx,
+        comp.center_dy,
+        system.get_param(comp.theta),
+    );
+    let lo_x = (min_x + board_clearance - box_min_x).max(0.0);
+    let hi_x = (box_max_x + board_clearance - max_x).max(0.0);
+    let lo_y = (min_y + board_clearance - box_min_y).max(0.0);
+    let hi_y = (box_max_y + board_clearance - max_y).max(0.0);
     lo_x + hi_x + lo_y + hi_y
 }
 
@@ -2724,6 +2943,8 @@ mod tests {
             designator: designator.to_string(),
             half_w: 1.0,
             half_h: 1.0,
+            center_dx: 0.0,
+            center_dy: 0.0,
         };
         system.add_entity(Box::new(entity.clone()));
         ComponentRuntime {
@@ -2831,6 +3052,53 @@ mod tests {
         assert!(
             !pair_ids.iter().any(|&(a, b)| a == 3 || b == 3),
             "far components should not activate clearance constraints"
+        );
+    }
+
+    #[test]
+    fn asymmetric_origin_overlap_is_detected() {
+        let mut system = ConstraintSystem::new();
+
+        let j2_eid = system.alloc_entity_id();
+        let j2_x = system.alloc_param(473.8874, j2_eid);
+        let j2_y = system.alloc_param(399.5528, j2_eid);
+        let j2_theta = system.alloc_param(0.0, j2_eid);
+        let j2 = PcbComponentEntity {
+            id: j2_eid,
+            x: j2_x,
+            y: j2_y,
+            theta: j2_theta,
+            params: [j2_x, j2_y, j2_theta],
+            designator: "J2".into(),
+            half_w: 4.81000562,
+            half_h: 1.0,
+            center_dx: 3.81000508,
+            center_dy: 0.0,
+        };
+        system.add_entity(Box::new(j2.clone()));
+
+        let r12_eid = system.alloc_entity_id();
+        let r12_x = system.alloc_param(480.4724, r12_eid);
+        let r12_y = system.alloc_param(399.5528, r12_eid);
+        let r12_theta = system.alloc_param(0.0, r12_eid);
+        let r12 = PcbComponentEntity {
+            id: r12_eid,
+            x: r12_x,
+            y: r12_y,
+            theta: r12_theta,
+            params: [r12_x, r12_y, r12_theta],
+            designator: "R12".into(),
+            half_w: 1.27500126,
+            half_h: 0.8,
+            center_dx: 0.0,
+            center_dy: 0.0,
+        };
+        system.add_entity(Box::new(r12.clone()));
+
+        let overlap = component_overlap_area(&system, &j2, &r12, 0.0);
+        assert!(
+            overlap > 1.0,
+            "expected asymmetric-origin boxes to overlap, got {overlap}"
         );
     }
 

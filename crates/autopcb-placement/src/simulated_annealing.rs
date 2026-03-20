@@ -70,6 +70,8 @@ struct ComponentState {
     rotation: f64,
     width: f64,
     height: f64,
+    center_dx: f64,
+    center_dy: f64,
     /// Only movable components are perturbed by SA.
     is_movable: bool,
     /// Cached pad offsets in component-local coordinates.
@@ -654,26 +656,121 @@ fn world_half_extents(component: &ComponentState) -> (f64, f64) {
     world_half_extents_at(component.width, component.height, component.rotation)
 }
 
+fn rotated_offset_at(dx: f64, dy: f64, rotation_deg: f64) -> (f64, f64) {
+    let (sin_t, cos_t) = rotation_deg.to_radians().sin_cos();
+    (dx * cos_t - dy * sin_t, dx * sin_t + dy * cos_t)
+}
+
+fn world_box_center_at(
+    x: f64,
+    y: f64,
+    center_dx: f64,
+    center_dy: f64,
+    rotation_deg: f64,
+) -> (f64, f64) {
+    let (off_x, off_y) = rotated_offset_at(center_dx, center_dy, rotation_deg);
+    (x + off_x, y + off_y)
+}
+
+fn world_box_at(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    center_dx: f64,
+    center_dy: f64,
+    rotation_deg: f64,
+) -> (f64, f64, f64, f64) {
+    let (cx, cy) = world_box_center_at(x, y, center_dx, center_dy, rotation_deg);
+    let (hw, hh) = world_half_extents_at(width, height, rotation_deg);
+    (cx - hw, cx + hw, cy - hh, cy + hh)
+}
+
+fn component_box_center(component: &ComponentState) -> (f64, f64) {
+    world_box_center_at(
+        component.x,
+        component.y,
+        component.center_dx,
+        component.center_dy,
+        component.rotation,
+    )
+}
+
+fn component_box_center_at(
+    component: &ComponentState,
+    x: f64,
+    y: f64,
+    rotation: f64,
+) -> (f64, f64) {
+    world_box_center_at(x, y, component.center_dx, component.center_dy, rotation)
+}
+
+fn component_world_box_at_pos(
+    component: &ComponentState,
+    x: f64,
+    y: f64,
+    rotation: f64,
+) -> (f64, f64, f64, f64) {
+    world_box_at(
+        x,
+        y,
+        component.width,
+        component.height,
+        component.center_dx,
+        component.center_dy,
+        rotation,
+    )
+}
+
+fn component_grid_params(component: &ComponentState) -> (f64, f64, f64, f64) {
+    let (cx, cy) = component_box_center(component);
+    let (hw, hh) = world_half_extents(component);
+    (cx, cy, hw, hh)
+}
+
+fn component_grid_params_at(
+    component: &ComponentState,
+    x: f64,
+    y: f64,
+    rotation: f64,
+) -> (f64, f64, f64, f64) {
+    let (cx, cy) = component_box_center_at(component, x, y, rotation);
+    let (hw, hh) = world_half_extents_at(component.width, component.height, rotation);
+    (cx, cy, hw, hh)
+}
+
+fn board_overflow_at(
+    component: &ComponentState,
+    x: f64,
+    y: f64,
+    rotation: f64,
+    board_bounds: (f64, f64, f64, f64),
+) -> f64 {
+    let (min_x, max_x, min_y, max_y) = component_world_box_at_pos(component, x, y, rotation);
+    let (x_min, y_min, x_max, y_max) = board_bounds;
+    (x_min - min_x).max(0.0)
+        + (max_x - x_max).max(0.0)
+        + (y_min - min_y).max(0.0)
+        + (max_y - y_max).max(0.0)
+}
+
 /// Overlap penalty for a component against its spatial grid neighbours.
 fn overlap_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
     let c = &placement.components[comp_idx];
-    let (hw, hh) = world_half_extents(c);
-    let neighbours = placement
-        .spatial_grid
-        .neighbours(c.x, c.y, hw, hh, comp_idx);
+    let (cx, cy, hw, hh) = component_grid_params(c);
+    let neighbours = placement.spatial_grid.neighbours(cx, cy, hw, hh, comp_idx);
     let mut penalty = 0.0;
-    let c_world_w = hw * 2.0;
-    let c_world_h = hh * 2.0;
+    let (box_cx, box_cy) = component_box_center(c);
     for ni in neighbours {
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
         penalty += aabb_overlap_area(
-            c.x,
-            c.y,
-            c_world_w,
-            c_world_h,
-            n.x,
-            n.y,
+            box_cx,
+            box_cy,
+            hw * 2.0,
+            hh * 2.0,
+            ncx,
+            ncy,
             nhw * 2.0,
             nhh * 2.0,
         );
@@ -684,13 +781,7 @@ fn overlap_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
 /// Board containment penalty: positive if component is outside the board.
 fn containment_penalty_for(comp_idx: usize, placement: &Placement) -> f64 {
     let c = &placement.components[comp_idx];
-    let (hw, hh) = world_half_extents(c);
-    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
-    let vx_lo = (x_min + hw - c.x).max(0.0);
-    let vx_hi = (c.x + hw - x_max).max(0.0);
-    let vy_lo = (y_min + hh - c.y).max(0.0);
-    let vy_hi = (c.y + hh - y_max).max(0.0);
-    BOARD_PENALTY * (vx_lo + vx_hi + vy_lo + vy_hi)
+    BOARD_PENALTY * board_overflow_at(c, c.x, c.y, c.rotation, placement.board_bounds)
 }
 
 // ---------------------------------------------------------------------------
@@ -859,40 +950,49 @@ fn apply_move(placement: &mut Placement, m: &Move) {
     match *m {
         Move::Displace { comp_idx, dx, dy } => {
             let c = &placement.components[comp_idx];
-            let (hw, hh) = world_half_extents(c);
-            let old_x = c.x;
-            let old_y = c.y;
+            let (old_cx, old_cy, hw, hh) = component_grid_params(c);
             placement
                 .spatial_grid
-                .remove(comp_idx, old_x, old_y, hw, hh);
+                .remove(comp_idx, old_cx, old_cy, hw, hh);
             let c = &mut placement.components[comp_idx];
             c.x += dx;
             c.y += dy;
-            let new_x = c.x;
-            let new_y = c.y;
+            let (new_cx, new_cy, _, _) = component_grid_params(c);
             placement
                 .spatial_grid
-                .insert(comp_idx, new_x, new_y, hw, hh);
+                .insert(comp_idx, new_cx, new_cy, hw, hh);
         }
         Move::Swap { comp_a, comp_b } => {
             let (ax, ay, ahw, ahh) = {
                 let a = &placement.components[comp_a];
-                let (hw, hh) = world_half_extents(a);
-                (a.x, a.y, hw, hh)
+                component_grid_params(a)
             };
             let (bx, by, bhw, bhh) = {
                 let b = &placement.components[comp_b];
-                let (hw, hh) = world_half_extents(b);
-                (b.x, b.y, hw, hh)
+                component_grid_params(b)
             };
             placement.spatial_grid.remove(comp_a, ax, ay, ahw, ahh);
             placement.spatial_grid.remove(comp_b, bx, by, bhw, bhh);
-            placement.components[comp_a].x = bx;
-            placement.components[comp_a].y = by;
-            placement.components[comp_b].x = ax;
-            placement.components[comp_b].y = ay;
-            placement.spatial_grid.insert(comp_a, bx, by, ahw, ahh);
-            placement.spatial_grid.insert(comp_b, ax, ay, bhw, bhh);
+            let old_a_origin = (
+                placement.components[comp_a].x,
+                placement.components[comp_a].y,
+            );
+            let old_b_origin = (
+                placement.components[comp_b].x,
+                placement.components[comp_b].y,
+            );
+            placement.components[comp_a].x = old_b_origin.0;
+            placement.components[comp_a].y = old_b_origin.1;
+            placement.components[comp_b].x = old_a_origin.0;
+            placement.components[comp_b].y = old_a_origin.1;
+            let (new_ax, new_ay, _, _) = component_grid_params(&placement.components[comp_a]);
+            let (new_bx, new_by, _, _) = component_grid_params(&placement.components[comp_b]);
+            placement
+                .spatial_grid
+                .insert(comp_a, new_ax, new_ay, ahw, ahh);
+            placement
+                .spatial_grid
+                .insert(comp_b, new_bx, new_by, bhw, bhh);
         }
         Move::Rotate {
             comp_idx,
@@ -900,18 +1000,17 @@ fn apply_move(placement: &mut Placement, m: &Move) {
         } => {
             let (old_x, old_y, old_hw, old_hh) = {
                 let c = &placement.components[comp_idx];
-                let (hw, hh) = world_half_extents(c);
-                (c.x, c.y, hw, hh)
+                component_grid_params(c)
             };
             placement
                 .spatial_grid
                 .remove(comp_idx, old_x, old_y, old_hw, old_hh);
             placement.components[comp_idx].rotation = new_rotation;
             let c = &placement.components[comp_idx];
-            let (new_hw, new_hh) = world_half_extents(c);
+            let (new_cx, new_cy, new_hw, new_hh) = component_grid_params(c);
             placement
                 .spatial_grid
-                .insert(comp_idx, c.x, c.y, new_hw, new_hh);
+                .insert(comp_idx, new_cx, new_cy, new_hw, new_hh);
         }
         Move::PinSwap {
             comp_idx,
@@ -939,32 +1038,44 @@ fn apply_move(placement: &mut Placement, m: &Move) {
         Move::PartSwap { comp_a, comp_b } => {
             // Exchange the full placement state so swap-group moves preserve the orientation
             // of the physical part being reassigned.
-            let (ax, ay, arot, ahw, ahh) = {
+            let (ax, ay, ahw, ahh) = {
                 let a = &placement.components[comp_a];
-                let (hw, hh) = world_half_extents(a);
-                (a.x, a.y, a.rotation, hw, hh)
+                let (cx, cy, hw, hh) = component_grid_params(a);
+                (cx, cy, hw, hh)
             };
-            let (bx, by, brot, bhw, bhh) = {
+            let (bx, by, bhw, bhh) = {
                 let b = &placement.components[comp_b];
-                let (hw, hh) = world_half_extents(b);
-                (b.x, b.y, b.rotation, hw, hh)
+                let (cx, cy, hw, hh) = component_grid_params(b);
+                (cx, cy, hw, hh)
             };
             placement.spatial_grid.remove(comp_a, ax, ay, ahw, ahh);
             placement.spatial_grid.remove(comp_b, bx, by, bhw, bhh);
-            placement.components[comp_a].x = bx;
-            placement.components[comp_a].y = by;
-            placement.components[comp_a].rotation = brot;
-            placement.components[comp_b].x = ax;
-            placement.components[comp_b].y = ay;
-            placement.components[comp_b].rotation = arot;
-            let (new_ahw, new_ahh) = world_half_extents(&placement.components[comp_a]);
-            let (new_bhw, new_bhh) = world_half_extents(&placement.components[comp_b]);
+            let old_a_origin = (
+                placement.components[comp_a].x,
+                placement.components[comp_a].y,
+                placement.components[comp_a].rotation,
+            );
+            let old_b_origin = (
+                placement.components[comp_b].x,
+                placement.components[comp_b].y,
+                placement.components[comp_b].rotation,
+            );
+            placement.components[comp_a].x = old_b_origin.0;
+            placement.components[comp_a].y = old_b_origin.1;
+            placement.components[comp_a].rotation = old_b_origin.2;
+            placement.components[comp_b].x = old_a_origin.0;
+            placement.components[comp_b].y = old_a_origin.1;
+            placement.components[comp_b].rotation = old_a_origin.2;
+            let (new_acx, new_acy, new_ahw, new_ahh) =
+                component_grid_params(&placement.components[comp_a]);
+            let (new_bcx, new_bcy, new_bhw, new_bhh) =
+                component_grid_params(&placement.components[comp_b]);
             placement
                 .spatial_grid
-                .insert(comp_a, bx, by, new_ahw, new_ahh);
+                .insert(comp_a, new_acx, new_acy, new_ahw, new_ahh);
             placement
                 .spatial_grid
-                .insert(comp_b, ax, ay, new_bhw, new_bhh);
+                .insert(comp_b, new_bcx, new_bcy, new_bhw, new_bhh);
         }
     }
 }
@@ -1276,34 +1387,29 @@ fn cost_after_displace(
 
     // Overlap: check neighbours of the new position.
     let c = &placement.components[comp_idx];
-    let (hw, hh) = world_half_extents(c);
-    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
+    let (new_cx, new_cy, hw, hh) = component_grid_params_at(c, new_x, new_y, c.rotation);
 
     let neighbours = placement
         .spatial_grid
-        .neighbours(new_x, new_y, hw, hh, comp_idx);
+        .neighbours(new_cx, new_cy, hw, hh, comp_idx);
     let mut overlap = 0.0;
     for ni in neighbours {
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
         overlap += aabb_overlap_area(
-            new_x,
-            new_y,
+            new_cx,
+            new_cy,
             hw * 2.0,
             hh * 2.0,
-            n.x,
-            n.y,
+            ncx,
+            ncy,
             nhw * 2.0,
             nhh * 2.0,
         );
     }
     let overlap_after = OVERLAP_WEIGHT * overlap;
-
-    let vx_lo = (x_min + hw - new_x).max(0.0);
-    let vx_hi = (new_x + hw - x_max).max(0.0);
-    let vy_lo = (y_min + hh - new_y).max(0.0);
-    let vy_hi = (new_y + hh - y_max).max(0.0);
-    let contain_after = BOARD_PENALTY * (vx_lo + vx_hi + vy_lo + vy_hi);
+    let contain_after =
+        BOARD_PENALTY * board_overflow_at(c, new_x, new_y, c.rotation, placement.board_bounds);
 
     (hpwl_after, overlap_after, contain_after)
 }
@@ -1366,49 +1472,70 @@ fn cost_after_swap(
     // Overlap for swapped positions.
     let ca = &placement.components[comp_a];
     let cb = &placement.components[comp_b];
-    let (ahw, ahh) = world_half_extents(ca);
-    let (bhw, bhh) = world_half_extents(cb);
-
-    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
+    let (a_cx_after, a_cy_after, ahw, ahh) = component_grid_params_at(ca, bx, by, ca.rotation);
+    let (b_cx_after, b_cy_after, bhw, bhh) = component_grid_params_at(cb, ax, ay, cb.rotation);
 
     // comp_a is now at (bx, by).
-    let nbrs_a = placement.spatial_grid.neighbours(bx, by, ahw, ahh, comp_a);
+    let nbrs_a = placement
+        .spatial_grid
+        .neighbours(a_cx_after, a_cy_after, ahw, ahh, comp_a);
     let mut ov_a = 0.0;
     for ni in nbrs_a {
         if ni == comp_b {
             continue;
         }
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
-        ov_a += aabb_overlap_area(bx, by, ahw * 2.0, ahh * 2.0, n.x, n.y, nhw * 2.0, nhh * 2.0);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
+        ov_a += aabb_overlap_area(
+            a_cx_after,
+            a_cy_after,
+            ahw * 2.0,
+            ahh * 2.0,
+            ncx,
+            ncy,
+            nhw * 2.0,
+            nhh * 2.0,
+        );
     }
     // Include mutual overlap of a and b (a at bx,by vs b at ax,ay).
-    ov_a += aabb_overlap_area(bx, by, ahw * 2.0, ahh * 2.0, ax, ay, bhw * 2.0, bhh * 2.0);
+    ov_a += aabb_overlap_area(
+        a_cx_after,
+        a_cy_after,
+        ahw * 2.0,
+        ahh * 2.0,
+        b_cx_after,
+        b_cy_after,
+        bhw * 2.0,
+        bhh * 2.0,
+    );
 
     // comp_b is now at (ax, ay).
-    let nbrs_b = placement.spatial_grid.neighbours(ax, ay, bhw, bhh, comp_b);
+    let nbrs_b = placement
+        .spatial_grid
+        .neighbours(b_cx_after, b_cy_after, bhw, bhh, comp_b);
     let mut ov_b = 0.0;
     for ni in nbrs_b {
         if ni == comp_a {
             continue;
         }
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
-        ov_b += aabb_overlap_area(ax, ay, bhw * 2.0, bhh * 2.0, n.x, n.y, nhw * 2.0, nhh * 2.0);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
+        ov_b += aabb_overlap_area(
+            b_cx_after,
+            b_cy_after,
+            bhw * 2.0,
+            bhh * 2.0,
+            ncx,
+            ncy,
+            nhw * 2.0,
+            nhh * 2.0,
+        );
     }
 
     let overlap_after = OVERLAP_WEIGHT * (ov_a + ov_b);
-
-    let vxa_lo = (x_min + ahw - bx).max(0.0);
-    let vxa_hi = (bx + ahw - x_max).max(0.0);
-    let vya_lo = (y_min + ahh - by).max(0.0);
-    let vya_hi = (by + ahh - y_max).max(0.0);
-    let vxb_lo = (x_min + bhw - ax).max(0.0);
-    let vxb_hi = (ax + bhw - x_max).max(0.0);
-    let vyb_lo = (y_min + bhh - ay).max(0.0);
-    let vyb_hi = (ay + bhh - y_max).max(0.0);
-    let contain_after =
-        BOARD_PENALTY * (vxa_lo + vxa_hi + vya_lo + vya_hi + vxb_lo + vxb_hi + vyb_lo + vyb_hi);
+    let contain_after = BOARD_PENALTY
+        * (board_overflow_at(ca, bx, by, ca.rotation, placement.board_bounds)
+            + board_overflow_at(cb, ax, ay, cb.rotation, placement.board_bounds));
 
     (hpwl_after, overlap_after, contain_after)
 }
@@ -1462,28 +1589,20 @@ fn hpwl_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) 
 
 fn overlap_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) -> f64 {
     let c = &placement.components[comp_idx];
-    let (hw, hh) = world_half_extents_at(c.width, c.height, new_rotation);
-    let neighbours = placement
-        .spatial_grid
-        .neighbours(c.x, c.y, hw, hh, comp_idx);
+    let (cx, cy, hw, hh) = component_grid_params_at(c, c.x, c.y, new_rotation);
+    let neighbours = placement.spatial_grid.neighbours(cx, cy, hw, hh, comp_idx);
     let mut penalty = 0.0;
     for ni in neighbours {
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
-        penalty += aabb_overlap_area(c.x, c.y, hw * 2.0, hh * 2.0, n.x, n.y, nhw * 2.0, nhh * 2.0);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
+        penalty += aabb_overlap_area(cx, cy, hw * 2.0, hh * 2.0, ncx, ncy, nhw * 2.0, nhh * 2.0);
     }
     OVERLAP_WEIGHT * penalty
 }
 
 fn contain_after_rotate(comp_idx: usize, new_rotation: f64, placement: &Placement) -> f64 {
     let c = &placement.components[comp_idx];
-    let (hw, hh) = world_half_extents_at(c.width, c.height, new_rotation);
-    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
-    let vx_lo = (x_min + hw - c.x).max(0.0);
-    let vx_hi = (c.x + hw - x_max).max(0.0);
-    let vy_lo = (y_min + hh - c.y).max(0.0);
-    let vy_hi = (c.y + hh - y_max).max(0.0);
-    BOARD_PENALTY * (vx_lo + vx_hi + vy_lo + vy_hi)
+    BOARD_PENALTY * board_overflow_at(c, c.x, c.y, new_rotation, placement.board_bounds)
 }
 
 fn cost_after_part_swap(
@@ -1536,59 +1655,58 @@ fn cost_after_part_swap(
         }
     }
 
-    let (new_ahw, new_ahh) = world_half_extents_at(a.width, a.height, brot);
-    let (new_bhw, new_bhh) = world_half_extents_at(b.width, b.height, arot);
-    let (x_min, y_min, x_max, y_max) = placement.board_bounds;
+    let (new_acx, new_acy, new_ahw, new_ahh) = component_grid_params_at(a, bx, by, brot);
+    let (new_bcx, new_bcy, new_bhw, new_bhh) = component_grid_params_at(b, ax, ay, arot);
 
     let nbrs_a = placement
         .spatial_grid
-        .neighbours(bx, by, new_ahw, new_ahh, comp_a);
+        .neighbours(new_acx, new_acy, new_ahw, new_ahh, comp_a);
     let mut ov_a = 0.0;
     for ni in nbrs_a {
         if ni == comp_b {
             continue;
         }
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
         ov_a += aabb_overlap_area(
-            bx,
-            by,
+            new_acx,
+            new_acy,
             new_ahw * 2.0,
             new_ahh * 2.0,
-            n.x,
-            n.y,
+            ncx,
+            ncy,
             nhw * 2.0,
             nhh * 2.0,
         );
     }
     ov_a += aabb_overlap_area(
-        bx,
-        by,
+        new_acx,
+        new_acy,
         new_ahw * 2.0,
         new_ahh * 2.0,
-        ax,
-        ay,
+        new_bcx,
+        new_bcy,
         new_bhw * 2.0,
         new_bhh * 2.0,
     );
 
     let nbrs_b = placement
         .spatial_grid
-        .neighbours(ax, ay, new_bhw, new_bhh, comp_b);
+        .neighbours(new_bcx, new_bcy, new_bhw, new_bhh, comp_b);
     let mut ov_b = 0.0;
     for ni in nbrs_b {
         if ni == comp_a {
             continue;
         }
         let n = &placement.components[ni];
-        let (nhw, nhh) = world_half_extents(n);
+        let (ncx, ncy, nhw, nhh) = component_grid_params(n);
         ov_b += aabb_overlap_area(
-            ax,
-            ay,
+            new_bcx,
+            new_bcy,
             new_bhw * 2.0,
             new_bhh * 2.0,
-            n.x,
-            n.y,
+            ncx,
+            ncy,
             nhw * 2.0,
             nhh * 2.0,
         );
@@ -1596,16 +1714,9 @@ fn cost_after_part_swap(
 
     let overlap_after = OVERLAP_WEIGHT * (ov_a + ov_b);
 
-    let vxa_lo = (x_min + new_ahw - bx).max(0.0);
-    let vxa_hi = (bx + new_ahw - x_max).max(0.0);
-    let vya_lo = (y_min + new_ahh - by).max(0.0);
-    let vya_hi = (by + new_ahh - y_max).max(0.0);
-    let vxb_lo = (x_min + new_bhw - ax).max(0.0);
-    let vxb_hi = (ax + new_bhw - x_max).max(0.0);
-    let vyb_lo = (y_min + new_bhh - ay).max(0.0);
-    let vyb_hi = (ay + new_bhh - y_max).max(0.0);
-    let contain_after =
-        BOARD_PENALTY * (vxa_lo + vxa_hi + vya_lo + vya_hi + vxb_lo + vxb_hi + vyb_lo + vyb_hi);
+    let contain_after = BOARD_PENALTY
+        * (board_overflow_at(a, bx, by, brot, placement.board_bounds)
+            + board_overflow_at(b, ax, ay, arot, placement.board_bounds));
 
     (hpwl_after, overlap_after, contain_after)
 }
@@ -1711,7 +1822,8 @@ pub fn refine_with_sa(
         .map(|c| {
             let is_movable = autoplace_designators.iter().any(|d| d == &c.designator);
             // Find IR component to get bounds and pads.
-            let (width, height, pads) = find_ir_component_data(&c.designator, ir);
+            let (width, height, center_dx, center_dy, pads) =
+                find_ir_component_data(&c.designator, ir);
             ComponentState {
                 designator: c.designator.clone(),
                 x: c.x_mm,
@@ -1719,6 +1831,8 @@ pub fn refine_with_sa(
                 rotation: c.rotation_deg,
                 width,
                 height,
+                center_dx,
+                center_dy,
                 is_movable,
                 pads,
             }
@@ -1743,8 +1857,8 @@ pub fn refine_with_sa(
     let cell_size = estimate_cell_size(&components, board_bounds);
     let mut spatial_grid = SpatialGrid::new(cell_size);
     for (idx, c) in components.iter().enumerate() {
-        let (hw, hh) = world_half_extents(c);
-        spatial_grid.insert(idx, c.x, c.y, hw, hh);
+        let (cx, cy, hw, hh) = component_grid_params(c);
+        spatial_grid.insert(idx, cx, cy, hw, hh);
     }
 
     // Build swap opportunities from IR pad swap IDs.
@@ -1957,16 +2071,16 @@ fn count_overlap_violations(components: &[ComponentState], clearance_mm: f64) ->
     let mut overlaps = 0usize;
     for i in 0..components.len() {
         let a = &components[i];
-        let (ahw, ahh) = world_half_extents(a);
+        let (acx, acy, ahw, ahh) = component_grid_params(a);
         for b in &components[(i + 1)..] {
-            let (bhw, bhh) = world_half_extents(b);
+            let (bcx, bcy, bhw, bhh) = component_grid_params(b);
             let area = aabb_overlap_area(
-                a.x,
-                a.y,
+                acx,
+                acy,
                 ahw * 2.0 + clearance_mm,
                 ahh * 2.0 + clearance_mm,
-                b.x,
-                b.y,
+                bcx,
+                bcy,
                 bhw * 2.0 + clearance_mm,
                 bhh * 2.0 + clearance_mm,
             );
@@ -2064,11 +2178,16 @@ fn build_swap_opportunities(
     (pin_swaps, part_swaps)
 }
 
-fn find_ir_component_data(designator: &str, ir: &PcbIr) -> (f64, f64, Vec<(usize, f64, f64)>) {
+fn find_ir_component_data(
+    designator: &str,
+    ir: &PcbIr,
+) -> (f64, f64, f64, f64, Vec<(usize, f64, f64)>) {
     for (_, comp) in ir.components.iter() {
         if comp.designator == designator {
             let w = comp.local_bounds.width().max(0.5);
             let h = comp.local_bounds.height().max(0.5);
+            let center_dx = (comp.local_bounds.min.x + comp.local_bounds.max.x) * 0.5;
+            let center_dy = (comp.local_bounds.min.y + comp.local_bounds.max.y) * 0.5;
             let pads: Vec<(usize, f64, f64)> = comp
                 .pads
                 .iter()
@@ -2077,10 +2196,10 @@ fn find_ir_component_data(designator: &str, ir: &PcbIr) -> (f64, f64, Vec<(usize
                         .map(|nid| (nid.raw() as usize, p.local_position.x, p.local_position.y))
                 })
                 .collect();
-            return (w, h, pads);
+            return (w, h, center_dx, center_dy, pads);
         }
     }
-    (1.0, 1.0, Vec::new())
+    (1.0, 1.0, 0.0, 0.0, Vec::new())
 }
 
 /// After building `components`, resolve pad net names to indices using `net_component_index`.
@@ -2117,8 +2236,8 @@ mod tests {
     ) -> Placement {
         let mut spatial_grid = SpatialGrid::new(1.0);
         for (idx, component) in components.iter().enumerate() {
-            let (hw, hh) = world_half_extents(component);
-            spatial_grid.insert(idx, component.x, component.y, hw, hh);
+            let (cx, cy, hw, hh) = component_grid_params(component);
+            spatial_grid.insert(idx, cx, cy, hw, hh);
         }
         Placement {
             net_component_index: NetComponentIndex {
@@ -2152,6 +2271,8 @@ mod tests {
                 rotation: 0.0,
                 width: 1.0,
                 height: 1.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: vec![(0, 0.0, 0.0)],
             },
@@ -2162,6 +2283,8 @@ mod tests {
                 rotation: 0.0,
                 width: 1.0,
                 height: 1.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: vec![(0, 0.0, 0.0)],
             },
@@ -2172,6 +2295,8 @@ mod tests {
                 rotation: 0.0,
                 width: 1.0,
                 height: 1.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: vec![(0, 0.0, 0.0)],
             },
@@ -2182,6 +2307,8 @@ mod tests {
                 rotation: 0.0,
                 width: 1.0,
                 height: 1.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: vec![(0, 0.0, 0.0)],
             },
@@ -2222,6 +2349,8 @@ mod tests {
                 rotation: 0.0,
                 width: 2.0,
                 height: 2.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: Vec::new(),
             },
@@ -2232,6 +2361,8 @@ mod tests {
                 rotation: 0.0,
                 width: 2.0,
                 height: 2.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: Vec::new(),
             },
@@ -2239,6 +2370,38 @@ mod tests {
 
         assert_eq!(count_overlap_violations(&components, 0.0), 1);
         assert_eq!(count_overlap_violations(&components, 0.6), 1);
+    }
+
+    #[test]
+    fn count_overlap_violations_handles_asymmetric_bbox_origins() {
+        let components = vec![
+            ComponentState {
+                designator: "J2".into(),
+                x: 473.8874,
+                y: 399.5528,
+                rotation: 0.0,
+                width: 9.62001124,
+                height: 2.0,
+                center_dx: 3.81000508,
+                center_dy: 0.0,
+                is_movable: true,
+                pads: Vec::new(),
+            },
+            ComponentState {
+                designator: "R12".into(),
+                x: 480.4724,
+                y: 399.5528,
+                rotation: 0.0,
+                width: 2.55000252,
+                height: 1.6,
+                center_dx: 0.0,
+                center_dy: 0.0,
+                is_movable: true,
+                pads: Vec::new(),
+            },
+        ];
+
+        assert_eq!(count_overlap_violations(&components, 0.0), 1);
     }
 
     // -----------------------------------------------------------------------
@@ -2365,6 +2528,8 @@ mod tests {
                 rotation: 0.0,
                 width: 8.0,
                 height: 2.0,
+                center_dx: 0.0,
+                center_dy: 0.0,
                 is_movable: true,
                 pads: Vec::new(),
             }],
@@ -2395,6 +2560,8 @@ mod tests {
                     rotation: 0.0,
                     width: 8.0,
                     height: 2.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: Vec::new(),
                 },
@@ -2405,6 +2572,8 @@ mod tests {
                     rotation: 0.0,
                     width: 2.0,
                     height: 2.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: Vec::new(),
                 },
@@ -2434,6 +2603,8 @@ mod tests {
                     rotation: 0.0,
                     width: 4.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: Vec::new(),
                 },
@@ -2444,6 +2615,8 @@ mod tests {
                     rotation: 90.0,
                     width: 4.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: Vec::new(),
                 },
@@ -2488,6 +2661,8 @@ mod tests {
                     rotation: 0.0,
                     width: 1.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: vec![(0, 0.0, 0.0)],
                 },
@@ -2498,6 +2673,8 @@ mod tests {
                     rotation: 0.0,
                     width: 1.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: vec![(0, 0.0, 0.0)],
                 },
@@ -2508,6 +2685,8 @@ mod tests {
                     rotation: 0.0,
                     width: 1.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: vec![(0, 0.0, 0.0)],
                 },
@@ -2537,6 +2716,8 @@ mod tests {
                     rotation: 0.0,
                     width: 1.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: vec![(0, 0.0, 0.0), (1, 0.0, 0.0)],
                 },
@@ -2547,6 +2728,8 @@ mod tests {
                     rotation: 0.0,
                     width: 1.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: vec![(0, 0.0, 0.0)],
                 },
@@ -2557,6 +2740,8 @@ mod tests {
                     rotation: 0.0,
                     width: 1.0,
                     height: 1.0,
+                    center_dx: 0.0,
+                    center_dy: 0.0,
                     is_movable: true,
                     pads: vec![(1, 0.0, 0.0)],
                 },
