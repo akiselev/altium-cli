@@ -20,4 +20,15 @@ pub struct IrCopperLayer {
     pub name: String,
     pub is_top: bool,
     pub is_bottom: bool,
+    /// Preferred routing direction hint for this layer, if any.
+    pub preferred_direction: Option<PreferredDirection>,
+}
+
+/// Preferred routing direction for a copper layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum PreferredDirection {
+    Horizontal,
+    Vertical,
+    Any,
 }

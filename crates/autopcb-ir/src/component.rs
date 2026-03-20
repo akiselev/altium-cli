@@ -1,6 +1,6 @@
 //! Component and pad representations in the IR.
 
-use crate::handles::{ComponentId, NetId, PadId};
+use crate::handles::{ComponentId, LayerId, NetId, PadId};
 use crate::types::{BoardSide, BoundingBoxMm, PointMm};
 
 /// A placed component on the board.
@@ -52,6 +52,9 @@ pub struct IrComponentPad {
     /// Components with the same `swap_id_part` have identical pinouts and can be swapped.
     /// `None` if the component has no part swap group or if PcbDoc does not carry this data.
     pub swap_id_part: Option<String>,
+    /// Set of copper layer IDs this pad exists on.
+    /// Through-hole pads span all copper layers; SMD pads exist on a single layer.
+    pub layer_set: Vec<LayerId>,
 }
 
 /// Describes the shape of a pad for rendering and clearance purposes.

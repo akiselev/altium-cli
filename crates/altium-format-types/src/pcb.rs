@@ -1744,6 +1744,7 @@ impl TryFrom<u8> for BoardSide {
 
 /// Corner routing style (0-2). From TCornerStyle in altium-types.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum CornerStyle {
@@ -2604,6 +2605,7 @@ impl TryFrom<u8> for RuleLayerKind {
 
 /// Net topology for routing rules. From TNetTopology in C#.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum NetTopology {

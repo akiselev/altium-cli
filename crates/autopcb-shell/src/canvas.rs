@@ -653,6 +653,7 @@ mod tests {
                 hole_size_mm: 0.0,
                 swap_id_pin: None,
                 swap_id_part: None,
+                layer_set: Vec::new(),
             }],
         };
 

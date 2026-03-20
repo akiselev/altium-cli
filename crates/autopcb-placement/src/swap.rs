@@ -594,6 +594,7 @@ mod tests {
             hole_size_mm: 0.0,
             swap_id_pin: swap_pin.map(|s| s.to_string()),
             swap_id_part: swap_part.map(|s| s.to_string()),
+            layer_set: Vec::new(),
         }
     }
 
@@ -624,6 +625,8 @@ mod tests {
             name: "NET_A".to_string(),
             pins: Vec::new(),
             component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
         });
         nets[net_a].id = net_a;
 
@@ -632,6 +635,8 @@ mod tests {
             name: "NET_B".to_string(),
             pins: Vec::new(),
             component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
         });
         nets[net_b].id = net_b;
 
@@ -752,6 +757,8 @@ mod tests {
             name: "A".to_string(),
             pins: Vec::new(),
             component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
         });
         nets[net_a].id = net_a;
 

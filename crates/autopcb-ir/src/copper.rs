@@ -1,6 +1,6 @@
 //! Free (non-component) copper geometry: tracks, vias, fills.
 
-use crate::handles::NetId;
+use crate::handles::{LayerId, NetId};
 use crate::types::PointMm;
 
 /// Collection of free-standing copper primitives (not owned by a component).
@@ -20,7 +20,13 @@ pub struct IrTrack {
     pub end: PointMm,
     pub width_mm: f64,
     pub layer_name: String,
+    /// Resolved copper layer identifier.
+    pub layer: LayerId,
     pub net: Option<NetId>,
+    /// Whether this track is locked (cannot be moved by the router).
+    pub locked: bool,
+    /// Whether this track was placed by a previous routing pass.
+    pub pre_routed: bool,
 }
 
 /// A via (vertical interconnect).
@@ -31,6 +37,14 @@ pub struct IrVia {
     pub diameter_mm: f64,
     pub hole_size_mm: f64,
     pub net: Option<NetId>,
+    /// Copper layer the via starts on (top of the drill span).
+    pub from_layer: LayerId,
+    /// Copper layer the via ends on (bottom of the drill span).
+    pub to_layer: LayerId,
+    /// Whether this via is locked.
+    pub locked: bool,
+    /// Whether this via was placed by a previous routing pass.
+    pub pre_routed: bool,
 }
 
 /// A solid copper fill (rectangle).

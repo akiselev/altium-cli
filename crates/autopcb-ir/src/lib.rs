@@ -19,7 +19,7 @@ pub use component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
 pub use copper::{FreeCopperGeometry, IrFill, IrTrack, IrVia};
 pub use extract::PcbIr;
 pub use handles::{ComponentId, IdMap, LayerId, NetId, PadId, PolygonId, RuleId};
-pub use layer_stack::{IrCopperLayer, IrLayerStack};
+pub use layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection};
 pub use net::{IrNet, IrNetPin};
 pub use polygon::IrPolygon;
 pub use rule::{IrDesignRule, IrRuleParams};

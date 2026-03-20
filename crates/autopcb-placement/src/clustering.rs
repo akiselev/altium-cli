@@ -692,6 +692,7 @@ mod tests {
                     hole_size_mm: 0.0,
                     swap_id_pin: None,
                     swap_id_part: None,
+                    layer_set: Vec::new(),
                 }],
             });
             components[comp_id].id = comp_id;
@@ -714,6 +715,8 @@ mod tests {
                 },
             ],
             component_count: 2,
+            net_class: None,
+            diff_pair_partner: None,
         });
         nets[net0].id = net0;
         let net1 = nets.push(IrNet {
@@ -732,6 +735,8 @@ mod tests {
                 },
             ],
             component_count: 2,
+            net_class: None,
+            diff_pair_partner: None,
         });
         nets[net1].id = net1;
 
@@ -753,6 +758,7 @@ mod tests {
                     name: "Top".into(),
                     is_top: true,
                     is_bottom: false,
+                    preferred_direction: None,
                 }],
                 copper_layer_count: 2,
             },

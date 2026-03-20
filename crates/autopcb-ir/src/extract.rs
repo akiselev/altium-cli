@@ -36,12 +36,18 @@ impl PcbIr {
     pub fn extract(board: &PcbDocBoard) -> Result<Self> {
         let ir_board = extract_board_geometry(board)?;
         let layer_stack = extract_layer_stack(board);
+        // Build a name → LayerId lookup shared across extraction steps.
+        let layer_lookup: HashMap<String, LayerId> = layer_stack
+            .copper_layers
+            .iter()
+            .map(|l| (l.name.clone(), l.id))
+            .collect();
         let (net_lookup, mut nets) = extract_nets(board);
-        let mut components = extract_components(board, &net_lookup)?;
+        let mut components = extract_components(board, &net_lookup, &layer_stack)?;
         backfill_net_pins(&mut nets, &components);
         compute_component_bounds(&mut components);
-        let rules = extract_rules(board);
-        let free_copper = extract_free_copper(board, &net_lookup);
+        let rules = extract_rules(board, &layer_lookup);
+        let free_copper = extract_free_copper(board, &net_lookup, &layer_lookup)?;
         let polygons = extract_polygons(board, &net_lookup);
 
         Ok(PcbIr {
@@ -159,6 +165,7 @@ fn extract_layer_stack(board: &PcbDocBoard) -> IrLayerStack {
             name: sl.name.clone(),
             is_top: i == 0,
             is_bottom: i == layer_count - 1,
+            preferred_direction: None,
         });
         layers[id].id = id;
     }
@@ -181,10 +188,34 @@ fn extract_nets(board: &PcbDocBoard) -> (HashMap<String, NetId>, IdMap<NetId, Ir
             name: n.name.clone(),
             pins: Vec::new(),
             component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
         });
         nets[id].id = id;
         lookup.insert(n.name.clone(), id);
     }
+
+    // Populate net_class: for each net-class whose members include a net name,
+    // assign that class name (last write wins if a net belongs to multiple classes).
+    for class in &board.classes {
+        for member_name in &class.members {
+            if let Some(&net_id) = lookup.get(member_name.as_str()) {
+                nets[net_id].net_class = Some(class.name.clone());
+            }
+        }
+    }
+
+    // Populate diff_pair_partner from differential pair definitions.
+    for dp in &board.differential_pairs {
+        if let (Some(&pos_id), Some(&neg_id)) = (
+            lookup.get(dp.positive_net.as_str()),
+            lookup.get(dp.negative_net.as_str()),
+        ) {
+            nets[pos_id].diff_pair_partner = Some(neg_id);
+            nets[neg_id].diff_pair_partner = Some(pos_id);
+        }
+    }
+
     (lookup, nets)
 }
 
@@ -195,9 +226,24 @@ fn extract_nets(board: &PcbDocBoard) -> (HashMap<String, NetId>, IdMap<NetId, Ir
 fn extract_components(
     board: &PcbDocBoard,
     net_lookup: &HashMap<String, NetId>,
+    layer_stack: &IrLayerStack,
 ) -> Result<IdMap<ComponentId, IrComponent>> {
     let mut components = IdMap::with_capacity(board.components.len());
     let mut next_pad_id: u32 = 0;
+
+    // Build name → LayerId lookup for resolving pad layer_set entries.
+    let layer_name_to_id: HashMap<String, LayerId> = layer_stack
+        .copper_layers
+        .iter()
+        .map(|l| (l.name.clone(), l.id))
+        .collect();
+
+    // Collect all copper LayerIds for through-hole pads.
+    let all_copper_layers: Vec<LayerId> = layer_stack
+        .copper_layers
+        .iter()
+        .map(|l| l.id)
+        .collect();
 
     for comp in &board.components {
         let comp_pos = PointMm::from_coord_point(&comp.location);
@@ -230,6 +276,23 @@ fn extract_components(
 
             let is_through_hole = pad.hole_size.to_mms() > 0.0;
 
+            // Build layer_set: through-hole pads span all copper layers;
+            // SMD pads exist only on the layer reported by the pad record.
+            let layer_set = if is_through_hole {
+                all_copper_layers.clone()
+            } else {
+                let pad_layer_name = pad
+                    .layer
+                    .display_name()
+                    .unwrap_or("Unknown")
+                    .to_string();
+                layer_name_to_id
+                    .get(&pad_layer_name)
+                    .copied()
+                    .into_iter()
+                    .collect()
+            };
+
             let pad_id = PadId::from(next_pad_id);
             next_pad_id += 1;
             ir_pads.push(IrComponentPad {
@@ -248,6 +311,7 @@ fn extract_components(
                 hole_size_mm: pad.hole_size.to_mms(),
                 swap_id_pin: pad.swap_id_pin.clone(),
                 swap_id_part: pad.swap_id_part.clone(),
+                layer_set,
             });
 
             // pad_id already assigned above
@@ -368,7 +432,10 @@ fn backfill_net_pins(
 // Rules
 // ---------------------------------------------------------------------------
 
-fn extract_rules(board: &PcbDocBoard) -> IdMap<RuleId, IrDesignRule> {
+fn extract_rules(
+    board: &PcbDocBoard,
+    layer_lookup: &HashMap<String, LayerId>,
+) -> IdMap<RuleId, IrDesignRule> {
     let mut rules = IdMap::new();
     for r in &board.rules {
         let params = match &r.params {
@@ -406,6 +473,50 @@ fn extract_rules(board: &PcbDocBoard) -> IdMap<RuleId, IrDesignRule> {
                     expansion_mm: expansion.to_mms(),
                 }
             }
+            RuleParams::RoutingTopology { topology } => IrRuleParams::RoutingTopology {
+                topology: *topology,
+            },
+            RuleParams::RoutingPriority { priority } => IrRuleParams::RoutingPriority {
+                priority: *priority,
+            },
+            RuleParams::RoutingLayers { layer_flags } => {
+                let allowed = layer_flags
+                    .iter()
+                    .filter(|(_, enabled)| *enabled)
+                    .filter_map(|(name, _)| layer_lookup.get(name).copied())
+                    .collect();
+                IrRuleParams::RoutingLayers { allowed }
+            }
+            RuleParams::RoutingViaStyle {
+                min_width,
+                max_width,
+                min_hole_width,
+                max_hole_width,
+                ..
+            } => IrRuleParams::RoutingViaStyle {
+                width_min_mm: min_width.to_mms(),
+                width_max_mm: max_width.to_mms(),
+                hole_min_mm: min_hole_width.to_mms(),
+                hole_max_mm: max_hole_width.to_mms(),
+            },
+            RuleParams::RoutingCornerStyle { corner_style, .. } => {
+                IrRuleParams::RoutingCornerStyle {
+                    style: *corner_style,
+                }
+            }
+            RuleParams::DiffPairsRouting {
+                min_gap,
+                max_gap,
+                max_uncoupled_length,
+                ..
+            } => IrRuleParams::DiffPairsRouting {
+                gap_mm: min_gap.to_mms(),
+                max_gap_mm: max_gap.to_mms(),
+                max_uncoupled_length_mm: max_uncoupled_length.to_mms(),
+            },
+            RuleParams::MatchedLengths { tolerance } => IrRuleParams::MatchedLengths {
+                tolerance_mm: tolerance.to_mms(),
+            },
             _ => IrRuleParams::Other { kind: r.kind },
         };
 
@@ -429,49 +540,71 @@ fn extract_rules(board: &PcbDocBoard) -> IdMap<RuleId, IrDesignRule> {
 fn extract_free_copper(
     board: &PcbDocBoard,
     net_lookup: &HashMap<String, NetId>,
-) -> FreeCopperGeometry {
-    let tracks = board
-        .tracks
-        .iter()
-        .filter(|t| t.component.is_none())
-        .map(|t| {
-            let layer_name = t
-                .layer
-                .display_name()
-                .unwrap_or("Unknown")
-                .to_string();
-            IrTrack {
-                start: PointMm::from_coord_point(&t.start),
-                end: PointMm::from_coord_point(&t.end),
-                width_mm: t.width.to_mms(),
-                layer_name,
-                net: t.net.as_ref().and_then(|n| net_lookup.get(n)).copied(),
-            }
-        })
-        .collect();
+    layer_lookup: &HashMap<String, LayerId>,
+) -> Result<FreeCopperGeometry> {
+    let mut tracks = Vec::new();
+    for t in board.tracks.iter().filter(|t| t.component.is_none()) {
+        let layer_name = t.layer.display_name().unwrap_or("Unknown").to_string();
+        let layer = layer_lookup.get(&layer_name).copied().ok_or_else(|| {
+            IrError::ExtractionError(format!(
+                "track on unknown copper layer '{layer_name}'"
+            ))
+        })?;
+        tracks.push(IrTrack {
+            start: PointMm::from_coord_point(&t.start),
+            end: PointMm::from_coord_point(&t.end),
+            width_mm: t.width.to_mms(),
+            layer_name,
+            layer,
+            net: t.net.as_ref().and_then(|n| net_lookup.get(n)).copied(),
+            locked: false,
+            pre_routed: false,
+        });
+    }
 
-    let vias = board
-        .vias
-        .iter()
-        .filter(|v| v.component.is_none())
-        .map(|v| IrVia {
+    let mut vias = Vec::new();
+    for v in board.vias.iter().filter(|v| v.component.is_none()) {
+        // Resolve from_layer / to_layer by display name, falling back to the
+        // top and bottom copper layers when the layer name is not in the stack
+        // (e.g. older files that record "MultiLayer" for through-hole vias).
+        let from_layer_name = v.from_layer.display_name().unwrap_or("Unknown").to_string();
+        let to_layer_name = v.to_layer.display_name().unwrap_or("Unknown").to_string();
+        // TODO: older PcbDoc files may record via span layers that do not
+        // appear in the copper layer stack (e.g. "Multi-Layer"). When that
+        // happens we fall back to the first/last copper layer. Proper blind/buried
+        // via layer mapping should be revisited once test fixtures are available.
+        let from_layer = layer_lookup
+            .get(&from_layer_name)
+            .or_else(|| layer_lookup.values().next())
+            .copied()
+            .ok_or_else(|| {
+                IrError::ExtractionError("board has no copper layers".into())
+            })?;
+        let to_layer = layer_lookup
+            .get(&to_layer_name)
+            .or_else(|| layer_lookup.values().last())
+            .copied()
+            .ok_or_else(|| {
+                IrError::ExtractionError("board has no copper layers".into())
+            })?;
+        vias.push(IrVia {
             position: PointMm::from_coord_point(&v.location),
             diameter_mm: v.diameter.to_mms(),
             hole_size_mm: v.hole_size.to_mms(),
             net: v.net.as_ref().and_then(|n| net_lookup.get(n)).copied(),
-        })
-        .collect();
+            from_layer,
+            to_layer,
+            locked: false,
+            pre_routed: false,
+        });
+    }
 
     let fills = board
         .fills
         .iter()
         .filter(|f| f.component.is_none())
         .map(|f| {
-            let layer_name = f
-                .layer
-                .display_name()
-                .unwrap_or("Unknown")
-                .to_string();
+            let layer_name = f.layer.display_name().unwrap_or("Unknown").to_string();
             IrFill {
                 corner1: PointMm::from_coord_point(&f.corner1),
                 corner2: PointMm::from_coord_point(&f.corner2),
@@ -481,11 +614,11 @@ fn extract_free_copper(
         })
         .collect();
 
-    FreeCopperGeometry {
+    Ok(FreeCopperGeometry {
         tracks,
         vias,
         fills,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------

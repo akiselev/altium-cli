@@ -1,7 +1,7 @@
 //! Design rules extracted from PcbDoc.
 
-use crate::handles::RuleId;
-use altium_format_types::pcb::RuleKind;
+use crate::handles::{LayerId, RuleId};
+use altium_format_types::pcb::{CornerStyle, NetTopology, RuleKind};
 
 /// A design rule from the PcbDoc.
 #[derive(Debug, Clone)]
@@ -44,6 +44,34 @@ pub enum IrRuleParams {
     },
     PasteMaskExpansion {
         expansion_mm: f64,
+    },
+    RoutingTopology {
+        topology: NetTopology,
+    },
+    RoutingPriority {
+        priority: i32,
+    },
+    /// Layers allowed for routing. Only layers whose name matches a copper
+    /// layer in the IR layer stack are included (unknown names are skipped).
+    RoutingLayers {
+        allowed: Vec<LayerId>,
+    },
+    RoutingViaStyle {
+        width_min_mm: f64,
+        width_max_mm: f64,
+        hole_min_mm: f64,
+        hole_max_mm: f64,
+    },
+    RoutingCornerStyle {
+        style: CornerStyle,
+    },
+    DiffPairsRouting {
+        gap_mm: f64,
+        max_gap_mm: f64,
+        max_uncoupled_length_mm: f64,
+    },
+    MatchedLengths {
+        tolerance_mm: f64,
     },
     /// Rule kind not yet given a typed IR representation.
     Other {

@@ -1,4 +1,5 @@
 pub mod clustering;
+pub mod congestion;
 pub mod simulated_annealing;
 pub mod swap;
 
@@ -17,6 +18,8 @@ use solverang::param::ParamStore;
 use solverang::solver::LMConfig;
 use solverang::system::{ConstraintSystem, SystemConfig, SystemStatus};
 use tracing::{debug, info, trace, warn};
+
+pub use congestion::CongestionOracle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlacementConfig {
@@ -2055,6 +2058,8 @@ fn build_subset_ir(ir: &PcbIr, designators: &HashSet<String>, region: RectRegion
             name: net.name.clone(),
             pins: new_pins,
             component_count: seen_components.len(),
+            net_class: net.net_class.clone(),
+            diff_pair_partner: None,
         });
         nets[new_id].id = new_id;
         net_map.insert(old_net_id.raw(), new_id);
@@ -2991,6 +2996,7 @@ mod tests {
                     hole_size_mm: 0.0,
                     swap_id_pin: None,
                     swap_id_part: swap_group.map(str::to_string),
+                    layer_set: Vec::new(),
                 }],
             });
             components[comp_id].id = comp_id;
@@ -3014,6 +3020,7 @@ mod tests {
                     name: "Top".into(),
                     is_top: true,
                     is_bottom: false,
+                    preferred_direction: None,
                 }],
                 copper_layer_count: 2,
             },

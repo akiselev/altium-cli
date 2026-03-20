@@ -13,6 +13,10 @@ pub struct IrNet {
     pub pins: Vec<IrNetPin>,
     /// Number of distinct components this net touches.
     pub component_count: usize,
+    /// Net class name this net belongs to, if any.
+    pub net_class: Option<String>,
+    /// The partner net in a differential pair (e.g. the negative net when this is the positive).
+    pub diff_pair_partner: Option<NetId>,
 }
 
 /// A single pin (pad) within a net.

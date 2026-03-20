@@ -181,6 +181,11 @@ enum Commands {
         #[command(subcommand)]
         sub: SpecSubcommand,
     },
+    /// Routing commands for .routes files and spec-driven autorouting
+    Routing {
+        #[command(subcommand)]
+        sub: RoutingSubcommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -349,6 +354,17 @@ enum SpecSubcommand {
     },
 }
 
+#[derive(Subcommand)]
+enum RoutingSubcommand {
+    /// Load a .routes file and print routing statistics
+    Inspect {
+        /// Path to the .routes file (binary or JSON)
+        path: PathBuf,
+    },
+    /// Solve routing from a spec file (requires full spec pipeline integration)
+    Solve,
+}
+
 fn main() -> ExitCode {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -491,6 +507,12 @@ fn main() -> ExitCode {
         },
         Commands::Spec { sub } => {
             if let Err(e) = run_spec(sub) {
+                eprintln!("Error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Routing { sub } => {
+            if let Err(e) = run_routing(sub) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -3002,6 +3024,55 @@ fn parse_edge(s: &str) -> Option<PlacementEdge> {
     }
 }
 
+// ── routing ───────────────────────────────────────────────────────────────────
+
+fn run_routing(sub: RoutingSubcommand) -> anyhow::Result<()> {
+    match sub {
+        RoutingSubcommand::Inspect { path } => cmd_routing_inspect(&path),
+        RoutingSubcommand::Solve => cmd_routing_solve(),
+    }
+}
+
+fn cmd_routing_inspect(path: &std::path::Path) -> anyhow::Result<()> {
+    let solution = autopcb_routes::load_binary(path)
+        .or_else(|_| autopcb_routes::load_json(path))
+        .map_err(|e| {
+            anyhow::anyhow!("failed to load routes file {}: {e}", path.display())
+        })?;
+
+    let m = &solution.metrics;
+    let net_count = solution.nets.len();
+    let unrouted_count = solution.unrouted.len();
+    let iteration_count = solution.iterations.len();
+
+    println!("Routes file: {}", path.display());
+    println!("  Version:        {}", solution.version);
+    println!("  Nets routed:    {}", net_count);
+    println!("  Nets unrouted:  {}", unrouted_count);
+    println!("  Total vias:     {}", m.total_vias);
+    println!("  Total length:   {:.4} mm", m.total_length_mm);
+    println!("  Completion:     {:.1}%", m.completion_pct);
+    println!("  DRC violations: {}", m.drc_violations);
+    println!("  Iterations:     {}", iteration_count);
+
+    if !solution.unrouted.is_empty() {
+        println!();
+        println!("Unrouted nets:");
+        for net_id in &solution.unrouted {
+            println!("  net {}", net_id.raw());
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_routing_solve() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "routing solve requires a spec file and full pipeline integration; \
+         this command is not yet implemented"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3037,5 +3108,45 @@ mod tests {
             } => assert!(!sa, "--no-sa should disable SA"),
             _ => panic!("expected placement autoplace command"),
         }
+    }
+
+    #[test]
+    fn routing_inspect_parses_path_arg() {
+        let cli = Cli::try_parse_from(["altium", "routing", "inspect", "board.routes"])
+            .expect("routing inspect args should parse");
+        match cli.command {
+            Commands::Routing {
+                sub: RoutingSubcommand::Inspect { path },
+            } => {
+                assert_eq!(path, PathBuf::from("board.routes"));
+            }
+            _ => panic!("expected routing inspect command"),
+        }
+    }
+
+    #[test]
+    fn routing_inspect_loads_binary_routes_file() {
+        use autopcb_routes::{NetId, RouteSolution, save_binary};
+
+        let solution = RouteSolution::new();
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        save_binary(&solution, tmp.path()).expect("save_binary");
+        cmd_routing_inspect(tmp.path()).expect("cmd_routing_inspect should succeed");
+    }
+
+    #[test]
+    fn routing_inspect_loads_json_routes_file() {
+        use autopcb_routes::{RouteSolution, save_json};
+
+        let solution = RouteSolution::new();
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        save_json(&solution, tmp.path()).expect("save_json");
+        cmd_routing_inspect(tmp.path()).expect("cmd_routing_inspect should succeed on JSON");
+    }
+
+    #[test]
+    fn routing_solve_returns_error() {
+        let result = cmd_routing_solve();
+        assert!(result.is_err(), "routing solve should return an error until implemented");
     }
 }
