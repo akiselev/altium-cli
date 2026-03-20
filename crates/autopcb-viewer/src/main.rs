@@ -1,6 +1,9 @@
 //! AutoPCB Viewer — standalone binary for visualising PCB IR data.
 //!
-//! Usage: autopcb-viewer <path-to-pcbdoc-or-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]
+//! The viewer is spec-centric: it ONLY accepts `.pcbdoc-spec` files as input.
+//! The underlying PcbDoc is loaded and mutated by the spec pipeline internally.
+//!
+//! Usage: autopcb-viewer <path-to-pcbdoc-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]
 
 mod app;
 mod colors;
@@ -11,29 +14,19 @@ mod view3d;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 
-use altium_format::PcbDoc;
-use autopcb_ir::{BoundingBoxMm, IrComponent, PcbIr, PointMm};
+use autopcb_ir::PcbIr;
 use autopcb_placement::PlacementIterationSnapshot;
 
-#[derive(Debug, Clone)]
-struct SpecPlacementOverride {
-    designator: String,
-    x_mm: f64,
-    y_mm: f64,
-    rotation_deg: Option<f64>,
-}
-
-/// Parse a `.pcbdoc-spec` file and return the resolved PcbDoc path and any
-/// `at:` position overrides keyed by designator.
+/// Compile a `.pcbdoc-spec` file and produce a `PcbIr` with all spec mutations applied.
 ///
-/// Returns `(pcbdoc_path, positions)` where each placement override contains
-/// `at:` and optional fixed `rotation:` sourced from `placement { places { ... } }`.
-fn load_spec(
+/// Returns `(ir, target_pcbdoc_path)`.
+pub(crate) fn load_spec_ir(
     spec_path: &std::path::Path,
     explicit_target: Option<&std::path::Path>,
-) -> anyhow::Result<(PathBuf, Vec<SpecPlacementOverride>)> {
+) -> anyhow::Result<(PcbIr, PathBuf)> {
     use altium_format_spec::parser::parse_spec;
     use altium_format_spec::{SpecDomain, SpecModel, compile_spec};
+    use autopcb_ir::load_ir_from_spec;
 
     let source = std::fs::read_to_string(spec_path)
         .map_err(|e| anyhow::anyhow!("failed to read spec {}: {e}", spec_path.display()))?;
@@ -49,101 +42,11 @@ fn load_spec(
         _ => anyhow::bail!("spec file does not describe a PcbDoc"),
     };
 
-    // Resolve the target PcbDoc path.
-    let pcbdoc_path = if let Some(explicit) = explicit_target {
-        explicit.to_path_buf()
-    } else {
-        let target_str = pcbdoc_spec
-            .placement
-            .as_ref()
-            .and_then(|p| p.target.as_ref())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "spec has no `target:` in placement block and no --target flag was given"
-                )
-            })?;
-        // Resolve relative to the spec file's parent directory.
-        let base = spec_path.parent().unwrap_or(std::path::Path::new("."));
-        base.join(target_str)
-    };
+    let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
+    let result = load_ir_from_spec(&pcbdoc_spec, spec_dir, explicit_target)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Collect `at:` position overrides from placement places.
-    let mut positions: Vec<SpecPlacementOverride> = Vec::new();
-    if let Some(placement) = &pcbdoc_spec.placement {
-        for place in &placement.places {
-            if let Some(at) = &place.at {
-                let x_mm = at.x.to_mms();
-                let y_mm = at.y.to_mms();
-                for designator in &place.designators {
-                    positions.push(SpecPlacementOverride {
-                        designator: designator.clone(),
-                        x_mm,
-                        y_mm,
-                        rotation_deg: place.rotation,
-                    });
-                }
-            }
-        }
-    }
-
-    Ok((pcbdoc_path, positions))
-}
-
-pub(crate) fn apply_component_pose(
-    comp: &mut IrComponent,
-    x_mm: f64,
-    y_mm: f64,
-    rotation_deg: f64,
-) {
-    let rotation_delta = rotation_deg - comp.rotation;
-    comp.position = PointMm::new(x_mm, y_mm);
-    comp.rotation = rotation_deg;
-
-    let theta = rotation_deg.to_radians();
-    let (sin_t, cos_t) = theta.sin_cos();
-    for pad in &mut comp.pads {
-        let lx = pad.local_position.x;
-        let ly = pad.local_position.y;
-        pad.world_position = PointMm::new(
-            x_mm + lx * cos_t - ly * sin_t,
-            y_mm + lx * sin_t + ly * cos_t,
-        );
-        pad.shape.rotation = (pad.shape.rotation + rotation_delta).rem_euclid(360.0);
-    }
-
-    let lb = comp.local_bounds;
-    let corners = [
-        PointMm::new(lb.min.x, lb.min.y),
-        PointMm::new(lb.min.x, lb.max.y),
-        PointMm::new(lb.max.x, lb.min.y),
-        PointMm::new(lb.max.x, lb.max.y),
-    ];
-    let mut world_pts = Vec::with_capacity(4);
-    for c in corners {
-        world_pts.push(PointMm::new(
-            x_mm + c.x * cos_t - c.y * sin_t,
-            y_mm + c.x * sin_t + c.y * cos_t,
-        ));
-    }
-    if let Some(bb) = BoundingBoxMm::from_points(&world_pts) {
-        comp.world_bounds = bb;
-    }
-}
-
-/// Apply spec position overrides to an IR in-place.
-fn apply_spec_positions(ir: &mut PcbIr, positions: &[SpecPlacementOverride]) {
-    for override_ in positions {
-        for (_id, comp) in ir.components.iter_mut() {
-            if comp.designator == override_.designator {
-                apply_component_pose(
-                    comp,
-                    override_.x_mm,
-                    override_.y_mm,
-                    override_.rotation_deg.unwrap_or(comp.rotation),
-                );
-            }
-        }
-    }
+    Ok((result.ir, result.target_path))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -152,7 +55,7 @@ fn main() -> anyhow::Result<()> {
         Some(p) => PathBuf::from(p),
         None => {
             eprintln!(
-                "Usage: autopcb-viewer <path-to-pcbdoc-or-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
+                "Usage: autopcb-viewer <path-to-pcbdoc-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
             );
             std::process::exit(1);
         }
@@ -192,34 +95,20 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Detect whether the input is a spec file.
+    // The viewer only accepts spec files.
     let path_str = path.to_string_lossy();
-    let is_spec = path_str.ends_with(".pcbdoc-spec") || path_str.ends_with("-spec");
-
-    let (pcbdoc_path, spec_path, spec_positions) = if is_spec {
-        eprintln!("Loading spec {}...", path.display());
-        let (pcbdoc, positions) = load_spec(&path, explicit_target.as_deref())?;
-        (pcbdoc, Some(path.clone()), positions)
-    } else {
-        (path.clone(), None, Vec::new())
-    };
-
-    eprintln!("Opening {}...", pcbdoc_path.display());
-    let doc = PcbDoc::open(&pcbdoc_path)?;
-
-    eprintln!("Extracting board...");
-    let board = doc.board()?;
-
-    eprintln!("Building IR...");
-    let mut ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    if !spec_positions.is_empty() {
+    if !path_str.ends_with(".pcbdoc-spec") {
         eprintln!(
-            "Applying {} spec position overrides...",
-            spec_positions.len()
+            "Error: autopcb-viewer requires a .pcbdoc-spec file as input.\n\
+             Got: {}\n\
+             Hint: create a spec file that references your PcbDoc via `target:`",
+            path.display()
         );
-        apply_spec_positions(&mut ir, &spec_positions);
+        std::process::exit(1);
     }
+
+    eprintln!("Loading spec {}...", path.display());
+    let (ir, target_pcbdoc_path) = load_spec_ir(&path, explicit_target.as_deref())?;
 
     eprintln!(
         "Board: {:.1} x {:.1} mm, {} components, {} nets",
@@ -248,7 +137,6 @@ fn main() -> anyhow::Result<()> {
         };
 
     // Set up file watcher if --watch was requested.
-    // The watcher is kept alive for the duration of the program by binding it here.
     let watch_rx: Option<mpsc::Receiver<notify::Result<notify::Event>>> = if watch {
         use notify::Watcher;
 
@@ -256,18 +144,22 @@ fn main() -> anyhow::Result<()> {
         let mut watcher = notify::RecommendedWatcher::new(tx, notify::Config::default())
             .map_err(|e| anyhow::anyhow!("failed to create file watcher: {e}"))?;
 
-        // In spec mode, watch the spec file; its changes trigger a full reload
-        // (re-parse spec + re-open PcbDoc). Also watch the PcbDoc itself.
-        if let Some(ref sp) = spec_path {
-            watcher
-                .watch(sp, notify::RecursiveMode::NonRecursive)
-                .map_err(|e| anyhow::anyhow!("failed to watch {}: {e}", sp.display()))?;
-            eprintln!("Watching {} for changes...", sp.display());
-        }
-
+        // Watch the spec file.
         watcher
-            .watch(&pcbdoc_path, notify::RecursiveMode::NonRecursive)
-            .map_err(|e| anyhow::anyhow!("failed to watch {}: {e}", pcbdoc_path.display()))?;
+            .watch(&path, notify::RecursiveMode::NonRecursive)
+            .map_err(|e| anyhow::anyhow!("failed to watch {}: {e}", path.display()))?;
+        eprintln!("Watching {} for changes...", path.display());
+
+        // Watch the target PcbDoc.
+        watcher
+            .watch(&target_pcbdoc_path, notify::RecursiveMode::NonRecursive)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to watch {}: {e}",
+                    target_pcbdoc_path.display()
+                )
+            })?;
+        eprintln!("Watching {} for changes...", target_pcbdoc_path.display());
 
         if let Some(ref pb_path) = playback_path {
             watcher
@@ -275,11 +167,7 @@ fn main() -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("failed to watch {}: {e}", pb_path.display()))?;
         }
 
-        eprintln!("Watching {} for changes...", pcbdoc_path.display());
-
         // Leak the watcher so it stays alive for the lifetime of the process.
-        // eframe takes ownership of the app and there is no clean shutdown hook,
-        // so leaking is the simplest way to keep the OS watch handle open.
         std::mem::forget(watcher);
 
         Some(rx)
@@ -298,6 +186,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let pb_path_clone = playback_path.clone();
+    let spec_path = path.clone();
 
     eframe::run_native(
         &title,
@@ -308,7 +197,7 @@ fn main() -> anyhow::Result<()> {
                 screenshot_path,
                 playback.clone(),
                 watch_rx,
-                pcbdoc_path,
+                target_pcbdoc_path,
                 pb_path_clone,
                 spec_path,
                 explicit_target,
@@ -319,54 +208,4 @@ fn main() -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use autopcb_ir::{BoardSide, BoundingBoxMm, ComponentId, IrComponent, IrComponentPad, PointMm};
-    use autopcb_ir::{PadId, PadShapeInfo, PadShapeKind};
-
-    #[test]
-    fn apply_component_pose_updates_rotation_and_pad_geometry() {
-        let mut comp = IrComponent {
-            id: ComponentId::from(0),
-            designator: "U1".into(),
-            pattern: "TEST".into(),
-            value: "".into(),
-            position: PointMm::new(0.0, 0.0),
-            rotation: 0.0,
-            side: BoardSide::Top,
-            local_bounds: BoundingBoxMm::new(PointMm::new(-2.0, -1.0), PointMm::new(2.0, 1.0)),
-            world_bounds: BoundingBoxMm::new(PointMm::new(-2.0, -1.0), PointMm::new(2.0, 1.0)),
-            pads: vec![IrComponentPad {
-                id: PadId::from(0),
-                name: "1".into(),
-                local_position: PointMm::new(1.0, 0.0),
-                world_position: PointMm::new(1.0, 0.0),
-                net: None,
-                shape: PadShapeInfo {
-                    kind: PadShapeKind::Rectangular,
-                    size_x: 1.0,
-                    size_y: 2.0,
-                    rotation: 0.0,
-                },
-                is_through_hole: false,
-                hole_size_mm: 0.0,
-                swap_id_pin: None,
-                swap_id_part: None,
-                layer_set: Vec::new(),
-            }],
-        };
-
-        apply_component_pose(&mut comp, 10.0, 20.0, 90.0);
-
-        assert_eq!(comp.position, PointMm::new(10.0, 20.0));
-        assert_eq!(comp.rotation, 90.0);
-        assert!((comp.pads[0].world_position.x - 10.0).abs() < 1e-6);
-        assert!((comp.pads[0].world_position.y - 21.0).abs() < 1e-6);
-        assert_eq!(comp.pads[0].shape.rotation, 90.0);
-        assert!((comp.world_bounds.width() - 2.0).abs() < 1e-6);
-        assert!((comp.world_bounds.height() - 4.0).abs() < 1e-6);
-    }
 }

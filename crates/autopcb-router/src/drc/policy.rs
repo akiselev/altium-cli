@@ -354,8 +354,13 @@ impl DrcPolicy {
     }
 
     /// Get width bounds for a net class on a given layer.
+    ///
+    /// NOTE: `layer` is currently ignored — the IR extraction does not capture
+    /// per-layer scope from PcbDoc Width rules. Altium rules CAN specify layer
+    /// scope (e.g., different min width on inner vs outer layers), but
+    /// `IrDesignRule` does not yet carry a scope expression. All layers receive
+    /// the same bounds until IR layer-scoped rules are implemented.
     pub fn width_bounds(&self, net_class: Option<&str>, _layer: Option<LayerId>) -> DrcWidthBounds {
-        let _ = _layer;
         // Look up by net class name, fall back to default (None key).
         if let Some(class) = net_class {
             if let Some(bounds) = self.width_constraints.get(&Some(class.to_string())) {
@@ -366,6 +371,12 @@ impl DrcPolicy {
     }
 
     /// Get via bounds for a net class.
+    ///
+    /// NOTE: `net_class` is currently ignored — there is a single global
+    /// `DrcViaBounds` populated from the first matching RoutingViaStyle,
+    /// MinimumAnnularRing, and HoleToHoleClearance rules. Per-net-class via
+    /// constraints require scope expressions on `IrDesignRule`, which are not
+    /// yet extracted from PcbDoc. All net classes receive the same bounds.
     pub fn via_bounds(&self, _net_class: Option<&str>) -> &DrcViaBounds {
         &self.via_bounds
     }
@@ -422,6 +433,9 @@ mod tests {
             rules: IdMap::new(),
             free_copper: Default::default(),
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         }
     }
 

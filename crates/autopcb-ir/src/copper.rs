@@ -8,6 +8,7 @@ use crate::types::PointMm;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FreeCopperGeometry {
     pub tracks: Vec<IrTrack>,
+    pub arcs: Vec<IrArc>,
     pub vias: Vec<IrVia>,
     pub fills: Vec<IrFill>,
 }
@@ -45,6 +46,22 @@ pub struct IrVia {
     pub locked: bool,
     /// Whether this via was placed by a previous routing pass.
     pub pre_routed: bool,
+}
+
+/// A PCB arc segment.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct IrArc {
+    pub center: PointMm,
+    pub radius_mm: f64,
+    pub start_angle_deg: f64,
+    pub end_angle_deg: f64,
+    pub width_mm: f64,
+    pub layer_name: String,
+    /// Resolved copper layer identifier. `None` for non-copper layers (silkscreen,
+    /// mechanical, overlay) where there is no matching entry in the copper layer stack.
+    pub layer: Option<LayerId>,
+    pub net: Option<NetId>,
 }
 
 /// A solid copper fill (rectangle).

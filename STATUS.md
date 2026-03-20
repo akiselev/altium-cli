@@ -22,7 +22,7 @@ altium-cli             (CLI binary: validate, save-as, render, query, plan, appl
 
 autopcb-ir             (PCB intermediate representation: mm-based extraction from PcbDocBoard; serde JSON export)
      ↓
-autopcb-viewer         (standalone egui/wgpu binary: 2D + 2.5D PCB viewer with pan/zoom/orbit; accepts .pcbdoc-spec files directly with spec position overrides)
+autopcb-viewer         (standalone egui/wgpu binary: 2D + 2.5D PCB viewer; spec-centric — accepts ONLY .pcbdoc-spec files, never PcbDoc directly; all rendering from PcbIr via spec bridge)
 ```
 
 ---
@@ -1045,11 +1045,26 @@ saves PNG, exits. Interactive S key also saves `screenshot.png`.
 - Orthographic projection with configurable yaw/pitch/zoom
 
 **File watch (`--watch`):** `autopcb-viewer <file> --watch` sets up a `notify::RecommendedWatcher`
-(via `mpsc::channel`) on the PcbDoc path and optional `--playback` JSON path. On
-`Modify`/`Create` events the viewer reloads the PcbDoc, rebuilds the IR, updates GPU scene
+(via `mpsc::channel`) on the spec file, target PcbDoc path, and optional `--playback` JSON path.
+On `Modify`/`Create` events the viewer reloads from the spec via `reload_from_spec()`, which
+re-parses the spec, opens the PcbDoc via the spec bridge, rebuilds the IR, updates GPU scene
 resources, reloads the playback JSON if applicable, and shows a green "Reloaded at HH:MM:SS UTC"
 label in the sidebar. Events within 100ms of each other are debounced to a single reload.
 `request_repaint()` is called after each reload so egui redraws immediately.
+
+**Spec-centric viewer refactor (2026-03-20):**
+- `altium-format` dependency removed from viewer — the viewer never imports PcbDoc or PcbDocBoard
+- Viewer accepts ONLY `.pcbdoc-spec` files; rejects raw PcbDoc with a helpful error message
+- All PcbDoc access encapsulated in `autopcb-ir::spec_bridge::load_ir_from_spec()` bridge function
+- Bridge pipeline: compile spec → open target PcbDoc → apply spec mutations → extract IR → apply placement overrides
+- `apply_component_pose` utility moved from viewer to `autopcb-ir::spec_bridge` (shared by bridge and playback)
+- New IR primitive types added for rendering: `IrArc`, `IrText`, `IrRegion`/`IrRegionKind`, `IrComponentBody`
+- New handle types: `TextId`, `RegionId`, `ComponentBodyId`, `DimensionId`
+- `FreeCopperGeometry` now includes `arcs: Vec<IrArc>`
+- `IrArc.layer` is `Option<LayerId>` — `None` for non-copper layers
+- Region extraction checks `is_board_cutout` flag with priority over `RegionKind`
+- `IrDimension` type defined but not yet extracted (Dimension API lacks reference point fields)
+- Component-owned copper (tracks/arcs/fills on IrComponent) deferred — see `component.rs` comment
 
 ---
 

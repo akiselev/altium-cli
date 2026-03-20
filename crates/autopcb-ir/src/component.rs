@@ -22,6 +22,13 @@ pub struct IrComponent {
     pub world_bounds: BoundingBoxMm,
     /// Pads belonging to this component.
     pub pads: Vec<IrComponentPad>,
+    // DEFERRED(component-owned-copper): Component-owned tracks, arcs, and fills
+    // are not yet extracted. Currently only free copper (component.is_none()) is
+    // in the IR. Component-owned primitives (e.g. silkscreen outlines drawn as
+    // tracks) are silently dropped. Add `tracks: Vec<IrTrack>`, `arcs: Vec<IrArc>`,
+    // `fills: Vec<IrFill>` fields here and populate in extract_components() when
+    // viewer rendering of component graphics is implemented.
+    // See docs/plans/viewer-refactor.md Wave 2.
 }
 
 /// A single pad on a component.

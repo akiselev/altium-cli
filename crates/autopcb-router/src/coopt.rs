@@ -428,6 +428,9 @@ mod tests {
             rules: IdMap::new(),
             free_copper: FreeCopperGeometry::default(),
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         }
     }
 

@@ -99,6 +99,9 @@ pub enum DrcObject {
     Polygon {
         id: usize,
     },
+    Net {
+        net_id: NetId,
+    },
 }
 
 /// Classification of a DRC violation.
@@ -122,17 +125,16 @@ pub enum DrcViolationKind {
     MatchedLengthOutOfTolerance,
     DiffPairGapViolation,
     DiffPairWidthViolation,
-    DiffPairUncoupledLengthExceeded,
     DiffPairSkew,
-    DaisyChainStubLength,
+    DaisyChainStubTooLong,
     BoardOutlineClearance,
     ComponentClearance,
-    SolderMaskSliver,
-    SilkToSolderMask,
-    SilkToSilk,
-    SilkToBoardRegion,
-    ViasUnderSmd,
-    ParallelSegment,
+    SolderMaskSliverBelowMinimum,
+    SilkToSolderMaskClearance,
+    SilkToSilkClearance,
+    SilkToBoardRegionClearance,
+    ViaUnderSmd,
+    ParallelSegmentTooLong,
     PowerPlaneClearance,
     CreepageViolation,
     SolderMaskExpansionViolation,

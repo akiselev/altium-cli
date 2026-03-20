@@ -158,7 +158,7 @@ fn points_equal(a: &Point, b: &Point) -> bool {
 ///
 /// STUB: Not yet implemented. Requires iterating all same-layer segment
 /// pairs to find parallel runs exceeding policy thresholds. Will emit
-/// `DrcViolationKind::ParallelSegment` when implemented.
+/// `DrcViolationKind::ParallelSegmentTooLong` when implemented.
 pub fn check_parallel_segments(
     _solution: &RouteSolution,
     _policy: &DrcPolicy,
@@ -207,6 +207,9 @@ mod tests {
             rules: IdMap::new(),
             free_copper: Default::default(),
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         }
     }
 

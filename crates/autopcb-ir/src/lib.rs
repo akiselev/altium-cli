@@ -5,24 +5,36 @@
 
 pub mod board;
 pub mod component;
+pub mod component_body;
 pub mod copper;
+pub mod dimension;
 pub mod extract;
 pub mod handles;
 pub mod layer_stack;
 pub mod net;
 pub mod polygon;
+pub mod region;
 pub mod rule;
+pub mod spec_bridge;
+pub mod text;
 pub mod types;
 
 pub use board::{IrBoardGeometry, IrKeepoutZone};
 pub use component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
-pub use copper::{FreeCopperGeometry, IrFill, IrTrack, IrVia};
+pub use component_body::IrComponentBody;
+pub use copper::{FreeCopperGeometry, IrArc, IrFill, IrTrack, IrVia};
 pub use extract::PcbIr;
-pub use handles::{ComponentId, IdMap, LayerId, NetId, PadId, PolygonId, RuleId};
+pub use handles::{
+    ComponentBodyId, ComponentId, DimensionId, IdMap, LayerId, NetId, PadId, PolygonId, RegionId,
+    RuleId, TextId,
+};
 pub use layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection};
 pub use net::{IrNet, IrNetPin};
 pub use polygon::IrPolygon;
+pub use region::{IrRegion, IrRegionKind};
 pub use rule::{IrDesignRule, IrRuleParams};
+pub use spec_bridge::load_ir_from_spec;
+pub use text::IrText;
 pub use types::{BoardSide, BoundingBoxMm, PointMm};
 
 /// Errors from IR extraction.
@@ -33,9 +45,6 @@ pub enum IrError {
 
     #[error("extraction failed: {0}")]
     ExtractionError(String),
-
-    #[error(transparent)]
-    FormatError(#[from] altium_format::AltiumFormatError),
 }
 
 pub type Result<T> = std::result::Result<T, IrError>;

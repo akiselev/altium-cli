@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::{apply_component_pose, apply_spec_positions, load_spec};
+use crate::load_spec_ir;
+use autopcb_ir::spec_bridge::apply_component_pose;
 
 use eframe::egui::{self, ColorImage, Event, Rect, Sense, Stroke, UserData, ViewportCommand};
 
@@ -52,13 +53,13 @@ pub struct ViewerApp {
     playback_last_tick: Instant,
     /// Receiver for file-system change events from `notify`.  `None` if --watch was not passed.
     watch_rx: Option<mpsc::Receiver<notify::Result<notify::Event>>>,
-    /// Path to the PcbDoc being displayed; used to reload on file change.
-    pcbdoc_path: PathBuf,
+    /// Path to the resolved target PcbDoc; used for file watching.
+    target_pcbdoc_path: PathBuf,
     /// Path to the playback JSON file; reloaded when the file changes.
     playback_path: Option<PathBuf>,
-    /// Path to the `.pcbdoc-spec` file, if the viewer was launched with one.
-    spec_path: Option<PathBuf>,
-    /// Explicit `--target` override for spec mode; `None` means use the spec's `target:` field.
+    /// Path to the `.pcbdoc-spec` file (always required).
+    spec_path: PathBuf,
+    /// Explicit `--target` override; `None` means use the spec's `target:` field.
     explicit_target: Option<PathBuf>,
     /// Timestamp of the most recent successful reload; shown in the sidebar.
     last_reloaded: Option<std::time::SystemTime>,
@@ -72,9 +73,9 @@ impl ViewerApp {
         screenshot_path: Option<PathBuf>,
         playback: Option<Vec<PlacementIterationSnapshot>>,
         watch_rx: Option<mpsc::Receiver<notify::Result<notify::Event>>>,
-        pcbdoc_path: PathBuf,
+        target_pcbdoc_path: PathBuf,
         playback_path: Option<PathBuf>,
-        spec_path: Option<PathBuf>,
+        spec_path: PathBuf,
         explicit_target: Option<PathBuf>,
         cc: &eframe::CreationContext<'_>,
     ) -> Self {
@@ -140,7 +141,7 @@ impl ViewerApp {
             playback_playing: false,
             playback_last_tick: Instant::now(),
             watch_rx,
-            pcbdoc_path,
+            target_pcbdoc_path,
             playback_path,
             spec_path,
             explicit_target,
@@ -199,7 +200,7 @@ impl ViewerApp {
         // call any method that would drop or move `self.watch_rx` during this scope.
         let rx = unsafe { &*rx };
 
-        let mut reload_pcbdoc = false;
+        let mut reload_from_spec = false;
         let mut reload_playback = false;
 
         while let Ok(event_result) = rx.try_recv() {
@@ -217,15 +218,13 @@ impl ViewerApp {
             }
 
             for path in &event.paths {
-                if path == &self.pcbdoc_path {
-                    reload_pcbdoc = true;
+                if path == &self.target_pcbdoc_path {
+                    reload_from_spec = true;
                 }
-                // A change to the spec file also triggers a full PcbDoc reload
-                // so that updated `at:` positions are re-applied.
-                if let Some(ref sp) = self.spec_path {
-                    if path == sp {
-                        reload_pcbdoc = true;
-                    }
+                // A change to the spec file also triggers a full reload
+                // so that updated positions and mutations are re-applied.
+                if *path == self.spec_path {
+                    reload_from_spec = true;
                 }
                 if let Some(ref pb) = self.playback_path {
                     if path == pb {
@@ -235,7 +234,7 @@ impl ViewerApp {
             }
         }
 
-        if !reload_pcbdoc && !reload_playback {
+        if !reload_from_spec && !reload_playback {
             return false;
         }
 
@@ -248,8 +247,8 @@ impl ViewerApp {
 
         let mut did_reload = false;
 
-        if reload_pcbdoc {
-            match self.reload_pcbdoc(cc_wgpu) {
+        if reload_from_spec {
+            match self.reload_from_spec(cc_wgpu) {
                 Ok(()) => {
                     did_reload = true;
                 }
@@ -282,33 +281,13 @@ impl ViewerApp {
         self.watch_rx.as_ref()
     }
 
-    fn reload_pcbdoc(&mut self, cc_wgpu: Option<&egui_wgpu::RenderState>) -> anyhow::Result<()> {
-        use altium_format::PcbDoc;
-        use autopcb_ir::PcbIr;
+    fn reload_from_spec(&mut self, cc_wgpu: Option<&egui_wgpu::RenderState>) -> anyhow::Result<()> {
+        let spec_path = self.spec_path.clone();
+        eprintln!("Reloading from spec {}...", spec_path.display());
+        let (new_ir, target_path) =
+            load_spec_ir(&spec_path, self.explicit_target.as_deref())?;
 
-        // If a spec file is present, re-parse it to pick up updated positions
-        // and (if using the spec's target:) to re-resolve the PcbDoc path.
-        let spec_positions = if let Some(ref sp) = self.spec_path.clone() {
-            eprintln!("Re-parsing spec {}...", sp.display());
-            match load_spec(sp, self.explicit_target.as_deref()) {
-                Ok((_resolved_pcbdoc, positions)) => positions,
-                Err(e) => {
-                    eprintln!("Spec reload failed: {e}");
-                    return Err(e);
-                }
-            }
-        } else {
-            Vec::new()
-        };
-
-        eprintln!("Reloading {}...", self.pcbdoc_path.display());
-        let doc = PcbDoc::open(&self.pcbdoc_path).map_err(|e| anyhow::anyhow!("open: {e}"))?;
-        let board = doc.board().map_err(|e| anyhow::anyhow!("board: {e}"))?;
-        let mut new_ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("extract: {e}"))?;
-
-        if !spec_positions.is_empty() {
-            apply_spec_positions(&mut new_ir, &spec_positions);
-        }
+        self.target_pcbdoc_path = target_path;
 
         if let Some(wgpu_state) = cc_wgpu {
             let scene = crate::view3d::PcbScene3D::from_ir(

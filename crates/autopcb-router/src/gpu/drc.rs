@@ -120,6 +120,9 @@ mod tests {
             rules: IdMap::new(),
             free_copper: Default::default(),
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         }
     }
 

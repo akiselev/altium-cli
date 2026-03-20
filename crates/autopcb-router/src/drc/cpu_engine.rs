@@ -67,9 +67,12 @@ impl DrcEngine for CpuDrcEngine {
         violations.extend(via::check_vias_under_smd(solution, ir));
         violations.extend(board::check_component_clearance(solution, ir, &self.policy));
         violations.extend(board::check_creepage(solution, ir, &self.policy));
+        // 15 checker dispatches above (clearance, shorts, widths, vias, geometry,
+        // connectivity, lengths, diff_pairs, board, manufacturing, topology,
+        // parallel_segments, vias_under_smd, component_clearance, creepage).
         let report = DrcReport::new(violations)
             .with_audit(
-                11,
+                15,
                 self.policy.skipped_rules.clone(),
             );
         Ok(report)
@@ -119,6 +122,9 @@ mod tests {
             rules: IdMap::new(),
             free_copper: Default::default(),
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         }
     }
 

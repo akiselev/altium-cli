@@ -46,21 +46,30 @@ pub fn check_board(
     for net in solution.nets.values() {
         for seg in &net.segments {
             if ir.board.outline.len() >= 3 {
-                for endpoint in [&seg.start, &seg.end] {
-                    let dist = point_to_outline_distance(endpoint, &ir.board.outline);
-                    if dist < clearance {
-                        violations.push(DrcViolation {
-                            kind: DrcViolationKind::BoardOutlineClearance,
-                            rule_kind: RuleKind::BoardOutlineClearance,
-                            rule_name: "Board Outline Clearance".to_string(),
-                            object_a: DrcObject::Segment(seg.clone()),
-                            object_b: Some(DrcObject::BoardEdge),
-                            location: PointMm { x: endpoint.x, y: endpoint.y },
-                            layer: Some(seg.layer),
-                            actual_mm: dist,
-                            required_mm: clearance,
-                        });
-                    }
+                // Check the full segment body against the board outline polygon,
+                // not just endpoints — a diagonal segment could cross the board
+                // edge midway even if both endpoints are inside.
+                let dist = super::clearance::segment_to_polyline_distance(
+                    seg.start,
+                    seg.end,
+                    &ir.board.outline,
+                );
+                if dist < clearance {
+                    let mid = PointMm {
+                        x: (seg.start.x + seg.end.x) / 2.0,
+                        y: (seg.start.y + seg.end.y) / 2.0,
+                    };
+                    violations.push(DrcViolation {
+                        kind: DrcViolationKind::BoardOutlineClearance,
+                        rule_kind: RuleKind::BoardOutlineClearance,
+                        rule_name: "Board Outline Clearance".to_string(),
+                        object_a: DrcObject::Segment(seg.clone()),
+                        object_b: Some(DrcObject::BoardEdge),
+                        location: mid,
+                        layer: Some(seg.layer),
+                        actual_mm: dist,
+                        required_mm: clearance,
+                    });
                 }
             } else {
                 let bounds = &ir.board.bounds;
@@ -186,6 +195,9 @@ mod tests {
             rules: IdMap::new(),
             free_copper: Default::default(),
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         };
         let id = ir.rules.push(IrDesignRule {
             id: RuleId::from(0u32),

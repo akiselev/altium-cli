@@ -724,10 +724,14 @@ mod tests {
             rules: IdMap::new(),
             free_copper: FreeCopperGeometry {
                 tracks: Vec::new(),
+                arcs: Vec::new(),
                 vias: Vec::new(),
                 fills: Vec::new(),
             },
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         }
     }
 
@@ -798,10 +802,14 @@ mod tests {
             rules: IdMap::new(),
             free_copper: FreeCopperGeometry {
                 tracks: Vec::new(),
+                arcs: Vec::new(),
                 vias: Vec::new(),
                 fills: Vec::new(),
             },
             polygons: IdMap::new(),
+            texts: IdMap::new(),
+            regions: IdMap::new(),
+            component_bodies: IdMap::new(),
         };
 
         let model = build_swap_model(&ir);

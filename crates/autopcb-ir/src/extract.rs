@@ -5,16 +5,21 @@ use std::collections::HashMap;
 use altium_format::api::{
     BoardContour, ContourSegment, PcbDocBoard, RuleParams,
 };
-use altium_format_types::pcb::{RuleKind, V6Layer};
+use altium_format_types::pcb::{RegionKind, RuleKind, V6Layer};
 
 use crate::board::{IrBoardGeometry, IrKeepoutZone};
 use crate::component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
-use crate::copper::{FreeCopperGeometry, IrFill, IrTrack, IrVia};
-use crate::handles::{ComponentId, IdMap, LayerId, NetId, PadId, PolygonId, RuleId};
+use crate::component_body::IrComponentBody;
+use crate::copper::{FreeCopperGeometry, IrArc, IrFill, IrTrack, IrVia};
+use crate::handles::{
+    ComponentBodyId, ComponentId, IdMap, LayerId, NetId, PadId, PolygonId, RegionId, RuleId, TextId,
+};
 use crate::layer_stack::{IrCopperLayer, IrLayerStack};
 use crate::net::{IrNet, IrNetPin};
 use crate::polygon::IrPolygon;
+use crate::region::{IrRegion, IrRegionKind};
 use crate::rule::{IrDesignRule, IrRuleParams};
+use crate::text::IrText;
 use crate::types::{BoardSide, BoundingBoxMm, PointMm};
 use crate::{IrError, Result};
 
@@ -29,6 +34,9 @@ pub struct PcbIr {
     pub rules: IdMap<RuleId, IrDesignRule>,
     pub free_copper: FreeCopperGeometry,
     pub polygons: IdMap<PolygonId, IrPolygon>,
+    pub texts: IdMap<TextId, IrText>,
+    pub regions: IdMap<RegionId, IrRegion>,
+    pub component_bodies: IdMap<ComponentBodyId, IrComponentBody>,
 }
 
 impl PcbIr {
@@ -49,6 +57,9 @@ impl PcbIr {
         let rules = extract_rules(board, &layer_lookup);
         let free_copper = extract_free_copper(board, &net_lookup, &layer_lookup)?;
         let polygons = extract_polygons(board, &net_lookup);
+        let texts = extract_texts(board, &components);
+        let regions = extract_regions(board, &net_lookup);
+        let component_bodies = extract_component_bodies(board, &components);
 
         Ok(PcbIr {
             board: ir_board,
@@ -58,6 +69,9 @@ impl PcbIr {
             rules,
             free_copper,
             polygons,
+            texts,
+            regions,
+            component_bodies,
         })
     }
 }
@@ -574,8 +588,16 @@ fn extract_rules(
                     // See: docs/routing/rules6-audit.md § SilkToBoardRegionClearance
                     IrRuleParams::SilkToBoardRegionClearance { clearance_mm: 0.0 }
                 }
-                // The following DRC-checkable rules lack typed RuleParams upstream.
-                // Default values are used until altium-format exposes their parameters.
+                // The following DRC-checkable rules lack typed RuleParams upstream
+                // in altium-format. Default values (0.0) effectively DISABLE these
+                // checks until altium-format exposes their parameters via typed
+                // RuleParams variants. Each needs Ghidra verification of the Delphi
+                // Export_ToParameters method for the corresponding TRuleKind.
+                //
+                // PowerPlaneClearance: needs IPCB_PowerPlaneClearanceRule.Clearance
+                // Creepage: needs IPCB_CreepageRule.CreepageDistance
+                // MaxMinHeight: needs IPCB_MaxMinHeightRule.Min/Max
+                // ZAxisClearance: needs IPCB_ZAxisClearanceRule.MinClearance
                 RuleKind::PowerPlaneClearance => {
                     IrRuleParams::PowerPlaneClearance { gap_mm: 0.0 }
                 }
@@ -687,8 +709,27 @@ fn extract_free_copper(
         })
         .collect();
 
+    let mut arcs = Vec::new();
+    for a in board.arcs.iter().filter(|a| a.component.is_none()) {
+        let layer_name = a.layer.display_name().unwrap_or("Unknown").to_string();
+        // Arcs may be on non-copper layers (overlay, mechanical) — `layer` is
+        // `None` when the arc's layer has no entry in the copper layer stack.
+        let layer = layer_lookup.get(&layer_name).copied();
+        arcs.push(IrArc {
+            center: PointMm::from_coord_point(&a.center),
+            radius_mm: a.radius.to_mms(),
+            start_angle_deg: a.start_angle,
+            end_angle_deg: a.end_angle,
+            width_mm: a.width.to_mms(),
+            layer_name,
+            layer,
+            net: a.net.as_ref().and_then(|n| net_lookup.get(n)).copied(),
+        });
+    }
+
     Ok(FreeCopperGeometry {
         tracks,
+        arcs,
         vias,
         fills,
     })
@@ -723,3 +764,143 @@ fn extract_polygons(
     }
     polygons
 }
+
+// ---------------------------------------------------------------------------
+// Texts
+// ---------------------------------------------------------------------------
+
+fn extract_texts(
+    board: &PcbDocBoard,
+    components: &IdMap<ComponentId, IrComponent>,
+) -> IdMap<TextId, IrText> {
+    // Build designator → ComponentId lookup.
+    let comp_lookup: HashMap<&str, ComponentId> = components
+        .iter()
+        .map(|(id, c)| (c.designator.as_str(), id))
+        .collect();
+
+    let mut texts = IdMap::new();
+    for t in &board.texts {
+        let component = t
+            .component
+            .as_ref()
+            .and_then(|d| comp_lookup.get(d.as_str()))
+            .copied();
+
+        let id = texts.push(IrText {
+            id: TextId::from(0),
+            text: t.text.clone(),
+            location: PointMm::from_coord_point(&t.location),
+            height_mm: t.height.to_mms(),
+            width_mm: t.width.to_mms(),
+            rotation_deg: t.rotation,
+            is_mirrored: t.is_mirrored,
+            is_designator: t.is_designator,
+            is_comment: t.is_comment,
+            layer_name: t.layer.display_name().unwrap_or("Unknown").to_string(),
+            component,
+        });
+        texts[id].id = id;
+    }
+    texts
+}
+
+// ---------------------------------------------------------------------------
+// Regions
+// ---------------------------------------------------------------------------
+
+fn extract_regions(
+    board: &PcbDocBoard,
+    net_lookup: &HashMap<String, NetId>,
+) -> IdMap<RegionId, IrRegion> {
+    let mut regions = IdMap::new();
+    for r in &board.regions {
+        // is_board_cutout takes priority — a region can have kind=Copper but
+        // is_board_cutout=true (both fields exist in the Altium format).
+        let kind = if r.is_board_cutout {
+            IrRegionKind::BoardCutout
+        } else {
+            match r.kind {
+                RegionKind::Copper => IrRegionKind::CopperPour,
+                RegionKind::BoardCutout => IrRegionKind::BoardCutout,
+                _ if r.layer.is_solder_mask() => IrRegionKind::SolderMask,
+                _ if r.layer.is_paste_mask() => IrRegionKind::PasteMask,
+                _ => IrRegionKind::Other,
+            }
+        };
+
+        let outline = r
+            .outline
+            .iter()
+            .map(|p| PointMm::from_coord_point(p))
+            .collect();
+
+        let holes = r
+            .holes
+            .iter()
+            .map(|hole| {
+                hole.iter()
+                    .map(|p| PointMm::from_coord_point(p))
+                    .collect()
+            })
+            .collect();
+
+        let id = regions.push(IrRegion {
+            id: RegionId::from(0),
+            kind,
+            outline,
+            holes,
+            layer_name: r.layer.display_name().unwrap_or("Unknown").to_string(),
+            net: r.net.as_ref().and_then(|n| net_lookup.get(n)).copied(),
+            is_keepout: r.is_keepout,
+        });
+        regions[id].id = id;
+    }
+    regions
+}
+
+// ---------------------------------------------------------------------------
+// Component bodies
+// ---------------------------------------------------------------------------
+
+fn extract_component_bodies(
+    board: &PcbDocBoard,
+    components: &IdMap<ComponentId, IrComponent>,
+) -> IdMap<ComponentBodyId, IrComponentBody> {
+    let comp_lookup: HashMap<&str, ComponentId> = components
+        .iter()
+        .map(|(id, c)| (c.designator.as_str(), id))
+        .collect();
+
+    let mut bodies = IdMap::new();
+    for cb in &board.component_bodies {
+        let component = cb
+            .component
+            .as_ref()
+            .and_then(|d| comp_lookup.get(d.as_str()))
+            .copied();
+
+        let rgb = cb.body_color_3d.to_rgb_array();
+        let alpha = (cb.body_opacity_3d.clamp(0.0, 1.0) * 255.0) as u8;
+
+        let outline = cb
+            .outline
+            .iter()
+            .map(|p| PointMm::from_coord_point(p))
+            .collect();
+
+        let id = bodies.push(IrComponentBody {
+            id: ComponentBodyId::from(0),
+            outline,
+            component,
+            body_color: [rgb[0], rgb[1], rgb[2], alpha],
+            body_opacity: cb.body_opacity_3d.clamp(0.0, 1.0),
+            standoff_height_mm: cb.standoff_height.to_mms(),
+            overall_height_mm: cb.overall_height.to_mms(),
+            layer_name: cb.layer.display_name().unwrap_or("Unknown").to_string(),
+        });
+        bodies[id].id = id;
+    }
+    bodies
+}
+

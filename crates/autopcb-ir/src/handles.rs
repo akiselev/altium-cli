@@ -42,6 +42,10 @@ define_handle!(PadId);
 define_handle!(RuleId);
 define_handle!(PolygonId);
 define_handle!(LayerId);
+define_handle!(TextId);
+define_handle!(RegionId);
+define_handle!(ComponentBodyId);
+define_handle!(DimensionId);
 
 /// A `Vec<V>` indexed by a typed handle `K`.
 ///
@@ -183,6 +187,10 @@ mod serde_handle_impls {
     impl_serialize_handle!(RuleId);
     impl_serialize_handle!(PolygonId);
     impl_serialize_handle!(LayerId);
+    impl_serialize_handle!(TextId);
+    impl_serialize_handle!(RegionId);
+    impl_serialize_handle!(ComponentBodyId);
+    impl_serialize_handle!(DimensionId);
 }
 
 #[cfg(test)]
