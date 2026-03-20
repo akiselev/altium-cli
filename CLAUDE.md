@@ -366,3 +366,8 @@ We want to support the last few legacy versions of file formats but like Altium 
 DO NOT RUN text-fixture TESTS AND proptest TESTS UNLESS EXPLICITLY ASKED TO.
 
 Keep STATUS.md updated with the state of the codebase whenever you implement something.
+
+
+# REVIEWS
+
+ALWAYS COMPLETE A COMPLETENESS REVIEW AFTER EVERY STEP OF A PLAN.
