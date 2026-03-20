@@ -12,20 +12,28 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 
 use altium_format::PcbDoc;
-use autopcb_ir::{PcbIr, PointMm};
+use autopcb_ir::{BoundingBoxMm, IrComponent, PcbIr, PointMm};
 use autopcb_placement::PlacementIterationSnapshot;
+
+#[derive(Debug, Clone)]
+struct SpecPlacementOverride {
+    designator: String,
+    x_mm: f64,
+    y_mm: f64,
+    rotation_deg: Option<f64>,
+}
 
 /// Parse a `.pcbdoc-spec` file and return the resolved PcbDoc path and any
 /// `at:` position overrides keyed by designator.
 ///
-/// Returns `(pcbdoc_path, positions)` where `positions` maps designator strings
-/// to `(x_mm, y_mm)` pairs sourced from `placement { places { at: ... } }`.
+/// Returns `(pcbdoc_path, positions)` where each placement override contains
+/// `at:` and optional fixed `rotation:` sourced from `placement { places { ... } }`.
 fn load_spec(
     spec_path: &std::path::Path,
     explicit_target: Option<&std::path::Path>,
-) -> anyhow::Result<(PathBuf, Vec<(String, f64, f64)>)> {
-    use altium_format_spec::{compile_spec, SpecDomain, SpecModel};
+) -> anyhow::Result<(PathBuf, Vec<SpecPlacementOverride>)> {
     use altium_format_spec::parser::parse_spec;
+    use altium_format_spec::{SpecDomain, SpecModel, compile_spec};
 
     let source = std::fs::read_to_string(spec_path)
         .map_err(|e| anyhow::anyhow!("failed to read spec {}: {e}", spec_path.display()))?;
@@ -60,14 +68,19 @@ fn load_spec(
     };
 
     // Collect `at:` position overrides from placement places.
-    let mut positions: Vec<(String, f64, f64)> = Vec::new();
+    let mut positions: Vec<SpecPlacementOverride> = Vec::new();
     if let Some(placement) = &pcbdoc_spec.placement {
         for place in &placement.places {
             if let Some(at) = &place.at {
                 let x_mm = at.x.to_mms();
                 let y_mm = at.y.to_mms();
                 for designator in &place.designators {
-                    positions.push((designator.clone(), x_mm, y_mm));
+                    positions.push(SpecPlacementOverride {
+                        designator: designator.clone(),
+                        x_mm,
+                        y_mm,
+                        rotation_deg: place.rotation,
+                    });
                 }
             }
         }
@@ -76,41 +89,58 @@ fn load_spec(
     Ok((pcbdoc_path, positions))
 }
 
+pub(crate) fn apply_component_pose(
+    comp: &mut IrComponent,
+    x_mm: f64,
+    y_mm: f64,
+    rotation_deg: f64,
+) {
+    let rotation_delta = rotation_deg - comp.rotation;
+    comp.position = PointMm::new(x_mm, y_mm);
+    comp.rotation = rotation_deg;
+
+    let theta = rotation_deg.to_radians();
+    let (sin_t, cos_t) = theta.sin_cos();
+    for pad in &mut comp.pads {
+        let lx = pad.local_position.x;
+        let ly = pad.local_position.y;
+        pad.world_position = PointMm::new(
+            x_mm + lx * cos_t - ly * sin_t,
+            y_mm + lx * sin_t + ly * cos_t,
+        );
+        pad.shape.rotation = (pad.shape.rotation + rotation_delta).rem_euclid(360.0);
+    }
+
+    let lb = comp.local_bounds;
+    let corners = [
+        PointMm::new(lb.min.x, lb.min.y),
+        PointMm::new(lb.min.x, lb.max.y),
+        PointMm::new(lb.max.x, lb.min.y),
+        PointMm::new(lb.max.x, lb.max.y),
+    ];
+    let mut world_pts = Vec::with_capacity(4);
+    for c in corners {
+        world_pts.push(PointMm::new(
+            x_mm + c.x * cos_t - c.y * sin_t,
+            y_mm + c.x * sin_t + c.y * cos_t,
+        ));
+    }
+    if let Some(bb) = BoundingBoxMm::from_points(&world_pts) {
+        comp.world_bounds = bb;
+    }
+}
+
 /// Apply spec position overrides to an IR in-place.
-fn apply_spec_positions(ir: &mut PcbIr, positions: &[(String, f64, f64)]) {
-    for (designator, x_mm, y_mm) in positions {
+fn apply_spec_positions(ir: &mut PcbIr, positions: &[SpecPlacementOverride]) {
+    for override_ in positions {
         for (_id, comp) in ir.components.iter_mut() {
-            if &comp.designator == designator {
-                comp.position = PointMm::new(*x_mm, *y_mm);
-
-                let theta = comp.rotation.to_radians();
-                let (sin_t, cos_t) = theta.sin_cos();
-                for pad in &mut comp.pads {
-                    let lx = pad.local_position.x;
-                    let ly = pad.local_position.y;
-                    pad.world_position = PointMm::new(
-                        x_mm + lx * cos_t - ly * sin_t,
-                        y_mm + lx * sin_t + ly * cos_t,
-                    );
-                }
-
-                let lb = comp.local_bounds;
-                let corners = [
-                    PointMm::new(lb.min.x, lb.min.y),
-                    PointMm::new(lb.min.x, lb.max.y),
-                    PointMm::new(lb.max.x, lb.min.y),
-                    PointMm::new(lb.max.x, lb.max.y),
-                ];
-                let mut world_pts = Vec::with_capacity(4);
-                for c in corners {
-                    world_pts.push(PointMm::new(
-                        x_mm + c.x * cos_t - c.y * sin_t,
-                        y_mm + c.x * sin_t + c.y * cos_t,
-                    ));
-                }
-                if let Some(bb) = autopcb_ir::BoundingBoxMm::from_points(&world_pts) {
-                    comp.world_bounds = bb;
-                }
+            if comp.designator == override_.designator {
+                apply_component_pose(
+                    comp,
+                    override_.x_mm,
+                    override_.y_mm,
+                    override_.rotation_deg.unwrap_or(comp.rotation),
+                );
             }
         }
     }
@@ -121,7 +151,9 @@ fn main() -> anyhow::Result<()> {
     let path = match args.next() {
         Some(p) => PathBuf::from(p),
         None => {
-            eprintln!("Usage: autopcb-viewer <path-to-pcbdoc-or-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]");
+            eprintln!(
+                "Usage: autopcb-viewer <path-to-pcbdoc-or-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
+            );
             std::process::exit(1);
         }
     };
@@ -182,7 +214,10 @@ fn main() -> anyhow::Result<()> {
     let mut ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if !spec_positions.is_empty() {
-        eprintln!("Applying {} spec position overrides...", spec_positions.len());
+        eprintln!(
+            "Applying {} spec position overrides...",
+            spec_positions.len()
+        );
         apply_spec_positions(&mut ir, &spec_positions);
     }
 
@@ -196,23 +231,21 @@ fn main() -> anyhow::Result<()> {
 
     let title = format!(
         "AutoPCB Viewer — {}",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("board")
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("board")
     );
 
     let ir = Arc::new(Mutex::new(ir));
     let app_ir = Arc::clone(&ir);
-    let playback: Option<Vec<PlacementIterationSnapshot>> = if let Some(ref pb_path) = playback_path {
-        let source = std::fs::read_to_string(pb_path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", pb_path.display()))?;
-        Some(
-            serde_json::from_str(&source)
-                .map_err(|e| anyhow::anyhow!("failed to parse playback {}: {e}", pb_path.display()))?,
-        )
-    } else {
-        None
-    };
+    let playback: Option<Vec<PlacementIterationSnapshot>> =
+        if let Some(ref pb_path) = playback_path {
+            let source = std::fs::read_to_string(pb_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", pb_path.display()))?;
+            Some(serde_json::from_str(&source).map_err(|e| {
+                anyhow::anyhow!("failed to parse playback {}: {e}", pb_path.display())
+            })?)
+        } else {
+            None
+        };
 
     // Set up file watcher if --watch was requested.
     // The watcher is kept alive for the duration of the program by binding it here.
@@ -286,4 +319,53 @@ fn main() -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use autopcb_ir::{BoardSide, BoundingBoxMm, ComponentId, IrComponent, IrComponentPad, PointMm};
+    use autopcb_ir::{PadId, PadShapeInfo, PadShapeKind};
+
+    #[test]
+    fn apply_component_pose_updates_rotation_and_pad_geometry() {
+        let mut comp = IrComponent {
+            id: ComponentId::from(0),
+            designator: "U1".into(),
+            pattern: "TEST".into(),
+            value: "".into(),
+            position: PointMm::new(0.0, 0.0),
+            rotation: 0.0,
+            side: BoardSide::Top,
+            local_bounds: BoundingBoxMm::new(PointMm::new(-2.0, -1.0), PointMm::new(2.0, 1.0)),
+            world_bounds: BoundingBoxMm::new(PointMm::new(-2.0, -1.0), PointMm::new(2.0, 1.0)),
+            pads: vec![IrComponentPad {
+                id: PadId::from(0),
+                name: "1".into(),
+                local_position: PointMm::new(1.0, 0.0),
+                world_position: PointMm::new(1.0, 0.0),
+                net: None,
+                shape: PadShapeInfo {
+                    kind: PadShapeKind::Rectangular,
+                    size_x: 1.0,
+                    size_y: 2.0,
+                    rotation: 0.0,
+                },
+                is_through_hole: false,
+                hole_size_mm: 0.0,
+                swap_id_pin: None,
+                swap_id_part: None,
+            }],
+        };
+
+        apply_component_pose(&mut comp, 10.0, 20.0, 90.0);
+
+        assert_eq!(comp.position, PointMm::new(10.0, 20.0));
+        assert_eq!(comp.rotation, 90.0);
+        assert!((comp.pads[0].world_position.x - 10.0).abs() < 1e-6);
+        assert!((comp.pads[0].world_position.y - 21.0).abs() < 1e-6);
+        assert_eq!(comp.pads[0].shape.rotation, 90.0);
+        assert!((comp.world_bounds.width() - 2.0).abs() < 1e-6);
+        assert!((comp.world_bounds.height() - 4.0).abs() < 1e-6);
+    }
 }

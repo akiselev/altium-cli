@@ -2942,6 +2942,7 @@ fn build_user_constraints(
                         designator: d.clone(),
                         x_mm: at.x.to_mms(),
                         y_mm: at.y.to_mms(),
+                        rotation_deg: place.rotation,
                     });
                 }
             } else if let Some(at) = place.at {
@@ -2949,6 +2950,7 @@ fn build_user_constraints(
                     designator: d.clone(),
                     x_mm: at.x.to_mms(),
                     y_mm: at.y.to_mms(),
+                    rotation_deg: place.rotation,
                 });
             }
         }
@@ -3010,10 +3012,7 @@ mod tests {
             .expect("autoplace args should parse");
         match cli.command {
             Commands::Placement {
-                sub:
-                    PlacementSubcommand::Autoplace {
-                        sa, spec_file, ..
-                    },
+                sub: PlacementSubcommand::Autoplace { sa, spec_file, .. },
             } => {
                 assert!(sa, "SA should be enabled by default");
                 assert_eq!(spec_file, PathBuf::from("board.pcbdoc-spec"));

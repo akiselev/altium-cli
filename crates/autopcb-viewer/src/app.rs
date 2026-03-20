@@ -4,16 +4,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::{apply_spec_positions, load_spec};
+use crate::{apply_component_pose, apply_spec_positions, load_spec};
 
-use eframe::egui::{self, ColorImage, Event, Rect, UserData, ViewportCommand};
+use eframe::egui::{self, ColorImage, Event, Rect, Sense, Stroke, UserData, ViewportCommand};
 
 use autopcb_ir::{BoardSide, ComponentId, NetId, PcbIr, PointMm};
 use autopcb_placement::PlacementIterationSnapshot;
 
 use crate::colors;
 use crate::interaction;
-use crate::renderer::{self, RenderOptions};
+use crate::renderer::{self, LayerRenderState, RenderOptions};
 use crate::view3d::{Camera, PcbScene3D, PcbScene3DCallback, SceneResources};
 
 /// Minimum time between two consecutive reloads (debounce window).
@@ -32,6 +32,7 @@ pub struct ViewerApp {
     hovered_component: Option<ComponentId>,
     selected_net: Option<NetId>,
     render_opts: RenderOptions,
+    layer_states: Vec<LayerRenderState>,
     /// Persistent view bounds for the Scene (mutated by pan/zoom).
     scene_rect: Rect,
     /// Path to save screenshot to, if --screenshot was passed.
@@ -116,6 +117,10 @@ impl ViewerApp {
                     .insert(SceneResources { scene });
             }
         }
+        let layer_states = {
+            let ir = ir.lock().unwrap();
+            renderer::collect_layer_states(&ir)
+        };
 
         Self {
             ir,
@@ -123,6 +128,7 @@ impl ViewerApp {
             hovered_component: None,
             selected_net: None,
             render_opts: RenderOptions::default(),
+            layer_states,
             scene_rect: initial_rect,
             screenshot_path,
             screenshot_requested: false,
@@ -149,38 +155,7 @@ impl ViewerApp {
                 if comp.designator != state.designator {
                     continue;
                 }
-
-                comp.position = PointMm::new(state.x_mm, state.y_mm);
-                comp.rotation = state.rotation_deg;
-
-                let theta = state.rotation_deg.to_radians();
-                let (sin_t, cos_t) = theta.sin_cos();
-                for pad in &mut comp.pads {
-                    let lx = pad.local_position.x;
-                    let ly = pad.local_position.y;
-                    pad.world_position = PointMm::new(
-                        state.x_mm + lx * cos_t - ly * sin_t,
-                        state.y_mm + lx * sin_t + ly * cos_t,
-                    );
-                }
-
-                let lb = comp.local_bounds;
-                let corners = [
-                    PointMm::new(lb.min.x, lb.min.y),
-                    PointMm::new(lb.min.x, lb.max.y),
-                    PointMm::new(lb.max.x, lb.min.y),
-                    PointMm::new(lb.max.x, lb.max.y),
-                ];
-                let mut world_pts = Vec::with_capacity(4);
-                for c in corners {
-                    world_pts.push(PointMm::new(
-                        state.x_mm + c.x * cos_t - c.y * sin_t,
-                        state.y_mm + c.x * sin_t + c.y * cos_t,
-                    ));
-                }
-                if let Some(bb) = autopcb_ir::BoundingBoxMm::from_points(&world_pts) {
-                    comp.world_bounds = bb;
-                }
+                apply_component_pose(comp, state.x_mm, state.y_mm, state.rotation_deg);
             }
         }
     }
@@ -313,7 +288,7 @@ impl ViewerApp {
 
         // If a spec file is present, re-parse it to pick up updated positions
         // and (if using the spec's target:) to re-resolve the PcbDoc path.
-        let spec_positions: Vec<(String, f64, f64)> = if let Some(ref sp) = self.spec_path.clone() {
+        let spec_positions = if let Some(ref sp) = self.spec_path.clone() {
             eprintln!("Re-parsing spec {}...", sp.display());
             match load_spec(sp, self.explicit_target.as_deref()) {
                 Ok((_resolved_pcbdoc, positions)) => positions,
@@ -327,12 +302,9 @@ impl ViewerApp {
         };
 
         eprintln!("Reloading {}...", self.pcbdoc_path.display());
-        let doc = PcbDoc::open(&self.pcbdoc_path)
-            .map_err(|e| anyhow::anyhow!("open: {e}"))?;
-        let board = doc.board()
-            .map_err(|e| anyhow::anyhow!("board: {e}"))?;
-        let mut new_ir = PcbIr::extract(&board)
-            .map_err(|e| anyhow::anyhow!("extract: {e}"))?;
+        let doc = PcbDoc::open(&self.pcbdoc_path).map_err(|e| anyhow::anyhow!("open: {e}"))?;
+        let board = doc.board().map_err(|e| anyhow::anyhow!("board: {e}"))?;
+        let mut new_ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("extract: {e}"))?;
 
         if !spec_positions.is_empty() {
             apply_spec_positions(&mut new_ir, &spec_positions);
@@ -352,6 +324,7 @@ impl ViewerApp {
                 .insert(SceneResources { scene });
         }
 
+        self.layer_states = renderer::merge_layer_states(&new_ir, &self.layer_states);
         *self.ir.lock().unwrap() = new_ir;
         eprintln!("Reload complete.");
         Ok(())
@@ -363,10 +336,9 @@ impl ViewerApp {
             None => return Ok(()),
         };
         eprintln!("Reloading playback {}...", pb_path.display());
-        let source = std::fs::read_to_string(&pb_path)
-            .map_err(|e| anyhow::anyhow!("read: {e}"))?;
-        let snapshots: Vec<PlacementIterationSnapshot> = serde_json::from_str(&source)
-            .map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        let source = std::fs::read_to_string(&pb_path).map_err(|e| anyhow::anyhow!("read: {e}"))?;
+        let snapshots: Vec<PlacementIterationSnapshot> =
+            serde_json::from_str(&source).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
         self.playback = Some(snapshots);
         self.playback_index = 0;
         Ok(())
@@ -374,7 +346,7 @@ impl ViewerApp {
 
     /// Format a `SystemTime` as `HH:MM:SS` in local time (best-effort; falls back to UTC).
     fn format_reload_time(t: std::time::SystemTime) -> String {
-        use std::time::{UNIX_EPOCH};
+        use std::time::UNIX_EPOCH;
         let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let h = (secs / 3600) % 24;
         let m = (secs / 60) % 60;
@@ -385,11 +357,7 @@ impl ViewerApp {
 
 fn save_screenshot_png(image: &ColorImage, path: &Path) {
     let [width, height] = image.size;
-    let rgba: Vec<u8> = image
-        .pixels
-        .iter()
-        .flat_map(|c| c.to_array())
-        .collect();
+    let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
     if let Err(e) = image::save_buffer(
         path,
         &rgba,
@@ -400,6 +368,102 @@ fn save_screenshot_png(image: &ColorImage, path: &Path) {
         eprintln!("Failed to save screenshot to {}: {e}", path.display());
     } else {
         eprintln!("Screenshot saved to {}", path.display());
+    }
+}
+
+fn visibility_eye_button(ui: &mut egui::Ui, visible: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 14.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let stroke_color = if visible {
+            egui::Color32::from_rgb(220, 220, 220)
+        } else {
+            egui::Color32::from_rgb(110, 110, 110)
+        };
+        let stroke = Stroke::new(1.1, stroke_color);
+        let center = rect.center();
+        let rx = rect.width() * 0.42;
+        let ry = rect.height() * 0.32;
+        let left = egui::pos2(center.x - rx, center.y);
+        let top = egui::pos2(center.x, center.y - ry);
+        let right = egui::pos2(center.x + rx, center.y);
+        let bottom = egui::pos2(center.x, center.y + ry);
+        ui.painter().add(egui::Shape::line(
+            vec![left, top, right, bottom, left],
+            stroke,
+        ));
+        if visible {
+            ui.painter().circle_filled(center, 2.2, stroke_color);
+        } else {
+            ui.painter().line_segment(
+                [
+                    rect.left_top() + egui::vec2(1.5, 1.5),
+                    rect.right_bottom() - egui::vec2(1.5, 1.5),
+                ],
+                stroke,
+            );
+        }
+    }
+    response
+}
+
+impl ViewerApp {
+    fn render_status(
+        ui: &mut egui::Ui,
+        ir: &PcbIr,
+        hovered: Option<ComponentId>,
+        selected_net: Option<NetId>,
+    ) {
+        ui.horizontal(|ui| {
+            if let Some(id) = hovered {
+                let comp = &ir.components[id];
+                ui.label(format!(
+                    "Hover: {} ({}) at ({:.2}, {:.2}) mm",
+                    comp.designator, comp.pattern, comp.position.x, comp.position.y
+                ));
+            } else if let Some(net_id) = selected_net {
+                let net = &ir.nets[net_id];
+                ui.label(format!(
+                    "Net: {} | {} pins | {} components",
+                    net.name,
+                    net.pins.len(),
+                    net.component_count
+                ));
+            } else {
+                ui.label("Hover over a component for details");
+            }
+        });
+    }
+
+    fn render_layer_strip(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::horizontal()
+            .id_salt("layer_strip")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for layer in &mut self.layer_states {
+                        egui::Frame::new()
+                            .fill(colors::TAB_FILL)
+                            .stroke(Stroke::new(1.0, colors::TAB_STROKE))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(6, 4))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    if visibility_eye_button(ui, layer.visible).clicked() {
+                                        layer.visible = !layer.visible;
+                                    }
+                                    ui.color_edit_button_srgba(&mut layer.color);
+                                    let text = if layer.visible {
+                                        egui::RichText::new(&layer.name)
+                                    } else {
+                                        egui::RichText::new(&layer.name).weak()
+                                    };
+                                    if ui.selectable_label(layer.visible, text).clicked() {
+                                        layer.visible = !layer.visible;
+                                    }
+                                });
+                            });
+                    }
+                });
+            });
     }
 }
 
@@ -505,12 +569,9 @@ impl eframe::App for ViewerApp {
                 if let Some(t) = self.last_reloaded {
                     ui.separator();
                     ui.label(
-                        egui::RichText::new(format!(
-                            "Reloaded at {}",
-                            Self::format_reload_time(t)
-                        ))
-                        .color(egui::Color32::from_rgb(100, 220, 100))
-                        .small(),
+                        egui::RichText::new(format!("Reloaded at {}", Self::format_reload_time(t)))
+                            .color(egui::Color32::from_rgb(100, 220, 100))
+                            .small(),
                     );
                 }
 
@@ -521,7 +582,11 @@ impl eframe::App for ViewerApp {
                         ui.heading("Playback");
                         ui.horizontal(|ui| {
                             if ui
-                                .button(if self.playback_playing { "Pause" } else { "Play" })
+                                .button(if self.playback_playing {
+                                    "Pause"
+                                } else {
+                                    "Play"
+                                })
                                 .clicked()
                             {
                                 self.playback_playing = !self.playback_playing;
@@ -534,7 +599,9 @@ impl eframe::App for ViewerApp {
                         });
 
                         let max_idx = playback.len().saturating_sub(1);
-                        ui.add(egui::Slider::new(&mut self.playback_index, 0..=max_idx).text("frame"));
+                        ui.add(
+                            egui::Slider::new(&mut self.playback_index, 0..=max_idx).text("frame"),
+                        );
                         let idx = self.playback_index.min(max_idx);
                         ui.label(format!("Phase: {}", playback[idx].phase));
                         if let Some(note) = &playback[idx].note {
@@ -644,56 +711,49 @@ impl eframe::App for ViewerApp {
                 });
             });
 
-        // Bottom status bar
+        drop(ir);
+
+        // Bottom layer strip + status
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(id) = self.hovered_component {
-                    let comp = &ir.components[id];
-                    ui.label(format!(
-                        "Hover: {} ({}) at ({:.2}, {:.2}) mm",
-                        comp.designator, comp.pattern, comp.position.x, comp.position.y
-                    ));
-                } else if let Some(net_id) = self.selected_net {
-                    let net = &ir.nets[net_id];
-                    ui.label(format!(
-                        "Net: {} | {} pins | {} components",
-                        net.name, net.pins.len(), net.component_count
-                    ));
-                } else {
-                    ui.label("Hover over a component for details");
-                }
-            });
+            {
+                let ir = self.ir.lock().unwrap();
+                Self::render_status(ui, &ir, self.hovered_component, self.selected_net);
+            }
+            ui.separator();
+            self.render_layer_strip(ui);
         });
 
         // Central panel: 2D top-down or 2.5D wgpu view
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.style_mut().visuals.panel_fill = colors::BACKGROUND;
+            let ir = self.ir.lock().unwrap();
 
             match self.view_mode {
                 ViewMode::TopDown2D => {
-                    let scene_response = egui::Scene::new()
-                        .zoom_range(0.001..=f32::INFINITY)
-                        .show(ui, &mut self.scene_rect, |ui| {
+                    let scene_response = egui::Scene::new().zoom_range(0.001..=f32::INFINITY).show(
+                        ui,
+                        &mut self.scene_rect,
+                        |ui| {
                             let painter = ui.painter();
                             renderer::render_board(
                                 painter,
                                 &ir,
                                 &self.render_opts,
+                                &self.layer_states,
                                 self.selected_component,
                                 self.hovered_component,
                                 self.selected_net,
                             );
-                        });
+                        },
+                    );
 
                     // Hit-testing via hover position (in scene/world coordinates)
                     if let Some(hover_pos) = scene_response.response.hover_pos() {
                         let resp_rect = scene_response.response.rect;
                         let sx = self.scene_rect.width() / resp_rect.width();
                         let sy = self.scene_rect.height() / resp_rect.height();
-                        let scene_x =
-                            self.scene_rect.min.x + (hover_pos.x - resp_rect.min.x) * sx;
-                        let scene_y =
-                            self.scene_rect.min.y + (hover_pos.y - resp_rect.min.y) * sy;
+                        let scene_x = self.scene_rect.min.x + (hover_pos.x - resp_rect.min.x) * sx;
+                        let scene_y = self.scene_rect.min.y + (hover_pos.y - resp_rect.min.y) * sy;
                         // Undo Y-flip: scene_y = -world_y
                         let world = PointMm::new(scene_x as f64, -scene_y as f64);
                         self.hovered_component = interaction::find_component_at(&ir, world);
@@ -732,15 +792,15 @@ impl eframe::App for ViewerApp {
 
                     // Issue the wgpu paint callback
                     let camera_snapshot = Camera {
-                        yaw:    self.camera.yaw,
-                        pitch:  self.camera.pitch,
-                        zoom:   self.camera.zoom,
+                        yaw: self.camera.yaw,
+                        pitch: self.camera.pitch,
+                        zoom: self.camera.zoom,
                         target: self.camera.target,
                     };
                     ui.painter().add(egui_wgpu::Callback::new_paint_callback(
                         rect,
                         PcbScene3DCallback {
-                            camera:        camera_snapshot,
+                            camera: camera_snapshot,
                             viewport_rect: rect,
                         },
                     ));

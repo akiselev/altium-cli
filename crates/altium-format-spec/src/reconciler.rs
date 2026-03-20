@@ -3561,6 +3561,7 @@ mod tests {
             inset: None,
             near: None,
             max_distance: None,
+            rotation: None,
             rotation_options: vec![],
             fixed: false,
             at: Some(make_coord_mm(x_mm, y_mm)),
@@ -3653,6 +3654,7 @@ mod tests {
             inset: None,
             near: None,
             max_distance: None,
+            rotation: None,
             rotation_options: vec![],
             fixed: false,
             at: None, // no position specified

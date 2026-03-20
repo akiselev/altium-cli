@@ -111,6 +111,7 @@ pub enum UserConstraint {
         designator: String,
         x_mm: f64,
         y_mm: f64,
+        rotation_deg: Option<f64>,
     },
 }
 
@@ -621,9 +622,11 @@ struct FixedPositionConstraint {
     entity: EntityId,
     x: ParamId,
     y: ParamId,
+    theta: ParamId,
     tx: f64,
     ty: f64,
-    params: [ParamId; 2],
+    ttheta: Option<f64>,
+    params: Vec<ParamId>,
 }
 
 impl Constraint for FixedPositionConstraint {
@@ -640,15 +643,23 @@ impl Constraint for FixedPositionConstraint {
         &self.params
     }
     fn equation_count(&self) -> usize {
-        2
+        if self.ttheta.is_some() { 3 } else { 2 }
     }
 
     fn residuals(&self, store: &ParamStore) -> Vec<f64> {
-        vec![store.get(self.x) - self.tx, store.get(self.y) - self.ty]
+        let mut out = vec![store.get(self.x) - self.tx, store.get(self.y) - self.ty];
+        if let Some(ttheta) = self.ttheta {
+            out.push(store.get(self.theta) - ttheta.to_radians());
+        }
+        out
     }
 
     fn jacobian(&self, _store: &ParamStore) -> Vec<(usize, ParamId, f64)> {
-        vec![(0, self.x, 1.0), (1, self.y, 1.0)]
+        let mut out = vec![(0, self.x, 1.0), (1, self.y, 1.0)];
+        if self.ttheta.is_some() {
+            out.push((2, self.theta, 1.0));
+        }
+        out
     }
 }
 
@@ -1291,20 +1302,27 @@ fn solve_flat_placement(
                 designator,
                 x_mm,
                 y_mm,
+                rotation_deg,
             } => {
                 let idx = *designator_to_idx
                     .get(designator)
                     .ok_or_else(|| PlacementError::UnknownComponent(designator.clone()))?;
                 let comp = &runtimes[idx].entity;
+                let mut params = vec![comp.x, comp.y];
+                if rotation_deg.is_some() {
+                    params.push(comp.theta);
+                }
                 let cid = system.alloc_constraint_id();
                 system.add_constraint(Box::new(FixedPositionConstraint {
                     id: cid,
                     entity: comp.id,
                     x: comp.x,
                     y: comp.y,
+                    theta: comp.theta,
                     tx: *x_mm,
                     ty: *y_mm,
-                    params: [comp.x, comp.y],
+                    ttheta: *rotation_deg,
+                    params,
                 }));
             }
         }
@@ -1372,13 +1390,8 @@ fn solve_flat_placement(
     ));
 
     // Re-activate only a sparse set of likely-overlap pairs for the refinement pass.
-    let clearance_pairs = select_sparse_clearance_pairs(
-        &system,
-        &runtimes,
-        config.default_clearance_mm,
-        4,
-        5.0,
-    );
+    let clearance_pairs =
+        select_sparse_clearance_pairs(&system, &runtimes, config.default_clearance_mm, 4, 5.0);
     info!(
         target: "autopcb_placement::flat",
         candidate_pair_count = clearance_pairs.len(),
@@ -1397,7 +1410,10 @@ fn solve_flat_placement(
         "sparse_clearance_seed",
         &system,
         &runtimes,
-        Some(format!("activated {} sparse clearance pairs", clearance_pairs.len())),
+        Some(format!(
+            "activated {} sparse clearance pairs",
+            clearance_pairs.len()
+        )),
     ));
 
     // Re-solve with higher gamma by adding additional constraints to sharpen HPWL.
@@ -1537,8 +1553,13 @@ fn solve_flat_placement(
             "placement_sa_started"
         );
         let sa_started = Instant::now();
-        let sa_result =
-            simulated_annealing::refine_with_sa(&phase2_result, ir, sa_cfg, &autoplace_designators)?;
+        let sa_result = simulated_annealing::refine_with_sa(
+            &phase2_result,
+            ir,
+            sa_cfg,
+            &autoplace_designators,
+            config.default_clearance_mm,
+        )?;
         info!(
             target: "autopcb_placement::flat",
             duration_ms = sa_started.elapsed().as_millis(),
@@ -1639,8 +1660,7 @@ fn select_sparse_clearance_pairs(
             let b = &runtime.entity;
             let bx = system.get_param(b.x);
             let by = system.get_param(b.y);
-            let (b_hw, b_hh) =
-                world_half_extents_at(b.half_w, b.half_h, system.get_param(b.theta));
+            let (b_hw, b_hh) = world_half_extents_at(b.half_w, b.half_h, system.get_param(b.theta));
             let sep_x = (ax - bx).abs() - (a_hw + b_hw + clearance);
             let sep_y = (ay - by).abs() - (a_hh + b_hh + clearance);
             let score_mm = sep_x.max(sep_y);
@@ -1654,7 +1674,10 @@ fn select_sparse_clearance_pairs(
         }
 
         candidates.sort_by(|lhs, rhs| lhs.score_mm.total_cmp(&rhs.score_mm));
-        let overlap_count = candidates.iter().take_while(|candidate| candidate.score_mm <= 0.0).count();
+        let overlap_count = candidates
+            .iter()
+            .take_while(|candidate| candidate.score_mm <= 0.0)
+            .count();
         for candidate in candidates
             .into_iter()
             .take(overlap_count.max(neighbors_per_component))

@@ -126,6 +126,7 @@ pub fn placement_spec_to_constraints(
                         designator: designator.clone(),
                         x_mm: at.x.to_mms(),
                         y_mm: at.y.to_mms(),
+                        rotation_deg: place.rotation,
                     });
                 }
             }
@@ -210,6 +211,7 @@ pub fn placement_spec_to_constraints(
                         designator: comp.designator.clone(),
                         x_mm: comp.position.x,
                         y_mm: comp.position.y,
+                        rotation_deg: Some(comp.rotation),
                     });
                 }
             }
@@ -332,6 +334,7 @@ mod tests {
             inset: None,
             near: None,
             max_distance: None,
+            rotation: None,
             rotation_options: vec![],
             fixed: true,
             at: Some(make_point(x_mils, y_mils)),
@@ -352,6 +355,7 @@ mod tests {
             inset: None,
             near: None,
             max_distance: None,
+            rotation: None,
             rotation_options: vec![],
             fixed: false,
             at: None,
@@ -392,10 +396,31 @@ mod tests {
                 designator,
                 x_mm,
                 y_mm,
+                rotation_deg: _,
             } => {
                 assert_eq!(designator, "U1");
                 assert!((x_mm - make_coord(1000.0).to_mms()).abs() < 1e-6);
                 assert!((y_mm - make_coord(2000.0).to_mms()).abs() < 1e-6);
+            }
+            other => panic!("expected FixedPosition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn solved_place_propagates_fixed_rotation() {
+        let ir = minimal_ir(&[("U1", 5.0, 10.0)]);
+        let mut place = solved_place("U1", 1000.0, 2000.0);
+        place.rotation = Some(90.0);
+        let spec = empty_spec(vec![place], UnplacedStrategy::Ignore);
+        let (constraints, _) = placement_spec_to_constraints(&spec, &ir).unwrap();
+        match &constraints[0] {
+            UserConstraint::FixedPosition {
+                designator,
+                rotation_deg,
+                ..
+            } => {
+                assert_eq!(designator, "U1");
+                assert_eq!(*rotation_deg, Some(90.0));
             }
             other => panic!("expected FixedPosition, got {:?}", other),
         }

@@ -1679,6 +1679,7 @@ pub fn refine_with_sa(
     ir: &PcbIr,
     config: &SAConfig,
     autoplace_designators: &[String],
+    clearance_mm: f64,
 ) -> Result<PlacementResult, crate::PlacementError> {
     let started = Instant::now();
     if config.moves_per_temp == 0 {
@@ -1930,6 +1931,7 @@ pub fn refine_with_sa(
         v.sort_by(|a, b| a.designator.cmp(&b.designator));
         v
     };
+    let overlap_violations = count_overlap_violations(&placement.components, clearance_mm);
 
     Ok(PlacementResult {
         status: "SA_Refined".to_string(),
@@ -1938,7 +1940,7 @@ pub fn refine_with_sa(
         components: final_components,
         snapshots,
         hpwl_estimate_mm: best_hpwl,
-        overlap_violations: 0,
+        overlap_violations,
     })
     .inspect(|result| {
         info!(
@@ -1949,6 +1951,31 @@ pub fn refine_with_sa(
             "placement_sa_finished"
         );
     })
+}
+
+fn count_overlap_violations(components: &[ComponentState], clearance_mm: f64) -> usize {
+    let mut overlaps = 0usize;
+    for i in 0..components.len() {
+        let a = &components[i];
+        let (ahw, ahh) = world_half_extents(a);
+        for b in &components[(i + 1)..] {
+            let (bhw, bhh) = world_half_extents(b);
+            let area = aabb_overlap_area(
+                a.x,
+                a.y,
+                ahw * 2.0 + clearance_mm,
+                ahh * 2.0 + clearance_mm,
+                b.x,
+                b.y,
+                bhw * 2.0 + clearance_mm,
+                bhh * 2.0 + clearance_mm,
+            );
+            if area > 1e-9 {
+                overlaps += 1;
+            }
+        }
+    }
+    overlaps
 }
 
 // ---------------------------------------------------------------------------
@@ -2183,6 +2210,35 @@ mod tests {
         // Two 2×2 boxes centred at (0,0) and (3,0) — no overlap.
         let ov = aabb_overlap_area(0.0, 0.0, 2.0, 2.0, 3.0, 0.0, 2.0, 2.0);
         assert_eq!(ov, 0.0);
+    }
+
+    #[test]
+    fn count_overlap_violations_reports_overlaps() {
+        let components = vec![
+            ComponentState {
+                designator: "U1".into(),
+                x: 0.0,
+                y: 0.0,
+                rotation: 0.0,
+                width: 2.0,
+                height: 2.0,
+                is_movable: true,
+                pads: Vec::new(),
+            },
+            ComponentState {
+                designator: "U2".into(),
+                x: 0.5,
+                y: 0.0,
+                rotation: 0.0,
+                width: 2.0,
+                height: 2.0,
+                is_movable: true,
+                pads: Vec::new(),
+            },
+        ];
+
+        assert_eq!(count_overlap_violations(&components, 0.0), 1);
+        assert_eq!(count_overlap_violations(&components, 0.6), 1);
     }
 
     // -----------------------------------------------------------------------

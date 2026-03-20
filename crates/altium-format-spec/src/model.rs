@@ -651,6 +651,7 @@ pub struct PlacementPlaceSpec {
     pub inset: Option<Coord>,
     pub near: Option<String>,
     pub max_distance: Option<Coord>,
+    pub rotation: Option<f64>,
     pub rotation_options: Vec<i32>,
     pub fixed: bool,
     pub at: Option<CoordPoint>,

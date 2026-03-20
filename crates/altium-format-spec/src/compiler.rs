@@ -2466,16 +2466,23 @@ impl SpecCompiler {
             Some((expr, span)) => Some(self.expr_to_coord(expr, *span)?),
             None => None,
         };
-        let rotation_options = match props.get("rotation") {
+        let autoplace = match props.get("autoplace") {
+            Some((expr, span)) => self.expr_to_autoplace_mode(expr, *span)?,
+            None => PlacementAutoplaceMode::Disabled,
+        };
+        let (rotation, rotation_options) = match props.get("rotation") {
             Some((crate::ast::Expr::Array(items), _)) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
                     out.push(self.expr_to_i32(&item.node, item.span)?);
                 }
-                out
+                (None, out)
             }
-            Some((expr, span)) => vec![self.expr_to_i32(expr, *span)?],
-            None => Vec::new(),
+            Some((expr, span)) if autoplace.is_solver_variable() => {
+                (None, vec![self.expr_to_i32(expr, *span)?])
+            }
+            Some((expr, span)) => (Some(self.expr_to_f64(expr, *span)?), Vec::new()),
+            None => (None, Vec::new()),
         };
         let fixed = match props.get("fixed") {
             Some((expr, span)) => self.expr_to_bool(expr, *span)?,
@@ -2488,10 +2495,6 @@ impl SpecCompiler {
         let side = match props.get("side") {
             Some((expr, span)) => Some(self.expr_to_string(expr, *span)?),
             None => None,
-        };
-        let autoplace = match props.get("autoplace") {
-            Some((expr, span)) => self.expr_to_autoplace_mode(expr, *span)?,
-            None => PlacementAutoplaceMode::Disabled,
         };
         let no_pin_swap = match props.get("no_pin_swap") {
             Some((crate::ast::Expr::Array(items), _)) => {
@@ -2518,6 +2521,7 @@ impl SpecCompiler {
             inset,
             near,
             max_distance,
+            rotation,
             rotation_options,
             fixed,
             at,
@@ -7362,6 +7366,23 @@ placement {
         .unwrap();
         assert_eq!(spec.places[0].autoplace, PlacementAutoplaceMode::Solved);
         assert_eq!(spec.places[1].autoplace, PlacementAutoplaceMode::Locked);
+    }
+
+    #[test]
+    fn solved_place_rotation_compiles_as_fixed_rotation() {
+        let spec = compile_placement(
+            r#"
+placement {
+    place U1 { autoplace: solved, at: (10mm, 20mm), rotation: 90.0 }
+    place U2 { autoplace: true, rotation: 180 }
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(spec.places[0].rotation, Some(90.0));
+        assert!(spec.places[0].rotation_options.is_empty());
+        assert_eq!(spec.places[1].rotation, None);
+        assert_eq!(spec.places[1].rotation_options, vec![180]);
     }
 
     #[test]

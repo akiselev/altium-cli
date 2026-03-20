@@ -29,9 +29,9 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            yaw: std::f32::consts::FRAC_PI_4,  // 45°
-            pitch: 0.5236,                       // 30°
-            zoom: 80.0,                          // mm half-width
+            yaw: std::f32::consts::FRAC_PI_4, // 45°
+            pitch: 0.5236,                    // 30°
+            zoom: 80.0,                       // mm half-width
             target: [0.0, 0.0, 0.0],
         }
     }
@@ -70,8 +70,7 @@ impl Camera {
     pub fn orbit(&mut self, dx: f32, dy: f32) {
         let sensitivity = 0.005;
         self.yaw -= dx * sensitivity;
-        self.pitch = (self.pitch + dy * sensitivity)
-            .clamp(0.087, 1.484); // 5° – 85°
+        self.pitch = (self.pitch + dy * sensitivity).clamp(0.087, 1.484); // 5° – 85°
     }
 
     /// Handle scroll wheel (positive = zoom in).
@@ -88,8 +87,8 @@ impl Camera {
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub normal:   [f32; 3],
-    pub color:    [f32; 3],
+    pub normal: [f32; 3],
+    pub color: [f32; 3],
 }
 
 impl Vertex {
@@ -117,7 +116,7 @@ impl Vertex {
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     light_dir: [f32; 3],
-    _pad:      f32,
+    _pad: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -126,12 +125,15 @@ struct Uniforms {
 
 struct MeshBuilder {
     vertices: Vec<Vertex>,
-    indices:  Vec<u32>,
+    indices: Vec<u32>,
 }
 
 impl MeshBuilder {
     fn new() -> Self {
-        Self { vertices: Vec::new(), indices: Vec::new() }
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        }
     }
 
     /// Push a quad (two triangles) given 4 corner positions and a flat color.
@@ -139,10 +141,15 @@ impl MeshBuilder {
     fn push_quad(&mut self, corners: [[f32; 3]; 4], normal: [f32; 3], color: [f32; 3]) {
         let base = self.vertices.len() as u32;
         for &pos in &corners {
-            self.vertices.push(Vertex { position: pos, normal, color });
+            self.vertices.push(Vertex {
+                position: pos,
+                normal,
+                color,
+            });
         }
         // Two triangles (CCW winding)
-        self.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// Push all 6 faces of an axis-aligned box.
@@ -152,42 +159,51 @@ impl MeshBuilder {
 
         // Top face (+Z)
         self.push_quad(
-            [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]],
-            [0.0, 0.0, 1.0], color,
+            [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
+            [0.0, 0.0, 1.0],
+            color,
         );
         // Bottom face (-Z)
         self.push_quad(
-            [[x0,y1,z0],[x1,y1,z0],[x1,y0,z0],[x0,y0,z0]],
-            [0.0, 0.0, -1.0], color,
+            [[x0, y1, z0], [x1, y1, z0], [x1, y0, z0], [x0, y0, z0]],
+            [0.0, 0.0, -1.0],
+            color,
         );
         // Front face (+Y)
         self.push_quad(
-            [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]],
-            [0.0, 1.0, 0.0], color,
+            [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]],
+            [0.0, 1.0, 0.0],
+            color,
         );
         // Back face (-Y)
         self.push_quad(
-            [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]],
-            [0.0, -1.0, 0.0], color,
+            [[x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0]],
+            [0.0, -1.0, 0.0],
+            color,
         );
         // Right face (+X)
         self.push_quad(
-            [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]],
-            [1.0, 0.0, 0.0], color,
+            [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]],
+            [1.0, 0.0, 0.0],
+            color,
         );
         // Left face (-X)
         self.push_quad(
-            [[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],[x0,y0,z0]],
-            [-1.0, 0.0, 0.0], color,
+            [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]],
+            [-1.0, 0.0, 0.0],
+            color,
         );
     }
 
     /// Push a flat horizontal slab (thin box extruded upward from z_base).
     fn push_slab(
         &mut self,
-        x0: f32, y0: f32,
-        x1: f32, y1: f32,
-        z_base: f32, thickness: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        z_base: f32,
+        thickness: f32,
         color: [f32; 3],
     ) {
         self.push_box(
@@ -227,15 +243,15 @@ fn layer_z(name: &str, n_copper: usize) -> f32 {
 /// RGB color for a layer name.
 fn layer_rgb(name: &str) -> [f32; 3] {
     match name {
-        "Top Layer"    => [0.8, 0.2, 0.2],
+        "Top Layer" => [0.8, 0.2, 0.2],
         "Bottom Layer" => [0.2, 0.2, 0.8],
-        "Mid Layer 1"  => [0.8, 0.8, 0.2],
-        "Mid Layer 2"  => [0.2, 0.8, 0.2],
-        "Mid Layer 3"  => [0.8, 0.6, 0.2],
-        "Mid Layer 4"  => [0.6, 0.2, 0.8],
-        "Mid Layer 5"  => [0.2, 0.8, 0.8],
-        "Mid Layer 6"  => [0.8, 0.2, 0.6],
-        _              => [0.6, 0.6, 0.6],
+        "Mid Layer 1" => [0.8, 0.8, 0.2],
+        "Mid Layer 2" => [0.2, 0.8, 0.2],
+        "Mid Layer 3" => [0.8, 0.6, 0.2],
+        "Mid Layer 4" => [0.6, 0.2, 0.8],
+        "Mid Layer 5" => [0.2, 0.8, 0.8],
+        "Mid Layer 6" => [0.8, 0.2, 0.6],
+        _ => [0.6, 0.6, 0.6],
     }
 }
 
@@ -245,12 +261,12 @@ fn layer_rgb(name: &str) -> [f32; 3] {
 
 /// GPU resources for the 3-D PCB scene.
 pub struct PcbScene3D {
-    pipeline:       wgpu::RenderPipeline,
-    vertex_buffer:  wgpu::Buffer,
-    index_buffer:   wgpu::Buffer,
-    index_count:    u32,
+    pipeline: wgpu::RenderPipeline,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
     uniform_buffer: wgpu::Buffer,
-    bind_group:     wgpu::BindGroup,
+    bind_group: wgpu::BindGroup,
 }
 
 impl PcbScene3D {
@@ -282,7 +298,7 @@ impl PcbScene3D {
             let half_w = (track.width_mm as f32) / 2.0;
 
             let (x0, y0) = (track.start.x as f32, track.start.y as f32);
-            let (x1, y1) = (track.end.x   as f32, track.end.y   as f32);
+            let (x1, y1) = (track.end.x as f32, track.end.y as f32);
 
             // Build an AABB that encompasses the track + half-width on each side
             let (lx0, lx1) = (x0.min(x1) - half_w, x0.max(x1) + half_w);
@@ -309,7 +325,9 @@ impl PcbScene3D {
             let color = layer_rgb(&poly.layer_name);
 
             // Fan triangulation from first vertex
-            let verts: Vec<[f32; 2]> = poly.vertices.iter()
+            let verts: Vec<[f32; 2]> = poly
+                .vertices
+                .iter()
                 .map(|p| [p.x as f32, p.y as f32])
                 .collect();
             let _v0 = verts[0];
@@ -327,7 +345,8 @@ impl PcbScene3D {
             // Fan triangles
             let n = verts.len() as u32;
             for i in 1..(n - 1) {
-                mesh.indices.extend_from_slice(&[base, base + i, base + i + 1]);
+                mesh.indices
+                    .extend_from_slice(&[base, base + i, base + i + 1]);
             }
         }
 
@@ -347,31 +366,35 @@ impl PcbScene3D {
         // ── Component bounding boxes ──────────────────────────────────────
         for (_id, comp) in ir.components.iter() {
             let color = match comp.side {
-                BoardSide::Top    => [0.8, 0.25, 0.25],
+                BoardSide::Top => [0.8, 0.25, 0.25],
                 BoardSide::Bottom => [0.25, 0.25, 0.8],
             };
             let z_base = match comp.side {
-                BoardSide::Top    => BOARD_THICKNESS_MM,
+                BoardSide::Top => BOARD_THICKNESS_MM,
                 BoardSide::Bottom => -(COPPER_THICKNESS_MM * 3.0),
             };
             let bb = &comp.world_bounds;
             mesh.push_box(
                 [bb.min.x as f32, bb.min.y as f32, z_base],
-                [bb.max.x as f32, bb.max.y as f32, z_base + COPPER_THICKNESS_MM * 3.0],
+                [
+                    bb.max.x as f32,
+                    bb.max.y as f32,
+                    z_base + COPPER_THICKNESS_MM * 3.0,
+                ],
                 color,
             );
         }
 
         // ── Upload to GPU ─────────────────────────────────────────────────
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label:    Some("pcb3d_vertices"),
+            label: Some("pcb3d_vertices"),
             contents: bytemuck::cast_slice(&mesh.vertices),
-            usage:    wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label:    Some("pcb3d_indices"),
+            label: Some("pcb3d_indices"),
             contents: bytemuck::cast_slice(&mesh.indices),
-            usage:    wgpu::BufferUsages::INDEX,
+            usage: wgpu::BufferUsages::INDEX,
         });
         let index_count = mesh.indices.len() as u32;
 
@@ -379,33 +402,33 @@ impl PcbScene3D {
         let uniforms = Uniforms {
             view_proj: [[0.0; 4]; 4],
             light_dir: [0.5, 0.5, 1.0],
-            _pad:      0.0,
+            _pad: 0.0,
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label:    Some("pcb3d_uniforms"),
+            label: Some("pcb3d_uniforms"),
             contents: bytemuck::bytes_of(&uniforms),
-            usage:    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         // ── Bind group layout ─────────────────────────────────────────────
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("pcb3d_bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
-                binding:    0,
+                binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
-                ty:         wgpu::BindingType::Buffer {
-                    ty:                 wgpu::BufferBindingType::Uniform,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size:   None,
+                    min_binding_size: None,
                 },
                 count: None,
             }],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label:   Some("pcb3d_bg"),
-            layout:  &bgl,
+            label: Some("pcb3d_bg"),
+            layout: &bgl,
             entries: &[wgpu::BindGroupEntry {
-                binding:  0,
+                binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
             }],
         });
@@ -413,50 +436,50 @@ impl PcbScene3D {
         // ── Pipeline ──────────────────────────────────────────────────────
         let shader_src = include_str!("view3d_shader.wgsl");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label:  Some("pcb3d_shader"),
+            label: Some("pcb3d_shader"),
             source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label:                Some("pcb3d_layout"),
-            bind_group_layouts:   &[&bgl],
+            label: Some("pcb3d_layout"),
+            bind_group_layouts: &[&bgl],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label:  Some("pcb3d_pipeline"),
+            label: Some("pcb3d_pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module:      &shader,
+                module: &shader,
                 entry_point: Some("vs_main"),
-                buffers:     &[Vertex::desc()],
+                buffers: &[Vertex::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module:      &shader,
+                module: &shader,
                 entry_point: Some("fs_main"),
-                targets:     &[Some(wgpu::ColorTargetState {
-                    format:     target_format,
-                    blend:      Some(wgpu::BlendState::REPLACE),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology:           wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face:         wgpu::FrontFace::Ccw,
-                cull_mode:          Some(wgpu::Face::Back),
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format:              wgpu::TextureFormat::Depth32Float,
+                format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
-                depth_compare:       wgpu::CompareFunction::Less,
-                stencil:             Default::default(),
-                bias:                Default::default(),
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
             }),
             multisample: wgpu::MultisampleState {
                 count: 1,
-                mask:  !0,
+                mask: !0,
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
@@ -492,8 +515,8 @@ pub struct PcbScene3DCallback {
 impl egui_wgpu::CallbackTrait for PcbScene3DCallback {
     fn prepare(
         &self,
-        _device:   &wgpu::Device,
-        queue:     &wgpu::Queue,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
         _screen_descriptor: &egui_wgpu::ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
         resources: &mut egui_wgpu::CallbackResources,
@@ -504,19 +527,15 @@ impl egui_wgpu::CallbackTrait for PcbScene3DCallback {
         let uniforms = Uniforms {
             view_proj: vp,
             light_dir: [0.577, 0.577, 0.577],
-            _pad:      0.0,
+            _pad: 0.0,
         };
-        queue.write_buffer(
-            &res.scene.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        queue.write_buffer(&res.scene.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         Vec::new()
     }
 
     fn paint(
         &self,
-        _info:     egui::PaintCallbackInfo,
+        _info: egui::PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
         resources: &egui_wgpu::CallbackResources,
     ) {
@@ -540,23 +559,28 @@ fn look_at(eye: [f32; 3], center: [f32; 3], up: [f32; 3]) -> [[f32; 4]; 4] {
     let u = cross3(s, f);
 
     [
-        [s[0],            u[0],            -f[0],           0.0],
-        [s[1],            u[1],            -f[1],           0.0],
-        [s[2],            u[2],            -f[2],           0.0],
-        [-dot3(s, eye), -dot3(u, eye),  dot3(f, eye),  1.0],
+        [s[0], u[0], -f[0], 0.0],
+        [s[1], u[1], -f[1], 0.0],
+        [s[2], u[2], -f[2], 0.0],
+        [-dot3(s, eye), -dot3(u, eye), dot3(f, eye), 1.0],
     ]
 }
 
 /// Orthographic projection (right-handed, NDC depth 0..1 for wgpu).
 fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> [[f32; 4]; 4] {
     let rml = right - left;
-    let tmb = top   - bottom;
-    let fmn = far   - near;
+    let tmb = top - bottom;
+    let fmn = far - near;
     [
-        [2.0 / rml,            0.0,                    0.0,          0.0],
-        [0.0,                  2.0 / tmb,              0.0,          0.0],
-        [0.0,                  0.0,                   -1.0 / fmn,   0.0],
-        [-(right+left)/rml,  -(top+bottom)/tmb,  -near/fmn,   1.0],
+        [2.0 / rml, 0.0, 0.0, 0.0],
+        [0.0, 2.0 / tmb, 0.0, 0.0],
+        [0.0, 0.0, -1.0 / fmn, 0.0],
+        [
+            -(right + left) / rml,
+            -(top + bottom) / tmb,
+            -near / fmn,
+            1.0,
+        ],
     ]
 }
 
@@ -573,19 +597,19 @@ fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
 }
 
 fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[0]-b[0], a[1]-b[1], a[2]-b[2]]
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
-    a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0],
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
     ]
 }
 fn normalize(v: [f32; 3]) -> [f32; 3] {
     let len = dot3(v, v).sqrt().max(1e-8);
-    [v[0]/len, v[1]/len, v[2]/len]
+    [v[0] / len, v[1] / len, v[2] / len]
 }
