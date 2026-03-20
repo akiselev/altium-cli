@@ -36,6 +36,9 @@ enough geometry for future integration.
 | BTreeMap for ALL DrcPolicy lookups | Determinism invariant → HashMap has non-deterministic iteration → BTreeMap guarantees identical resolution order → applies to width_constraints, length_constraints, diff_pair_constraints, not just clearance matrix |
 | DrcError type separate from RoutingError | DRC is not routing → DrcPolicy build errors and check failures are domain-distinct → `DrcError` enum with UnsupportedRule, PolicyBuildError, CheckFailed variants → `impl From<DrcError> for RoutingError` for PathFinder integration site |
 | Delete drc.rs stub before creating drc/ module | Rust resolves `mod drc` to either `drc.rs` OR `drc/mod.rs`, not both → existing `drc.rs` stub must be deleted → M1 includes this migration step |
+| Solverang for DRC repair + rubber-banding | DRC detection finds violations → solverang can *fix* them by adjusting trace vertex positions → constraints are `dist(A,B) - gap ≥ 0` (inequality via slack) → squared-distance formulation avoids Jacobian singularity at zero distance → solverang already used in placement (same crate ecosystem) → repair is more powerful than rip-up+reroute for small violations (nudge trace 0.01mm vs re-route entire net) |
+| Solverang repair as separate milestone after GPU DRC | Repair depends on detection working correctly → GPU DRC is an optimization, repair is a capability → decoupled milestones allow shipping detection-only first → repair adds solverang dependency to autopcb-router |
+| Rubber-banding via solverang (not GPU) | Rubber-banding pulls trace vertices toward shorter paths subject to clearance constraints → this is continuous optimization, perfect for LM solver → GPU would require custom optimizer in WGSL → solverang already has the machinery (ConstraintSystem, Jacobian, inequality constraints) |
 
 ### Rejected Alternatives
 
@@ -46,6 +49,8 @@ enough geometry for future integration.
 | Full DRC every PathFinder iteration | Too slow — full DRC includes length matching, topology, manufacturing → 30+ checks per iteration is expensive → clearance+shorts is sufficient for convergence |
 | Solverang repair in initial implementation | Continuous solver for discrete grid positions adds complexity → design violations for future repair but implement detection first |
 | Single monolithic drc.rs | 30+ rule types × geometry checks = >3000 lines → unmaintainable → per-rule modules with shared DrcEngine trait |
+| GPU rubber-banding instead of solverang | Would require implementing LM optimizer in WGSL → no standard GPU optimization library → solverang already has ConstraintSystem, auto-Jacobian, inequality support → CPU solverang on trace vertices is fast enough (< 100ms for typical boards) |
+| Solverang for routing (replacing PathFinder) | Routing is discrete graph search (path exists or doesn't) → LM solver needs continuous differentiable residuals → path finding is non-differentiable → solverang handles post-route optimization, not route finding |
 
 ### Constraints & Assumptions
 
@@ -127,7 +132,46 @@ PcbIr (design rules)  +  RouteSolution (routed segments/vias)
 
 - **Routing-time DRC scope**: Only clearance+shorts during routing (fast) vs full DRC per iteration (slow but more accurate). Chose fast — other rules are satisfied by construction.
 - **CPU vs GPU**: CPU is simpler and always available. GPU wins at >5K segments but adds complexity. Both share same DrcEngine trait.
-- **Detection vs repair**: Detection only in this plan. Solverang repair is more powerful but complex. Violations carry enough geometry for future repair integration.
+- **Detection then repair**: DRC detects violations (M1-M7), solverang repairs them (M10-M11). Repair is a continuous optimization on trace vertex positions subject to clearance constraints. This is more precise than rip-up+reroute for small violations (solverang nudges a vertex 0.01mm vs PathFinder re-routing an entire net).
+- **Solverang rubber-banding vs GPU rubber-banding**: Solverang (CPU, LM solver) naturally handles inequality constraints and produces mathematically optimal vertex positions. GPU would require implementing an optimizer in WGSL with no standard library support. CPU solverang is fast enough (< 100ms for typical boards) — the bottleneck is the solve, not the arithmetic.
+
+### Solverang Integration Architecture
+
+```
+Post-route pipeline:
+  RouteSolution (from PathFinder)
+         │
+         ▼
+  DRC detect (CPU or GPU)
+  → DrcReport with violations
+         │
+         ▼
+  Solverang repair (M10)
+  → For each violation cluster:
+     • Extract trace vertices as solvable params (x, y)
+     • Pin pad endpoints (fixed)
+     • Build ClearanceConstraints: dist²(A,B) - gap² ≥ 0
+     • LM solve → adjusted vertex positions
+     • Write back to RouteSolution
+         │
+         ▼
+  Solverang rubber-band (M11)
+  → Per-net optimization:
+     • All trace vertices solvable
+     • Objective: minimize total length
+     • Constraints: clearance to all nearby objects
+     • LM solve → tighter traces
+         │
+         ▼
+  DRC re-check (verify 0 violations)
+         │
+         ▼
+  Final RouteSolution
+```
+
+The squared-distance formulation (`dist²` instead of `dist`) is critical: it avoids
+the `1/dist` singularity in the Jacobian when two objects touch, giving the solver
+smooth gradients everywhere. This is documented in `docs/future/solverang/constraint-types.md`.
 
 ## Plan Flags
 
@@ -512,7 +556,104 @@ PcbIr (design rules)  +  RouteSolution (routed segments/vias)
 
 ---
 
-### Milestone 10: Documentation
+### Milestone 10: Solverang DRC Repair
+
+**Files**:
+- `crates/autopcb-router/src/drc/repair.rs`
+- `crates/autopcb-router/Cargo.toml` (add solverang dependency)
+
+**Flags**: `complex-algorithm`, `needs-rationale`
+
+**Requirements**:
+- Add `solverang` dependency to autopcb-router: `solverang = { path = "../../../solverang/crates/solverang" }`
+- For each DRC violation cluster: extract nearby trace vertices as solvable parameters
+- Build solverang `ConstraintSystem` with clearance constraints: `dist²(A, B) - gap² ≥ 0` (squared-distance formulation, no sqrt singularity)
+- Each trace vertex becomes two solvable parameters (x, y)
+- Fixed objects (pads, vias, board edge) are non-solvable entities — only trace vertices move
+- Run LM solver with `SystemConfig` tuned for small local adjustments (tight convergence, few iterations)
+- After repair: re-run DRC to verify violations resolved
+- If solverang can't fix a violation (solver diverges or constraint infeasible): leave violation in report, don't corrupt the route
+
+**Acceptance Criteria**:
+- Trace 0.09mm from pad with 0.1mm clearance → solverang nudges trace to 0.1mm → DRC passes
+- Trace that can't be moved (boxed in by obstacles) → violation remains, trace not corrupted
+- Repair does not increase total trace length by more than 5%
+- Repair preserves connectivity (no broken nets after adjustment)
+
+**Tests**:
+- **Test files**: `crates/autopcb-router/src/drc/repair.rs` (inline)
+- **Test type**: unit + integration
+- **Backing**: user-specified
+- **Scenarios**:
+  - Single clearance violation, space to move → repaired
+  - Multiple clustered violations → all repaired in one solve pass
+  - Infeasible violation (no room) → violation preserved, route unchanged
+  - Repair + re-DRC round-trip: violation count decreases
+
+**Code Intent**:
+- New `drc/repair.rs`: `repair_violations(solution: &mut RouteSolution, violations: &[DrcViolation], ir: &PcbIr, policy: &DrcPolicy) -> RepairResult`
+- `RepairResult { repaired_count: usize, remaining_violations: Vec<DrcViolation> }`
+- For each violation: extract the two involved objects → find movable trace vertices within a radius → create `solverang::Entity` for each vertex → create `ClearanceConstraint` (inequality, squared-distance) → solve
+- Constraint types from `docs/future/solverang/constraint-types.md`:
+  - `CopperClearance`: `dist²(seg_a, seg_b) - gap² ≥ 0`
+  - `BoardEdgeClearance`: `dist²(vertex, outline) - gap² ≥ 0`
+  - `ComponentClearance`: `bbox_dist²(trace, courtyard) - gap² ≥ 0`
+- After solve: update `TraceSegment.start`/`.end` coordinates in RouteSolution
+- Verify connectivity preserved (segment endpoints still connect to adjacent segments/pads)
+
+---
+
+### Milestone 11: Solverang Rubber-Banding
+
+**Files**:
+- `crates/autopcb-router/src/optimize/rubber_band.rs` (extend existing 217-line file)
+
+**Flags**: `complex-algorithm`, `performance`
+
+**Requirements**:
+- Replace or augment existing rubber-banding with solverang-based optimization
+- Objective: minimize total trace length subject to ALL clearance constraints
+- Each trace vertex (x, y) is a solvable parameter
+- Constraints:
+  - Clearance to all nearby obstacles (pads, other traces, keepouts, board edge)
+  - Clearance to other nets' traces
+  - Connectivity preservation (endpoints pinned to pad locations)
+- Use spatial index (R-tree) to find nearby obstacles for each vertex → only build constraints for nearby objects (not all-pairs)
+- Run LM solver per-net (not all nets simultaneously — too many parameters)
+- Iterate: optimize net, update spatial index with new positions, optimize next net
+
+**Acceptance Criteria**:
+- Rubber-banded traces are shorter than input traces
+- No clearance violations introduced by rubber-banding
+- Connectivity preserved (all pads still connected)
+- Runtime < 1 second for typical PCB boards (< 2000 nets)
+
+**Tests**:
+- **Test files**: `crates/autopcb-router/src/optimize/rubber_band.rs` (inline)
+- **Test type**: unit + property-based (proptest: rubber-banded length ≤ original length)
+- **Backing**: user-specified
+- **Scenarios**:
+  - Trace with slack (unnecessary detour) → shortened
+  - Trace already tight (no slack) → unchanged
+  - Trace near obstacle → shortened but maintains clearance
+  - Property: post-rubber-band DRC produces 0 new violations
+
+**Code Intent**:
+- Extend `optimize/rubber_band.rs`: `rubber_band_solverang(solution: &mut RouteSolution, workspace: &RoutingWorkspace, policy: &DrcPolicy)`
+- Per-net optimization loop:
+  1. Extract net's trace vertices as `solverang::Entity` with (x, y) params
+  2. Pin endpoint vertices to pad positions (fixed params)
+  3. Query R-tree for nearby obstacles within clearance radius of each vertex
+  4. Build `ClearanceConstraint` for each (vertex, obstacle) pair
+  5. Objective residuals: minimize segment lengths (sum of `sqrt(dx² + dy²)` per segment)
+  6. Run `ConstraintSystem::solve()` with LMConfig
+  7. Write back optimized vertex positions to TraceSegments
+  8. Update spatial index with new segment positions
+- Falls back to existing geometric rubber-banding if solverang is not available or solve diverges
+
+---
+
+### Milestone 12: Documentation
 
 **Delegated to**: @agent-technical-writer (mode: post-implementation)
 
@@ -542,16 +683,20 @@ M1 (core types) ──→ M2 (clearance+shorts) ──→ M7 (PathFinder integra
                                                 │
 M6 (IR extensions) ────────────────────────────→ M7
                                                 │
-                                         ┌──────┴──────┐
-                                         ▼             ▼
-                                   M8 (GPU DRC)   M9 (CLI)
-                                         │             │
-                                         └──────┬──────┘
-                                                ▼
-                                         M10 (docs)
+                                    ┌───────────┼───────────┐
+                                    ▼           ▼           ▼
+                              M8 (GPU DRC) M9 (CLI) M10 (solverang repair)
+                                    │           │           │
+                                    │           │           ▼
+                                    │           │    M11 (rubber-banding)
+                                    │           │           │
+                                    └─────┬─────┴───────────┘
+                                          ▼
+                                    M12 (docs)
 ```
 
 **Parallel opportunities:**
 - M2, M3, M4, M5 can proceed in parallel after M1 (different files, different rule types)
 - M6 can proceed in parallel with M2-M5 (different crate)
-- M8 and M9 can proceed in parallel after M7
+- M8, M9, M10 can proceed in parallel after M7
+- M11 depends on M10 (needs solverang constraint types from repair module)
