@@ -3,6 +3,7 @@ pub mod simulated_annealing;
 pub mod swap;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Instant;
 
 use autopcb_ir::{
     ComponentId, FreeCopperGeometry, IdMap, IrNet, IrNetPin, NetId, PadId, PcbIr, PointMm,
@@ -15,6 +16,7 @@ use solverang::id::{ConstraintId, EntityId, ParamId};
 use solverang::param::ParamStore;
 use solverang::solver::LMConfig;
 use solverang::system::{ConstraintSystem, SystemConfig, SystemStatus};
+use tracing::{debug, info, trace, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlacementConfig {
@@ -49,7 +51,7 @@ impl Default for PlacementConfig {
             default_clearance_mm: 0.5,
             board_edge_clearance_mm: 0.0,
             grid_snap_mm: None,
-            auto_cluster: false,
+            auto_cluster: true,
             cluster_target_size: 12,
             cluster_max_depth: 3,
             sa_config: None,
@@ -651,42 +653,6 @@ impl Constraint for FixedPositionConstraint {
 }
 
 #[derive(Debug, Clone)]
-struct RotationDiscretizeConstraint {
-    id: ConstraintId,
-    entity: EntityId,
-    theta: ParamId,
-    params: [ParamId; 1],
-}
-
-impl Constraint for RotationDiscretizeConstraint {
-    fn id(&self) -> ConstraintId {
-        self.id
-    }
-    fn name(&self) -> &str {
-        "RotationDiscretize"
-    }
-    fn entity_ids(&self) -> &[EntityId] {
-        std::slice::from_ref(&self.entity)
-    }
-    fn param_ids(&self) -> &[ParamId] {
-        &self.params
-    }
-    fn equation_count(&self) -> usize {
-        1
-    }
-
-    fn residuals(&self, store: &ParamStore) -> Vec<f64> {
-        let theta = store.get(self.theta);
-        vec![(2.0 * theta).sin()]
-    }
-
-    fn jacobian(&self, store: &ParamStore) -> Vec<(usize, ParamId, f64)> {
-        let theta = store.get(self.theta);
-        vec![(0, self.theta, 2.0 * (2.0 * theta).cos())]
-    }
-}
-
-#[derive(Debug, Clone)]
 struct HpwlPin {
     comp_x: ParamId,
     comp_y: ParamId,
@@ -904,10 +870,32 @@ pub fn solve_placement(
     config: &PlacementConfig,
     placement_groups: &[Vec<String>],
 ) -> Result<PlacementResult, PlacementError> {
+    let clustered_groups = augment_with_part_swap_groups(ir, placement_groups);
+    let started = Instant::now();
+    info!(
+        target: "autopcb_placement::solve",
+        component_count = ir.components.len(),
+        net_count = ir.nets.len(),
+        user_constraint_count = user_constraints.len(),
+        placement_group_count = placement_groups.len(),
+        clustered_group_count = clustered_groups.len(),
+        auto_cluster = config.auto_cluster,
+        sa_enabled = config.sa_config.is_some(),
+        allow_part_swap = config.allow_part_swap,
+        allow_pin_swap = config.allow_pin_swap,
+        "placement_solve_started"
+    );
     if config.auto_cluster && ir.components.len() > config.cluster_target_size.max(2) {
         if let Some(plan) =
-            clustering::build_cluster_plan(ir, user_constraints, placement_groups, config)?
+            clustering::build_cluster_plan(ir, user_constraints, &clustered_groups, config)?
         {
+            info!(
+                target: "autopcb_placement::solve",
+                leaf_count = plan.leaves.len(),
+                cluster_target_size = config.cluster_target_size,
+                cluster_max_depth = config.cluster_max_depth,
+                "placement_cluster_plan_ready"
+            );
             let anchored = explicit_anchor_designators(user_constraints);
             let mut seeds = original_seed_positions(ir);
             let mut inherited_constraints = user_constraints.to_vec();
@@ -920,22 +908,52 @@ pub fn solve_placement(
                     .members
                     .iter()
                     .any(|designator| anchored.contains(designator));
+                debug!(
+                    target: "autopcb_placement::solve",
+                    member_count = leaf.members.len(),
+                    region_min_x = leaf.region.min_x,
+                    region_min_y = leaf.region.min_y,
+                    region_max_x = leaf.region.max_x,
+                    region_max_y = leaf.region.max_y,
+                    has_anchor,
+                    members = ?leaf.members,
+                    "placement_cluster_leaf_started"
+                );
 
                 if !has_anchor && leaf.members.len() > 1 {
                     let leaf_ir = build_subset_ir(ir, &leaf_set, leaf.region.clone());
                     let mut leaf_config = config.clone();
                     leaf_config.auto_cluster = false;
-                    if let Ok(leaf_result) =
-                        solve_flat_placement(&leaf_ir, &leaf_constraints, &leaf_config, None)
-                    {
-                        for component in leaf_result.components {
-                            seeds.insert(
-                                component.designator,
-                                PlacementSeed {
-                                    x_mm: component.x_mm,
-                                    y_mm: component.y_mm,
-                                    rotation_deg: component.rotation_deg,
-                                },
+                    let leaf_started = Instant::now();
+                    match solve_flat_placement(&leaf_ir, &leaf_constraints, &leaf_config, None) {
+                        Ok(leaf_result) => {
+                            info!(
+                                target: "autopcb_placement::solve",
+                                member_count = leaf.members.len(),
+                                duration_ms = leaf_started.elapsed().as_millis(),
+                                status = %leaf_result.status,
+                                hpwl_mm = leaf_result.hpwl_estimate_mm,
+                                overlap_violations = leaf_result.overlap_violations,
+                                "placement_cluster_leaf_finished"
+                            );
+                            for component in leaf_result.components {
+                                seeds.insert(
+                                    component.designator,
+                                    PlacementSeed {
+                                        x_mm: component.x_mm,
+                                        y_mm: component.y_mm,
+                                        rotation_deg: component.rotation_deg,
+                                    },
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                target: "autopcb_placement::solve",
+                                member_count = leaf.members.len(),
+                                duration_ms = leaf_started.elapsed().as_millis(),
+                                error = %err,
+                                "placement_cluster_leaf_failed"
                             );
                         }
                     }
@@ -954,11 +972,38 @@ pub fn solve_placement(
 
             let mut flat_config = config.clone();
             flat_config.auto_cluster = false;
-            return solve_flat_placement(ir, &inherited_constraints, &flat_config, Some(&seeds));
+            let result =
+                solve_flat_placement(ir, &inherited_constraints, &flat_config, Some(&seeds));
+            if let Ok(ref placement) = result {
+                info!(
+                    target: "autopcb_placement::solve",
+                    duration_ms = started.elapsed().as_millis(),
+                    status = %placement.status,
+                    hpwl_mm = placement.hpwl_estimate_mm,
+                    overlap_violations = placement.overlap_violations,
+                    "placement_solve_finished"
+                );
+            }
+            return result;
         }
+        debug!(
+            target: "autopcb_placement::solve",
+            "placement_cluster_plan_skipped"
+        );
     }
 
-    solve_flat_placement(ir, user_constraints, config, None)
+    let result = solve_flat_placement(ir, user_constraints, config, None);
+    if let Ok(ref placement) = result {
+        info!(
+            target: "autopcb_placement::solve",
+            duration_ms = started.elapsed().as_millis(),
+            status = %placement.status,
+            hpwl_mm = placement.hpwl_estimate_mm,
+            overlap_violations = placement.overlap_violations,
+            "placement_solve_finished"
+        );
+    }
+    result
 }
 
 fn solve_flat_placement(
@@ -967,6 +1012,7 @@ fn solve_flat_placement(
     config: &PlacementConfig,
     initial_seeds: Option<&HashMap<String, PlacementSeed>>,
 ) -> Result<PlacementResult, PlacementError> {
+    let started = Instant::now();
     if ir.components.is_empty() {
         return Err(PlacementError::NoComponents);
     }
@@ -977,6 +1023,17 @@ fn solve_flat_placement(
     }
 
     let mut snapshots = Vec::new();
+    info!(
+        target: "autopcb_placement::flat",
+        component_count = ir.components.len(),
+        net_count = ir.nets.len(),
+        user_constraint_count = user_constraints.len(),
+        seed_count = initial_seeds.map(|seeds| seeds.len()).unwrap_or(0),
+        max_iters = config.max_iters,
+        gamma_start = config.gamma_start,
+        gamma_end = config.gamma_end,
+        "placement_flat_started"
+    );
 
     let mut system = ConstraintSystem::with_config(SystemConfig {
         lm_config: LMConfig::robust().with_patience(config.max_iters.max(10)),
@@ -1034,6 +1091,11 @@ fn solve_flat_placement(
             None
         }
     };
+    debug!(
+        target: "autopcb_placement::flat",
+        scatter_applied = scatter_positions.is_some(),
+        "placement_initial_scatter_evaluated"
+    );
 
     for (comp_idx, (_id, comp)) in ir.components.iter().enumerate() {
         let eid = system.alloc_entity_id();
@@ -1078,7 +1140,8 @@ fn solve_flat_placement(
         runtimes.push(ComponentRuntime { entity, pads });
     }
 
-    // Base hard constraints.
+    // Base hard constraints. Keep rotation fixed during the analytical LM pass;
+    // rotation changes are handled later by the legalizer and SA.
     for comp in &runtimes {
         let cid = system.alloc_constraint_id();
         let s0 = system.alloc_param(0.01, comp.entity.id);
@@ -1109,40 +1172,7 @@ fn solve_flat_placement(
                 s3,
             ],
         }));
-
-        let rcid = system.alloc_constraint_id();
-        system.add_constraint(Box::new(RotationDiscretizeConstraint {
-            id: rcid,
-            entity: comp.entity.id,
-            theta: comp.entity.theta,
-            params: [comp.entity.theta],
-        }));
-    }
-
-    for i in 0..runtimes.len() {
-        for j in (i + 1)..runtimes.len() {
-            let a = &runtimes[i].entity;
-            let b = &runtimes[j].entity;
-            let slack = system.alloc_param(0.01, a.id);
-            let cid = system.alloc_constraint_id();
-            system.add_constraint(Box::new(ComponentClearance {
-                id: cid,
-                entities: [a.id, b.id],
-                x1: a.x,
-                y1: a.y,
-                theta1: a.theta,
-                x2: b.x,
-                y2: b.y,
-                theta2: b.theta,
-                s: slack,
-                half_w1: a.half_w,
-                half_h1: a.half_h,
-                half_w2: b.half_w,
-                half_h2: b.half_h,
-                clearance: config.default_clearance_mm,
-                params: [a.x, a.y, a.theta, b.x, b.y, b.theta, slack],
-            }));
-        }
+        system.fix_param(comp.entity.theta);
     }
 
     // User constraints.
@@ -1323,7 +1353,17 @@ fn solve_flat_placement(
 
     snapshots.push(snapshot_from_system("initial", &system, &runtimes, None));
 
+    info!(target: "autopcb_placement::flat", "placement_continuous_solve_started");
+    let first_started = Instant::now();
     let first = system.solve();
+    info!(
+        target: "autopcb_placement::flat",
+        duration_ms = first_started.elapsed().as_millis(),
+        status = status_str(&first.status),
+        iterations = first.total_iterations,
+        solver_duration_ms = first.duration.as_millis(),
+        "placement_continuous_solve_finished"
+    );
     snapshots.push(snapshot_from_system(
         "continuous",
         &system,
@@ -1331,16 +1371,34 @@ fn solve_flat_placement(
         Some(status_str(&first.status).to_string()),
     ));
 
-    // Snap rotations to nearest 90.
-    for comp in &runtimes {
-        let theta = system.get_param(comp.entity.theta);
-        let deg = theta.to_degrees();
-        let snapped = ((deg / 90.0).round() as i32).rem_euclid(4) as f64 * 90.0;
-        system.set_param(comp.entity.theta, snapped.to_radians());
-        system.fix_param(comp.entity.theta);
+    // Re-activate only a sparse set of likely-overlap pairs for the refinement pass.
+    let clearance_pairs = select_sparse_clearance_pairs(
+        &system,
+        &runtimes,
+        config.default_clearance_mm,
+        4,
+        5.0,
+    );
+    info!(
+        target: "autopcb_placement::flat",
+        candidate_pair_count = clearance_pairs.len(),
+        "placement_sparse_clearance_selected"
+    );
+    for pair in &clearance_pairs {
+        add_component_clearance_constraint(
+            &mut system,
+            &runtimes[pair.a].entity,
+            &runtimes[pair.b].entity,
+            config.default_clearance_mm,
+        );
     }
 
-    snapshots.push(snapshot_from_system("snapped", &system, &runtimes, None));
+    snapshots.push(snapshot_from_system(
+        "sparse_clearance_seed",
+        &system,
+        &runtimes,
+        Some(format!("activated {} sparse clearance pairs", clearance_pairs.len())),
+    ));
 
     // Re-solve with higher gamma by adding additional constraints to sharpen HPWL.
     if config.gamma_end > config.gamma_start {
@@ -1372,7 +1430,17 @@ fn solve_flat_placement(
         }
     }
 
+    info!(target: "autopcb_placement::flat", "placement_sharpened_solve_started");
+    let second_started = Instant::now();
     let second = system.solve();
+    info!(
+        target: "autopcb_placement::flat",
+        duration_ms = second_started.elapsed().as_millis(),
+        status = status_str(&second.status),
+        iterations = second.total_iterations,
+        solver_duration_ms = second.duration.as_millis(),
+        "placement_sharpened_solve_finished"
+    );
 
     if let Some(grid) = config.grid_snap_mm {
         for comp in &runtimes {
@@ -1383,6 +1451,7 @@ fn solve_flat_placement(
         }
     }
 
+    let legalize_started = Instant::now();
     let overlaps = structured_legalize(
         &mut system,
         &runtimes,
@@ -1395,6 +1464,12 @@ fn solve_flat_placement(
         config.grid_snap_mm,
         user_constraints,
         &net_to_pins,
+    );
+    info!(
+        target: "autopcb_placement::flat",
+        moved_count = overlaps,
+        duration_ms = legalize_started.elapsed().as_millis(),
+        "placement_legalize_finished"
     );
     snapshots.push(snapshot_from_system(
         "legalized",
@@ -1433,8 +1508,18 @@ fn solve_flat_placement(
     if config.allow_part_swap {
         let swap_model = swap::build_swap_model(ir);
         if !swap_model.part_swap_groups.is_empty() {
+            info!(
+                target: "autopcb_placement::flat",
+                part_group_count = swap_model.part_swap_groups.len(),
+                "placement_part_swap_started"
+            );
             let _changelog = swap::greedy_part_swap_pass(&mut phase2_result, ir, &swap_model);
             phase2_result.hpwl_estimate_mm = swap::compute_hpwl(&phase2_result, ir);
+            info!(
+                target: "autopcb_placement::flat",
+                hpwl_mm = phase2_result.hpwl_estimate_mm,
+                "placement_part_swap_finished"
+            );
         }
     }
 
@@ -1446,7 +1531,22 @@ fn solve_flat_placement(
             .filter(|component| !fixed_designators.contains(&component.designator))
             .map(|c| c.designator.clone())
             .collect();
-        simulated_annealing::refine_with_sa(&phase2_result, ir, sa_cfg, &autoplace_designators)?
+        info!(
+            target: "autopcb_placement::flat",
+            movable_count = autoplace_designators.len(),
+            "placement_sa_started"
+        );
+        let sa_started = Instant::now();
+        let sa_result =
+            simulated_annealing::refine_with_sa(&phase2_result, ir, sa_cfg, &autoplace_designators)?;
+        info!(
+            target: "autopcb_placement::flat",
+            duration_ms = sa_started.elapsed().as_millis(),
+            hpwl_mm = sa_result.hpwl_estimate_mm,
+            snapshot_count = sa_result.snapshots.len(),
+            "placement_sa_finished"
+        );
+        sa_result
     } else {
         phase2_result
     };
@@ -1455,9 +1555,28 @@ fn solve_flat_placement(
     if config.allow_pin_swap {
         let swap_model = swap::build_swap_model(ir);
         if !swap_model.pin_swap_groups.is_empty() {
+            info!(
+                target: "autopcb_placement::flat",
+                pin_group_count = swap_model.pin_swap_groups.len(),
+                "placement_pin_swap_started"
+            );
             let _changelog = swap::greedy_pin_swap_sweep(&mut post_sa_result, ir, &swap_model);
+            info!(
+                target: "autopcb_placement::flat",
+                hpwl_mm = post_sa_result.hpwl_estimate_mm,
+                "placement_pin_swap_finished"
+            );
         }
     }
+
+    info!(
+        target: "autopcb_placement::flat",
+        duration_ms = started.elapsed().as_millis(),
+        status = %post_sa_result.status,
+        hpwl_mm = post_sa_result.hpwl_estimate_mm,
+        overlap_violations = post_sa_result.overlap_violations,
+        "placement_flat_finished"
+    );
 
     Ok(post_sa_result)
 }
@@ -1468,6 +1587,101 @@ fn status_str(status: &SystemStatus) -> &'static str {
         SystemStatus::PartiallySolved => "PartiallySolved",
         SystemStatus::DiagnosticFailure(_) => "DiagnosticFailure",
     }
+}
+
+fn add_component_clearance_constraint(
+    system: &mut ConstraintSystem,
+    a: &PcbComponentEntity,
+    b: &PcbComponentEntity,
+    clearance: f64,
+) -> ConstraintId {
+    let slack = system.alloc_param(0.01, a.id);
+    let cid = system.alloc_constraint_id();
+    system.add_constraint(Box::new(ComponentClearance {
+        id: cid,
+        entities: [a.id, b.id],
+        x1: a.x,
+        y1: a.y,
+        theta1: a.theta,
+        x2: b.x,
+        y2: b.y,
+        theta2: b.theta,
+        s: slack,
+        half_w1: a.half_w,
+        half_h1: a.half_h,
+        half_w2: b.half_w,
+        half_h2: b.half_h,
+        clearance,
+        params: [a.x, a.y, a.theta, b.x, b.y, b.theta, slack],
+    }))
+}
+
+fn select_sparse_clearance_pairs(
+    system: &ConstraintSystem,
+    runtimes: &[ComponentRuntime],
+    clearance: f64,
+    neighbors_per_component: usize,
+    activation_margin_mm: f64,
+) -> Vec<ClearanceCandidatePair> {
+    let mut selected = HashMap::<(usize, usize), f64>::new();
+
+    for i in 0..runtimes.len() {
+        let a = &runtimes[i].entity;
+        let ax = system.get_param(a.x);
+        let ay = system.get_param(a.y);
+        let (a_hw, a_hh) = world_half_extents_at(a.half_w, a.half_h, system.get_param(a.theta));
+
+        let mut candidates = Vec::<ClearanceCandidatePair>::new();
+        for (j, runtime) in runtimes.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let b = &runtime.entity;
+            let bx = system.get_param(b.x);
+            let by = system.get_param(b.y);
+            let (b_hw, b_hh) =
+                world_half_extents_at(b.half_w, b.half_h, system.get_param(b.theta));
+            let sep_x = (ax - bx).abs() - (a_hw + b_hw + clearance);
+            let sep_y = (ay - by).abs() - (a_hh + b_hh + clearance);
+            let score_mm = sep_x.max(sep_y);
+            if score_mm <= activation_margin_mm {
+                candidates.push(ClearanceCandidatePair {
+                    a: i,
+                    b: j,
+                    score_mm,
+                });
+            }
+        }
+
+        candidates.sort_by(|lhs, rhs| lhs.score_mm.total_cmp(&rhs.score_mm));
+        let overlap_count = candidates.iter().take_while(|candidate| candidate.score_mm <= 0.0).count();
+        for candidate in candidates
+            .into_iter()
+            .take(overlap_count.max(neighbors_per_component))
+        {
+            let key = if candidate.a < candidate.b {
+                (candidate.a, candidate.b)
+            } else {
+                (candidate.b, candidate.a)
+            };
+            selected
+                .entry(key)
+                .and_modify(|score| *score = (*score).min(candidate.score_mm))
+                .or_insert(candidate.score_mm);
+        }
+    }
+
+    let mut pairs: Vec<ClearanceCandidatePair> = selected
+        .into_iter()
+        .map(|((a, b), score_mm)| ClearanceCandidatePair { a, b, score_mm })
+        .collect();
+    pairs.sort_by(|lhs, rhs| {
+        lhs.score_mm
+            .total_cmp(&rhs.score_mm)
+            .then_with(|| lhs.a.cmp(&rhs.a))
+            .then_with(|| lhs.b.cmp(&rhs.b))
+    });
+    pairs
 }
 
 fn snapshot_from_system(
@@ -1529,6 +1743,33 @@ fn explicit_anchor_designators(user_constraints: &[UserConstraint]) -> HashSet<S
             UserConstraint::Directional { .. } | UserConstraint::Near { .. } => None,
         })
         .collect()
+}
+
+fn augment_with_part_swap_groups(ir: &PcbIr, placement_groups: &[Vec<String>]) -> Vec<Vec<String>> {
+    let mut groups = placement_groups.to_vec();
+    let swap_model = swap::build_swap_model(ir);
+    if swap_model.part_swap_groups.is_empty() {
+        return groups;
+    }
+
+    let comp_designators: Vec<String> = ir
+        .components
+        .iter()
+        .map(|(_, component)| component.designator.clone())
+        .collect();
+
+    for members in swap_model.part_swap_groups.values() {
+        let mut group = Vec::with_capacity(members.len());
+        for idx in members {
+            if let Some(designator) = comp_designators.get(*idx) {
+                group.push(designator.clone());
+            }
+        }
+        if group.len() >= 2 {
+            groups.push(group);
+        }
+    }
+    groups
 }
 
 fn filter_constraints_for_designators(
@@ -1652,6 +1893,13 @@ struct LegalizerPose {
     theta: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClearanceCandidatePair {
+    a: usize,
+    b: usize,
+    score_mm: f64,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct LegalizerEvaluation {
     hard_violations: usize,
@@ -1684,6 +1932,7 @@ fn structured_legalize(
     user_constraints: &[UserConstraint],
     net_to_pins: &BTreeMap<String, Vec<HpwlPin>>,
 ) -> usize {
+    let started = Instant::now();
     let mut moved = 0usize;
     let fixed = fixed_position_designators(user_constraints);
     let mut current_eval = evaluate_legalizer_state(
@@ -1699,8 +1948,18 @@ fn structured_legalize(
         grid_snap.unwrap_or(5.0).max(1.0),
     );
     let pass_budget = runtimes.len().max(1) * 16;
+    info!(
+        target: "autopcb_placement::legalizer",
+        pass_budget,
+        fixed_count = fixed.len(),
+        initial_hard_violations = current_eval.hard_violations,
+        initial_overlap_area = current_eval.overlap_area,
+        initial_overflow = current_eval.overflow,
+        initial_congestion = current_eval.congestion,
+        "placement_legalizer_started"
+    );
 
-    for _ in 0..pass_budget {
+    for pass in 0..pass_budget {
         let violating = violating_components(
             system,
             runtimes,
@@ -1713,8 +1972,23 @@ fn structured_legalize(
             board_clearance,
         );
         if violating.is_empty() {
+            trace!(
+                target: "autopcb_placement::legalizer",
+                pass,
+                "placement_legalizer_no_violations"
+            );
             break;
         }
+        trace!(
+            target: "autopcb_placement::legalizer",
+            pass,
+            violating_count = violating.len(),
+            hard_violations = current_eval.hard_violations,
+            overlap_area = current_eval.overlap_area,
+            overflow = current_eval.overflow,
+            congestion = current_eval.congestion,
+            "placement_legalizer_pass_started"
+        );
 
         let mut improved = false;
         for comp_idx in violating {
@@ -1746,6 +2020,19 @@ fn structured_legalize(
                     system.set_param(comp.x, pose.x);
                     system.set_param(comp.y, pose.y);
                     system.set_param(comp.theta, pose.theta);
+                    debug!(
+                        target: "autopcb_placement::legalizer",
+                        pass,
+                        designator = %comp.designator,
+                        x = pose.x,
+                        y = pose.y,
+                        rotation_deg = pose.theta.to_degrees(),
+                        hard_violations = eval.hard_violations,
+                        overlap_area = eval.overlap_area,
+                        overflow = eval.overflow,
+                        congestion = eval.congestion,
+                        "placement_legalizer_candidate_accepted"
+                    );
                     current_eval = eval;
                     moved += 1;
                     improved = true;
@@ -1754,9 +2041,24 @@ fn structured_legalize(
             }
         }
         if !improved {
+            debug!(
+                target: "autopcb_placement::legalizer",
+                pass,
+                "placement_legalizer_stalled"
+            );
             break;
         }
     }
+    info!(
+        target: "autopcb_placement::legalizer",
+        moved_count = moved,
+        final_hard_violations = current_eval.hard_violations,
+        final_overlap_area = current_eval.overlap_area,
+        final_overflow = current_eval.overflow,
+        final_congestion = current_eval.congestion,
+        duration_ms = started.elapsed().as_millis(),
+        "placement_legalizer_finished"
+    );
     moved
 }
 
@@ -2368,4 +2670,159 @@ pub fn named_region_from_board(ir: &PcbIr, name: &str) -> Option<RectRegion> {
         ir.board.bounds.max.x,
         ir.board.bounds.max.y,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use autopcb_ir::{
+        BoardSide, BoundingBoxMm, ComponentId, IdMap, IrBoardGeometry, IrComponent, IrComponentPad,
+        IrCopperLayer, IrLayerStack, IrNet, LayerId, NetId, PadId, PadShapeInfo, PadShapeKind,
+        PcbIr,
+    };
+
+    fn runtime_at(
+        system: &mut ConstraintSystem,
+        designator: &str,
+        x_mm: f64,
+        y_mm: f64,
+    ) -> ComponentRuntime {
+        let eid = system.alloc_entity_id();
+        let x = system.alloc_param(x_mm, eid);
+        let y = system.alloc_param(y_mm, eid);
+        let theta = system.alloc_param(0.0, eid);
+        let entity = PcbComponentEntity {
+            id: eid,
+            x,
+            y,
+            theta,
+            params: [x, y, theta],
+            designator: designator.to_string(),
+            half_w: 1.0,
+            half_h: 1.0,
+        };
+        system.add_entity(Box::new(entity.clone()));
+        ComponentRuntime {
+            entity,
+            pads: Vec::new(),
+        }
+    }
+
+    fn simple_swap_ir() -> PcbIr {
+        let mut components = IdMap::<ComponentId, IrComponent>::new();
+        let defs = [
+            ("R1", 10.0, Some("RG")),
+            ("R2", 20.0, Some("RG")),
+            ("U1", 80.0, None),
+        ];
+        for (index, (designator, x, swap_group)) in defs.into_iter().enumerate() {
+            let pad_id = PadId::from(index as u32);
+            let comp_id = components.push(IrComponent {
+                id: ComponentId::from(0),
+                designator: designator.to_string(),
+                pattern: "0603".into(),
+                value: String::new(),
+                position: PointMm::new(x, 20.0),
+                rotation: 0.0,
+                side: BoardSide::Top,
+                local_bounds: BoundingBoxMm::new(PointMm::new(-1.0, -0.5), PointMm::new(1.0, 0.5)),
+                world_bounds: BoundingBoxMm::new(
+                    PointMm::new(x - 1.0, 19.5),
+                    PointMm::new(x + 1.0, 20.5),
+                ),
+                pads: vec![IrComponentPad {
+                    id: pad_id,
+                    name: "1".into(),
+                    local_position: PointMm::new(0.0, 0.0),
+                    world_position: PointMm::new(x, 20.0),
+                    net: None,
+                    shape: PadShapeInfo {
+                        kind: PadShapeKind::Rectangular,
+                        size_x: 1.0,
+                        size_y: 1.0,
+                        rotation: 0.0,
+                    },
+                    is_through_hole: false,
+                    hole_size_mm: 0.0,
+                    swap_id_pin: None,
+                    swap_id_part: swap_group.map(str::to_string),
+                }],
+            });
+            components[comp_id].id = comp_id;
+        }
+
+        PcbIr {
+            board: IrBoardGeometry {
+                outline: vec![
+                    PointMm::new(0.0, 0.0),
+                    PointMm::new(100.0, 0.0),
+                    PointMm::new(100.0, 50.0),
+                    PointMm::new(0.0, 50.0),
+                ],
+                cutouts: Vec::new(),
+                bounds: BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(100.0, 50.0)),
+                keepouts: Vec::new(),
+            },
+            layer_stack: IrLayerStack {
+                copper_layers: vec![IrCopperLayer {
+                    id: LayerId::from(0),
+                    name: "Top".into(),
+                    is_top: true,
+                    is_bottom: false,
+                }],
+                copper_layer_count: 2,
+            },
+            components,
+            nets: IdMap::<NetId, IrNet>::new(),
+            rules: IdMap::new(),
+            free_copper: FreeCopperGeometry::default(),
+            polygons: IdMap::new(),
+        }
+    }
+
+    #[test]
+    fn placement_config_clusters_by_default() {
+        assert!(PlacementConfig::default().auto_cluster);
+    }
+
+    #[test]
+    fn sparse_clearance_pairs_stay_local() {
+        let mut system = ConstraintSystem::new();
+        let runtimes = vec![
+            runtime_at(&mut system, "A", 0.0, 0.0),
+            runtime_at(&mut system, "B", 3.0, 0.0),
+            runtime_at(&mut system, "C", 6.5, 0.0),
+            runtime_at(&mut system, "D", 25.0, 0.0),
+        ];
+
+        let pairs = select_sparse_clearance_pairs(&system, &runtimes, 0.5, 1, 5.0);
+        let pair_ids: Vec<(usize, usize)> = pairs.iter().map(|pair| (pair.a, pair.b)).collect();
+
+        assert!(pair_ids.contains(&(0, 1)));
+        assert!(pair_ids.contains(&(1, 2)));
+        assert!(
+            !pair_ids.contains(&(0, 2)),
+            "selector should avoid reintroducing a dense pair graph"
+        );
+        assert!(
+            !pair_ids.iter().any(|&(a, b)| a == 3 || b == 3),
+            "far components should not activate clearance constraints"
+        );
+    }
+
+    #[test]
+    fn augment_with_part_swap_groups_adds_ir_swap_groups() {
+        let ir = simple_swap_ir();
+        let groups = augment_with_part_swap_groups(&ir, &[]);
+
+        assert!(
+            groups.iter().any(|group| {
+                group.len() == 2
+                    && group.contains(&"R1".to_string())
+                    && group.contains(&"R2".to_string())
+            }),
+            "part swap groups should be preserved for clustering and seeding"
+        );
+    }
 }

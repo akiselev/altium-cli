@@ -190,6 +190,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -749,6 +751,7 @@ dependencies = [
  "serde",
  "solverang",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

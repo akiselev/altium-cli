@@ -45,12 +45,12 @@ use crate::model::{
     ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec, PcbDocComponentSpec,
     PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec, PcbDocPrimitiveSpec,
     PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType, PinPadMap,
-    PinRef, PinSpec, PlacementClearanceSpec, PlacementConstraintSpec, PlacementGroupSpec,
-    PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec, PortSpec,
-    PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec, SchDocComponentSpec,
-    SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec,
-    SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, UnplacedStrategy, VariantSpec,
-    VariationSpec, WireSpec,
+    PinRef, PinSpec, PlacementAutoplaceMode, PlacementClearanceSpec, PlacementConstraintSpec,
+    PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec,
+    PlacementSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec,
+    SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec,
+    SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, UnplacedStrategy,
+    VariantSpec, VariationSpec, WireSpec,
 };
 
 use crate::diagnostic::Spanned;
@@ -2490,8 +2490,8 @@ impl SpecCompiler {
             None => None,
         };
         let autoplace = match props.get("autoplace") {
-            Some((expr, span)) => self.expr_to_bool(expr, *span)?,
-            None => false,
+            Some((expr, span)) => self.expr_to_autoplace_mode(expr, *span)?,
+            None => PlacementAutoplaceMode::Disabled,
         };
         let no_pin_swap = match props.get("no_pin_swap") {
             Some((crate::ast::Expr::Array(items), _)) => {
@@ -2732,6 +2732,42 @@ impl SpecCompiler {
     ) -> Result<bool, SpecError> {
         let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
         value_to_bool(&val, Some(span))
+    }
+
+    fn expr_to_autoplace_mode(
+        &self,
+        expr: &crate::ast::Expr,
+        span: crate::diagnostic::Span,
+    ) -> Result<PlacementAutoplaceMode, SpecError> {
+        match expr {
+            crate::ast::Expr::Bool(true) => Ok(PlacementAutoplaceMode::Auto),
+            crate::ast::Expr::Bool(false) => Ok(PlacementAutoplaceMode::Disabled),
+            crate::ast::Expr::Ident(name) => match name.as_str() {
+                "solved" => Ok(PlacementAutoplaceMode::Solved),
+                "locked" => Ok(PlacementAutoplaceMode::Locked),
+                "true" => Ok(PlacementAutoplaceMode::Auto),
+                "false" => Ok(PlacementAutoplaceMode::Disabled),
+                other => Err(SpecError::at(
+                    SpecErrorCode::TypeMismatch,
+                    format!(
+                        "invalid autoplace value '{other}'; expected true, false, solved, or locked"
+                    ),
+                    span,
+                )),
+            },
+            _ => {
+                let val = eval_expr(&Spanned::new(expr.clone(), span), &self.scope)?;
+                match value_to_bool(&val, Some(span)) {
+                    Ok(true) => Ok(PlacementAutoplaceMode::Auto),
+                    Ok(false) => Ok(PlacementAutoplaceMode::Disabled),
+                    Err(_) => Err(SpecError::at(
+                        SpecErrorCode::TypeMismatch,
+                        "expected autoplace value true, false, solved, or locked",
+                        span,
+                    )),
+                }
+            }
+        }
     }
 
     fn expr_to_i32(
@@ -7310,7 +7346,22 @@ placement {
 "#,
         )
         .unwrap();
-        assert!(spec.places[0].autoplace);
+        assert_eq!(spec.places[0].autoplace, PlacementAutoplaceMode::Auto);
+    }
+
+    #[test]
+    fn autoplace_place_states_compile() {
+        let spec = compile_placement(
+            r#"
+placement {
+    place U1 { autoplace: solved }
+    place U2 { autoplace: locked }
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(spec.places[0].autoplace, PlacementAutoplaceMode::Solved);
+        assert_eq!(spec.places[1].autoplace, PlacementAutoplaceMode::Locked);
     }
 
     #[test]

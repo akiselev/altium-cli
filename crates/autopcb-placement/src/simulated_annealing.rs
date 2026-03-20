@@ -5,9 +5,11 @@
 //! The module is self-contained: all SA logic lives here.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use autopcb_ir::{ComponentId, PcbIr};
 use rand::Rng;
+use tracing::{debug, info, trace};
 
 use crate::{PlacementComponentState, PlacementIterationSnapshot, PlacementResult};
 
@@ -1678,9 +1680,28 @@ pub fn refine_with_sa(
     config: &SAConfig,
     autoplace_designators: &[String],
 ) -> Result<PlacementResult, crate::PlacementError> {
+    let started = Instant::now();
     if config.moves_per_temp == 0 {
+        debug!(
+            target: "autopcb_placement::sa",
+            "placement_sa_skipped_zero_moves"
+        );
         return Ok(initial.clone());
     }
+    info!(
+        target: "autopcb_placement::sa",
+        initial_component_count = initial.components.len(),
+        movable_count = autoplace_designators.len(),
+        initial_hpwl_mm = initial.hpwl_estimate_mm,
+        moves_per_temp = config.moves_per_temp,
+        max_steps = config.max_steps,
+        cooling_rate = config.cooling_rate,
+        snapshot_interval = config.snapshot_interval,
+        congestion_weight = config.congestion_weight,
+        congestion_cell_mm = config.congestion_cell_mm,
+        critical_net_boost = config.critical_net_boost,
+        "placement_sa_started"
+    );
 
     // Build component list from the input PlacementResult.
     let mut components: Vec<ComponentState> = initial
@@ -1728,6 +1749,12 @@ pub fn refine_with_sa(
     // Build swap opportunities from IR pad swap IDs.
     let (pin_swap_opportunities, part_swap_opportunities) =
         build_swap_opportunities(ir, &comp_designators);
+    debug!(
+        target: "autopcb_placement::sa",
+        pin_swap_count = pin_swap_opportunities.len(),
+        part_swap_count = part_swap_opportunities.len(),
+        "placement_sa_swap_opportunities_built"
+    );
 
     let congestion_cell_mm = config.congestion_cell_mm.max(0.5);
     let congestion_capacity = ir.layer_stack.copper_layer_count.max(1) as f64 * congestion_cell_mm;
@@ -1747,6 +1774,12 @@ pub fn refine_with_sa(
 
     let initial_congestion = compute_congestion_metrics(&placement, &placement.components).penalty;
     placement.congestion_enabled = placement.congestion_weight > 0.0 && initial_congestion > 0.0;
+    info!(
+        target: "autopcb_placement::sa",
+        initial_congestion_penalty = initial_congestion,
+        congestion_enabled = placement.congestion_enabled,
+        "placement_sa_congestion_evaluated"
+    );
 
     // Auto-initialize temperature.
     let mut rng = rand::rng();
@@ -1754,6 +1787,11 @@ pub fn refine_with_sa(
     if temperature < 1e-9 {
         temperature = 1.0;
     }
+    info!(
+        target: "autopcb_placement::sa",
+        initial_temperature = temperature,
+        "placement_sa_temperature_initialized"
+    );
 
     let mut best_components = placement.components.clone();
     let mut best_hpwl = total_hpwl(&placement.net_component_index, &placement.components);
@@ -1763,6 +1801,13 @@ pub fn refine_with_sa(
 
     for step in 0..config.max_steps {
         if temperature < config.t_frozen {
+            debug!(
+                target: "autopcb_placement::sa",
+                step,
+                temperature,
+                frozen_threshold = config.t_frozen,
+                "placement_sa_frozen"
+            );
             break;
         }
 
@@ -1822,6 +1867,16 @@ pub fn refine_with_sa(
         } else {
             0.0
         };
+        trace!(
+            target: "autopcb_placement::sa",
+            step,
+            temperature,
+            attempted,
+            accepted,
+            acceptance_rate,
+            best_hpwl_mm = best_hpwl,
+            "placement_sa_step_finished"
+        );
         temperature = if acceptance_rate > 0.96 {
             temperature * 0.5
         } else if acceptance_rate < 0.02 {
@@ -1834,6 +1889,13 @@ pub fn refine_with_sa(
         if acceptance_rate < 0.01 {
             low_acceptance_streak += 1;
             if low_acceptance_streak >= config.min_acceptance_steps {
+                debug!(
+                    target: "autopcb_placement::sa",
+                    step,
+                    low_acceptance_streak,
+                    min_acceptance_steps = config.min_acceptance_steps,
+                    "placement_sa_early_stop_low_acceptance"
+                );
                 break;
             }
         } else {
@@ -1877,6 +1939,15 @@ pub fn refine_with_sa(
         snapshots,
         hpwl_estimate_mm: best_hpwl,
         overlap_violations: 0,
+    })
+    .inspect(|result| {
+        info!(
+            target: "autopcb_placement::sa",
+            duration_ms = started.elapsed().as_millis(),
+            final_hpwl_mm = result.hpwl_estimate_mm,
+            final_snapshot_count = result.snapshots.len(),
+            "placement_sa_finished"
+        );
     })
 }
 

@@ -3449,8 +3449,8 @@ mod tests {
     // ── Tests: diff_placement_positions ──────────────────────────────────────
 
     use crate::model::{
-        PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementSpec,
-        UnplacedStrategy,
+        PlacementAutoplaceMode, PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
+        PlacementSpec, UnplacedStrategy,
     };
     use altium_format::api::{
         BoardGeometry, BoardSettings, LayerStack, PcbDocBoard, PcbDocComponent,
@@ -3565,7 +3565,7 @@ mod tests {
             fixed: false,
             at: Some(make_coord_mm(x_mm, y_mm)),
             side: None,
-            autoplace: false,
+            autoplace: PlacementAutoplaceMode::Disabled,
             no_pin_swap: vec![],
             no_part_swap: false,
         }
@@ -3657,7 +3657,7 @@ mod tests {
             fixed: false,
             at: None, // no position specified
             side: None,
-            autoplace: false,
+            autoplace: PlacementAutoplaceMode::Disabled,
             no_pin_swap: vec![],
             no_part_swap: false,
         }]);

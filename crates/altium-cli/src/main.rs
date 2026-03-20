@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Instant;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use altium_format_query::{eval_query, parse_query};
@@ -27,6 +28,7 @@ use autopcb_placement::{
     solve_placement,
 };
 use clap::{Parser, Subcommand};
+use tracing::{debug, info};
 
 mod cfb;
 pub mod placement_bridge;
@@ -271,8 +273,8 @@ enum PlacementSubcommand {
         gamma_end: f64,
         #[arg(long, default_value_t = 250)]
         max_iters: usize,
-        /// Enable simulated annealing refinement after analytical placement
-        #[arg(long, default_value_t = false)]
+        /// Disable simulated annealing refinement after analytical placement
+        #[arg(long = "no-sa", action = clap::ArgAction::SetFalse, default_value_t = true)]
         sa: bool,
     },
     /// Dump current component positions from a PcbDoc as a placement spec
@@ -348,6 +350,13 @@ enum SpecSubcommand {
 }
 
 fn main() -> ExitCode {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -2604,7 +2613,16 @@ pub fn autoplace_spec(
 ) -> anyhow::Result<AutoplaceReport> {
     use altium_format_spec::model::SpecModel;
 
+    let started = Instant::now();
     let spec_path_buf = spec_path.to_path_buf();
+    info!(
+        target: "altium_cli::placement",
+        spec_path = %spec_path.display(),
+        requested_target = pcbdoc_path.map(|p| p.display().to_string()),
+        dry_run,
+        has_output_override = output_path.is_some(),
+        "autoplace_spec_started"
+    );
     let source = std::fs::read_to_string(spec_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_path.display()))?;
 
@@ -2638,6 +2656,13 @@ pub fn autoplace_spec(
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target_path.display()))?;
     let board = doc.board()?;
     let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+    info!(
+        target: "altium_cli::placement",
+        target_path = %target_path.display(),
+        component_count = ir.components.len(),
+        net_count = ir.nets.len(),
+        "autoplace_ir_loaded"
+    );
 
     // Build PlacementConfig from spec settings, then overlay caller-provided config.
     let mut cfg = config.clone();
@@ -2708,6 +2733,24 @@ pub fn autoplace_spec(
 
     let component_count = ir.components.len();
     let autoplace_count = autoplace_designators.len();
+    info!(
+        target: "altium_cli::placement",
+        component_count,
+        autoplace_count,
+        user_constraint_count = user_constraints.len(),
+        placement_group_count = placement.groups.len(),
+        sa_enabled = cfg.sa_config.is_some(),
+        auto_cluster = cfg.auto_cluster,
+        max_iters = cfg.max_iters,
+        gamma_start = cfg.gamma_start,
+        gamma_end = cfg.gamma_end,
+        "autoplace_solver_configured"
+    );
+    debug!(
+        target: "altium_cli::placement",
+        ?autoplace_designators,
+        "autoplace_designators_resolved"
+    );
 
     // Run solver.
     let placement_groups: Vec<Vec<String>> = placement
@@ -2716,15 +2759,33 @@ pub fn autoplace_spec(
         .map(|group| group.components.clone())
         .collect();
 
+    let solve_started = Instant::now();
     let result = solve_placement(&ir, &user_constraints, &cfg, &placement_groups)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    info!(
+        target: "altium_cli::placement",
+        duration_ms = solve_started.elapsed().as_millis(),
+        status = %result.status,
+        hpwl_mm = result.hpwl_estimate_mm,
+        overlap_violations = result.overlap_violations,
+        snapshot_count = result.snapshots.len(),
+        "autoplace_solver_finished"
+    );
 
     let hpwl_mm = result.hpwl_estimate_mm;
     let duration_ms = result.duration_ms;
 
     // Rewrite spec text.
+    let rewrite_started = Instant::now();
     let rewrite =
         spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators)?;
+    info!(
+        target: "altium_cli::placement",
+        duration_ms = rewrite_started.elapsed().as_millis(),
+        rewritten_in_place_count = rewrite.rewritten_in_place.len(),
+        appended_count = rewrite.appended.len(),
+        "autoplace_spec_rewritten"
+    );
 
     // Determine output path.
     let out_path = output_path
@@ -2735,6 +2796,13 @@ pub fn autoplace_spec(
         std::fs::write(&out_path, &rewrite.text)
             .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
     }
+
+    info!(
+        target: "altium_cli::placement",
+        output_path = %out_path.display(),
+        duration_ms = started.elapsed().as_millis(),
+        "autoplace_spec_finished"
+    );
 
     Ok(AutoplaceReport {
         hpwl_mm,
@@ -2929,5 +2997,46 @@ fn parse_edge(s: &str) -> Option<PlacementEdge> {
         "left" => Some(PlacementEdge::Left),
         "right" => Some(PlacementEdge::Right),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placement_autoplace_enables_sa_by_default() {
+        let cli = Cli::try_parse_from(["altium", "placement", "autoplace", "board.pcbdoc-spec"])
+            .expect("autoplace args should parse");
+        match cli.command {
+            Commands::Placement {
+                sub:
+                    PlacementSubcommand::Autoplace {
+                        sa, spec_file, ..
+                    },
+            } => {
+                assert!(sa, "SA should be enabled by default");
+                assert_eq!(spec_file, PathBuf::from("board.pcbdoc-spec"));
+            }
+            _ => panic!("expected placement autoplace command"),
+        }
+    }
+
+    #[test]
+    fn placement_autoplace_accepts_no_sa_override() {
+        let cli = Cli::try_parse_from([
+            "altium",
+            "placement",
+            "autoplace",
+            "board.pcbdoc-spec",
+            "--no-sa",
+        ])
+        .expect("autoplace args should parse");
+        match cli.command {
+            Commands::Placement {
+                sub: PlacementSubcommand::Autoplace { sa, .. },
+            } => assert!(!sa, "--no-sa should disable SA"),
+            _ => panic!("expected placement autoplace command"),
+        }
     }
 }

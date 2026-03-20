@@ -655,9 +655,24 @@ pub struct PlacementPlaceSpec {
     pub fixed: bool,
     pub at: Option<CoordPoint>,
     pub side: Option<String>,
-    pub autoplace: bool,
+    pub autoplace: PlacementAutoplaceMode,
     pub no_pin_swap: Vec<String>,
     pub no_part_swap: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlacementAutoplaceMode {
+    #[default]
+    Disabled,
+    Auto,
+    Solved,
+    Locked,
+}
+
+impl PlacementAutoplaceMode {
+    pub fn is_solver_variable(self) -> bool {
+        matches!(self, Self::Auto)
+    }
 }
 
 /// Strategy for components present in PcbDoc but not mentioned in the spec.

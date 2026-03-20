@@ -25,12 +25,12 @@ pub struct RewriteResult {
     pub appended: Vec<String>,
 }
 
-/// Rewrite a `.pcbdoc-spec` source text to replace `autoplace: true` with concrete positions.
+/// Rewrite a `.pcbdoc-spec` source text to replace `autoplace: true` with solved placements.
 ///
 /// For each component in `result.components` whose designator is in `autoplace_designators`:
 /// - If the component is mentioned in a `place` block that has `autoplace: true`:
 ///   - Replace the entire `PlaceDecl` span with a solved block containing `at:` and `rotation:`
-///   - Add `// autoplace: solved` comment after the block opening brace
+///   - Rewrite the existing `autoplace:` property to `autoplace: solved`
 ///   - Multi-designator blocks are expanded to individual single-designator blocks
 /// - If the component is not mentioned in any place block:
 ///   - Append a new `place DESIGNATOR { at: (x_mm, y_mm), rotation: N }` block before
@@ -215,8 +215,8 @@ fn has_autoplace(place: &PlaceDecl) -> bool {
 
 /// Build the replacement text for a single designator's place block.
 ///
-/// If the component is solved, emits a block with `at:` and `rotation:` and a
-/// `// autoplace: solved` annotation. If not solved (missing from state_map),
+/// If the component is solved, emits a block with `autoplace: solved`, `at:`, and `rotation:`.
+/// If not solved (missing from state_map),
 /// emits the original body with `// autoplace: unsolved` annotation.
 fn build_replacement_text(
     designator: &str,
@@ -279,16 +279,19 @@ fn build_solved_replacement(
     out.push_str(indent);
     out.push_str(&format!("place {} {{\n", designator));
 
-    // Emit non-autoplace properties verbatim from source, with intra-body comments.
+    // Emit properties verbatim from source, but rewrite autoplace and replace stale
+    // placement values with the solved result.
     let body_start = place.body.span.start + 1; // byte after `{`
     let mut prev_end = body_start;
     for item in &place.body.node.items {
-        // Always emit comments between the previous item and this one,
-        // even if we're about to skip `autoplace: true`.
         emit_intra_body_comments(&mut out, trivia, prev_end, item.span.start, inner_indent);
         prev_end = item.span.end;
         if let ObjectItem::Property(prop) = &item.node {
             if prop.key.node == "autoplace" {
+                out.push_str(&format!("{inner_indent}autoplace: solved\n"));
+                continue;
+            }
+            if prop.key.node == "at" || prop.key.node == "rotation" {
                 continue;
             }
         }
@@ -310,9 +313,6 @@ fn build_solved_replacement(
         "{}rotation: {:.1}\n",
         inner_indent, state.rotation_deg
     ));
-
-    // Solved annotation.
-    out.push_str(&format!("{}// autoplace: solved\n", inner_indent));
 
     // Closing brace.
     out.push_str(indent);
@@ -425,7 +425,7 @@ fn build_append_text(
     for &d in designators {
         if let Some(state) = state_map.get(d) {
             out.push_str(&format!(
-                "    place {} {{\n        at: ({:.4}mm, {:.4}mm)\n        rotation: {:.1}\n        // autoplace: solved\n    }}\n",
+                "    place {} {{\n        autoplace: solved\n        at: ({:.4}mm, {:.4}mm)\n        rotation: {:.1}\n    }}\n",
                 d, state.x_mm, state.y_mm, state.rotation_deg
             ));
         }
@@ -534,12 +534,12 @@ placement {
             "autoplace: true must be removed"
         );
         assert!(
-            rw.text.contains("region: center"),
-            "other properties must be preserved"
+            rw.text.contains("autoplace: solved"),
+            "autoplace state must be rewritten to solved"
         );
         assert!(
-            rw.text.contains("// autoplace: solved"),
-            "solved comment must be present"
+            rw.text.contains("region: center"),
+            "other properties must be preserved"
         );
     }
 
@@ -596,6 +596,7 @@ placement {
             rw.text.contains("rotation: 90.0"),
             "R1 rotation must be correct"
         );
+        assert!(rw.text.contains("autoplace: solved"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use autopcb_ir::PcbIr;
+use tracing::{debug, info};
 
 use crate::{PlacementConfig, PlacementError, RectRegion, UserConstraint};
 
@@ -65,7 +66,20 @@ pub fn build_cluster_plan(
     placement_groups: &[Vec<String>],
     config: &PlacementConfig,
 ) -> Result<Option<ClusterPlan>, PlacementError> {
+    info!(
+        target: "autopcb_placement::clustering",
+        component_count = ir.components.len(),
+        user_constraint_count = user_constraints.len(),
+        placement_group_count = placement_groups.len(),
+        cluster_target_size = config.cluster_target_size,
+        cluster_max_depth = config.cluster_max_depth,
+        "placement_clustering_started"
+    );
     if ir.components.len() <= config.cluster_target_size.max(2) {
+        debug!(
+            target: "autopcb_placement::clustering",
+            "placement_clustering_skipped_small_design"
+        );
         return Ok(None);
     }
 
@@ -89,8 +103,18 @@ pub fn build_cluster_plan(
         user_constraints,
         placement_groups,
     )?;
+    debug!(
+        target: "autopcb_placement::clustering",
+        locked_group_count = locked_groups.len(),
+        "placement_clustering_locked_groups_built"
+    );
     let units = build_units(ir, &locked_groups, &desig_to_idx);
     if units.len() < 2 {
+        debug!(
+            target: "autopcb_placement::clustering",
+            unit_count = units.len(),
+            "placement_clustering_skipped_insufficient_units"
+        );
         return Ok(None);
     }
 
@@ -119,9 +143,20 @@ pub fn build_cluster_plan(
     );
 
     if leaves.len() < 2 {
+        debug!(
+            target: "autopcb_placement::clustering",
+            leaf_count = leaves.len(),
+            "placement_clustering_skipped_single_leaf"
+        );
         return Ok(None);
     }
 
+    info!(
+        target: "autopcb_placement::clustering",
+        unit_count = units.len(),
+        leaf_count = leaves.len(),
+        "placement_clustering_finished"
+    );
     Ok(Some(ClusterPlan { leaves }))
 }
 

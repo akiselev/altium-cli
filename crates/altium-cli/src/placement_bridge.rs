@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 
+#[cfg(test)]
+use altium_format_spec::model::PlacementAutoplaceMode;
 use altium_format_spec::{PlacementConstraintSpec, PlacementSpec, UnplacedStrategy};
 use autopcb_ir::PcbIr;
 use autopcb_placement::{
@@ -19,7 +21,7 @@ use autopcb_placement::{
 ///
 /// # Constraint mapping
 ///
-/// - Component with `at:` and `autoplace: false` → `UserConstraint::FixedPosition`
+/// - Component with `at:` and `autoplace: false|solved|locked` → `UserConstraint::FixedPosition`
 /// - Component with `autoplace: true`:
 ///   - If has `edge:` → `UserConstraint::EdgePlacement`
 ///   - If has `near:` + `max_distance:` → `UserConstraint::Near`
@@ -70,7 +72,7 @@ pub fn placement_spec_to_constraints(
                 continue;
             }
 
-            if place.autoplace {
+            if place.autoplace.is_solver_variable() {
                 // Component is a solver variable.
                 autoplace_designators.push(designator.clone());
 
@@ -118,7 +120,7 @@ pub fn placement_spec_to_constraints(
                     });
                 }
             } else {
-                // Locked component: has at: without autoplace, or explicit fixed: true.
+                // Locked component: has at: without solver-autoplace.
                 if let Some(at) = place.at {
                     constraints.push(UserConstraint::FixedPosition {
                         designator: designator.clone(),
@@ -334,7 +336,7 @@ mod tests {
             fixed: true,
             at: Some(make_point(x_mils, y_mils)),
             side: None,
-            autoplace: false,
+            autoplace: PlacementAutoplaceMode::Disabled,
             no_pin_swap: vec![],
             no_part_swap: false,
         }
@@ -354,10 +356,22 @@ mod tests {
             fixed: false,
             at: None,
             side: None,
-            autoplace: true,
+            autoplace: PlacementAutoplaceMode::Auto,
             no_pin_swap: vec![],
             no_part_swap: false,
         }
+    }
+
+    fn solved_place(designator: &str, x_mils: f64, y_mils: f64) -> PlacementPlaceSpec {
+        let mut place = locked_place(designator, x_mils, y_mils);
+        place.autoplace = PlacementAutoplaceMode::Solved;
+        place
+    }
+
+    fn explicitly_locked_place(designator: &str, x_mils: f64, y_mils: f64) -> PlacementPlaceSpec {
+        let mut place = locked_place(designator, x_mils, y_mils);
+        place.autoplace = PlacementAutoplaceMode::Locked;
+        place
     }
 
     #[test]
@@ -401,6 +415,26 @@ mod tests {
             constraints
                 .iter()
                 .all(|c| matches!(c, UserConstraint::FixedPosition { .. }))
+        );
+    }
+
+    #[test]
+    fn solved_and_locked_places_are_not_in_autoplace_set() {
+        let ir = minimal_ir(&[("U1", 0.0, 0.0), ("U2", 10.0, 0.0)]);
+        let spec = empty_spec(
+            vec![
+                solved_place("U1", 0.0, 0.0),
+                explicitly_locked_place("U2", 393.7, 0.0),
+            ],
+            UnplacedStrategy::Ignore,
+        );
+        let (constraints, autoplace) = placement_spec_to_constraints(&spec, &ir).unwrap();
+        assert!(autoplace.is_empty());
+        assert_eq!(constraints.len(), 2);
+        assert!(
+            constraints
+                .iter()
+                .all(|constraint| matches!(constraint, UserConstraint::FixedPosition { .. }))
         );
     }
 
