@@ -370,4 +370,6 @@ Keep STATUS.md updated with the state of the codebase whenever you implement som
 
 # REVIEWS
 
-ALWAYS COMPLETE A COMPLETENESS REVIEW AFTER EVERY STEP OF A PLAN.
+ALWAYS COMPLETE A COMPLETENESS REVIEW WITH AN INDEPENDENT AGENT AFTER EVERY STEP OF A PLAN.
+
+After a developer/coder agent runs, if there are errors from rust-analyzer, first run cargo check to see if they're stale.

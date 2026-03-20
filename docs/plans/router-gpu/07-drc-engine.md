@@ -396,13 +396,12 @@ impl DrcReport {
 /// DRC engine trait: implemented by both CPU and GPU backends.
 pub trait DrcEngine {
     /// Run routing-time DRC (clearance + shorts only, fast).
-    /// Returns violation count and updates history costs if provided.
     fn check_routing(
         &self,
         solution: &RouteSolution,
         workspace: &RoutingWorkspace,
-        history: Option<&mut HistoryArray>,
-    ) -> Result<DrcReport, RoutingError>;
+        ir: &PcbIr,
+    ) -> Result<DrcReport, DrcError>;
 
     /// Run comprehensive post-routing DRC (all applicable rules).
     fn check_full(
@@ -410,9 +409,11 @@ pub trait DrcEngine {
         solution: &RouteSolution,
         workspace: &RoutingWorkspace,
         ir: &PcbIr,
-    ) -> Result<DrcReport, RoutingError>;
+    ) -> Result<DrcReport, DrcError>;
 }
 ```
+
+Note: History updates are performed by PathFinder, not inside the engine. See Decision Log in `07-drc-engine-plan.md` (M7).
 
 ### 2.3 DrcPolicy: Rule Resolution
 
