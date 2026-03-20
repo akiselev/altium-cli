@@ -360,6 +360,14 @@ enum RoutingSubcommand {
     Inspect {
         /// Path to the .routes file (binary or JSON)
         path: PathBuf,
+        /// Show detailed per-violation output
+        #[arg(long)]
+        verbose: bool,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+        // Note: --drc for live DRC is not supported here because running DRC
+        // requires a full PcbIr, which is not available from a .routes file alone.
     },
     /// Solve routing from a spec file (requires full spec pipeline integration)
     Solve,
@@ -3028,17 +3036,47 @@ fn parse_edge(s: &str) -> Option<PlacementEdge> {
 
 fn run_routing(sub: RoutingSubcommand) -> anyhow::Result<()> {
     match sub {
-        RoutingSubcommand::Inspect { path } => cmd_routing_inspect(&path),
+        RoutingSubcommand::Inspect { path, verbose, json } => {
+            cmd_routing_inspect(&path, verbose, json)
+        }
         RoutingSubcommand::Solve => cmd_routing_solve(),
     }
 }
 
-fn cmd_routing_inspect(path: &std::path::Path) -> anyhow::Result<()> {
+fn cmd_routing_inspect(path: &std::path::Path, verbose: bool, json: bool) -> anyhow::Result<()> {
     let solution = autopcb_routes::load_binary(path)
         .or_else(|_| autopcb_routes::load_json(path))
         .map_err(|e| {
             anyhow::anyhow!("failed to load routes file {}: {e}", path.display())
         })?;
+
+    if json {
+        let out = serde_json::json!({
+            "path": path.display().to_string(),
+            "version": solution.version,
+            "nets_routed": solution.nets.len(),
+            "nets_unrouted": solution.unrouted.len(),
+            "iterations": solution.iterations.len(),
+            "metrics": {
+                "total_vias": solution.metrics.total_vias,
+                "total_length_mm": solution.metrics.total_length_mm,
+                "completion_pct": solution.metrics.completion_pct,
+                "drc_violations": solution.metrics.drc_violations,
+            },
+            "drc_violation_records": solution.drc_violation_records.iter().map(|v| {
+                serde_json::json!({
+                    "kind": v.kind_name,
+                    "location": { "x": v.location.x, "y": v.location.y },
+                    "layer": v.layer,
+                    "actual_mm": v.actual_mm,
+                    "required_mm": v.required_mm,
+                    "rule_name": v.rule_name,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
 
     let m = &solution.metrics;
     let net_count = solution.nets.len();
@@ -3060,6 +3098,38 @@ fn cmd_routing_inspect(path: &std::path::Path) -> anyhow::Result<()> {
         println!("Unrouted nets:");
         for net_id in &solution.unrouted {
             println!("  net {}", net_id.raw());
+        }
+    }
+
+    if !solution.drc_violation_records.is_empty() {
+        println!();
+        if verbose {
+            println!("DRC Violations:");
+            for (i, v) in solution.drc_violation_records.iter().enumerate() {
+                println!(
+                    "  #{}: {} at ({:.4}, {:.4}){} — actual: {:.4} mm, required: {:.4} mm [{}]",
+                    i + 1,
+                    v.kind_name,
+                    v.location.x,
+                    v.location.y,
+                    v.layer.map(|l| format!(" layer {}", l)).unwrap_or_default(),
+                    v.actual_mm,
+                    v.required_mm,
+                    v.rule_name,
+                );
+            }
+        } else {
+            println!("DRC Violations (use --verbose for details):");
+            for (i, v) in solution.drc_violation_records.iter().enumerate() {
+                println!(
+                    "  #{}: {} at ({:.4}, {:.4}) [{}]",
+                    i + 1,
+                    v.kind_name,
+                    v.location.x,
+                    v.location.y,
+                    v.rule_name,
+                );
+            }
         }
     }
 
@@ -3116,9 +3186,11 @@ mod tests {
             .expect("routing inspect args should parse");
         match cli.command {
             Commands::Routing {
-                sub: RoutingSubcommand::Inspect { path },
+                sub: RoutingSubcommand::Inspect { path, verbose, json },
             } => {
                 assert_eq!(path, PathBuf::from("board.routes"));
+                assert!(!verbose);
+                assert!(!json);
             }
             _ => panic!("expected routing inspect command"),
         }
@@ -3131,7 +3203,7 @@ mod tests {
         let solution = RouteSolution::new();
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
         save_binary(&solution, tmp.path()).expect("save_binary");
-        cmd_routing_inspect(tmp.path()).expect("cmd_routing_inspect should succeed");
+        cmd_routing_inspect(tmp.path(), false, false).expect("cmd_routing_inspect should succeed");
     }
 
     #[test]
@@ -3141,12 +3213,45 @@ mod tests {
         let solution = RouteSolution::new();
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
         save_json(&solution, tmp.path()).expect("save_json");
-        cmd_routing_inspect(tmp.path()).expect("cmd_routing_inspect should succeed on JSON");
+        cmd_routing_inspect(tmp.path(), false, false).expect("cmd_routing_inspect should succeed on JSON");
     }
 
     #[test]
     fn routing_solve_returns_error() {
         let result = cmd_routing_solve();
         assert!(result.is_err(), "routing solve should return an error until implemented");
+    }
+
+    #[test]
+    fn routing_inspect_shows_zero_drc_violations() {
+        use autopcb_routes::{RouteSolution, save_binary};
+
+        let solution = RouteSolution::new();
+        assert_eq!(solution.metrics.drc_violations, 0);
+        assert!(solution.drc_violation_records.is_empty());
+
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        save_binary(&solution, tmp.path()).expect("save_binary");
+        cmd_routing_inspect(tmp.path(), false, false).expect("inspect with 0 violations should succeed");
+    }
+
+    #[test]
+    fn routing_inspect_shows_drc_violation_records() {
+        use autopcb_routes::{DrcViolationRecord, Point, RouteSolution, save_binary};
+
+        let mut solution = RouteSolution::new();
+        solution.drc_violation_records.push(DrcViolationRecord {
+            kind_name: "ClearanceViolation".to_string(),
+            location: Point { x: 1.2345, y: 6.7890 },
+            layer: Some(1),
+            actual_mm: 0.05,
+            required_mm: 0.1,
+            rule_name: "Clearance_default".to_string(),
+        });
+        solution.metrics.drc_violations = 1;
+
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        save_binary(&solution, tmp.path()).expect("save_binary");
+        cmd_routing_inspect(tmp.path(), false, false).expect("inspect with violations should succeed");
     }
 }

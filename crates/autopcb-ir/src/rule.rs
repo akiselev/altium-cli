@@ -73,6 +73,48 @@ pub enum IrRuleParams {
     MatchedLengths {
         tolerance_mm: f64,
     },
+    ShortCircuit,
+    BrokenNets,
+    NetAntennae,
+    ViasUnderSmd,
+    AcuteAngle {
+        min_angle_deg: f64,
+    },
+    SmdToCorner {
+        clearance_mm: f64,
+    },
+    MaximumViaCount {
+        max: u32,
+    },
+    MaxMinHoleSize {
+        min_mm: f64,
+        max_mm: f64,
+    },
+    Length {
+        min_mm: f64,
+        max_mm: f64,
+    },
+    DaisyChainStubLength {
+        max_mm: f64,
+    },
+    SmdNeckDown,
+    SmdEntry,
+    ParallelSegment {
+        max_run_mm: f64,
+        check_gap_mm: f64,
+    },
+    MinimumSolderMaskSliver {
+        min_mm: f64,
+    },
+    SilkToSolderMaskClearance {
+        clearance_mm: f64,
+    },
+    SilkToSilkClearance {
+        clearance_mm: f64,
+    },
+    SilkToBoardRegionClearance {
+        clearance_mm: f64,
+    },
     /// Rule kind not yet given a typed IR representation.
     Other {
         kind: RuleKind,

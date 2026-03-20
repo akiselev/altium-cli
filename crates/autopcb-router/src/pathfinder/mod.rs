@@ -32,6 +32,9 @@ use crate::detailed::grid::{
     DetailedRouter, GridRouter, PathSegment, route_subnet_to_traces,
 };
 use crate::detailed::via_cost::ViaCostModel;
+use crate::drc::cpu_engine::CpuDrcEngine;
+use crate::drc::policy::DrcPolicy;
+use crate::drc::{DrcConfig, DrcEngine};
 use crate::global::global_route;
 use crate::solution::RouteSolutionBuilder;
 use crate::workspace::RoutingWorkspace;
@@ -114,6 +117,16 @@ pub fn pathfinder_route(
 
     let mut builder = RouteSolutionBuilder::new();
 
+    // DRC violation count from the last iteration that ran a DRC check.
+    let mut last_drc_violation_count: u32 = 0;
+
+    // ------------------------------------------------------------------
+    // 3b. Build DRC engine for routing-time checks.
+    // ------------------------------------------------------------------
+    let drc_config = DrcConfig::default();
+    let drc_policy = DrcPolicy::build(ir).map_err(RoutingError::from)?;
+    let drc_engine = CpuDrcEngine::new(drc_policy);
+
     // ------------------------------------------------------------------
     // 4. Negotiation loop.
     // ------------------------------------------------------------------
@@ -193,21 +206,72 @@ pub fn pathfinder_route(
             }
         }
 
-        // -- 4c. Count conflicts in current solution ------------------------
+        // -- 4c. DRC check (routing-time: clearance + shorts) ----------------
+        // Skip early iterations where many conflicts produce noisy DRC results.
+        if drc_config.enabled && _iteration >= drc_config.start_iteration {
+            // Build a partial RouteSolution for the current iteration's paths.
+            let mut iter_solution = autopcb_routes::RouteSolution::new();
+            for (&net_id, segs) in &solution_paths {
+                let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
+                let (traces, vias) = route_subnet_to_traces(segs, grid, net_id, width_mm);
+                iter_solution.nets.insert(net_id, autopcb_routes::RoutedNet {
+                    net_id,
+                    segments: traces,
+                    vias,
+                    routed_length_mm: 0.0,
+                });
+            }
+
+            match drc_engine.check_routing(&iter_solution, workspace, ir) {
+                Ok(report) => {
+                    let violation_count = report.total_count();
+                    if violation_count > 0 {
+                        tracing::debug!(
+                            iteration = _iteration,
+                            violations = violation_count,
+                            "DRC routing check: {} violation(s)",
+                            violation_count,
+                        );
+                    }
+                    last_drc_violation_count = violation_count as u32;
+
+                    // Increment history costs at each violation location so
+                    // future PathFinder iterations route away from DRC hotspots.
+                    for v in &report.violations {
+                        let (col, row) = grid.to_grid(v.location);
+                        if grid.in_bounds(col, row) {
+                            if let Some(layer_id) = v.layer {
+                                state.history.increment(
+                                    col,
+                                    row,
+                                    layer_id.raw(),
+                                    drc_config.violation_penalty,
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(RoutingError::from(e));
+                }
+            }
+        }
+
+        // -- 4d. Count conflicts in current solution ------------------------
         let (conflict_count, oversubscribed) =
             count_conflicts(&solution_paths, grid, workspace.layer_count);
 
-        // -- 4d. Update history: increment oversubscribed cells -------------
+        // -- 4e. Update history: increment oversubscribed cells -------------
         for &(x, y, layer_raw) in &oversubscribed {
             state
                 .history
                 .increment(x, y, layer_raw, config.history_increment);
         }
 
-        // -- 4e. Update present congestion factor ---------------------------
+        // -- 4f. Update present congestion factor ---------------------------
         state.pres_fac = (state.pres_fac * config.pres_fac_multiplier).min(config.pres_fac_cap);
 
-        // -- 4f. Capture iteration snapshot ---------------------------------
+        // -- 4g. Capture iteration snapshot ---------------------------------
         let routed_count = solution_paths.len() as u32;
         let unrouted_count = final_failed.len() as u32;
 
@@ -230,11 +294,13 @@ pub fn pathfinder_route(
             paths: snap_paths,
         });
 
-        // -- 4g. Convergence check ------------------------------------------
+        // -- 4h. Convergence check ------------------------------------------
         if conflict_count == 0 && final_failed.is_empty() {
             break;
         }
     }
+
+    builder.set_drc_violations(last_drc_violation_count);
 
     // ------------------------------------------------------------------
     // 5. Build final solution from the last iteration's paths.

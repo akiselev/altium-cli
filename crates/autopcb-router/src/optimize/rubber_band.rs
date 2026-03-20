@@ -96,6 +96,33 @@ pub fn rubber_band(segments: &mut Vec<TraceSegment>, iterations: u32) {
     }
 }
 
+/// Apply rubber-banding to all nets in a solution using geometric tightening.
+pub fn rubber_band_all_nets(solution: &mut autopcb_routes::RouteSolution, iterations: u32) {
+    for net in solution.nets.values_mut() {
+        rubber_band(&mut net.segments, iterations);
+    }
+}
+
+/// Rubber-band tightening with clearance constraints via solverang.
+///
+/// Unlike the geometric `rubber_band`, this version:
+/// 1. Minimizes total trace length (objective)
+/// 2. Maintains clearance to all nearby obstacles (constraints)
+/// 3. Pins pad endpoints (fixed parameters)
+///
+/// Falls back to geometric rubber-banding if solve diverges.
+#[cfg(feature = "solverang")]
+pub fn rubber_band_solverang(
+    solution: &mut autopcb_routes::RouteSolution,
+    _workspace: &crate::workspace::RoutingWorkspace,
+    _policy: &crate::drc::policy::DrcPolicy,
+) {
+    tracing::warn!(
+        "solverang rubber-banding not yet implemented — using geometric fallback"
+    );
+    rubber_band_all_nets(solution, 20);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -213,5 +240,114 @@ mod tests {
             (after - before).abs() < EPS,
             "zero iterations must not change anything"
         );
+    }
+
+    #[cfg(feature = "proptest")]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn rubber_band_never_increases_total_length(
+                // Generate a 3-point trace: A→M→B with arbitrary mid-point.
+                mid_x in -50.0_f64..50.0,
+                mid_y in -50.0_f64..50.0,
+            ) {
+                let mut segs = vec![
+                    TraceSegment {
+                        net_id: autopcb_routes::NetId(0),
+                        layer: LayerId(0),
+                        start: Point { x: 0.0, y: 0.0 },
+                        end: Point { x: mid_x, y: mid_y },
+                        width_mm: 0.2,
+                    },
+                    TraceSegment {
+                        net_id: autopcb_routes::NetId(0),
+                        layer: LayerId(0),
+                        start: Point { x: mid_x, y: mid_y },
+                        end: Point { x: 10.0, y: 0.0 },
+                        width_mm: 0.2,
+                    },
+                ];
+                let before = segs.iter().map(|s| dist(s.start, s.end)).sum::<f64>();
+                rubber_band(&mut segs, 20);
+                let after = segs.iter().map(|s| dist(s.start, s.end)).sum::<f64>();
+                prop_assert!(
+                    after <= before + EPS,
+                    "total_length_after ({after}) must be <= total_length_before ({before}) + EPS"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rubber_band_all_nets_shortens_traces() {
+        use autopcb_routes::{NetId, RouteSolution, RoutedNet};
+        let net_id = NetId(0);
+        let mut solution = RouteSolution::new();
+        solution.nets.insert(
+            net_id,
+            RoutedNet {
+                net_id,
+                segments: vec![seg(0.0, 0.0, 5.0, 5.0), seg(5.0, 5.0, 10.0, 0.0)],
+                vias: vec![],
+                routed_length_mm: 14.14,
+            },
+        );
+        let before: f64 = solution.nets[&net_id]
+            .segments
+            .iter()
+            .map(|s| dist(s.start, s.end))
+            .sum();
+        rubber_band_all_nets(&mut solution, 20);
+        let after: f64 = solution.nets[&net_id]
+            .segments
+            .iter()
+            .map(|s| dist(s.start, s.end))
+            .sum();
+        assert!(
+            after < before,
+            "rubber_band_all_nets should shorten slack traces"
+        );
+    }
+
+    #[cfg(feature = "proptest")]
+    mod proptests {
+        use super::*;
+        use autopcb_routes::NetId;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn rubber_band_never_increases_total_length(
+                mid_x in -50.0_f64..50.0,
+                mid_y in -50.0_f64..50.0,
+            ) {
+                let mut segs = vec![
+                    TraceSegment {
+                        net_id: NetId(0),
+                        layer: LayerId(0),
+                        start: Point { x: 0.0, y: 0.0 },
+                        end: Point { x: mid_x, y: mid_y },
+                        width_mm: 0.2,
+                    },
+                    TraceSegment {
+                        net_id: NetId(0),
+                        layer: LayerId(0),
+                        start: Point { x: mid_x, y: mid_y },
+                        end: Point { x: 10.0, y: 0.0 },
+                        width_mm: 0.2,
+                    },
+                ];
+                let before = segs.iter().map(|s| dist(s.start, s.end)).sum::<f64>();
+                rubber_band(&mut segs, 20);
+                let after = segs.iter().map(|s| dist(s.start, s.end)).sum::<f64>();
+                prop_assert!(
+                    after <= before + EPS,
+                    "total_length_after ({after}) must be <= total_length_before ({before}) + EPS"
+                );
+            }
+        }
     }
 }

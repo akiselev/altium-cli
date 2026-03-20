@@ -21,6 +21,7 @@ pub struct RouteSolutionBuilder {
     nets: BTreeMap<NetId, (Vec<TraceSegment>, Vec<RoutedVia>)>,
     unrouted: Vec<NetId>,
     snapshots: Vec<RoutingIterationSnapshot>,
+    drc_violation_count: u32,
 }
 
 impl RouteSolutionBuilder {
@@ -47,6 +48,11 @@ impl RouteSolutionBuilder {
     /// Append an iteration snapshot for viewer playback.
     pub fn add_snapshot(&mut self, snapshot: RoutingIterationSnapshot) {
         self.snapshots.push(snapshot);
+    }
+
+    /// Record the DRC violation count from the final full DRC run.
+    pub fn set_drc_violations(&mut self, count: u32) {
+        self.drc_violation_count = count;
     }
 
     /// Consume the builder and produce a [`RouteSolution`] with computed metrics.
@@ -90,7 +96,7 @@ impl RouteSolutionBuilder {
             total_vias,
             unrouted_count,
             completion_pct,
-            drc_violations: 0,
+            drc_violations: self.drc_violation_count,
         };
 
         RouteSolution {
@@ -99,6 +105,7 @@ impl RouteSolutionBuilder {
             unrouted: self.unrouted,
             metrics,
             iterations: self.snapshots,
+            drc_violation_records: Vec::new(),
         }
     }
 }

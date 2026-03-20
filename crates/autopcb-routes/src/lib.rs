@@ -87,6 +87,21 @@ pub struct RoutingIterationSnapshot {
     pub paths: BTreeMap<NetId, Vec<TraceSegment>>,
 }
 
+/// Serializable DRC violation record for storage in RouteSolution.
+///
+/// This is a thin format type — the full `DrcViolation` (in autopcb-router)
+/// carries richer object references, but this record carries enough for
+/// CLI display and post-hoc analysis without depending on autopcb-router.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DrcViolationRecord {
+    pub kind_name: String,
+    pub location: Point,
+    pub layer: Option<u16>,
+    pub actual_mm: f64,
+    pub required_mm: f64,
+    pub rule_name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteSolution {
     pub version: u32,
@@ -94,6 +109,7 @@ pub struct RouteSolution {
     pub unrouted: Vec<NetId>,
     pub metrics: RoutingMetrics,
     pub iterations: Vec<RoutingIterationSnapshot>,
+    pub drc_violation_records: Vec<DrcViolationRecord>,
 }
 
 impl RouteSolution {
@@ -104,6 +120,7 @@ impl RouteSolution {
             unrouted: Vec::new(),
             metrics: RoutingMetrics::default(),
             iterations: Vec::new(),
+            drc_violation_records: Vec::new(),
         }
     }
 }

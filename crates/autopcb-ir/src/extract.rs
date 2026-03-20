@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use altium_format::api::{
     BoardContour, ContourSegment, PcbDocBoard, RuleParams,
 };
-use altium_format_types::pcb::V6Layer;
+use altium_format_types::pcb::{RuleKind, V6Layer};
 
 use crate::board::{IrBoardGeometry, IrKeepoutZone};
 use crate::component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
@@ -517,7 +517,65 @@ fn extract_rules(
             RuleParams::MatchedLengths { tolerance } => IrRuleParams::MatchedLengths {
                 tolerance_mm: tolerance.to_mms(),
             },
-            _ => IrRuleParams::Other { kind: r.kind },
+            RuleParams::ShortCircuit { .. } => IrRuleParams::ShortCircuit,
+            RuleParams::BrokenNets { .. } => IrRuleParams::BrokenNets,
+            RuleParams::NetAntennae { .. } => IrRuleParams::NetAntennae,
+            RuleParams::ViasUnderSmd { .. } => IrRuleParams::ViasUnderSmd,
+            RuleParams::AcuteAngle { minimum } => IrRuleParams::AcuteAngle {
+                min_angle_deg: *minimum,
+            },
+            RuleParams::SmdToCorner { distance } => IrRuleParams::SmdToCorner {
+                clearance_mm: distance.to_mms(),
+            },
+            RuleParams::MaximumViaCount { max_via_count } => IrRuleParams::MaximumViaCount {
+                max: *max_via_count,
+            },
+            RuleParams::MaxMinHoleSize { min, max } => IrRuleParams::MaxMinHoleSize {
+                min_mm: min.to_mms(),
+                max_mm: max.to_mms(),
+            },
+            RuleParams::Length { min, max } => IrRuleParams::Length {
+                min_mm: min.to_mms(),
+                max_mm: max.to_mms(),
+            },
+            RuleParams::DaisyChainStubLength { max_limit } => IrRuleParams::DaisyChainStubLength {
+                max_mm: max_limit.to_mms(),
+            },
+            RuleParams::SmdNeckDown { .. } => IrRuleParams::SmdNeckDown,
+            RuleParams::SmdEntry { .. } => IrRuleParams::SmdEntry,
+            RuleParams::ParallelSegment {
+                gap,
+                parallel_length,
+                ..
+            } => IrRuleParams::ParallelSegment {
+                max_run_mm: parallel_length.to_mms(),
+                check_gap_mm: gap.to_mms(),
+            },
+            RuleParams::MinimumSolderMaskSliver { min_width } => {
+                IrRuleParams::MinimumSolderMaskSliver {
+                    min_mm: min_width.to_mms(),
+                }
+            }
+            RuleParams::SilkToSolderMaskClearance { gap } => {
+                IrRuleParams::SilkToSolderMaskClearance {
+                    clearance_mm: gap.to_mms(),
+                }
+            }
+            RuleParams::SilkToSilkClearance { gap } => IrRuleParams::SilkToSilkClearance {
+                clearance_mm: gap.to_mms(),
+            },
+            _ => match r.kind {
+                RuleKind::SilkToBoardRegionClearance => {
+                    // altium-format parses SilkToBoardRegionClearance as EmptyRuleData because
+                    // no dedicated IPCB_SilkToBoardRegionRule interface was found in the C# SDK
+                    // and the gap parameter has not been verified via Ghidra or test fixtures.
+                    // Until altium-format exposes RuleParams::SilkToBoardRegionClearance { gap },
+                    // the clearance value cannot be extracted here and falls back to 0.0.
+                    // See: docs/routing/rules6-audit.md § SilkToBoardRegionClearance
+                    IrRuleParams::SilkToBoardRegionClearance { clearance_mm: 0.0 }
+                }
+                _ => IrRuleParams::Other { kind: r.kind },
+            },
         };
 
         let id = rules.push(IrDesignRule {

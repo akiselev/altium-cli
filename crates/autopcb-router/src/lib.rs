@@ -15,6 +15,9 @@
 
 #![allow(dead_code)]
 
+#[cfg(feature = "gpu")]
+pub mod gpu;
+
 pub mod coopt;
 pub mod config;
 pub mod detailed;
