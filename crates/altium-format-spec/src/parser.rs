@@ -2,18 +2,18 @@ use crate::diagnostic::{BinOp, ParseError, ParseErrorCode, Span, Spanned};
 
 use super::ast::{
     AliasDecl, AnnotationBlockDecl, AnnotationKey, BlockAnnotation, BoardDecl, BoardItem,
-    ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, ConstraintDecl, ConstraintKind,
-    DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl, ErcLevelEntryDecl,
-    ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl, FootprintItem,
-    FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
+    CallArg, ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, ConstraintDecl,
+    ConstraintKind, DifferentialPairDecl, DocumentBlockDecl, EntityName, EntryDecl,
+    ErcLevelEntryDecl, ErcMatrixEntryDecl, Expr, FontBlockDecl, FontDecl, FootprintDecl,
+    FootprintItem, FootprintMapDecl, FootprintRef, GraphicDecl, GridDecl, ImportDecl, LetBinding,
     MatchParameterDecl, NetDecl, Object, ObjectItem, OutputBlockDecl, OutputGroupBlockDecl,
     PadDecl, ParamVariationDecl, ParameterDecl, PartBlock, PartItem, PcbDocPrimitiveDecl,
     PinConnectionDecl, PinConnectionTarget, PinDecl, PinPadPair, PlaceDecl,
     PlacementConstraintDecl, PlacementDecl, PlacementGroupDecl, PlacementItem,
     PlacementSeparateDecl, PolygonDecl, PowerDecl, ProjectDecl, ProjectItem, Property, RowDecl,
-    RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
-    SwapGroupDecl, VariantBlockDecl, VariationDecl, is_graphic_type, is_pcbdoc_block_type,
-    is_pcbdoc_primitive_type, is_schdoc_object_type,
+    RoutingDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile,
+    SpecItem, SwapGroupDecl, VariantBlockDecl, VariationDecl, is_graphic_type,
+    is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
 };
 use super::lexer::{Token, TokenKind, lex};
 
@@ -359,7 +359,7 @@ impl<'a> SpecParser<'a> {
             || self.at(&TokenKind::Net)
             || self.at(&TokenKind::Power)
             || self.at(&TokenKind::Board)
-            || matches!(self.current_kind(), TokenKind::Ident(n) if n == "placement" || is_pcbdoc_block_type(n));
+            || matches!(self.current_kind(), TokenKind::Ident(n) if n == "placement" || n == "routing" || is_pcbdoc_block_type(n));
 
         if annotation.is_some() && !at_block_decl {
             return Err(self.err(
@@ -511,6 +511,15 @@ impl<'a> SpecParser<'a> {
                 let decl = self.parse_placement(annotation)?;
                 let end = self.prev_span();
                 return Ok(Spanned::new(SpecItem::Placement(decl), start.merge(end)));
+            }
+        }
+
+        // routing { ... } top-level block.
+        if let TokenKind::Ident(ref name) = self.current_kind().clone() {
+            if name == "routing" {
+                let decl = self.parse_routing_decl()?;
+                let end = self.prev_span();
+                return Ok(Spanned::new(SpecItem::Routing(decl), start.merge(end)));
             }
         }
 
@@ -1782,6 +1791,19 @@ impl<'a> SpecParser<'a> {
         Ok(PlacementDecl { annotation, body })
     }
 
+    /// Parse `routing { ... }` top-level block.
+    fn parse_routing_decl(&mut self) -> Result<RoutingDecl, ParseError> {
+        match self.current_kind() {
+            TokenKind::Ident(s) if s == "routing" => {
+                self.bump();
+            }
+            _ => return Err(self.err("expected 'routing'")),
+        }
+        self.skip_newlines();
+        let body = self.parse_object()?;
+        Ok(RoutingDecl { body })
+    }
+
     fn parse_placement_place(
         &mut self,
         annotation: Option<Spanned<BlockAnnotation>>,
@@ -2596,6 +2618,41 @@ impl<'a> SpecParser<'a> {
         self.parse_pratt_expr(0)
     }
 
+    /// Parse function call arguments: `( [arg, ...] )`
+    /// Each arg is either positional (`expr`) or named (`name: expr`).
+    /// Positional args must come before named args.
+    fn parse_call_args(&mut self) -> Result<Vec<CallArg>, ParseError> {
+        self.expect(&TokenKind::LParen, "expected '(' for function call")?;
+        self.skip_newlines();
+        let mut args = Vec::new();
+        let mut seen_named = false;
+        while !self.at(&TokenKind::RParen) && !self.at_eof() {
+            // Lookahead: Ident + Colon means named arg
+            let is_named = matches!(self.current_kind(), TokenKind::Ident(_))
+                && matches!(self.peek_ahead(1), TokenKind::Colon);
+            if is_named {
+                let name = self.expect_ident("expected argument name")?;
+                self.expect(&TokenKind::Colon, "expected ':' after argument name")?;
+                self.skip_newlines();
+                let value = self.parse_pratt_expr(0)?;
+                args.push(CallArg { name: Some(name), value });
+                seen_named = true;
+            } else {
+                if seen_named {
+                    return Err(self.err("positional arguments must come before named arguments"));
+                }
+                let value = self.parse_pratt_expr(0)?;
+                args.push(CallArg { name: None, value });
+            }
+            if !self.eat_separator() {
+                break;
+            }
+            self.skip_newlines();
+        }
+        self.expect(&TokenKind::RParen, "expected ')' to close function call")?;
+        Ok(args)
+    }
+
     fn parse_pratt_expr(&mut self, min_bp: u8) -> Result<Spanned<Expr>, ParseError> {
         let mut lhs = self.parse_prefix_expr()?;
 
@@ -2806,25 +2863,54 @@ impl<'a> SpecParser<'a> {
             // bare IDENT — let binding ref or enum value, possibly with path tail
             TokenKind::Ident(name) => {
                 self.bump();
-                let mut expr = Spanned::new(Expr::Ident(name), start);
-                loop {
-                    if self.eat(&TokenKind::Dot) {
-                        let field = self.expect_ident("expected field name after '.'")?;
-                        let span = start.merge(field.span);
-                        expr = Spanned::new(Expr::Path(Box::new(expr), field), span);
-                    } else if self.eat(&TokenKind::LBracket) {
-                        self.skip_newlines();
-                        let idx = self.parse_pratt_expr(0)?;
-                        self.skip_newlines();
-                        let end = self.current_span();
-                        self.expect(&TokenKind::RBracket, "expected ']'")?;
-                        let span = start.merge(end);
-                        expr = Spanned::new(Expr::Index(Box::new(expr), Box::new(idx)), span);
-                    } else {
-                        break;
+                // Function call: name(...)
+                if self.at(&TokenKind::LParen) {
+                    let call_args = self.parse_call_args()?;
+                    let end = self.prev_span();
+                    let mut expr = Spanned::new(
+                        Expr::Call { name, args: call_args },
+                        start.merge(end),
+                    );
+                    // Allow path/index tail after call: name(...).field or name(...)[0]
+                    loop {
+                        if self.eat(&TokenKind::Dot) {
+                            let field = self.expect_ident("expected field name after '.'")?;
+                            let span = start.merge(field.span);
+                            expr = Spanned::new(Expr::Path(Box::new(expr), field), span);
+                        } else if self.eat(&TokenKind::LBracket) {
+                            self.skip_newlines();
+                            let idx = self.parse_pratt_expr(0)?;
+                            self.skip_newlines();
+                            let end = self.current_span();
+                            self.expect(&TokenKind::RBracket, "expected ']'")?;
+                            let span = start.merge(end);
+                            expr = Spanned::new(Expr::Index(Box::new(expr), Box::new(idx)), span);
+                        } else {
+                            break;
+                        }
                     }
+                    Ok(expr)
+                } else {
+                    let mut expr = Spanned::new(Expr::Ident(name), start);
+                    loop {
+                        if self.eat(&TokenKind::Dot) {
+                            let field = self.expect_ident("expected field name after '.'")?;
+                            let span = start.merge(field.span);
+                            expr = Spanned::new(Expr::Path(Box::new(expr), field), span);
+                        } else if self.eat(&TokenKind::LBracket) {
+                            self.skip_newlines();
+                            let idx = self.parse_pratt_expr(0)?;
+                            self.skip_newlines();
+                            let end = self.current_span();
+                            self.expect(&TokenKind::RBracket, "expected ']'")?;
+                            let span = start.merge(end);
+                            expr = Spanned::new(Expr::Index(Box::new(expr), Box::new(idx)), span);
+                        } else {
+                            break;
+                        }
+                    }
+                    Ok(expr)
                 }
-                Ok(expr)
             }
 
             // Unary negation: -expr
@@ -4236,5 +4322,130 @@ placement {
         // which will then fail — that is the correct behavior.
         let err = parse_err(r#"component U1 { pin net -> #CLK }"#);
         assert!(!err.message.is_empty());
+    }
+
+    // ── Function call parsing tests ─────────────────────────────────────
+
+    #[test]
+    fn test_call_no_args() {
+        let f = parse("let x = foo()");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            assert!(matches!(&b.value.node, Expr::Call { name, args } if name == "foo" && args.is_empty()));
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_call_positional_args() {
+        let f = parse("let x = rect(100mm, 50mm)");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            if let Expr::Call { name, args } = &b.value.node {
+                assert_eq!(name, "rect");
+                assert_eq!(args.len(), 2);
+                assert!(args[0].name.is_none());
+                assert!(args[1].name.is_none());
+            } else {
+                panic!("expected Call");
+            }
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_call_named_args() {
+        let f = parse("let x = rect(from: (0mm, 0mm), to: (100mm, 50mm))");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            if let Expr::Call { name, args } = &b.value.node {
+                assert_eq!(name, "rect");
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[0].name.as_ref().unwrap().node, "from");
+                assert_eq!(args[1].name.as_ref().unwrap().node, "to");
+            } else {
+                panic!("expected Call");
+            }
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_call_mixed_args() {
+        let f = parse("let x = rect(100mm, 50mm, center: (0mm, 0mm))");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            if let Expr::Call { name, args } = &b.value.node {
+                assert_eq!(name, "rect");
+                assert_eq!(args.len(), 3);
+                assert!(args[0].name.is_none());
+                assert!(args[1].name.is_none());
+                assert_eq!(args[2].name.as_ref().unwrap().node, "center");
+            } else {
+                panic!("expected Call");
+            }
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_call_nested() {
+        // inset(rect(100mm, 50mm), 5mm)
+        let f = parse("let x = inset(rect(100mm, 50mm), 5mm)");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            if let Expr::Call { name, args } = &b.value.node {
+                assert_eq!(name, "inset");
+                assert_eq!(args.len(), 2);
+                // First arg should be a nested Call
+                assert!(matches!(&args[0].value.node, Expr::Call { name, .. } if name == "rect"));
+            } else {
+                panic!("expected Call");
+            }
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_call_with_path_tail() {
+        // rect(100mm, 50mm).width
+        let f = parse("let w = rect(100mm, 50mm).width");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            if let Expr::Path(base, field) = &b.value.node {
+                assert_eq!(field.node, "width");
+                assert!(matches!(&base.node, Expr::Call { name, .. } if name == "rect"));
+            } else {
+                panic!("expected Path, got {:?}", b.value.node);
+            }
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_call_in_expression() {
+        // width(shape) + 10mm
+        let f = parse("let x = width(shape) + 10mm");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            assert!(matches!(&b.value.node, Expr::BinOp(..)));
+        } else {
+            panic!("expected LetBinding");
+        }
+    }
+
+    #[test]
+    fn test_positional_after_named_error() {
+        let _err = parse_err("let x = rect(center: (0mm, 0mm), 100mm)");
+    }
+
+    #[test]
+    fn test_bare_ident_not_call() {
+        // Bare ident without parens should still be Expr::Ident
+        let f = parse("let x = some_var");
+        if let SpecItem::LetBinding(b) = &f.items[0].node {
+            assert!(matches!(&b.value.node, Expr::Ident(name) if name == "some_var"));
+        } else {
+            panic!("expected LetBinding");
+        }
     }
 }

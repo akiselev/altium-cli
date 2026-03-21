@@ -4,18 +4,22 @@
 //! suitable for placement solvers, routers, DRC, and visualisation.
 
 pub mod board;
+pub mod compile_error;
 pub mod component;
 pub mod component_body;
 pub mod copper;
 pub mod dimension;
 pub mod extract;
+pub(crate) mod geometry;
 pub mod handles;
 pub mod layer_stack;
 pub mod net;
+pub mod pcbdoc_import;
 pub mod polygon;
 pub mod region;
 pub mod rule;
 pub mod spec_bridge;
+pub mod spec_compiler;
 pub mod text;
 pub mod types;
 
@@ -32,8 +36,11 @@ pub use layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection};
 pub use net::{IrNet, IrNetPin};
 pub use polygon::IrPolygon;
 pub use region::{IrRegion, IrRegionKind};
-pub use rule::{IrDesignRule, IrRuleParams};
+pub use compile_error::IrCompileError;
+pub use rule::{IrDesignRule, IrRuleParams, IrRuleScope, IrRuleScopePair};
+pub use pcbdoc_import::import_pcbdoc;
 pub use spec_bridge::load_ir_from_spec;
+pub use spec_compiler::spec_to_ir;
 pub use text::IrText;
 pub use types::{BoardSide, BoundingBoxMm, PointMm};
 

@@ -529,14 +529,47 @@ pub enum SpecModel {
     PrjPcb(PrjPcbSpec),
 }
 
+// ── PcbDoc geometry types ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct KeepoutSpec {
+    pub vertices: Vec<CoordPoint>,
+    pub restrict_copper: bool,
+    pub restrict_components: bool,
+    pub layer: Option<LayerSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoardLayerSpec {
+    pub name: String,
+    pub is_copper: bool,
+    pub copper_index: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PadGeometrySpec {
+    pub designator: String,
+    pub position: CoordPoint,
+    pub shape: PadShape,
+    pub size_x: Coord,
+    pub size_y: Coord,
+    pub hole_size: Option<Coord>,
+    pub layer: LayerSpec,
+    pub net: Option<String>,
+    pub rotation: f64,
+}
+
 // ── PcbDoc ──────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct PcbDocSpec {
     pub boards: Vec<BoardSpec>,
     pub placement: Option<PlacementSpec>,
     pub placement_rules: Vec<PlacementRuleSpec>,
+    pub routing: Option<RoutingSpec>,
 }
 
+#[derive(Clone)]
 pub struct BoardSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub name: String,
@@ -544,6 +577,10 @@ pub struct BoardSpec {
     pub snap_grid_size: Option<Coord>,
     pub visible_grid_size: Option<Coord>,
     pub display_unit: Option<String>,
+
+    pub outline: Option<Vec<CoordPoint>>,
+    pub keepouts: Vec<KeepoutSpec>,
+    pub layers: Vec<BoardLayerSpec>,
 
     pub nets: Vec<PcbDocNetSpec>,
     pub components: Vec<PcbDocComponentSpec>,
@@ -564,6 +601,7 @@ pub struct BoardSpec {
 
 /// A generic PcbDoc primitive spec (track, arc, via, pad, fill, text, region, component_body, dimension).
 /// Properties are stored as evaluated key-value pairs; the executor converts them to typed API objects.
+#[derive(Clone)]
 pub struct PcbDocPrimitiveSpec {
     pub id: String,
     pub position_index: usize,
@@ -571,6 +609,7 @@ pub struct PcbDocPrimitiveSpec {
     pub properties: indexmap::IndexMap<String, crate::eval::Value>,
 }
 
+#[derive(Clone)]
 pub struct PcbDocNetSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub name: String,
@@ -578,6 +617,7 @@ pub struct PcbDocNetSpec {
     pub visible: Option<bool>,
 }
 
+#[derive(Clone)]
 pub struct PcbDocComponentSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub designator: String,
@@ -589,8 +629,10 @@ pub struct PcbDocComponentSpec {
     pub source_library: Option<String>,
     /// BOM parameters keyed by name.
     pub parameters: indexmap::IndexMap<String, String>,
+    pub pads: Vec<PadGeometrySpec>,
 }
 
+#[derive(Clone)]
 pub struct PcbDocPolygonSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub name: String,
@@ -600,6 +642,7 @@ pub struct PcbDocPolygonSpec {
     pub pour_order: Option<i32>,
 }
 
+#[derive(Clone)]
 pub struct PcbDocRuleSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub name: String,
@@ -612,14 +655,19 @@ pub struct PcbDocRuleSpec {
     pub properties: indexmap::IndexMap<String, String>,
     /// Scope expression limiting which objects the rule applies to (e.g. `"all_copper"`).
     pub scope: Option<String>,
+    /// Second scope expression for two-object rules (Clearance, ComponentClearance).
+    pub scope2: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct PcbDocClassSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub name: String,
     pub kind: Option<String>,
+    pub members: Vec<String>,
 }
 
+#[derive(Clone)]
 pub struct PcbDocDifferentialPairSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub name: String,
@@ -627,6 +675,7 @@ pub struct PcbDocDifferentialPairSpec {
     pub negative_net: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct PlacementSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub target: Option<String>,
@@ -642,6 +691,7 @@ pub struct PlacementSpec {
     pub groups: Vec<PlacementGroupSpec>,
 }
 
+#[derive(Clone)]
 pub struct PlacementPlaceSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub designators: Vec<String>,
@@ -686,6 +736,7 @@ pub enum UnplacedStrategy {
 }
 
 /// Configuration for the autoplace solver.
+#[derive(Clone)]
 pub struct AutoplaceConfig {
     pub algorithm: Option<String>,
     pub sa_cooling: Option<f64>,
@@ -704,11 +755,13 @@ pub struct AutoplaceConfig {
 }
 
 /// A named group of components for placement solver grouping.
+#[derive(Clone)]
 pub struct PlacementGroupSpec {
     pub name: String,
     pub components: Vec<String>,
 }
 
+#[derive(Clone)]
 pub enum PlacementConstraintSpec {
     LeftOf {
         a: String,
@@ -732,20 +785,32 @@ pub enum PlacementConstraintSpec {
     },
 }
 
+#[derive(Clone)]
 pub struct PlacementOptimizeSpec {
     pub ratsnest: bool,
     pub ratsnest_weight: f64,
 }
 
+#[derive(Clone)]
 pub struct PlacementClearanceSpec {
     pub all: Option<Coord>,
     pub edge: Option<Coord>,
 }
 
+#[derive(Clone)]
 pub struct PlacementRuleSpec {
     pub name: String,
     pub kind: Option<String>,
     pub gap: Option<Coord>,
+}
+
+/// Routing configuration and solution file reference.
+#[derive(Clone, Debug, Default)]
+pub struct RoutingSpec {
+    /// Explicit path to a .routes solution file (relative to spec dir).
+    pub solution: Option<String>,
+    /// Routing config overrides as key-value pairs.
+    pub config: indexmap::IndexMap<String, String>,
 }
 
 // ── PrjPcb ──────────────────────────────────────────────────────────────────

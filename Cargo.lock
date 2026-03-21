@@ -181,6 +181,7 @@ dependencies = [
  "autopcb-graph-spec",
  "autopcb-ir",
  "autopcb-placement",
+ "autopcb-router",
  "autopcb-routes",
  "cfb",
  "clap",
@@ -738,7 +739,10 @@ name = "autopcb-ir"
 version = "0.2.0"
 dependencies = [
  "altium-format",
+ "altium-format-spec",
  "altium-format-types",
+ "autopcb-routes",
+ "indexmap",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -822,7 +826,6 @@ dependencies = [
 name = "autopcb-viewer"
 version = "0.2.0"
 dependencies = [
- "altium-format",
  "altium-format-spec",
  "anyhow",
  "autopcb-ir",

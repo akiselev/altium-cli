@@ -52,6 +52,7 @@ pub enum SpecItem {
     // PcbDoc-specific
     Board(BoardDecl),
     Placement(PlacementDecl),
+    Routing(RoutingDecl),
     PcbDocPrimitive(PcbDocPrimitiveDecl),
     Polygon(PolygonDecl),
     Rule(RuleDecl),
@@ -478,6 +479,12 @@ pub struct DifferentialPairDecl {
     pub body: Spanned<Object>,
 }
 
+/// routing { ... } top-level block for PcbDoc specs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoutingDecl {
+    pub body: Spanned<Object>,
+}
+
 /// placement { ... } top-level block for placement solver directives.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacementDecl {
@@ -598,6 +605,20 @@ pub enum Expr {
     Tuple(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     Array(Vec<Spanned<Expr>>),
     Object(Object),
+
+    /// Function call: `name(arg1, key: arg2, ...)`
+    Call {
+        name: String,
+        args: Vec<CallArg>,
+    },
+}
+
+/// A function call argument: either positional or named.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    /// `None` for positional args, `Some(name)` for named args.
+    pub name: Option<Spanned<String>>,
+    pub value: Spanned<Expr>,
 }
 
 /// { items... }

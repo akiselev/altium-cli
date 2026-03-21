@@ -1,6 +1,7 @@
 //! Width DRC: verify each segment's width is within min/max bounds.
 
 use altium_format_types::pcb::RuleKind;
+use autopcb_ir::PcbIr;
 use autopcb_ir::types::PointMm;
 use autopcb_routes::RouteSolution;
 
@@ -9,17 +10,20 @@ use super::policy::DrcPolicy;
 
 /// Check that each segment's width satisfies the policy width bounds.
 ///
-/// Uses the default net-class bounds (`None`) for every segment — per-net-class
-/// width lookup can be added once IR carries net-class scope.
+/// Looks up the net class for each segment's net from `ir` and passes both
+/// net class and layer to `policy.width_bounds()` for scoped cascade resolution.
 pub fn check_widths(
     solution: &RouteSolution,
     policy: &DrcPolicy,
+    ir: &PcbIr,
 ) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
 
     for routed_net in solution.nets.values() {
+        let net_class: Option<&str> = super::net_class_for_net(ir, routed_net.net_id);
+
         for segment in &routed_net.segments {
-            let bounds = policy.width_bounds(None, None);
+            let bounds = policy.width_bounds(net_class, Some(segment.layer));
 
             if segment.width_mm < bounds.min_mm {
                 let mid = PointMm {
@@ -55,6 +59,7 @@ pub fn check_widths(
                 });
             }
         }
+
     }
 
     violations
@@ -69,45 +74,13 @@ mod tests {
     use super::*;
     use altium_format_types::pcb::RuleKind;
     use autopcb_ir::{
-        handles::{IdMap, LayerId as IrLayerId, RuleId},
-        layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
-        rule::{IrDesignRule, IrRuleParams},
-        types::{BoundingBoxMm, PointMm as IrPointMm},
-        IrBoardGeometry, PcbIr,
+        handles::RuleId,
+        rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
+        PcbIr,
     };
     use autopcb_routes::{LayerId, NetId, Point, RoutedNet, RouteSolution, TraceSegment};
 
-    fn empty_ir() -> PcbIr {
-        PcbIr {
-            board: IrBoardGeometry {
-                outline: vec![],
-                cutouts: vec![],
-                bounds: BoundingBoxMm {
-                    min: IrPointMm { x: 0.0, y: 0.0 },
-                    max: IrPointMm { x: 100.0, y: 100.0 },
-                },
-                keepouts: vec![],
-            },
-            layer_stack: IrLayerStack {
-                copper_layers: vec![IrCopperLayer {
-                    id: IrLayerId::from(0u32),
-                    name: "Top Layer".into(),
-                    is_top: true,
-                    is_bottom: false,
-                    preferred_direction: Some(PreferredDirection::Any),
-                }],
-                copper_layer_count: 1,
-            },
-            components: IdMap::new(),
-            nets: IdMap::new(),
-            rules: IdMap::new(),
-            free_copper: Default::default(),
-            polygons: IdMap::new(),
-            texts: IdMap::new(),
-            regions: IdMap::new(),
-            component_bodies: IdMap::new(),
-        }
-    }
+    use super::super::test_helpers::empty_ir;
 
     fn add_width_rule(ir: &mut PcbIr, priority: i32, min_mm: f64, max_mm: f64, preferred_mm: f64) {
         let id = ir.rules.push(IrDesignRule {
@@ -116,6 +89,7 @@ mod tests {
             kind: RuleKind::Width,
             priority,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params: IrRuleParams::Width { min_mm, max_mm, preferred_mm },
         });
         ir.rules[id].id = id;
@@ -147,7 +121,7 @@ mod tests {
         add_width_rule(&mut ir, 1, 0.1, 1.0, 0.2);
         let policy = DrcPolicy::build(&ir).unwrap();
         let solution = solution_with_segment(0.2);
-        let violations = check_widths(&solution, &policy);
+        let violations = check_widths(&solution, &policy, &ir);
         assert!(violations.is_empty(), "expected no violations, got {:?}", violations);
     }
 
@@ -157,7 +131,7 @@ mod tests {
         add_width_rule(&mut ir, 1, 0.15, 1.0, 0.2);
         let policy = DrcPolicy::build(&ir).unwrap();
         let solution = solution_with_segment(0.1);
-        let violations = check_widths(&solution, &policy);
+        let violations = check_widths(&solution, &policy, &ir);
         assert_eq!(violations.len(), 1);
         let v = &violations[0];
         assert_eq!(v.kind, DrcViolationKind::WidthBelowMinimum);
@@ -173,7 +147,7 @@ mod tests {
         add_width_rule(&mut ir, 1, 0.1, 0.5, 0.2);
         let policy = DrcPolicy::build(&ir).unwrap();
         let solution = solution_with_segment(1.0);
-        let violations = check_widths(&solution, &policy);
+        let violations = check_widths(&solution, &policy, &ir);
         assert_eq!(violations.len(), 1);
         let v = &violations[0];
         assert_eq!(v.kind, DrcViolationKind::WidthAboveMaximum);
@@ -187,7 +161,7 @@ mod tests {
         add_width_rule(&mut ir, 1, 0.1, 1.0, 0.2);
         let policy = DrcPolicy::build(&ir).unwrap();
         let solution = solution_with_segment(0.1);
-        let violations = check_widths(&solution, &policy);
+        let violations = check_widths(&solution, &policy, &ir);
         assert!(violations.is_empty());
     }
 
@@ -197,7 +171,7 @@ mod tests {
         add_width_rule(&mut ir, 1, 0.1, 1.0, 0.2);
         let policy = DrcPolicy::build(&ir).unwrap();
         let solution = solution_with_segment(1.0);
-        let violations = check_widths(&solution, &policy);
+        let violations = check_widths(&solution, &policy, &ir);
         assert!(violations.is_empty());
     }
 }

@@ -3,6 +3,33 @@
 use crate::handles::{LayerId, RuleId};
 use altium_format_types::pcb::{CornerStyle, NetTopology, RuleKind};
 
+/// Scope selector for one side of a rule scope pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum IrRuleScope {
+    All,
+    NetClass(String),
+    Layer(LayerId),
+    NetClassAndLayer(String, LayerId),
+}
+
+/// Two-sided scope for a design rule (matches Altium's scope1/scope2 model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct IrRuleScopePair {
+    pub scope1: IrRuleScope,
+    pub scope2: IrRuleScope,
+}
+
+impl Default for IrRuleScopePair {
+    fn default() -> Self {
+        Self {
+            scope1: IrRuleScope::All,
+            scope2: IrRuleScope::All,
+        }
+    }
+}
+
 /// A design rule from the PcbDoc.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -12,6 +39,7 @@ pub struct IrDesignRule {
     pub kind: RuleKind,
     pub priority: i32,
     pub enabled: bool,
+    pub scope: IrRuleScopePair,
     pub params: IrRuleParams,
 }
 
@@ -134,4 +162,46 @@ pub enum IrRuleParams {
     Other {
         kind: RuleKind,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handles::RuleId;
+
+    #[test]
+    fn design_rule_default_scope_is_all() {
+        let rule = IrDesignRule {
+            id: RuleId::from(0u32),
+            name: "test".into(),
+            kind: RuleKind::Clearance,
+            priority: 1,
+            enabled: true,
+            scope: IrRuleScopePair::default(),
+            params: IrRuleParams::Clearance { gap_mm: 0.25 },
+        };
+        assert_eq!(rule.scope.scope1, IrRuleScope::All);
+        assert_eq!(rule.scope.scope2, IrRuleScope::All);
+    }
+
+    #[test]
+    fn design_rule_net_class_scope() {
+        let rule = IrDesignRule {
+            id: RuleId::from(1u32),
+            name: "high_speed".into(),
+            kind: RuleKind::Clearance,
+            priority: 2,
+            enabled: true,
+            scope: IrRuleScopePair {
+                scope1: IrRuleScope::NetClass("HighSpeed".into()),
+                scope2: IrRuleScope::All,
+            },
+            params: IrRuleParams::Clearance { gap_mm: 0.15 },
+        };
+        assert_eq!(
+            rule.scope.scope1,
+            IrRuleScope::NetClass("HighSpeed".into())
+        );
+        assert_eq!(rule.scope.scope2, IrRuleScope::All);
+    }
 }

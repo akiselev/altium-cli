@@ -31,7 +31,7 @@ pub use eco::{
     PropValue,
 };
 pub use eval::{
-    EvalResult, ScopeStack, Severity, SpecError, SpecErrorCode, Value, eval_expr,
+    EvalResult, ScopeStack, Severity, Shape, SpecError, SpecErrorCode, Value, eval_expr,
     eval_let_bindings, unit_to_internal,
 };
 pub use executor::{

@@ -243,7 +243,7 @@ mod tests {
         handles::{IdMap, LayerId as IrLayerId, NetId as IrNetId, RuleId},
         layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
         net::IrNet,
-        rule::{IrDesignRule, IrRuleParams},
+        rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
         types::{BoundingBoxMm, PointMm},
         IrBoardGeometry, PcbIr,
     };
@@ -290,6 +290,7 @@ mod tests {
             kind,
             priority,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params,
         });
         ir.rules[id].id = id;

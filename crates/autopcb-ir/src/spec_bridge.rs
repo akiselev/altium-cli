@@ -1,17 +1,22 @@
 //! Bridge between the spec pipeline and the IR.
 //!
 //! Provides [`load_ir_from_spec`] which encapsulates the full pipeline:
-//! compile spec → resolve target PcbDoc → open PcbDoc → apply spec → extract IR.
+//! open PcbDoc → `import_pcbdoc()` → merge spec mutations → `spec_to_ir()`.
 //!
-//! The caller never touches `PcbDoc` or `altium_format` types.
+//! The caller never touches `PcbDoc` or `PcbDocBoard` types directly.
 
 use std::path::{Path, PathBuf};
 
 use altium_format::PcbDoc;
-use altium_format_spec::{PcbDocSpec, apply_spec_pcbdoc};
+use altium_format_spec::PcbDocSpec;
+use autopcb_routes::RouteSolution;
 
 use crate::component::IrComponent;
+use crate::copper::{IrTrack, IrVia};
 use crate::extract::PcbIr;
+use crate::handles::{LayerId, NetId};
+use crate::pcbdoc_import::{import_pcbdoc, merge_pcbdoc_spec};
+use crate::spec_compiler::spec_to_ir;
 use crate::types::{BoundingBoxMm, PointMm};
 use crate::IrError;
 
@@ -28,9 +33,10 @@ pub struct SpecIrResult {
 /// Pipeline:
 /// 1. Resolve the target PcbDoc path from `spec.placement.target` or `target_override`
 /// 2. Open the PcbDoc
-/// 3. Apply spec board mutations via `apply_spec_pcbdoc`
-/// 4. Extract IR
-/// 5. Apply placement `at:` overrides to the IR
+/// 3. Import PcbDoc into a [`PcbDocSpec`] via `import_pcbdoc()`
+/// 4. Merge spec file mutations on top (spec file wins on conflict)
+/// 5. Compile merged spec to IR via `spec_to_ir()`
+/// 6. Apply placement `at:` overrides to the IR
 ///
 /// The caller never sees `PcbDoc` or `PcbDocBoard`.
 pub fn load_ir_from_spec(
@@ -56,23 +62,32 @@ pub fn load_ir_from_spec(
     };
 
     // 2. Open PcbDoc.
-    let mut doc = PcbDoc::open(&target_path).map_err(|e| {
+    let doc = PcbDoc::open(&target_path).map_err(|e| {
         IrError::ExtractionError(format!("failed to open {}: {e}", target_path.display()))
     })?;
 
-    // 3. Apply spec mutations.
-    apply_spec_pcbdoc(spec, &mut doc).map_err(|e| {
-        IrError::ExtractionError(format!("failed to apply spec: {e}"))
-    })?;
-
-    // 4. Extract IR.
+    // 3. Import PcbDoc into PcbDocSpec.
     let board = doc.board().map_err(|e| {
         IrError::ExtractionError(format!("failed to extract board: {e}"))
     })?;
-    let mut ir = PcbIr::extract(&board)?;
+    let imported_spec = import_pcbdoc(&board).map_err(|e| {
+        IrError::ExtractionError(format!("failed to import PcbDoc: {e}"))
+    })?;
 
-    // 5. Apply placement `at:` overrides.
-    apply_placement_overrides(spec, &mut ir);
+    // 4. Merge spec file mutations on top of imported spec.
+    //    Spec file values overwrite imported values on conflict.
+    let merged_spec = merge_pcbdoc_spec(imported_spec, spec);
+
+    // 5. Compile merged spec to IR.
+    let mut ir = spec_to_ir(&merged_spec).map_err(|e| {
+        IrError::ExtractionError(format!("spec compilation failed: {e}"))
+    })?;
+
+    // 6. Apply placement `at:` overrides.
+    apply_placement_overrides(&merged_spec, &mut ir);
+
+    // 7. Load and merge routing solution if available.
+    merge_routes_if_available(&mut ir, &merged_spec, spec_dir);
 
     Ok(SpecIrResult { ir, target_path })
 }
@@ -149,6 +164,85 @@ pub fn apply_component_pose(
     }
     if let Some(bb) = BoundingBoxMm::from_points(&world_pts) {
         comp.world_bounds = bb;
+    }
+}
+
+/// Load a .routes file and merge its segments/vias into `PcbIr.free_copper`.
+///
+/// Returns `true` if a solution was loaded and merged, `false` if no routes
+/// file was configured or the file could not be read.
+fn merge_routes_if_available(ir: &mut PcbIr, spec: &PcbDocSpec, spec_dir: &Path) -> bool {
+    let routes_path = spec
+        .routing
+        .as_ref()
+        .and_then(|r| r.solution.as_ref())
+        .map(|s| spec_dir.join(s));
+
+    let routes_path = match routes_path {
+        Some(p) if p.exists() => p,
+        _ => return false,
+    };
+
+    let solution = match autopcb_routes::load_binary(&routes_path)
+        .or_else(|_| autopcb_routes::load_json(&routes_path))
+    {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    merge_solution_into_ir(ir, &solution);
+    true
+}
+
+/// Convert a [`RouteSolution`] into `IrTrack` and `IrVia` entries appended to
+/// `ir.free_copper`. Segments and vias that reference a layer index outside the
+/// IR layer stack are silently skipped (the router may have been run against a
+/// different board revision).
+fn merge_solution_into_ir(ir: &mut PcbIr, solution: &RouteSolution) {
+    for routed_net in solution.nets.values() {
+        let ir_net_id = NetId::from(routed_net.net_id.raw());
+        let net = if ir.nets.get(ir_net_id).is_some() {
+            Some(ir_net_id)
+        } else {
+            None
+        };
+
+        for seg in &routed_net.segments {
+            let layer_idx = seg.layer.raw() as u32;
+            let ir_layer = LayerId::from(layer_idx);
+            let layer_name = ir
+                .layer_stack
+                .copper_layers
+                .iter()
+                .find(|l| l.id == ir_layer)
+                .map(|l| l.name.clone())
+                .unwrap_or_else(|| format!("Layer{}", layer_idx));
+            ir.free_copper.tracks.push(IrTrack {
+                start: PointMm::new(seg.start.x, seg.start.y),
+                end: PointMm::new(seg.end.x, seg.end.y),
+                width_mm: seg.width_mm,
+                layer_name,
+                layer: ir_layer,
+                net,
+                locked: false,
+                pre_routed: true,
+            });
+        }
+
+        for via in &routed_net.vias {
+            let from_idx = via.from_layer.raw() as u32;
+            let to_idx = via.to_layer.raw() as u32;
+            ir.free_copper.vias.push(IrVia {
+                position: PointMm::new(via.position.x, via.position.y),
+                diameter_mm: via.drill_mm + 2.0 * via.annular_ring_mm,
+                hole_size_mm: via.drill_mm,
+                net,
+                from_layer: LayerId::from(from_idx),
+                to_layer: LayerId::from(to_idx),
+                locked: false,
+                pre_routed: true,
+            });
+        }
     }
 }
 

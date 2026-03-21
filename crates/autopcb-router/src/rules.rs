@@ -212,14 +212,11 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
         .collect();
     sorted.sort_by_key(|s| s.priority);
 
-    // Fail fast on any unsupported (Other) rule before we process anything.
-    for s in &sorted {
-        if let IrRuleParams::Other { kind } = &s.rule.params {
-            return Err(RoutingError::UnsupportedRule {
-                kind: kind.to_string(),
-            });
-        }
-    }
+    // Filter out rules with IrRuleParams::Other — these are manufacturing, test,
+    // and signal-integrity rules (SmdToPlane, FabricationTestpoint, etc.) that the
+    // router does not use. The spec compiler preserves them for completeness, but
+    // the router only needs Width, Clearance, Via, Routing, and DiffPair rules.
+    sorted.retain(|s| !matches!(&s.rule.params, IrRuleParams::Other { .. }));
 
     // Extract defaults from the first matching rule of each kind (first in
     // sorted order = highest priority).
@@ -382,7 +379,7 @@ mod tests {
         handles::{IdMap, LayerId as IrLayerId, NetId as IrNetId, RuleId},
         layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
         net::IrNet,
-        rule::{IrDesignRule, IrRuleParams},
+        rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
         types::{BoundingBoxMm, PointMm},
         IrBoardGeometry,
     };
@@ -443,6 +440,7 @@ mod tests {
             kind,
             priority,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params,
         });
         rules[id].id = id;
@@ -539,9 +537,10 @@ mod tests {
         );
     }
 
-    /// An unsupported (Other) rule kind returns RoutingError::UnsupportedRule.
+    /// Other-kind rules are silently filtered out (manufacturing/test rules the
+    /// router doesn't use).
     #[test]
-    fn unsupported_rule_kind_returns_error() {
+    fn other_rule_kind_is_filtered_not_rejected() {
         let mut ir = empty_ir();
         make_rule(
             &mut ir.rules,
@@ -552,11 +551,7 @@ mod tests {
             },
         );
         let result = build_policy(&ir, &default_config());
-        assert!(
-            matches!(result, Err(RoutingError::UnsupportedRule { .. })),
-            "expected UnsupportedRule, got {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Other rules should be filtered, not rejected: {:?}", result);
     }
 
     /// Diff pair config returned for diff-pair nets, None for regular nets.

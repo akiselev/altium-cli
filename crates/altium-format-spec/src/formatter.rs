@@ -391,6 +391,21 @@ impl<'a> Printer<'a> {
             Expr::Object(obj) => {
                 self.fmt_object(obj);
             }
+            Expr::Call { name, args } => {
+                self.push(name);
+                self.push("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.push(", ");
+                    }
+                    if let Some(ref arg_name) = arg.name {
+                        self.push(&arg_name.node);
+                        self.push(": ");
+                    }
+                    self.fmt_expr(&arg.value.node, false);
+                }
+                self.push(")");
+            }
         }
     }
 
@@ -542,6 +557,7 @@ impl<'a> Printer<'a> {
             SpecItem::SchDocObject(decl) => self.fmt_schdoc_object(decl),
             SpecItem::Board(decl) => self.fmt_board(decl),
             SpecItem::Placement(decl) => self.fmt_placement(decl),
+            SpecItem::Routing(decl) => self.fmt_routing(decl),
             SpecItem::PcbDocPrimitive(decl) => self.fmt_pcbdoc_primitive(decl),
             SpecItem::Polygon(decl) => self.fmt_polygon(decl),
             SpecItem::Rule(decl) => self.fmt_rule(decl),
@@ -1130,6 +1146,13 @@ impl<'a> Printer<'a> {
         }
         self.dedent();
         self.push("}");
+    }
+
+    // ── Routing ───────────────────────────────────────────────────────────────
+
+    fn fmt_routing(&mut self, decl: &RoutingDecl) {
+        self.push("routing ");
+        self.fmt_object(&decl.body.node);
     }
 
     fn fmt_placement_item(&mut self, item: &PlacementItem) {

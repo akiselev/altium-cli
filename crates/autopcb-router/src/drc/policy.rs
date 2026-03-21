@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use altium_format_types::pcb::RuleKind;
-use autopcb_ir::{IrDesignRule, IrRuleParams, PcbIr};
+use autopcb_ir::{IrDesignRule, IrRuleParams, IrRuleScope, IrRuleScopePair, PcbIr};
 use autopcb_routes::LayerId;
 
 use super::DrcError;
@@ -97,13 +97,57 @@ impl ClearanceMatrix {
     }
 }
 
+/// Scope priority level for width/via rule cascade.
+///
+/// Higher value = higher priority. Used internally by `width_bounds` and `via_bounds`
+/// to select the most-specific rule that matches the query context.
+///
+/// Priority order (per Decision Log): NetClassAndLayer > NetClass > Layer > All.
+fn scope_priority(scope: &IrRuleScope) -> u8 {
+    match scope {
+        IrRuleScope::All => 0,
+        IrRuleScope::Layer(_) => 1,
+        IrRuleScope::NetClass(_) => 2,
+        IrRuleScope::NetClassAndLayer(_, _) => 3,
+    }
+}
+
+/// Returns true if `scope` matches the given net class and layer context.
+fn scope_matches(
+    scope: &IrRuleScope,
+    net_class: Option<&str>,
+    layer: Option<autopcb_ir::LayerId>,
+) -> bool {
+    match scope {
+        IrRuleScope::All => true,
+        IrRuleScope::NetClass(cls) => net_class.map_or(false, |nc| nc == cls.as_str()),
+        IrRuleScope::Layer(lid) => layer.map_or(false, |l| l == *lid),
+        IrRuleScope::NetClassAndLayer(cls, lid) => {
+            net_class.map_or(false, |nc| nc == cls.as_str())
+                && layer.map_or(false, |l| l == *lid)
+        }
+    }
+}
+
 /// DRC policy built from `PcbIr` design rules.
 ///
 /// All lookups use `BTreeMap` for deterministic iteration order.
 #[derive(Debug, Clone)]
 pub struct DrcPolicy {
     pub clearance_matrix: ClearanceMatrix,
-    pub width_constraints: BTreeMap<Option<String>, DrcWidthBounds>,
+    /// Scoped clearance rules: `(scope_pair, gap_mm)` in priority order (highest priority first).
+    ///
+    /// Each entry represents a Clearance rule with its two-sided scope. Lookup via
+    /// `clearance_for_scopes()` checks both orderings (scope1↔class_a AND scope2↔class_b,
+    /// or scope1↔class_b AND scope2↔class_a) and returns the first match.
+    pub clearance_scoped: Vec<(IrRuleScopePair, f64)>,
+    /// Width constraints stored as `(scope, bounds)` pairs sorted by priority descending.
+    /// Lookup uses explicit cascade: NetClassAndLayer > NetClass > Layer > All.
+    pub width_constraints: Vec<(IrRuleScope, DrcWidthBounds)>,
+    /// Via bounds stored as `(scope, bounds)` pairs sorted by priority descending.
+    /// Lookup uses explicit cascade: NetClass > All (layer is not meaningful for vias).
+    pub via_bounds_scoped: Vec<(IrRuleScope, DrcViaBounds)>,
+    /// Kept for direct mutation in tests (e.g. setting max_via_count).
     pub via_bounds: DrcViaBounds,
     pub board_outline_clearance_mm: f64,
     pub component_clearance_mm: f64,
@@ -134,14 +178,34 @@ impl DrcPolicy {
             .collect();
         sorted_rules.sort_by_key(|r| r.priority);
 
-        // Extract default clearance.
+        // Extract default clearance (first All-scoped Clearance rule, or 0.1 mm).
         let default_clearance_mm = sorted_rules
             .iter()
             .find_map(|r| match &r.params {
-                IrRuleParams::Clearance { gap_mm } => Some(*gap_mm),
+                IrRuleParams::Clearance { gap_mm }
+                    if matches!(r.scope.scope1, IrRuleScope::All)
+                        && matches!(r.scope.scope2, IrRuleScope::All) =>
+                {
+                    Some(*gap_mm)
+                }
                 _ => None,
             })
+            .or_else(|| {
+                sorted_rules.iter().find_map(|r| match &r.params {
+                    IrRuleParams::Clearance { gap_mm } => Some(*gap_mm),
+                    _ => None,
+                })
+            })
             .unwrap_or(0.1);
+
+        // Collect all scoped clearance rules (in priority order, highest priority first).
+        let clearance_scoped: Vec<(IrRuleScopePair, f64)> = sorted_rules
+            .iter()
+            .filter_map(|r| match &r.params {
+                IrRuleParams::Clearance { gap_mm } => Some((r.scope.clone(), *gap_mm)),
+                _ => None,
+            })
+            .collect();
 
         // Build clearance matrix.
         // Currently IR doesn't carry net-class scope, so we have a single default class.
@@ -154,26 +218,58 @@ impl DrcPolicy {
             default_clearance_mm,
         };
 
-        // Width constraints: build from all Width rules.
-        let mut width_constraints = BTreeMap::new();
+        // Width constraints: collect all Width rules as (scope, bounds), preserving
+        // declaration order (rules are already sorted by priority). Cascade lookup
+        // (width_bounds) selects the highest-specificity matching scope at query time.
+        let mut width_constraints: Vec<(IrRuleScope, DrcWidthBounds)> = Vec::new();
         for r in &sorted_rules {
             if let IrRuleParams::Width { min_mm, max_mm, preferred_mm } = &r.params {
-                // Currently no per-net-class scoping, so None key = default.
-                width_constraints.entry(None).or_insert(DrcWidthBounds {
-                    min_mm: *min_mm,
-                    max_mm: *max_mm,
-                    preferred_mm: *preferred_mm,
-                });
+                width_constraints.push((
+                    r.scope.scope1.clone(),
+                    DrcWidthBounds {
+                        min_mm: *min_mm,
+                        max_mm: *max_mm,
+                        preferred_mm: *preferred_mm,
+                    },
+                ));
             }
         }
-        // Ensure a default exists.
-        width_constraints.entry(None).or_insert(DrcWidthBounds {
-            min_mm: 0.1,
-            max_mm: 3.0,
-            preferred_mm: 0.2,
-        });
+        // Ensure a default All-scope entry exists.
+        let has_all_scope = width_constraints
+            .iter()
+            .any(|(s, _)| matches!(s, IrRuleScope::All));
+        if !has_all_scope {
+            width_constraints.push((
+                IrRuleScope::All,
+                DrcWidthBounds { min_mm: 0.1, max_mm: 3.0, preferred_mm: 0.2 },
+            ));
+        }
 
-        // Via bounds.
+        // Via bounds: collect per-scope RoutingViaStyle rules for cascade lookup.
+        // Global scalar fields (annular ring, hole-to-hole) are stored in via_bounds
+        // for backward compatibility.
+        let mut via_bounds_scoped: Vec<(IrRuleScope, DrcViaBounds)> = Vec::new();
+        for r in &sorted_rules {
+            if let IrRuleParams::RoutingViaStyle { hole_min_mm, hole_max_mm, .. } = &r.params {
+                via_bounds_scoped.push((
+                    r.scope.scope1.clone(),
+                    DrcViaBounds {
+                        hole_min_mm: *hole_min_mm,
+                        hole_max_mm: *hole_max_mm,
+                        ..DrcViaBounds::default()
+                    },
+                ));
+            }
+        }
+        // Ensure a default All-scope via entry exists.
+        let has_all_via = via_bounds_scoped
+            .iter()
+            .any(|(s, _)| matches!(s, IrRuleScope::All));
+        if !has_all_via {
+            via_bounds_scoped.push((IrRuleScope::All, DrcViaBounds::default()));
+        }
+
+        // Global via bounds for direct mutation (max_via_count, annular ring, h2h).
         let mut via_bounds = DrcViaBounds::default();
         for r in &sorted_rules {
             match &r.params {
@@ -329,7 +425,9 @@ impl DrcPolicy {
 
         Ok(DrcPolicy {
             clearance_matrix,
+            clearance_scoped,
             width_constraints,
+            via_bounds_scoped,
             via_bounds,
             board_outline_clearance_mm,
             component_clearance_mm,
@@ -348,36 +446,113 @@ impl DrcPolicy {
         })
     }
 
-    /// Get clearance between two net classes.
+    /// Get clearance between two net classes, using scoped rules with cascade fallback.
+    ///
+    /// Checks `clearance_scoped` rules bidirectionally (scope1↔class_a AND scope2↔class_b,
+    /// or scope1↔class_b AND scope2↔class_a), returning the first match in priority order.
+    /// Falls back to `clearance_matrix` (default clearance) when no scoped rule matches.
     pub fn clearance(&self, class_a: Option<&str>, class_b: Option<&str>) -> f64 {
+        self.clearance_for_scopes(class_a, class_b)
+    }
+
+    /// Look up clearance for a pair of net classes using scoped Clearance rules.
+    ///
+    /// Rules are checked in priority order (as stored in `clearance_scoped`).
+    /// A rule matches when scope1 matches `class_a` AND scope2 matches `class_b`,
+    /// OR scope1 matches `class_b` AND scope2 matches `class_a`.
+    /// Falls back to the default clearance when no scoped rule matches.
+    pub fn clearance_for_scopes(
+        &self,
+        class_a: Option<&str>,
+        class_b: Option<&str>,
+    ) -> f64 {
+        for (scope_pair, gap_mm) in &self.clearance_scoped {
+            let fwd = scope_matches(&scope_pair.scope1, class_a, None)
+                && scope_matches(&scope_pair.scope2, class_b, None);
+            let rev = scope_matches(&scope_pair.scope1, class_b, None)
+                && scope_matches(&scope_pair.scope2, class_a, None);
+            if fwd || rev {
+                return *gap_mm;
+            }
+        }
         self.clearance_matrix.clearance_or_default(class_a, class_b)
     }
 
     /// Get width bounds for a net class on a given layer.
     ///
-    /// NOTE: `layer` is currently ignored — the IR extraction does not capture
-    /// per-layer scope from PcbDoc Width rules. Altium rules CAN specify layer
-    /// scope (e.g., different min width on inner vs outer layers), but
-    /// `IrDesignRule` does not yet carry a scope expression. All layers receive
-    /// the same bounds until IR layer-scoped rules are implemented.
-    pub fn width_bounds(&self, net_class: Option<&str>, _layer: Option<LayerId>) -> DrcWidthBounds {
-        // Look up by net class name, fall back to default (None key).
-        if let Some(class) = net_class {
-            if let Some(bounds) = self.width_constraints.get(&Some(class.to_string())) {
-                return *bounds;
+    /// Cascade priority: NetClassAndLayer > NetClass > Layer > All.
+    /// Uses explicit match arms per Decision Log (no Ord on IrRuleScope).
+    pub fn width_bounds(
+        &self,
+        net_class: Option<&str>,
+        layer: Option<LayerId>,
+    ) -> DrcWidthBounds {
+        // Convert routes::LayerId to ir::LayerId for scope matching.
+        let ir_layer = layer.map(|l| autopcb_ir::LayerId::from(l.0 as u32));
+
+        let mut best: Option<(u8, DrcWidthBounds)> = None;
+        for (scope, bounds) in &self.width_constraints {
+            if scope_matches(scope, net_class, ir_layer) {
+                let prio = scope_priority(scope);
+                match best {
+                    None => best = Some((prio, *bounds)),
+                    Some((best_prio, _)) if prio > best_prio => best = Some((prio, *bounds)),
+                    _ => {}
+                }
             }
         }
-        *self.width_constraints.get(&None).unwrap()
+        best.map(|(_, b)| b).unwrap_or(DrcWidthBounds {
+            min_mm: 0.1,
+            max_mm: 3.0,
+            preferred_mm: 0.2,
+        })
     }
 
-    /// Get via bounds for a net class.
+    /// Get via bounds for a net class, applying cascade scope resolution.
     ///
-    /// NOTE: `net_class` is currently ignored — there is a single global
-    /// `DrcViaBounds` populated from the first matching RoutingViaStyle,
-    /// MinimumAnnularRing, and HoleToHoleClearance rules. Per-net-class via
-    /// constraints require scope expressions on `IrDesignRule`, which are not
-    /// yet extracted from PcbDoc. All net classes receive the same bounds.
-    pub fn via_bounds(&self, _net_class: Option<&str>) -> &DrcViaBounds {
+    /// Cascade priority: NetClass > All (layer is not meaningful for vias).
+    /// Uses explicit match arms per Decision Log (no Ord on IrRuleScope).
+    ///
+    /// Returns an owned `DrcViaBounds` merging global values (annular ring,
+    /// hole-to-hole clearance, max via count) with any net-class-scoped
+    /// hole size override from `via_bounds_scoped`.
+    pub fn via_bounds_for(&self, net_class: Option<&str>) -> DrcViaBounds {
+        let mut best_prio: u8 = 0;
+        let mut best_hole: Option<(f64, f64)> = None;
+        for (scope, bounds) in &self.via_bounds_scoped {
+            // Only NetClass and All are meaningful for via scope.
+            let matches = match scope {
+                IrRuleScope::All => true,
+                IrRuleScope::NetClass(cls) => {
+                    net_class.map_or(false, |nc| nc == cls.as_str())
+                }
+                IrRuleScope::Layer(_) | IrRuleScope::NetClassAndLayer(_, _) => false,
+            };
+            if matches {
+                let prio = scope_priority(scope);
+                if best_hole.is_none() || prio > best_prio {
+                    best_prio = prio;
+                    best_hole = Some((bounds.hole_min_mm, bounds.hole_max_mm));
+                }
+            }
+        }
+        // Start from the global via_bounds (annular ring, h2h, max_via_count are global)
+        // and apply scoped hole-size override if found.
+        let mut result = self.via_bounds;
+        if let Some((hole_min, hole_max)) = best_hole {
+            result.hole_min_mm = hole_min;
+            result.hole_max_mm = hole_max;
+        }
+        result
+    }
+
+    /// Get global via bounds (annular ring, hole-to-hole clearance, max via count).
+    ///
+    /// Returns `&self.via_bounds` which is populated from global `RoutingViaStyle`,
+    /// `MinimumAnnularRing`, and `HoleToHoleClearance` rules.
+    ///
+    /// For per-net-class hole size lookup, use `via_bounds_for()`.
+    pub fn global_via_bounds(&self) -> &DrcViaBounds {
         &self.via_bounds
     }
 }
@@ -390,54 +565,13 @@ impl DrcPolicy {
 mod tests {
     use super::*;
     use autopcb_ir::{
-        handles::{IdMap, LayerId as IrLayerId, NetId as IrNetId, RuleId},
-        layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
-        rule::{IrDesignRule, IrRuleParams},
-        types::{BoundingBoxMm, PointMm},
-        IrBoardGeometry, PcbIr,
+        handles::{LayerId as IrLayerId, RuleId},
+        rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
+        PcbIr,
     };
     use altium_format_types::pcb::RuleKind;
 
-    fn empty_ir() -> PcbIr {
-        PcbIr {
-            board: IrBoardGeometry {
-                outline: vec![],
-                cutouts: vec![],
-                bounds: BoundingBoxMm {
-                    min: PointMm { x: 0.0, y: 0.0 },
-                    max: PointMm { x: 100.0, y: 100.0 },
-                },
-                keepouts: vec![],
-            },
-            layer_stack: IrLayerStack {
-                copper_layers: vec![
-                    IrCopperLayer {
-                        id: IrLayerId::from(0u32),
-                        name: "Top Layer".into(),
-                        is_top: true,
-                        is_bottom: false,
-                        preferred_direction: Some(PreferredDirection::Any),
-                    },
-                    IrCopperLayer {
-                        id: IrLayerId::from(1u32),
-                        name: "Bottom Layer".into(),
-                        is_top: false,
-                        is_bottom: true,
-                        preferred_direction: Some(PreferredDirection::Any),
-                    },
-                ],
-                copper_layer_count: 2,
-            },
-            components: IdMap::new(),
-            nets: IdMap::new(),
-            rules: IdMap::new(),
-            free_copper: Default::default(),
-            polygons: IdMap::new(),
-            texts: IdMap::new(),
-            regions: IdMap::new(),
-            component_bodies: IdMap::new(),
-        }
-    }
+    use super::super::test_helpers::empty_ir;
 
     fn add_rule(ir: &mut PcbIr, kind: RuleKind, priority: i32, params: IrRuleParams) {
         let id = ir.rules.push(IrDesignRule {
@@ -446,7 +580,31 @@ mod tests {
             kind,
             priority,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params,
+        });
+        ir.rules[id].id = id;
+    }
+
+    fn add_scoped_width_rule(
+        ir: &mut PcbIr,
+        priority: i32,
+        scope: IrRuleScope,
+        min_mm: f64,
+        max_mm: f64,
+        preferred_mm: f64,
+    ) {
+        let id = ir.rules.push(IrDesignRule {
+            id: RuleId::from(0u32),
+            name: "width_rule".into(),
+            kind: RuleKind::Width,
+            priority,
+            enabled: true,
+            scope: IrRuleScopePair {
+                scope1: scope,
+                scope2: IrRuleScope::All,
+            },
+            params: IrRuleParams::Width { min_mm, max_mm, preferred_mm },
         });
         ir.rules[id].id = id;
     }
@@ -496,9 +654,131 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Enable when IrDesignRule carries net-class scope
-    fn net_class_specific_clearance_overrides_default() {
-        // TODO: validates that a Power-class clearance rule overrides the
-        // default for Power-to-Signal pairs once IR supports net-class scoping.
+    fn net_class_specific_width_overrides_default() {
+        let mut ir = empty_ir();
+        // All-scope default: min=0.1
+        add_scoped_width_rule(&mut ir, 2, IrRuleScope::All, 0.1, 3.0, 0.2);
+        // Power-class override: min=0.3 (higher priority number, but higher scope specificity wins)
+        add_scoped_width_rule(&mut ir, 1, IrRuleScope::NetClass("Power".into()), 0.3, 3.0, 0.5);
+
+        let policy = DrcPolicy::build(&ir).unwrap();
+
+        // Power net class gets the override.
+        let power_bounds = policy.width_bounds(Some("Power"), None);
+        assert!(
+            (power_bounds.min_mm - 0.3).abs() < f64::EPSILON,
+            "Power class should get min=0.3, got {}",
+            power_bounds.min_mm
+        );
+
+        // Signal net class falls back to default.
+        let signal_bounds = policy.width_bounds(Some("Signal"), None);
+        assert!(
+            (signal_bounds.min_mm - 0.1).abs() < f64::EPSILON,
+            "Signal class should fall back to All min=0.1, got {}",
+            signal_bounds.min_mm
+        );
+    }
+
+    #[test]
+    fn layer_specific_width_overrides_default() {
+        let mut ir = empty_ir();
+        // All-scope default: preferred=0.2
+        add_scoped_width_rule(&mut ir, 2, IrRuleScope::All, 0.1, 3.0, 0.2);
+        // Layer 0 override: preferred=0.15
+        add_scoped_width_rule(
+            &mut ir,
+            1,
+            IrRuleScope::Layer(IrLayerId::from(0u32)),
+            0.05,
+            1.0,
+            0.15,
+        );
+
+        let policy = DrcPolicy::build(&ir).unwrap();
+
+        // Layer 0 query gets the layer-specific rule.
+        let bounds_layer0 = policy.width_bounds(None, Some(LayerId(0)));
+        assert!(
+            (bounds_layer0.preferred_mm - 0.15).abs() < f64::EPSILON,
+            "Layer 0 should get preferred=0.15, got {}",
+            bounds_layer0.preferred_mm
+        );
+
+        // Layer 1 falls back to All.
+        let bounds_layer1 = policy.width_bounds(None, Some(LayerId(1)));
+        assert!(
+            (bounds_layer1.preferred_mm - 0.2).abs() < f64::EPSILON,
+            "Layer 1 should fall back to All preferred=0.2, got {}",
+            bounds_layer1.preferred_mm
+        );
+    }
+
+    #[test]
+    fn most_specific_scope_wins_class_and_layer_over_class_over_all() {
+        let mut ir = empty_ir();
+        // All-scope default
+        add_scoped_width_rule(&mut ir, 3, IrRuleScope::All, 0.1, 3.0, 0.2);
+        // NetClass-only
+        add_scoped_width_rule(
+            &mut ir,
+            2,
+            IrRuleScope::NetClass("Power".into()),
+            0.2,
+            3.0,
+            0.3,
+        );
+        // NetClassAndLayer — most specific
+        add_scoped_width_rule(
+            &mut ir,
+            1,
+            IrRuleScope::NetClassAndLayer("Power".into(), IrLayerId::from(0u32)),
+            0.4,
+            3.0,
+            0.6,
+        );
+
+        let policy = DrcPolicy::build(&ir).unwrap();
+
+        // Power on layer 0 → NetClassAndLayer wins (preferred=0.6).
+        let bounds = policy.width_bounds(Some("Power"), Some(LayerId(0)));
+        assert!(
+            (bounds.preferred_mm - 0.6).abs() < f64::EPSILON,
+            "NetClassAndLayer should win: expected preferred=0.6, got {}",
+            bounds.preferred_mm
+        );
+
+        // Power on layer 1 → NetClass wins (preferred=0.3).
+        let bounds = policy.width_bounds(Some("Power"), Some(LayerId(1)));
+        assert!(
+            (bounds.preferred_mm - 0.3).abs() < f64::EPSILON,
+            "NetClass should win for Power on layer 1: expected preferred=0.3, got {}",
+            bounds.preferred_mm
+        );
+
+        // Signal on layer 0 → All wins (preferred=0.2).
+        let bounds = policy.width_bounds(Some("Signal"), Some(LayerId(0)));
+        assert!(
+            (bounds.preferred_mm - 0.2).abs() < f64::EPSILON,
+            "All should win for Signal on layer 0: expected preferred=0.2, got {}",
+            bounds.preferred_mm
+        );
+    }
+
+    #[test]
+    fn no_matching_scope_falls_back_to_all() {
+        let mut ir = empty_ir();
+        // Only an All-scope rule exists.
+        add_scoped_width_rule(&mut ir, 1, IrRuleScope::All, 0.15, 2.0, 0.25);
+
+        let policy = DrcPolicy::build(&ir).unwrap();
+
+        // Any combination of net class / layer falls through to All.
+        let bounds = policy.width_bounds(Some("HighSpeed"), Some(LayerId(0)));
+        assert!(
+            (bounds.preferred_mm - 0.25).abs() < f64::EPSILON,
+            "Should fall back to All: expected preferred=0.25, got {}",
+            bounds.preferred_mm
+        );
     }
 }

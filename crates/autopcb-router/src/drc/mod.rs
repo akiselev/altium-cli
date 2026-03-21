@@ -3,6 +3,8 @@
 pub mod board;
 pub mod repair;
 pub mod clearance;
+#[cfg(test)]
+pub(crate) mod test_helpers;
 pub mod connectivity;
 pub mod cpu_engine;
 pub mod diff_pair;
@@ -58,7 +60,20 @@ pub(crate) fn net_midpoint(solution: &RouteSolution, net_id: NetId) -> PointMm {
         .unwrap_or(PointMm { x: 0.0, y: 0.0 })
 }
 
+use autopcb_ir::PcbIr;
+
 use crate::RoutingError;
+
+/// Look up the net class name for the given routed net ID.
+///
+/// Routes [`NetId`] and IR [`autopcb_ir::handles::NetId`] share the same raw
+/// `u32` value, so equality is checked via `.raw()` / `.0`.
+pub(crate) fn net_class_for_net<'a>(ir: &'a PcbIr, net_id: autopcb_routes::NetId) -> Option<&'a str> {
+    ir.nets
+        .values()
+        .find(|n| n.id.raw() == net_id.0)
+        .and_then(|n| n.net_class.as_deref())
+}
 
 /// Errors specific to DRC operations.
 #[derive(Debug, Error)]

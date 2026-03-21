@@ -160,7 +160,7 @@ mod tests {
     };
     use autopcb_routes::{LayerId as RouteLayerId, NetId, Point, RoutedNet, TraceSegment};
     use altium_format_types::pcb::RuleKind;
-    use autopcb_ir::rule::{IrDesignRule, IrRuleParams};
+    use autopcb_ir::rule::{IrDesignRule, IrRuleParams, IrRuleScopePair};
     use autopcb_ir::handles::RuleId;
 
     fn make_ir(
@@ -205,6 +205,7 @@ mod tests {
             kind: RuleKind::BoardOutlineClearance,
             priority: 1,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params: IrRuleParams::BoardOutlineClearance { gap_mm: board_clearance_mm },
         });
         ir.rules[id].id = id;

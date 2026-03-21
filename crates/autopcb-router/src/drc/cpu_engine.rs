@@ -54,8 +54,8 @@ impl DrcEngine for CpuDrcEngine {
         let mut violations = Vec::new();
         violations.extend(check_clearance(solution, &self.policy, ir));
         violations.extend(check_shorts(solution));
-        violations.extend(check_widths(solution, &self.policy));
-        violations.extend(check_vias(solution, &self.policy));
+        violations.extend(check_widths(solution, &self.policy, ir));
+        violations.extend(check_vias(solution, &self.policy, ir));
         violations.extend(check_geometry(solution, &self.policy, ir));
         violations.extend(check_connectivity(solution, ir, &self.policy));
         violations.extend(check_lengths(solution, &self.policy));
@@ -86,47 +86,12 @@ impl DrcEngine for CpuDrcEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use autopcb_ir::{
-        handles::{IdMap, LayerId as IrLayerId},
-        layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
-        types::{BoundingBoxMm, PointMm},
-        IrBoardGeometry, PcbIr,
-    };
+    use autopcb_ir::PcbIr;
     use autopcb_routes::{LayerId, NetId, Point, RoutedNet, RouteSolution, TraceSegment};
     use crate::workspace::build_workspace;
     use crate::config::RoutingConfig;
 
-    fn empty_ir() -> PcbIr {
-        PcbIr {
-            board: IrBoardGeometry {
-                outline: vec![],
-                cutouts: vec![],
-                bounds: BoundingBoxMm {
-                    min: PointMm { x: 0.0, y: 0.0 },
-                    max: PointMm { x: 100.0, y: 100.0 },
-                },
-                keepouts: vec![],
-            },
-            layer_stack: IrLayerStack {
-                copper_layers: vec![IrCopperLayer {
-                    id: IrLayerId::from(0u32),
-                    name: "Top".into(),
-                    is_top: true,
-                    is_bottom: false,
-                    preferred_direction: Some(PreferredDirection::Any),
-                }],
-                copper_layer_count: 1,
-            },
-            components: IdMap::new(),
-            nets: IdMap::new(),
-            rules: IdMap::new(),
-            free_copper: Default::default(),
-            polygons: IdMap::new(),
-            texts: IdMap::new(),
-            regions: IdMap::new(),
-            component_bodies: IdMap::new(),
-        }
-    }
+    use super::super::test_helpers::empty_ir;
 
     fn make_workspace(ir: &PcbIr) -> crate::workspace::RoutingWorkspace {
         let mut config = RoutingConfig::default();

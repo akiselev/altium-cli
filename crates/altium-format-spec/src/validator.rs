@@ -492,6 +492,7 @@ mod tests {
             layer: None,
             source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pads: Vec::new(),
         }
     }
 
@@ -503,6 +504,9 @@ mod tests {
             snap_grid_size: None,
             visible_grid_size: None,
             display_unit: None,
+            outline: None,
+            keepouts: Vec::new(),
+            layers: Vec::new(),
             nets: Vec::new(),
             components: Vec::new(),
             tracks: Vec::new(),
@@ -531,6 +535,7 @@ mod tests {
             }],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let result = validate_pcbdoc_spec(&spec);
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
@@ -553,6 +558,7 @@ mod tests {
             ],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let result = validate_pcbdoc_spec(&spec);
         assert!(result.is_err());
@@ -590,6 +596,7 @@ mod tests {
             }],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let result = validate_pcbdoc_spec(&spec);
         assert!(result.is_err());

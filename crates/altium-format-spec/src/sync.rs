@@ -899,6 +899,7 @@ pub fn apply_sync_changes_to_pcbdoc(
                         layer: None,
                         source_library: component.source_library.clone(),
                         parameters: component.parameters.clone(),
+                        pads: Vec::new(),
                     });
             }
             SyncChange::AddNet { name, .. } => {
@@ -1434,6 +1435,9 @@ mod tests {
             snap_grid_size: None,
             visible_grid_size: None,
             display_unit: None,
+            outline: None,
+            keepouts: Vec::new(),
+            layers: Vec::new(),
             nets: Vec::new(),
             components: Vec::new(),
             tracks: Vec::new(),
@@ -1597,6 +1601,7 @@ mod tests {
             boards: Vec::new(),
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let snapshot = project_pcbdoc_spec(&spec).unwrap();
         assert!(snapshot.components.is_empty());
@@ -1619,6 +1624,7 @@ mod tests {
                 layer: None,
                 source_library: None,
                 parameters: IndexMap::new(),
+                pads: Vec::new(),
             });
         }
         for net_name in ["VCC", "GND"] {
@@ -1634,6 +1640,7 @@ mod tests {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let snapshot = project_pcbdoc_spec(&spec).unwrap();
 
@@ -1670,6 +1677,7 @@ mod tests {
                 layer: None,
                 source_library: None,
                 parameters: IndexMap::new(),
+                pads: Vec::new(),
             });
         }
 
@@ -1677,6 +1685,7 @@ mod tests {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let err = project_pcbdoc_spec(&spec).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
@@ -1705,6 +1714,7 @@ mod tests {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let err = project_pcbdoc_spec(&spec).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::DuplicateEntity);
@@ -2166,6 +2176,7 @@ mod tests {
             boards: Vec::new(),
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let err = apply_sync_changes_to_pcbdoc(&changes, &mut spec).unwrap_err();
         assert!(
@@ -2184,6 +2195,7 @@ mod tests {
             boards: vec![make_empty_board("A"), make_empty_board("B")],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
         let err = apply_sync_changes_to_pcbdoc(&changes, &mut spec).unwrap_err();
         assert!(
@@ -2201,6 +2213,7 @@ mod tests {
             boards: vec![make_empty_board("Main")],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         let new_comp = SyncComponent {
@@ -2247,6 +2260,7 @@ mod tests {
             layer: None,
             source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pads: Vec::new(),
         });
         board.components.push(PcbDocComponentSpec {
             annotation: None,
@@ -2258,12 +2272,14 @@ mod tests {
             layer: None,
             source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pads: Vec::new(),
         });
 
         let mut spec = PcbDocSpec {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         let changes = vec![SyncChange::RemoveComponent {
@@ -2296,12 +2312,14 @@ mod tests {
             layer: None,
             source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pads: Vec::new(),
         });
 
         let mut spec = PcbDocSpec {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         let changes = vec![SyncChange::UpdateComponent {
@@ -2338,6 +2356,7 @@ mod tests {
             boards: vec![make_empty_board("Main")],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         let changes = vec![SyncChange::AddNet {
@@ -2374,6 +2393,7 @@ mod tests {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         let changes = vec![SyncChange::RemoveNet {
@@ -2393,6 +2413,7 @@ mod tests {
             boards: vec![make_empty_board("Main")],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         let changes = vec![SyncChange::AddPin {
@@ -2585,11 +2606,13 @@ mod tests {
             layer: None,
             source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pads: Vec::new(),
         });
         let mut spec = PcbDocSpec {
             boards: vec![board],
             placement: None,
             placement_rules: Vec::new(),
+            routing: None,
         };
 
         // First sync: forward.
@@ -3143,6 +3166,9 @@ mod proptests {
                 snap_grid_size: None,
                 visible_grid_size: None,
                 display_unit: None,
+                outline: None,
+                keepouts: Vec::new(),
+                layers: Vec::new(),
                 nets: Vec::new(),
                 components: Vec::new(),
                 tracks: Vec::new(),
@@ -3170,7 +3196,8 @@ mod proptests {
                     rotation: None,
                     layer: None,
                     source_library: None,
-                parameters: indexmap::IndexMap::new(),
+                    parameters: indexmap::IndexMap::new(),
+                    pads: Vec::new(),
                 });
             }
 
@@ -3187,6 +3214,7 @@ mod proptests {
                 boards: vec![board],
                 placement: None,
                 placement_rules: Vec::new(),
+                routing: None,
             };
             let snapshot = project_pcbdoc_spec(&spec).unwrap();
             prop_assert_eq!(snapshot.components.len(), comp_count);

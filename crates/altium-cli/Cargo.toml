@@ -33,6 +33,7 @@ autopcb-graph-spec = { version = "0.1.0", path = "../autopcb-graph-spec" }
 autopcb-graph-import-altium = { version = "0.1.0", path = "../autopcb-graph-import-altium" }
 autopcb-ir = { version = "0.2.0", path = "../autopcb-ir", features = ["serde"] }
 autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
+autopcb-router = { version = "0.1.0", path = "../autopcb-router" }
 autopcb-routes = { version = "0.2.0", path = "../autopcb-routes" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"

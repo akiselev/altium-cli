@@ -11,6 +11,8 @@ workspace = true
 altium-format = { version = "0.2.0", path = "../altium-format" }
 altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+autopcb-routes = { version = "0.2.0", path = "../autopcb-routes" }
+indexmap = "2"
 thiserror = "2"
 serde = { version = "1.0", features = ["derive"], optional = true }
 

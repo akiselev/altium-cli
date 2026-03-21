@@ -104,7 +104,7 @@ implemented modules sequentially and collects their violations into a single
   outgoing direction at a segment junction. Threshold is 45°. `actual_mm` stores
   the angle in degrees (not mm).
 - **Matched length**: checks global spread (max − min) across all routed nets.
-  Per-net-group scoping requires IR extensions (M6) not yet merged.
+  Per-net-group scoping is not yet supported; matched-length check applies globally across all routed nets.
 - **Diff pair skew**: computes `|len_pos − len_neg|` and checks against
   `policy.diff_pair.max_uncoupled_length_mm`. Each pair is visited once
   (canonical min-raw-index ordering via `BTreeSet`).
@@ -116,23 +116,43 @@ number = higher priority), and populates:
 
 ```
 DrcPolicy {
-    clearance_matrix: ClearanceMatrix,   // flat Vec<f64>, BTreeMap index
-    width_constraints: BTreeMap<Option<String>, DrcWidthBounds>,
-    via_bounds: DrcViaBounds,
-    board_outline_clearance_mm: f64,     // default 0.5 mm
-    component_clearance_mm: f64,         // default 0.25 mm
+    clearance_matrix: ClearanceMatrix,              // flat Vec<f64>, BTreeMap index
+    clearance_scoped: Vec<(IrRuleScopePair, f64)>,  // scoped clearance rules, priority order
+    width_constraints: Vec<(IrRuleScope, DrcWidthBounds)>,  // scoped, priority descending
+    via_bounds_scoped: Vec<(IrRuleScope, DrcViaBounds)>,    // scoped, priority descending
+    via_bounds: DrcViaBounds,                       // kept for direct test mutation
+    board_outline_clearance_mm: f64,                // default 0.5 mm
+    component_clearance_mm: f64,                    // default 0.25 mm
     matched_length: Option<MatchedLengthConstraint>,
     diff_pair: Option<DiffPairConstraint>,
+    length_constraints: BTreeMap<Option<String>, LengthConstraint>,
     solder_mask_expansion_mm: f64,
     paste_mask_expansion_mm: f64,
 }
 ```
 
+Diagram shows scoped-resolution fields only; see `policy.rs` for the complete struct definition including manufacturing, creepage, and angle constraints.
+
+### Scoped rule resolution
+
+Width and via rules carry an `IrRuleScope` from the IR compiler. `DrcPolicy`
+resolves rules by cascade priority: `NetClassAndLayer` > `NetClass` > `Layer`
+> `All`. `check_widths()` and `check_vias()` pass net class and layer to
+`width_bounds()` / `via_bounds_scoped_lookup()`, which scan the priority-sorted
+vec and return the first matching entry.
+
+Priority is implemented via explicit `match` arms in `scope_priority()` and
+`scope_matches()` — no `Ord` derivation on `IrRuleScope`. This keeps the
+cascade visible and auditable without relying on variant declaration order.
+
 `ClearanceMatrix` is a flat `Vec<f64>` indexed by `class_a * size + class_b`
-where class indices come from a `BTreeMap<String, usize>`. Currently the matrix
-has one entry (default class) because `IrNet::net_class` scoping is not yet
-propagated through routing. The matrix expands transparently when IR net-class
-data is available.
+where class indices come from a `BTreeMap<String, usize>`. The matrix expands
+transparently as IR net-class data becomes available.
+
+### Test helpers (`test_helpers.rs`)
+
+`test_helpers::empty_ir()` constructs a minimal `PcbIr` with a two-layer
+copper stack for use in DRC unit tests. Gated behind `#[cfg(test)]`.
 
 ## Invariants
 

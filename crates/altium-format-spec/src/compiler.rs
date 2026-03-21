@@ -31,8 +31,8 @@ use crate::ast::{
     DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
     GraphicDecl, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
     PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
-    PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem, RuleDecl,
-    SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem, RoutingDecl,
+    RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
@@ -48,9 +48,9 @@ use crate::model::{
     PinRef, PinSpec, PlacementAutoplaceMode, PlacementClearanceSpec, PlacementConstraintSpec,
     PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec,
     PlacementSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec,
-    SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec, SheetSpec,
-    SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef, UnplacedStrategy,
-    VariantSpec, VariationSpec, WireSpec,
+    RoutingSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec,
+    SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef,
+    UnplacedStrategy, VariantSpec, VariationSpec, WireSpec,
 };
 
 use crate::diagnostic::Spanned;
@@ -631,6 +631,7 @@ impl SpecCompiler {
                 | SpecItem::Board(_)
                 | SpecItem::PcbDocPrimitive(_)
                 | SpecItem::Placement(_)
+                | SpecItem::Routing(_)
                 | SpecItem::Polygon(_)
                 | SpecItem::Rule(_)
                 | SpecItem::Class(_)
@@ -1992,6 +1993,7 @@ impl SpecCompiler {
         let mut rules = Vec::new();
         let mut placement_rules = Vec::new();
         let mut placement: Option<PlacementSpec> = None;
+        let mut routing: Option<RoutingSpec> = None;
         let mut classes = Vec::new();
         let mut differential_pairs = Vec::new();
 
@@ -2022,6 +2024,9 @@ impl SpecCompiler {
                 }
                 SpecItem::Placement(decl) => {
                     placement = Some(self.compile_placement_decl(decl)?);
+                }
+                SpecItem::Routing(decl) => {
+                    routing = Some(self.compile_routing_decl(decl)?);
                 }
                 SpecItem::Class(decl) => {
                     classes.push(self.compile_pcbdoc_class(decl)?);
@@ -2059,6 +2064,9 @@ impl SpecCompiler {
             dimensions: primitives_by_type
                 .shift_remove("dimension")
                 .unwrap_or_default(),
+            outline: extract_outline_from_props(&board_settings_props),
+            keepouts: Vec::new(),
+            layers: Vec::new(),
             polygons,
             rules,
             classes,
@@ -2069,6 +2077,7 @@ impl SpecCompiler {
             boards: vec![board],
             placement,
             placement_rules,
+            routing,
         })
     }
 
@@ -2158,6 +2167,7 @@ impl SpecCompiler {
             layer,
             source_library,
             parameters: indexmap::IndexMap::new(),
+            pads: Vec::new(),
         })
     }
 
@@ -2251,6 +2261,7 @@ impl SpecCompiler {
             priority,
             properties,
             scope,
+            scope2: None,
         })
     }
 
@@ -2259,10 +2270,22 @@ impl SpecCompiler {
         let name = decl.name.node.as_str();
         let props = eval_object_to_map(&decl.body.node, &self.scope)?;
 
+        let members = match props.get("members") {
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+
         Ok(PcbDocClassSpec {
             annotation,
             name,
             kind: get_string_opt(&props, "kind"),
+            members,
         })
     }
 
@@ -2279,6 +2302,18 @@ impl SpecCompiler {
             positive_net: get_string_opt(&props, "positive_net"),
             negative_net: get_string_opt(&props, "negative_net"),
         })
+    }
+
+    fn compile_routing_decl(&mut self, decl: &RoutingDecl) -> Result<RoutingSpec, SpecError> {
+        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
+        let solution = get_string_opt(&props, "solution");
+        let mut config = indexmap::IndexMap::new();
+        for (key, val) in &props {
+            if key != "solution" {
+                config.insert(key.clone(), val.display());
+            }
+        }
+        Ok(RoutingSpec { solution, config })
     }
 
     fn compile_placement_rule(&mut self, decl: &RuleDecl) -> Result<PlacementRuleSpec, SpecError> {
@@ -5402,6 +5437,33 @@ fn get_coord_point_opt(
     match props.get(key) {
         None => Ok(None),
         Some(v) => Ok(Some(value_to_coord_point(v, Some(span))?)),
+    }
+}
+
+/// Extract a board outline from evaluated properties.
+///
+/// Accepts either a `Value::Shape` (from `rect()`, `circle()`, etc.) or a
+/// `Value::Array` of `CoordPoint` values (backward compat with raw vertex lists).
+fn extract_outline_from_props(props: &IndexMap<String, Value>) -> Option<Vec<CoordPoint>> {
+    match props.get("outline") {
+        Some(Value::Shape(s)) => {
+            let verts = s.to_vertices();
+            if verts.is_empty() {
+                None
+            } else {
+                Some(
+                    verts
+                        .into_iter()
+                        .map(|(x, y)| CoordPoint::new(Coord::new(x), Coord::new(y)))
+                        .collect(),
+                )
+            }
+        }
+        Some(Value::Array(_)) => {
+            // Backward compat: array of coordinate points
+            value_to_points(props.get("outline").unwrap(), None).ok()
+        }
+        _ => None,
     }
 }
 

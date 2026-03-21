@@ -356,7 +356,7 @@ mod tests {
             component::{IrComponentPad, IrComponent, PadShapeInfo, PadShapeKind},
             handles::{ComponentId, PadId, NetId as IrNetId},
             types::BoardSide,
-            rule::{IrDesignRule, IrRuleParams},
+            rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
             handles::RuleId,
         };
         use altium_format_types::pcb::RuleKind as AltiumRuleKind;
@@ -370,6 +370,7 @@ mod tests {
             kind: AltiumRuleKind::SmdToCorner,
             priority: 1,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params: IrRuleParams::SmdToCorner { clearance_mm: 0.5 },
         });
         ir.rules[rule_id].id = rule_id;

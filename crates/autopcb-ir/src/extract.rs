@@ -18,7 +18,7 @@ use crate::layer_stack::{IrCopperLayer, IrLayerStack};
 use crate::net::{IrNet, IrNetPin};
 use crate::polygon::IrPolygon;
 use crate::region::{IrRegion, IrRegionKind};
-use crate::rule::{IrDesignRule, IrRuleParams};
+use crate::rule::{IrDesignRule, IrRuleParams, IrRuleScopePair};
 use crate::text::IrText;
 use crate::types::{BoardSide, BoundingBoxMm, PointMm};
 use crate::{IrError, Result};
@@ -41,6 +41,12 @@ pub struct PcbIr {
 
 impl PcbIr {
     /// Extract an IR from a parsed PcbDoc board.
+    ///
+    /// NOTE: Design rule scopes from PcbDoc are not resolved by this extraction
+    /// path; all rules are treated as globally-scoped
+    /// ([`IrRuleScope::All`](crate::rule::IrRuleScope::All)). For scope-aware IR,
+    /// use `load_ir_from_spec()` which routes through `import_pcbdoc()` →
+    /// `spec_to_ir()`.
     pub fn extract(board: &PcbDocBoard) -> Result<Self> {
         let ir_board = extract_board_geometry(board)?;
         let layer_stack = extract_layer_stack(board);
@@ -351,63 +357,7 @@ fn extract_components(
     Ok(components)
 }
 
-/// Convert a world position back to component-local coordinates.
-fn world_to_local(world: PointMm, comp_pos: PointMm, rotation_deg: f64) -> PointMm {
-    let dx = world.x - comp_pos.x;
-    let dy = world.y - comp_pos.y;
-    if rotation_deg.abs() < 1e-6 {
-        return PointMm::new(dx, dy);
-    }
-    let angle = -rotation_deg.to_radians();
-    PointMm::new(
-        dx * angle.cos() - dy * angle.sin(),
-        dx * angle.sin() + dy * angle.cos(),
-    )
-}
-
-/// Compute bounding boxes from pad extents.
-fn compute_component_bounds(components: &mut IdMap<ComponentId, IrComponent>) {
-    for (_id, comp) in components.iter_mut() {
-        if comp.pads.is_empty() {
-            // Fallback: 1mm box around component position
-            comp.world_bounds = BoundingBoxMm::new(comp.position, comp.position).expand(0.5);
-            comp.local_bounds = BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(0.0, 0.0)).expand(0.5);
-            continue;
-        }
-
-        // World bounds from pad world positions + pad sizes
-        let world_points: Vec<PointMm> = comp
-            .pads
-            .iter()
-            .flat_map(|p| {
-                let half_x = p.shape.size_x / 2.0;
-                let half_y = p.shape.size_y / 2.0;
-                [
-                    PointMm::new(p.world_position.x - half_x, p.world_position.y - half_y),
-                    PointMm::new(p.world_position.x + half_x, p.world_position.y + half_y),
-                ]
-            })
-            .collect();
-        comp.world_bounds = BoundingBoxMm::from_points(&world_points)
-            .unwrap_or_else(|| BoundingBoxMm::new(comp.position, comp.position));
-
-        // Local bounds from pad local positions + pad sizes
-        let local_points: Vec<PointMm> = comp
-            .pads
-            .iter()
-            .flat_map(|p| {
-                let half_x = p.shape.size_x / 2.0;
-                let half_y = p.shape.size_y / 2.0;
-                [
-                    PointMm::new(p.local_position.x - half_x, p.local_position.y - half_y),
-                    PointMm::new(p.local_position.x + half_x, p.local_position.y + half_y),
-                ]
-            })
-            .collect();
-        comp.local_bounds = BoundingBoxMm::from_points(&local_points)
-            .unwrap_or_else(|| BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(0.0, 0.0)));
-    }
-}
+use crate::geometry::{compute_component_bounds, world_to_local};
 
 // ---------------------------------------------------------------------------
 // Net pin backfill
@@ -621,6 +571,11 @@ fn extract_rules(
             kind: r.kind,
             priority: r.priority,
             enabled: r.enabled,
+            // extract.rs provides direct PcbDoc extraction without spec compilation.
+            // All rules are assigned global scope (IrRuleScopePair::default()).
+            // PcbDoc scope strings (r.scope, r.scope2) are available but not parsed here —
+            // use import_pcbdoc() -> spec_to_ir() for scope-aware rule enforcement.
+            scope: IrRuleScopePair::default(),
             params,
         });
         rules[id].id = id;

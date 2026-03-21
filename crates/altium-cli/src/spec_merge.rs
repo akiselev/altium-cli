@@ -214,6 +214,7 @@ enum ItemType {
     Rule,
     Class,
     DifferentialPair,
+    Routing,
 }
 
 #[derive(Debug, Default)]
@@ -385,6 +386,11 @@ fn extract_identity(item: &SpecItem) -> BlockIdentity {
         SpecItem::DifferentialPair(decl) => BlockIdentity {
             item_type: ItemType::DifferentialPair,
             natural_key: Some(entity_name_key(&decl.name.node)),
+            ..Default::default()
+        },
+        SpecItem::Routing(_) => BlockIdentity {
+            item_type: ItemType::Routing,
+            natural_key: None,
             ..Default::default()
         },
     }

@@ -9,7 +9,7 @@ use altium_format_render_png::{
 };
 use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_schlib_component};
 use altium_format_spec::{
-    FormatConfig, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
+    FormatConfig, PcbDocSpec, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
     SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb,
     apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_schlibs,
     compile_spec_with_resolved, diff_snapshots, dump_intlib, dump_pcbdoc, dump_pcblib,
@@ -22,7 +22,7 @@ use altium_format_spec::{
 };
 use autopcb_graph_import_altium::{import_pcblib, import_schlib};
 use autopcb_graph_spec::{create_workspace_bundle, save_workspace, validate_workspace};
-use autopcb_ir::PcbIr;
+use autopcb_ir::{PcbIr, spec_bridge::load_ir_from_spec};
 use autopcb_placement::{
     Direction, PlacementConfig, PlacementEdge, RectRegion, UserConstraint, named_region_from_board,
     solve_placement,
@@ -369,8 +369,20 @@ enum RoutingSubcommand {
         // Note: --drc for live DRC is not supported here because running DRC
         // requires a full PcbIr, which is not available from a .routes file alone.
     },
-    /// Solve routing from a spec file (requires full spec pipeline integration)
-    Solve,
+    /// Solve routing from a .pcbdoc-spec file and write a .routes file
+    Solve {
+        /// Path to .pcbdoc-spec file
+        spec_file: PathBuf,
+        /// Target .PcbDoc file (overrides target: in spec)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Output .routes file path (default: <spec_stem>.routes)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Emit JSON output
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -1415,6 +1427,12 @@ fn apply_for_model(
                 imported_components,
             )?;
 
+            // Merge routed tracks/vias from .routes file into the PcbDoc.
+            let routes_injected = inject_routes_into_pcbdoc(&mut doc, spec, spec_file)?;
+            if routes_injected > 0 {
+                eprintln!("  Injected {routes_injected} routed primitives from .routes file");
+            }
+
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
@@ -1517,6 +1535,129 @@ fn transform_contour(
 /// whose `pattern` matches a footprint in that library.
 ///
 /// Coordinates are transformed from footprint-local to board space using the
+/// Load a .routes file and inject routed tracks/vias into a PcbDoc board.
+///
+/// Returns the number of primitives injected (tracks + vias). Returns 0 if no
+/// routes file is configured or found.
+fn inject_routes_into_pcbdoc(
+    doc: &mut PcbDoc,
+    spec: &PcbDocSpec,
+    spec_file: &std::path::Path,
+) -> anyhow::Result<usize> {
+    use altium_format::api::{Track, Via};
+    use altium_format_types::{Coord, CoordPoint, LayerRef};
+
+    let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
+
+    // Determine routes path: explicit from spec, or convention <stem>.routes
+    let routes_path = if let Some(ref routing) = spec.routing {
+        if let Some(ref solution) = routing.solution {
+            spec_dir.join(solution)
+        } else {
+            spec_file.with_extension("routes")
+        }
+    } else {
+        spec_file.with_extension("routes")
+    };
+
+    if !routes_path.exists() {
+        return Ok(0);
+    }
+
+    let solution = autopcb_routes::load_binary(&routes_path)
+        .or_else(|_| autopcb_routes::load_json(&routes_path))
+        .map_err(|e| anyhow::anyhow!("failed to load routes {}: {e}", routes_path.display()))?;
+
+    // Build net name lookup from the spec's net list.
+    let net_names: Vec<String> = spec
+        .boards
+        .first()
+        .map(|b| b.nets.iter().map(|n| n.name.clone()).collect())
+        .unwrap_or_default();
+
+    let mut board = doc
+        .board()
+        .map_err(|e| anyhow::anyhow!("failed to read board for route injection: {e}"))?;
+
+    // Map router layer index to LayerRef.
+    // The router uses 0-based copper layer indices from the IR layer stack.
+    // Build the same mapping by reading the board's layer stack.
+    // Copper layers from the stack (non-plane signal layers + plane layers).
+    // The router's layer indices match the copper layer order from the IR layer stack,
+    // which is the same order as the board's layer stack copper layers.
+    let layer_refs: Vec<LayerRef> = board
+        .settings
+        .layer_stack
+        .layers
+        .iter()
+        .map(|l| l.layer.clone())
+        .collect();
+
+    let mut count = 0usize;
+
+    for routed_net in solution.nets.values() {
+        let net_name = net_names
+            .get(routed_net.net_id.raw() as usize)
+            .cloned();
+
+        for (i, seg) in routed_net.segments.iter().enumerate() {
+            let layer = layer_refs
+                .get(seg.layer.raw() as usize)
+                .cloned()
+                .unwrap_or_else(|| LayerRef::from_v6(altium_format_types::pcb::V6Layer::TopLayer));
+            board.tracks.push(Track {
+                id: format!("rt_{}_{}_{i}", routed_net.net_id.raw(), seg.layer.raw()),
+                layer,
+                net: net_name.clone(),
+                component: None,
+                start: CoordPoint::new(
+                    Coord::from_mms(seg.start.x),
+                    Coord::from_mms(seg.start.y),
+                ),
+                end: CoordPoint::new(
+                    Coord::from_mms(seg.end.x),
+                    Coord::from_mms(seg.end.y),
+                ),
+                width: Coord::from_mms(seg.width_mm),
+            });
+            count += 1;
+        }
+
+        for (i, via) in routed_net.vias.iter().enumerate() {
+            let from_layer = layer_refs
+                .get(via.from_layer.raw() as usize)
+                .cloned()
+                .unwrap_or_else(|| LayerRef::from_v6(altium_format_types::pcb::V6Layer::TopLayer));
+            let to_layer = layer_refs
+                .get(via.to_layer.raw() as usize)
+                .cloned()
+                .unwrap_or_else(|| {
+                    LayerRef::from_v6(altium_format_types::pcb::V6Layer::BottomLayer)
+                });
+            board.vias.push(Via {
+                id: format!("rv_{}_{i}", routed_net.net_id.raw()),
+                net: net_name.clone(),
+                component: None,
+                location: CoordPoint::new(
+                    Coord::from_mms(via.position.x),
+                    Coord::from_mms(via.position.y),
+                ),
+                diameter: Coord::from_mms(via.drill_mm + 2.0 * via.annular_ring_mm),
+                hole_size: Coord::from_mms(via.drill_mm),
+                from_layer,
+                to_layer,
+                solder_mask_expansion: None,
+            });
+            count += 1;
+        }
+    }
+
+    doc.update_board(&board)
+        .map_err(|e| anyhow::anyhow!("failed to update board with routes: {e}"))?;
+
+    Ok(count)
+}
+
 /// component's placement position and rotation.  Existing component-owned
 /// primitives are removed before re-instantiation so that running `apply` twice
 /// is idempotent.
@@ -2375,9 +2516,16 @@ fn run_query(
 }
 
 fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result<()> {
-    let doc = PcbDoc::open(path)?;
-    let board = doc.board()?;
-    let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let empty_spec = PcbDocSpec {
+        boards: Vec::new(),
+        placement: None,
+        placement_rules: Vec::new(),
+        routing: None,
+    };
+    let spec_dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let result = load_ir_from_spec(&empty_spec, spec_dir, Some(path))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let ir = result.ir;
 
     match sub {
         InspectSubcommand::Summary => {
@@ -2541,17 +2689,17 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
                 }
             };
 
-            let placement = spec.placement.ok_or_else(|| {
+            let placement = spec.placement.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "spec {} has no placement {{ ... }} block",
                     spec_file.display()
                 )
             })?;
 
-            let doc = PcbDoc::open(&target)
-                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-            let board = doc.board()?;
-            let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
+            let ir_result = load_ir_from_spec(&spec, spec_dir, Some(&target))
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let ir = ir_result.ir;
 
             let mut cfg = PlacementConfig {
                 gamma_start,
@@ -2682,10 +2830,10 @@ pub fn autoplace_spec(
         )
     };
 
-    let doc = PcbDoc::open(&target_path)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target_path.display()))?;
-    let board = doc.board()?;
-    let ir = PcbIr::extract(&board).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
+    let ir_result = load_ir_from_spec(&spec, spec_dir, Some(&target_path))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let ir = ir_result.ir;
     info!(
         target: "altium_cli::placement",
         target_path = %target_path.display(),
@@ -3039,7 +3187,9 @@ fn run_routing(sub: RoutingSubcommand) -> anyhow::Result<()> {
         RoutingSubcommand::Inspect { path, verbose, json } => {
             cmd_routing_inspect(&path, verbose, json)
         }
-        RoutingSubcommand::Solve => cmd_routing_solve(),
+        RoutingSubcommand::Solve { spec_file, target, output, json } => {
+            cmd_routing_solve(&spec_file, target.as_deref(), output.as_deref(), json)
+        }
     }
 }
 
@@ -3136,11 +3286,57 @@ fn cmd_routing_inspect(path: &std::path::Path, verbose: bool, json: bool) -> any
     Ok(())
 }
 
-fn cmd_routing_solve() -> anyhow::Result<()> {
-    anyhow::bail!(
-        "routing solve requires a spec file and full pipeline integration; \
-         this command is not yet implemented"
-    )
+fn cmd_routing_solve(
+    spec_file: &std::path::Path,
+    target: Option<&std::path::Path>,
+    output: Option<&std::path::Path>,
+    json: bool,
+) -> anyhow::Result<()> {
+    use altium_format_spec::model::SpecModel;
+
+    let source = std::fs::read_to_string(spec_file)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
+    let spec_file_buf = spec_file.to_path_buf();
+    let result = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::PcbDoc)?;
+    let spec = match result.model {
+        SpecModel::PcbDoc(s) => s,
+        _ => anyhow::bail!("routing solve requires a .pcbdoc-spec file"),
+    };
+
+    let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
+    let ir_result = load_ir_from_spec(&spec, spec_dir, target)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let config = autopcb_router::RoutingConfig::default();
+    let workspace = autopcb_router::build_workspace(&ir_result.ir, &config)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let solution = autopcb_router::route_board(&workspace, &ir_result.ir, &config)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let output_path = output
+        .map(|p: &std::path::Path| p.to_path_buf())
+        .unwrap_or_else(|| spec_file.with_extension("routes"));
+    autopcb_routes::save_binary(&solution, &output_path)
+        .map_err(|e| anyhow::anyhow!("failed to save {}: {e}", output_path.display()))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&solution.metrics)?);
+    } else {
+        println!("ROUTING REPORT");
+        println!("  output: {}", output_path.display());
+        println!(
+            "  nets routed: {}/{}",
+            solution.nets.len(),
+            solution.nets.len() + solution.unrouted.len()
+        );
+        println!("  unrouted: {}", solution.unrouted.len());
+        println!("  total length: {:.2} mm", solution.metrics.total_length_mm);
+        println!("  total vias: {}", solution.metrics.total_vias);
+        println!("  completion: {:.1}%", solution.metrics.completion_pct);
+        println!("  DRC violations: {}", solution.metrics.drc_violations);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3217,9 +3413,14 @@ mod tests {
     }
 
     #[test]
-    fn routing_solve_returns_error() {
-        let result = cmd_routing_solve();
-        assert!(result.is_err(), "routing solve should return an error until implemented");
+    fn routing_solve_missing_spec_returns_error() {
+        let result = cmd_routing_solve(
+            std::path::Path::new("nonexistent.pcbdoc-spec"),
+            None,
+            None,
+            false,
+        );
+        assert!(result.is_err(), "routing solve with missing spec file should return an error");
     }
 
     #[test]

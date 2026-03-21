@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use autopcb_routes::{
-    NetId, RouteSolution, RoutedNet, RoutedVia, RoutingIterationSnapshot, RoutingMetrics,
-    TraceSegment,
+    DrcViolationRecord, NetId, RouteSolution, RoutedNet, RoutedVia, RoutingIterationSnapshot,
+    RoutingMetrics, TraceSegment,
 };
 
 // ---------------------------------------------------------------------------
@@ -22,6 +22,7 @@ pub struct RouteSolutionBuilder {
     unrouted: Vec<NetId>,
     snapshots: Vec<RoutingIterationSnapshot>,
     drc_violation_count: u32,
+    drc_violation_records: Vec<DrcViolationRecord>,
 }
 
 impl RouteSolutionBuilder {
@@ -53,6 +54,37 @@ impl RouteSolutionBuilder {
     /// Record the DRC violation count from the final full DRC run.
     pub fn set_drc_violations(&mut self, count: u32) {
         self.drc_violation_count = count;
+    }
+
+    /// Store the serializable DRC violation records from the final full DRC run.
+    pub fn set_drc_violation_records(&mut self, records: Vec<DrcViolationRecord>) {
+        self.drc_violation_records = records;
+    }
+
+    /// Build a [`RouteSolution`] snapshot from the currently accumulated nets
+    /// without consuming the builder. Used to run a final DRC pass before
+    /// `build()` is called.
+    pub fn build_partial(&self) -> RouteSolution {
+        let mut routed_nets: BTreeMap<NetId, RoutedNet> = BTreeMap::new();
+        for (net_id, (segments, vias)) in &self.nets {
+            routed_nets.insert(
+                *net_id,
+                RoutedNet {
+                    net_id: *net_id,
+                    segments: segments.clone(),
+                    vias: vias.clone(),
+                    routed_length_mm: 0.0,
+                },
+            );
+        }
+        RouteSolution {
+            version: autopcb_routes::CURRENT_VERSION,
+            nets: routed_nets,
+            unrouted: self.unrouted.clone(),
+            metrics: RoutingMetrics::default(),
+            iterations: Vec::new(),
+            drc_violation_records: Vec::new(),
+        }
     }
 
     /// Consume the builder and produce a [`RouteSolution`] with computed metrics.
@@ -105,7 +137,7 @@ impl RouteSolutionBuilder {
             unrouted: self.unrouted,
             metrics,
             iterations: self.snapshots,
-            drc_violation_records: Vec::new(),
+            drc_violation_records: self.drc_violation_records,
         }
     }
 }

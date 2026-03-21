@@ -13,7 +13,7 @@ use std::fmt::Write as FmtWrite;
 
 use indexmap::IndexMap;
 
-use crate::ast::{Expr, Object, ObjectItem, TemplatePart};
+use crate::ast::{CallArg, Expr, Object, ObjectItem, TemplatePart};
 use crate::diagnostic::{BinOp, Span, Spanned, Unit};
 
 // ── Error types ──────────────────────────────────────────────────────────────
@@ -173,6 +173,233 @@ pub enum Value {
         alias: String,
         name: String,
     },
+    /// A geometric shape value in Altium internal units (10,000 per mil).
+    Shape(Shape),
+}
+
+// ── Shape type ────────────────────────────────────────────────────────────────
+
+/// Geometric shape value in Altium internal units (10,000 per mil).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shape {
+    /// Axis-aligned rectangle. cx/cy = center, hw/hh = half-width/half-height.
+    Rect { cx: i32, cy: i32, hw: i32, hh: i32 },
+    /// Rounded rectangle: same as Rect + corner radius.
+    RoundedRect { cx: i32, cy: i32, hw: i32, hh: i32, radius: i32 },
+    /// Circle: center + radius.
+    Circle { cx: i32, cy: i32, radius: i32 },
+    /// Arbitrary polygon: ordered vertices (closed — last connects to first).
+    Polygon { vertices: Vec<(i32, i32)> },
+}
+
+impl Shape {
+    /// Bounding box center.
+    pub fn center(&self) -> (i32, i32) {
+        match self {
+            Shape::Rect { cx, cy, .. }
+            | Shape::RoundedRect { cx, cy, .. }
+            | Shape::Circle { cx, cy, .. } => (*cx, *cy),
+            Shape::Polygon { vertices } => {
+                if vertices.is_empty() {
+                    return (0, 0);
+                }
+                // Bounding-box center, consistent with width()/height() which use bounding-box.
+                let (mut min_x, mut max_x) = (i32::MAX, i32::MIN);
+                let (mut min_y, mut max_y) = (i32::MAX, i32::MIN);
+                for &(x, y) in vertices {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
+                }
+                ((min_x + max_x) / 2, (min_y + max_y) / 2)
+            }
+        }
+    }
+
+    /// Bounding box width (full, not half).
+    pub fn width(&self) -> i32 {
+        match self {
+            Shape::Rect { hw, .. } | Shape::RoundedRect { hw, .. } => *hw * 2,
+            Shape::Circle { radius, .. } => *radius * 2,
+            Shape::Polygon { vertices } => {
+                if vertices.is_empty() {
+                    return 0;
+                }
+                let (min_x, max_x) = vertices
+                    .iter()
+                    .fold((i32::MAX, i32::MIN), |(mn, mx), (x, _)| {
+                        (mn.min(*x), mx.max(*x))
+                    });
+                max_x - min_x
+            }
+        }
+    }
+
+    /// Bounding box height (full, not half).
+    pub fn height(&self) -> i32 {
+        match self {
+            Shape::Rect { hh, .. } | Shape::RoundedRect { hh, .. } => *hh * 2,
+            Shape::Circle { radius, .. } => *radius * 2,
+            Shape::Polygon { vertices } => {
+                if vertices.is_empty() {
+                    return 0;
+                }
+                let (min_y, max_y) = vertices
+                    .iter()
+                    .fold((i32::MAX, i32::MIN), |(mn, mx), (_, y)| {
+                        (mn.min(*y), mx.max(*y))
+                    });
+                max_y - min_y
+            }
+        }
+    }
+
+    /// Convert to vertex list (polygon approximation for curved shapes).
+    pub fn to_vertices(&self) -> Vec<(i32, i32)> {
+        match self {
+            Shape::Rect { cx, cy, hw, hh } => vec![
+                (cx - hw, cy - hh),
+                (cx + hw, cy - hh),
+                (cx + hw, cy + hh),
+                (cx - hw, cy + hh),
+            ],
+            Shape::RoundedRect { cx, cy, hw, hh, radius } => {
+                rounded_rect_vertices(*cx, *cy, *hw, *hh, *radius)
+            }
+            Shape::Circle { cx, cy, radius } => circle_vertices(*cx, *cy, *radius, 72),
+            Shape::Polygon { vertices } => vertices.clone(),
+        }
+    }
+
+    /// Translate by offset.
+    pub fn translate(&self, dx: i32, dy: i32) -> Shape {
+        match self {
+            Shape::Rect { cx, cy, hw, hh } => {
+                Shape::Rect { cx: cx + dx, cy: cy + dy, hw: *hw, hh: *hh }
+            }
+            Shape::RoundedRect { cx, cy, hw, hh, radius } => Shape::RoundedRect {
+                cx: cx + dx,
+                cy: cy + dy,
+                hw: *hw,
+                hh: *hh,
+                radius: *radius,
+            },
+            Shape::Circle { cx, cy, radius } => {
+                Shape::Circle { cx: cx + dx, cy: cy + dy, radius: *radius }
+            }
+            Shape::Polygon { vertices } => Shape::Polygon {
+                vertices: vertices.iter().map(|(x, y)| (x + dx, y + dy)).collect(),
+            },
+        }
+    }
+
+    /// Inset (shrink) by distance. Amount must be non-negative.
+    /// Returns None for Polygon shapes (not supported).
+    pub fn inset(&self, amount: i32) -> Result<Shape, &'static str> {
+        if amount < 0 {
+            return Err("inset amount must be non-negative; use outset() to expand");
+        }
+        match self {
+            Shape::Rect { cx, cy, hw, hh } => Ok(Shape::Rect {
+                cx: *cx,
+                cy: *cy,
+                hw: (*hw - amount).max(0),
+                hh: (*hh - amount).max(0),
+            }),
+            Shape::RoundedRect { cx, cy, hw, hh, radius } => Ok(Shape::RoundedRect {
+                cx: *cx,
+                cy: *cy,
+                hw: (*hw - amount).max(0),
+                hh: (*hh - amount).max(0),
+                radius: (*radius - amount).max(0),
+            }),
+            Shape::Circle { cx, cy, radius } => Ok(Shape::Circle {
+                cx: *cx,
+                cy: *cy,
+                radius: (*radius - amount).max(0),
+            }),
+            Shape::Polygon { .. } => {
+                Err("inset() is not supported for polygon shapes; use explicit vertex coordinates")
+            }
+        }
+    }
+
+    /// Outset (expand) by distance. Amount must be non-negative.
+    /// Returns Err for Polygon shapes (not supported) or on overflow.
+    pub fn outset(&self, amount: i32) -> Result<Shape, &'static str> {
+        if amount < 0 {
+            return Err("outset amount must be non-negative; use inset() to shrink");
+        }
+        match self {
+            Shape::Rect { cx, cy, hw, hh } => Ok(Shape::Rect {
+                cx: *cx,
+                cy: *cy,
+                hw: hw.checked_add(amount).ok_or("outset overflow: shape dimension too large")?,
+                hh: hh.checked_add(amount).ok_or("outset overflow: shape dimension too large")?,
+            }),
+            Shape::RoundedRect { cx, cy, hw, hh, radius } => Ok(Shape::RoundedRect {
+                cx: *cx,
+                cy: *cy,
+                hw: hw.checked_add(amount).ok_or("outset overflow: shape dimension too large")?,
+                hh: hh.checked_add(amount).ok_or("outset overflow: shape dimension too large")?,
+                radius: radius.checked_add(amount).ok_or("outset overflow: shape dimension too large")?,
+            }),
+            Shape::Circle { cx, cy, radius } => Ok(Shape::Circle {
+                cx: *cx,
+                cy: *cy,
+                radius: radius.checked_add(amount).ok_or("outset overflow: shape dimension too large")?,
+            }),
+            Shape::Polygon { .. } => {
+                Err("outset() is not supported for polygon shapes; use explicit vertex coordinates")
+            }
+        }
+    }
+}
+
+/// Generate vertices for a rounded rectangle.
+fn rounded_rect_vertices(cx: i32, cy: i32, hw: i32, hh: i32, radius: i32) -> Vec<(i32, i32)> {
+    let r = radius.min(hw).min(hh);
+    if r <= 0 {
+        return vec![
+            (cx - hw, cy - hh),
+            (cx + hw, cy - hh),
+            (cx + hw, cy + hh),
+            (cx - hw, cy + hh),
+        ];
+    }
+    let mut verts = Vec::with_capacity(4 * 8);
+    let steps = 8usize;
+    // Corner arc centers and start angles. Each corner traces 90 degrees.
+    // Using 0..steps (exclusive end) avoids duplicate vertices at corner boundaries,
+    // since the next corner's first point covers the shared boundary position.
+    let corners = [
+        (cx + hw - r, cy + hh - r, 0.0f64),
+        (cx - hw + r, cy + hh - r, 90.0f64),
+        (cx - hw + r, cy - hh + r, 180.0f64),
+        (cx + hw - r, cy - hh + r, 270.0f64),
+    ];
+    for &(ccx, ccy, start_deg) in &corners {
+        for i in 0..steps {
+            let angle = (start_deg + (i as f64) * 90.0 / (steps as f64)).to_radians();
+            let x = ccx + (r as f64 * angle.cos()).round() as i32;
+            let y = ccy + (r as f64 * angle.sin()).round() as i32;
+            verts.push((x, y));
+        }
+    }
+    verts
+}
+
+/// Generate vertices for a circle approximation.
+fn circle_vertices(cx: i32, cy: i32, radius: i32, segments: usize) -> Vec<(i32, i32)> {
+    (0..segments)
+        .map(|i| {
+            let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+            let x = cx + (radius as f64 * angle.cos()).round() as i32;
+            let y = cy + (radius as f64 * angle.sin()).round() as i32;
+            (x, y)
+        })
+        .collect()
 }
 
 impl Value {
@@ -208,6 +435,7 @@ impl Value {
             Value::SwapGroup(s) => s.clone(),
             Value::ImportObject { alias, .. } => format!("<import:{alias}>"),
             Value::ImportRef { alias, name } => format!("{alias}.{name}"),
+            Value::Shape(s) => format!("shape({} vertices)", s.to_vertices().len()),
         }
     }
 
@@ -226,6 +454,7 @@ impl Value {
             Value::SwapGroup(_) => "swap_group",
             Value::ImportObject { .. } => "import_object",
             Value::ImportRef { .. } => "import_ref",
+            Value::Shape(_) => "shape",
         }
     }
 
@@ -442,6 +671,9 @@ pub fn eval_expr(expr: &Spanned<Expr>, scope: &ScopeStack) -> EvalResult<Value> 
 
         // ── Object ────────────────────────────────────────────────────────
         Expr::Object(obj) => eval_object(obj, scope),
+
+        // ── Function call ─────────────────────────────────────────────────
+        Expr::Call { name, args } => eval_builtin_call(name, args, scope, span),
     }
 }
 
@@ -807,6 +1039,19 @@ fn eval_field_access(base: Value, field: &str, span: Option<Span>) -> EvalResult
                 span,
             )),
         },
+        Value::Shape(s) => match field {
+            "width" => Ok(Value::Dim(s.width())),
+            "height" => Ok(Value::Dim(s.height())),
+            "center" => {
+                let (cx, cy) = s.center();
+                Ok(Value::CoordPoint(cx, cy))
+            }
+            _ => Err(SpecError::new(
+                SpecErrorCode::InvalidFieldAccess,
+                format!("shape has no field '{field}' (available: width, height, center)"),
+                span,
+            )),
+        },
         other => Err(SpecError::new(
             SpecErrorCode::InvalidFieldAccess,
             format!("cannot access field '{field}' on {}", other.kind_name()),
@@ -890,6 +1135,428 @@ pub fn eval_let_bindings(
         scope.define(name.to_string(), value);
     }
     Ok(())
+}
+
+// ── Builtin function dispatch ────────────────────────────────────────────────
+
+/// Evaluate a builtin function call.
+fn eval_builtin_call(
+    name: &str,
+    args: &[CallArg],
+    scope: &ScopeStack,
+    span: Span,
+) -> EvalResult<Value> {
+    let evaluated: Vec<(Option<String>, Value)> = args
+        .iter()
+        .map(|a| {
+            let val = eval_expr(&a.value, scope)?;
+            Ok((a.name.as_ref().map(|n| n.node.clone()), val))
+        })
+        .collect::<EvalResult<_>>()?;
+
+    match name {
+        "rect" => builtin_rect(&evaluated, span),
+        "rounded_rect" => builtin_rounded_rect(&evaluated, span),
+        "circle" => builtin_circle(&evaluated, span),
+        "polygon" => builtin_polygon(&evaluated, span),
+        "inset" => builtin_inset(&evaluated, span),
+        "outset" => builtin_outset(&evaluated, span),
+        "translate" => builtin_translate(&evaluated, span),
+        "width" => builtin_shape_width(&evaluated, span),
+        "height" => builtin_shape_height(&evaluated, span),
+        "center" => builtin_shape_center(&evaluated, span),
+        "min" => builtin_min(&evaluated, span),
+        "max" => builtin_max(&evaluated, span),
+        "clamp" => builtin_clamp(&evaluated, span),
+        "abs" => builtin_abs(&evaluated, span),
+        _ => Err(SpecError::at(
+            SpecErrorCode::NotSupported,
+            format!("unknown function '{name}'"),
+            span,
+        )),
+    }
+}
+
+// ── Argument extraction helpers ───────────────────────────────────────────────
+
+fn get_named_arg<'a>(args: &'a [(Option<String>, Value)], name: &str) -> Option<&'a Value> {
+    args.iter().find_map(|(n, v)| {
+        if n.as_deref() == Some(name) {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
+fn positional_args(args: &[(Option<String>, Value)]) -> Vec<&Value> {
+    args.iter()
+        .filter_map(|(n, v)| if n.is_none() { Some(v) } else { None })
+        .collect()
+}
+
+fn require_dim(val: &Value, arg_name: &str, fn_name: &str, span: Span) -> EvalResult<i32> {
+    val.to_dim(Some(span)).map_err(|_| {
+        SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            format!(
+                "{fn_name}(): argument '{arg_name}' must be a dimension (e.g., 10mm, 100mil)"
+            ),
+            span,
+        )
+    })
+}
+
+fn require_shape<'a>(
+    val: &'a Value,
+    arg_name: &str,
+    fn_name: &str,
+    span: Span,
+) -> EvalResult<&'a Shape> {
+    match val {
+        Value::Shape(s) => Ok(s),
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            format!("{fn_name}(): argument '{arg_name}' must be a shape"),
+            span,
+        )),
+    }
+}
+
+fn require_coord_point(
+    val: &Value,
+    arg_name: &str,
+    fn_name: &str,
+    span: Span,
+) -> EvalResult<(i32, i32)> {
+    match val {
+        Value::CoordPoint(x, y) => Ok((*x, *y)),
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            format!(
+                "{fn_name}(): argument '{arg_name}' must be a coordinate point, e.g., (10mm, 5mm)"
+            ),
+            span,
+        )),
+    }
+}
+
+// ── Geometry constructors ─────────────────────────────────────────────────────
+
+fn builtin_rect(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+
+    if let (Some(from), Some(to)) = (get_named_arg(args, "from"), get_named_arg(args, "to")) {
+        let (x1, y1) = require_coord_point(from, "from", "rect", span)?;
+        let (x2, y2) = require_coord_point(to, "to", "rect", span)?;
+        let cx = (x1 + x2) / 2;
+        let cy = (y1 + y2) / 2;
+        let hw = ((x2 - x1) / 2).abs();
+        let hh = ((y2 - y1) / 2).abs();
+        return Ok(Value::Shape(Shape::Rect { cx, cy, hw, hh }));
+    }
+
+    if pos.len() == 2 {
+        let w = require_dim(pos[0], "width", "rect", span)?;
+        let h = require_dim(pos[1], "height", "rect", span)?;
+        let (cx, cy) = match get_named_arg(args, "center") {
+            Some(v) => require_coord_point(v, "center", "rect", span)?,
+            None => (0, 0),
+        };
+        return Ok(Value::Shape(Shape::Rect { cx, cy, hw: w / 2, hh: h / 2 }));
+    }
+
+    // Form: rect(at: lower-left corner, width: dim, height: dim)
+    // 'at' is the lower-left corner origin; center is computed as (ox + w/2, oy + h/2).
+    if let (Some(at), Some(w_val), Some(h_val)) = (
+        get_named_arg(args, "at"),
+        get_named_arg(args, "width"),
+        get_named_arg(args, "height"),
+    ) {
+        let (ox, oy) = require_coord_point(at, "at (lower-left corner)", "rect", span)?;
+        let w = require_dim(w_val, "width", "rect", span)?;
+        let h = require_dim(h_val, "height", "rect", span)?;
+        return Ok(Value::Shape(Shape::Rect {
+            cx: ox + w / 2,
+            cy: oy + h / 2,
+            hw: w / 2,
+            hh: h / 2,
+        }));
+    }
+
+    Err(SpecError::at(
+        SpecErrorCode::TypeMismatch,
+        "rect() requires (width, height), (from: point, to: point), or (at: lower-left corner, width: dim, height: dim)".to_string(),
+        span,
+    ))
+}
+
+fn builtin_rounded_rect(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 3 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "rounded_rect() requires 3 positional args: width, height, radius".to_string(),
+            span,
+        ));
+    }
+    let w = require_dim(pos[0], "width", "rounded_rect", span)?;
+    let h = require_dim(pos[1], "height", "rounded_rect", span)?;
+    let r = require_dim(pos[2], "radius", "rounded_rect", span)?;
+    let (cx, cy) = match get_named_arg(args, "center") {
+        Some(v) => require_coord_point(v, "center", "rounded_rect", span)?,
+        None => (0, 0),
+    };
+    Ok(Value::Shape(Shape::RoundedRect { cx, cy, hw: w / 2, hh: h / 2, radius: r }))
+}
+
+fn builtin_circle(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 1 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "circle() requires 1 positional arg: radius".to_string(),
+            span,
+        ));
+    }
+    let r = require_dim(pos[0], "radius", "circle", span)?;
+    let (cx, cy) = match get_named_arg(args, "center") {
+        Some(v) => require_coord_point(v, "center", "circle", span)?,
+        None => (0, 0),
+    };
+    Ok(Value::Shape(Shape::Circle { cx, cy, radius: r }))
+}
+
+fn builtin_polygon(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 1 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "polygon() requires 1 positional arg: array of points".to_string(),
+            span,
+        ));
+    }
+    match pos[0] {
+        Value::Array(arr) => {
+            let mut vertices = Vec::with_capacity(arr.len());
+            for (i, v) in arr.iter().enumerate() {
+                match v {
+                    Value::CoordPoint(x, y) => vertices.push((*x, *y)),
+                    _ => {
+                        return Err(SpecError::at(
+                            SpecErrorCode::TypeMismatch,
+                            format!("polygon(): element {i} must be a coordinate point"),
+                            span,
+                        ))
+                    }
+                }
+            }
+            if vertices.len() < 3 {
+                return Err(SpecError::at(
+                    SpecErrorCode::TypeMismatch,
+                    format!(
+                        "polygon() requires at least 3 vertices, got {}",
+                        vertices.len()
+                    ),
+                    span,
+                ));
+            }
+            Ok(Value::Shape(Shape::Polygon { vertices }))
+        }
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "polygon() argument must be an array of points".to_string(),
+            span,
+        )),
+    }
+}
+
+// ── Geometry operations ───────────────────────────────────────────────────────
+
+fn builtin_inset(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 2 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "inset() requires 2 args: shape, amount".to_string(),
+            span,
+        ));
+    }
+    let shape = require_shape(pos[0], "shape", "inset", span)?;
+    let amount = require_dim(pos[1], "amount", "inset", span)?;
+    let result = shape.inset(amount).map_err(|msg| {
+        SpecError::at(SpecErrorCode::NotSupported, format!("inset(): {msg}"), span)
+    })?;
+    Ok(Value::Shape(result))
+}
+
+fn builtin_outset(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 2 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "outset() requires 2 args: shape, amount".to_string(),
+            span,
+        ));
+    }
+    let shape = require_shape(pos[0], "shape", "outset", span)?;
+    let amount = require_dim(pos[1], "amount", "outset", span)?;
+    let result = shape.outset(amount).map_err(|msg| {
+        SpecError::at(SpecErrorCode::NotSupported, format!("outset(): {msg}"), span)
+    })?;
+    Ok(Value::Shape(result))
+}
+
+fn builtin_translate(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() == 2 {
+        let shape = require_shape(pos[0], "shape", "translate", span)?;
+        let (dx, dy) = require_coord_point(pos[1], "offset", "translate", span)?;
+        return Ok(Value::Shape(shape.translate(dx, dy)));
+    }
+    if pos.len() == 3 {
+        let shape = require_shape(pos[0], "shape", "translate", span)?;
+        let dx = require_dim(pos[1], "dx", "translate", span)?;
+        let dy = require_dim(pos[2], "dy", "translate", span)?;
+        return Ok(Value::Shape(shape.translate(dx, dy)));
+    }
+    Err(SpecError::at(
+        SpecErrorCode::TypeMismatch,
+        "translate() requires (shape, offset) or (shape, dx, dy)".to_string(),
+        span,
+    ))
+}
+
+// ── Shape accessors ───────────────────────────────────────────────────────────
+
+fn builtin_shape_width(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 1 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "width() requires 1 arg: shape".to_string(),
+            span,
+        ));
+    }
+    let shape = require_shape(pos[0], "shape", "width", span)?;
+    Ok(Value::Dim(shape.width()))
+}
+
+fn builtin_shape_height(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 1 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "height() requires 1 arg: shape".to_string(),
+            span,
+        ));
+    }
+    let shape = require_shape(pos[0], "shape", "height", span)?;
+    Ok(Value::Dim(shape.height()))
+}
+
+fn builtin_shape_center(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 1 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "center() requires 1 arg: shape".to_string(),
+            span,
+        ));
+    }
+    let shape = require_shape(pos[0], "shape", "center", span)?;
+    let (cx, cy) = shape.center();
+    Ok(Value::CoordPoint(cx, cy))
+}
+
+// ── Math functions ────────────────────────────────────────────────────────────
+
+fn builtin_min(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 2 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "min() requires 2 args".to_string(),
+            span,
+        ));
+    }
+    match (pos[0], pos[1]) {
+        (Value::Dim(a), Value::Dim(b)) => Ok(Value::Dim(*a.min(b))),
+        (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(*a.min(b))),
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.min(*b))),
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "min() arguments must be the same numeric type".to_string(),
+            span,
+        )),
+    }
+}
+
+fn builtin_max(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 2 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "max() requires 2 args".to_string(),
+            span,
+        ));
+    }
+    match (pos[0], pos[1]) {
+        (Value::Dim(a), Value::Dim(b)) => Ok(Value::Dim(*a.max(b))),
+        (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(*a.max(b))),
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.max(*b))),
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "max() arguments must be the same numeric type".to_string(),
+            span,
+        )),
+    }
+}
+
+fn builtin_clamp(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 3 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "clamp() requires 3 args: value, min, max".to_string(),
+            span,
+        ));
+    }
+    match (pos[0], pos[1], pos[2]) {
+        (Value::Dim(v), Value::Dim(lo), Value::Dim(hi)) => Ok(Value::Dim(*v.clamp(lo, hi))),
+        (Value::Integer(v), Value::Integer(lo), Value::Integer(hi)) => {
+            Ok(Value::Integer(*v.clamp(lo, hi)))
+        }
+        (Value::Float(v), Value::Float(lo), Value::Float(hi)) => {
+            Ok(Value::Float(v.clamp(*lo, *hi)))
+        }
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "clamp() arguments must be the same numeric type".to_string(),
+            span,
+        )),
+    }
+}
+
+fn builtin_abs(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let pos = positional_args(args);
+    if pos.len() != 1 {
+        return Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "abs() requires 1 arg".to_string(),
+            span,
+        ));
+    }
+    match pos[0] {
+        Value::Dim(v) => Ok(Value::Dim(v.abs())),
+        Value::Integer(v) => Ok(Value::Integer(v.abs())),
+        Value::Float(v) => Ok(Value::Float(v.abs())),
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            "abs() argument must be numeric".to_string(),
+            span,
+        )),
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1308,5 +1975,444 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    // ── Function call / shape tests ─────────────────────────────────────
+
+    use crate::ast::CallArg;
+
+    /// Helper: build an Expr::Call with positional args.
+    fn call(name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
+        spanned(Expr::Call {
+            name: name.to_string(),
+            args: args.into_iter().map(|v| CallArg { name: None, value: v }).collect(),
+        })
+    }
+
+    /// Helper: build an Expr::Call with named args.
+    fn call_named(name: &str, args: Vec<(&str, Spanned<Expr>)>) -> Spanned<Expr> {
+        spanned(Expr::Call {
+            name: name.to_string(),
+            args: args
+                .into_iter()
+                .map(|(k, v)| CallArg {
+                    name: Some(spanned(k.to_string())),
+                    value: v,
+                })
+                .collect(),
+        })
+    }
+
+    fn dim(val: f64, unit: Unit) -> Spanned<Expr> {
+        spanned(Expr::Dim(val, unit))
+    }
+
+    fn coord(x: f64, y: f64) -> Spanned<Expr> {
+        spanned(Expr::Tuple(
+            Box::new(dim(x, Unit::Mm)),
+            Box::new(dim(y, Unit::Mm)),
+        ))
+    }
+
+    #[test]
+    fn rect_basic_centered_at_origin() {
+        let scope = make_scope();
+        let expr = call("rect", vec![dim(100.0, Unit::Mm), dim(50.0, Unit::Mm)]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Rect { cx, cy, hw, hh }) => {
+                assert_eq!(cx, 0);
+                assert_eq!(cy, 0);
+                // 100mm / 2 = 50mm = 50 * 393_701 internal units
+                let expected_hw = unit_to_internal(50.0, Unit::Mm);
+                assert_eq!(hw, expected_hw);
+                let expected_hh = unit_to_internal(25.0, Unit::Mm);
+                assert_eq!(hh, expected_hh);
+            }
+            other => panic!("expected Shape::Rect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rect_with_center() {
+        let scope = make_scope();
+        // rect(100mm, 50mm, center: (10mm, 20mm))
+        let args = vec![
+            CallArg { name: None, value: dim(100.0, Unit::Mm) },
+            CallArg { name: None, value: dim(50.0, Unit::Mm) },
+            CallArg {
+                name: Some(spanned("center".to_string())),
+                value: coord(10.0, 20.0),
+            },
+        ];
+        let expr = spanned(Expr::Call { name: "rect".to_string(), args });
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Rect { cx, cy, .. }) => {
+                assert_eq!(cx, unit_to_internal(10.0, Unit::Mm));
+                assert_eq!(cy, unit_to_internal(20.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Rect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rect_from_to() {
+        let scope = make_scope();
+        let expr = call_named("rect", vec![
+            ("from", coord(0.0, 0.0)),
+            ("to", coord(100.0, 50.0)),
+        ]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Rect { cx, cy, hw, hh }) => {
+                assert_eq!(cx, unit_to_internal(50.0, Unit::Mm));
+                assert_eq!(cy, unit_to_internal(25.0, Unit::Mm));
+                assert_eq!(hw, unit_to_internal(50.0, Unit::Mm));
+                assert_eq!(hh, unit_to_internal(25.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Rect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rect_at_corner_origin() {
+        // rect(at: lower-left corner, width, height) — 'at' is corner, not center
+        let scope = make_scope();
+        let expr = call_named("rect", vec![
+            ("at", coord(0.0, 0.0)),
+            ("width", dim(100.0, Unit::Mm)),
+            ("height", dim(50.0, Unit::Mm)),
+        ]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Rect { cx, cy, hw, hh }) => {
+                // Center should be at (50mm, 25mm), not (0, 0)
+                assert_eq!(cx, unit_to_internal(50.0, Unit::Mm));
+                assert_eq!(cy, unit_to_internal(25.0, Unit::Mm));
+                assert_eq!(hw, unit_to_internal(50.0, Unit::Mm));
+                assert_eq!(hh, unit_to_internal(25.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Rect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn polygon_center_is_bounding_box_center() {
+        // L-shaped polygon where centroid != bounding-box center
+        // Vertices: (0,0), (100,0), (100,50), (50,50), (50,100), (0,100)
+        let s = Shape::Polygon {
+            vertices: vec![(0, 0), (100, 0), (100, 50), (50, 50), (50, 100), (0, 100)],
+        };
+        let (cx, cy) = s.center();
+        // Bounding box: x=[0,100], y=[0,100] → center = (50, 50)
+        assert_eq!(cx, 50);
+        assert_eq!(cy, 50);
+    }
+
+    #[test]
+    fn shape_field_access_center() {
+        let scope = make_scope();
+        let rect_expr = call("rect", vec![dim(60.0, Unit::Mm), dim(40.0, Unit::Mm)]);
+        let expr = spanned(Expr::Path(
+            Box::new(rect_expr),
+            spanned("center".to_string()),
+        ));
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::CoordPoint(0, 0)); // centered at origin
+    }
+
+    #[test]
+    fn circle_basic() {
+        let scope = make_scope();
+        let expr = call("circle", vec![dim(5.0, Unit::Mm)]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Circle { cx, cy, radius }) => {
+                assert_eq!(cx, 0);
+                assert_eq!(cy, 0);
+                assert_eq!(radius, unit_to_internal(5.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Circle, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rounded_rect_basic() {
+        let scope = make_scope();
+        let expr = call("rounded_rect", vec![
+            dim(60.0, Unit::Mm),
+            dim(40.0, Unit::Mm),
+            dim(3.0, Unit::Mm),
+        ]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::RoundedRect { cx, cy, hw, hh, radius }) => {
+                assert_eq!(cx, 0);
+                assert_eq!(cy, 0);
+                assert_eq!(hw, unit_to_internal(30.0, Unit::Mm));
+                assert_eq!(hh, unit_to_internal(20.0, Unit::Mm));
+                assert_eq!(radius, unit_to_internal(3.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::RoundedRect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inset_rect() {
+        let scope = make_scope();
+        // Create a 100mm x 50mm rect, then inset by 5mm
+        let rect_expr = call("rect", vec![dim(100.0, Unit::Mm), dim(50.0, Unit::Mm)]);
+        let expr = spanned(Expr::Call {
+            name: "inset".to_string(),
+            args: vec![
+                CallArg { name: None, value: rect_expr },
+                CallArg { name: None, value: dim(5.0, Unit::Mm) },
+            ],
+        });
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Rect { hw, hh, .. }) => {
+                // Original hw = 50mm, after inset 5mm -> 45mm
+                assert_eq!(hw, unit_to_internal(45.0, Unit::Mm));
+                assert_eq!(hh, unit_to_internal(20.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Rect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn outset_circle() {
+        let scope = make_scope();
+        let circle_expr = call("circle", vec![dim(10.0, Unit::Mm)]);
+        let expr = spanned(Expr::Call {
+            name: "outset".to_string(),
+            args: vec![
+                CallArg { name: None, value: circle_expr },
+                CallArg { name: None, value: dim(2.0, Unit::Mm) },
+            ],
+        });
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Circle { radius, .. }) => {
+                assert_eq!(radius, unit_to_internal(12.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Circle, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn translate_rect() {
+        let scope = make_scope();
+        let rect_expr = call("rect", vec![dim(100.0, Unit::Mm), dim(50.0, Unit::Mm)]);
+        let expr = spanned(Expr::Call {
+            name: "translate".to_string(),
+            args: vec![
+                CallArg { name: None, value: rect_expr },
+                CallArg { name: None, value: coord(10.0, 20.0) },
+            ],
+        });
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Rect { cx, cy, .. }) => {
+                assert_eq!(cx, unit_to_internal(10.0, Unit::Mm));
+                assert_eq!(cy, unit_to_internal(20.0, Unit::Mm));
+            }
+            other => panic!("expected Shape::Rect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn shape_width_accessor() {
+        let scope = make_scope();
+        let rect_expr = call("rect", vec![dim(100.0, Unit::Mm), dim(50.0, Unit::Mm)]);
+        let expr = spanned(Expr::Call {
+            name: "width".to_string(),
+            args: vec![CallArg { name: None, value: rect_expr }],
+        });
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::Dim(unit_to_internal(100.0, Unit::Mm)));
+    }
+
+    #[test]
+    fn shape_height_accessor() {
+        let scope = make_scope();
+        let rect_expr = call("rect", vec![dim(100.0, Unit::Mm), dim(50.0, Unit::Mm)]);
+        let expr = spanned(Expr::Call {
+            name: "height".to_string(),
+            args: vec![CallArg { name: None, value: rect_expr }],
+        });
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::Dim(unit_to_internal(50.0, Unit::Mm)));
+    }
+
+    #[test]
+    fn shape_field_access_width() {
+        // Test $shape.width via field access
+        let scope = make_scope();
+        let rect_expr = call("rect", vec![dim(60.0, Unit::Mm), dim(40.0, Unit::Mm)]);
+        let expr = spanned(Expr::Path(
+            Box::new(rect_expr),
+            spanned("width".to_string()),
+        ));
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::Dim(unit_to_internal(60.0, Unit::Mm)));
+    }
+
+    #[test]
+    fn min_dim() {
+        let scope = make_scope();
+        let expr = call("min", vec![dim(10.0, Unit::Mm), dim(5.0, Unit::Mm)]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::Dim(unit_to_internal(5.0, Unit::Mm)));
+    }
+
+    #[test]
+    fn max_integer() {
+        let scope = make_scope();
+        let expr = call("max", vec![spanned(Expr::Integer(3)), spanned(Expr::Integer(7))]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::Integer(7));
+    }
+
+    #[test]
+    fn clamp_dim() {
+        let scope = make_scope();
+        let expr = call("clamp", vec![
+            dim(1.0, Unit::Mm),
+            dim(5.0, Unit::Mm),
+            dim(10.0, Unit::Mm),
+        ]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        // 1mm clamped to [5mm, 10mm] = 5mm
+        assert_eq!(val, Value::Dim(unit_to_internal(5.0, Unit::Mm)));
+    }
+
+    #[test]
+    fn abs_negative_dim() {
+        let scope = make_scope();
+        // abs(-10mm): negate 10mm first, then abs
+        let neg_dim = spanned(Expr::UnaryNeg(Box::new(dim(10.0, Unit::Mm))));
+        let expr = spanned(Expr::Call {
+            name: "abs".to_string(),
+            args: vec![CallArg { name: None, value: neg_dim }],
+        });
+        let val = eval_expr(&expr, &scope).unwrap();
+        assert_eq!(val, Value::Dim(unit_to_internal(10.0, Unit::Mm)));
+    }
+
+    #[test]
+    fn polygon_from_array() {
+        let scope = make_scope();
+        let points = spanned(Expr::Array(vec![
+            coord(0.0, 0.0),
+            coord(10.0, 0.0),
+            coord(10.0, 5.0),
+            coord(0.0, 5.0),
+        ]));
+        let expr = call("polygon", vec![points]);
+        let val = eval_expr(&expr, &scope).unwrap();
+        match val {
+            Value::Shape(Shape::Polygon { vertices }) => {
+                assert_eq!(vertices.len(), 4);
+            }
+            other => panic!("expected Shape::Polygon, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unknown_function_errors() {
+        let scope = make_scope();
+        let expr = call("nonexistent_func", vec![]);
+        let result = eval_expr(&expr, &scope);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rect_wrong_arg_count_errors() {
+        let scope = make_scope();
+        let expr = call("rect", vec![dim(10.0, Unit::Mm)]);
+        let result = eval_expr(&expr, &scope);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rect_to_vertices() {
+        let s = Shape::Rect { cx: 0, cy: 0, hw: 100, hh: 50 };
+        let verts = s.to_vertices();
+        assert_eq!(verts.len(), 4);
+        assert_eq!(verts[0], (-100, -50));
+        assert_eq!(verts[1], (100, -50));
+        assert_eq!(verts[2], (100, 50));
+        assert_eq!(verts[3], (-100, 50));
+    }
+
+    #[test]
+    fn circle_to_vertices_count() {
+        let s = Shape::Circle { cx: 0, cy: 0, radius: 1000 };
+        let verts = s.to_vertices();
+        assert_eq!(verts.len(), 72); // 72-point approximation
+    }
+
+    #[test]
+    fn rounded_rect_to_vertices() {
+        let s = Shape::RoundedRect { cx: 0, cy: 0, hw: 1000, hh: 500, radius: 100 };
+        let verts = s.to_vertices();
+        // 4 corners * 8 points each = 32 vertices (no duplicate boundary points)
+        assert_eq!(verts.len(), 32);
+    }
+
+    #[test]
+    fn shape_inset_clamps_to_zero() {
+        let s = Shape::Rect { cx: 0, cy: 0, hw: 100, hh: 50 };
+        let inset = s.inset(200).unwrap(); // inset more than half-width
+        match inset {
+            Shape::Rect { hw, hh, .. } => {
+                assert_eq!(hw, 0);
+                assert_eq!(hh, 0);
+            }
+            _ => panic!("expected Rect"),
+        }
+    }
+
+    #[test]
+    fn inset_negative_amount_errors() {
+        let s = Shape::Rect { cx: 0, cy: 0, hw: 100, hh: 50 };
+        assert!(s.inset(-10).is_err());
+    }
+
+    #[test]
+    fn outset_negative_amount_errors() {
+        let s = Shape::Rect { cx: 0, cy: 0, hw: 100, hh: 50 };
+        assert!(s.outset(-10).is_err());
+    }
+
+    #[test]
+    fn inset_polygon_errors() {
+        let s = Shape::Polygon { vertices: vec![(0, 0), (100, 0), (100, 100)] };
+        assert!(s.inset(10).is_err());
+    }
+
+    #[test]
+    fn outset_polygon_errors() {
+        let s = Shape::Polygon { vertices: vec![(0, 0), (100, 0), (100, 100)] };
+        assert!(s.outset(10).is_err());
+    }
+
+    #[test]
+    fn polygon_too_few_vertices_errors() {
+        let scope = make_scope();
+        // Only 2 points — not enough for a polygon
+        let points = spanned(Expr::Array(vec![coord(0.0, 0.0), coord(10.0, 0.0)]));
+        let expr = call("polygon", vec![points]);
+        assert!(eval_expr(&expr, &scope).is_err());
+    }
+
+    #[test]
+    fn polygon_empty_errors() {
+        let scope = make_scope();
+        let points = spanned(Expr::Array(vec![]));
+        let expr = call("polygon", vec![points]);
+        assert!(eval_expr(&expr, &scope).is_err());
     }
 }

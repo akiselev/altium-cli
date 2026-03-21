@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use altium_format_types::pcb::RuleKind;
-use autopcb_ir::types::PointMm;
+use autopcb_ir::{PcbIr, types::PointMm};
 use autopcb_routes::{NetId, RouteSolution};
 
 use super::{DrcObject, DrcViolation, DrcViolationKind};
@@ -14,12 +14,17 @@ use super::policy::DrcPolicy;
 /// Checks per-via: drill size bounds and annular ring minimum.
 /// Checks per-net: maximum via count (if configured).
 /// Checks all pairs: hole-to-hole clearance between via centers.
+///
+/// Looks up each net's net class from `ir` for scoped via rule cascade.
 pub fn check_vias(
     solution: &RouteSolution,
     policy: &DrcPolicy,
+    ir: &PcbIr,
 ) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
-    let bounds = policy.via_bounds(None);
+
+    // Use global via_bounds for annular ring and hole-to-hole (not net-class scoped).
+    let bounds = policy.global_via_bounds();
 
     // Collect all vias across all nets for pair-checking.
     let all_vias: Vec<_> = solution
@@ -32,7 +37,10 @@ pub fn check_vias(
     for via in &all_vias {
         let center = PointMm { x: via.position.x, y: via.position.y };
 
-        if via.drill_mm < bounds.hole_min_mm {
+        let via_net_class: Option<&str> = super::net_class_for_net(ir, via.net_id);
+        let via_bounds = policy.via_bounds_for(via_net_class);
+
+        if via.drill_mm < via_bounds.hole_min_mm {
             violations.push(DrcViolation {
                 kind: DrcViolationKind::HoleSizeBelowMinimum,
                 rule_kind: RuleKind::MaxMinHoleSize,
@@ -42,9 +50,9 @@ pub fn check_vias(
                 location: center,
                 layer: None,
                 actual_mm: via.drill_mm,
-                required_mm: bounds.hole_min_mm,
+                required_mm: via_bounds.hole_min_mm,
             });
-        } else if via.drill_mm > bounds.hole_max_mm {
+        } else if via.drill_mm > via_bounds.hole_max_mm {
             violations.push(DrcViolation {
                 kind: DrcViolationKind::HoleSizeAboveMaximum,
                 rule_kind: RuleKind::MaxMinHoleSize,
@@ -54,11 +62,11 @@ pub fn check_vias(
                 location: center,
                 layer: None,
                 actual_mm: via.drill_mm,
-                required_mm: bounds.hole_max_mm,
+                required_mm: via_bounds.hole_max_mm,
             });
         }
 
-        if via.annular_ring_mm < bounds.annular_ring_min_mm {
+        if via.annular_ring_mm < via_bounds.annular_ring_min_mm {
             violations.push(DrcViolation {
                 kind: DrcViolationKind::AnnularRingBelowMinimum,
                 rule_kind: RuleKind::MinimumAnnularRing,
@@ -68,7 +76,7 @@ pub fn check_vias(
                 location: center,
                 layer: None,
                 actual_mm: via.annular_ring_mm,
-                required_mm: bounds.annular_ring_min_mm,
+                required_mm: via_bounds.annular_ring_min_mm,
             });
         }
     }
@@ -158,45 +166,13 @@ mod tests {
     use super::*;
     use altium_format_types::pcb::RuleKind;
     use autopcb_ir::{
-        handles::{IdMap, LayerId as IrLayerId, RuleId},
-        layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
-        rule::{IrDesignRule, IrRuleParams},
-        types::{BoundingBoxMm, PointMm as IrPointMm},
-        IrBoardGeometry, PcbIr,
+        handles::RuleId,
+        rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
+        PcbIr,
     };
     use autopcb_routes::{LayerId, NetId, Point, RoutedNet, RouteSolution, RoutedVia};
 
-    fn empty_ir() -> PcbIr {
-        PcbIr {
-            board: IrBoardGeometry {
-                outline: vec![],
-                cutouts: vec![],
-                bounds: BoundingBoxMm {
-                    min: IrPointMm { x: 0.0, y: 0.0 },
-                    max: IrPointMm { x: 100.0, y: 100.0 },
-                },
-                keepouts: vec![],
-            },
-            layer_stack: IrLayerStack {
-                copper_layers: vec![IrCopperLayer {
-                    id: IrLayerId::from(0u32),
-                    name: "Top Layer".into(),
-                    is_top: true,
-                    is_bottom: false,
-                    preferred_direction: Some(PreferredDirection::Any),
-                }],
-                copper_layer_count: 1,
-            },
-            components: IdMap::new(),
-            nets: IdMap::new(),
-            rules: IdMap::new(),
-            free_copper: Default::default(),
-            polygons: IdMap::new(),
-            texts: IdMap::new(),
-            regions: IdMap::new(),
-            component_bodies: IdMap::new(),
-        }
-    }
+    use super::super::test_helpers::empty_ir;
 
     fn add_annular_ring_rule(ir: &mut PcbIr, min_mm: f64) {
         let id = ir.rules.push(IrDesignRule {
@@ -205,6 +181,7 @@ mod tests {
             kind: RuleKind::MinimumAnnularRing,
             priority: 1,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params: IrRuleParams::MinimumAnnularRing { min_mm },
         });
         ir.rules[id].id = id;
@@ -247,7 +224,7 @@ mod tests {
         // Default bounds: hole 0.1–6.35, annular ring ≥ 0.05.
         let via = make_via(net_id, 0.0, 0.0, 0.3, 0.1);
         let solution = solution_with_vias(vec![(net_id, via)]);
-        let violations = check_vias(&solution, &policy);
+        let violations = check_vias(&solution, &policy, &ir);
         assert!(violations.is_empty(), "expected no violations, got {:?}", violations);
     }
 
@@ -259,7 +236,7 @@ mod tests {
         let net_id = NetId(1);
         let via = make_via(net_id, 0.0, 0.0, 0.3, 0.05);
         let solution = solution_with_vias(vec![(net_id, via)]);
-        let violations = check_vias(&solution, &policy);
+        let violations = check_vias(&solution, &policy, &ir);
         let annular_violations: Vec<_> = violations
             .iter()
             .filter(|v| v.kind == DrcViolationKind::AnnularRingBelowMinimum)
@@ -286,7 +263,7 @@ mod tests {
             (net_id, make_via(net_id, 2.0, 0.0, 0.3, 0.1)),
         ];
         let solution = solution_with_vias(vias);
-        let violations = check_vias(&solution, &policy);
+        let violations = check_vias(&solution, &policy, &ir);
         let count_violations: Vec<_> = violations
             .iter()
             .filter(|v| v.kind == DrcViolationKind::MaximumViaCountExceeded)
@@ -306,7 +283,7 @@ mod tests {
         let via_a = make_via(net_id, 0.0, 0.0, 0.2, 0.1);
         let via_b = make_via(net_id, 0.1, 0.0, 0.2, 0.1);
         let solution = solution_with_vias(vec![(net_id, via_a), (net_id, via_b)]);
-        let violations = check_vias(&solution, &policy);
+        let violations = check_vias(&solution, &policy, &ir);
         let h2h: Vec<_> = violations
             .iter()
             .filter(|v| v.kind == DrcViolationKind::HoleToHoleClearance)
@@ -326,7 +303,7 @@ mod tests {
         let via_a = make_via(net_id, 0.0, 0.0, 0.2, 0.1);
         let via_b = make_via(net_id, 1.0, 0.0, 0.2, 0.1);
         let solution = solution_with_vias(vec![(net_id, via_a), (net_id, via_b)]);
-        let violations = check_vias(&solution, &policy);
+        let violations = check_vias(&solution, &policy, &ir);
         let h2h: Vec<_> = violations
             .iter()
             .filter(|v| v.kind == DrcViolationKind::HoleToHoleClearance)

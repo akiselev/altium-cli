@@ -303,8 +303,6 @@ pub fn pathfinder_route(
         }
     }
 
-    builder.set_drc_violations(last_drc_violation_count);
-
     // ------------------------------------------------------------------
     // 5. Build final solution from the last iteration's paths.
     // ------------------------------------------------------------------
@@ -315,6 +313,21 @@ pub fn pathfinder_route(
     }
     for net_id in &final_failed {
         builder.add_unrouted(*net_id);
+    }
+
+    // ------------------------------------------------------------------
+    // 6. Final full DRC run — captures all violation records for storage.
+    // ------------------------------------------------------------------
+    let partial_solution = builder.build_partial();
+    match drc_engine.check_full(&partial_solution, workspace, ir) {
+        Ok(report) => {
+            let count = report.total_count() as u32;
+            builder.set_drc_violations(count);
+            builder.set_drc_violation_records(report.to_violation_records());
+        }
+        Err(e) => {
+            return Err(RoutingError::from(e));
+        }
     }
 
     Ok(builder.build())

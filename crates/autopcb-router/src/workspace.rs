@@ -652,7 +652,7 @@ mod tests {
         copper::FreeCopperGeometry,
         handles::{ComponentId, IdMap, LayerId as IrLayerId, PadId, RuleId},
         layer_stack::{IrCopperLayer, IrLayerStack, PreferredDirection},
-        rule::{IrDesignRule, IrRuleParams},
+        rule::{IrDesignRule, IrRuleParams, IrRuleScopePair},
         types::{BoardSide, BoundingBoxMm, PointMm},
         IrBoardGeometry,
     };
@@ -785,6 +785,7 @@ mod tests {
             kind: RuleKind::Clearance,
             priority: 1,
             enabled: true,
+            scope: IrRuleScopePair::default(),
             params: IrRuleParams::Clearance { gap_mm: 0.5 },
         });
         ir.rules[rule_id].id = rule_id;
