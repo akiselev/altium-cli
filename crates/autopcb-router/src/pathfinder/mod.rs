@@ -125,6 +125,8 @@ pub fn pathfinder_route(
     // ------------------------------------------------------------------
     let drc_config = DrcConfig::default();
     let drc_policy = DrcPolicy::build(ir).map_err(RoutingError::from)?;
+    let via_drill_mm = drc_policy.via_bounds.hole_min_mm;
+    let via_annular_ring_mm = drc_policy.via_bounds.annular_ring_min_mm;
     let drc_engine = CpuDrcEngine::new(drc_policy);
 
     // ------------------------------------------------------------------
@@ -190,7 +192,7 @@ pub fn pathfinder_route(
 
             for &subnet_idx in subnet_indices {
                 let subnet = &global_plan.subnets[subnet_idx];
-                match router.route_subnet(workspace, subnet, net_id, Some(history_slice)) {
+                match router.route_subnet(workspace, subnet, net_id, Some(history_slice), state.pres_fac) {
                     Ok(segments) => net_segments.extend(segments),
                     Err(_) => {
                         net_failed = true;
@@ -213,7 +215,7 @@ pub fn pathfinder_route(
             let mut iter_solution = autopcb_routes::RouteSolution::new();
             for (&net_id, segs) in &solution_paths {
                 let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
-                let (traces, vias) = route_subnet_to_traces(segs, grid, net_id, width_mm);
+                let (traces, vias) = route_subnet_to_traces(segs, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
                 iter_solution.nets.insert(net_id, autopcb_routes::RoutedNet {
                     net_id,
                     segments: traces,
@@ -281,7 +283,7 @@ pub fn pathfinder_route(
             .map(|(&net_id, segs)| {
                 let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
                 let (traces, _vias) =
-                    route_subnet_to_traces(segs, grid, net_id, width_mm);
+                    route_subnet_to_traces(segs, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
                 (net_id, traces)
             })
             .collect();
@@ -308,7 +310,7 @@ pub fn pathfinder_route(
     // ------------------------------------------------------------------
     for (&net_id, segments) in &solution_paths {
         let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
-        let (traces, vias) = route_subnet_to_traces(segments, grid, net_id, width_mm);
+        let (traces, vias) = route_subnet_to_traces(segments, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
         builder.add_net(net_id, traces, vias);
     }
     for net_id in &final_failed {

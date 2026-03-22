@@ -69,6 +69,21 @@ pub(crate) fn world_to_local(world: PointMm, comp_pos: PointMm, rotation_deg: f6
     )
 }
 
+/// Convert a component-local position to world coordinates.
+///
+/// Inverse of [`world_to_local`]: rotates by `+rotation_deg` then translates by
+/// `comp_pos`.
+pub(crate) fn local_to_world(local: PointMm, comp_pos: PointMm, rotation_deg: f64) -> PointMm {
+    if rotation_deg.abs() < 1e-6 {
+        return PointMm::new(local.x + comp_pos.x, local.y + comp_pos.y);
+    }
+    let angle = rotation_deg.to_radians();
+    PointMm::new(
+        local.x * angle.cos() - local.y * angle.sin() + comp_pos.x,
+        local.x * angle.sin() + local.y * angle.cos() + comp_pos.y,
+    )
+}
+
 /// Compute world and local bounding boxes for all components from their pad extents.
 pub(crate) fn compute_component_bounds(components: &mut IdMap<ComponentId, IrComponent>) {
     for (_id, comp) in components.iter_mut() {

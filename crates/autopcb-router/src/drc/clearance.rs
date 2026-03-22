@@ -19,7 +19,7 @@ use autopcb_routes::{RouteSolution, RoutedVia, TraceSegment};
 use autopcb_ir::types::PointMm;
 use altium_format_types::pcb::RuleKind;
 
-use super::{DrcObject, DrcViolation, DrcViolationKind};
+use super::{net_class_for_net, DrcObject, DrcViolation, DrcViolationKind};
 use super::policy::DrcPolicy;
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,14 @@ pub fn check_clearance(
     ir: &PcbIr,
 ) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
+
+    // Helper: map an IR-native NetId to its net class name.
+    let ir_net_class = |net_id: autopcb_ir::handles::NetId| -> Option<&str> {
+        ir.nets
+            .values()
+            .find(|n| n.id == net_id)
+            .and_then(|n| n.net_class.as_deref())
+    };
 
     // Collect all segments and vias from every net.
     let all_segments: Vec<&TraceSegment> = solution
@@ -67,7 +75,9 @@ pub fn check_clearance(
                 // Same net — clearance rules do not apply.
                 continue;
             }
-            let required = policy.clearance(None, None);
+            let class_a = net_class_for_net(ir, seg_a.net_id);
+            let class_b = net_class_for_net(ir, seg_b.net_id);
+            let required = policy.clearance(class_a, class_b);
             let centerline_dist = segment_to_segment_distance(
                 seg_a.start, seg_a.end,
                 seg_b.start, seg_b.end,
@@ -105,7 +115,9 @@ pub fn check_clearance(
                 continue;
             }
             let via_radius = via.drill_mm / 2.0 + via.annular_ring_mm;
-            let required = policy.clearance(None, None);
+            let class_seg = net_class_for_net(ir, seg.net_id);
+            let class_via = net_class_for_net(ir, via.net_id);
+            let required = policy.clearance(class_seg, class_via);
             let centerline_dist = point_to_segment_distance(
                 via.position,
                 seg.start,
@@ -145,7 +157,9 @@ pub fn check_clearance(
             }
             let ra = via_a.drill_mm / 2.0 + via_a.annular_ring_mm;
             let rb = via_b.drill_mm / 2.0 + via_b.annular_ring_mm;
-            let required = policy.clearance(None, None);
+            let class_a = net_class_for_net(ir, via_a.net_id);
+            let class_b = net_class_for_net(ir, via_b.net_id);
+            let required = policy.clearance(class_a, class_b);
             let dx = via_a.position.x - via_b.position.x;
             let dy = via_a.position.y - via_b.position.y;
             let center_dist = (dx * dx + dy * dy).sqrt();
@@ -169,7 +183,6 @@ pub fn check_clearance(
     // --- Segment-to-pad ---
     // For every segment, check clearance against all pads on a different net that
     // share at least one copper layer with the segment.
-    let required_pad = policy.clearance(None, None);
     for seg in &all_segments {
         for (_comp_id, comp) in ir.components.iter() {
             for pad in &comp.pads {
@@ -182,6 +195,9 @@ pub fn check_clearance(
                 if !pad.layer_set.contains(&seg_ir_layer) {
                     continue;
                 }
+                let class_seg = net_class_for_net(ir, seg.net_id);
+                let class_pad = pad.net.and_then(|net_id| ir_net_class(net_id));
+                let required_pad = policy.clearance(class_seg, class_pad);
                 // Approximate the pad as a circle whose radius is half the
                 // larger pad dimension (worst-case circular envelope).
                 let pad_radius = (pad.shape.size_x.max(pad.shape.size_y)) / 2.0;

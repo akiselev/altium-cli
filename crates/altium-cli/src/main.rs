@@ -1828,8 +1828,8 @@ fn instantiate_footprint_primitives(
                             component: Some(comp.designator.clone()),
                             center,
                             radius: arc.radius,
-                            start_angle: arc.start_angle + comp.rotation,
-                            end_angle: arc.end_angle + comp.rotation,
+                            start_angle: (arc.start_angle + comp.rotation) % 360.0,
+                            end_angle: (arc.end_angle + comp.rotation) % 360.0,
                             width: arc.width,
                         });
                         arc_counter += 1;
@@ -2516,16 +2516,17 @@ fn run_query(
 }
 
 fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result<()> {
-    let empty_spec = PcbDocSpec {
-        boards: Vec::new(),
-        placement: None,
-        placement_rules: Vec::new(),
-        routing: None,
-    };
-    let spec_dir = path.parent().unwrap_or(std::path::Path::new("."));
-    let result = load_ir_from_spec(&empty_spec, spec_dir, Some(path))
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let ir = result.ir;
+    use autopcb_ir::{import_pcbdoc, merge_pcbdoc_spec};
+    use autopcb_ir::spec_compiler::spec_to_ir;
+
+    let doc = PcbDoc::open(path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", path.display()))?;
+    let board = doc.board()
+        .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
+    let imported_spec = import_pcbdoc(&board)
+        .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
+    let ir = spec_to_ir(&imported_spec)
+        .map_err(|e| anyhow::anyhow!("spec compilation failed: {e:?}"))?;
 
     match sub {
         InspectSubcommand::Summary => {
@@ -2697,9 +2698,16 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
             })?;
 
             let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
-            let ir_result = load_ir_from_spec(&spec, spec_dir, Some(&target))
+            // Import PcbDoc and merge with spec at the CLI level.
+            let doc = PcbDoc::open(&target)
+                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
+            let board = doc.board()
+                .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
+            let imported = autopcb_ir::import_pcbdoc(&board)
+                .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
+            let merged = autopcb_ir::merge_pcbdoc_spec(imported, &spec);
+            let ir = load_ir_from_spec(&merged, spec_dir)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let ir = ir_result.ir;
 
             let mut cfg = PlacementConfig {
                 gamma_start,
@@ -2831,9 +2839,16 @@ pub fn autoplace_spec(
     };
 
     let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
-    let ir_result = load_ir_from_spec(&spec, spec_dir, Some(&target_path))
+    // Import PcbDoc and merge with spec at the CLI level.
+    let doc = PcbDoc::open(&target_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target_path.display()))?;
+    let board = doc.board()
+        .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
+    let imported = autopcb_ir::import_pcbdoc(&board)
+        .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
+    let merged = autopcb_ir::merge_pcbdoc_spec(imported, &spec);
+    let ir = load_ir_from_spec(&merged, spec_dir)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let ir = ir_result.ir;
     info!(
         target: "altium_cli::placement",
         target_path = %target_path.display(),
@@ -3043,14 +3058,113 @@ fn cmd_placement_apply(
         for place in &placement.places {
             if let Some(loc) = place.at {
                 for designator in &place.designators {
-                    if let Some(comp) = board
-                        .components
-                        .iter_mut()
-                        .find(|c| &c.designator == designator)
+                    // Capture old position before mutating.
+                    let old_location;
+                    let old_rotation;
                     {
-                        comp.location = loc;
-                        placed += 1;
+                        let comp = board
+                            .components
+                            .iter()
+                            .find(|c| &c.designator == designator);
+                        let Some(comp) = comp else { continue };
+                        old_location = comp.location;
+                        old_rotation = comp.rotation;
                     }
+
+                    // Compute translation delta.
+                    use altium_format_types::coord::{Coord, CoordPoint};
+                    let delta_x = loc.x - old_location.x;
+                    let delta_y = loc.y - old_location.y;
+                    let new_rotation = place.rotation.unwrap_or(old_rotation);
+                    let delta_rotation = new_rotation - old_rotation;
+
+                    // Update the component record itself.
+                    {
+                        let comp = board
+                            .components
+                            .iter_mut()
+                            .find(|c| &c.designator == designator)
+                            .expect("component must exist: checked above");
+                        comp.location = loc;
+                        comp.rotation = new_rotation;
+                    }
+
+                    // Translate (and optionally rotate) every primitive owned by
+                    // this component.  Primitives store world-space absolute
+                    // coordinates, so a component move requires updating all of
+                    // them by the same delta.  When the rotation also changes,
+                    // each primitive's position is rotated around the *new*
+                    // component centre.
+                    let translate_point = |p: CoordPoint| -> CoordPoint {
+                        let mut q = CoordPoint::new(p.x + delta_x, p.y + delta_y);
+                        if delta_rotation != 0.0 {
+                            let angle_rad = delta_rotation.to_radians();
+                            let (sin_a, cos_a) = angle_rad.sin_cos();
+                            let rx = (q.x - loc.x).raw() as f64;
+                            let ry = (q.y - loc.y).raw() as f64;
+                            q = CoordPoint::new(
+                                Coord::new(
+                                    (loc.x.raw() as f64 + rx * cos_a - ry * sin_a).round() as i32,
+                                ),
+                                Coord::new(
+                                    (loc.y.raw() as f64 + rx * sin_a + ry * cos_a).round() as i32,
+                                ),
+                            );
+                        }
+                        q
+                    };
+
+                    for pad in board.pads.iter_mut() {
+                        if pad.component.as_deref() == Some(designator) {
+                            pad.location = translate_point(pad.location);
+                            pad.rotation += delta_rotation;
+                        }
+                    }
+                    for track in board.tracks.iter_mut() {
+                        if track.component.as_deref() == Some(designator) {
+                            track.start = translate_point(track.start);
+                            track.end = translate_point(track.end);
+                        }
+                    }
+                    for arc in board.arcs.iter_mut() {
+                        if arc.component.as_deref() == Some(designator) {
+                            arc.center = translate_point(arc.center);
+                        }
+                    }
+                    for fill in board.fills.iter_mut() {
+                        if fill.component.as_deref() == Some(designator) {
+                            fill.corner1 = translate_point(fill.corner1);
+                            fill.corner2 = translate_point(fill.corner2);
+                            fill.rotation += delta_rotation;
+                        }
+                    }
+                    for text in board.texts.iter_mut() {
+                        if text.component.as_deref() == Some(designator) {
+                            text.location = translate_point(text.location);
+                            text.rotation += delta_rotation;
+                        }
+                    }
+                    for region in board.regions.iter_mut() {
+                        if region.component.as_deref() == Some(designator) {
+                            for v in region.outline.iter_mut() {
+                                *v = translate_point(*v);
+                            }
+                            for hole in region.holes.iter_mut() {
+                                for v in hole.iter_mut() {
+                                    *v = translate_point(*v);
+                                }
+                            }
+                        }
+                    }
+                    for body in board.component_bodies.iter_mut() {
+                        if body.component.as_deref() == Some(designator) {
+                            for v in body.outline.iter_mut() {
+                                *v = translate_point(*v);
+                            }
+                        }
+                    }
+
+                    placed += 1;
                 }
             }
         }
@@ -3304,13 +3418,25 @@ fn cmd_routing_solve(
     };
 
     let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
-    let ir_result = load_ir_from_spec(&spec, spec_dir, target)
+    // If a target PcbDoc was given, import it and merge with the spec.
+    let final_spec = if let Some(target) = target {
+        let doc = PcbDoc::open(target)
+            .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
+        let board = doc.board()
+            .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
+        let imported = autopcb_ir::import_pcbdoc(&board)
+            .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
+        autopcb_ir::merge_pcbdoc_spec(imported, &spec)
+    } else {
+        spec
+    };
+    let ir = load_ir_from_spec(&final_spec, spec_dir)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = autopcb_router::RoutingConfig::default();
-    let workspace = autopcb_router::build_workspace(&ir_result.ir, &config)
+    let workspace = autopcb_router::build_workspace(&ir, &config)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let solution = autopcb_router::route_board(&workspace, &ir_result.ir, &config)
+    let solution = autopcb_router::route_board(&workspace, &ir, &config)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let output_path = output

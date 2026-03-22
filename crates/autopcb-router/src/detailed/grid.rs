@@ -75,6 +75,9 @@ pub struct PathSegment {
 /// `history_costs` is an optional slice for PathFinder integration (M7).
 /// If `Some`, the linearized cost at each node is added during A* successor
 /// expansion to guide rip-up/reroute convergence.
+///
+/// `pres_fac` is the present-congestion multiplier from the PathFinder loop.
+/// Pass `1.0` when not running inside a PathFinder loop (no scaling effect).
 pub trait DetailedRouter {
     fn route_subnet(
         &self,
@@ -82,6 +85,7 @@ pub trait DetailedRouter {
         subnet: &crate::global::steiner::Subnet,
         net_id: NetId,
         history_costs: Option<&[f64]>,
+        pres_fac: f64,
     ) -> Result<Vec<PathSegment>, RoutingError>;
 }
 
@@ -112,8 +116,9 @@ impl DetailedRouter for GridRouter {
         subnet: &crate::global::steiner::Subnet,
         net_id: NetId,
         history_costs: Option<&[f64]>,
+        pres_fac: f64,
     ) -> Result<Vec<PathSegment>, RoutingError> {
-        route_subnet_astar(self, workspace, subnet, net_id, history_costs)
+        route_subnet_astar(self, workspace, subnet, net_id, history_costs, pres_fac)
     }
 }
 
@@ -178,6 +183,7 @@ fn successors(
     via_cost: &ViaCostModel,
     movement: MovementStyle,
     history_costs: Option<&[f64]>,
+    pres_fac: f64,
     allowed_layers: &[LayerId],
 ) -> Vec<(GridNode, OrderedFloat<f64>)> {
     let grid = &workspace.grid;
@@ -186,7 +192,7 @@ fn successors(
 
     let mut result = Vec::new();
 
-    // Helper: add the history cost if provided.
+    // Helper: look up the history cost for a node.
     let history_cost = |n: GridNode| -> f64 {
         history_costs
             .map(|h| {
@@ -194,6 +200,16 @@ fn successors(
                 if idx < h.len() { h[idx] } else { 0.0 }
             })
             .unwrap_or(0.0)
+    };
+
+    // Helper: apply PathFinder cost formula C(n) = (base + history) * pres_fac
+    // when the cell has nonzero history; otherwise use base cost unscaled.
+    let apply_pres_fac = |base: f64, history: f64| -> f64 {
+        if history > 0.0 {
+            (base + history) * pres_fac
+        } else {
+            base
+        }
     };
 
     // --- Same-layer moves ---
@@ -221,7 +237,8 @@ fn successors(
             return;
         }
         let penalty = direction_penalty(dx, dy, preferred);
-        let cost = base_cost * penalty + history_cost(neighbour);
+        let history = history_cost(neighbour);
+        let cost = apply_pres_fac(base_cost * penalty, history);
         result.push((neighbour, OrderedFloat(cost)));
     };
 
@@ -248,7 +265,8 @@ fn successors(
             continue;
         }
         let via_node = GridNode { x: node.x, y: node.y, layer: target_layer };
-        let cost = via_c + history_cost(via_node);
+        let history = history_cost(via_node);
+        let cost = apply_pres_fac(via_c, history);
         result.push((via_node, OrderedFloat(cost)));
     }
 
@@ -265,6 +283,7 @@ fn route_subnet_astar(
     subnet: &crate::global::steiner::Subnet,
     net_id: NetId,
     history_costs: Option<&[f64]>,
+    pres_fac: f64,
 ) -> Result<Vec<PathSegment>, RoutingError> {
     let grid = &workspace.grid;
 
@@ -312,6 +331,7 @@ fn route_subnet_astar(
                 &router.via_cost,
                 router.movement,
                 history_costs,
+                pres_fac,
                 &allowed_layers,
             )
         },
@@ -360,11 +380,14 @@ fn node_sequence_to_segments(path: &[GridNode]) -> Vec<PathSegment> {
 /// Layer transitions (via nodes) become `RoutedVia` entries.
 ///
 /// `width_mm` is applied to every `TraceSegment`.
+/// `via_drill_mm` and `via_annular_ring_mm` are applied to every `RoutedVia`.
 pub fn route_subnet_to_traces(
     path_segments: &[PathSegment],
     grid: &GridConfig,
     net_id: NetId,
     width_mm: f64,
+    via_drill_mm: f64,
+    via_annular_ring_mm: f64,
 ) -> (Vec<TraceSegment>, Vec<RoutedVia>) {
     let mut traces: Vec<TraceSegment> = Vec::new();
     let mut vias: Vec<RoutedVia> = Vec::new();
@@ -402,8 +425,8 @@ pub fn route_subnet_to_traces(
                 position: Point { x: seg_start_mm.x, y: seg_start_mm.y },
                 from_layer: seg.start.layer,
                 to_layer: seg.end.layer,
-                drill_mm: 0.3,
-                annular_ring_mm: 0.1,
+                drill_mm: via_drill_mm,
+                annular_ring_mm: via_annular_ring_mm,
             });
 
             current_layer = seg.end.layer;
@@ -536,7 +559,7 @@ mod tests {
         let subnet = make_subnet(2.0, 2.0, 7.0, 2.0, net_id);
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None)
+            .route_subnet(&ws, &subnet, net_id, None, 1.0)
             .expect("should find a path");
 
         assert!(!path.is_empty(), "expected non-empty path");
@@ -599,7 +622,7 @@ mod tests {
         let subnet = make_subnet(2.5, 5.5, 9.5, 5.5, net_id);
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None)
+            .route_subnet(&ws, &subnet, net_id, None, 1.0)
             .expect("router should find a path around the obstacle");
 
         assert!(!path.is_empty(), "expected non-empty path");
@@ -639,7 +662,7 @@ mod tests {
             region_path: vec![],
         };
 
-        let result = router.route_subnet(&ws, &subnet, net_id, None);
+        let result = router.route_subnet(&ws, &subnet, net_id, None, 1.0);
         assert!(
             matches!(result, Err(RoutingError::NoPath { .. })),
             "expected NoPath error for fully blocked route, got {:?}",
@@ -676,7 +699,7 @@ mod tests {
         };
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None)
+            .route_subnet(&ws, &subnet, net_id, None, 1.0)
             .expect("should find multi-layer path");
 
         // Check that the path includes a layer transition.
@@ -715,7 +738,7 @@ mod tests {
         let subnet = make_subnet(2.0, 2.0, 7.0, 7.0, net_id);
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None)
+            .route_subnet(&ws, &subnet, net_id, None, 1.0)
             .expect("should find diagonal path");
 
         // An 8-way diagonal path should have at most 5 segments (vs 10 for 4-way L-shape).
@@ -761,7 +784,7 @@ mod tests {
                 end: GridNode { x: 2, y: 0, layer: LayerId(0) },
             },
         ];
-        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.2);
+        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.2, 0.3, 0.1);
         assert!(vias.is_empty(), "no via expected for single-layer path");
         assert!(!traces.is_empty(), "expected at least one trace segment");
         // All traces on layer 0.
@@ -797,7 +820,7 @@ mod tests {
                 end: GridNode { x: 4, y: 0, layer: LayerId(1) },
             },
         ];
-        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.15);
+        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.15, 0.3, 0.1);
         assert_eq!(vias.len(), 1, "expected 1 via");
         assert_eq!(vias[0].from_layer, LayerId(0));
         assert_eq!(vias[0].to_layer, LayerId(1));

@@ -80,7 +80,7 @@ pub struct NetRoutingConfig {
 }
 
 fn default_grid_resolution_mm() -> f64 {
-    0.1
+    0.25
 }
 
 fn default_max_iterations() -> u32 {

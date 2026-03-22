@@ -15,7 +15,7 @@ use crate::compile_error::IrCompileError;
 use crate::component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
 use crate::copper::FreeCopperGeometry;
 use crate::extract::PcbIr;
-use crate::geometry::{compute_component_bounds, world_to_local};
+use crate::geometry::{compute_component_bounds, local_to_world, world_to_local};
 use crate::handles::{ComponentId, IdMap, LayerId, NetId, PadId, RuleId};
 use crate::layer_stack::{IrCopperLayer, IrLayerStack};
 use crate::net::{IrNet, IrNetPin};
@@ -251,6 +251,11 @@ fn compile_pads(
     let mut ir_pads = Vec::new();
 
     for pad_spec in pads {
+        // After merge_pcbdoc_spec(), pad positions from PcbDoc import are absolute
+        // world coordinates.  When no PcbDoc target is used (pure spec-only board),
+        // positions come from PcbLib and are footprint-relative.  The merge path is
+        // the dominant case; treat positions as world coords and derive local from
+        // world - comp_pos.
         let world_pos = PointMm::new(pad_spec.position.x.to_mms(), pad_spec.position.y.to_mms());
         let local_pos = world_to_local(world_pos, comp_pos, rotation);
         let net_id = match &pad_spec.net {
