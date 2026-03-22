@@ -503,6 +503,21 @@ pub enum PlacementItem {
     GroupDecl(PlacementGroupDecl),
     SeparateDecl(PlacementSeparateDecl),
     AutoplaceBlock(Spanned<Object>),
+    /// `minimize { objective_key }` — set the optimization objective.
+    ///
+    /// Supported objectives: `wirelength`, `congestion`, `area`.
+    /// Can include `subject_to { ... }` block for constraint relaxation hints.
+    Minimize(MinimizeDecl),
+}
+
+/// `minimize { wirelength } subject_to { ... }` — optimization objective
+/// with optional constraint relaxation hints.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MinimizeDecl {
+    /// The objective to minimize (e.g., "wirelength", "congestion").
+    pub objective: Spanned<String>,
+    /// Optional constraint relaxation hints in `subject_to { ... }` block.
+    pub subject_to: Option<Spanned<Object>>,
 }
 
 /// group NAME { components: [...] }

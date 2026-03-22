@@ -1173,6 +1173,14 @@ impl<'a> Printer<'a> {
                 self.push("autoplace ");
                 self.fmt_object(&obj.node);
             }
+            PlacementItem::Minimize(decl) => {
+                self.push("minimize ");
+                self.push(&decl.objective.node);
+                if let Some(ref subject_to) = decl.subject_to {
+                    self.push(" subject_to ");
+                    self.fmt_object(&subject_to.node);
+                }
+            }
             PlacementItem::GroupDecl(group) => {
                 self.push("group ");
                 self.push(&group.name.node);

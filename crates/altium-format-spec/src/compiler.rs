@@ -2417,6 +2417,20 @@ impl SpecCompiler {
                         clearance.edge = Some(self.expr_to_coord(v.0, v.1)?);
                     }
                 }
+                PlacementItem::Minimize(decl) => {
+                    // `minimize wirelength` maps to optimize.ratsnest = true
+                    // `minimize wirelength subject_to { ... }` additionally stores hints
+                    match decl.objective.node.as_str() {
+                        "wirelength" => {
+                            optimize.ratsnest = true;
+                            optimize.ratsnest_weight = 0.01; // default
+                        }
+                        _other => {
+                            // Phase 1: only 'wirelength' is supported
+                        }
+                    }
+                    // subject_to hints parsed but not yet consumed (Phase 2)
+                }
                 PlacementItem::AutoplaceBlock(obj) => {
                     autoplace_config = Some(self.compile_autoplace_config(&obj.node)?);
                 }

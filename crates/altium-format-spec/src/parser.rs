@@ -1714,6 +1714,46 @@ impl<'a> SpecParser<'a> {
                         self.skip_separators();
                         continue;
                     }
+                    "minimize" => {
+                        if item_annotation.is_some() {
+                            return Err(self
+                                .err("expected 'place' after annotation inside placement block"));
+                        }
+                        self.bump();
+                        self.skip_newlines();
+
+                        // Parse objective name (identifier like `wirelength`)
+                        let objective_name = self.expect_ident(
+                            "expected objective name after 'minimize' \
+                             (e.g., 'wirelength', 'congestion', 'area')",
+                        )?;
+                        self.skip_newlines();
+
+                        // Optional subject_to { ... } block
+                        let subject_to =
+                            if let TokenKind::Ident(ref s) = self.current_kind().clone() {
+                                if s == "subject_to" {
+                                    self.bump();
+                                    self.skip_newlines();
+                                    Some(self.parse_object()?)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                        let end = self.prev_span();
+                        body.push(Spanned::new(
+                            PlacementItem::Minimize(crate::ast::MinimizeDecl {
+                                objective: objective_name,
+                                subject_to,
+                            }),
+                            start.merge(end),
+                        ));
+                        self.skip_separators();
+                        continue;
+                    }
                     "clearance" => {
                         if item_annotation.is_some() {
                             return Err(self
