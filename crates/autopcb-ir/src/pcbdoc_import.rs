@@ -491,11 +491,7 @@ fn merge_board_spec(imported: BoardSpec, spec: &BoardSpec) -> BoardSpec {
         } else {
             spec.nets.clone()
         },
-        components: if spec.components.is_empty() {
-            imported.components
-        } else {
-            spec.components.clone()
-        },
+        components: merge_components(imported.components, &spec.components),
         tracks: if spec.tracks.is_empty() {
             imported.tracks
         } else {
@@ -562,6 +558,82 @@ fn merge_board_spec(imported: BoardSpec, spec: &BoardSpec) -> BoardSpec {
             spec.differential_pairs.clone()
         },
     }
+}
+
+/// Per-component merge: combine imported components (with pad geometry and net
+/// assignments from the PcbDoc binary) with spec components (with overridden
+/// properties like pattern, location, source_library).
+///
+/// - Components matched by designator: spec properties win, but imported pads
+///   are preserved when spec pads are empty.
+/// - Imported-only components are kept.
+/// - Spec-only components are kept.
+fn merge_components(
+    imported: Vec<PcbDocComponentSpec>,
+    spec: &[PcbDocComponentSpec],
+) -> Vec<PcbDocComponentSpec> {
+    if spec.is_empty() {
+        return imported;
+    }
+
+    use indexmap::IndexMap;
+
+    // Build lookup of imported components by designator.
+    let mut imported_map: IndexMap<String, PcbDocComponentSpec> = imported
+        .into_iter()
+        .map(|c| (c.designator.clone(), c))
+        .collect();
+
+    let mut result: Vec<PcbDocComponentSpec> = Vec::new();
+
+    // Process spec components in order — these define the canonical component list.
+    for spec_comp in spec {
+        if let Some(mut imp) = imported_map.shift_remove(&spec_comp.designator) {
+            // Merge: spec properties win, imported pads preserved when spec has none.
+            if let Some(ref v) = spec_comp.pattern {
+                imp.pattern = Some(v.clone());
+            }
+            if let Some(ref v) = spec_comp.comment {
+                imp.comment = Some(v.clone());
+            }
+            if let Some(v) = spec_comp.location {
+                imp.location = Some(v);
+            }
+            if let Some(v) = spec_comp.rotation {
+                imp.rotation = Some(v);
+            }
+            if let Some(ref v) = spec_comp.layer {
+                imp.layer = Some(v.clone());
+            }
+            if let Some(ref v) = spec_comp.source_library {
+                imp.source_library = Some(v.clone());
+            }
+            if !spec_comp.parameters.is_empty() {
+                for (k, v) in &spec_comp.parameters {
+                    imp.parameters.insert(k.clone(), v.clone());
+                }
+            }
+            // Pads: spec pads win when non-empty, otherwise preserve imported pads.
+            if !spec_comp.pads.is_empty() {
+                imp.pads = spec_comp.pads.clone();
+            }
+            // Annotation: spec wins if present.
+            if spec_comp.annotation.is_some() {
+                imp.annotation = spec_comp.annotation.clone();
+            }
+            result.push(imp);
+        } else {
+            // Spec-only component (not in PcbDoc) — keep as-is.
+            result.push(spec_comp.clone());
+        }
+    }
+
+    // Append any imported-only components (not mentioned in spec).
+    for (_designator, imp) in imported_map {
+        result.push(imp);
+    }
+
+    result
 }
 
 /// Merge a spec-file [`PcbDocSpec`] (by reference) on top of an imported [`PcbDocSpec`].

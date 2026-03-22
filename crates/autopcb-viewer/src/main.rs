@@ -3,7 +3,7 @@
 //! The viewer is spec-centric: it ONLY accepts `.pcbdoc-spec` files as input.
 //! The underlying PcbDoc is loaded and mutated by the spec pipeline internally.
 //!
-//! Usage: autopcb-viewer <path-to-pcbdoc-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]
+//! Usage: autopcb-viewer <path-to-pcbdoc-spec> [--screenshot <output.png>] [--playback <iterations.json>] [--watch]
 
 mod app;
 mod colors;
@@ -18,12 +18,7 @@ use autopcb_ir::PcbIr;
 use autopcb_placement::PlacementIterationSnapshot;
 
 /// Compile a `.pcbdoc-spec` file and produce a `PcbIr` with all spec mutations applied.
-///
-/// Returns `(ir, target_pcbdoc_path)`.
-pub(crate) fn load_spec_ir(
-    spec_path: &std::path::Path,
-    explicit_target: Option<&std::path::Path>,
-) -> anyhow::Result<(PcbIr, PathBuf)> {
+pub(crate) fn load_spec_ir(spec_path: &std::path::Path) -> anyhow::Result<PcbIr> {
     use altium_format_spec::parser::parse_spec;
     use altium_format_spec::{SpecDomain, SpecModel, compile_spec};
     use autopcb_ir::load_ir_from_spec;
@@ -43,10 +38,10 @@ pub(crate) fn load_spec_ir(
     };
 
     let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
-    let result = load_ir_from_spec(&pcbdoc_spec, spec_dir, explicit_target)
+    let ir = load_ir_from_spec(&pcbdoc_spec, spec_dir)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    Ok((result.ir, result.target_path))
+    Ok(ir)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -55,7 +50,7 @@ fn main() -> anyhow::Result<()> {
         Some(p) => PathBuf::from(p),
         None => {
             eprintln!(
-                "Usage: autopcb-viewer <path-to-pcbdoc-spec> [--target <pcbdoc>] [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
+                "Usage: autopcb-viewer <path-to-pcbdoc-spec> [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
             );
             std::process::exit(1);
         }
@@ -63,7 +58,6 @@ fn main() -> anyhow::Result<()> {
 
     let mut screenshot_path: Option<PathBuf> = None;
     let mut playback_path: Option<PathBuf> = None;
-    let mut explicit_target: Option<PathBuf> = None;
     let mut watch = false;
     while let Some(arg) = args.next() {
         if arg == "--screenshot" {
@@ -82,14 +76,6 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
-        } else if arg == "--target" {
-            match args.next() {
-                Some(p) => explicit_target = Some(PathBuf::from(p)),
-                None => {
-                    eprintln!("--target requires a path argument");
-                    std::process::exit(1);
-                }
-            }
         } else if arg == "--watch" {
             watch = true;
         }
@@ -100,15 +86,14 @@ fn main() -> anyhow::Result<()> {
     if !path_str.ends_with(".pcbdoc-spec") {
         eprintln!(
             "Error: autopcb-viewer requires a .pcbdoc-spec file as input.\n\
-             Got: {}\n\
-             Hint: create a spec file that references your PcbDoc via `target:`",
+             Got: {}",
             path.display()
         );
         std::process::exit(1);
     }
 
     eprintln!("Loading spec {}...", path.display());
-    let (ir, target_pcbdoc_path) = load_spec_ir(&path, explicit_target.as_deref())?;
+    let ir = load_spec_ir(&path)?;
 
     eprintln!(
         "Board: {:.1} x {:.1} mm, {} components, {} nets",
@@ -150,17 +135,6 @@ fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("failed to watch {}: {e}", path.display()))?;
         eprintln!("Watching {} for changes...", path.display());
 
-        // Watch the target PcbDoc.
-        watcher
-            .watch(&target_pcbdoc_path, notify::RecursiveMode::NonRecursive)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to watch {}: {e}",
-                    target_pcbdoc_path.display()
-                )
-            })?;
-        eprintln!("Watching {} for changes...", target_pcbdoc_path.display());
-
         if let Some(ref pb_path) = playback_path {
             watcher
                 .watch(pb_path, notify::RecursiveMode::NonRecursive)
@@ -197,10 +171,8 @@ fn main() -> anyhow::Result<()> {
                 screenshot_path,
                 playback.clone(),
                 watch_rx,
-                target_pcbdoc_path,
                 pb_path_clone,
                 spec_path,
-                explicit_target,
                 cc,
             )))
         }),

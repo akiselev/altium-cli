@@ -1,6 +1,6 @@
 //! Intermediate representation for PCB placement and routing.
 //!
-//! Extracts a simplified, mm-based IR from an `altium_format::PcbDocBoard`,
+//! Compiles a simplified, mm-based IR from a `PcbDocSpec`,
 //! suitable for placement solvers, routers, DRC, and visualisation.
 
 pub mod board;
@@ -38,7 +38,7 @@ pub use polygon::IrPolygon;
 pub use region::{IrRegion, IrRegionKind};
 pub use compile_error::IrCompileError;
 pub use rule::{IrDesignRule, IrRuleParams, IrRuleScope, IrRuleScopePair};
-pub use pcbdoc_import::import_pcbdoc;
+pub use pcbdoc_import::{import_pcbdoc, merge_pcbdoc_spec};
 pub use spec_bridge::load_ir_from_spec;
 pub use spec_compiler::spec_to_ir;
 pub use text::IrText;

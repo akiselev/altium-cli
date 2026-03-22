@@ -1,13 +1,12 @@
 //! Bridge between the spec pipeline and the IR.
 //!
-//! Provides [`load_ir_from_spec`] which encapsulates the full pipeline:
-//! open PcbDoc → `import_pcbdoc()` → merge spec mutations → `spec_to_ir()`.
+//! Provides [`load_ir_from_spec`] which compiles a [`PcbDocSpec`] directly to
+//! a [`PcbIr`] and merges routing solutions.
 //!
-//! The caller never touches `PcbDoc` or `PcbDocBoard` types directly.
+//! The spec is the sole source of truth — no PcbDoc files are opened here.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use altium_format::PcbDoc;
 use altium_format_spec::PcbDocSpec;
 use autopcb_routes::RouteSolution;
 
@@ -15,81 +14,28 @@ use crate::component::IrComponent;
 use crate::copper::{IrTrack, IrVia};
 use crate::extract::PcbIr;
 use crate::handles::{LayerId, NetId};
-use crate::pcbdoc_import::{import_pcbdoc, merge_pcbdoc_spec};
 use crate::spec_compiler::spec_to_ir;
 use crate::types::{BoundingBoxMm, PointMm};
 use crate::IrError;
 
-/// Result of loading IR from a spec.
-pub struct SpecIrResult {
-    /// The extracted IR with all spec mutations applied.
-    pub ir: PcbIr,
-    /// The resolved path to the target PcbDoc (useful for file watching).
-    pub target_path: PathBuf,
-}
-
 /// Load a [`PcbIr`] from a compiled [`PcbDocSpec`].
 ///
 /// Pipeline:
-/// 1. Resolve the target PcbDoc path from `spec.placement.target` or `target_override`
-/// 2. Open the PcbDoc
-/// 3. Import PcbDoc into a [`PcbDocSpec`] via `import_pcbdoc()`
-/// 4. Merge spec file mutations on top (spec file wins on conflict)
-/// 5. Compile merged spec to IR via `spec_to_ir()`
-/// 6. Apply placement `at:` overrides to the IR
-///
-/// The caller never sees `PcbDoc` or `PcbDocBoard`.
+/// 1. Compile spec to IR via `spec_to_ir()`
+/// 2. Apply placement `at:` overrides
+/// 3. Load and merge routing solution if available
 pub fn load_ir_from_spec(
     spec: &PcbDocSpec,
     spec_dir: &Path,
-    target_override: Option<&Path>,
-) -> crate::Result<SpecIrResult> {
-    // 1. Resolve target PcbDoc path.
-    let target_path = if let Some(explicit) = target_override {
-        explicit.to_path_buf()
-    } else {
-        let target_str = spec
-            .placement
-            .as_ref()
-            .and_then(|p| p.target.as_ref())
-            .ok_or_else(|| {
-                IrError::ExtractionError(
-                    "spec has no `target:` in placement block and no --target override was given"
-                        .into(),
-                )
-            })?;
-        spec_dir.join(target_str)
-    };
-
-    // 2. Open PcbDoc.
-    let doc = PcbDoc::open(&target_path).map_err(|e| {
-        IrError::ExtractionError(format!("failed to open {}: {e}", target_path.display()))
-    })?;
-
-    // 3. Import PcbDoc into PcbDocSpec.
-    let board = doc.board().map_err(|e| {
-        IrError::ExtractionError(format!("failed to extract board: {e}"))
-    })?;
-    let imported_spec = import_pcbdoc(&board).map_err(|e| {
-        IrError::ExtractionError(format!("failed to import PcbDoc: {e}"))
-    })?;
-
-    // 4. Merge spec file mutations on top of imported spec.
-    //    Spec file values overwrite imported values on conflict.
-    let merged_spec = merge_pcbdoc_spec(imported_spec, spec);
-
-    // 5. Compile merged spec to IR.
-    let mut ir = spec_to_ir(&merged_spec).map_err(|e| {
+) -> crate::Result<PcbIr> {
+    let mut ir = spec_to_ir(spec).map_err(|e| {
         IrError::ExtractionError(format!("spec compilation failed: {e}"))
     })?;
 
-    // 6. Apply placement `at:` overrides.
-    apply_placement_overrides(&merged_spec, &mut ir);
+    apply_placement_overrides(spec, &mut ir);
+    merge_routes_if_available(&mut ir, spec, spec_dir);
 
-    // 7. Load and merge routing solution if available.
-    merge_routes_if_available(&mut ir, &merged_spec, spec_dir);
-
-    Ok(SpecIrResult { ir, target_path })
+    Ok(ir)
 }
 
 /// Apply `placement { places { ... } }` position overrides to components in the IR.

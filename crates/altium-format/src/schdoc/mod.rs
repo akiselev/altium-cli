@@ -422,10 +422,16 @@ impl SchDoc {
             .unwrap_or(&[]);
 
         let mut current_overrides: Option<crate::render::sch::ComponentColorOverrides> = None;
+        // Number of transforms pushed by the current component (0, 1, or 2).
+        let mut component_transform_depth: usize = 0;
 
         for record in &self.records {
-            // Track component context for color overrides
+            // When we encounter a new Component, pop any transforms from the previous one.
             if let crate::sch_records::SchRecord::Component(c) = record {
+                for _ in 0..component_transform_depth {
+                    canvas.pop_transform();
+                }
+                component_transform_depth = if c.is_mirrored { 2 } else { 1 };
                 if c.override_colors {
                     current_overrides = Some(crate::render::sch::ComponentColorOverrides {
                         line_color: c.color,
@@ -437,6 +443,10 @@ impl SchDoc {
                 }
             }
             crate::render::sch::draw_sch_record(record, canvas, fonts, current_overrides.as_ref());
+        }
+        // Pop any transforms left open by the last component.
+        for _ in 0..component_transform_depth {
+            canvas.pop_transform();
         }
         for record in &self.additional_records {
             crate::render::sch::draw_sch_record(record, canvas, fonts, None);
