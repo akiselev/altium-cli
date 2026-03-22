@@ -150,7 +150,28 @@ pub fn route_board(
     ir: &PcbIr,
     config: &RoutingConfig,
 ) -> Result<RouteSolution, RoutingError> {
-    pathfinder::pathfinder_route(workspace, ir, config)
+    tracing::info!(
+        target: "autopcb_router",
+        component_count = ir.components.len(),
+        net_count = ir.nets.len(),
+        rule_count = ir.rules.len(),
+        "route_board_started"
+    );
+
+    let solution = pathfinder::pathfinder_route(workspace, ir, config)?;
+
+    tracing::info!(
+        target: "autopcb_router",
+        nets_routed = solution.nets.len(),
+        nets_unrouted = solution.unrouted.len(),
+        total_length_mm = %solution.metrics.total_length_mm,
+        total_vias = solution.metrics.total_vias,
+        completion_pct = %solution.metrics.completion_pct,
+        drc_violations = solution.metrics.drc_violations,
+        "route_board_finished"
+    );
+
+    Ok(solution)
 }
 
 /// Apply post-route optimization passes to a solution.

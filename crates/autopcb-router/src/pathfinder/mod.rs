@@ -93,6 +93,15 @@ pub fn pathfinder_route(
     // ------------------------------------------------------------------
     let global_plan = global_route(workspace, ir)?;
 
+    tracing::info!(
+        target: "autopcb_router::pathfinder",
+        net_count = global_plan.net_order.len(),
+        subnet_count = global_plan.subnets.len(),
+        max_iterations = config.max_iterations,
+        pres_fac_multiplier = %config.pres_fac_multiplier,
+        "pathfinder_started"
+    );
+
     // ------------------------------------------------------------------
     // 2. Build detailed router.
     // ------------------------------------------------------------------
@@ -194,7 +203,14 @@ pub fn pathfinder_route(
                 let subnet = &global_plan.subnets[subnet_idx];
                 match router.route_subnet(workspace, subnet, net_id, Some(history_slice), state.pres_fac) {
                     Ok(segments) => net_segments.extend(segments),
-                    Err(_) => {
+                    Err(e) => {
+                        tracing::debug!(
+                            target: "autopcb_router::pathfinder",
+                            net_id = ?net_id,
+                            subnet_idx,
+                            error = %e,
+                            "subnet_routing_failed"
+                        );
                         net_failed = true;
                         break;
                     }
@@ -296,6 +312,17 @@ pub fn pathfinder_route(
             paths: snap_paths,
         });
 
+        tracing::info!(
+            target: "autopcb_router::pathfinder",
+            iteration = _iteration,
+            conflict_count,
+            routed_count,
+            unrouted_count = final_failed.len(),
+            pres_fac = %state.pres_fac,
+            drc_violations = last_drc_violation_count,
+            "pathfinder_iteration_complete"
+        );
+
         // -- 4h. Convergence check ------------------------------------------
         let drc_clean = !drc_config.enabled
             || _iteration < drc_config.start_iteration
@@ -304,6 +331,14 @@ pub fn pathfinder_route(
             break;
         }
     }
+
+    tracing::info!(
+        target: "autopcb_router::pathfinder",
+        total_iterations = state.iteration + 1,
+        nets_routed = solution_paths.len(),
+        nets_failed = final_failed.len(),
+        "pathfinder_finished"
+    );
 
     // ------------------------------------------------------------------
     // 5. Build final solution from the last iteration's paths.

@@ -281,7 +281,18 @@ pub fn build_workspace(
     // pads currently use the same global clearance this is sufficient.
     let sentinel = NetId(u32::MAX);
     let clearance_mm = policy.clearance(sentinel, sentinel);
-    let inflate = grid.inflate_cells(clearance_mm);
+    // Inflate obstacles by clearance + via radius so that a point-check at the
+    // via center correctly detects overlap with pads. Without this, the A*
+    // router treats vias as zero-width points during placement.
+    let via_radius_mm = {
+        let dummy_net = NetId(0);
+        let dummy_layer = LayerId(0);
+        let candidates = policy.via_candidates(dummy_net, dummy_layer, dummy_layer);
+        let v = candidates.first().copied().unwrap_or_default();
+        v.drill_mm / 2.0 + v.annular_ring_mm
+    };
+    let obstacle_inflate_mm = clearance_mm + via_radius_mm;
+    let inflate = grid.inflate_cells(obstacle_inflate_mm);
 
     // ------------------------------------------------------------------
     // 5. Accumulate obstacle entries
@@ -312,14 +323,26 @@ pub fn build_workspace(
     // ------------------------------------------------------------------
     let pin_accesses = compute_access_points(ir, &grid, &obstacle_maps, layer_count);
 
-    Ok(RoutingWorkspace {
+    let workspace = RoutingWorkspace {
         policy,
         spatial_index,
         obstacle_maps,
         grid,
         pin_accesses,
         layer_count,
-    })
+    };
+
+    tracing::info!(
+        target: "autopcb_router::workspace",
+        grid_width = workspace.grid.width_cells,
+        grid_height = workspace.grid.height_cells,
+        layer_count = workspace.layer_count,
+        resolution_mm = %config.grid_resolution_mm,
+        total_cells = workspace.grid.width_cells as u64 * workspace.grid.height_cells as u64 * workspace.layer_count as u64,
+        "routing_workspace_built"
+    );
+
+    Ok(workspace)
 }
 
 // ---------------------------------------------------------------------------
@@ -398,35 +421,54 @@ fn mark_pads(
             let pad_radius = (pad.shape.size_x.max(pad.shape.size_y) / 2.0).max(0.0);
             let inflated_radius = pad_radius + clearance_mm;
 
-            // R-tree entry (once per pad, not per layer — the bbox is 2D).
-            if let Some(&first_layer) = pad.layer_set.first() {
+            // Drill hole radius (for through-hole pads, blocks ALL copper layers).
+            let drill_radius = if pad.is_through_hole && pad.hole_size_mm > 0.0 {
+                pad.hole_size_mm / 2.0
+            } else {
+                0.0
+            };
+            let drill_inflated = drill_radius + clearance_mm;
+
+            let (gcx, gcy) = grid.to_grid(pad.world_position);
+
+            // Bitmap + R-tree: one entry per layer the pad occupies.
+            // For the pad copper area, block with copper radius on declared layers.
+            let copper_radius_cells =
+                (pad_radius / grid.resolution_mm).ceil() as u32 + inflate;
+
+            for &ir_layer in &pad.layer_set {
+                let idx = ir_layer.raw() as usize;
+                if idx < maps.len() {
+                    maps[idx].mark_circle_blocked(gcx, gcy, copper_radius_cells);
+                }
                 entries.push(ObstacleEntry::pad(
                     cx - inflated_radius,
                     cy - inflated_radius,
                     cx + inflated_radius,
                     cy + inflated_radius,
                     net_id,
-                    first_layer,
+                    ir_layer,
                 ));
             }
 
-            // Bitmap: one entry per layer the pad occupies.
-            let (gcx, gcy) = grid.to_grid(pad.world_position);
-            let radius_cells = (pad_radius / grid.resolution_mm).ceil() as u32 + inflate;
-
-            for &ir_layer in &pad.layer_set {
-                let idx = ir_layer.raw() as usize;
-                if idx < maps.len() {
-                    // Use circle blocking for pads.
-                    maps[idx].mark_circle_blocked(gcx, gcy, radius_cells);
+            // Through-hole drill: block the hole on ALL copper layers, not just
+            // the pad's declared layers. The drill punches through the entire
+            // stackup regardless of which layers have copper pads.
+            if drill_radius > 0.0 {
+                let drill_cells =
+                    (drill_radius / grid.resolution_mm).ceil() as u32 + inflate;
+                for idx in 0..maps.len() {
+                    maps[idx].mark_circle_blocked(gcx, gcy, drill_cells);
                 }
-                // Additional R-tree entry per extra layer (for same-net query).
-                if pad.layer_set.len() > 1 {
+                // R-tree entries for drill on every layer (for clearance queries).
+                for idx in 0..maps.len() {
+                    let ir_layer =
+                        autopcb_ir::handles::LayerId::from(idx as u32);
                     entries.push(ObstacleEntry::pad(
-                        cx - inflated_radius,
-                        cy - inflated_radius,
-                        cx + inflated_radius,
-                        cy + inflated_radius,
+                        cx - drill_inflated,
+                        cy - drill_inflated,
+                        cx + drill_inflated,
+                        cy + drill_inflated,
                         net_id,
                         ir_layer,
                     ));

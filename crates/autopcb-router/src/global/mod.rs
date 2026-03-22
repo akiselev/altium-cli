@@ -136,11 +136,20 @@ pub fn global_route(
     let seed = workspace.policy.seed();
     let net_order = order_nets(&ordering_input, seed);
 
-    Ok(GlobalRoutePlan {
+    let plan = GlobalRoutePlan {
         subnets: all_subnets,
         layer_assignments,
         net_order,
-    })
+    };
+
+    tracing::info!(
+        target: "autopcb_router::global",
+        subnet_count = plan.subnets.len(),
+        net_order_count = plan.net_order.len(),
+        "global_route_finished"
+    );
+
+    Ok(plan)
 }
 
 // ---------------------------------------------------------------------------

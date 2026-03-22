@@ -75,6 +75,13 @@ impl DrcEngine for CpuDrcEngine {
                 15,
                 self.policy.skipped_rules.clone(),
             );
+
+        tracing::info!(
+            target: "autopcb_router::drc",
+            total_violations = report.total_count(),
+            "drc_check_complete"
+        );
+
         Ok(report)
     }
 }
