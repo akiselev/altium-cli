@@ -39,3 +39,8 @@ docs/*-diff/
 
 # Generated files by the cli
 /generated/
+
+# Autoresearch benchmark artifacts
+results.tsv
+*.routes
+run.log

@@ -98,12 +98,12 @@ pub struct PathFinderState {
 }
 
 impl PathFinderState {
-    fn new(width: u32, height: u32, layer_count: usize, initial_pres_fac: f64) -> Self {
+    fn new(width: u32, height: u32, layer_count: usize, _initial_pres_fac: f64) -> Self {
         PathFinderState {
             history: HistoryArray::new(width, height, layer_count),
             edge_history: EdgeHistoryMap::new(),
             present_usage: PresentUsageArray::new(width, height, layer_count),
-            pres_fac: initial_pres_fac,
+            pres_fac: 0.0, // VPR: first iteration ignores congestion
             iteration: 0,
             best_conflict_count: u32::MAX,
             stagnation_counter: 0,
@@ -154,11 +154,13 @@ pub fn pathfinder_route(
     // 3. Initialise PathFinder state.
     // ------------------------------------------------------------------
     let grid = &workspace.grid;
+    // VPR pattern: first iteration uses zero congestion so every net finds
+    // its natural shortest path. Real congestion pressure starts from iter 1.
     let mut state = PathFinderState::new(
         grid.width_cells,
         grid.height_cells,
         workspace.layer_count,
-        config.initial_pres_fac,
+        0.0, // pres_fac=0 for iteration 0
     );
 
     // Current solution: maps NetId → flat list of PathSegments.
@@ -233,7 +235,36 @@ pub fn pathfinder_route(
 
         let history_slice = state.history.as_slice();
 
-        for &net_id in &global_plan.net_order {
+        // Build dynamic ordering: failed nets first, then the rest in original order.
+        let dynamic_order: Vec<NetId> = if !final_failed.is_empty() && _iteration > 0 {
+            let failed_set: std::collections::HashSet<NetId> = final_failed.iter().copied().collect();
+            let mut order = Vec::with_capacity(global_plan.net_order.len());
+            // Failed nets first
+            for &net_id in &global_plan.net_order {
+                if failed_set.contains(&net_id) {
+                    order.push(net_id);
+                }
+            }
+            // Then remaining nets in original order
+            for &net_id in &global_plan.net_order {
+                if !failed_set.contains(&net_id) {
+                    order.push(net_id);
+                }
+            }
+            order
+        } else {
+            global_plan.net_order.clone()
+        };
+
+        if !final_failed.is_empty() && _iteration > 0 {
+            tracing::info!(
+                target: "autopcb_router::pathfinder",
+                failed_count = final_failed.len(),
+                "reordering nets: failed nets first"
+            );
+        }
+
+        for &net_id in &dynamic_order {
             // Skip nets that already have a valid path (not ripped up).
             if solution_paths.contains_key(&net_id) {
                 continue;
@@ -275,7 +306,9 @@ pub fn pathfinder_route(
                             "subnet_routing_failed"
                         );
                         net_failed = true;
-                        break;
+                        // Don't break — try remaining subnets so they
+                        // occupy the grid and guide future iterations.
+                        continue;
                     }
                 }
             }
@@ -394,15 +427,24 @@ pub fn pathfinder_route(
         }
 
         // -- 4f. Update present congestion factor ---------------------------
-        // On stagnation threshold: escalate by doubling instead of normal growth.
-        if state.stagnation_counter == config.stagnation_threshold {
+        // VPR pattern: first iteration uses zero congestion, then switch to initial_pres_fac.
+        // On stagnation threshold: escalate by 1.5× instead of normal growth.
+        // (Was 2.0× but that's too aggressive for 2-layer boards.)
+        if _iteration == 0 {
+            tracing::info!(
+                target: "autopcb_router::pathfinder",
+                initial_pres_fac = config.initial_pres_fac,
+                "first iteration complete, switching to initial_pres_fac"
+            );
+            state.pres_fac = config.initial_pres_fac;
+        } else if state.stagnation_counter == config.stagnation_threshold {
             tracing::info!(
                 target: "autopcb_router::pathfinder",
                 iteration = _iteration,
                 stagnation_counter = state.stagnation_counter,
-                "stagnation_escalation: doubling pres_fac"
+                "stagnation_escalation: boosting pres_fac"
             );
-            state.pres_fac = (state.pres_fac * 2.0).min(config.pres_fac_cap);
+            state.pres_fac = (state.pres_fac * 1.5).min(config.pres_fac_cap);
         } else {
             state.pres_fac = (state.pres_fac * config.pres_fac_multiplier).min(config.pres_fac_cap);
         }

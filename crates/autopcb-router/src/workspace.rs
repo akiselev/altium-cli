@@ -201,11 +201,19 @@ impl RoutingWorkspace {
                 cell_mm.y + r,
             ]);
             // If every obstacle touching this cell is same-net, allow pass-through.
+            // Also allow pass-through when there are NO R-tree entries at all —
+            // this means the cell is blocked only by clearance inflation (the
+            // bitmap inflates by clearance + via_radius, but R-tree entries only
+            // cover clearance). Without this, a dead-zone ring forms around pads
+            // that no net can route through, not even the pad's own net.
+            if candidates.is_empty() {
+                return false;
+            }
             let all_same_net = candidates.iter().all(|obs| {
                 obs.net_id()
                     .map_or(false, |obs_net| obs_net == query_net)
             });
-            if all_same_net && !candidates.is_empty() {
+            if all_same_net {
                 return false;
             }
         }

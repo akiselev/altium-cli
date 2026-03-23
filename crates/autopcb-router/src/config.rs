@@ -24,10 +24,10 @@ pub enum CornerStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MovementStyle {
-    /// Four-way cardinal movement (default).
-    #[default]
+    /// Four-way cardinal movement.
     FourWay,
-    /// Eight-way diagonal movement.
+    /// Eight-way diagonal movement (default).
+    #[default]
     EightWay,
 }
 
@@ -104,7 +104,7 @@ fn default_neckdown_enabled() -> bool {
 }
 
 fn default_roi_initial_radius() -> u32 {
-    24
+    40
 }
 
 fn default_roi_retry_multiplier() -> u32 {
@@ -112,11 +112,11 @@ fn default_roi_retry_multiplier() -> u32 {
 }
 
 fn default_stagnation_threshold() -> u32 {
-    5
+    8
 }
 
 fn default_stagnation_max() -> u32 {
-    10
+    20
 }
 
 /// Configuration for pad escape planning (BGA/QFP fanout pre-routing).
@@ -171,11 +171,11 @@ fn default_grid_resolution_mm() -> f64 {
 }
 
 fn default_max_iterations() -> u32 {
-    50
+    100
 }
 
 fn default_pres_fac_multiplier() -> f64 {
-    1.5
+    1.3
 }
 
 fn default_pres_fac_cap() -> f64 {
@@ -191,7 +191,7 @@ fn default_initial_pres_fac() -> f64 {
 }
 
 fn default_history_decay() -> f64 {
-    1.0
+    0.95
 }
 
 fn default_hist_weight() -> f64 {
@@ -327,19 +327,19 @@ mod tests {
     fn default_config_has_expected_values() {
         let cfg = RoutingConfig::default();
         assert!((cfg.grid_resolution_mm - 0.25).abs() < f64::EPSILON);
-        assert_eq!(cfg.max_iterations, 50);
+        assert_eq!(cfg.max_iterations, 100);
         assert!((cfg.via_cost_base - 10.0).abs() < f64::EPSILON);
-        assert!((cfg.pres_fac_multiplier - 1.5).abs() < f64::EPSILON);
+        assert!((cfg.pres_fac_multiplier - 1.3).abs() < f64::EPSILON);
         assert!((cfg.pres_fac_cap - 500.0).abs() < f64::EPSILON);
         assert!((cfg.history_increment - 1.5).abs() < f64::EPSILON);
         assert!((cfg.initial_pres_fac - 0.5).abs() < f64::EPSILON);
-        assert!((cfg.history_decay - 1.0).abs() < f64::EPSILON);
+        assert!((cfg.history_decay - 0.95).abs() < f64::EPSILON);
         assert!((cfg.hist_weight - 1.0).abs() < f64::EPSILON);
         assert_eq!(cfg.corner_style, CornerStyle::FortyFiveDegree);
         assert!(cfg.allowed_layers.is_empty());
         assert!(cfg.net_configs.is_empty());
         assert_eq!(cfg.seed, 0);
-        assert_eq!(cfg.movement, MovementStyle::FourWay);
+        assert_eq!(cfg.movement, MovementStyle::EightWay);
     }
 
     #[test]
@@ -385,12 +385,12 @@ mod tests {
         let json = r#"{}"#;
         let cfg: RoutingConfig = serde_json::from_str(json).expect("deserialization failed");
         assert!((cfg.grid_resolution_mm - 0.25).abs() < f64::EPSILON);
-        assert_eq!(cfg.max_iterations, 50);
+        assert_eq!(cfg.max_iterations, 100);
         assert_eq!(cfg.corner_style, CornerStyle::FortyFiveDegree);
-        assert_eq!(cfg.movement, MovementStyle::FourWay);
+        assert_eq!(cfg.movement, MovementStyle::EightWay);
         assert_eq!(cfg.seed, 0);
         assert!((cfg.initial_pres_fac - 0.5).abs() < f64::EPSILON);
-        assert!((cfg.history_decay - 1.0).abs() < f64::EPSILON);
+        assert!((cfg.history_decay - 0.95).abs() < f64::EPSILON);
         assert!((cfg.hist_weight - 1.0).abs() < f64::EPSILON);
     }
 }
