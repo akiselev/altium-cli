@@ -99,6 +99,10 @@ fn default_min_access_threshold() -> usize {
     3
 }
 
+fn default_neckdown_enabled() -> bool {
+    true
+}
+
 fn default_roi_initial_radius() -> u32 {
     24
 }
@@ -139,6 +143,14 @@ pub struct EscapeConfig {
     /// considered already routable. Default 3.
     #[serde(default = "default_min_access_threshold")]
     pub min_access_threshold: usize,
+
+    /// Enable trace width necking near pad edges. Default true.
+    #[serde(default = "default_neckdown_enabled")]
+    pub neckdown_enabled: bool,
+
+    /// Minimum neckdown trace width in mm. Default 0.0 (use routing policy minimum).
+    #[serde(default)]
+    pub neckdown_min_width_mm: f64,
 }
 
 impl Default for EscapeConfig {
@@ -148,6 +160,8 @@ impl Default for EscapeConfig {
             min_escape_mm: default_min_escape_mm(),
             max_escape_mm: default_max_escape_mm(),
             min_access_threshold: default_min_access_threshold(),
+            neckdown_enabled: default_neckdown_enabled(),
+            neckdown_min_width_mm: 0.0,
         }
     }
 }
@@ -205,7 +219,8 @@ pub struct RoutingConfig {
     pub via_cost_base: f64,
 
     /// Present congestion factor growth multiplier per iteration. McMurchie &
-    /// Ebeling 1995 §3.2 baseline is 1.15. Default 1.15.
+    /// Ebeling 1995 §3.2 baseline is 1.15. Default 1.5 (more aggressive than
+    /// baseline for faster convergence on dense boards).
     #[serde(default = "default_pres_fac_multiplier")]
     pub pres_fac_multiplier: f64,
 

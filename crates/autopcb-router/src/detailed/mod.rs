@@ -22,6 +22,6 @@ pub mod grid;
 pub mod shape;
 pub mod via_cost;
 
-pub use grid::{DetailedRouter, GridNode, GridRouter, PathSegment, route_subnet_to_traces};
+pub use grid::{DetailedRouter, GridNode, GridRouter, NeckdownMap, PathSegment, build_neckdown_map, route_subnet_to_traces};
 pub use shape::ShapeRouter;
 pub use via_cost::ViaCostModel;

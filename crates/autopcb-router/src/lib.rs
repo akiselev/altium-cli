@@ -95,7 +95,7 @@ pub fn route_single_net(
     config: &RoutingConfig,
     net_id: NetId,
 ) -> Result<RoutedNet, RoutingError> {
-    use detailed::grid::{DetailedRouter, GridRouter, route_subnet_to_traces};
+    use detailed::grid::{DetailedRouter, GridRouter, build_neckdown_map, route_subnet_to_traces};
     use detailed::via_cost::ViaCostModel;
     use drc::policy::DrcPolicy;
     use global::global_route;
@@ -108,6 +108,8 @@ pub fn route_single_net(
     let via_drill_mm = drc_policy.via_bounds.hole_min_mm;
     let via_annular_ring_mm = drc_policy.via_bounds.annular_ring_min_mm;
 
+    let neckdown_map = build_neckdown_map(&workspace.escape_plan);
+
     let mut all_traces = Vec::new();
     let mut all_vias = Vec::new();
 
@@ -118,7 +120,7 @@ pub fn route_single_net(
             .trace_width(net_id, autopcb_routes::LayerId(0))
             .preferred;
         let (traces, vias) =
-            route_subnet_to_traces(&segments, &workspace.grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
+            route_subnet_to_traces(&segments, &workspace.grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm, &neckdown_map);
         all_traces.extend(traces);
         all_vias.extend(vias);
     }

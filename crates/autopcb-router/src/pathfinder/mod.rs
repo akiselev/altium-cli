@@ -34,7 +34,7 @@ use autopcb_routes::{NetId, RouteSolution, RoutingIterationSnapshot, TraceSegmen
 
 use crate::config::RoutingConfig;
 use crate::detailed::grid::{
-    GridRouter, PathSegment, route_subnet_to_traces,
+    GridRouter, NeckdownMap, PathSegment, build_neckdown_map, route_subnet_to_traces,
 };
 use crate::detailed::via_cost::ViaCostModel;
 use crate::drc::cpu_engine::CpuDrcEngine;
@@ -184,6 +184,9 @@ pub fn pathfinder_route(
     let via_annular_ring_mm = drc_policy.via_bounds.annular_ring_min_mm;
     let drc_engine = CpuDrcEngine::new(drc_policy);
 
+    // Build neckdown map from the escape plan once before the loop.
+    let neckdown_map: NeckdownMap = build_neckdown_map(&workspace.escape_plan);
+
     // ------------------------------------------------------------------
     // 4. Negotiation loop.
     // ------------------------------------------------------------------
@@ -308,7 +311,7 @@ pub fn pathfinder_route(
             let mut iter_solution = autopcb_routes::RouteSolution::new();
             for (&net_id, segs) in &solution_paths {
                 let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
-                let (traces, vias) = route_subnet_to_traces(segs, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
+                let (traces, vias) = route_subnet_to_traces(segs, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm, &neckdown_map);
                 iter_solution.nets.insert(net_id, autopcb_routes::RoutedNet {
                     net_id,
                     segments: traces,
@@ -414,7 +417,7 @@ pub fn pathfinder_route(
             .map(|(&net_id, segs)| {
                 let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
                 let (traces, _vias) =
-                    route_subnet_to_traces(segs, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
+                    route_subnet_to_traces(segs, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm, &neckdown_map);
                 (net_id, traces)
             })
             .collect();
@@ -496,7 +499,7 @@ pub fn pathfinder_route(
     // ------------------------------------------------------------------
     for (&net_id, segments) in &solution_paths {
         let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
-        let (traces, vias) = route_subnet_to_traces(segments, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm);
+        let (traces, vias) = route_subnet_to_traces(segments, grid, net_id, width_mm, via_drill_mm, via_annular_ring_mm, &neckdown_map);
         builder.add_net(net_id, traces, vias);
     }
     for net_id in &final_failed {
@@ -724,5 +727,226 @@ mod tests {
         for (i, snap) in solution.iterations.iter().enumerate() {
             assert_eq!(snap.iteration, i as u32, "snapshots must be in order");
         }
+    }
+
+    // -----------------------------------------------------------------------
+
+    /// Build a 2-layer IR with a peripheral QFP-like component.
+    ///
+    /// The component has 8 SMD pads arranged 2-per-side (top/bottom/left/right)
+    /// with a 0.5 mm pitch on a 0.5 mm routing grid. Design rules are set with
+    /// zero clearance and zero via size so that `inflate = 0` and
+    /// `copper_radius_cells = 1` (only cardinal neighbors blocked). At that
+    /// radius, adjacent pads within 1 grid cell block each other's diagonal
+    /// cells, leaving exactly 2 free neighbors per pad — below the
+    /// `min_access_threshold` of 3 — triggering the escape planner while still
+    /// leaving a free diagonal step-1 cell for `plan_stubs` to use.
+    fn qfp_ir_with_component() -> PcbIr {
+        use autopcb_ir::component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
+        use autopcb_ir::rule::{IrDesignRule, IrRuleParams, IrRuleScopePair};
+        use autopcb_ir::types::BoardSide;
+        use altium_format_types::pcb::RuleKind;
+
+        // Board is 30x30 mm; component sits at center (15, 15).
+        let board_max = 30.0;
+        let cx = 15.0_f64;
+        let cy = 15.0_f64;
+
+        // Pad pitch: 0.5 mm = 1 grid cell.
+        // 8 pads: 2 on each of the 4 sides.
+        //
+        // On a 0.5 mm grid, each pad at (gx, gy) with copper_radius_cells=1
+        // blocks only the 4 cardinal neighbors. The 2 adjacent pads on each
+        // edge (1 cell apart in the along-edge axis) each block two of the
+        // pad's diagonal cells, leaving exactly 2 free diagonal cells per pad.
+        // That count (2) is below min_access_threshold (3), so escape routing
+        // activates. The step-1 diagonal cell is not in the pad's own blocked
+        // radius, so plan_stubs successfully creates an escape stub.
+        //
+        // Pad layout (local coords, component center at origin):
+        //   Top edge    (y = +1.5):  x = -0.25, +0.25
+        //   Bottom edge (y = -1.5):  x = -0.25, +0.25
+        //   Left edge   (x = -1.5):  y = -0.25, +0.25
+        //   Right edge  (x = +1.5):  y = -0.25, +0.25
+        let local_pad_offsets: [(f64, f64); 8] = [
+            (-0.25, 1.5),  // Top-left      (pad 0)
+            (0.25, 1.5),   // Top-right     (pad 1)
+            (-0.25, -1.5), // Bottom-left   (pad 2)
+            (0.25, -1.5),  // Bottom-right  (pad 3)
+            (-1.5, -0.25), // Left-bottom   (pad 4)
+            (-1.5, 0.25),  // Left-top      (pad 5)
+            (1.5, -0.25),  // Right-bottom  (pad 6)
+            (1.5, 0.25),   // Right-top     (pad 7)
+        ];
+
+        let comp_id = ComponentId::from(0);
+        let top_layer = IrLayerId::from(0);
+
+        let mut pads: Vec<IrComponentPad> = Vec::new();
+        for (pad_idx, &(lx, ly)) in local_pad_offsets.iter().enumerate() {
+            pads.push(IrComponentPad {
+                id: PadId::from(pad_idx as u32),
+                name: format!("{}", pad_idx + 1),
+                local_position: PointMm::new(lx, ly),
+                world_position: PointMm::new(cx + lx, cy + ly),
+                net: Some(IrNetId::from(pad_idx as u32)),
+                shape: PadShapeInfo {
+                    kind: PadShapeKind::Rectangular,
+                    size_x: 0.4,
+                    size_y: 0.4,
+                    rotation: 0.0,
+                },
+                is_through_hole: false,
+                hole_size_mm: 0.0,
+                swap_id_pin: None,
+                swap_id_part: None,
+                layer_set: vec![top_layer],
+            });
+        }
+
+        // Component bounding box: pads span ±1.5 mm from center.
+        let half = 1.5_f64;
+        let local_bounds = BoundingBoxMm::new(
+            PointMm::new(-half, -half),
+            PointMm::new(half, half),
+        );
+        let world_bounds = BoundingBoxMm::new(
+            PointMm::new(cx - half, cy - half),
+            PointMm::new(cx + half, cy + half),
+        );
+
+        let comp = IrComponent {
+            id: comp_id,
+            designator: "U1".into(),
+            pattern: "QFP8".into(),
+            value: "IC".into(),
+            position: PointMm::new(cx, cy),
+            rotation: 0.0,
+            side: BoardSide::Top,
+            local_bounds,
+            world_bounds,
+            pads,
+        };
+
+        let mut ir = two_layer_ir(board_max);
+        ir.components.push(comp);
+
+        // Add design rules: zero clearance and zero via size so that the
+        // workspace obstacle inflation is 0. This gives copper_radius_cells=1
+        // (only the pad's center + 4 cardinal cells blocked), which allows the
+        // escape planner to find a free diagonal step-1 cell.
+        ir.rules.push(IrDesignRule {
+            id: autopcb_ir::handles::RuleId::from(0u32),
+            name: "TestClearance".into(),
+            kind: RuleKind::Clearance,
+            priority: 1,
+            enabled: true,
+            scope: IrRuleScopePair::default(),
+            params: IrRuleParams::Clearance { gap_mm: 0.0 },
+        });
+        ir.rules.push(IrDesignRule {
+            id: autopcb_ir::handles::RuleId::from(1u32),
+            name: "TestVia".into(),
+            kind: RuleKind::RoutingViaStyle,
+            priority: 2,
+            enabled: true,
+            scope: IrRuleScopePair::default(),
+            params: IrRuleParams::RoutingViaStyle {
+                width_min_mm: 0.0,
+                width_max_mm: 0.5,
+                hole_min_mm: 0.0,
+                hole_max_mm: 0.3,
+            },
+        });
+
+        // Each pad gets a net with 2 pins: the pad itself and a far-away
+        // destination spread around the board perimeter.
+        let far_points: [(f64, f64); 8] = [
+            (3.0, 27.0),
+            (27.0, 27.0),
+            (3.0, 3.0),
+            (27.0, 3.0),
+            (2.0, 10.0),
+            (2.0, 20.0),
+            (28.0, 10.0),
+            (28.0, 20.0),
+        ];
+
+        for (pad_idx, &(fx, fy)) in far_points.iter().enumerate() {
+            let net = IrNet {
+                id: IrNetId::from(pad_idx as u32),
+                name: format!("NET{pad_idx}"),
+                pins: vec![
+                    IrNetPin {
+                        pad: PadId::from(pad_idx as u32),
+                        component: comp_id,
+                        position: PointMm::new(
+                            cx + local_pad_offsets[pad_idx].0,
+                            cy + local_pad_offsets[pad_idx].1,
+                        ),
+                    },
+                    IrNetPin {
+                        pad: PadId::from(pad_idx as u32),
+                        component: ComponentId::from(1),
+                        position: PointMm::new(fx, fy),
+                    },
+                ],
+                component_count: 2,
+                net_class: None,
+                diff_pair_partner: None,
+            };
+            ir.nets.push(net);
+        }
+
+        ir
+    }
+
+    #[test]
+    fn two_layer_qfp_breakout_integration() {
+        let ir = qfp_ir_with_component();
+
+        // Escape-enabled config: 0.5 mm grid (1 grid cell per pad pitch),
+        // min_access_threshold=3 so pads with 2 free diagonal neighbors trigger
+        // escape routing.
+        let mut config = RoutingConfig::default();
+        config.grid_resolution_mm = 0.5;
+        config.max_iterations = 30;
+        config.escape.enabled = true;
+        config.escape.min_access_threshold = 3;
+
+        let ws = build_workspace(&ir, &config).expect("workspace build failed");
+
+        // Verify the escape planner generated breakout routes for the QFP pads.
+        assert!(
+            !ws.escape_plan.routes.is_empty(),
+            "breakout system should produce escape routes on 2-layer QFP, got 0 routes"
+        );
+
+        let solution = pathfinder_route(&ws, &ir, &config).expect("pathfinder failed");
+
+        // All 8 nets must appear in either routed or unrouted sets.
+        assert_eq!(
+            solution.nets.len() + solution.unrouted.len(),
+            8,
+            "all 8 nets must appear in routed or unrouted sets"
+        );
+
+        // Compare against escape-disabled baseline: escape-enabled version must
+        // route at least as many nets.
+        let mut config_no_escape = config.clone();
+        config_no_escape.escape.enabled = false;
+        let ws_no_escape =
+            build_workspace(&ir, &config_no_escape).expect("no-escape workspace build failed");
+        let solution_no_escape =
+            pathfinder_route(&ws_no_escape, &ir, &config_no_escape)
+                .expect("no-escape pathfinder failed");
+
+        assert!(
+            solution.nets.len() >= solution_no_escape.nets.len(),
+            "escape-enabled routing ({} nets) should route at least as many nets as \
+             escape-disabled ({} nets)",
+            solution.nets.len(),
+            solution_no_escape.nets.len()
+        );
     }
 }

@@ -20,6 +20,7 @@
 //!
 //! as specified in the plan invariants section.
 
+use std::collections::HashMap;
 use std::hash::Hash;
 
 use autopcb_ir::handles::LayerId as IrLayerId;
@@ -29,6 +30,7 @@ use ordered_float::OrderedFloat;
 use pathfinding::directed::astar::astar;
 
 use crate::config::MovementStyle;
+use crate::detailed::fanout::BreakoutPlan;
 use crate::pathfinder::history::EdgeHistoryMap;
 use crate::workspace::{GridConfig, RoutingWorkspace};
 use crate::RoutingError;
@@ -476,7 +478,7 @@ fn route_subnet_astar_inner(
     // Apply escape routing for source.
     let (sx, sy, start_layer) =
         if let Some(escape) = workspace.escape_for_position(subnet.source, start_layer) {
-            let (ex, ey) = escape.via_cell;
+            let (ex, ey) = escape.via_cell.unwrap_or(escape.stub_endpoint);
             (ex, ey, escape.target_layer)
         } else {
             (sx, sy, start_layer)
@@ -485,7 +487,7 @@ fn route_subnet_astar_inner(
     // Apply escape routing for target.
     let (tx, ty, goal_layer) =
         if let Some(escape) = workspace.escape_for_position(subnet.target, goal_layer) {
-            let (ex, ey) = escape.via_cell;
+            let (ex, ey) = escape.via_cell.unwrap_or(escape.stub_endpoint);
             (ex, ey, escape.target_layer)
         } else {
             (tx, ty, goal_layer)
@@ -570,6 +572,32 @@ fn node_sequence_to_segments(path: &[GridNode]) -> Vec<PathSegment> {
 }
 
 // ---------------------------------------------------------------------------
+// NeckdownMap
+// ---------------------------------------------------------------------------
+
+/// Pre-computed per-cell width overrides derived from breakout routes.
+///
+/// Key: `(grid_x, grid_y, layer_raw)`. Value: trace width in mm for that cell.
+/// Cells absent from the map use the net's preferred width.
+pub type NeckdownMap = HashMap<(u32, u32, u16), f64>;
+
+/// Build a [`NeckdownMap`] from a [`BreakoutPlan`].
+///
+/// Iterates every breakout route's `width_sequence` and inserts an entry for
+/// each `(grid_x, grid_y, layer)` cell. When a cell appears in multiple routes
+/// (unusual but possible for shared access points), the last-inserted value wins.
+pub fn build_neckdown_map(plan: &BreakoutPlan) -> NeckdownMap {
+    let mut map = NeckdownMap::new();
+    for route in &plan.routes {
+        let layer = route.source_layer.raw();
+        for &(gx, gy, w) in &route.width_sequence {
+            map.insert((gx, gy, layer), w);
+        }
+    }
+    map
+}
+
+// ---------------------------------------------------------------------------
 // route_subnet_to_traces
 // ---------------------------------------------------------------------------
 
@@ -579,7 +607,10 @@ fn node_sequence_to_segments(path: &[GridNode]) -> Vec<PathSegment> {
 /// Consecutive same-layer segments are merged into a single `TraceSegment`.
 /// Layer transitions (via nodes) become `RoutedVia` entries.
 ///
-/// `width_mm` is applied to every `TraceSegment`.
+/// `width_mm` is the default (preferred) width applied to segments not covered
+/// by `neckdown`. `neckdown` maps `(grid_x, grid_y, layer)` cells to a
+/// narrower width; when the end cell of a segment has an override the run is
+/// split so each width section becomes its own `TraceSegment`.
 pub fn route_subnet_to_traces(
     path_segments: &[PathSegment],
     grid: &GridConfig,
@@ -587,19 +618,24 @@ pub fn route_subnet_to_traces(
     width_mm: f64,
     via_drill_mm: f64,
     via_annular_ring_mm: f64,
+    neckdown: &NeckdownMap,
 ) -> (Vec<TraceSegment>, Vec<RoutedVia>) {
     let mut traces: Vec<TraceSegment> = Vec::new();
     let mut vias: Vec<RoutedVia> = Vec::new();
 
-    // Reconstruct the full node sequence from PathSegments.
     if path_segments.is_empty() {
         return (traces, vias);
     }
 
     // Walk segments: detect layer transitions (vias) vs same-layer traces.
-    // For efficiency we accumulate same-layer runs.
-    let mut current_layer = path_segments[0].start.layer;
-    let mut run_start_mm = grid.to_mm(path_segments[0].start.x, path_segments[0].start.y);
+    // Accumulate same-layer runs; split when the per-cell width changes.
+    let first = &path_segments[0];
+    let mut current_layer = first.start.layer;
+    let mut run_start_mm = grid.to_mm(first.start.x, first.start.y);
+    let mut current_width = neckdown
+        .get(&(first.start.x, first.start.y, current_layer.raw()))
+        .copied()
+        .unwrap_or(width_mm);
 
     for seg in path_segments {
         if seg.start.layer != seg.end.layer {
@@ -607,18 +643,16 @@ pub fn route_subnet_to_traces(
             let seg_start_mm = grid.to_mm(seg.start.x, seg.start.y);
             let seg_end_mm = grid.to_mm(seg.end.x, seg.end.y);
 
-            // Close the current trace run from run_start → via position.
             if run_start_mm.x != seg_start_mm.x || run_start_mm.y != seg_start_mm.y {
                 traces.push(TraceSegment {
                     net_id,
                     layer: current_layer,
                     start: Point { x: run_start_mm.x, y: run_start_mm.y },
                     end: Point { x: seg_start_mm.x, y: seg_start_mm.y },
-                    width_mm,
+                    width_mm: current_width,
                 });
             }
 
-            // Emit the via.
             vias.push(RoutedVia {
                 net_id,
                 position: Point { x: seg_start_mm.x, y: seg_start_mm.y },
@@ -630,8 +664,35 @@ pub fn route_subnet_to_traces(
 
             current_layer = seg.end.layer;
             run_start_mm = seg_end_mm;
+            current_width = neckdown
+                .get(&(seg.end.x, seg.end.y, current_layer.raw()))
+                .copied()
+                .unwrap_or(width_mm);
+        } else {
+            // Same-layer move: check if the end cell has a different width.
+            let end_width = neckdown
+                .get(&(seg.end.x, seg.end.y, seg.end.layer.raw()))
+                .copied()
+                .unwrap_or(width_mm);
+
+            if (end_width - current_width).abs() > 1e-9 {
+                // Width transition: emit the current run up to seg.start, then
+                // start a new run beginning at seg.start with end_width.
+                let seg_start_mm = grid.to_mm(seg.start.x, seg.start.y);
+                if run_start_mm.x != seg_start_mm.x || run_start_mm.y != seg_start_mm.y {
+                    traces.push(TraceSegment {
+                        net_id,
+                        layer: current_layer,
+                        start: Point { x: run_start_mm.x, y: run_start_mm.y },
+                        end: Point { x: seg_start_mm.x, y: seg_start_mm.y },
+                        width_mm: current_width,
+                    });
+                }
+                run_start_mm = seg_start_mm;
+                current_width = end_width;
+            }
+            // else: same width — continue the run.
         }
-        // else: same-layer move — continue the run.
     }
 
     // Emit the final trace run.
@@ -643,7 +704,7 @@ pub fn route_subnet_to_traces(
             layer: current_layer,
             start: Point { x: run_start_mm.x, y: run_start_mm.y },
             end: Point { x: last_end_mm.x, y: last_end_mm.y },
-            width_mm,
+            width_mm: current_width,
         });
     }
 
@@ -983,7 +1044,8 @@ mod tests {
                 end: GridNode { x: 2, y: 0, layer: LayerId(0) },
             },
         ];
-        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.2, 0.3, 0.1);
+        let neckdown = NeckdownMap::new();
+        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.2, 0.3, 0.1, &neckdown);
         assert!(vias.is_empty(), "no via expected for single-layer path");
         assert!(!traces.is_empty(), "expected at least one trace segment");
         // All traces on layer 0.
@@ -1065,10 +1127,59 @@ mod tests {
                 end: GridNode { x: 4, y: 0, layer: LayerId(1) },
             },
         ];
-        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.15, 0.3, 0.1);
+        let neckdown = NeckdownMap::new();
+        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.15, 0.3, 0.1, &neckdown);
         assert_eq!(vias.len(), 1, "expected 1 via");
         assert_eq!(vias[0].from_layer, LayerId(0));
         assert_eq!(vias[0].to_layer, LayerId(1));
         assert!(!traces.is_empty(), "expected trace segments");
+    }
+
+    // -----------------------------------------------------------------------
+    // Neckdown: traces split at width-transition boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn route_subnet_to_traces_with_neckdown() {
+        let grid = crate::workspace::GridConfig {
+            resolution_mm: 1.0,
+            width_cells: 11,
+            height_cells: 11,
+            origin: autopcb_ir::types::PointMm::new(0.0, 0.0),
+        };
+        let net_id = NetId(3);
+        // Four cells: (0,0) → (1,0) → (2,0) → (3,0)
+        let segments = vec![
+            PathSegment {
+                start: GridNode { x: 0, y: 0, layer: LayerId(0) },
+                end: GridNode { x: 1, y: 0, layer: LayerId(0) },
+            },
+            PathSegment {
+                start: GridNode { x: 1, y: 0, layer: LayerId(0) },
+                end: GridNode { x: 2, y: 0, layer: LayerId(0) },
+            },
+            PathSegment {
+                start: GridNode { x: 2, y: 0, layer: LayerId(0) },
+                end: GridNode { x: 3, y: 0, layer: LayerId(0) },
+            },
+        ];
+        // Cells 0 and 1 get neckdown width 0.1; cell 2+ use preferred 0.2.
+        let mut neckdown = NeckdownMap::new();
+        neckdown.insert((0, 0, 0), 0.1);
+        neckdown.insert((1, 0, 0), 0.1);
+
+        let (traces, vias) = route_subnet_to_traces(&segments, &grid, net_id, 0.2, 0.3, 0.1, &neckdown);
+        assert!(vias.is_empty(), "no vias on single-layer path");
+        assert_eq!(traces.len(), 2, "expected 2 trace segments (neckdown + normal)");
+
+        // First segment: neckdown width.
+        assert!((traces[0].width_mm - 0.1).abs() < 1e-9, "first segment should have neckdown width 0.1");
+        // Second segment: preferred width.
+        assert!((traces[1].width_mm - 0.2).abs() < 1e-9, "second segment should have preferred width 0.2");
+        // Both on layer 0, correct net.
+        for t in &traces {
+            assert_eq!(t.layer, LayerId(0));
+            assert_eq!(t.net_id, net_id);
+        }
     }
 }

@@ -47,7 +47,7 @@ use autopcb_ir::PcbIr;
 use autopcb_routes::{LayerId, NetId};
 
 use crate::config::RoutingConfig;
-use crate::detailed::fanout::{EscapePlan, EscapeRoute};
+use crate::detailed::fanout::{BreakoutPlan, EscapePlan, EscapeRoute};
 use crate::obstacles::{AccessPoint, ObstacleMap};
 use crate::rules::{build_policy, RoutingPolicy};
 use crate::spatial::{ObstacleEntry, SpatialIndex};
@@ -335,14 +335,15 @@ pub fn build_workspace(
 
     // 5e. Pad escape planning (must run after pads/keepouts are blocked,
     //     before access points are computed so escapes are visible to AP logic)
-    let escape_plan = crate::detailed::fanout::plan_escapes(
+    let escape_plan: BreakoutPlan = crate::detailed::fanout::plan_breakouts(
         ir,
         &grid,
         &obstacle_maps,
         layer_count,
+        &policy,
         &config.escape,
     );
-    crate::detailed::fanout::apply_escapes(&escape_plan, &grid, &mut obstacle_maps, inflate);
+    crate::detailed::fanout::apply_breakouts(&escape_plan, &mut obstacle_maps, inflate);
 
     // ------------------------------------------------------------------
     // 6. Build spatial index

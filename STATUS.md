@@ -1,6 +1,22 @@
 # Codebase Status
 
-Updated: 2026-03-21
+Updated: 2026-03-23
+
+## Three-Tier Pad Breakout System — Complete
+
+Tiered pipeline in `crates/autopcb-router/src/detailed/fanout.rs` that pre-routes
+short escape traces from dense SMD pads before the PathFinder negotiation loop.
+
+| Tier | Function | Scope | Handles |
+|------|----------|-------|---------|
+| 1 | `plan_stubs()` | Any layer count | Dense SMD pads — 8-direction same-layer stubs with neckdown |
+| 2 | `plan_perimeter_escapes()` | Any layer count | Peripheral packages (QFP/TQFP/SOP) — perpendicular outward escapes |
+| 3 | `plan_via_escapes()` | >= 3 layers | BGA interior pads — via to inner layer (original algorithm) |
+
+New types: `BreakoutRoute`, `BreakoutTier`, `ComponentKind`, `BreakoutPlan`.
+`EscapeRoute`/`EscapePlan` are backward-compat aliases.
+Neckdown formula: `max(pad_min_dim/2, trace_min_width)` (FreeRouting-validated).
+Architecture documented in `crates/autopcb-router/src/detailed/README.md`.
 
 ## Routing Pipeline Integration
 
