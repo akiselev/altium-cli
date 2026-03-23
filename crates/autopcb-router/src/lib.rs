@@ -102,7 +102,7 @@ pub fn route_single_net(
 
     let plan = global_route(workspace, ir)?;
     let via_cost = ViaCostModel::from_config(config);
-    let router = GridRouter::new(via_cost, config.movement);
+    let router = GridRouter::new(via_cost, config.movement, config.roi_initial_radius, config.roi_retry_multiplier);
 
     let drc_policy = DrcPolicy::build(ir).map_err(RoutingError::from)?;
     let via_drill_mm = drc_policy.via_bounds.hole_min_mm;
@@ -112,7 +112,7 @@ pub fn route_single_net(
     let mut all_vias = Vec::new();
 
     for subnet in plan.subnets.iter().filter(|s| s.net_id == net_id) {
-        let segments = router.route_subnet(workspace, subnet, net_id, None, 1.0)?;
+        let segments = router.route_subnet(workspace, subnet, net_id, None, None, 1.0, 1.0)?;
         let width_mm = workspace
             .policy
             .trace_width(net_id, autopcb_routes::LayerId(0))

@@ -74,9 +74,82 @@ pub struct NetRoutingConfig {
     #[serde(default)]
     pub width_override: Option<f64>,
 
+    /// Override clearance (mm) for this net class.
+    #[serde(default)]
+    pub clearance_override: Option<f64>,
+
     /// Restrict routing to specific layers for this net class.
     #[serde(default)]
     pub layer_override: Vec<autopcb_routes::LayerId>,
+}
+
+fn default_escape_enabled() -> bool {
+    true
+}
+
+fn default_min_escape_mm() -> f64 {
+    0.5
+}
+
+fn default_max_escape_mm() -> f64 {
+    3.0
+}
+
+fn default_min_access_threshold() -> usize {
+    3
+}
+
+fn default_roi_initial_radius() -> u32 {
+    24
+}
+
+fn default_roi_retry_multiplier() -> u32 {
+    2
+}
+
+fn default_stagnation_threshold() -> u32 {
+    5
+}
+
+fn default_stagnation_max() -> u32 {
+    10
+}
+
+/// Configuration for pad escape planning (BGA/QFP fanout pre-routing).
+///
+/// Escape planning runs before the PathFinder loop and pre-routes short
+/// escape traces + vias from dense SMD pads to inner layers, creating
+/// routable access points for the main detailed router.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EscapeConfig {
+    /// Enable pad escape planning. Default true.
+    #[serde(default = "default_escape_enabled")]
+    pub enabled: bool,
+
+    /// Minimum escape trace length in mm. Default 0.5mm.
+    #[serde(default = "default_min_escape_mm")]
+    pub min_escape_mm: f64,
+
+    /// Maximum escape trace length in mm. Default 3.0mm.
+    #[serde(default = "default_max_escape_mm")]
+    pub max_escape_mm: f64,
+
+    /// Minimum number of free access points before escape planning is
+    /// skipped for a pad. Pads with >= this many free neighbours are
+    /// considered already routable. Default 3.
+    #[serde(default = "default_min_access_threshold")]
+    pub min_access_threshold: usize,
+}
+
+impl Default for EscapeConfig {
+    fn default() -> Self {
+        EscapeConfig {
+            enabled: default_escape_enabled(),
+            min_escape_mm: default_min_escape_mm(),
+            max_escape_mm: default_max_escape_mm(),
+            min_access_threshold: default_min_access_threshold(),
+        }
+    }
 }
 
 fn default_grid_resolution_mm() -> f64 {
@@ -88,14 +161,26 @@ fn default_max_iterations() -> u32 {
 }
 
 fn default_pres_fac_multiplier() -> f64 {
-    1.15
+    1.5
 }
 
 fn default_pres_fac_cap() -> f64 {
-    100.0
+    500.0
 }
 
 fn default_history_increment() -> f64 {
+    1.5
+}
+
+fn default_initial_pres_fac() -> f64 {
+    0.5
+}
+
+fn default_history_decay() -> f64 {
+    1.0
+}
+
+fn default_hist_weight() -> f64 {
     1.0
 }
 
@@ -128,9 +213,26 @@ pub struct RoutingConfig {
     #[serde(default = "default_pres_fac_cap")]
     pub pres_fac_cap: f64,
 
-    /// History congestion increment per oversubscribed-node-iteration. Default 1.0.
+    /// History congestion increment per oversubscribed-node-iteration. Default 1.5.
     #[serde(default = "default_history_increment")]
     pub history_increment: f64,
+
+    /// Starting present-congestion factor. Lower values allow more natural
+    /// shortest-path routing in early iterations. Default 0.5.
+    #[serde(default = "default_initial_pres_fac")]
+    pub initial_pres_fac: f64,
+
+    /// Multiplicative decay applied to the entire history array at the start
+    /// of each iteration. Values < 1.0 allow history to "forget" old
+    /// congestion, preventing route fossilization. Default 1.0 (no decay).
+    #[serde(default = "default_history_decay")]
+    pub history_decay: f64,
+
+    /// Weight multiplier for history cost in the A* cost function.
+    /// `C(n) = base * dir_penalty * corridor_penalty + hist_weight * (history[n] + edge_hist[n]) + pres_fac * max(0, usage[n] - 1)`
+    /// Default 1.0.
+    #[serde(default = "default_hist_weight")]
+    pub hist_weight: f64,
 
     /// Corner style applied during post-route optimization. Default FortyFiveDegree.
     #[serde(default)]
@@ -153,6 +255,27 @@ pub struct RoutingConfig {
     /// Grid movement style: cardinal (FourWay) or diagonal (EightWay). Default FourWay.
     #[serde(default)]
     pub movement: MovementStyle,
+
+    /// Pad escape planning configuration for BGA/QFP dense components.
+    #[serde(default)]
+    pub escape: EscapeConfig,
+
+    /// Initial ROI radius in grid cells for A* search. Default 24.
+    #[serde(default = "default_roi_initial_radius")]
+    pub roi_initial_radius: u32,
+
+    /// ROI retry multiplier: second attempt uses radius × this value. Default 2.
+    #[serde(default = "default_roi_retry_multiplier")]
+    pub roi_retry_multiplier: u32,
+
+    /// Number of stagnation iterations before escalation (double pres_fac, full rip-up).
+    /// Default 5.
+    #[serde(default = "default_stagnation_threshold")]
+    pub stagnation_threshold: u32,
+
+    /// Number of stagnation iterations before early termination. Default 10.
+    #[serde(default = "default_stagnation_max")]
+    pub stagnation_max: u32,
 }
 
 impl Default for RoutingConfig {
@@ -164,11 +287,19 @@ impl Default for RoutingConfig {
             pres_fac_multiplier: default_pres_fac_multiplier(),
             pres_fac_cap: default_pres_fac_cap(),
             history_increment: default_history_increment(),
+            initial_pres_fac: default_initial_pres_fac(),
+            history_decay: default_history_decay(),
+            hist_weight: default_hist_weight(),
             corner_style: CornerStyle::default(),
             allowed_layers: Vec::new(),
             net_configs: BTreeMap::new(),
             seed: 0,
             movement: MovementStyle::default(),
+            escape: EscapeConfig::default(),
+            roi_initial_radius: default_roi_initial_radius(),
+            roi_retry_multiplier: default_roi_retry_multiplier(),
+            stagnation_threshold: default_stagnation_threshold(),
+            stagnation_max: default_stagnation_max(),
         }
     }
 }
@@ -180,12 +311,15 @@ mod tests {
     #[test]
     fn default_config_has_expected_values() {
         let cfg = RoutingConfig::default();
-        assert!((cfg.grid_resolution_mm - 0.1).abs() < f64::EPSILON);
+        assert!((cfg.grid_resolution_mm - 0.25).abs() < f64::EPSILON);
         assert_eq!(cfg.max_iterations, 50);
         assert!((cfg.via_cost_base - 10.0).abs() < f64::EPSILON);
-        assert!((cfg.pres_fac_multiplier - 1.15).abs() < f64::EPSILON);
-        assert!((cfg.pres_fac_cap - 100.0).abs() < f64::EPSILON);
-        assert!((cfg.history_increment - 1.0).abs() < f64::EPSILON);
+        assert!((cfg.pres_fac_multiplier - 1.5).abs() < f64::EPSILON);
+        assert!((cfg.pres_fac_cap - 500.0).abs() < f64::EPSILON);
+        assert!((cfg.history_increment - 1.5).abs() < f64::EPSILON);
+        assert!((cfg.initial_pres_fac - 0.5).abs() < f64::EPSILON);
+        assert!((cfg.history_decay - 1.0).abs() < f64::EPSILON);
+        assert!((cfg.hist_weight - 1.0).abs() < f64::EPSILON);
         assert_eq!(cfg.corner_style, CornerStyle::FortyFiveDegree);
         assert!(cfg.allowed_layers.is_empty());
         assert!(cfg.net_configs.is_empty());
@@ -235,10 +369,13 @@ mod tests {
     fn config_deserializes_from_minimal_json() {
         let json = r#"{}"#;
         let cfg: RoutingConfig = serde_json::from_str(json).expect("deserialization failed");
-        assert!((cfg.grid_resolution_mm - 0.1).abs() < f64::EPSILON);
+        assert!((cfg.grid_resolution_mm - 0.25).abs() < f64::EPSILON);
         assert_eq!(cfg.max_iterations, 50);
         assert_eq!(cfg.corner_style, CornerStyle::FortyFiveDegree);
         assert_eq!(cfg.movement, MovementStyle::FourWay);
         assert_eq!(cfg.seed, 0);
+        assert!((cfg.initial_pres_fac - 0.5).abs() < f64::EPSILON);
+        assert!((cfg.history_decay - 1.0).abs() < f64::EPSILON);
+        assert!((cfg.hist_weight - 1.0).abs() < f64::EPSILON);
     }
 }

@@ -41,11 +41,13 @@
 use std::collections::HashMap;
 
 use autopcb_ir::handles::{ComponentId, LayerId as IrLayerId, NetId as IrNetId, PadId};
+use autopcb_ir::layer_stack::PreferredDirection;
 use autopcb_ir::types::{BoundingBoxMm, PointMm};
 use autopcb_ir::PcbIr;
 use autopcb_routes::{LayerId, NetId};
 
 use crate::config::RoutingConfig;
+use crate::detailed::fanout::{EscapePlan, EscapeRoute};
 use crate::obstacles::{AccessPoint, ObstacleMap};
 use crate::rules::{build_policy, RoutingPolicy};
 use crate::spatial::{ObstacleEntry, SpatialIndex};
@@ -159,6 +161,11 @@ pub struct RoutingWorkspace {
     pub pin_accesses: HashMap<PadKey, Vec<AccessPoint>>,
     /// Number of copper layers (== `obstacle_maps.len()`).
     pub layer_count: usize,
+    /// Pre-planned pad escape routes (generated before access point computation).
+    pub escape_plan: EscapePlan,
+    /// Per-layer preferred routing direction, indexed by `layer.raw() as usize`.
+    /// `None` entries indicate no preference or out-of-range layer indices.
+    pub layer_directions: Vec<Option<PreferredDirection>>,
 }
 
 impl RoutingWorkspace {
@@ -211,6 +218,19 @@ impl RoutingWorkspace {
             .get(&key)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    /// Look up a pre-planned escape route for a pad at `pos` on `layer`.
+    ///
+    /// Returns `Some(&EscapeRoute)` when a route was pre-planned from the grid
+    /// cell containing `pos` on the given source layer.  The caller should use
+    /// `route.via_cell` as the effective routing start/goal position and
+    /// `route.target_layer` as the layer for the A* search.
+    pub fn escape_for_position(&self, pos: PointMm, layer: LayerId) -> Option<&EscapeRoute> {
+        let (gx, gy) = self.grid.to_grid(pos);
+        self.escape_plan.routes.iter().find(|e| {
+            e.pad_cell == (gx, gy) && e.source_layer == layer
+        })
     }
 
     /// Spatial clearance query: obstacles within `clearance` mm of a segment
@@ -313,6 +333,17 @@ pub fn build_workspace(
     // 5d. Pre-routed tracks and vias (locked)
     mark_pre_routed(ir, &grid, inflate, &mut obstacle_maps, &mut entries);
 
+    // 5e. Pad escape planning (must run after pads/keepouts are blocked,
+    //     before access points are computed so escapes are visible to AP logic)
+    let escape_plan = crate::detailed::fanout::plan_escapes(
+        ir,
+        &grid,
+        &obstacle_maps,
+        layer_count,
+        &config.escape,
+    );
+    crate::detailed::fanout::apply_escapes(&escape_plan, &grid, &mut obstacle_maps, inflate);
+
     // ------------------------------------------------------------------
     // 6. Build spatial index
     // ------------------------------------------------------------------
@@ -323,6 +354,13 @@ pub fn build_workspace(
     // ------------------------------------------------------------------
     let pin_accesses = compute_access_points(ir, &grid, &obstacle_maps, layer_count);
 
+    let layer_directions: Vec<Option<PreferredDirection>> = ir
+        .layer_stack
+        .copper_layers
+        .iter()
+        .map(|l| l.preferred_direction)
+        .collect();
+
     let workspace = RoutingWorkspace {
         policy,
         spatial_index,
@@ -330,6 +368,8 @@ pub fn build_workspace(
         grid,
         pin_accesses,
         layer_count,
+        escape_plan,
+        layer_directions,
     };
 
     tracing::info!(

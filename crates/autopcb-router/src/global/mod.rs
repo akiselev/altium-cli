@@ -54,6 +54,11 @@ pub struct GlobalRoutePlan {
 
     /// Net routing order: `NetId`s sorted by the global ordering heuristic.
     pub net_order: Vec<NetId>,
+
+    /// Coarse congestion grid built during global routing. Used by the
+    /// detailed router to apply corridor bias when `Subnet::region_path`
+    /// is populated.
+    pub congestion_grid: GlobalRoutingGrid,
 }
 
 // ---------------------------------------------------------------------------
@@ -64,13 +69,10 @@ pub struct GlobalRoutePlan {
 ///
 /// Steps:
 /// 1. Decompose every net in `ir.nets` into 2-pin subnets via MST.
-/// 2. Build a coarse congestion grid from the workspace obstacle maps.
+/// 2. Build a coarse congestion grid and run a congestion-weighted coarse A*
+///    for each subnet, populating `Subnet::region_path`.
 /// 3. Assign layers to subnets using the heuristic in `layer_assignment`.
 /// 4. Compute net routing order using the heuristic in `ordering`.
-///
-/// Currently the coarse A* region path (`Subnet::region_path`) is left empty;
-/// it will be populated in Milestone 7 when the PathFinder negotiation loop
-/// performs global routing on the congestion grid.
 pub fn global_route(
     workspace: &RoutingWorkspace,
     ir: &PcbIr,
@@ -112,9 +114,25 @@ pub fn global_route(
     }
 
     // ------------------------------------------------------------------
-    // 2. Build coarse congestion grid
+    // 2. Build coarse congestion grid and run coarse A* per subnet
     // ------------------------------------------------------------------
-    let _grid = GlobalRoutingGrid::from_workspace(workspace, DEFAULT_CELL_MULTIPLIER);
+    let mut congestion_grid = GlobalRoutingGrid::from_workspace(workspace, DEFAULT_CELL_MULTIPLIER);
+
+    // Coarse A* on congestion grid: route each subnet, update demand.
+    let congestion_weight = 2.0_f64;
+    for subnet in &mut all_subnets {
+        let (sx, sy) = workspace.grid.to_grid(subnet.source);
+        let (tx, ty) = workspace.grid.to_grid(subnet.target);
+        let start = congestion_grid.cell_id_for_fine(sx, sy, &workspace.grid);
+        let goal = congestion_grid.cell_id_for_fine(tx, ty, &workspace.grid);
+
+        if let Some(path) = congestion_grid.find_coarse_path(start, goal, congestion_weight) {
+            for &cell in &path {
+                congestion_grid.add_demand(cell, 1.0);
+            }
+            subnet.region_path = path;
+        }
+    }
 
     // ------------------------------------------------------------------
     // 3. Layer assignment
@@ -140,6 +158,7 @@ pub fn global_route(
         subnets: all_subnets,
         layer_assignments,
         net_order,
+        congestion_grid,
     };
 
     tracing::info!(

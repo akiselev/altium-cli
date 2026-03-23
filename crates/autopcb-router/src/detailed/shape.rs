@@ -28,7 +28,9 @@ impl DetailedRouter for ShapeRouter {
         _subnet: &Subnet,
         _net_id: NetId,
         _history_costs: Option<&[f64]>,
+        _present_usage: Option<&[u16]>,
         _pres_fac: f64,
+        _hist_weight: f64,
     ) -> Result<Vec<PathSegment>, RoutingError> {
         Err(RoutingError::RoutingFailed(
             "shape routing not yet implemented".to_string(),

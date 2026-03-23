@@ -6,11 +6,12 @@
 //! connecting its outer neighbours. If the moved vertex produces a shorter
 //! total path it is kept; otherwise the original position is retained.
 //!
-//! Clearance checking is omitted in this implementation — the pass performs
-//! pure geometric shortening. A full DRC pass after optimization will catch
-//! any violations introduced.
+//! When a [`RoutingWorkspace`] is provided, clearance is checked against nearby
+//! obstacles before accepting each vertex move. Same-net obstacles are excluded
+//! from the clearance check (same-net pass-through).
 
-use autopcb_routes::{Point, TraceSegment};
+use autopcb_routes::{NetId, Point, TraceSegment};
+use crate::spatial::SpatialIndex;
 
 /// Tolerance for treating a coordinate difference as zero (mm).
 const EPS: f64 = 1e-9;
@@ -37,6 +38,83 @@ fn project_onto_segment(p: Point, a: Point, b: Point) -> Point {
         x: a.x + t * dx,
         y: a.y + t * dy,
     }
+}
+
+/// Minimum distance from point `p` to the line segment `(a, b)`.
+fn point_segment_distance(p: Point, a: Point, b: Point) -> f64 {
+    let closest = project_onto_segment(p, a, b);
+    dist(p, closest)
+}
+
+/// Check whether the two segments (prev_start→projected) and
+/// (projected→next_end) maintain clearance against all nearby non-same-net
+/// obstacles.
+///
+/// Returns `true` if the move is safe (no clearance violation).
+fn check_clearance(
+    prev_start: Point,
+    projected: Point,
+    next_end: Point,
+    spatial: &SpatialIndex,
+    net_id: NetId,
+    layer: autopcb_routes::LayerId,
+    clearance_mm: f64,
+    half_width: f64,
+) -> bool {
+    let min_dist = clearance_mm + half_width;
+
+    // Query obstacles near both new segments.
+    let seg1_obs = spatial.clearance_query(
+        layer,
+        prev_start.x, prev_start.y,
+        projected.x, projected.y,
+        min_dist,
+    );
+    let seg2_obs = spatial.clearance_query(
+        layer,
+        projected.x, projected.y,
+        next_end.x, next_end.y,
+        min_dist,
+    );
+
+    // Check segment 1: prev_start → projected
+    for obs in &seg1_obs {
+        // Same-net pass-through: skip obstacles belonging to this net.
+        if obs.net_id() == Some(net_id) {
+            continue;
+        }
+        // Use the obstacle's AABB center as a point approximation for distance.
+        let bounds = obs.raw_bounds();
+        let center = Point {
+            x: (bounds[0] + bounds[2]) / 2.0,
+            y: (bounds[1] + bounds[3]) / 2.0,
+        };
+        let d = point_segment_distance(center, prev_start, projected);
+        // Account for obstacle half-extent (conservative).
+        let obs_half = ((bounds[2] - bounds[0]).max(bounds[3] - bounds[1])) / 2.0;
+        if d - obs_half < min_dist {
+            return false;
+        }
+    }
+
+    // Check segment 2: projected → next_end
+    for obs in &seg2_obs {
+        if obs.net_id() == Some(net_id) {
+            continue;
+        }
+        let bounds = obs.raw_bounds();
+        let center = Point {
+            x: (bounds[0] + bounds[2]) / 2.0,
+            y: (bounds[1] + bounds[3]) / 2.0,
+        };
+        let d = point_segment_distance(center, projected, next_end);
+        let obs_half = ((bounds[2] - bounds[0]).max(bounds[3] - bounds[1])) / 2.0;
+        if d - obs_half < min_dist {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Move vertex at index `i` (the end of `segments[i-1]` / start of
@@ -96,10 +174,91 @@ pub fn rubber_band(segments: &mut Vec<TraceSegment>, iterations: u32) {
     }
 }
 
+/// Clearance-aware rubber-banding: tightens vertices only when the new
+/// position maintains clearance against nearby obstacles.
+///
+/// When `spatial` is `None`, falls back to pure geometric tightening.
+pub fn rubber_band_checked(
+    segments: &mut Vec<TraceSegment>,
+    iterations: u32,
+    spatial: Option<&SpatialIndex>,
+    clearance_mm: f64,
+) {
+    if segments.len() < 2 {
+        return;
+    }
+    let spatial = match spatial {
+        Some(s) => s,
+        None => {
+            // Fall back to unchecked geometric rubber-banding.
+            rubber_band(segments, iterations);
+            return;
+        }
+    };
+
+    for _ in 0..iterations {
+        let mut changed = false;
+        for i in 1..segments.len() {
+            if segments[i - 1].layer != segments[i].layer
+                || segments[i - 1].net_id != segments[i].net_id
+            {
+                continue;
+            }
+
+            let prev_start = segments[i - 1].start;
+            let next_end = segments[i].end;
+            let current = segments[i - 1].end;
+            let projected = project_onto_segment(current, prev_start, next_end);
+
+            let old_len = dist(prev_start, current) + dist(current, next_end);
+            let new_len = dist(prev_start, projected) + dist(projected, next_end);
+
+            if new_len < old_len - EPS {
+                // Check clearance before accepting the move.
+                let half_width = segments[i].width_mm / 2.0;
+                let safe = check_clearance(
+                    prev_start,
+                    projected,
+                    next_end,
+                    spatial,
+                    segments[i].net_id,
+                    segments[i].layer,
+                    clearance_mm,
+                    half_width,
+                );
+                if safe {
+                    segments[i - 1].end = projected;
+                    segments[i].start = projected;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 /// Apply rubber-banding to all nets in a solution using geometric tightening.
 pub fn rubber_band_all_nets(solution: &mut autopcb_routes::RouteSolution, iterations: u32) {
     for net in solution.nets.values_mut() {
         rubber_band(&mut net.segments, iterations);
+    }
+}
+
+/// Apply clearance-aware rubber-banding to all nets in a solution.
+///
+/// Each net's traces are tightened using the spatial index to prevent
+/// introducing clearance violations. Same-net obstacles are excluded
+/// (pass-through allowed).
+pub fn rubber_band_all_nets_checked(
+    solution: &mut autopcb_routes::RouteSolution,
+    iterations: u32,
+    spatial: &SpatialIndex,
+    clearance_mm: f64,
+) {
+    for net in solution.nets.values_mut() {
+        rubber_band_checked(&mut net.segments, iterations, Some(spatial), clearance_mm);
     }
 }
 

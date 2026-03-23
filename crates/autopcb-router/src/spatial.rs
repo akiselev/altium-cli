@@ -76,7 +76,7 @@ pub enum ObstacleEntry {
 
 impl ObstacleEntry {
     /// Bounding box as `[min_x, min_y, max_x, max_y]`.
-    fn raw_bounds(&self) -> [f64; 4] {
+    pub(crate) fn raw_bounds(&self) -> [f64; 4] {
         match self {
             ObstacleEntry::Pad { bounds, .. }
             | ObstacleEntry::Keepout { bounds, .. }
@@ -261,7 +261,7 @@ impl SpatialIndex {
     /// checks if needed.
     pub fn clearance_query(
         &self,
-        _layer: LayerId,
+        layer: LayerId,
         start_x: f64,
         start_y: f64,
         end_x: f64,
@@ -273,6 +273,13 @@ impl SpatialIndex {
         let max_x = start_x.max(end_x) + clearance;
         let max_y = start_y.max(end_y) + clearance;
         self.query_rect([min_x, min_y, max_x, max_y])
+            .into_iter()
+            .filter(|e| {
+                // Keep obstacles on the queried layer, plus layer-agnostic
+                // obstacles (BoardEdge, keepouts with no layer restriction).
+                e.layer().map_or(true, |l| l == layer)
+            })
+            .collect()
     }
 
     /// Number of obstacles in the index.

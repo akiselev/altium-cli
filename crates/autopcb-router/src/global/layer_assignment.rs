@@ -108,18 +108,8 @@ fn choose_layer(
 impl RoutingWorkspace {
     /// Look up the preferred routing direction for the given routes `LayerId`.
     fn layer_stack_preferred_direction(&self, layer: LayerId) -> Option<PreferredDirection> {
-        // `workspace.layer_count` layers are stored; their IR index equals
-        // `layer.raw() as usize` by the Vec-indexing convention.
         let idx = layer.raw() as usize;
-        // We don't store the full layer stack in the workspace; instead we use
-        // the obstacle maps length as a proxy for whether the layer exists.
-        // The actual preferred direction is carried in the policy (future
-        // improvement).  For now, return `Any` for all valid layers.
-        if idx < self.layer_count {
-            Some(PreferredDirection::Any)
-        } else {
-            None
-        }
+        self.layer_directions.get(idx).copied().flatten()
     }
 }
 

@@ -29,6 +29,7 @@ use ordered_float::OrderedFloat;
 use pathfinding::directed::astar::astar;
 
 use crate::config::MovementStyle;
+use crate::pathfinder::history::EdgeHistoryMap;
 use crate::workspace::{GridConfig, RoutingWorkspace};
 use crate::RoutingError;
 
@@ -76,8 +77,12 @@ pub struct PathSegment {
 /// If `Some`, the linearized cost at each node is added during A* successor
 /// expansion to guide rip-up/reroute convergence.
 ///
-/// `pres_fac` is the present-congestion multiplier from the PathFinder loop.
-/// Pass `1.0` when not running inside a PathFinder loop (no scaling effect).
+/// `present_usage` is an optional slice of per-cell usage counts for the
+/// current iteration (rebuilt from scratch each iteration).
+///
+/// `pres_fac` scales the present-usage congestion penalty.
+///
+/// `hist_weight` scales the history congestion penalty.
 pub trait DetailedRouter {
     fn route_subnet(
         &self,
@@ -85,8 +90,40 @@ pub trait DetailedRouter {
         subnet: &crate::global::steiner::Subnet,
         net_id: NetId,
         history_costs: Option<&[f64]>,
+        present_usage: Option<&[u16]>,
         pres_fac: f64,
+        hist_weight: f64,
     ) -> Result<Vec<PathSegment>, RoutingError>;
+}
+
+// ---------------------------------------------------------------------------
+// RoiBounds
+// ---------------------------------------------------------------------------
+
+/// Bounding box for Region of Interest filtering in A*.
+#[derive(Debug, Clone, Copy)]
+struct RoiBounds {
+    min_x: u32,
+    max_x: u32,
+    min_y: u32,
+    max_y: u32,
+}
+
+impl RoiBounds {
+    /// Compute ROI from start/goal expanded by `radius`, clamped to grid bounds.
+    fn from_endpoints(start: GridNode, goal: GridNode, radius: u32, grid: &GridConfig) -> Self {
+        let min_x = start.x.min(goal.x).saturating_sub(radius);
+        let min_y = start.y.min(goal.y).saturating_sub(radius);
+        let max_x = (start.x.max(goal.x) + radius).min(grid.width_cells.saturating_sub(1));
+        let max_y = (start.y.max(goal.y) + radius).min(grid.height_cells.saturating_sub(1));
+        RoiBounds { min_x, max_x, min_y, max_y }
+    }
+
+    /// Returns true if (x, y) is within the ROI bounds.
+    #[inline]
+    fn contains(&self, x: u32, y: u32) -> bool {
+        x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -101,11 +138,47 @@ pub trait DetailedRouter {
 pub struct GridRouter {
     pub via_cost: ViaCostModel,
     pub movement: MovementStyle,
+    pub roi_initial_radius: u32,
+    pub roi_retry_multiplier: u32,
 }
 
 impl GridRouter {
-    pub fn new(via_cost: ViaCostModel, movement: MovementStyle) -> Self {
-        GridRouter { via_cost, movement }
+    pub fn new(
+        via_cost: ViaCostModel,
+        movement: MovementStyle,
+        roi_initial_radius: u32,
+        roi_retry_multiplier: u32,
+    ) -> Self {
+        GridRouter { via_cost, movement, roi_initial_radius, roi_retry_multiplier }
+    }
+
+    /// Route a subnet with optional corridor and congestion grid for bias.
+    pub fn route_subnet_with_corridor(
+        &self,
+        workspace: &RoutingWorkspace,
+        subnet: &crate::global::steiner::Subnet,
+        net_id: NetId,
+        history_costs: Option<&[f64]>,
+        present_usage: Option<&[u16]>,
+        pres_fac: f64,
+        hist_weight: f64,
+        corridor: Option<&std::collections::HashSet<u32>>,
+        congestion_grid: Option<&crate::global::congestion::GlobalRoutingGrid>,
+        edge_history: Option<&EdgeHistoryMap>,
+    ) -> Result<Vec<PathSegment>, RoutingError> {
+        route_subnet_astar_inner(
+            self,
+            workspace,
+            subnet,
+            net_id,
+            history_costs,
+            present_usage,
+            pres_fac,
+            hist_weight,
+            corridor,
+            congestion_grid,
+            edge_history,
+        )
     }
 }
 
@@ -116,9 +189,20 @@ impl DetailedRouter for GridRouter {
         subnet: &crate::global::steiner::Subnet,
         net_id: NetId,
         history_costs: Option<&[f64]>,
+        present_usage: Option<&[u16]>,
         pres_fac: f64,
+        hist_weight: f64,
     ) -> Result<Vec<PathSegment>, RoutingError> {
-        route_subnet_astar(self, workspace, subnet, net_id, history_costs, pres_fac)
+        route_subnet_astar(
+            self,
+            workspace,
+            subnet,
+            net_id,
+            history_costs,
+            present_usage,
+            pres_fac,
+            hist_weight,
+        )
     }
 }
 
@@ -158,24 +242,23 @@ const DIAGONAL: &[(i32, i32, f64)] = &[
     (-1, -1, std::f64::consts::SQRT_2),
 ];
 
-/// Return the `PreferredDirection` for `layer` from the IR layer stack, or
-/// `None` if the layer is not found.
+/// Return the `PreferredDirection` for `layer` from the workspace layer directions.
 fn preferred_direction(workspace: &RoutingWorkspace, layer: LayerId) -> Option<PreferredDirection> {
-    // workspace doesn't hold a direct reference to the IR, but the
-    // allowed_layers + direction info is in the policy. We fall through
-    // to None for now; M5 will wire up layer-direction from the full IR.
-    // The workspace doesn't currently expose the IR layer stack directly,
-    // so we query via the policy's all_copper_layers.
-    // Direction info requires the IR layer_stack — not yet on the workspace.
-    // Return None (no preference) so the penalty is 1.0 everywhere.
-    // TODO (M5 wiring): expose preferred_direction via policy or workspace.
-    let _ = (workspace, layer);
-    None
+    let idx = layer.raw() as usize;
+    workspace.layer_directions.get(idx).copied().flatten()
+}
+
+/// Combine base cost, history penalty, and present-usage penalty into a
+/// single scalar edge cost.
+#[inline]
+fn apply_costs(base: f64, history: f64, usage: f64) -> f64 {
+    base + history + usage
 }
 
 /// Generate successors for `node` during A*:
 /// 1. Same-layer moves (4-way or 8-way).
 /// 2. Via transitions to every other allowed layer.
+#[allow(clippy::too_many_arguments)]
 fn successors(
     node: GridNode,
     workspace: &RoutingWorkspace,
@@ -183,8 +266,14 @@ fn successors(
     via_cost: &ViaCostModel,
     movement: MovementStyle,
     history_costs: Option<&[f64]>,
+    present_usage: Option<&[u16]>,
     pres_fac: f64,
+    hist_weight: f64,
     allowed_layers: &[LayerId],
+    roi: Option<&RoiBounds>,
+    corridor: Option<&std::collections::HashSet<u32>>,
+    congestion_grid: Option<&crate::global::congestion::GlobalRoutingGrid>,
+    edge_history: Option<&EdgeHistoryMap>,
 ) -> Vec<(GridNode, OrderedFloat<f64>)> {
     let grid = &workspace.grid;
     let layer_count = workspace.layer_count;
@@ -192,24 +281,28 @@ fn successors(
 
     let mut result = Vec::new();
 
-    // Helper: look up the history cost for a node.
+    // Helper: add the weighted history cost if provided.
     let history_cost = |n: GridNode| -> f64 {
         history_costs
             .map(|h| {
                 let idx = linearize(n, grid, layer_count);
-                if idx < h.len() { h[idx] } else { 0.0 }
+                if idx < h.len() { hist_weight * h[idx] } else { 0.0 }
             })
             .unwrap_or(0.0)
     };
 
-    // Helper: apply PathFinder cost formula C(n) = (base + history) * pres_fac
-    // when the cell has nonzero history; otherwise use base cost unscaled.
-    let apply_pres_fac = |base: f64, history: f64| -> f64 {
-        if history > 0.0 {
-            (base + history) * pres_fac
-        } else {
-            base
-        }
+    // Helper: add the present-usage congestion cost if provided.
+    let usage_cost = |n: GridNode| -> f64 {
+        present_usage
+            .map(|u| {
+                let idx = linearize(n, grid, layer_count);
+                if idx < u.len() {
+                    pres_fac * (u[idx].saturating_sub(1)) as f64
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.0)
     };
 
     // --- Same-layer moves ---
@@ -232,13 +325,35 @@ fn successors(
         if !grid.in_bounds(nx, ny) {
             return;
         }
+        // ROI bounds check — skipped before is_blocked to avoid expensive spatial lookups.
+        if let Some(roi) = roi {
+            if !roi.contains(nx, ny) {
+                return;
+            }
+        }
         let neighbour = GridNode { x: nx, y: ny, layer: node.layer };
         if workspace.is_blocked(to_ir_layer(node.layer), nx, ny, Some(net_id)) {
             return;
         }
         let penalty = direction_penalty(dx, dy, preferred);
+        let corridor_penalty = if let (Some(corridor), Some(cg)) = (corridor, congestion_grid) {
+            let coarse_cell = cg.cell_id_for_fine(nx, ny, grid);
+            if corridor.contains(&coarse_cell.0) { 1.0 } else { 1.5 }
+        } else {
+            1.0
+        };
         let history = history_cost(neighbour);
-        let cost = apply_pres_fac(base_cost * penalty, history);
+        let usage = usage_cost(neighbour);
+        let edge_hist = edge_history
+            .map(|eh| {
+                let a = (node.x, node.y, node.layer.raw());
+                let b = (nx, ny, node.layer.raw());
+                let key = if a <= b { (a, b) } else { (b, a) };
+                eh.get(&key)
+            })
+            .unwrap_or(0.0);
+        let cost = apply_costs(base_cost * penalty * corridor_penalty, history, usage)
+            + hist_weight * edge_hist;
         result.push((neighbour, OrderedFloat(cost)));
     };
 
@@ -253,7 +368,7 @@ fn successors(
     }
 
     // --- Via transitions ---
-    let net_class: Option<&str> = None; // net class lookup deferred to M9 wiring
+    let net_class: Option<&str> = workspace.policy.net_class(net_id);
     let via_c = via_cost.cost(net_class);
 
     for &target_layer in allowed_layers {
@@ -265,8 +380,24 @@ fn successors(
             continue;
         }
         let via_node = GridNode { x: node.x, y: node.y, layer: target_layer };
+        let corridor_penalty = if let (Some(corridor), Some(cg)) = (corridor, congestion_grid) {
+            let coarse_cell = cg.cell_id_for_fine(node.x, node.y, grid);
+            if corridor.contains(&coarse_cell.0) { 1.0 } else { 1.5 }
+        } else {
+            1.0
+        };
         let history = history_cost(via_node);
-        let cost = apply_pres_fac(via_c, history);
+        let usage = usage_cost(via_node);
+        let edge_hist = edge_history
+            .map(|eh| {
+                let a = (node.x, node.y, node.layer.raw());
+                let b = (node.x, node.y, target_layer.raw());
+                let key = if a <= b { (a, b) } else { (b, a) };
+                eh.get(&key)
+            })
+            .unwrap_or(0.0);
+        let cost = apply_costs(via_c * corridor_penalty, history, usage)
+            + hist_weight * edge_hist;
         result.push((via_node, OrderedFloat(cost)));
     }
 
@@ -283,7 +414,38 @@ fn route_subnet_astar(
     subnet: &crate::global::steiner::Subnet,
     net_id: NetId,
     history_costs: Option<&[f64]>,
+    present_usage: Option<&[u16]>,
     pres_fac: f64,
+    hist_weight: f64,
+) -> Result<Vec<PathSegment>, RoutingError> {
+    route_subnet_astar_inner(
+        router,
+        workspace,
+        subnet,
+        net_id,
+        history_costs,
+        present_usage,
+        pres_fac,
+        hist_weight,
+        None,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn route_subnet_astar_inner(
+    router: &GridRouter,
+    workspace: &RoutingWorkspace,
+    subnet: &crate::global::steiner::Subnet,
+    net_id: NetId,
+    history_costs: Option<&[f64]>,
+    present_usage: Option<&[u16]>,
+    pres_fac: f64,
+    hist_weight: f64,
+    corridor: Option<&std::collections::HashSet<u32>>,
+    congestion_grid: Option<&crate::global::congestion::GlobalRoutingGrid>,
+    edge_history: Option<&EdgeHistoryMap>,
 ) -> Result<Vec<PathSegment>, RoutingError> {
     let grid = &workspace.grid;
 
@@ -311,6 +473,24 @@ fn route_subnet_astar(
         .filter(|l| allowed_layers.contains(l))
         .unwrap_or(allowed_layers[0]);
 
+    // Apply escape routing for source.
+    let (sx, sy, start_layer) =
+        if let Some(escape) = workspace.escape_for_position(subnet.source, start_layer) {
+            let (ex, ey) = escape.via_cell;
+            (ex, ey, escape.target_layer)
+        } else {
+            (sx, sy, start_layer)
+        };
+
+    // Apply escape routing for target.
+    let (tx, ty, goal_layer) =
+        if let Some(escape) = workspace.escape_for_position(subnet.target, goal_layer) {
+            let (ex, ey) = escape.via_cell;
+            (ex, ey, escape.target_layer)
+        } else {
+            (tx, ty, goal_layer)
+        };
+
     let start = GridNode { x: sx, y: sy, layer: start_layer };
     let goal = GridNode { x: tx, y: ty, layer: goal_layer };
 
@@ -321,39 +501,59 @@ fn route_subnet_astar(
 
     let min_via_cost = router.via_cost.cost(None);
 
-    let result = astar(
-        &start,
-        |node| {
-            successors(
-                *node,
-                workspace,
-                net_id,
-                &router.via_cost,
-                router.movement,
-                history_costs,
-                pres_fac,
-                &allowed_layers,
-            )
-        },
-        |node| OrderedFloat(heuristic(*node, goal, min_via_cost)),
-        |node| node.x == goal.x && node.y == goal.y && node.layer == goal.layer,
-    );
+    // Build the ordered list of ROI radii to attempt.
+    // radius=None means full grid (no ROI restriction).
+    let radii: Vec<Option<u32>> = if router.roi_initial_radius > 0 {
+        vec![
+            Some(router.roi_initial_radius),
+            Some(router.roi_initial_radius * router.roi_retry_multiplier),
+            None,
+        ]
+    } else {
+        vec![None]
+    };
 
-    match result {
-        None => Err(RoutingError::NoPath {
-            net_id,
-            reason: format!(
-                "A* found no path from ({sx},{sy},layer {}) to ({tx},{ty},layer {})",
-                start_layer.raw(),
-                goal_layer.raw(),
-            ),
-        }),
-        Some((path, _cost)) => {
-            // Convert the node sequence to PathSegments.
-            let segments = node_sequence_to_segments(&path);
-            Ok(segments)
+    for radius_opt in &radii {
+        let roi = radius_opt.map(|r| RoiBounds::from_endpoints(start, goal, r, grid));
+        let roi_ref = roi.as_ref();
+
+        let result = astar(
+            &start,
+            |node| {
+                successors(
+                    *node,
+                    workspace,
+                    net_id,
+                    &router.via_cost,
+                    router.movement,
+                    history_costs,
+                    present_usage,
+                    pres_fac,
+                    hist_weight,
+                    &allowed_layers,
+                    roi_ref,
+                    corridor,
+                    congestion_grid,
+                    edge_history,
+                )
+            },
+            |node| OrderedFloat(heuristic(*node, goal, min_via_cost)),
+            |node| node.x == goal.x && node.y == goal.y && node.layer == goal.layer,
+        );
+
+        if let Some((path, _cost)) = result {
+            return Ok(node_sequence_to_segments(&path));
         }
     }
+
+    Err(RoutingError::NoPath {
+        net_id,
+        reason: format!(
+            "A* found no path from ({sx},{sy},layer {}) to ({tx},{ty},layer {})",
+            start_layer.raw(),
+            goal_layer.raw(),
+        ),
+    })
 }
 
 /// Convert a sequence of `GridNode`s returned by A* into `PathSegment`s.
@@ -380,7 +580,6 @@ fn node_sequence_to_segments(path: &[GridNode]) -> Vec<PathSegment> {
 /// Layer transitions (via nodes) become `RoutedVia` entries.
 ///
 /// `width_mm` is applied to every `TraceSegment`.
-/// `via_drill_mm` and `via_annular_ring_mm` are applied to every `RoutedVia`.
 pub fn route_subnet_to_traces(
     path_segments: &[PathSegment],
     grid: &GridConfig,
@@ -529,7 +728,7 @@ mod tests {
     }
 
     fn make_router() -> GridRouter {
-        GridRouter::new(ViaCostModel::default(), MovementStyle::FourWay)
+        GridRouter::new(ViaCostModel::default(), MovementStyle::FourWay, 0, 0)
     }
 
     fn make_subnet(sx: f64, sy: f64, tx: f64, ty: f64, net_id: NetId) -> Subnet {
@@ -559,7 +758,7 @@ mod tests {
         let subnet = make_subnet(2.0, 2.0, 7.0, 2.0, net_id);
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None, 1.0)
+            .route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0)
             .expect("should find a path");
 
         assert!(!path.is_empty(), "expected non-empty path");
@@ -622,7 +821,7 @@ mod tests {
         let subnet = make_subnet(2.5, 5.5, 9.5, 5.5, net_id);
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None, 1.0)
+            .route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0)
             .expect("router should find a path around the obstacle");
 
         assert!(!path.is_empty(), "expected non-empty path");
@@ -662,7 +861,7 @@ mod tests {
             region_path: vec![],
         };
 
-        let result = router.route_subnet(&ws, &subnet, net_id, None, 1.0);
+        let result = router.route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0);
         assert!(
             matches!(result, Err(RoutingError::NoPath { .. })),
             "expected NoPath error for fully blocked route, got {:?}",
@@ -685,7 +884,7 @@ mod tests {
             si_penalty: 0.0,
             overrides: Default::default(),
         };
-        let router = GridRouter::new(via_cost, MovementStyle::FourWay);
+        let router = GridRouter::new(via_cost, MovementStyle::FourWay, 0, 0);
 
         let net_id = NetId(0);
         // Source on layer 0, target on layer 1.
@@ -699,7 +898,7 @@ mod tests {
         };
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None, 1.0)
+            .route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0)
             .expect("should find multi-layer path");
 
         // Check that the path includes a layer transition.
@@ -731,14 +930,14 @@ mod tests {
         let ws = build_workspace(&ir, &config).expect("build_workspace failed");
 
         let via_cost = ViaCostModel::default();
-        let router = GridRouter::new(via_cost, MovementStyle::EightWay);
+        let router = GridRouter::new(via_cost, MovementStyle::EightWay, 0, 0);
 
         let net_id = NetId(0);
         // Diagonal path from (2,2) to (7,7).
         let subnet = make_subnet(2.0, 2.0, 7.0, 7.0, net_id);
 
         let path = router
-            .route_subnet(&ws, &subnet, net_id, None, 1.0)
+            .route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0)
             .expect("should find diagonal path");
 
         // An 8-way diagonal path should have at most 5 segments (vs 10 for 4-way L-shape).
@@ -794,6 +993,52 @@ mod tests {
             assert!((t.width_mm - 0.2).abs() < f64::EPSILON);
         }
         let _ = bounds;
+    }
+
+    // -----------------------------------------------------------------------
+    // ROI disabled (roi_initial_radius=0) still routes correctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn roi_disabled_routes_correctly() {
+        let ir = two_layer_ir(20.0);
+        let config = simple_config();
+        let ws = build_workspace(&ir, &config).expect("build_workspace failed");
+        // roi_initial_radius=0 disables ROI entirely — full grid used.
+        let router = GridRouter::new(ViaCostModel::default(), MovementStyle::FourWay, 0, 0);
+
+        let net_id = NetId(0);
+        let subnet = make_subnet(1.0, 1.0, 15.0, 1.0, net_id);
+
+        let path = router
+            .route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0)
+            .expect("should find a path with ROI disabled");
+
+        assert!(!path.is_empty(), "ROI-disabled router should produce a non-empty path");
+    }
+
+    // -----------------------------------------------------------------------
+    // Very small ROI forces fallback to full grid
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn small_roi_falls_back_to_full_grid() {
+        let ir = two_layer_ir(20.0);
+        let config = simple_config();
+        let ws = build_workspace(&ir, &config).expect("build_workspace failed");
+        // roi_initial_radius=1 is too small to span the 10-cell path; multiplier=1
+        // means the second attempt is the same size; third attempt is full grid.
+        let router = GridRouter::new(ViaCostModel::default(), MovementStyle::FourWay, 1, 1);
+
+        let net_id = NetId(0);
+        // Route a long path that won't fit in a radius-1 or radius-1 ROI.
+        let subnet = make_subnet(0.0, 0.0, 18.0, 0.0, net_id);
+
+        let path = router
+            .route_subnet(&ws, &subnet, net_id, None, None, 1.0, 1.0)
+            .expect("should find a path after falling back to full grid");
+
+        assert!(!path.is_empty(), "fallback to full grid should produce a non-empty path");
     }
 
     #[test]

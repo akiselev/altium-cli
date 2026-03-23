@@ -19,6 +19,9 @@
 //! Cell size is `cell_size_multiplier × (trace_width + clearance)`, clamped
 //! to at least one fine-grid cell.  Typical multiplier: 5–10.
 
+use ordered_float::OrderedFloat;
+use pathfinding::directed::astar::astar;
+
 use crate::workspace::{GridConfig, RoutingWorkspace};
 
 use super::steiner::CellId;
@@ -222,6 +225,59 @@ impl GlobalRoutingGrid {
         self.cells
             .get(idx)
             .map_or(0.0, |c| c.congestion_ratio())
+    }
+
+    /// Convert a `CellId` to `(col, row)` coordinates.
+    pub fn cell_to_coords(&self, cell: CellId) -> (u32, u32) {
+        let col = cell.0 % self.cols;
+        let row = cell.0 / self.cols;
+        (col, row)
+    }
+
+    /// Manhattan distance between two cells in cell units.
+    fn manhattan_distance(&self, a: CellId, b: CellId) -> f64 {
+        let (ac, ar) = self.cell_to_coords(a);
+        let (bc, br) = self.cell_to_coords(b);
+        (ac as f64 - bc as f64).abs() + (ar as f64 - br as f64).abs()
+    }
+
+    /// Find a coarse path using A* with congestion-weighted costs.
+    ///
+    /// `congestion_weight` scales the congestion ratio added to each step cost.
+    /// Returns `None` when no path exists (e.g., zero-size grid or
+    /// disconnected cells).  When `start == goal`, returns `Some(vec![start])`.
+    pub fn find_coarse_path(
+        &self,
+        start: CellId,
+        goal: CellId,
+        congestion_weight: f64,
+    ) -> Option<Vec<CellId>> {
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        let result = astar(
+            &start,
+            |&cell| {
+                let (col, row) = self.cell_to_coords(cell);
+                let mut neighbors = Vec::with_capacity(4);
+                let deltas: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+                for (dc, dr) in deltas {
+                    let nc = col as i64 + dc as i64;
+                    let nr = row as i64 + dr as i64;
+                    if nc >= 0 && nc < self.cols as i64 && nr >= 0 && nr < self.rows as i64 {
+                        let id = CellId(nr as u32 * self.cols + nc as u32);
+                        let cost = 1.0 + congestion_weight * self.congestion_ratio(id);
+                        neighbors.push((id, OrderedFloat(cost)));
+                    }
+                }
+                neighbors
+            },
+            |&cell| OrderedFloat(self.manhattan_distance(cell, goal)),
+            |&cell| cell == goal,
+        );
+
+        result.map(|(path, _cost)| path)
     }
 }
 

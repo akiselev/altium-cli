@@ -6,12 +6,16 @@
 //!
 //! # Cost function
 //!
-//! `C(n) = (b_n + h_n) × p_n`
+//! `C(n) = base * dir_penalty * corridor_penalty + hist_weight * history[n] + pres_fac * max(0, usage[n] - 1)`
 //!
 //! where:
-//! - `b_n` = base cost (Manhattan distance move cost)
-//! - `h_n` = history cost for cell `n` (accumulated from previous iterations)
-//! - `p_n` = present congestion factor (grows exponentially each iteration)
+//! - `base` = move cost (1.0 cardinal, √2 diagonal, via_cost for layer change)
+//! - `dir_penalty` = 1.0 (preferred) or 1.5 (against layer preferred direction)
+//! - `corridor_penalty` = 1.0 (inside global corridor) or 1.5 (outside)
+//! - `hist_weight` = weight multiplier for history cost (default 1.0)
+//! - `history[n]` = accumulated congestion from prior iterations
+//! - `pres_fac` = present congestion factor (grows exponentially each iteration)
+//! - `usage[n]` = current-iteration net occupancy count (0 = free, 1 = at capacity)
 //!
 //! # Convergence
 //!
@@ -20,16 +24,17 @@
 
 pub mod history;
 pub mod hot_set;
+pub mod present_usage;
 pub mod ripup;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use autopcb_ir::PcbIr;
 use autopcb_routes::{NetId, RouteSolution, RoutingIterationSnapshot, TraceSegment};
 
 use crate::config::RoutingConfig;
 use crate::detailed::grid::{
-    DetailedRouter, GridRouter, PathSegment, route_subnet_to_traces,
+    GridRouter, PathSegment, route_subnet_to_traces,
 };
 use crate::detailed::via_cost::ViaCostModel;
 use crate::drc::cpu_engine::CpuDrcEngine;
@@ -40,9 +45,34 @@ use crate::solution::RouteSolutionBuilder;
 use crate::workspace::RoutingWorkspace;
 use crate::RoutingError;
 
-use history::HistoryArray;
+use history::{EdgeHistoryMap, HistoryArray};
 use hot_set::HotSet;
-use ripup::{count_conflicts, rip_up_all, rip_up_net};
+use present_usage::PresentUsageArray;
+use ripup::{count_conflicts, count_edge_conflicts, rip_up_all, rip_up_net};
+
+// ---------------------------------------------------------------------------
+// BestSolution
+// ---------------------------------------------------------------------------
+
+/// Snapshot of the best routing solution seen during PathFinder iteration.
+///
+/// Cloned from `solution_paths` whenever the combined score (conflicts + DRC
+/// violations) improves. At termination, if the final solution is worse than
+/// the best, the best is returned instead.
+#[derive(Debug, Clone)]
+struct BestSolution {
+    paths: HashMap<NetId, Vec<PathSegment>>,
+    failed: Vec<NetId>,
+    conflict_count: u32,
+    drc_violations: u32,
+    iteration: u32,
+}
+
+impl BestSolution {
+    fn score(&self) -> u32 {
+        self.conflict_count + self.drc_violations
+    }
+}
 
 // ---------------------------------------------------------------------------
 // PathFinderState
@@ -51,20 +81,32 @@ use ripup::{count_conflicts, rip_up_all, rip_up_net};
 /// Mutable state carried across PathFinder iterations.
 #[derive(Debug)]
 pub struct PathFinderState {
-    /// Per-cell history congestion costs.
+    /// Per-cell history congestion costs (accumulates across iterations).
     pub history: HistoryArray,
+    /// Per-edge history congestion costs (sparse; accumulates across iterations).
+    pub edge_history: EdgeHistoryMap,
+    /// Per-cell present usage counts (rebuilt from scratch each iteration).
+    pub present_usage: PresentUsageArray,
     /// Current present-congestion multiplier. Grows each iteration.
     pub pres_fac: f64,
     /// Current iteration number (0-based).
     pub iteration: u32,
+    /// Best (lowest) conflict count seen so far.
+    pub best_conflict_count: u32,
+    /// Number of consecutive iterations without improvement.
+    pub stagnation_counter: u32,
 }
 
 impl PathFinderState {
-    fn new(width: u32, height: u32, layer_count: usize) -> Self {
+    fn new(width: u32, height: u32, layer_count: usize, initial_pres_fac: f64) -> Self {
         PathFinderState {
             history: HistoryArray::new(width, height, layer_count),
-            pres_fac: 1.0,
+            edge_history: EdgeHistoryMap::new(),
+            present_usage: PresentUsageArray::new(width, height, layer_count),
+            pres_fac: initial_pres_fac,
             iteration: 0,
+            best_conflict_count: u32::MAX,
+            stagnation_counter: 0,
         }
     }
 }
@@ -106,7 +148,7 @@ pub fn pathfinder_route(
     // 2. Build detailed router.
     // ------------------------------------------------------------------
     let via_cost = ViaCostModel::from_config(config);
-    let router = GridRouter::new(via_cost, config.movement);
+    let router = GridRouter::new(via_cost, config.movement, config.roi_initial_radius, config.roi_retry_multiplier);
 
     // ------------------------------------------------------------------
     // 3. Initialise PathFinder state.
@@ -116,6 +158,7 @@ pub fn pathfinder_route(
         grid.width_cells,
         grid.height_cells,
         workspace.layer_count,
+        config.initial_pres_fac,
     );
 
     // Current solution: maps NetId → flat list of PathSegments.
@@ -128,6 +171,9 @@ pub fn pathfinder_route(
 
     // DRC violation count from the last iteration that ran a DRC check.
     let mut last_drc_violation_count: u32 = 0;
+
+    // Best solution tracking for rollback.
+    let mut best_solution: Option<BestSolution> = None;
 
     // ------------------------------------------------------------------
     // 3b. Build DRC engine for routing-time checks.
@@ -145,6 +191,10 @@ pub fn pathfinder_route(
         state.iteration = _iteration;
         final_failed.clear();
 
+        // -- 4a-pre. Apply history decay (prevents fossilization) -----------
+        state.history.decay(config.history_decay);
+        state.edge_history.decay(config.history_decay);
+
         // -- 4a. Rip-up strategy -------------------------------------------
         if _iteration == 0 {
             // First iteration: always full rip-up (solution is empty anyway).
@@ -159,7 +209,7 @@ pub fn pathfinder_route(
                 break;
             }
 
-            let hot = HotSet::from_conflicts(&oversubscribed, &solution_paths);
+            let hot = HotSet::from_conflicts_adaptive(&oversubscribed, &solution_paths);
             if hot.is_empty() {
                 // Hot set is empty despite conflicts — fall back to full rip-up.
                 rip_up_all(&mut solution_paths);
@@ -201,7 +251,17 @@ pub fn pathfinder_route(
 
             for &subnet_idx in subnet_indices {
                 let subnet = &global_plan.subnets[subnet_idx];
-                match router.route_subnet(workspace, subnet, net_id, Some(history_slice), state.pres_fac) {
+                let present_slice = state.present_usage.as_slice();
+
+                let corridor: Option<HashSet<u32>> = if subnet.region_path.is_empty() {
+                    None
+                } else {
+                    Some(subnet.region_path.iter().map(|c| c.0).collect())
+                };
+                let corridor_ref = corridor.as_ref();
+                let congestion_grid_ref = Some(&global_plan.congestion_grid);
+
+                match router.route_subnet_with_corridor(workspace, subnet, net_id, Some(history_slice), Some(present_slice), state.pres_fac, config.hist_weight, corridor_ref, congestion_grid_ref, Some(&state.edge_history)) {
                     Ok(segments) => net_segments.extend(segments),
                     Err(e) => {
                         tracing::debug!(
@@ -221,6 +281,23 @@ pub fn pathfinder_route(
                 final_failed.push(net_id);
             } else {
                 solution_paths.insert(net_id, net_segments);
+            }
+        }
+
+        // -- 4b2. Rebuild present usage from current solution paths ----------
+        state.present_usage.clear();
+        for segs in solution_paths.values() {
+            // Track which cells each net touches (deduplicate per net).
+            let mut seen = std::collections::HashSet::new();
+            for seg in segs {
+                let start_key = (seg.start.x, seg.start.y, seg.start.layer.raw());
+                let end_key = (seg.end.x, seg.end.y, seg.end.layer.raw());
+                if seen.insert(start_key) {
+                    state.present_usage.increment(seg.start.x, seg.start.y, seg.start.layer.raw());
+                }
+                if seen.insert(end_key) {
+                    state.present_usage.increment(seg.end.x, seg.end.y, seg.end.layer.raw());
+                }
             }
         }
 
@@ -286,8 +363,46 @@ pub fn pathfinder_route(
                 .increment(x, y, layer_raw, config.history_increment);
         }
 
+        // -- 4d-edge. Count edge conflicts and update edge history ----------
+        let (_edge_conflict_count, edge_oversubscribed) =
+            count_edge_conflicts(&solution_paths, grid, workspace.layer_count);
+        for edge in &edge_oversubscribed {
+            state.edge_history.increment(*edge, config.history_increment);
+        }
+
+        // -- 4e2. Stagnation detection ----------------------------------------
+        if conflict_count < state.best_conflict_count {
+            state.best_conflict_count = conflict_count;
+            state.stagnation_counter = 0;
+        } else {
+            state.stagnation_counter += 1;
+        }
+
+        // Early termination on persistent stagnation
+        if state.stagnation_counter >= config.stagnation_max {
+            tracing::warn!(
+                target: "autopcb_router::pathfinder",
+                iteration = _iteration,
+                conflict_count,
+                "stagnation_termination: no progress for {} iterations",
+                state.stagnation_counter,
+            );
+            break;
+        }
+
         // -- 4f. Update present congestion factor ---------------------------
-        state.pres_fac = (state.pres_fac * config.pres_fac_multiplier).min(config.pres_fac_cap);
+        // On stagnation threshold: escalate by doubling instead of normal growth.
+        if state.stagnation_counter == config.stagnation_threshold {
+            tracing::info!(
+                target: "autopcb_router::pathfinder",
+                iteration = _iteration,
+                stagnation_counter = state.stagnation_counter,
+                "stagnation_escalation: doubling pres_fac"
+            );
+            state.pres_fac = (state.pres_fac * 2.0).min(config.pres_fac_cap);
+        } else {
+            state.pres_fac = (state.pres_fac * config.pres_fac_multiplier).min(config.pres_fac_cap);
+        }
 
         // -- 4g. Capture iteration snapshot ---------------------------------
         let routed_count = solution_paths.len() as u32;
@@ -323,7 +438,22 @@ pub fn pathfinder_route(
             "pathfinder_iteration_complete"
         );
 
-        // -- 4h. Convergence check ------------------------------------------
+        // -- 4h. Best-solution tracking --------------------------------------
+        let current_score = conflict_count + last_drc_violation_count;
+        let is_best = best_solution
+            .as_ref()
+            .map_or(true, |b| current_score < b.score());
+        if is_best {
+            best_solution = Some(BestSolution {
+                paths: solution_paths.clone(),
+                failed: final_failed.clone(),
+                conflict_count,
+                drc_violations: last_drc_violation_count,
+                iteration: _iteration,
+            });
+        }
+
+        // -- 4i. Convergence check ------------------------------------------
         let drc_clean = !drc_config.enabled
             || _iteration < drc_config.start_iteration
             || last_drc_violation_count == 0;
@@ -341,7 +471,28 @@ pub fn pathfinder_route(
     );
 
     // ------------------------------------------------------------------
-    // 5. Build final solution from the last iteration's paths.
+    // 5. Rollback to best solution if final is worse.
+    // ------------------------------------------------------------------
+    let final_score = {
+        let (cc, _) = count_conflicts(&solution_paths, grid, workspace.layer_count);
+        cc + last_drc_violation_count
+    };
+    if let Some(ref best) = best_solution {
+        if best.score() < final_score {
+            tracing::info!(
+                target: "autopcb_router::pathfinder",
+                best_iteration = best.iteration,
+                best_score = best.score(),
+                final_score,
+                "rolling_back_to_best_solution"
+            );
+            solution_paths = best.paths.clone();
+            final_failed = best.failed.clone();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 6. Build final solution from the best iteration's paths.
     // ------------------------------------------------------------------
     for (&net_id, segments) in &solution_paths {
         let width_mm = workspace.policy.trace_width(net_id, autopcb_routes::LayerId(0)).preferred;
@@ -353,7 +504,7 @@ pub fn pathfinder_route(
     }
 
     // ------------------------------------------------------------------
-    // 6. Final full DRC run — captures all violation records for storage.
+    // 7. Final full DRC run — captures all violation records for storage.
     // ------------------------------------------------------------------
     let partial_solution = builder.build_partial();
     match drc_engine.check_full(&partial_solution, workspace, ir) {

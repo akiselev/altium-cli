@@ -123,6 +123,15 @@ pub struct RoutingPolicy {
     /// Per-net cache: diff-pair config. `None` for regular nets.
     diff_pair_cache: HashMap<NetId, Option<DiffPairConfig>>,
 
+    /// Map from NetId to net class name (from IR net definitions).
+    net_class_map: HashMap<NetId, String>,
+
+    /// Per-net-class clearance overrides (from config).
+    class_clearance: HashMap<String, f64>,
+
+    /// Per-net-class width overrides (from config).
+    class_width: HashMap<String, f64>,
+
     // ----- config reference -----
     config_corner_style: CornerStyle,
 
@@ -134,18 +143,46 @@ pub struct RoutingPolicy {
 }
 
 impl RoutingPolicy {
-    /// Clearance in mm between two nets. Currently the same value for all
-    /// pairs (no per-net-class clearance override in the IR scope model yet).
-    pub fn clearance(&self, _net_a: NetId, _net_b: NetId) -> f64 {
-        self.default_clearance_mm
+    /// Clearance in mm between two nets.
+    ///
+    /// If either net belongs to a class with a clearance override, the
+    /// maximum of the two class clearances (and the global default) is used
+    /// (conservative — stricter class wins).
+    pub fn clearance(&self, net_a: NetId, net_b: NetId) -> f64 {
+        let class_a = self.net_class_map.get(&net_a);
+        let class_b = self.net_class_map.get(&net_b);
+
+        let clear_a = class_a.and_then(|c| self.class_clearance.get(c)).copied();
+        let clear_b = class_b.and_then(|c| self.class_clearance.get(c)).copied();
+
+        match (clear_a, clear_b) {
+            (Some(a), Some(b)) => a.max(b),
+            (Some(a), None) => a.max(self.default_clearance_mm),
+            (None, Some(b)) => b.max(self.default_clearance_mm),
+            (None, None) => self.default_clearance_mm,
+        }
     }
 
     /// Width constraints for a net on a given layer.
     ///
     /// Per-net-class overrides from `RoutingConfig::net_configs` are applied
     /// on top of the rule-derived default.
-    pub fn trace_width(&self, _net_id: NetId, _layer: LayerId) -> WidthConstraint {
+    pub fn trace_width(&self, net_id: NetId, _layer: LayerId) -> WidthConstraint {
+        if let Some(class) = self.net_class_map.get(&net_id) {
+            if let Some(&w) = self.class_width.get(class) {
+                return WidthConstraint {
+                    min: w * 0.5,
+                    max: w * 2.0,
+                    preferred: w,
+                };
+            }
+        }
         self.default_width
+    }
+
+    /// Return the net class name for `net_id`, if any.
+    pub fn net_class(&self, net_id: NetId) -> Option<&str> {
+        self.net_class_map.get(&net_id).map(|s| s.as_str())
     }
 
     /// Layers on which `net_id` may be routed. Returns all copper layers if
@@ -345,6 +382,7 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
     });
 
     let mut diff_pair_cache: HashMap<NetId, Option<DiffPairConfig>> = HashMap::new();
+    let mut net_class_map: HashMap<NetId, String> = HashMap::new();
     for (_ir_net_id, ir_net) in ir.nets.iter() {
         let routes_net_id = NetId(ir_net.id.raw());
         let dp_cfg = if ir_net.diff_pair_partner.is_some() {
@@ -353,6 +391,21 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
             None
         };
         diff_pair_cache.insert(routes_net_id, dp_cfg);
+        if let Some(ref class) = ir_net.net_class {
+            net_class_map.insert(routes_net_id, class.clone());
+        }
+    }
+
+    // Extract per-net-class overrides from config.
+    let mut class_clearance: HashMap<String, f64> = HashMap::new();
+    let mut class_width: HashMap<String, f64> = HashMap::new();
+    for (class_name, net_cfg) in &config.net_configs {
+        if let Some(c) = net_cfg.clearance_override {
+            class_clearance.insert(class_name.clone(), c);
+        }
+        if let Some(w) = net_cfg.width_override {
+            class_width.insert(class_name.clone(), w);
+        }
     }
 
     Ok(RoutingPolicy {
@@ -362,6 +415,9 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
         default_via,
         default_corner_style,
         diff_pair_cache,
+        net_class_map,
+        class_clearance,
+        class_width,
         config_corner_style: config.corner_style,
         config_seed: config.seed,
         all_copper_layers,
@@ -720,5 +776,88 @@ mod tests {
         assert_eq!(layers.len(), 2, "expected 2 copper layers");
         assert!(layers.contains(&LayerId(0)));
         assert!(layers.contains(&LayerId(1)));
+    }
+
+    /// Per-net-class width_override from RoutingConfig applies to nets in that class.
+    #[test]
+    fn per_class_width_override_applies_to_class_nets() {
+        use crate::config::NetRoutingConfig;
+        use std::collections::BTreeMap;
+
+        let mut ir = empty_ir();
+
+        // Add a net with net_class = "Power".
+        let power_net_id = IrNetId::from(0);
+        let signal_net_id = IrNetId::from(1);
+
+        let power_net = IrNet {
+            id: power_net_id,
+            name: "VCC".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: Some("Power".into()),
+            diff_pair_partner: None,
+        };
+        let signal_net = IrNet {
+            id: signal_net_id,
+            name: "SIG".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
+        };
+        ir.nets.push(power_net);
+        ir.nets.push(signal_net);
+
+        // Config: Power class gets width override of 0.5 mm.
+        let mut config = default_config();
+        config.net_configs = BTreeMap::from([(
+            "Power".to_string(),
+            NetRoutingConfig {
+                width_override: Some(0.5),
+                ..Default::default()
+            },
+        )]);
+
+        let policy = build_policy(&ir, &config).expect("build_policy failed");
+
+        // Power net should get the overridden width.
+        let power_wc = policy.trace_width(NetId(power_net_id.raw()), LayerId(0));
+        assert!(
+            (power_wc.preferred - 0.5).abs() < f64::EPSILON,
+            "expected preferred=0.5 for Power class, got {}",
+            power_wc.preferred
+        );
+        assert!(
+            (power_wc.min - 0.25).abs() < f64::EPSILON,
+            "expected min=0.25 (0.5*0.5), got {}",
+            power_wc.min
+        );
+        assert!(
+            (power_wc.max - 1.0).abs() < f64::EPSILON,
+            "expected max=1.0 (0.5*2.0), got {}",
+            power_wc.max
+        );
+
+        // Signal net (no class) should get the default width.
+        let signal_wc = policy.trace_width(NetId(signal_net_id.raw()), LayerId(0));
+        let expected_default = WidthConstraint::default();
+        assert!(
+            (signal_wc.preferred - expected_default.preferred).abs() < f64::EPSILON,
+            "expected default preferred width for Signal net, got {}",
+            signal_wc.preferred
+        );
+
+        // net_class() accessor returns the class name for the Power net.
+        assert_eq!(
+            policy.net_class(NetId(power_net_id.raw())),
+            Some("Power"),
+            "expected net_class to return 'Power'"
+        );
+        assert_eq!(
+            policy.net_class(NetId(signal_net_id.raw())),
+            None,
+            "expected net_class to return None for Signal net"
+        );
     }
 }
