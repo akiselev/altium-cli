@@ -94,9 +94,9 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ### Milestone 1: Lexer + AST + Parser
 
 **Files**:
-- `crates/altium-format-spec/src/lexer.rs`
-- `crates/altium-format-spec/src/ast.rs`
-- `crates/altium-format-spec/src/parser.rs`
+- `crates/autopcb-spec/src/lexer.rs`
+- `crates/autopcb-spec/src/ast.rs`
+- `crates/autopcb-spec/src/parser.rs`
 
 **Flags**: `conformance`
 
@@ -120,7 +120,7 @@ This is a targeted change to `eval_field_access` — only when the base value is
 - Arrow token does not break existing `-` minus usage in expressions
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/parser.rs` (inline `#[test]` in existing test module)
+- **Test files**: `crates/autopcb-spec/src/parser.rs` (inline `#[test]` in existing test module)
 - **Test type**: unit (example-based, following existing codebase convention)
 - **Backing**: default-derived
 - **Scenarios**:
@@ -137,8 +137,8 @@ This is a targeted change to `eval_field_access` — only when the base value is
 **Code Changes**:
 
 ```diff
---- a/crates/altium-format-spec/src/lexer.rs
-+++ b/crates/altium-format-spec/src/lexer.rs
+--- a/crates/autopcb-spec/src/lexer.rs
++++ b/crates/autopcb-spec/src/lexer.rs
 @@ -69,6 +69,7 @@ pub enum TokenKind {
      Dot,
      DotDotDot,
@@ -175,8 +175,8 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ```
 
 ```diff
---- a/crates/altium-format-spec/src/ast.rs
-+++ b/crates/altium-format-spec/src/ast.rs
+--- a/crates/autopcb-spec/src/ast.rs
++++ b/crates/autopcb-spec/src/ast.rs
 @@ -91,6 +91,7 @@ pub enum ComponentItem {
      Property(Property),
      LetBinding(LetBinding),
@@ -213,8 +213,8 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ```
 
 ```diff
---- a/crates/altium-format-spec/src/parser.rs
-+++ b/crates/altium-format-spec/src/parser.rs
+--- a/crates/autopcb-spec/src/parser.rs
++++ b/crates/autopcb-spec/src/parser.rs
 @@ -3,7 +3,7 @@ use super::ast::{
      AliasDecl, AnnotationBlockDecl, AnnotationKey, BlockAnnotation, BoardDecl, BoardItem,
      ClassDecl, ComparisonRuleDecl, ComponentDecl, ComponentItem, ConstraintDecl, ConstraintKind,
@@ -295,9 +295,9 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ### Milestone 2: Model + Compiler + Validated Symbol References
 
 **Files**:
-- `crates/altium-format-spec/src/model.rs`
-- `crates/altium-format-spec/src/compiler.rs`
-- `crates/altium-format-spec/src/eval.rs`
+- `crates/autopcb-spec/src/model.rs`
+- `crates/autopcb-spec/src/compiler.rs`
+- `crates/autopcb-spec/src/eval.rs`
 
 **Flags**: `conformance`, `needs-rationale`
 
@@ -327,7 +327,7 @@ This is a targeted change to `eval_field_access` — only when the base value is
 - Existing `$alias.field` usage in non-import contexts (e.g., component bindings) unaffected
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/compiler.rs` (inline `#[test]` in existing test module)
+- **Test files**: `crates/autopcb-spec/src/compiler.rs` (inline `#[test]` in existing test module)
 - **Test type**: unit (example-based)
 - **Backing**: default-derived
 - **Scenarios**:
@@ -345,8 +345,8 @@ This is a targeted change to `eval_field_access` — only when the base value is
 **Code Changes**:
 
 ```diff
---- a/crates/altium-format-spec/src/eval.rs
-+++ b/crates/altium-format-spec/src/eval.rs
+--- a/crates/autopcb-spec/src/eval.rs
++++ b/crates/autopcb-spec/src/eval.rs
 @@ -148,6 +148,14 @@ pub enum Value {
      Array(Vec<Value>),
      Object(IndexMap<String, Value>),
@@ -428,8 +428,8 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ```
 
 ```diff
---- a/crates/altium-format-spec/src/model.rs
-+++ b/crates/altium-format-spec/src/model.rs
+--- a/crates/autopcb-spec/src/model.rs
++++ b/crates/autopcb-spec/src/model.rs
 @@ -96,6 +96,34 @@ pub struct PinPadMap {
      pub pad: String,
  }
@@ -479,8 +479,8 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ```
 
 ```diff
---- a/crates/altium-format-spec/src/compiler.rs
-+++ b/crates/altium-format-spec/src/compiler.rs
+--- a/crates/autopcb-spec/src/compiler.rs
++++ b/crates/autopcb-spec/src/compiler.rs
 @@ -104,7 +104,7 @@ pub fn compile_spec_with_resolved(
              if let Some(name) = name {
                  entries.insert(name.clone(), Value::String(name));
@@ -615,7 +615,7 @@ This is a targeted change to `eval_field_access` — only when the base value is
 ### Milestone 3: Executor — Wire Stub Generation
 
 **Files**:
-- `crates/altium-format-spec/src/executor.rs`
+- `crates/autopcb-spec/src/executor.rs`
 
 **Flags**: `complex-algorithm`, `needs-rationale`
 
@@ -645,7 +645,7 @@ This is a targeted change to `eval_field_access` — only when the base value is
 - Component without imported SchLib (lib_reference string, no import) → pin connections produce error: "cannot resolve pin connections for 'U1': symbol not found in imported libraries"
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/executor.rs` (inline `#[test]` in existing test module)
+- **Test files**: `crates/autopcb-spec/src/executor.rs` (inline `#[test]` in existing test module)
 - **Test type**: unit (example-based)
 - **Backing**: default-derived
 - **Scenarios**:
@@ -672,14 +672,14 @@ This is a targeted change to `eval_field_access` — only when the base value is
 **Code Changes**:
 
 ```diff
---- a/crates/altium-format-spec/src/executor.rs
-+++ b/crates/altium-format-spec/src/executor.rs
+--- a/crates/autopcb-spec/src/executor.rs
++++ b/crates/autopcb-spec/src/executor.rs
 @@ -23,7 +23,7 @@ use crate::model::{
      BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
      PadSpec, ParameterSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocPolygonSpec,
-     PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinSpec,
--    PrjPcbSpec, SchLibSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
-+    PinConnectionTarget, PinConnectionSpec, PrjPcbSpec, SchLibSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
+     PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, SymSpec, PinSpec,
+-    PrjPcbSpec, SymSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
++    PinConnectionTarget, PinConnectionSpec, PrjPcbSpec, SymSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SheetSpec, SymbolRef,
  };
 @@ -530,12 +530,16 @@ use crate::model::{
  /// Apply a SchDocSpec directly to a document.
@@ -942,7 +942,7 @@ This is a targeted change to `eval_field_access` — only when the base value is
 
 **Files**:
 - `crates/altium-cli/src/main.rs` (or wherever `altium apply`/`altium plan` dispatch for schdoc)
-- `crates/altium-format-spec/src/eco.rs`
+- `crates/autopcb-spec/src/eco.rs`
 
 **Flags**: `conformance`
 
@@ -952,13 +952,13 @@ This is a targeted change to `eval_field_access` — only when the base value is
 - ECO entries: "Add wire stub U1.GPIO4 → #SDA", "Add power stub U1.VDD → #3V3 (bar)", "Add no-connect U1.NC1"
 
 **Acceptance Criteria**:
-- `altium apply test.schdoc-spec` generates a SchDoc with correct Wire, NetLabel, PowerObject, NoConnect objects
-- `altium plan test.schdoc-spec` shows ECO entries for each pin connection
+- `altium apply test.sch` generates a SchDoc with correct Wire, NetLabel, PowerObject, NoConnect objects
+- `altium plan test.sch` shows ECO entries for each pin connection
 - `altium dump` or `altium query` on the generated SchDoc returns the expected count of Wire records (one per non-nc pin connection), NetLabel records (one per signal connection), PowerObject records (one per power connection), and NoConnect records (one per nc connection)
 - Wire vertex coordinates match expected positions computed from test component placement (verified via `altium dump` output, not just `altium validate` which only checks structural well-formedness)
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/executor.rs` (inline `#[test]`, end-to-end through compile+apply pipeline; no separate `tests/` directory exists in the project)
+- **Test files**: `crates/autopcb-spec/src/executor.rs` (inline `#[test]`, end-to-end through compile+apply pipeline; no separate `tests/` directory exists in the project)
 - **Test type**: integration (end-to-end apply + validate)
 - **Backing**: default-derived
 - **Scenarios**:
@@ -977,12 +977,12 @@ This is a targeted change to `eval_field_access` — only when the base value is
 +++ b/crates/altium-cli/src/main.rs
 @@ -1395,6 +1395,9 @@ fn compile_and_resolve(
  struct CompileResult {
-     model: altium_format_spec::model::SpecModel,
+     model: autopcb_spec::model::SpecModel,
      /// All import paths (bare + named) for --all processing.
      import_paths: Vec<PathBuf>,
 +    /// Compiled SchLib components from imports, keyed by lib_reference.
 +    /// Used by SchDoc apply to resolve pin positions.
-+    imported_components: std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
++    imported_components: std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
  }
 
  fn compile_and_resolve(
@@ -1023,12 +1023,12 @@ This is a targeted change to `eval_field_access` — only when the base value is
      }
 @@ -1176,7 +1178,9 @@ fn apply_for_model(
  fn apply_for_model(
-     spec_model: &altium_format_spec::model::SpecModel,
+     spec_model: &autopcb_spec::model::SpecModel,
      target: Option<&PathBuf>,
      output: Option<&PathBuf>,
      spec_file: &PathBuf,
      domain: &SpecDomain,
-+    imported_components: &std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
++    imported_components: &std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
  ) -> anyhow::Result<()> {
 @@ -1250,9 +1254,9 @@ fn apply_for_model(
              let out_path = output.cloned().unwrap_or(library_path);
@@ -1054,7 +1054,7 @@ Note: The plan for eco.rs does not require new code — pin connection stubs app
 - `/home/kiselev/git/ee-template/docs/altium-spec-reference.md`
 
 **Requirements**:
-- Document `pin X -> #NET` syntax in schdoc-spec section
+- Document `pin X -> #NET` syntax in `.sch` spec section
 - Document validated symbol references via `symbol: $alias.Name`
 - Document `power` declaration interaction with pin connections
 - Document `nc` keyword for no-connect

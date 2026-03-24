@@ -110,8 +110,8 @@ altium validate /tmp/modified.SchLib
 #### f) Automated tests
 ```bash
 cargo test -p altium-format schlib
-cargo test -p altium-format-ops --test ops_e2e_schlib
-cargo test -p altium-format-ops --test executor_proptest
+cargo test -p autopcb-spec --test ops_e2e_schlib
+cargo test -p autopcb-spec --test executor_proptest
 ```
 
 ### Known format details to watch for
@@ -196,8 +196,8 @@ altium validate /tmp/modified.SchDoc
 #### f) Automated tests
 ```bash
 cargo test -p altium-format schdoc
-cargo test -p altium-format-ops --test ops_e2e_schdoc
-cargo test -p altium-format-ops --test executor_schdoc_proptest
+cargo test -p autopcb-spec --test ops_e2e_schdoc
+cargo test -p autopcb-spec --test executor_schdoc_proptest
 ```
 
 ### Known format details to watch for
@@ -291,7 +291,7 @@ altium validate /tmp/modified.PcbLib
 #### f) Automated tests
 ```bash
 cargo test -p altium-format pcblib
-cargo test -p altium-format-ops --test executor_pcb_proptest
+cargo test -p autopcb-spec --test executor_pcb_proptest
 ```
 
 ### Known format details to watch for
@@ -388,7 +388,7 @@ altium validate /tmp/modified.PcbDoc
 #### f) Automated tests
 ```bash
 cargo test -p altium-format pcbdoc
-cargo test -p altium-format-ops --test executor_pcb_proptest
+cargo test -p autopcb-spec --test executor_pcb_proptest
 ```
 
 ### Known format details to watch for
@@ -416,12 +416,12 @@ altium get version data/pcblib/SomeLib.PcbLib
 cargo test -p altium-format
 
 # All integration tests
-cargo test -p altium-format-ops
+cargo test -p autopcb-spec
 
 # All property-based tests (proptest)
-cargo test -p altium-format-ops --test executor_proptest
-cargo test -p altium-format-ops --test executor_schdoc_proptest
-cargo test -p altium-format-ops --test executor_pcb_proptest
+cargo test -p autopcb-spec --test executor_proptest
+cargo test -p autopcb-spec --test executor_schdoc_proptest
+cargo test -p autopcb-spec --test executor_pcb_proptest
 
 # Everything
 cargo test --workspace

@@ -17,7 +17,7 @@ Per spec-lang.md §12.1:
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  ENGINEERING CHANGE ORDER                                          ║
 ║  Library: my-parts.SchLib                                          ║
-║  Spec:    my-parts.schlib-spec                                     ║
+║  Spec:    my-parts.sym                                     ║
 ║  Date:    2026-02-26 14:30:00 UTC                                  ║
 ╚══════════════════════════════════════════════════════════════════════╝
 

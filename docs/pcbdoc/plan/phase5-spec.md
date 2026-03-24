@@ -9,7 +9,7 @@ Add PcbDoc support to the spec language: parse, compile, execute, reconcile, dum
 Phase 2 (read) and Phase 3 (write) must be complete. Phase 4c (dump) can be done
 concurrently.
 
-## 5a: Parser — `.pcbdoc-spec` Syntax
+## 5a: Parser — `.pcb` Syntax
 
 **New AST nodes:**
 ```rust
@@ -38,7 +38,7 @@ pub struct PcbDocPrimitiveDecl {
 ```
 
 **Parser changes:**
-- Detect `.pcbdoc-spec` extension -> parse as PcbDoc
+- Detect `.pcb` extension -> parse as PcbDoc
 - Add `board` keyword to top-level dispatch
 - Parse primitive blocks: `track [NAME] { ... }`, `via [NAME] { ... }`, etc.
 - All primitive type keywords: `track`, `arc`, `via`, `pad`, `fill`, `text`,

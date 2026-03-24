@@ -25,7 +25,7 @@ To set up a new optimization run, work with the user to:
    master.
 3. **Read the in-scope files**: Read the files listed in the "Scope" section
    below for full context on what you can modify.
-4. **Select benchmark boards**: Identify which `.pcbdoc-spec` files to use as
+4. **Select benchmark boards**: Identify which `.pcb` files to use as
    benchmarks. At minimum use the cobra board. Record the benchmark list in
    `results.tsv`.
 5. **Establish baseline**: Route all benchmarks with the current code, record
@@ -158,7 +158,7 @@ cost functions, heuristics, data structures, search strategies.
   format). Changing it would invalidate benchmarks.
 - `crates/altium-format*/` — File format parsing. Not relevant to routing quality.
 - `crates/altium-cli/` — CLI interface. Not relevant to routing quality.
-- Benchmark `.pcbdoc-spec` files — these are the fixed inputs.
+- Benchmark `.pcb` files — these are the fixed inputs.
 - The scoring function defined above.
 
 ### What You SHOULD NOT Do
@@ -323,7 +323,7 @@ LOOP FOREVER:
 6. **Run the benchmark**: route the benchmark board(s).
    ```bash
    cargo run -p altium-cli --release -- routing solve \
-       --target <board>.PcbDoc <board>.pcbdoc-spec > run.log 2>&1
+       --target <board>.PcbDoc <board>.pcb > run.log 2>&1
    ```
 
 7. **Extract metrics**: parse the output for completion, wirelength, vias, DRC.

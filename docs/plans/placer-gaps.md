@@ -26,14 +26,14 @@ organized into three implementation waves by dependency order and impact.
 | Connections6 generation after pad-net fix | Connections6 binary records are already parsed (43-byte payload, `BinaryLenRecord` in records.rs) → write path exists (`write_binary_section`) → just need to compute ratsnest topology and populate |
 | Star topology for ratsnest (not MST) | Altium itself uses star from a central pad → simpler to implement → matches Altium's own initial ratsnest → MST is an optimization for display, not correctness |
 | Footprint graphics as separate milestone from pads | Pads are functional (affect connectivity), graphics are visual (silkscreen, courtyard) → different blast radius → graphics can follow independently |
-| Import-based pcbdoc-spec deferred to Wave 3 | Correct long-term architecture but large scope → current stringly-typed sync works for the immediate fixes → import architecture eliminates the sync command entirely but requires spec language extensions |
+| Import-based `.pcb` spec deferred to Wave 3 | Correct long-term architecture but large scope → current stringly-typed sync works for the immediate fixes → import architecture eliminates the sync command entirely but requires spec language extensions |
 | SOURCEUNIQUEID from SchDoc UniqueIDs | Real Altium ECO populates these from schematic `UNIQUE_ID` fields → we have access during sync from SchDoc spec → just need to propagate through the SyncComponent IR |
 
 ### Rejected Alternatives
 
 | Alternative | Why Rejected |
 |-------------|-------------|
-| Fix pad-net in pcbdoc-spec format (add pin syntax) | Treating the spec as carrier of pin-level connectivity conflates placement spec with netlist → pad-net belongs in the apply pipeline, derived from the SchDoc+SchLib import chain |
+| Fix pad-net in `.pcb` spec format (add pin syntax) | Treating the spec as carrier of pin-level connectivity conflates placement spec with netlist → pad-net belongs in the apply pipeline, derived from the SchDoc+SchLib import chain |
 | Write Connections6 from spec | Ratsnest is derived data (computed from pad-net topology) → should be generated during apply, not declared in specs |
 | Fix sync policy to Forward for pins | The sync IR doesn't carry pad designators (only pin names) → enabling Forward would propagate wrong data → must fix pin→pad resolution first |
 | Skip Board6 fix, generate from scratch | Board6 is ~93KB of layer stack, grid settings, display prefs → regenerating requires implementing the full V7/V8/V9 layer stack writer → merge is one line |
@@ -112,7 +112,7 @@ pin→pad mapping but is never consulted.
 
 **Resolution chain:**
 ```
-schdoc-spec pin "IO8" on net "LED_POWER"
+.sch spec pin "IO8" on net "LED_POWER"
   → SchLib component lookup → pin with name "IO8" has designator "10"
   → FootprintMapSpec.maps → PinPadMap { pin: "10", pad: "10" }
   → pad designator is "10"
@@ -120,9 +120,9 @@ schdoc-spec pin "IO8" on net "LED_POWER"
 ```
 
 **Files:**
-- `crates/altium-format-spec/src/sync.rs:219` — pin projection in `project_schdoc_spec`
-- `crates/altium-format-spec/src/sync.rs:97` — where FootprintMapSpec.model_name is extracted
-- `crates/altium-format-spec/src/model.rs:85-93` — `FootprintMapSpec`, `PinPadMap` types
+- `crates/autopcb-spec/src/sync.rs:219` — pin projection in `project_schdoc_spec`
+- `crates/autopcb-spec/src/sync.rs:97` — where FootprintMapSpec.model_name is extracted
+- `crates/autopcb-spec/src/model.rs:85-93` — `FootprintMapSpec`, `PinPadMap` types
 
 **Implementation:**
 
@@ -313,8 +313,8 @@ can't match components → would add all as duplicates.
 
 **Files:**
 - `crates/altium-format/src/api/pcbdoc_write.rs:283-284` — hardcoded empty strings
-- `crates/altium-format-spec/src/sync.rs` — SyncComponent IR
-- `crates/altium-format-spec/src/model.rs` — SchDocComponentSpec
+- `crates/autopcb-spec/src/sync.rs` — SyncComponent IR
+- `crates/autopcb-spec/src/model.rs` — SchDocComponentSpec
 
 **Implementation:**
 
@@ -466,35 +466,35 @@ to `Forward`.
 
 ---
 
-### M11: Import-Based pcbdoc-spec Architecture
+### M11: Import-Based `.pcb` Spec Architecture
 
 **Problem:** Stringly-typed sync with no structural validation. The correct
 architecture uses imports that carry the full pin→pad→net data chain.
 
 **Files:**
-- `crates/altium-format-spec/src/` — spec language extensions
+- `crates/autopcb-spec/src/` — spec language extensions
 - `crates/altium-cli/src/main.rs` — sync command replacement
 
 **Implementation:**
 
-1. Extend spec language with pcbdoc-spec imports:
+1. Extend spec language with `.pcb` spec imports:
    ```
-   import "hub.schdoc-spec" as sch
-   import "libs/footprints.pcblib-spec" as fp
+   import "hub.sch" as sch
+   import "libs/footprints.sym" as fp
    ```
 
 2. Import resolution derives:
-   - Components and designators from schdoc-spec
-   - Nets and connectivity from schdoc-spec pin connections
-   - Footprint patterns from schdoc-spec → SchLib → pcblib-spec chain
+   - Components and designators from `.sch` spec
+   - Nets and connectivity from `.sch` spec pin connections
+   - Footprint patterns from `.sch` spec → SchLib → `.sym` (footprint) chain
    - Pad-net mapping from the full resolution chain
 
-3. Eliminate explicit component/net declarations in pcbdoc-spec — they're
+3. Eliminate explicit component/net declarations in the `.pcb` spec — they're
    derived from imports.
 
 4. The `altium spec sync` command becomes unnecessary — imports ARE the sync.
 
-**This is the largest milestone** and effectively redesigns the pcbdoc-spec
+**This is the largest milestone** and effectively redesigns the `.pcb` spec
 format. It should be preceded by an RFC-style design document.
 
 **Scope:** Spec language parser, compiler, executor, reconciler, dump all
@@ -548,7 +548,7 @@ Wave 3 (Feature parity — parallel, independent):
 ### After Wave 1 (M1-M3 complete):
 ```bash
 # 1. Apply spec to PcbDoc
-altium apply hub.pcbdoc-spec --target template.PcbDoc --output hub.PcbDoc
+altium apply hub.pcb --target template.PcbDoc --output hub.PcbDoc
 
 # 2. Verify pad-net assignment
 altium query hub.PcbDoc "pad[net!='']" --count
@@ -559,7 +559,7 @@ altium cfb diff --semantic template.PcbDoc hub.PcbDoc --stream Board6
 # Expected: only our 5 fields differ, not 93KB missing
 
 # 4. Run placement solver
-altium placement autoplace hub.pcbdoc-spec --target hub.PcbDoc
+altium placement autoplace hub.pcb --target hub.PcbDoc
 # Expected: HPWL > 0, non-zero rotations
 
 # 5. Inspect placement result

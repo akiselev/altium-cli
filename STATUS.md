@@ -2,6 +2,15 @@
 
 Updated: 2026-03-23
 
+## Crate Rename: autopcb-spec → autopcb-spec
+
+The spec DSL crate has been renamed from `autopcb-spec` to `autopcb-spec`.
+File extensions changed: `.sym`→`.sym`, `.sym`→`.sym`,
+`.sch`→`.sch`, `.pcb`→`.pcb`, `.proj`→`.proj`.
+Model types changed: `SchLibSpec`+`PcbLibSpec` → `SymSpec`.
+Domain variants changed: `SpecDomain::SchLib`/`PcbLib`/`SchDoc`/`PcbDoc`/`PrjPcb`
+→ `Sym`/`Sch`/`Pcb`/`Proj`.
+
 ## Three-Tier Pad Breakout System — Complete
 
 Tiered pipeline in `crates/autopcb-router/src/detailed/fanout.rs` that pre-routes
@@ -24,7 +33,7 @@ Full spec-to-routing pipeline: `routing solve` CLI command + routes loading in s
 
 **New:**
 - `routing { solution: "board.routes" }` spec block (convention: `<stem>.routes` if omitted)
-- `altium routing solve --target board.PcbDoc board.pcbdoc-spec` → generates `.routes` file
+- `altium routing solve --target board.PcbDoc board.pcb` → generates `.routes` file
 - `load_ir_from_spec()` loads `.routes` and merges into `PcbIr.free_copper` (tracks/vias)
 - `apply` injects routed tracks/vias from `.routes` into PcbDoc output
 - Router `build_policy()` filters `Other`-kind rules instead of hard-erroring
@@ -98,7 +107,7 @@ altium-format          (core: parsing, serialization, high-level API, rendering 
   ├→ altium-format-query       (AQL query language engine)
   ├→ altium-format-render-svg  (SVG rendering backend)
   └→ altium-format-render-png  (PNG rasterization via resvg)
-altium-format-spec     (spec DSL: compiler, executor, reconciler, dump)
+autopcb-spec           (spec DSL: compiler, executor, reconciler, dump)
 altium-cli             (CLI binary)
 autopcb-ir             (PCB intermediate representation, mm-based, serde JSON)
 autopcb-placement      (simulated annealing placer with pin/part swap)
@@ -152,9 +161,9 @@ All 40+ record types parsed. Flat OWNERINDEX → nested tree conversion. UniqueI
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).
 
 ### IntLib
-Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces `.schlib-spec` + `.pcblib-spec`.
+Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces `.sym` files.
 
-## Spec Language (altium-format-spec)
+## Spec Language (autopcb-spec)
 
 Full pipeline: lexer → parser → AST → compiler → SpecModel → executor/reconciler/dump.
 
@@ -168,7 +177,7 @@ Features: let bindings, arithmetic, units (`100mil`, `2.54mm`), color literals, 
 
 ## AutoPCB Placer — Complete
 
-Full pipeline: `.pcbdoc-spec` → constraints → solve → rewrite spec → apply to `.PcbDoc`.
+Full pipeline: `.pcb` → constraints → solve → rewrite spec → apply to `.PcbDoc`.
 
 | Phase | Description |
 |-------|-------------|
@@ -185,7 +194,7 @@ Spec extensions: `autoplace`, `group`, `separate`, `unplaced` directives. AST-ba
 |-----|--------|
 | Board6 merge (preserves layer stack) | ✅ |
 | Pin→Pad resolution via SchLib FootprintMap | ✅ |
-| Pad-Net assignment from sibling schdoc-specs | ✅ |
+| Pad-Net assignment from sibling .sch specs | ✅ |
 | Connections6 star-topology ratsnest | ✅ |
 | Footprint graphics instantiation (tracks/arcs/fills/texts/regions/bodies) | ✅ |
 | SOURCEUNIQUEID (read/write roundtrip, not yet populated for new components) | Partial |
@@ -198,7 +207,7 @@ Spec extensions: `autoplace`, `group`, `separate`, `unplaced` directives. AST-ba
 
 ## AutoPCB Viewer
 
-Spec-centric: accepts ONLY `.pcbdoc-spec` files. No `altium-format` dependency.
+Spec-centric: accepts ONLY `.pcb` files. No `altium-format` dependency.
 
 - 2D: layer-colored tracks, keepout zones, copper pours, fills, cutouts, net highlighting
 - 2.5D: extruded board/copper/vias/components with orbit camera and Lambertian shading

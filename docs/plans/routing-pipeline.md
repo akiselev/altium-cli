@@ -10,7 +10,7 @@ one step.
 ## Architecture
 
 ```
-pcbdoc-spec (source of truth)
+.pcb spec (source of truth)
   + .routes sidecar (routing solution)
   + .PcbDoc (import source)
        ↓

@@ -8,7 +8,7 @@ Research and design documents for `.PrjPcb` (Altium PCB project file) support.
 |----------|---------|
 | [format.md](format.md) | Complete file format reference — sections, keys, enums, parsing mechanics |
 | [high-level-api.md](high-level-api.md) | High-level API design — types, methods, read/write paths, executor/reconciler patterns |
-| [spec-lang-design.md](spec-lang-design.md) | Spec language extension design — `.prjpcb-spec` syntax, AST/model changes, implementation phases |
+| [spec-lang-design.md](spec-lang-design.md) | Spec language extension design — `.proj` syntax, AST/model changes, implementation phases |
 
 ## Quick Facts
 

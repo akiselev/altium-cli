@@ -62,7 +62,7 @@
 | `docs/ops-design.md` | Operations layer architecture + SchDoc/SchLib low-ops design | **CURRENT & CENTRAL** — Key design doc for ops system | Core reference for ops crate |
 | `docs/ops-lang-spec.md` | Ops language specification (syntax, semantics, type system) | **CURRENT** — Formal spec for .ops DSL | Central reference for ops language |
 | `docs/query-lang.md` | Query language specification (selectors, path expressions) | **SOMEWHAT OBSOLETE** — Some concepts have evolved in ops-lang-spec; may document older design | Review against ops-lang-spec; consolidate if overlap |
-| `docs/spec-lang.md` | Spec language specification (.schlib-spec, .pcblib-spec, .schdoc-spec) | **CURRENT** — Formal spec for .spec DSL | Central reference for spec language |
+| `docs/spec-lang.md` | Spec language specification (.sym, .sym, .sch) | **CURRENT** — Formal spec for .spec DSL | Central reference for spec language |
 
 **Assessment**: These form a cohesive set. Minor consolidation opportunity: `query-lang.md` may be subsumed by `ops-lang-spec.md`.
 
@@ -223,7 +223,7 @@ docs/SCHEMA.md
 **docs/spec-examples/**: **EMPTY** (0 files)
 **Recommendation**: Either:
 1. Remove the directory (not needed)
-2. Add sample .schlib-spec, .schdoc-spec, .pcblib-spec files here as learning materials
+2. Add sample .sym, .sch, .sym files here as learning materials
 
 ---
 

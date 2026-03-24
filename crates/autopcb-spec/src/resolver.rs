@@ -1,6 +1,6 @@
 //! Phase 4 library resolution for SchDoc specs.
 //!
-//! Resolves component symbol references against a set of [`SchLibSpec`]
+//! Resolves component symbol references against a set of [`SymSpec`]
 //! instances to build a designator → footprint name mapping.
 //!
 //! If a component explicitly references a library that is not present in the
@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use crate::eval::{SpecError, SpecErrorCode};
-use crate::model::{SchDocSpec, SchLibSpec, SymbolRef};
+use crate::model::{SchDocSpec, SymSpec, SymbolRef};
 
 /// Output of Phase 4 library resolution.
 ///
@@ -42,7 +42,7 @@ pub struct FootprintResolvedSpec {
 /// silently omitted from the footprint map.
 pub fn resolve_schdoc_spec(
     model: &SchDocSpec,
-    libraries: &[SchLibSpec],
+    libraries: &[SymSpec],
 ) -> Result<FootprintResolvedSpec, SpecError> {
     let mut footprint_map: HashMap<String, String> = HashMap::new();
 
@@ -51,15 +51,15 @@ pub fn resolve_schdoc_spec(
             match &component.symbol {
                 SymbolRef::Import { alias, name } => {
                     // The caller must have provided the library referenced by `alias`.
-                    // We match libraries positionally (no alias metadata on SchLibSpec
+                    // We match libraries positionally (no alias metadata on SymSpec
                     // itself), so we search by lib_reference name across all libraries.
                     //
                     // LIMITATION: This resolver ignores the library alias entirely — it
                     // searches all provided libraries for a component whose `lib_reference`
                     // matches `name`, regardless of which alias the spec declares. Because
-                    // `SchLibSpec` does not carry library identity (filename or alias),
+                    // `SymSpec` does not carry library identity (filename or alias),
                     // alias-based disambiguation is not possible at this layer. When library
-                    // identity is added to `SchLibSpec`, this lookup must be updated to
+                    // identity is added to `SymSpec`, this lookup must be updated to
                     // filter by alias first before falling back to a name-only search.
                     let resolved = libraries
                         .iter()
@@ -116,7 +116,7 @@ pub fn resolve_schdoc_spec(
 mod tests {
     use super::*;
     use crate::model::{
-        ComponentSpec, FootprintMapSpec, SchDocComponentSpec, SchDocSpec, SchLibSpec, SheetSpec,
+        ComponentSpec, FootprintMapSpec, SchDocComponentSpec, SchDocSpec, SymSpec, SheetSpec,
         SymbolRef,
     };
     use altium_format_types::{Coord, CoordPoint};
@@ -205,8 +205,8 @@ mod tests {
         }
     }
 
-    fn make_schlib(components: Vec<ComponentSpec>) -> SchLibSpec {
-        SchLibSpec { components }
+    fn make_sym(components: Vec<ComponentSpec>) -> SymSpec {
+        SymSpec { components, footprints: Vec::new() }
     }
 
     #[test]
@@ -219,7 +219,7 @@ mod tests {
             sheets: vec![sheet],
         };
 
-        let lib = make_schlib(vec![make_schlib_component("Resistor", "0402")]);
+        let lib = make_sym(vec![make_schlib_component("Resistor", "0402")]);
         let result = resolve_schdoc_spec(&model, &[lib]);
         assert!(result.is_ok(), "expected Ok, got {:?}", result.err());
         let resolved = result.unwrap();
@@ -263,7 +263,7 @@ mod tests {
             sheets: vec![sheet],
         };
 
-        let lib = make_schlib(vec![make_schlib_component("OpAmp", "SOIC8")]);
+        let lib = make_sym(vec![make_schlib_component("OpAmp", "SOIC8")]);
         let result = resolve_schdoc_spec(&model, &[lib]);
         assert!(result.is_ok());
         let resolved = result.unwrap();
@@ -284,7 +284,7 @@ mod tests {
         };
 
         // Libraries provided but don't contain "OpAmp"
-        let lib = make_schlib(vec![make_schlib_component("Resistor", "0402")]);
+        let lib = make_sym(vec![make_schlib_component("Resistor", "0402")]);
         let result = resolve_schdoc_spec(&model, &[lib]);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -315,11 +315,11 @@ mod tests {
             sheets: vec![sheet],
         };
 
-        let first_lib = make_schlib(vec![make_schlib_component("OpAmp", "SOIC8")]);
-        let second_lib = make_schlib(vec![make_schlib_component("OpAmp", "DIP8")]);
+        let first_lib = make_sym(vec![make_schlib_component("OpAmp", "SOIC8")]);
+        let second_lib = make_sym(vec![make_schlib_component("OpAmp", "DIP8")]);
 
         // Even though the alias says "second_lib", the first library wins because
-        // SchLibSpec carries no identity metadata and the resolver searches in order.
+        // SymSpec carries no identity metadata and the resolver searches in order.
         let result = resolve_schdoc_spec(&model, &[first_lib, second_lib]);
         assert!(result.is_ok());
         let resolved = result.unwrap();
@@ -341,7 +341,7 @@ mod tests {
         };
 
         // Library component has no footprints
-        let lib = make_schlib(vec![ComponentSpec {
+        let lib = make_sym(vec![ComponentSpec {
             annotation: None,
             lib_reference: "Resistor".to_string(),
             designator: None,

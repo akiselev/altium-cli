@@ -4,7 +4,7 @@ Research report on applying GPU compute (via wgpu) to our autoplacer and autorou
 
 ## Context
 
-Our router is **spec-centric**: `pcbdoc-spec` is the sole entry point. The router
+Our router is **spec-centric**: a `.pcb` spec is the sole entry point. The router
 receives `PcbIr` + `RoutingConfig` and produces a `RouteSolution`. The spec language
 is primarily LLM-authored, meaning we can add arbitrarily detailed constraint
 declarations that would be tedious for humans but trivial for LLM agents. This

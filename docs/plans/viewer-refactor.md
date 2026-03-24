@@ -9,7 +9,7 @@ extracted from PcbDoc files via the spec pipeline. The viewer never imports
 ### Architecture
 
 ```
-pcbdoc-spec file
+.pcb spec file
       |
       +--parse/compile--> PcbDocSpec
       |

@@ -13,7 +13,7 @@
 //! 3. `greedy_pin_swap_sweep` — run after Phase 4 (final refinement).
 //! 4. `verify_swap_integrity` — assert that net count and per-net pin counts
 //!    are unchanged after all swaps.
-//! 5. `write_swap_overlay` — emit a `.schdoc-spec` overlay listing the accepted swaps.
+//! 5. `write_swap_overlay` — emit a `.sch` overlay listing the accepted swaps.
 
 use std::collections::HashMap;
 
@@ -485,7 +485,7 @@ pub fn collect_net_pin_counts(ir: &PcbIr) -> HashMap<String, usize> {
 // ---------------------------------------------------------------------------
 // Swap overlay generation
 
-/// Generate a `.schdoc-spec` overlay text that documents all accepted swaps.
+/// Generate a `.sch` overlay text that documents all accepted swaps.
 pub fn write_swap_overlay(changelog: &SwapChangelog) -> String {
     let mut out = String::new();
 

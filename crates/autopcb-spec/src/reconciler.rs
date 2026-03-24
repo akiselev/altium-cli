@@ -17,8 +17,8 @@ use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, LayerSpec, PadSpec,
     PcbDocClassSpec, PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec,
-    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbLibSpec, PinSpec,
-    PrjPcbSpec, ProjectSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec,
+    PcbDocPolygonSpec, PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, SymSpec, PinSpec,
+    PrjPcbSpec, ProjectSpec, SchDocObjectSpec, SchDocSpec,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ use crate::model::{
 /// components and produces an ECO describing what would change.
 /// This is a read-only operation: the document is not modified.
 pub fn reconcile_schlib(
-    spec: &SchLibSpec,
+    spec: &SymSpec,
     doc: &SchLib,
     library_path: PathBuf,
     spec_path: PathBuf,
@@ -68,7 +68,7 @@ pub fn reconcile_schlib(
 
 /// Reconcile against an empty document: every entity in the spec is an Add.
 pub fn reconcile_schlib_empty(
-    spec: &SchLibSpec,
+    spec: &SymSpec,
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
@@ -94,7 +94,7 @@ pub fn reconcile_schlib_empty(
 ///
 /// This is a read-only operation: the document is not modified.
 pub fn reconcile_pcblib(
-    spec: &PcbLibSpec,
+    spec: &SymSpec,
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
@@ -135,7 +135,7 @@ pub fn reconcile_pcblib(
 
 /// Reconcile against an empty PcbLib document: every entity in the spec is an Add.
 pub fn reconcile_pcblib_empty(
-    spec: &PcbLibSpec,
+    spec: &SymSpec,
     library_path: PathBuf,
     spec_path: PathBuf,
 ) -> EngineeringChangeOrder {
@@ -1391,9 +1391,8 @@ impl ComponentSpec {
 /// Format a `LayerSpec` for display in ECO reports.
 fn format_layer_spec(spec: &LayerSpec) -> String {
     match spec {
-        LayerSpec::Resolved(lr) => format!("{lr}"),
+        LayerSpec::Named(name) => name.clone(),
         LayerSpec::CopperPosition(n) => format!("copper({n})"),
-        LayerSpec::NamedLayer(name) => name.clone(),
     }
 }
 
@@ -2629,7 +2628,7 @@ mod tests {
     use super::*;
     use crate::executor::apply_spec_schlib;
     use crate::model::{
-        ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SchLibSpec,
+        ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SymSpec,
     };
     use altium_format_types::{Coord, CoordPoint, RotationBy90};
 
@@ -2675,8 +2674,8 @@ mod tests {
         }
     }
 
-    fn make_spec(components: Vec<ComponentSpec>) -> SchLibSpec {
-        SchLibSpec { components }
+    fn make_spec(components: Vec<ComponentSpec>) -> SymSpec {
+        SymSpec { components, footprints: Vec::new() }
     }
 
     fn blank_doc() -> SchLib {
@@ -2697,7 +2696,7 @@ mod tests {
         let eco = reconcile_schlib_empty(
             &spec,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 2);
@@ -2741,7 +2740,7 @@ mod tests {
         let eco = reconcile_schlib_empty(
             &spec,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         let comp_summary = eco.summary.by_kind.get(&EntityKind::Component).unwrap();
@@ -2791,7 +2790,7 @@ mod tests {
         let eco = reconcile_schlib_empty(
             &spec,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 1);
@@ -2877,7 +2876,7 @@ mod tests {
         let eco = reconcile_schlib_empty(
             &spec,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         let pin_summary = eco.summary.by_kind.get(&EntityKind::Pin).unwrap();
@@ -2900,7 +2899,7 @@ mod tests {
             &spec,
             &doc,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         )
         .unwrap();
 
@@ -2926,7 +2925,7 @@ mod tests {
             &spec2,
             &doc,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         )
         .unwrap();
 
@@ -2963,7 +2962,7 @@ mod tests {
             &spec2,
             &doc,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         )
         .unwrap();
 
@@ -2996,7 +2995,7 @@ mod tests {
             &spec2,
             &doc,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         )
         .unwrap();
 
@@ -3089,7 +3088,7 @@ mod tests {
             &spec2,
             &doc,
             PathBuf::from("test.SchLib"),
-            PathBuf::from("test.schlib-spec"),
+            PathBuf::from("test.sym"),
         )
         .unwrap();
 
@@ -3165,8 +3164,8 @@ mod tests {
         }
     }
 
-    fn make_pcblib_spec(footprints: Vec<crate::model::FootprintSpec>) -> PcbLibSpec {
-        PcbLibSpec { footprints }
+    fn make_pcblib_spec(footprints: Vec<crate::model::FootprintSpec>) -> SymSpec {
+        SymSpec { components: Vec::new(), footprints }
     }
 
     #[test]
@@ -3186,7 +3185,7 @@ mod tests {
         let eco = reconcile_pcblib_empty(
             &spec,
             PathBuf::from("test.PcbLib"),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 2);
@@ -3215,7 +3214,7 @@ mod tests {
         let eco = reconcile_pcblib_empty(
             &spec,
             PathBuf::from("test.PcbLib"),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 1);
@@ -3248,7 +3247,7 @@ mod tests {
         let eco = reconcile_pcblib_empty(
             &spec,
             PathBuf::from("test.PcbLib"),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         let fp_summary = eco.summary.by_kind.get(&EntityKind::Footprint).unwrap();
@@ -3266,7 +3265,7 @@ mod tests {
         let eco = reconcile_pcblib_empty(
             &spec,
             PathBuf::from("test.PcbLib"),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         if let EntityChange::Add { children, .. } = &eco.changes[0] {
@@ -3319,7 +3318,7 @@ mod tests {
         let eco = reconcile_pcblib(
             &spec,
             tmp.path().to_path_buf(),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 1);
@@ -3345,7 +3344,7 @@ mod tests {
         let eco = reconcile_pcblib(
             &spec2,
             tmp.path().to_path_buf(),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 2);
@@ -3377,7 +3376,7 @@ mod tests {
         let eco = reconcile_pcblib(
             &spec2,
             tmp.path().to_path_buf(),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 1);
@@ -3410,7 +3409,7 @@ mod tests {
         let eco = reconcile_pcblib(
             &spec2,
             tmp.path().to_path_buf(),
-            PathBuf::from("test.pcblib-spec"),
+            PathBuf::from("test.sym"),
         );
 
         assert_eq!(eco.changes.len(), 1);

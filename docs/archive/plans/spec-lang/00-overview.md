@@ -4,14 +4,14 @@
 
 Implement the Altium Spec Language (spec-lang.md v0.3): a declarative DSL for
 describing the desired state of SchLib/PcbLib files. The spec compiler reads a
-`.schlib-spec` or `.pcblib-spec` file, diffs it against an existing document (or
+`.sym` or `.sym` file, diffs it against an existing document (or
 an empty one), produces an Engineering Change Order (ECO), and optionally applies
 it.
 
 ## Execution Pipeline
 
 ```
-.schlib-spec / .pcblib-spec file
+.sym / .sym file
     |
     v
 [1. Lexer]           crates/altium-format-ops/src/spec/lexer.rs

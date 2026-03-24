@@ -21,7 +21,7 @@ use altium_format_types::sch::{
     PowerObjectStyle, TextJustification,
 };
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
+    Color, ComponentKind, Coord, CoordPoint, PadShape, PadStackMode, PinElectricalType,
     PlaneConnectionStyle, RotationBy90,
 };
 
@@ -50,8 +50,8 @@ use crate::model::{
     PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
     PlacementRuleSpec, PlacementSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec,
     ProbeSpec, ProjectSpec, RoutingSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec,
-    SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain,
-    SpecModel, SymbolRef, UnplacedStrategy, VariantSpec, VariationSpec, WireSpec,
+    SheetEntrySpec, SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain,
+    SpecModel, SymSpec, SymbolRef, UnplacedStrategy, VariantSpec, VariationSpec, WireSpec,
 };
 
 use crate::diagnostic::Spanned;
@@ -120,84 +120,42 @@ pub fn compile_spec_with_resolved(
     compiler.compile(&resolved.root)
 }
 
-/// Compile all SchLib-domain imports and collect their components by lib_reference.
-///
-/// This is used by SchDoc compilation to resolve symbol references for rich
-/// component bindings (pin access).
-pub fn compile_imported_schlibs(
-    resolved: &crate::import::ResolvedSpec,
-) -> Result<HashMap<String, ComponentSpec>, (std::path::PathBuf, SpecError)> {
-    let mut components = HashMap::new();
-
-    for (path, spec_file) in &resolved.bare_imports {
-        collect_schlib_components(path, spec_file, &mut components)
-            .map_err(|e| (path.clone(), e))?;
-    }
-
-    for (_alias, (path, spec_file)) in &resolved.named_imports {
-        collect_schlib_components(path, spec_file, &mut components)
-            .map_err(|e| (path.clone(), e))?;
-    }
-
-    Ok(components)
-}
-
-fn collect_schlib_components(
-    path: &std::path::Path,
-    file: &SpecFile,
-    components: &mut HashMap<String, ComponentSpec>,
-) -> Result<(), SpecError> {
-    // Resolve the imported file's own imports (e.g., schlib-spec importing pcblib-spec)
-    // so that transitive bindings like `$fp["FootprintName"]` are available during compilation.
-    let sub_resolved = crate::import::resolve_imports(path, file.clone())?;
-    let sub_model = compile_spec_with_resolved(&sub_resolved, SpecDomain::SchLib, HashMap::new())?;
-    match sub_model {
-        SpecModel::SchLib(schlib) => {
-            for comp in schlib.components {
-                components.insert(comp.lib_reference.clone(), comp);
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Compile all PcbLib-domain imports and collect their footprints.
+/// Compile all Sym-domain imports and collect their components and footprints.
 ///
 /// Returns a map keyed by import alias (for named imports) or canonical
-/// path string (for bare imports). Each value is the compiled `PcbLibSpec`
-/// containing all footprints defined in that library.
-pub fn compile_imported_pcblibs(
+/// path string (for bare imports). Each value is the compiled `SymSpec`
+/// containing all components and footprints defined in that library.
+pub fn compile_imported_syms(
     resolved: &crate::import::ResolvedSpec,
-) -> Result<HashMap<String, crate::model::PcbLibSpec>, (std::path::PathBuf, SpecError)> {
+) -> Result<HashMap<String, SymSpec>, (std::path::PathBuf, SpecError)> {
     let mut libs = HashMap::new();
 
     // Bare imports — key by canonical path
     for (path, spec_file) in &resolved.bare_imports {
-        collect_pcblib(path, spec_file, &path.display().to_string(), &mut libs)
+        collect_sym(path, spec_file, &path.display().to_string(), &mut libs)
             .map_err(|e| (path.clone(), e))?;
     }
 
     // Named imports — key by alias
     for (alias, (path, spec_file)) in &resolved.named_imports {
-        collect_pcblib(path, spec_file, alias, &mut libs)
+        collect_sym(path, spec_file, alias, &mut libs)
             .map_err(|e| (path.clone(), e))?;
     }
 
     Ok(libs)
 }
 
-fn collect_pcblib(
+fn collect_sym(
     path: &std::path::Path,
     file: &SpecFile,
     key: &str,
-    libs: &mut HashMap<String, crate::model::PcbLibSpec>,
+    libs: &mut HashMap<String, SymSpec>,
 ) -> Result<(), SpecError> {
     let sub_resolved = crate::import::resolve_imports(path, file.clone())?;
-    let sub_model = compile_spec_with_resolved(&sub_resolved, SpecDomain::PcbLib, HashMap::new())?;
+    let sub_model = compile_spec_with_resolved(&sub_resolved, SpecDomain::Sym, HashMap::new())?;
     match sub_model {
-        SpecModel::PcbLib(pcblib) => {
-            libs.insert(key.to_string(), pcblib);
+        SpecModel::Sym(sym) => {
+            libs.insert(key.to_string(), sym);
         }
         _ => {}
     }
@@ -372,27 +330,20 @@ impl SpecCompiler {
         }
 
         match self.domain {
-            SpecDomain::SchLib => {
+            SpecDomain::Sym => {
                 let mut components = Vec::new();
-                for item in &file.items {
-                    if let SpecItem::Component(decl) = &item.node {
-                        components.push(self.compile_component(decl)?);
-                    }
-                }
-                self.scope.pop();
-                Ok(SpecModel::SchLib(SchLibSpec { components }))
-            }
-            SpecDomain::PcbLib => {
                 let mut footprints = Vec::new();
                 for item in &file.items {
-                    if let SpecItem::Footprint(decl) = &item.node {
-                        footprints.push(self.compile_footprint(decl)?);
+                    match &item.node {
+                        SpecItem::Component(decl) => components.push(self.compile_component(decl)?),
+                        SpecItem::Footprint(decl) => footprints.push(self.compile_footprint(decl)?),
+                        _ => {}
                     }
                 }
                 self.scope.pop();
-                Ok(SpecModel::PcbLib(crate::model::PcbLibSpec { footprints }))
+                Ok(SpecModel::Sym(SymSpec { components, footprints }))
             }
-            SpecDomain::PrjPcb => {
+            SpecDomain::Proj => {
                 let mut projects = Vec::new();
                 for item in &file.items {
                     if let SpecItem::Project(decl) = &item.node {
@@ -400,17 +351,17 @@ impl SpecCompiler {
                     }
                 }
                 self.scope.pop();
-                Ok(SpecModel::PrjPcb(PrjPcbSpec { projects }))
+                Ok(SpecModel::Proj(PrjPcbSpec { projects }))
             }
-            SpecDomain::SchDoc => {
+            SpecDomain::Sch => {
                 let spec = self.compile_schdoc(file)?;
                 self.scope.pop();
-                Ok(SpecModel::SchDoc(spec))
+                Ok(SpecModel::Sch(spec))
             }
-            SpecDomain::PcbDoc => {
+            SpecDomain::Pcb => {
                 let spec = self.compile_pcbdoc(file)?;
                 self.scope.pop();
-                Ok(SpecModel::PcbDoc(spec))
+                Ok(SpecModel::Pcb(spec))
             }
         }
     }
@@ -3948,12 +3899,8 @@ fn parse_layer_spec(s: &str) -> Option<LayerSpec> {
     if let Some(n) = parse_copper_position(s) {
         return Some(LayerSpec::CopperPosition(n));
     }
-    // Try V6 canonical name
-    if let Some(lr) = LayerRef::from_string_name(s) {
-        return Some(LayerSpec::Resolved(lr));
-    }
-    // Treat as custom stack name (deferred resolution)
-    Some(LayerSpec::NamedLayer(s.to_owned()))
+    // All layer names are resolved at execution time against a board stack
+    Some(LayerSpec::Named(s.to_owned()))
 }
 
 fn parse_copper_position(s: &str) -> Option<usize> {
@@ -6106,27 +6053,27 @@ mod tests {
     use super::*;
     use crate::parser::parse_spec;
 
-    fn compile_schlib(src: &str) -> Result<SchLibSpec, SpecError> {
+    fn compile_schlib(src: &str) -> Result<SymSpec, SpecError> {
         let file = parse_spec(src).expect("parse failed");
-        match compile_spec(&file, SpecDomain::SchLib)? {
-            SpecModel::SchLib(s) => Ok(s),
-            other => panic!("expected SchLib, got {:?}", std::mem::discriminant(&other)),
+        match compile_spec(&file, SpecDomain::Sym)? {
+            SpecModel::Sym(s) => Ok(s),
+            other => panic!("expected Sym, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
     fn compile_schdoc(src: &str) -> Result<SchDocSpec, SpecError> {
         let file = parse_spec(src).expect("parse failed");
-        match compile_spec(&file, SpecDomain::SchDoc)? {
-            SpecModel::SchDoc(s) => Ok(s),
-            other => panic!("expected SchDoc, got {:?}", std::mem::discriminant(&other)),
+        match compile_spec(&file, SpecDomain::Sch)? {
+            SpecModel::Sch(s) => Ok(s),
+            other => panic!("expected Sch, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
-    fn compile_pcblib(src: &str) -> Result<crate::model::PcbLibSpec, SpecError> {
+    fn compile_pcblib(src: &str) -> Result<SymSpec, SpecError> {
         let file = parse_spec(src).expect("parse failed");
-        match compile_spec(&file, SpecDomain::PcbLib)? {
-            SpecModel::PcbLib(p) => Ok(p),
-            other => panic!("expected PcbLib, got {:?}", std::mem::discriminant(&other)),
+        match compile_spec(&file, SpecDomain::Sym)? {
+            SpecModel::Sym(p) => Ok(p),
+            other => panic!("expected Sym, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
@@ -6427,7 +6374,7 @@ mod tests {
         assert_eq!(fp.pads[0].x_size, Some(Coord::new(600_000)));
         assert!(matches!(
             &fp.pads[0].layer,
-            Some(LayerSpec::Resolved(lr)) if lr.display_name() == Some("TopLayer")
+            Some(LayerSpec::Named(name)) if name == "TopLayer"
         ));
         assert_eq!(fp.pads[1].pad_name, "2");
         assert_eq!(fp.pads[1].at.x, Coord::new(1_000_000));
@@ -6479,7 +6426,7 @@ mod tests {
             }
         "#;
         let file = parse_spec(src).expect("parse failed");
-        let result = compile_spec(&file, SpecDomain::SchLib);
+        let result = compile_spec(&file, SpecDomain::Sym);
         let err = result.err().expect("expected error");
         assert_eq!(err.code, SpecErrorCode::TypeMismatch);
     }
@@ -6493,7 +6440,7 @@ mod tests {
             }
         "#;
         let file = parse_spec(src).expect("parse failed");
-        let result = compile_spec(&file, SpecDomain::SchLib);
+        let result = compile_spec(&file, SpecDomain::Sym);
         let err = result.err().expect("expected error");
         assert_eq!(err.code, SpecErrorCode::UndefinedBinding);
     }
@@ -6510,7 +6457,7 @@ mod tests {
             }
         "#;
         let file = parse_spec(src).expect("parse failed");
-        let result = compile_spec(&file, SpecDomain::SchLib);
+        let result = compile_spec(&file, SpecDomain::Sym);
         assert!(result.is_err());
     }
 
@@ -6816,9 +6763,9 @@ mod tests {
         imported_components: HashMap<String, ComponentSpec>,
     ) -> Result<SchDocSpec, SpecError> {
         let file = parse_spec(src).expect("parse failed");
-        match compile_spec_with_imports(&file, SpecDomain::SchDoc, imported_components)? {
-            SpecModel::SchDoc(s) => Ok(s),
-            other => panic!("expected SchDoc, got {:?}", std::mem::discriminant(&other)),
+        match compile_spec_with_imports(&file, SpecDomain::Sch, imported_components)? {
+            SpecModel::Sch(s) => Ok(s),
+            other => panic!("expected Sch, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
@@ -6968,7 +6915,7 @@ mod tests {
             }
         "#;
         let file = parse_spec(src).expect("parse failed");
-        let result = compile_spec(&file, SpecDomain::SchLib);
+        let result = compile_spec(&file, SpecDomain::Sym);
         let err = result.err().expect("expected error");
         assert_eq!(err.code, SpecErrorCode::CrossEdgeReference);
     }
@@ -6983,12 +6930,12 @@ mod tests {
             }
         "#;
         let file = parse_spec(src).expect("parse failed");
-        let result = compile_spec(&file, SpecDomain::SchLib);
+        let result = compile_spec(&file, SpecDomain::Sym);
         let err = result.err().expect("expected error");
         assert_eq!(err.code, SpecErrorCode::UndefinedBinding);
     }
 
-    // ── SchLib domain ignores footprints ───────────────────────────────────
+    // ── Sym domain collects both components and footprints ──────────────────
 
     #[test]
     fn domain_filtering() {
@@ -6996,17 +6943,14 @@ mod tests {
             component R { }
             footprint "R_0603" { }
         "#;
-        // SchLib: only component
+        // Sym: collects both component and footprint
         let file = parse_spec(src).unwrap();
-        let schlib = compile_spec(&file, SpecDomain::SchLib).unwrap();
-        match schlib {
-            SpecModel::SchLib(s) => assert_eq!(s.components.len(), 1),
-            _ => panic!(),
-        }
-        // PcbLib: only footprint
-        let pcblib = compile_spec(&file, SpecDomain::PcbLib).unwrap();
-        match pcblib {
-            SpecModel::PcbLib(p) => assert_eq!(p.footprints.len(), 1),
+        let sym = compile_spec(&file, SpecDomain::Sym).unwrap();
+        match sym {
+            SpecModel::Sym(s) => {
+                assert_eq!(s.components.len(), 1);
+                assert_eq!(s.footprints.len(), 1);
+            }
             _ => panic!(),
         }
     }
@@ -7506,14 +7450,14 @@ mod tests {
 
     fn compile_placement(src: &str) -> Result<PlacementSpec, SpecError> {
         let file = parse_spec(src).expect("parse must succeed for compiler tests");
-        match compile_spec(&file, SpecDomain::PcbDoc)? {
-            SpecModel::PcbDoc(spec) => spec.placement.ok_or_else(|| {
+        match compile_spec(&file, SpecDomain::Pcb)? {
+            SpecModel::Pcb(spec) => spec.placement.ok_or_else(|| {
                 SpecError::no_span(
                     SpecErrorCode::TypeMismatch,
                     "no placement block found in test input",
                 )
             }),
-            other => panic!("expected PcbDoc, got {:?}", std::mem::discriminant(&other)),
+            other => panic!("expected Pcb, got {:?}", std::mem::discriminant(&other)),
         }
     }
 
@@ -7951,7 +7895,7 @@ component ESP32_C6 {
             make_minimal_component_spec("ESP32_C6"),
         );
 
-        let result = compile_spec_with_resolved(&resolved, SpecDomain::SchDoc, imported);
+        let result = compile_spec_with_resolved(&resolved, SpecDomain::Sch, imported);
         let err = match result {
             Err(e) => e,
             Ok(_) => panic!("expected compile error for unknown import symbol"),
@@ -8012,11 +7956,11 @@ component ESP32_C6 {
             make_minimal_component_spec("ESP32_C6"),
         );
 
-        let spec = compile_spec_with_resolved(&resolved, SpecDomain::SchDoc, imported)
+        let spec = compile_spec_with_resolved(&resolved, SpecDomain::Sch, imported)
             .expect("compile should succeed");
         let spec = match spec {
-            SpecModel::SchDoc(s) => s,
-            other => panic!("expected SchDoc, got {:?}", std::mem::discriminant(&other)),
+            SpecModel::Sch(s) => s,
+            other => panic!("expected Sch, got {:?}", std::mem::discriminant(&other)),
         };
         let sym = &spec.sheets[0].components[0].symbol;
         match sym {

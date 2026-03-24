@@ -21,9 +21,9 @@ produces a deployable increment.
 | Decision | Reasoning Chain |
 |----------|----------------|
 | Parallel waves over sequential | Tasks 1/5/6/9 have zero dependencies → can start in parallel → reduces wall-clock time by ~40% vs sequential → Wave 2 depends only on Wave 1 parser, Wave 3 only on Wave 2 |
-| Spec-to-spec transformer (not PcbDoc mutation) | User requirement: autoplacer edits .pcbdoc-spec files → preserves human-readable output → existing reconciler applies spec to PcbDoc binary → clean separation of concerns |
+| Spec-to-spec transformer (not PcbDoc mutation) | User requirement: autoplacer edits .pcb files → preserves human-readable output → existing reconciler applies spec to PcbDoc binary → clean separation of concerns |
 | `autoplace: true` → `at: (x,y)` rewriting | Autoplacer reads partial spec with autoplace directives → solves → rewrites same file with explicit positions → user can review/tweak → re-run → iterate → idempotent |
-| Swap overlay file (not inline schematic edit) | Pin/part swaps change net-to-pin mapping → modifying user's schematic spec directly risks data loss → overlay file imported by pcbdoc-spec → user can delete import to undo all swaps → safe and reviewable |
+| Swap overlay file (not inline schematic edit) | Pin/part swaps change net-to-pin mapping → modifying user's schematic spec directly risks data loss → overlay file imported by `.pcb` spec → user can delete import to undo all swaps → safe and reviewable |
 | Viewer watches iterations.json (not live IPC) | Live solver streaming requires IPC infrastructure → file watching with `notify` crate is 10 lines → autoplacer writes snapshots incrementally → viewer polls file → sufficient for interactive feedback → can upgrade to IPC later |
 | SA as opt-in (`algorithm: analytical` default) | MVP autoplacer works with analytical solver alone → SA adds ~800-1500 lines → making it optional means MVP ships faster → users opt in via `algorithm: full_pipeline` |
 | Grid-based spatial index over R-tree | PCB scale N<500 → grid is simpler (HashMap<(i32,i32), Vec>) → O(k) neighbor lookup sufficient → R-tree complexity only justified at VLSI scale N>10K |
@@ -69,12 +69,12 @@ produces a deployable increment.
 ### Architecture
 
 ```
-User writes .pcbdoc-spec (partial, with autoplace: true)
+User writes .pcb (partial, with autoplace: true)
          │
          ▼
 ┌─────────────────────────────────────────────────┐
-│  altium-format-spec PARSER                       │
-│  parse .pcbdoc-spec → PlacementSpec model       │
+│  autopcb-spec PARSER                       │
+│  parse .pcb → PlacementSpec model       │
 │  (lexer → tokens → AST → compiler → model)      │
 └──────────────────────┬──────────────────────────┘
                        │
@@ -100,14 +100,14 @@ User writes .pcbdoc-spec (partial, with autoplace: true)
                        ▼
 ┌─────────────────────────────────────────────────┐
 │  SPEC REWRITER (new)                             │
-│  PlacementResult → updated .pcbdoc-spec         │
+│  PlacementResult → updated .pcb         │
 │  autoplace:true → at:(x,y) + rotation:N        │
-│  + board-swaps.schdoc-spec overlay              │
+│  + board-swaps.sch overlay              │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────┐
-│  altium-format-spec RECONCILER (existing)        │
+│  autopcb-spec RECONCILER (existing)        │
 │  `altium placement apply` reads final spec      │
 │  writes component positions to .PcbDoc binary    │
 └─────────────────────────────────────────────────┘
@@ -116,7 +116,7 @@ User writes .pcbdoc-spec (partial, with autoplace: true)
 ### Data Flow
 
 ```
-.pcbdoc-spec ──parse──→ PlacementSpec
+.pcb ──parse──→ PlacementSpec
     +                       │
 .PcbDoc ──extract──→ PcbIr  │
                        │    │
@@ -128,7 +128,7 @@ User writes .pcbdoc-spec (partial, with autoplace: true)
                        │
               ┌────────┼────────┐
               ▼        ▼        ▼
-         .pcbdoc-spec  .json    .schdoc-spec
+         .pcb  .json    .sch
          (positions)  (viewer)  (swap overlay)
 ```
 
@@ -161,11 +161,11 @@ The spec-as-intermediate-representation pattern means:
 ### Milestone 1: Spec Parser Extensions + Model Updates
 
 **Files**:
-- `crates/altium-format-spec/src/model.rs`
-- `crates/altium-format-spec/src/ast.rs`
-- `crates/altium-format-spec/src/parser.rs`
-- `crates/altium-format-spec/src/compiler.rs`
-- `crates/altium-format-spec/src/lexer.rs`
+- `crates/autopcb-spec/src/model.rs`
+- `crates/autopcb-spec/src/ast.rs`
+- `crates/autopcb-spec/src/parser.rs`
+- `crates/autopcb-spec/src/compiler.rs`
+- `crates/autopcb-spec/src/lexer.rs`
 
 **Flags**: `conformance`
 
@@ -191,7 +191,7 @@ The spec-as-intermediate-representation pattern means:
 - Existing spec tests still pass
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/parser.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/parser.rs` (inline `#[cfg(test)]`)
 - **Test type**: unit
 - **Backing**: doc-derived (from spec-grammar.md)
 - **Scenarios**:
@@ -211,7 +211,7 @@ The spec-as-intermediate-representation pattern means:
 ### Milestone 2: Placement Dump (pcbdoc → spec)
 
 **Files**:
-- `crates/altium-format-spec/src/dump.rs`
+- `crates/autopcb-spec/src/dump.rs`
 
 **Requirements**:
 - `dump_pcbdoc()` emits a `placement { ... }` block containing a `place` declaration for each component
@@ -225,7 +225,7 @@ The spec-as-intermediate-representation pattern means:
 - All components in PcbDoc appear in dumped spec
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/dump.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/dump.rs` (inline `#[cfg(test)]`)
 - **Test type**: unit + integration (with `test-fixtures` flag)
 - **Backing**: default-derived
 - **Scenarios**:
@@ -241,7 +241,7 @@ The spec-as-intermediate-representation pattern means:
 ### Milestone 3: Reconciler Placement Comparison
 
 **Files**:
-- `crates/altium-format-spec/src/reconciler.rs`
+- `crates/autopcb-spec/src/reconciler.rs`
 
 **Requirements**:
 - `reconcile_pcbdoc()` compares component positions from spec vs PcbDoc
@@ -255,7 +255,7 @@ The spec-as-intermediate-representation pattern means:
 - After apply, PcbDoc component position matches spec
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/reconciler.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/reconciler.rs` (inline `#[cfg(test)]`)
 - **Test type**: unit
 - **Backing**: default-derived
 - **Scenarios**:
@@ -302,7 +302,7 @@ The spec-as-intermediate-representation pattern means:
 ### Milestone 5: PlacementSpec → UserConstraint Bridge
 
 **Files**:
-- `crates/altium-format-spec/src/executor.rs`
+- `crates/autopcb-spec/src/executor.rs`
 
 **Flags**: `needs-rationale`, `error-handling`
 
@@ -327,7 +327,7 @@ The spec-as-intermediate-representation pattern means:
 - PlaceSpec for designator not in PcbIr + unplaced: ignore → warning emitted, no constraint added
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/executor.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/executor.rs` (inline `#[cfg(test)]`)
 - **Test type**: unit
 - **Backing**: doc-derived (from autoplacer-spec-integration.md)
 - **Scenarios**:
@@ -344,8 +344,8 @@ The spec-as-intermediate-representation pattern means:
 ### Milestone 6: Executor Integration + Spec Rewriter
 
 **Files**:
-- `crates/altium-format-spec/src/executor.rs`
-- `crates/altium-format-spec/src/spec_rewriter.rs` (new)
+- `crates/autopcb-spec/src/executor.rs`
+- `crates/autopcb-spec/src/spec_rewriter.rs` (new)
 
 **Flags**: `needs-rationale`, `complex-algorithm`
 
@@ -369,7 +369,7 @@ The spec-as-intermediate-representation pattern means:
 - Output spec applied via `altium placement apply` produces valid PcbDoc
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/executor.rs`, `crates/altium-format-spec/src/spec_rewriter.rs`
+- **Test files**: `crates/autopcb-spec/src/executor.rs`, `crates/autopcb-spec/src/spec_rewriter.rs`
 - **Test type**: integration (with `test-fixtures` flag)
 - **Backing**: doc-derived
 - **Scenarios**:
@@ -448,7 +448,7 @@ The spec-as-intermediate-representation pattern means:
 - Greedy part swap pass: after Phase 2, try all pairwise part swaps
 - `PinSwap` and `PartSwap` as SA move types (integrated into Phase 3 if enabled)
 - `SwapChangelog` output: records all applied swaps with HPWL improvement
-- Swap overlay file generation: writes `board-swaps.schdoc-spec` with net reassignments
+- Swap overlay file generation: writes `board-swaps.sch` with net reassignments
 - Validation: verify net connectivity preserved after all swaps
 
 **Acceptance Criteria**:
@@ -469,7 +469,7 @@ The spec-as-intermediate-representation pattern means:
   - Validation: swap then verify netlist integrity
 
 **Code Intent**:
-- `swap.rs` (new ~400-600 lines): `SwapModel` struct built from PcbIr pad swap IDs (Decision: "Swap group data sourced from PcbIr"), `build_swap_model(ir: &PcbIr)`, `greedy_pin_swap_sweep()`, `greedy_part_swap_pass()`, `SwapChangelog` struct, `verify_swap_integrity()`, `write_swap_overlay()` (generates .schdoc-spec text)
+- `swap.rs` (new ~400-600 lines): `SwapModel` struct built from PcbIr pad swap IDs (Decision: "Swap group data sourced from PcbIr"), `build_swap_model(ir: &PcbIr)`, `greedy_pin_swap_sweep()`, `greedy_part_swap_pass()`, `SwapChangelog` struct, `verify_swap_integrity()`, `write_swap_overlay()` (generates .sch text)
 - `lib.rs`: Add `pub mod swap;`, call swap passes at Phase 2.5 and Phase 4.5 if swap flags enabled
 - `simulated_annealing.rs`: Add `PinSwap` and `PartSwap` variants to `Move` enum, add to `generate_move()` probability schedule
 
@@ -482,17 +482,17 @@ The spec-as-intermediate-representation pattern means:
 - `crates/altium-cli/src/commands/placement.rs` (new or extend existing)
 
 **Requirements**:
-- `altium placement autoplace <spec.pcbdoc-spec>` — run autoplacer, rewrite spec
+- `altium placement autoplace <spec.pcb>` — run autoplacer, rewrite spec
 - `altium placement autoplace <spec> --target <board.PcbDoc>` — explicit PcbDoc target
 - `altium placement autoplace <spec> --dry-run` — show plan without writing
-- `altium placement autoplace <spec> --output <out.pcbdoc-spec>` — write to different file
+- `altium placement autoplace <spec> --output <out.pcb>` — write to different file
 - `altium placement dump <board.PcbDoc>` — dump current positions as spec
 - `altium placement plan <spec>` — show placement ECO (uses existing reconciler)
 - `altium placement apply <spec>` — apply spec to PcbDoc (uses existing reconciler)
 - Output format: component count, HPWL, moves made, swap summary
 
 **Acceptance Criteria**:
-- `altium placement autoplace test.pcbdoc-spec` produces updated spec file
+- `altium placement autoplace test.pcb` produces updated spec file
 - `altium placement dump data/pcbdoc/test.PcbDoc` produces valid spec output
 - `--dry-run` produces plan output without modifying files
 - Exit code 0 on success, non-zero on error
@@ -520,7 +520,7 @@ The spec-as-intermediate-representation pattern means:
 
 **Files**:
 - `crates/autopcb-placement/README.md`
-- `crates/altium-format-spec/README.md` (update)
+- `crates/autopcb-spec/README.md` (update)
 
 **Requirements**:
 - Document autoplacer architecture (spec → bridge → solver → rewriter flow)
@@ -531,7 +531,7 @@ The spec-as-intermediate-representation pattern means:
 
 **Acceptance Criteria**:
 - README.md in autopcb-placement explains the placement pipeline
-- README.md in altium-format-spec documents the placement spec syntax
+- README.md in autopcb-spec documents the placement spec syntax
 - STATUS.md reflects current implementation state
 
 

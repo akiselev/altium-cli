@@ -6,7 +6,7 @@ The routing pipeline requires `IrNet.pins` to be populated. When these are empty
 router has nothing to route. Currently, ee-template boards route with 0mm traces because:
 
 1. **Merge destroys pad geometry**: `merge_pcbdoc_spec()` replaces the entire component
-   vec when the spec declares ANY components. Since pcbdoc-spec components have
+   vec when the spec declares ANY components. Since `.pcb` spec components have
    `pads: Vec::new()`, all imported pad geometry and net assignments from the PcbDoc
    binary are lost.
 
@@ -17,9 +17,9 @@ router has nothing to route. Currently, ee-template boards route with 0mm traces
 ## Architecture
 
 ```
-schdoc-spec (pin 1 -> #VCC_3V3)
+.sch spec (pin 1 -> #VCC_3V3)
      ↓ sync
-pcbdoc-spec (pad_net 1: "VCC_3V3" on component)
+.pcb spec (pad_net 1: "VCC_3V3" on component)
      ↓ compile + merge with PcbDoc import
 PcbIr (IrNet.pins populated)
      ↓ route
@@ -44,7 +44,7 @@ per-component merge by designator:
 This single change restores pad geometry and net assignments from the PcbDoc import,
 immediately enabling routing on any PcbDoc that has had ECO applied.
 
-### Phase 2: `pad_net` Syntax in pcbdoc-spec
+### Phase 2: `pad_net` Syntax in `.pcb` spec
 
 Add pad-to-net assignment syntax to component declarations:
 
@@ -65,7 +65,7 @@ component J1 {
 
 ### Phase 3: Enable Pin-Level Sync
 
-**File**: `crates/altium-format-spec/src/sync.rs`
+**File**: `crates/autopcb-spec/src/sync.rs`
 
 1. Handle `AddPin`/`UpdatePin`/`RemovePin` in `apply_sync_changes_to_pcbdoc()`
 2. Change `SyncDirection::None` to `SyncDirection::Forward` for `pin_net_assignment`
@@ -97,6 +97,6 @@ pure spec-driven workflow where schematics provide the netlist.
 
 ## Immediate Test
 
-After Phase 1, `altium routing solve --target cobra.PcbDoc cobra-route.pcbdoc-spec`
+After Phase 1, `altium routing solve --target cobra.PcbDoc cobra-route.pcb`
 should route 18/18 nets (cobra.PcbDoc has pad-to-net assignments from the original
 Altium project).

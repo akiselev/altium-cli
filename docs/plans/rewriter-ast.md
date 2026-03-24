@@ -23,7 +23,7 @@ Approach: **full trivia-preserving AST round-trip**.
 | Leading/trailing trivia association by byte proximity | Comments before a node are "leading" trivia for that node; inline comments after a node's closing token are "trailing" → this matches developer intuition → rustfmt and prettier use the same heuristic → unambiguous for 95%+ of cases |
 | Orphan trivia preserved via span gaps | Comments between replaced spans and the next AST node must not be lost → the rewriter copies source text verbatim for all byte ranges not covered by a replacement → orphan comments fall in these gap ranges → preserved automatically |
 | Formatter generates replacement text (not string concatenation) | String concatenation for `place` block generation is error-prone (indentation, separators, quoting) → the existing `fmt_place_decl()` already handles all formatting correctly → reuse it with trivia injection → single source of truth for spec syntax |
-| Rewriter stays in altium-cli (not altium-format-spec) | The rewriter depends on `PlacementResult` from `autopcb-placement` → `altium-format-spec` has no dependency on `autopcb-placement` → adding one creates a cycle → `altium-cli` sits at the top of the dependency graph and can import both |
+| Rewriter stays in altium-cli (not autopcb-spec) | The rewriter depends on `PlacementResult` from `autopcb-placement` → `autopcb-spec` has no dependency on `autopcb-placement` → adding one creates a cycle → `altium-cli` sits at the top of the dependency graph and can import both |
 | Replace entire PlaceDecl span (not property-level surgery) | Property-level replacement (only replacing `autoplace: true` line) requires tracking individual property spans within the Object body → fragile if properties span multiple lines or use spread syntax → replacing the entire PlaceDecl span is simpler and the formatter regenerates clean output |
 | Multi-designator expansion at AST level | The old rewriter did multi-designator expansion via text manipulation → AST approach: detect `place C1, C2 { autoplace: true }` as a PlaceDecl with multiple designators → generate N separate PlaceDecl AST nodes → format each → emit as replacement text |
 | `lex()` returns comments alongside tokens (not Lexer struct threading) | The lexer is a standalone `fn lex(input) -> Vec<Token>` function, not a stateful struct threaded through the parser → modifying `lex()` to return `(Vec<Token>, Vec<CommentToken>)` is a one-line signature change → `parse_with_trivia()` calls `lex()`, takes the comments, passes tokens to the parser → zero parser API changes needed |
@@ -40,7 +40,7 @@ Approach: **full trivia-preserving AST round-trip**.
 |-------------|-------------|
 | Span-indexed surgical replacement without trivia (Approach A) | User explicitly chose full trivia preservation → comments inside `place {}` bodies would be lost without trivia capture |
 | Hybrid span + inline comment scan (Approach C) | Heuristic comment detection is unreliable for block comments and edge cases → full trivia capture is more robust and not much more code |
-| Moving rewriter to altium-format-spec | Creates dependency cycle with autopcb-placement → would require extracting PlacementResult into a shared types crate → over-engineering for one consumer |
+| Moving rewriter to autopcb-spec | Creates dependency cycle with autopcb-placement → would require extracting PlacementResult into a shared types crate → over-engineering for one consumer |
 | CST (Concrete Syntax Tree) approach | Full CST requires every token (including whitespace) to be represented in the tree → massive parser rewrite → side-channel trivia is 90% of the benefit with 10% of the cost |
 | Modifying AST node structs to carry trivia fields | Would require changing ~20 struct definitions and all their constructors → TriviaMap achieves the same result without touching AST types |
 
@@ -59,8 +59,8 @@ Approach: **full trivia-preserving AST round-trip**.
 | Risk | Mitigation | Anchor |
 |------|-----------|--------|
 | Trivia association ambiguity between two adjacent nodes | Use "attach to following node" rule (leading trivia) with fallback to "trailing on previous node" for same-line comments → matches rustfmt convention | N/A (new code) |
-| Formatter output doesn't match original indentation level | Detect indentation of the span being replaced (first non-whitespace column) and pass as base indent to formatter → formatter already accepts indent level | crates/altium-format-spec/src/formatter.rs:171-209 (Printer struct with indent tracking) |
-| Comment inside a `place` property value (rare but possible) | Property values are single-line expressions in the spec grammar → comments can only appear between properties, not inside them → not a realistic concern | crates/altium-format-spec/src/lexer.rs:155-188 (comment skipping in lexer) |
+| Formatter output doesn't match original indentation level | Detect indentation of the span being replaced (first non-whitespace column) and pass as base indent to formatter → formatter already accepts indent level | crates/autopcb-spec/src/formatter.rs:171-209 (Printer struct with indent tracking) |
+| Comment inside a `place` property value (rare but possible) | Property values are single-line expressions in the spec grammar → comments can only appear between properties, not inside them → not a realistic concern | crates/autopcb-spec/src/lexer.rs:155-188 (comment skipping in lexer) |
 | Tab-indented files produce space-normalized output | The scan-backward character count treats tabs as 1 character; the formatter generates spaces at `indent_level * config.indent` width → a 2-tab-indented block produces `indent_level=2` → 8 spaces at default `indent=4` → cosmetic mismatch, recoverable by running the formatter on the full file | N/A (formatter design choice) |
 
 
@@ -69,7 +69,7 @@ Approach: **full trivia-preserving AST round-trip**.
 ### Architecture
 
 ```
-Source Text (.pcbdoc-spec)
+Source Text (.pcb)
          │
     ┌────┴────┐
     │  Lexer  │──→ Token Stream (unchanged)
@@ -177,9 +177,9 @@ The trivia system is decoupled from the AST and parser:
 ### Milestone 1: Lexer Comment Capture + TriviaMap
 
 **Files**:
-- `crates/altium-format-spec/src/lexer.rs`
-- `crates/altium-format-spec/src/trivia.rs` (new)
-- `crates/altium-format-spec/src/lib.rs`
+- `crates/autopcb-spec/src/lexer.rs`
+- `crates/autopcb-spec/src/trivia.rs` (new)
+- `crates/autopcb-spec/src/lib.rs`
 
 **Flags**: `conformance`
 
@@ -202,7 +202,7 @@ The trivia system is decoupled from the AST and parser:
 - `TriviaMap::trailing()` returns inline comment on same line as closing `}`
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/trivia.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/trivia.rs` (inline `#[cfg(test)]`)
 - **Test type**: unit
 - **Backing**: default-derived
 - **Scenarios**:
@@ -296,8 +296,8 @@ The trivia system is decoupled from the AST and parser:
 **Source**: `## Invisible Knowledge` section of this plan
 
 **Files**:
-- `crates/altium-format-spec/CLAUDE.md` (update: add trivia.rs entry)
-- `crates/altium-format-spec/README.md` (update: document trivia system)
+- `crates/autopcb-spec/CLAUDE.md` (update: add trivia.rs entry)
+- `crates/autopcb-spec/README.md` (update: document trivia system)
 - `crates/altium-cli/CLAUDE.md` (update: spec_rewriter.rs description)
 
 **Requirements**:

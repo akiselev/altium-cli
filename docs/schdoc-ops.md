@@ -2,14 +2,14 @@
 
 # SchDoc Low-Level Operations
 
-Low-level operations that `altium-format` exposes to `altium-format-ops` for SchDoc
+Low-level operations that `altium-format` exposes to `autopcb-spec` for SchDoc
 manipulation. Each op is a flat enum variant in `SchDocLowOp`, executed sequentially
 by `apply_schdoc_low_ops()`. Same flat-op architecture as SchLib — no state machine.
 
 ## Architecture
 
 ```
-altium-format-ops                    altium-format
+autopcb-spec                    altium-format
 ─────────────────                    ─────────────
 HighOp (YAML/JSON)                   SchDocLowOp enum
   ↓ lower                              ↓ apply_schdoc_low_ops()

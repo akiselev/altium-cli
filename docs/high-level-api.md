@@ -4,7 +4,7 @@
 
   Next steps from the plan (in priority order):
 
-  1. Wire up the spec executor/reconciler — The altium-format-spec crate should use the new component()/update_component() API instead
+  1. Wire up the spec executor/reconciler — The autopcb-spec crate should use the new component()/update_component() API instead
   of low-level record access. This is a key consumer.
   2. Replace DumpView usage in CLI — The dump command currently uses SchLibComponentDumpView. It should switch to api::Component and
   format into spec syntax, eventually deprecating the DumpView types.
@@ -328,7 +328,7 @@ impl PcbDoc {
 The executor uses the public API to apply specs:
 
 ```rust
-pub fn apply_spec_schlib(spec: &SchLibSpec, doc: &mut SchLib) -> Result<()> {
+pub fn apply_spec_schlib(spec: &SymSpec, doc: &mut SchLib) -> Result<()> {
     for comp_spec in &spec.components {
         match doc.component(&comp_spec.lib_reference) {
             Ok(mut existing) => {
@@ -350,7 +350,7 @@ pub fn apply_spec_schlib(spec: &SchLibSpec, doc: &mut SchLib) -> Result<()> {
 The reconciler queries existing state to produce Add/Update/Unchanged ECOs:
 
 ```rust
-pub fn reconcile_schlib(spec: &SchLibSpec, doc: &SchLib) -> Result<ECO> {
+pub fn reconcile_schlib(spec: &SymSpec, doc: &SchLib) -> Result<ECO> {
     for comp_spec in &spec.components {
         match doc.component(&comp_spec.lib_reference) {
             Ok(existing) => {

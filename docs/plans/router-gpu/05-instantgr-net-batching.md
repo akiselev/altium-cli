@@ -1275,7 +1275,7 @@ The following spec constructs map to batching inputs:
 **New spec model types needed:**
 
 ```rust
-/// File: crates/altium-format-spec/src/model.rs (additions to PcbDocSpec)
+/// File: crates/autopcb-spec/src/model.rs (additions to PcbDocSpec)
 
 /// Declaration of net groups that are guaranteed to be routable
 /// without resource conflicts. Used for GPU batch construction.

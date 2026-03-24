@@ -4,11 +4,11 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Placement Spec (.pcbdoc-spec)                                  │
+│  Placement Spec (.pcb)                                  │
 │  Written by LLM agent or human                                  │
 │  "U1 center, J1 top edge, clearance 0.5mm, optimize ratsnest"  │
 └──────────────────────────┬──────────────────────────────────────┘
-                           ↓ parse (altium-format-spec parser)
+                           ↓ parse (autopcb-spec parser)
 ┌─────────────────────────────────────────────────────────────────┐
 │  PlacementModel (typed IR)                                      │
 │  components: [{designator, region, edge, rotation_options}]     │
@@ -78,7 +78,7 @@ solverang (external, ~/git/solverang/)
       ├── builder.rs      — Ergonomic API (modeled after Sketch2DBuilder pattern)
       └── drc.rs          — Design rule → constraint mapping
 
-altium-format-spec (this workspace)
+autopcb-spec (this workspace)
   └── src/
       ├── placement.rs    — PlacementModel, PlacementSpec types
       ├── placement_compiler.rs — Compile spec AST → PlacementModel
@@ -205,7 +205,7 @@ under-constrained or over-constrained entities.
 ## Dependencies
 
 ```toml
-# In altium-format-spec/Cargo.toml
+# In autopcb-spec/Cargo.toml
 [dependencies]
 solverang = { path = "../../solverang/crates/solverang", features = ["sparse", "parallel", "macros"] }
 # Note: "geometry" feature is removed from solverang. PCB-specific geometry
@@ -221,6 +221,6 @@ solverang = { path = "../../solverang/crates/solverang", features = ["sparse", "
 solver with PCB plugin) or in the altium-cli workspace (Altium-specific placement)?
 
 **Recommendation**: `solverang-pcb` in the solverang workspace (reusable for other
-EDA tools), with a thin bridge in `altium-format-spec` that maps Altium types to
+EDA tools), with a thin bridge in `autopcb-spec` that maps Altium types to
 solverang-pcb types. The `Sketch2DBuilder` pattern in solverang provides a good
 template for the `PcbPlacementBuilder` API.

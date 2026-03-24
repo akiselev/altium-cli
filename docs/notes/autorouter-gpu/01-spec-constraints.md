@@ -1,6 +1,6 @@
 # Spec Constraints for GPU-Accelerated Autorouting
 
-How an LLM-authored pcbdoc-spec can provide rich constraint information to guide
+How an LLM-authored `.pcb` spec can provide rich constraint information to guide
 a GPU-accelerated PathFinder router (negotiation-based, McMurchie-Ebeling with
 Bellman-Ford on GPU).
 

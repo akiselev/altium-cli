@@ -1,4 +1,4 @@
-//! Spec rewriter: updates a `.pcbdoc-spec` file in-place after autoplace runs.
+//! Spec rewriter: updates a `.pcb` file in-place after autoplace runs.
 //!
 //! Strategy: AST-based rewriting with trivia (comment) preservation. Parses the
 //! source with `parse_with_trivia()` to obtain the typed AST and a `TriviaMap`
@@ -10,9 +10,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use altium_format_spec::ast::{Expr, ObjectItem, PlaceDecl, PlacementItem, SpecItem};
-use altium_format_spec::diagnostic::Span;
-use altium_format_spec::trivia::{TriviaMap, parse_with_trivia};
+use autopcb_spec::ast::{Expr, ObjectItem, PlaceDecl, PlacementItem, SpecItem};
+use autopcb_spec::diagnostic::Span;
+use autopcb_spec::trivia::{TriviaMap, parse_with_trivia};
 use autopcb_placement::{PlacementComponentState, PlacementResult};
 
 /// Result of the spec rewrite operation.
@@ -25,7 +25,7 @@ pub struct RewriteResult {
     pub appended: Vec<String>,
 }
 
-/// Rewrite a `.pcbdoc-spec` source text to replace `autoplace: true` with solved placements.
+/// Rewrite a `.pcb` source text to replace `autoplace: true` with solved placements.
 ///
 /// For each component in `result.components` whose designator is in `autoplace_designators`:
 /// - If the component is mentioned in a `place` block that has `autoplace: true`:

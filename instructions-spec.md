@@ -25,11 +25,11 @@ creates or updates the corresponding Altium file.
 
 | Spec extension    | Altium output | Purpose                        |
 | ----------------- | ------------- | ------------------------------ |
-| `.schlib-spec`    | `.SchLib`     | Schematic symbol libraries     |
-| `.pcblib-spec`    | `.PcbLib`     | PCB footprint libraries        |
-| `.schdoc-spec`    | `.SchDoc`     | Schematic sheets               |
-| `.pcbdoc-spec`    | `.PcbDoc`     | PCB board documents            |
-| `.prjpcb-spec`    | `.PrjPcb`     | Altium project configuration   |
+| `.sym`    | `.SchLib`     | Schematic symbol libraries     |
+| `.sym`    | `.PcbLib`     | PCB footprint libraries        |
+| `.sch`    | `.SchDoc`     | Schematic sheets               |
+| `.pcb`    | `.PcbDoc`     | PCB board documents            |
+| `.proj`    | `.PrjPcb`     | Altium project configuration   |
 
 ---
 
@@ -37,17 +37,17 @@ creates or updates the corresponding Altium file.
 
 ```bash
 # Preview changes (ECO) without modifying anything
-altium plan my-library.schlib-spec
-altium plan my-library.schlib-spec --json        # machine-readable ECO
+altium plan my-library.sym
+altium plan my-library.sym --json        # machine-readable ECO
 
 # Apply spec → create or update Altium file
-altium apply my-library.schlib-spec                          # creates my-library.SchLib
-altium apply my-library.schlib-spec --output parts.SchLib    # custom output name
-altium apply my-library.schlib-spec --target existing.SchLib # update existing file
+altium apply my-library.sym                          # creates my-library.SchLib
+altium apply my-library.sym --output parts.SchLib    # custom output name
+altium apply my-library.sym --target existing.SchLib # update existing file
 
 # Reverse-generate spec from existing Altium file
 altium dump existing.SchLib                                  # prints to stdout
-altium dump existing.PcbLib --output footprints.pcblib-spec  # writes to file
+altium dump existing.PcbLib --output footprints.sym  # writes to file
 ```
 
 `plan` generates an Engineering Change Order (ECO) showing adds, updates, and
@@ -221,7 +221,7 @@ $ref[0]              // array indexing
 
 ---
 
-## Schematic Library Specs (`.schlib-spec`)
+## Schematic Library Specs (`.sym`)
 
 SchLib specs define schematic symbols — the components that appear on schematic sheets.
 This corresponds to **Stage 4** of the design workflow (Symbol generation).
@@ -433,7 +433,7 @@ Available graphic types for symbol drawing:
 
 ---
 
-## PCB Footprint Library Specs (`.pcblib-spec`)
+## PCB Footprint Library Specs (`.sym`)
 
 PcbLib specs define PCB footprints (land patterns). This corresponds to **Stage 4**
 of the design workflow (Footprint generation).
@@ -623,7 +623,7 @@ footprint "JST-XH-4" {
 
 ---
 
-## Schematic Document Specs (`.schdoc-spec`)
+## Schematic Document Specs (`.sch`)
 
 SchDoc specs define schematic sheets — the wiring diagrams that connect components.
 This corresponds to **Stage 5** of the design workflow (Schematic capture).
@@ -787,7 +787,7 @@ power VCC_3V3 {
 SchDoc specs can import SchLib specs to reference symbols:
 
 ```
-import "my-parts.schlib-spec" as parts
+import "my-parts.sym" as parts
 
 component "U1" {
     lib_reference: $parts.ESP32_C6     // references the ESP32_C6 component from the import
@@ -797,7 +797,7 @@ component "U1" {
 
 ---
 
-## PCB Document Specs (`.pcbdoc-spec`)
+## PCB Document Specs (`.pcb`)
 
 PcbDoc specs describe PCB board documents — the physical board layout. This covers
 **Stages 7-8** of the design workflow (stackup, constraints, placement).
@@ -973,7 +973,7 @@ placement {
 
 ---
 
-## Project Specs (`.prjpcb-spec`)
+## Project Specs (`.proj`)
 
 PrjPcb specs configure Altium projects — design settings, document lists, ERC matrix,
 output jobs, and variants.
@@ -1031,7 +1031,7 @@ Spec files can import other spec files for reuse and composition.
 
 ```
 // Import a footprint library and give it an alias
-import "standard-footprints.pcblib-spec" as footprints
+import "standard-footprints.sym" as footprints
 
 // Reference entities from the import
 component MCU {
@@ -1046,7 +1046,7 @@ component MCU {
 
 ```
 // Merge all entities from another spec into this scope
-import "common-passives.schlib-spec"
+import "common-passives.sym"
 ```
 
 ### Import Rules
@@ -1061,10 +1061,10 @@ import "common-passives.schlib-spec"
 ## Complete Example: Footprint Library
 
 This example demonstrates pad templates, row layouts, and various package types in a
-single `.pcblib-spec` file.
+single `.sym` file.
 
 ```
-// my-footprints.pcblib-spec
+// my-footprints.sym
 
 // ============================================================================
 // Shared pad templates
@@ -1194,7 +1194,7 @@ footprint "CONN-4P" {
 This example shows a simple MCU schematic with components, power rails, nets, and wiring.
 
 ```
-// controller.schdoc-spec
+// controller.sch
 
 sheet {
     custom_width: 6200mil
@@ -1242,26 +1242,26 @@ Here is how the spec language maps to the stages defined in `instructions.md`:
 
 | Workflow Stage                              | Spec Type        | What to Generate                                                |
 | ------------------------------------------- | ---------------- | --------------------------------------------------------------- |
-| **Stage 4: Symbol generation**              | `.schlib-spec`   | Components with pins, graphics, parameters, footprint maps      |
-| **Stage 4: Footprint generation**           | `.pcblib-spec`   | Footprints with pads, silk outlines, courtyard, pin 1 markers   |
-| **Stage 5: Schematic capture**              | `.schdoc-spec`   | Components, power rails, nets, wires, notes                     |
-| **Stage 7: Stackup & constraints**          | `.pcbdoc-spec`   | Board settings, layer count, design rules, net classes           |
-| **Stage 8: Placement**                      | `.pcbdoc-spec`   | Component placement with solver constraints                     |
+| **Stage 4: Symbol generation**              | `.sym`   | Components with pins, graphics, parameters, footprint maps      |
+| **Stage 4: Footprint generation**           | `.sym`   | Footprints with pads, silk outlines, courtyard, pin 1 markers   |
+| **Stage 5: Schematic capture**              | `.sch`   | Components, power rails, nets, wires, notes                     |
+| **Stage 7: Stackup & constraints**          | `.pcb`   | Board settings, layer count, design rules, net classes           |
+| **Stage 8: Placement**                      | `.pcb`   | Component placement with solver constraints                     |
 | **Stage 14: Iteration (ECOs)**              | `altium plan`    | Preview changes before applying                                 |
-| **Project configuration**                   | `.prjpcb-spec`   | Documents, ERC matrix, output jobs, variants                    |
+| **Project configuration**                   | `.proj`   | Documents, ERC matrix, output jobs, variants                    |
 
 ### Typical Agent Workflow
 
-1. **Research parts** (LLM reads datasheets) and produce a `.schlib-spec` with symbols
-2. **Create footprints** from datasheet package drawings → `.pcblib-spec`
-3. **Verify libraries**: `altium plan parts.schlib-spec` and `altium plan footprints.pcblib-spec`
-4. **Build libraries**: `altium apply parts.schlib-spec` and `altium apply footprints.pcblib-spec`
+1. **Research parts** (LLM reads datasheets) and produce a `.sym` with symbols
+2. **Create footprints** from datasheet package drawings → `.sym`
+3. **Verify libraries**: `altium plan parts.sym` and `altium plan footprints.sym`
+4. **Build libraries**: `altium apply parts.sym` and `altium apply footprints.sym`
 5. **Render for review**: `altium render parts.SchLib` → SVG/PNG of each symbol
-6. **Capture schematic**: write `.schdoc-spec` placing components and wiring nets
-7. **Build schematic**: `altium apply schematic.schdoc-spec`
+6. **Capture schematic**: write `.sch` placing components and wiring nets
+7. **Build schematic**: `altium apply schematic.sch`
 8. **Render schematic**: `altium render schematic.SchDoc` → SVG of full sheet
-9. **Configure board**: write `.pcbdoc-spec` with rules, constraints, nets
-10. **Apply to board**: `altium apply board.pcbdoc-spec --target board.PcbDoc`
+9. **Configure board**: write `.pcb` with rules, constraints, nets
+10. **Apply to board**: `altium apply board.pcb --target board.PcbDoc`
 11. **Run placement solver**: `altium placement solve --target board.PcbDoc`
 12. **Iterate**: modify specs and re-apply; `altium plan` shows diffs
 
@@ -1271,13 +1271,13 @@ To bootstrap specs from existing Altium files:
 
 ```bash
 # Generate spec from existing SchLib
-altium dump vendor-parts.SchLib --output vendor-parts.schlib-spec
+altium dump vendor-parts.SchLib --output vendor-parts.sym
 
 # Generate spec from existing PcbLib
-altium dump vendor-footprints.PcbLib --output vendor-footprints.pcblib-spec
+altium dump vendor-footprints.PcbLib --output vendor-footprints.sym
 
 # Generate spec from existing PcbDoc (for board settings, rules, nets)
-altium dump existing-board.PcbDoc --output board.pcbdoc-spec
+altium dump existing-board.PcbDoc --output board.pcb
 ```
 
 The dumped specs use absolute coordinates and non-default properties only. They can

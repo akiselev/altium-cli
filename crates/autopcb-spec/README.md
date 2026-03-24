@@ -1,9 +1,9 @@
-# altium-format-spec
+# autopcb-spec
 
-Spec DSL for declaratively describing Altium Designer documents. Covers schematic
-libraries, PCB libraries, schematic sheets, PCB boards, and PCB component placement.
-Provides compile, execute (apply), reconcile (ECO diff), dump (reverse-generate),
-and spec-to-spec sync operations for all document types.
+Spec DSL for declaratively describing Altium Designer documents. Covers symbol
+libraries (SchLib and PcbLib), schematic sheets, PCB boards, and PCB component
+placement. Provides compile, execute (apply), reconcile (ECO diff), dump
+(reverse-generate), and spec-to-spec sync operations for all document types.
 
 ## Architecture
 
@@ -32,15 +32,15 @@ and spec-to-spec sync operations for all document types.
   executor.rs    apply_spec_*(): SpecModel → mutate Altium document
   reconciler.rs  reconcile_*(): SpecModel diff document → EngineeringChangeOrder
   dump.rs        dump_*(): Altium document → .spec text (emits #[annotation(...)] per block)
-  spec_rewriter  (altium-cli) rewrite .pcbdoc-spec after autoplace run
+  spec_rewriter  (altium-cli) rewrite .pcb after autoplace run
 ```
 
 ### Sync pipeline (spec-to-spec synchronization)
 
 ```
-SchDoc-spec ──compile──▶ SchDocSpec ──project──▶ SyncSnapshot
-                                                       │
-PcbDoc-spec ──compile──▶ PcbDocSpec ──project──▶ SyncSnapshot
+.sch ──compile──▶ SchDocSpec ──project──▶ SyncSnapshot
+                                               │
+.pcb ──compile──▶ PcbDocSpec ──project──▶ SyncSnapshot
                                                        │
                                               diff_snapshots()
                                                        │
@@ -50,7 +50,7 @@ PcbDoc-spec ──compile──▶ PcbDocSpec ──project──▶ SyncSnapsho
                                                        │
                                       apply_sync_changes_to_pcbdoc()
                                                        │
-                                         write back PcbDoc-spec
+                                         write back .pcb spec file
 ```
 
 The five-phase execution model:
@@ -67,7 +67,7 @@ Phase 5c: PROJECT   reconciler.rs: SpecModel vs document → EngineeringChangeOr
 
 ## Placement Spec
 
-The `placement { }` block is a sub-language within `.pcbdoc-spec` files. It drives
+The `placement { }` block is a sub-language within `.pcb` files. It drives
 the `autopcb-placement` solver via the bridge in `altium-cli/src/placement_bridge.rs`.
 
 ### Constraint semantics
@@ -92,7 +92,7 @@ Named regions for `region_name:`: `center`, `top_half`, `bottom_half`, `left_hal
 `algorithm: full_pipeline` in the `autoplace {}` block enables SA refinement (Phase 3)
 and both swap passes. `algorithm: analytical` (default) runs only Phases 1–2.
 
-After the solver runs, `spec_rewriter` (in `altium-cli`) rewrites the `.pcbdoc-spec`
+After the solver runs, `spec_rewriter` (in `altium-cli`) rewrites the `.pcb`
 file in place: `autoplace: true` becomes `at: (x, y)` + `rotation: N`, and a
 `// autoplace: solved` comment is inserted. All non-placement content is preserved
 verbatim using the byte-offset spans stored on AST nodes.
@@ -205,10 +205,10 @@ empty or wrong value causes Altium to treat every component as new on each ECO c
 
 ### Resolver library alias limitation
 
-`SchLibSpec` carries no library identity (filename or alias). The resolver cannot
+`SymSpec` carries no library identity (filename or alias). The resolver cannot
 disambiguate between two libraries that both contain a component with the same
 `lib_reference`. It searches all provided libraries in order and picks the first match,
-ignoring the alias declared in the spec. When library identity is added to `SchLibSpec`,
+ignoring the alias declared in the spec. When library identity is added to `SymSpec`,
 this lookup must be updated to filter by alias first.
 
 ### Validator return type
@@ -277,7 +277,7 @@ differs from NetLabel where the text-readability constraint requires collapsing 
 
 **`PinConnectionSpec` stays in model; executor resolves at apply time.** Pin connection
 declarations are not collapsed to wire coordinates during compilation. The executor needs
-live access to `imported_components` (a `HashMap<String, SchLibSpec>` threaded from the
+live access to `imported_components` (a `HashMap<String, SymSpec>` threaded from the
 CLI) to look up pin positions from the imported SchLib. Keeping the spec-level intent in
 `PinConnectionSpec` also preserves a clean separation between "what the user declared" and
 "what Altium objects result." Round-trip dump of `pin X -> #NET` from an existing SchDoc

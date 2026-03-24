@@ -12,7 +12,7 @@ home for a long-term design model:
   - intentionally reduced and PCB-only
   - useful for placement/routing/analysis
   - not suitable as the canonical source of truth
-- `altium-format-spec`
+- `autopcb-spec`
   - closest to a human-authored model
   - still organized around Altium file types and partial coverage
 

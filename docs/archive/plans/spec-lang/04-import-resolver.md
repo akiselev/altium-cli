@@ -53,18 +53,18 @@ After all files are parsed:
    hard error. Error: `E_DUPLICATE_ENTITY`.
 
 3. **Cross-domain rules**:
-   - `.schlib-spec` can import `.schlib-spec` (bare or named)
-   - `.schlib-spec` can import `.pcblib-spec` (named only)
-   - `.pcblib-spec` can import `.pcblib-spec` (bare or named)
-   - `.pcblib-spec` cannot import `.schlib-spec` (error)
+   - `.sym` can import `.sym` (bare or named)
+   - `.sym` can import `.sym` (named only)
+   - `.sym` can import `.sym` (bare or named)
+   - `.sym` cannot import `.sym` (error)
 
 ### Phase 3: Namespace Construction
 
-For named imports (`import "file.pcblib-spec" as fp`):
+For named imports (`import "file.sym" as fp`):
 - Store the parsed file under the alias `fp`
 - Entity references like `$fp.DIP8` resolve to the footprint `DIP8` in that file
 
-For bare imports (`import "passives.schlib-spec"`):
+For bare imports (`import "passives.sym"`):
 - Merge the imported file's entity declarations into the root file's declaration
   list
 - Let bindings from imported files are NOT merged (spec-lang.md §6.3)
@@ -92,7 +92,7 @@ fn detect_cycles(
 On cycle detection, report the full path:
 ```
 error[E_CIRCULAR_IMPORT]: circular import detected
-  a.schlib-spec -> b.schlib-spec -> a.schlib-spec
+  a.sym -> b.sym -> a.sym
 ```
 
 ## File Caching

@@ -2,7 +2,7 @@
 
 # SchLib Low-Level Operations
 
-Low-level operations that `altium-format` exposes to `altium-format-ops` for SchLib
+Low-level operations that `altium-format` exposes to `autopcb-spec` for SchLib
 manipulation. Each op is a flat enum variant in `SchLibLowOp`, executed sequentially
 by `apply_schlib_low_ops()`. No state machine — components are created atomically,
 children appended one at a time, and `save()` handles all serialization complexity.
@@ -10,7 +10,7 @@ children appended one at a time, and `save()` handles all serialization complexi
 ## Architecture
 
 ```
-altium-format-ops                    altium-format
+autopcb-spec                    altium-format
 ─────────────────                    ─────────────
 HighOp (YAML/JSON)                   SchLibLowOp enum
   ↓ lower                              ↓ apply_schlib_low_ops()

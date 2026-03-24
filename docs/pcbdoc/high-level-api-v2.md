@@ -361,7 +361,7 @@ should use `BoardSettings.geometry.outline` which preserves arc segments.
 ### Spec Language
 
 Board geometry is **read-only in the spec language** — you don't define the board
-outline in a `.pcbdoc-spec` (it's a physical property set in the PCB editor). The
+outline in a `.pcb` (it's a physical property set in the PCB editor). The
 dump shows it for information:
 
 ```

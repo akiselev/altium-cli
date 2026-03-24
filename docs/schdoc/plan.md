@@ -736,7 +736,7 @@ sheet_symbol "Power" {
 
 ### 6.2 Implementation
 
-In `crates/altium-format-spec/src/dump.rs`:
+In `crates/autopcb-spec/src/dump.rs`:
 
 ```rust
 pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatError> {
@@ -761,11 +761,11 @@ Component children are dumped via the existing `dump_pin`, `dump_parameter`,
 
 | Location | Change |
 |----------|--------|
-| `model.rs` | Add `SpecDomain::SchDoc` |
+| `model.rs` | Add `SpecDomain::Sch` |
 | `main.rs: detect_document_domain` | Add `"schdoc"` arm |
-| `main.rs: detect_spec_domain` | Add `"schdoc-spec"` arm |
+| `main.rs: detect_spec_domain` | Add `"sch"` arm |
 | `main.rs: default_output_for_spec` | Add `SchDoc` → `"SchDoc"` |
-| `main.rs: default_spec_for_document` | Add `SchDoc` → `"schdoc-spec"` |
+| `main.rs: default_spec_for_document` | Add `SchDoc → ".sch"` |
 | `main.rs: run_dump` | Add `SchDoc` arm: `SchDoc::open` → `dump_schdoc` |
 
 ---
@@ -796,7 +796,7 @@ Component children are dumped via the existing `dump_pin`, `dump_parameter`,
 ### Phase 3: Dump Command
 
 1. Add `dump_schdoc()` to dump.rs
-2. Add `SpecDomain::SchDoc` variant
+2. Add `SpecDomain::Sch` variant
 3. Wire CLI dispatch
 4. Test: `cargo run -- dump <fixture.SchDoc>`
 
@@ -828,9 +828,9 @@ Component children are dumped via the existing `dump_pin`, `dump_parameter`,
 | `crates/altium-format/src/api/schlib_write.rs` | Move shared converters to sch_common, re-import |
 | `crates/altium-format/src/schdoc/mod.rs` | Add sheet() + CRUD methods |
 | `crates/altium-format/src/lib.rs` | Re-export new SchDoc API types |
-| `crates/altium-format-spec/src/model.rs` | Add `SpecDomain::SchDoc` |
-| `crates/altium-format-spec/src/dump.rs` | Add `dump_schdoc()` |
-| `crates/altium-format-spec/src/lib.rs` | Re-export `dump_schdoc` |
+| `crates/autopcb-spec/src/model.rs` | Add `SpecDomain::Sch` |
+| `crates/autopcb-spec/src/dump.rs` | Add `dump_schdoc()` |
+| `crates/autopcb-spec/src/lib.rs` | Re-export `dump_schdoc` |
 | `crates/altium-cli/src/main.rs` | Add SchDoc to dump/plan/apply dispatch |
 
 ---

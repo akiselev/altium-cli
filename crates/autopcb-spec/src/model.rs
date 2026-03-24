@@ -11,30 +11,29 @@ use altium_format_types::sch::{
     PowerObjectStyle, TextJustification,
 };
 use altium_format_types::{
-    Color, ComponentKind, Coord, CoordPoint, LayerRef, PadShape, PadStackMode, PinElectricalType,
+    Color, ComponentKind, Coord, CoordPoint, PadShape, PadStackMode, PinElectricalType,
     PlaneConnectionStyle, RotationBy90,
 };
 
 /// A layer specification in the spec language.
 ///
 /// Layers can be specified as:
-/// - A known V6/V7 layer name (resolved at compile time)
+/// - A named layer (e.g., "TopLayer", "BottomOverlay", "GND_Plane")
 /// - A copper position like `copper(3)` (resolved at execution time against a board stack)
-/// - A custom layer name (resolved at execution time against a board stack)
 #[derive(Debug, Clone)]
 pub enum LayerSpec {
-    /// A fully resolved layer reference (e.g. "TopLayer", "Mechanical1").
-    Resolved(LayerRef),
+    /// A layer identified by name (e.g., "TopLayer", "BottomOverlay", "GND_Plane").
+    /// Resolved against a board's layer stack at execution time.
+    Named(String),
     /// The Nth copper layer (1-indexed), resolved against a board's layer stack.
     CopperPosition(usize),
-    /// A custom layer name, resolved against a board's layer stack.
-    NamedLayer(String),
 }
 
-// ── SchLib ──────────────────────────────────────────────────────────────────
+// ── SymSpec ─────────────────────────────────────────────────────────────────
 
-pub struct SchLibSpec {
+pub struct SymSpec {
     pub components: Vec<ComponentSpec>,
+    pub footprints: Vec<FootprintSpec>,
 }
 
 pub struct ComponentSpec {
@@ -374,10 +373,6 @@ pub struct SignalHarnessSpec {
 
 // ── PcbLib ──────────────────────────────────────────────────────────────────
 
-pub struct PcbLibSpec {
-    pub footprints: Vec<FootprintSpec>,
-}
-
 pub struct FootprintSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub display_name: String,
@@ -514,19 +509,17 @@ pub struct PcbGraphicProperties {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpecDomain {
-    SchLib,
-    SchDoc,
-    PcbLib,
-    PcbDoc,
-    PrjPcb,
+    Sym,
+    Sch,
+    Pcb,
+    Proj,
 }
 
 pub enum SpecModel {
-    SchLib(SchLibSpec),
-    SchDoc(SchDocSpec),
-    PcbLib(PcbLibSpec),
-    PcbDoc(PcbDocSpec),
-    PrjPcb(PrjPcbSpec),
+    Sym(SymSpec),
+    Sch(SchDocSpec),
+    Pcb(PcbDocSpec),
+    Proj(PrjPcbSpec),
 }
 
 // ── PcbDoc geometry types ────────────────────────────────────────────────────
@@ -617,10 +610,10 @@ pub struct PcbDocNetSpec {
     pub visible: Option<bool>,
 }
 
-/// Typed reference to a footprint defined in an imported `.pcblib-spec` file.
+/// Typed reference to a footprint defined in an imported `.sym` file.
 #[derive(Debug, Clone)]
 pub struct FootprintRef {
-    /// Import alias (e.g. "fp" from `import "device.pcblib-spec" as fp`)
+    /// Import alias (e.g. "fp" from `import "device.sym" as fp`)
     pub import_alias: String,
     /// Footprint name within the imported library (e.g. "LQFP100")
     pub name: String,

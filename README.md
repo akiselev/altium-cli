@@ -23,7 +23,7 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 - `altium-format-types`: domain types, enums, constants
 - `altium-format-derive`: proc-macro derives
 - `altium-format`: core parsers/serializers for Altium formats
-- `altium-format-ops`: high-level operations and `.ops` execution
+- `autopcb-spec`: spec DSL compiler, executor, and reconciler
 - `altium-cli`: command-line interface
 
 ## Current CLI commands
@@ -48,7 +48,7 @@ schematic symbols and PCB footprints:
 
 ```bash
 altium-cli validate vendor.IntLib    # reports SchLib/PcbLib counts
-altium-cli dump vendor.IntLib        # produces vendor.schlib-spec + vendor.pcblib-spec
+altium-cli dump vendor.IntLib        # produces vendor.sym + vendor.sym
 ```
 
 ## Roadmap

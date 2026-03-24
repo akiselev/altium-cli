@@ -1,18 +1,18 @@
 # autopcb-routes
 
 Thin format crate for PCB route solution serialization. Defines the types written
-by `autopcb-router` and read by the `altium-format-spec` import resolver.
+by `autopcb-router` and read by the `autopcb-spec` import resolver.
 
 ## Why This Crate Exists
 
-Both `autopcb-router` (producer) and `altium-format-spec` (consumer) need the route
+Both `autopcb-router` (producer) and `autopcb-spec` (consumer) need the route
 solution types. Placing them in either crate creates a circular dependency. This crate
 breaks the cycle by holding only serde data types with no algorithmic logic.
 
 ```
 autopcb-router ──writes──┐
                          ├── autopcb-routes (types only)
-altium-format-spec ──reads┘
+autopcb-spec   ──reads───┘
 ```
 
 ## Types
@@ -95,5 +95,5 @@ Older versions (version < CURRENT_VERSION) are accepted — all serde fields use
 | `serde_json` | JSON serialization |
 | `thiserror` | `RoutesError` derive |
 
-No dependency on `autopcb-ir` or any Altium crate. This is intentional — consumers
+No dependency on `autopcb-ir`, `autopcb-spec`, or any Altium crate. This is intentional — consumers
 of route files must not transitively depend on IR extraction logic.

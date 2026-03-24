@@ -2,7 +2,7 @@
 //!
 //! `RoutingConfig` is the sole input for all router tuning parameters. It is
 //! designed for serde deserialization from the `routing { ... }` block in
-//! `pcbdoc-spec`. All fields have `#[serde(default)]` so partial JSON is valid.
+//! `.pcb`. All fields have `#[serde(default)]` so partial JSON is valid.
 
 use std::collections::BTreeMap;
 

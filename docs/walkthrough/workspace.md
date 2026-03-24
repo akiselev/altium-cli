@@ -261,7 +261,7 @@ JobPayload::ParseProject { project_path } => {
 ```
 
 `build_project_graph()` in `project_graph.rs:110` dispatches by extension:
-- `.wrk` files: parsed as spec language, compiled to `SpecModel::PrjPcb`
+- `.wrk` files: parsed as spec language, compiled to `SpecModel::Proj`
 - `.prjpcb` files: parsed via `AltiumProject::open()` (Altium's native format)
 
 Both paths produce a `ProjectGraph` containing lists of `BoardNode`,
@@ -341,8 +341,8 @@ fn open_document_path(&mut self, path: PathBuf) {
 ```rust
 fn spec_open_mode_for_extension(ext: &str) -> SpecOpenMode {
     match ext {
-        "sym" | "schlib-spec" => SpecOpenMode::SchLibGallery,
-        "sch" | "schdoc-spec" => SpecOpenMode::SchDocPreview,
+        "sym" => SpecOpenMode::SchLibGallery,
+        "sch" => SpecOpenMode::SchDocPreview,
         _ => SpecOpenMode::SourceText,
     }
 }
@@ -513,8 +513,8 @@ This is the spec-to-Altium pipeline:
 ```rust
 fn build_schlib_from_spec_source(source_text: &str) -> Result<SchLib, String> {
     let ast = parse_spec(source_text)?;                          // parse .sym text
-    let model = compile_spec(&ast, SpecDomain::SchLib)?;         // compile to SchLib model
-    let SpecModel::SchLib(spec) = model;
+    let model = compile_spec(&ast, SpecDomain::Sym)?;            // compile to Sym model
+    let SpecModel::Sym(spec) = model;
     let mut lib = SchLib::new_blank_ad26()?;                     // create blank Altium SchLib
     lib.remove_component("Component_1");                         // remove default component
     apply_spec_schlib(&spec, &mut lib)?;                         // apply spec to SchLib

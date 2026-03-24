@@ -179,7 +179,7 @@ pub enum IrSource<'a> {
 | 1+2 | Define IrRuleKind/IrCornerStyle/IrNetTopology in autopcb-ir + update all 13 router DRC files via `use autopcb_ir::rule::IrRuleKind as RuleKind` alias | Low | Medium |
 | 3 | Remove CoordPoint from types.rs, inline conversion in extract.rs | None | Low |
 | 4 | Quarantine: doc-comment enforce extract.rs as sole altium boundary in autopcb-ir | None | Low |
-| 5 | Move spec_bridge + extract logic to altium-cli; remove altium-format/altium-format-spec deps from autopcb-ir Cargo.toml | Medium | High |
+| 5 | Move spec_bridge + extract logic to altium-cli; remove altium-format/autopcb-spec deps from autopcb-ir Cargo.toml | Medium | High |
 | 6 | Remove altium-format-types from autopcb-ir Cargo.toml (should be clean after step 5) | None | Trivial |
 
 ### Bridge strategy for Steps 1→2

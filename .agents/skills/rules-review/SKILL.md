@@ -48,7 +48,7 @@ All byte-to-string decoding MUST use strict (non-lossy) functions. Look for:
 - Note: `encoding_rs::WINDOWS_1252.decode()` maps all 256 byte values and cannot error, so discarding its flags is safe
 
 #### R3: No Silent Error Dropping
-Everything fallible MUST return `Result<T, AltiumFormatError>` (in `altium-format`) or `Result<T, AltiumOpsError>` (in `altium-format-ops`). Look for:
+Everything fallible MUST return `Result<T, AltiumFormatError>` (in `altium-format`) or `Result<T, SpecError>` (in `autopcb-spec`). Look for:
 - `.unwrap()` in non-test code
 - `.expect()` in library code (acceptable in tests and CLI)
 - Swallowing errors with `if let Ok(x) = ...` without handling the error case
@@ -58,7 +58,7 @@ Everything fallible MUST return `Result<T, AltiumFormatError>` (in `altium-forma
 #### R4: Crate Privacy — No Implementation Leaks
 `altium-format` implementation details must stay private to the crate. Look for:
 - `pub` visibility on internal parsing structs/functions that shouldn't be exposed
-- `altium-format-ops` or `altium-cli` directly accessing `altium-format` internals
+- `autopcb-spec` or `altium-cli` directly accessing `altium-format` internals
 - Types or functions that should be `pub(crate)` but are `pub`
 
 #### R5: No Unconsumed Data Suppression
@@ -72,7 +72,7 @@ Do NOT mark streams, records, or fields as "consumed" without actually parsing t
 #### R6: Error Type Correctness
 Each crate uses its own error type:
 - `altium-format` → `AltiumFormatError`
-- `altium-format-ops` → `AltiumOpsError`
+- `autopcb-spec` → `SpecError`
 - `altium-cli` → `anyhow`
 Look for error types used in the wrong crate.
 
@@ -89,7 +89,7 @@ All file format constants should come from `altium_format_types::constants::*` (
 #### R9: Dependency Direction
 The dependency graph must be strictly:
 ```
-altium-format-types → altium-format-derive → altium-format → altium-format-ops → altium-cli
+altium-format-types → altium-format-derive → altium-format → autopcb-spec → altium-cli
 ```
 Look for reverse dependencies or circular imports.
 
@@ -110,7 +110,7 @@ If the user specifies a scope, use it. Otherwise, audit all Rust source files ac
 crates/altium-format/src/**/*.rs
 crates/altium-format-derive/src/**/*.rs
 crates/altium-format-types/src/**/*.rs
-crates/altium-format-ops/src/**/*.rs
+crates/autopcb-spec/src/**/*.rs
 crates/altium-cli/src/**/*.rs
 ```
 
@@ -133,7 +133,7 @@ For each file in scope, use Grep and Read to check for violations. Efficient sea
 | R3 | `.unwrap()`, `.expect(`, `if let Ok(`, `let _ =` |
 | R4 | `pub fn` and `pub struct` in altium-format (check if they should be `pub(crate)`) |
 | R5 | `mark_consumed`, `set_consumed`, `consumed = true` without adjacent parsing |
-| R6 | `anyhow` in library crates, `AltiumFormatError` in ops crate |
+| R6 | `anyhow` in library crates, `AltiumFormatError` in spec/ops crates |
 | R7 | `enum` definitions in altium-format that look like Altium domain concepts |
 | R8 | String literals that look like stream/record names, numeric magic constants |
 | R9 | Check `Cargo.toml` files for dependency direction violations |

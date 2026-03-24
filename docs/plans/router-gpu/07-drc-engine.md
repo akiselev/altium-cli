@@ -1716,7 +1716,7 @@ occupancy + history), the DRC budget is ~40ms.
 
    **Recommendation**: Phase 1 uses global rules only (every rule applies to all
    objects). Phase 2 adds scope expression parsing and evaluation, building on the
-   `altium-format-spec` query language if available.
+   `autopcb-spec` query language if available.
 
 3. **Polygon pour DRC**: Copper polygon pours (from `IrPolygon`) interact with
    clearance rules (polygon edges act as copper for DRC purposes). The polygon

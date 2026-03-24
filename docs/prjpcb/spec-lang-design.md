@@ -1,6 +1,6 @@
 # PrjPcb Spec Language Design
 
-How to extend the Altium Spec Language to support `.prjpcb-spec` files.
+How to extend the Altium Spec Language to support `.proj` files.
 
 ## Context: What the Spec Language Already Does
 
@@ -22,14 +22,14 @@ Currently supported domains:
 
 | Extension | Domain | Top-level keyword | SpecModel variant |
 |---|---|---|---|
-| `.schlib-spec` | SchLib | `component` | `SpecModel::SchLib(SchLibSpec)` |
-| `.pcblib-spec` | PcbLib | `footprint` | `SpecModel::PcbLib(PcbLibSpec)` |
+| `.sym` | SchLib | `component` | `SpecModel::Sym(SymSpec)` |
+| `.sym` | PcbLib | `footprint` | `SpecModel::Sym(SymSpec)` |
 
 PrjPcb would add:
 
 | Extension | Domain | Top-level keyword | SpecModel variant |
 |---|---|---|---|
-| `.prjpcb-spec` | PrjPcb | `project` | `SpecModel::PrjPcb(PrjPcbSpec)` |
+| `.proj` | PrjPcb | `project` | `SpecModel::Proj(PrjPcbSpec)` |
 
 ---
 
@@ -37,9 +37,9 @@ PrjPcb would add:
 
 A declarative spec for project files enables:
 
-1. **Reproducible project creation** — `altium apply my-board.prjpcb-spec` creates a
+1. **Reproducible project creation** — `altium apply my-board.proj` creates a
    fully-configured project with documents, ERC settings, output jobs, etc.
-2. **Project auditing** — `altium plan my-board.prjpcb-spec` diffs the spec against an
+2. **Project auditing** — `altium plan my-board.proj` diffs the spec against an
    existing project and reports drift (changed ERC levels, missing documents, etc.)
 3. **Template enforcement** — company-wide spec templates ensure all projects use the
    same ERC matrix, annotation order, and output job configuration.
@@ -437,7 +437,7 @@ CFB-based executors — just format key-value pairs and write lines.
 1. Implement `AltiumProject` parser in `altium-format` (INI line parser, section state machine)
 2. Add PrjPcb-specific enums to `altium-format-types` (`FlattenMode`, `ChannelRoomNamingStyle`, etc.)
 3. Add `altium validate` support for `.PrjPcb` files
-4. Add `altium dump` support to reverse-generate `.prjpcb-spec` from existing projects
+4. Add `altium dump` support to reverse-generate `.proj` from existing projects
 
 ### Phase 2: Spec Language Extension
 
@@ -451,12 +451,12 @@ CFB-based executors — just format key-value pairs and write lines.
 
 1. Implement PrjPcb INI writer (format sections and key-value pairs)
 2. Implement `apply_spec_prjpcb()` executor
-3. Add `altium apply` support for `.prjpcb-spec` files
+3. Add `altium apply` support for `.proj` files
 
 ### Phase 4: Cross-Domain Integration
 
-1. Allow `.prjpcb-spec` to import `.schlib-spec` and `.pcblib-spec`
-2. `altium apply my-project.prjpcb-spec` creates the project AND its library files
+1. Allow `.proj` to import `.sym` and `.sym`
+2. `altium apply my-project.proj` creates the project AND its library files
 3. Document cross-references between project spec and library specs
 
 ---

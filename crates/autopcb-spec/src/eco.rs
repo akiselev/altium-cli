@@ -536,7 +536,7 @@ mod tests {
         let summary = compute_summary(&changes);
         EngineeringChangeOrder {
             library_path: PathBuf::from("my-parts.SchLib"),
-            spec_path: PathBuf::from("my-parts.schlib-spec"),
+            spec_path: PathBuf::from("my-parts.sym"),
             timestamp: SystemTime::UNIX_EPOCH,
             summary,
             changes,

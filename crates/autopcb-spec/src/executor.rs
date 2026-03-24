@@ -23,9 +23,9 @@ use crate::eval::{SpecError, SpecErrorCode};
 use crate::model::{
     BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicSpec, GraphicType, LayerSpec,
     PadSpec, ParameterSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocPolygonSpec,
-    PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, PcbLibSpec,
+    PcbDocPrimitiveSpec, PcbDocSpec, PcbGraphicSpec, PcbGraphicType, SymSpec,
     PinConnectionTarget, PinSpec, PrjPcbSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec,
-    SchLibSpec, SheetSpec, SymbolRef,
+    SheetSpec, SymbolRef,
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ use crate::model::{
 ///   spec fields over the existing component (additive-only: `Option::Some`
 ///   overrides, `None` preserves existing).
 /// - If the component doesn't exist, create it from the spec with defaults.
-pub fn apply_spec_schlib(spec: &SchLibSpec, doc: &mut SchLib) -> Result<(), SpecError> {
+pub fn apply_spec_schlib(spec: &SymSpec, doc: &mut SchLib) -> Result<(), SpecError> {
     for comp_spec in &spec.components {
         match doc.component(&comp_spec.lib_reference) {
             Ok(existing) => {
@@ -62,7 +62,7 @@ pub fn apply_spec_schlib(spec: &SchLibSpec, doc: &mut SchLib) -> Result<(), Spec
 ///   spec fields over the existing footprint (additive-only: `Option::Some`
 ///   overrides, `None` preserves existing).
 /// - If the footprint doesn't exist, create it from the spec with defaults.
-pub fn apply_spec_pcblib(spec: &PcbLibSpec, lib: &mut PcbLib) -> Result<(), SpecError> {
+pub fn apply_spec_pcblib(spec: &SymSpec, lib: &mut PcbLib) -> Result<(), SpecError> {
     for fp_spec in &spec.footprints {
         match lib.footprint(&fp_spec.display_name) {
             Ok(existing) => {
@@ -1568,12 +1568,12 @@ fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
     }
 }
 
-/// Resolve a `LayerSpec` to a `LayerRef`. Without a board stack, only `Resolved` and
-/// V6-name `NamedLayer` variants can be resolved; others fall back to a default.
+/// Resolve a `LayerSpec` to a `LayerRef` for Altium export.
+/// Without a board stack, only named layers with known V6 names can be fully resolved;
+/// others fall back to a default.
 fn resolve_layer_spec(spec: &LayerSpec) -> LayerRef {
     match spec {
-        LayerSpec::Resolved(lr) => lr.clone(),
-        LayerSpec::NamedLayer(name) => LayerRef::from_string_name(name)
+        LayerSpec::Named(name) => LayerRef::from_string_name(name)
             .unwrap_or_else(|| LayerRef::from_v6(V6Layer::NoLayer).with_name(name.clone())),
         LayerSpec::CopperPosition(_) => {
             // Cannot resolve without a board stack; fall back to MultiLayer
@@ -1810,7 +1810,7 @@ fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
 mod tests {
     use super::*;
     use crate::model::{
-        ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SchLibSpec,
+        ComponentSpec, FootprintMapSpec, ParameterSpec, PartSpec, PinPadMap, PinSpec, SymSpec,
     };
     use altium_format_types::{Coord, CoordPoint, RotationBy90};
 
@@ -1856,8 +1856,8 @@ mod tests {
         }
     }
 
-    fn make_spec(components: Vec<ComponentSpec>) -> SchLibSpec {
-        SchLibSpec { components }
+    fn make_spec(components: Vec<ComponentSpec>) -> SymSpec {
+        SymSpec { components, footprints: Vec::new() }
     }
 
     /// Helper: create a blank library and remove the default "Component_1"
@@ -2139,7 +2139,8 @@ mod tests {
 
     #[test]
     fn executor_pcblib_add_to_blank() {
-        let spec = PcbLibSpec {
+        let spec = SymSpec {
+            components: Vec::new(),
             footprints: vec![make_footprint_spec(
                 "R0603",
                 vec![make_pad_spec("1"), make_pad_spec("2")],
@@ -2635,13 +2636,15 @@ mod tests {
 
     #[test]
     fn executor_pcblib_merge() {
-        let spec1 = PcbLibSpec {
+        let spec1 = SymSpec {
+            components: Vec::new(),
             footprints: vec![make_footprint_spec("C0805", vec![make_pad_spec("1")])],
         };
         let mut lib = PcbLib::new_blank_ad26().expect("blank pcblib");
         apply_spec_pcblib(&spec1, &mut lib).unwrap();
 
-        let spec2 = PcbLibSpec {
+        let spec2 = SymSpec {
+            components: Vec::new(),
             footprints: vec![FootprintSpec {
                 annotation: None,
                 display_name: "C0805".to_string(),

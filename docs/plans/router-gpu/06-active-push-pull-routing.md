@@ -1246,7 +1246,7 @@ resolved in under 1 second.
 Altium's Route Guide is a polyline drawn interactively by the user. Our equivalent
 has two input paths:
 
-1. **Spec-declared corridors**: The `routing_corridor` directive in `pcbdoc-spec`
+1. **Spec-declared corridors**: The `routing_corridor` directive in a `.pcb` spec
    declares a corridor path and width. The LLM can generate these from schematic
    analysis:
    ```
@@ -1289,7 +1289,7 @@ is too narrow for all traces on one layer, vias are placed automatically.
 
 **Batch/spec-driven workflow**:
 ```
-pcbdoc-spec routing_corridor declaration
+.pcb spec routing_corridor declaration
     │
     ├── Spec compiler extracts: net list, corridor polyline, width
     │
@@ -1803,8 +1803,8 @@ roadmap (Section 12) with two additional phases.
 **Depends on**: Phase 7, Milestone 9 from `docs/plans/router/README.md`
 
 **Files**:
-- `crates/altium-format-spec/src/model.rs` -- `RoutingCorridorDecl` type
-- `crates/altium-format-spec/src/compiler.rs` -- `compile_routing_corridor_decl()`
+- `crates/autopcb-spec/src/model.rs` -- `RoutingCorridorDecl` type
+- `crates/autopcb-spec/src/compiler.rs` -- `compile_routing_corridor_decl()`
 - `crates/autopcb-viewer/src/active_route.rs` -- viewer ActiveRoute UI
 - `crates/autopcb-viewer/src/corridor_overlay.rs` -- corridor visualization
 

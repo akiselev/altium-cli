@@ -10,7 +10,7 @@ workspace = true
 [dependencies]
 autopcb-ir = { version = "0.2.0", path = "../autopcb-ir" }
 autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
-altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
+autopcb-spec = { version = "0.1.0", path = "../autopcb-spec" }
 eframe = { version = "0.33", features = ["wgpu"] }
 egui-wgpu = "0.33"
 wgpu = "27"

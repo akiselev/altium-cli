@@ -930,7 +930,7 @@ pub fn apply_sync_changes_to_pcbdoc(
 
 // ── Spec text rewriter ────────────────────────────────────────────────────────
 
-/// Rewrites a `.pcbdoc-spec` source text to reflect applied `SyncChange`s.
+/// Rewrites a `.pcb` source text to reflect applied `SyncChange`s.
 ///
 /// This is a source-level rewriter that preserves all non-component/net content
 /// (geometry, tracks, arcs, vias, pads, polygons, rules, placement blocks, etc.)

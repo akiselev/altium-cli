@@ -7,7 +7,7 @@ DRC engine, placer, viewer) never import `altium_format`.
 ## Architecture
 
 ```
-pcbdoc-spec file (source of truth)
+.pcb spec file (source of truth)
      |
      v
 SpecModel (PcbDocSpec)           PcbDoc file (import source)
@@ -82,7 +82,7 @@ Altium rules like `Clearance` and `ComponentClearance` have two scope sides.
 ## Invariants
 
 - `spec_to_ir()` never imports from `altium_format` (only `altium_format_types`
-  and `altium_format_spec`)
+  and `autopcb_spec`)
 - All scope resolution happens during compilation, not at query time
 - `PcbIr` is the same struct regardless of whether source is spec or imported PcbDoc
 - Handle IDs (`ComponentId`, `NetId`, etc.) are assigned sequentially during

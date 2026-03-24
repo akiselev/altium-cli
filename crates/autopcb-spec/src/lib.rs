@@ -23,8 +23,7 @@ pub mod validator;
 // Public API re-exports
 pub use annotation::{CompiledAnnotation, generate_short_id, validate_short_id};
 pub use compiler::{
-    compile_imported_pcblibs, compile_imported_schlibs, compile_spec, compile_spec_with_imports,
-    compile_spec_with_resolved,
+    compile_imported_syms, compile_spec, compile_spec_with_imports, compile_spec_with_resolved,
 };
 #[cfg(feature = "altium-apply")]
 pub use dump::{
@@ -48,10 +47,10 @@ pub use import::{ResolvedSpec, resolve_imports};
 pub use model::{
     AutoplaceConfig, BoardSpec, ComponentSpec, FootprintMapSpec, FootprintRef, FootprintSpec,
     GraphicProperties, GraphicSpec, GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec,
-    PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinPadMap, PinSpec,
+    PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType, PinPadMap, PinSpec,
     PlacementClearanceSpec, PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec,
     PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec, PrjPcbSpec, ProjectSpec, SchDocSpec,
-    SchLibSpec, SpecDomain, SpecModel, UnplacedStrategy,
+    SpecDomain, SpecModel, SymSpec, UnplacedStrategy,
 };
 #[cfg(feature = "altium-apply")]
 pub use reconciler::{

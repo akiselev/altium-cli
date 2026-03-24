@@ -1,6 +1,6 @@
 # Python API Design (PyO3)
 
-Design notes for a Python binding to `altium-format-ops` via PyO3, targeted at
+Design notes for a Python binding to `autopcb-spec` via PyO3, targeted at
 LLM agents writing scripts to manipulate Altium files.
 
 ## Goals
@@ -31,7 +31,7 @@ LLM agents writing scripts to manipulate Altium files.
 +-------------+---------------+
               |
 +-------------v---------------+
-|  altium-format-ops (Rust)   |
+|  autopcb-spec (Rust)   |
 |  (unchanged)                |
 +-----------------------------+
 ```

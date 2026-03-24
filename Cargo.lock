@@ -173,7 +173,6 @@ dependencies = [
  "altium-format-query",
  "altium-format-render-png",
  "altium-format-render-svg",
- "altium-format-spec",
  "altium-format-types",
  "anyhow",
  "autopcb-graph",
@@ -183,6 +182,7 @@ dependencies = [
  "autopcb-placement",
  "autopcb-router",
  "autopcb-routes",
+ "autopcb-spec",
  "cfb",
  "clap",
  "clap_complete",
@@ -263,21 +263,6 @@ dependencies = [
  "altium-format",
  "altium-format-types",
  "svg",
-]
-
-[[package]]
-name = "altium-format-spec"
-version = "0.2.0"
-dependencies = [
- "altium-format",
- "altium-format-types",
- "indexmap",
- "proptest",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -747,9 +732,9 @@ name = "autopcb-ir"
 version = "0.2.0"
 dependencies = [
  "altium-format",
- "altium-format-spec",
  "altium-format-types",
  "autopcb-routes",
+ "autopcb-spec",
  "indexmap",
  "serde",
  "thiserror 2.0.18",
@@ -811,7 +796,6 @@ version = "0.2.0"
 dependencies = [
  "altium-format",
  "altium-format-render-png",
- "altium-format-spec",
  "altium-format-types",
  "anyhow",
  "autopcb-graph",
@@ -819,6 +803,7 @@ dependencies = [
  "autopcb-graph-spec",
  "autopcb-ir",
  "autopcb-placement",
+ "autopcb-spec",
  "clap",
  "eframe",
  "egui_dock",
@@ -831,13 +816,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopcb-spec"
+version = "0.1.0"
+dependencies = [
+ "altium-format",
+ "altium-format-types",
+ "indexmap",
+ "proptest",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "autopcb-viewer"
 version = "0.2.0"
 dependencies = [
- "altium-format-spec",
  "anyhow",
  "autopcb-ir",
  "autopcb-placement",
+ "autopcb-spec",
  "bytemuck",
  "eframe",
  "egui-wgpu",

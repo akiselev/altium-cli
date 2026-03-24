@@ -1,10 +1,10 @@
 [package]
-name = "altium-format-spec"
-version = "0.2.0"
+name = "autopcb-spec"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 
-description = "Spec language for declarative Altium Designer library definitions."
+description = "Spec language for declarative EDA design definitions."
 license = "Apache-2.0"
 repository = "https://github.com/akiselev/altium-cli"
 homepage = "https://github.com/akiselev/altium-cli"

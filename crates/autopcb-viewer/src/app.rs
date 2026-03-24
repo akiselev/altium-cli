@@ -55,7 +55,7 @@ pub struct ViewerApp {
     watch_rx: Option<mpsc::Receiver<notify::Result<notify::Event>>>,
     /// Path to the playback JSON file; reloaded when the file changes.
     playback_path: Option<PathBuf>,
-    /// Path to the `.pcbdoc-spec` file (always required).
+    /// Path to the `.pcb` file (always required).
     spec_path: PathBuf,
     /// Timestamp of the most recent successful reload; shown in the sidebar.
     last_reloaded: Option<std::time::SystemTime>,

@@ -5,13 +5,13 @@
 ### The Linking Chain
 
 ```
-pcblib-spec -> PcbLib (footprint geometry)
+.sym (footprint) -> PcbLib (footprint geometry)
                 ^ footprint name
-schlib-spec -> SchLib (symbol definitions: pins, graphics, parameters, footprint refs)
+.sym (component) -> SchLib (symbol definitions: pins, graphics, parameters, footprint refs)
                 ^ LIBREFERENCE + SOURCELIBRARYNAME
-schdoc-spec -> SchDoc (placed instances + wires + nets)
+.sch             -> SchDoc (placed instances + wires + nets)
                 ^ SourceDesignator + SourceUniqueId + net names
-pcbdoc-spec -> PcbDoc (placed footprints + routed copper)
+.pcb             -> PcbDoc (placed footprints + routed copper)
 ```
 
 ### SchDoc -> SchLib Linking (The Key Mechanism)
@@ -161,7 +161,7 @@ R1 = place $lib.R_0603 {
 ```
 
 The `place` keyword bridges library definitions to sheet instances:
-1. Looks up component in imported schlib-spec
+1. Looks up component in imported `.sym` file
 2. Creates SchComponent with LIBREFERENCE + SOURCELIBRARYNAME
 3. Copies all pins, parameters, graphics from library
 4. Applies instance overrides
@@ -245,13 +245,13 @@ See `design-questions.md` for full rationale.
 ### 1. All Imports Are Named References
 
 No bare imports. Every import requires `as alias`. Each spec file produces exactly
-one output file. Bare import composition (merging schlib-specs) is dropped — SchDoc
+one output file. Bare import composition (merging `.sym` files) is dropped — `.sch`
 specs reference individual library specs directly, which is how real Altium projects
 work anyway.
 
 ```
-import "passives.schlib-spec" as passives
-import "ics.schlib-spec" as ics
+import "passives.sym" as passives
+import "ics.sym" as ics
 import "vendor-parts.SchLib" as vendor      // compiled binary import too
 
 R1 = place $passives.R_0603 { at: (1in, 1in), value: "10K" }
@@ -337,5 +337,5 @@ See `docs/schdoc/plan.md` §10 for the full identity architecture.
 
 ### 4. PcbDoc Extension (Future)
 
-Full chain completion: pcbdoc-spec -> PcbDoc with component placement from
-schdoc-spec netlist, net routing, copper pours, design rules.
+Full chain completion: `.pcb` spec → PcbDoc with component placement from
+`.sch` spec netlist, net routing, copper pours, design rules.

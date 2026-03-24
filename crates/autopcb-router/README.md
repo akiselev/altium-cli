@@ -7,7 +7,7 @@ and imported back into the spec pipeline.
 ## Architecture
 
 ```
-pcbdoc-spec (source of truth)
+board.pcb (source of truth)
   │
   ├── spec compiler ──→ PcbIr (board model in mm)
   │                       │
@@ -26,7 +26,7 @@ spec compiler apply ──→ PcbDoc output (tracks, vias from route solution)
 ```
 
 **PcbDoc is never a direct input.** Everything flows through
-`pcbdoc-spec` → `PcbIr` → `autopcb-router`.
+the `.pcb` spec file → `PcbIr` → `autopcb-router`.
 
 ## Derived-State-Only Policy
 
@@ -38,7 +38,7 @@ fresh from `PcbIr` + `RoutingConfig` for each invocation and never persisted.
 ## Data Flow
 
 ```
-pcbdoc-spec ──parse──→ PcbDocSpec
+board.pcb ──parse──→ PcbDocSpec
                          │
                          ├── RoutingSpec (grid resolution, max iterations, via costs, seed)
                          └── target PcbDoc path
@@ -94,7 +94,7 @@ Re-exported types: `RoutingConfig`, `RoutingWorkspace`, `GridConfig`, `RoutingPo
 ## RoutingConfig
 
 All fields have `#[serde(default)]` — an empty `{}` is valid. Designed for
-deserialization from the `routing { ... }` block in `pcbdoc-spec`.
+deserialization from the `routing { ... }` block in a `.pcb` spec file.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|

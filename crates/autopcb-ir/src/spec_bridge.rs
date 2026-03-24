@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use altium_format_spec::PcbDocSpec;
+use autopcb_spec::PcbDocSpec;
 use autopcb_routes::RouteSolution;
 
 use crate::component::IrComponent;
@@ -20,7 +20,7 @@ use crate::IrError;
 
 /// Load a [`PcbIr`] from a compiled [`PcbDocSpec`].
 ///
-/// `footprint_libs` maps import aliases to compiled [`PcbLibSpec`]s for
+/// `footprint_libs` maps import aliases to compiled [`SymSpec`]s for
 /// resolving `footprint: $fp.Name` references on components.
 ///
 /// Pipeline:
@@ -29,7 +29,7 @@ use crate::IrError;
 /// 3. Load and merge routing solution if available
 pub fn load_ir_from_spec(
     spec: &PcbDocSpec,
-    footprint_libs: &std::collections::HashMap<String, altium_format_spec::model::PcbLibSpec>,
+    footprint_libs: &std::collections::HashMap<String, autopcb_spec::model::SymSpec>,
     spec_dir: &Path,
 ) -> crate::Result<PcbIr> {
     let mut ir = spec_to_ir(spec, footprint_libs).map_err(|e| {

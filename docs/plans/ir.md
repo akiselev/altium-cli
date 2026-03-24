@@ -2,8 +2,8 @@
 
 ## Overview
 
-Replace the current lossy `pcbdoc-spec -> SpecModel -> executor -> PcbDoc -> extract -> PcbIr`
-pipeline with a direct `pcbdoc-spec -> SpecModel -> spec_to_ir() -> PcbIr` compiler that
+Replace the current lossy `.pcb spec -> SpecModel -> executor -> PcbDoc -> extract -> PcbIr`
+pipeline with a direct `.pcb spec -> SpecModel -> spec_to_ir() -> PcbIr` compiler that
 preserves all spec information (rule scope, placement constraints, annotations) without
 touching PcbDoc types. PcbDoc import is a separate adapter that generates spec models,
 making PcbDoc just another import format alongside future KiCad support.
@@ -23,7 +23,7 @@ they'll be replaced with IR-native types in a later PR.
 | Add geometry to spec language | Full spec independence is required -> board outline and pad shapes must be spec-native -> cannot depend on PcbDoc for geometry -> spec language needs `outline`, `keepout`, `pad` geometry blocks |
 | Resolve scope at compile time | Scope evaluation needs net/layer context -> compiler has all nets and layers -> resolving at compile produces concrete LayerId/net-class sets -> router/DRC gets precomputed lookups, no string parsing at query time |
 | altium-format-types OK for now | Domain enums (RuleKind, CornerStyle, NetTopology) are semantic concepts, not format internals -> replacing them is mechanical -> defer to a later PR to avoid scope creep |
-| No altium-format imports in new compiler | altium-format contains PcbDoc/SchLib/etc document types -> these are format-specific parsing artifacts -> spec_to_ir() must depend only on altium-format-spec (SpecModel) and altium-format-types (domain enums) |
+| No altium-format imports in new compiler | altium-format contains PcbDoc/SchLib/etc document types -> these are format-specific parsing artifacts -> spec_to_ir() must depend only on autopcb-spec (SpecModel) and altium-format-types (domain enums) |
 | Keep extract.rs as legacy import path | Existing PcbDoc files need to be imported -> import adapter reads PcbDoc and produces PcbDocSpec -> spec_to_ir() is the canonical IR compilation path; extract.rs is available for direct PcbDoc extraction |
 | IrDesignRule has resolved scope (IrRuleScopePair) | Raw scope strings are Altium-specific syntax -> resolved scope is format-independent -> IrRuleScope with concrete layer/net-class sets works for any import format |
 | BTreeMap for all scope resolution tables | Determinism invariant from CLAUDE.md -> HashMap non-deterministic iteration -> BTreeMap everywhere in IR and policy |
@@ -36,7 +36,7 @@ they'll be replaced with IR-native types in a later PR.
 | IrRuleScope uses explicit match cascade, not BTreeMap Ord | Cascade lookup is priority-based (exact > class > layer > All) -> BTreeMap Ord would impose variant-declaration order -> explicit match arms make priority visible and auditable -> no Ord derivation needed on IrRuleScope |
 | Roundtrip tolerance 1e-9 mm for M5 comparison | Coord->mm is integer/10000.0, exact in f64 for all Altium coordinate values (|Coord| < 2^31) -> 1e-9 is effectively exact equality -> an off-by-one Coord error (0.0001mm = 1e-4 mm) would be caught since 1e-4 >> 1e-9 |
 | `IrCompileError` as the error type for spec_to_ir() and import_pcbdoc() | autopcb-ir cannot import `AltiumFormatError` (bars altium-format) -> `SpecError` is semantically wrong for IR-specific errors (e.g., duplicate designator, missing net) -> new `IrCompileError` enum in autopcb-ir provides IR-specific variants -> both `spec_to_ir()` and `import_pcbdoc()` use it since they are part of the same compilation pipeline |
-| Spec file wins on merge conflict | The spec file is the source of truth (Invisible Knowledge, Architecture) -> when PcbDocSpec from import_pcbdoc() and mutations from the .pcbdoc-spec file conflict on the same field, the spec file value overwrites the imported value -> import adapter provides defaults, spec file provides overrides. For Option fields: Some(v) overwrites, None preserves import value (non-destructive merge) |
+| Spec file wins on merge conflict | The spec file is the source of truth (Invisible Knowledge, Architecture) -> when PcbDocSpec from import_pcbdoc() and mutations from the .pcb file conflict on the same field, the spec file value overwrites the imported value -> import adapter provides defaults, spec file provides overrides. For Option fields: Some(v) overwrites, None preserves import value (non-destructive merge) |
 | `PcbDocRuleSpec` has `scope2: Option<String>` field | Altium two-object rules (Clearance, ComponentClearance) have both scope and scope2 -> dropping scope2 silently scopes clearance rules wrong (e.g., Power-to-Signal becomes Power-to-all) -> PcbDocRuleSpec needs `scope2: Option<String>` -> spec_to_ir() resolves both scope strings into a two-object IrRuleScope variant or falls back to All with a warning |
 
 ### Rejected Alternatives
@@ -52,10 +52,10 @@ they'll be replaced with IR-native types in a later PR.
 
 - `altium-format-types` dependency is acceptable (domain enums, coordinate types)
 - `altium-format` dependency is NOT acceptable in the new spec compiler module
-- `altium-format-spec` dependency IS needed (provides SpecModel/PcbDocSpec)
+- `autopcb-spec` dependency IS needed (provides SpecModel/PcbDocSpec)
 - All coordinates in IR remain mm-based (f64), converted from Coord at compile time
 - Spec language extensions (outline, pad geometry) use existing parser infrastructure
-- Tests use `.pcbdoc-spec` fixture files, gated behind `test-fixtures` feature
+- Tests use `.pcb` fixture files, gated behind `test-fixtures` feature
 - CLAUDE.md fail-fast: unknown rule kinds must hard-error, not silently skip
 
 ### Known Risks
@@ -72,7 +72,7 @@ they'll be replaced with IR-native types in a later PR.
 ### Architecture
 
 ```
-pcbdoc-spec file (source of truth)
+.pcb spec file (source of truth)
      |
      v
 SpecModel (PcbDocSpec)           PcbDoc file (import source)
@@ -129,7 +129,7 @@ The PcbDoc import adapter preserves Altium's native scope syntax (which uses the
 
 ### Invariants
 
-- `spec_to_ir()` never imports from `altium_format` (only `altium_format_types` and `altium_format_spec`)
+- `spec_to_ir()` never imports from `altium_format` (only `altium_format_types` and `autopcb_spec`)
 - All scope resolution happens during compilation, not at query time
 - PcbIr is the same struct regardless of whether source is spec or imported PcbDoc
 - Handle IDs (ComponentId, NetId, etc.) are assigned sequentially during compilation
@@ -231,9 +231,9 @@ The PcbDoc import adapter preserves Altium's native scope syntax (which uses the
 ### Milestone 3: Spec Language Geometry Extensions
 
 **Files**:
-- `crates/altium-format-spec/src/model.rs`
-- `crates/altium-format-spec/src/compiler.rs`
-- `crates/altium-format-spec/src/parser.rs` (if separate from compiler)
+- `crates/autopcb-spec/src/model.rs`
+- `crates/autopcb-spec/src/compiler.rs`
+- `crates/autopcb-spec/src/parser.rs` (if separate from compiler)
 
 **Flags**: `conformance`
 
@@ -251,7 +251,7 @@ The PcbDoc import adapter preserves Altium's native scope syntax (which uses the
 - Spec files without geometry blocks compile correctly (fields are Optional)
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/` (inline or fixtures)
+- **Test files**: `crates/autopcb-spec/` (inline or fixtures)
 - **Test type**: unit + integration (spec file parsing)
 - **Backing**: user-specified
 - **Scenarios**:
@@ -283,7 +283,7 @@ The PcbDoc import adapter preserves Altium's native scope syntax (which uses the
 
 **Requirements**:
 - `pub fn spec_to_ir(spec: &PcbDocSpec) -> Result<PcbIr>` compiles PcbDocSpec directly to PcbIr
-- NO imports from `altium_format` — only `altium_format_spec` and `altium_format_types`
+- NO imports from `altium_format` — only `autopcb_spec` and `altium_format_types`
 - Handles: layer stack, board geometry, nets, net classes, diff pairs, components with pads, rules with scope resolution, free copper, polygons, texts, regions
 - Coordinate conversion: Coord -> mm via `.to_mms()` at compilation boundary
 - Layer resolution: `LayerSpec` -> `LayerId` using built layer stack
@@ -384,7 +384,7 @@ The PcbDoc import adapter preserves Altium's native scope syntax (which uses the
 **Code Intent**:
 - CLI calls `load_ir_from_spec()`, which internally routes through `import_pcbdoc()` -> `spec_to_ir()`
 - Verify no direct `PcbIr::extract()` calls exist in CLI code
-- Add one integration test with a minimal `.pcbdoc-spec` fixture that exercises the spec_to_ir() compilation pipeline end-to-end
+- Add one integration test with a minimal `.pcb` fixture that exercises the spec_to_ir() compilation pipeline end-to-end
 
 ---
 

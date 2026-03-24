@@ -9,8 +9,8 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime};
 
 use altium_format_render_png::{DEFAULT_SCALE, render_schlib_component_png};
-use altium_format_spec::parser::parse_spec;
-use altium_format_spec::{
+use autopcb_spec::parser::parse_spec;
+use autopcb_spec::{
     SpecDomain, SpecModel, apply_spec_schdoc, apply_spec_schlib, compile_spec,
 };
 use altium_format_types::coord::{Coord, CoordPoint};
@@ -2418,8 +2418,7 @@ impl ShellApp {
                     path.display()
                 )),
             },
-            "sch" | "sym" | "pcb" | "wrk-spec" | "spec" | "pcbdoc-spec" | "schdoc-spec"
-            | "prjpcb-spec" | "schlib-spec" => match fs::read_to_string(&path) {
+            "sch" | "sym" | "pcb" | "proj" | "wrk-spec" | "spec" => match fs::read_to_string(&path) {
                 Ok(text) => {
                     match spec_open_mode_for_extension(ext.as_str()) {
                         SpecOpenMode::SchLibGallery => {
@@ -3586,28 +3585,22 @@ impl ShellApp {
                     "sch",
                     "sym",
                     "pcb",
+                    "proj",
                     "graph-spec",
                     "spec",
-                    "wrk-spec",
-                    "pcbdoc-spec",
-                    "schdoc-spec",
-                    "prjpcb-spec",
-                    "schlib-spec",
                 ],
             )
-            .add_filter("Workspace Project", &["wrk", "prjpcb"])
-            .add_filter("Board", &["pcbdoc", "pcb", "pcbdoc-spec"])
+            .add_filter("Workspace Project", &["wrk", "prjpcb", "proj"])
+            .add_filter("Board", &["pcbdoc", "pcb"])
             .add_filter("Graph Workspace", &["graph-spec"])
             .add_filter(
                 "Spec Source",
                 &[
                     "sch",
                     "sym",
+                    "pcb",
+                    "proj",
                     "spec",
-                    "wrk-spec",
-                    "schdoc-spec",
-                    "prjpcb-spec",
-                    "schlib-spec",
                 ],
             );
         if let Some(root) = &self.model.workspace_root {
@@ -4744,9 +4737,9 @@ fn png_to_color_image(bytes: &[u8]) -> Result<ColorImage, String> {
 
 fn build_schlib_from_spec_source(source_text: &str) -> Result<altium_format::SchLib, String> {
     let ast = parse_spec(source_text).map_err(|e| e.to_string())?;
-    let model = compile_spec(&ast, SpecDomain::SchLib).map_err(|e| e.to_string())?;
-    let SpecModel::SchLib(spec) = model else {
-        return Err("spec did not compile as SchLib".to_owned());
+    let model = compile_spec(&ast, SpecDomain::Sym).map_err(|e| e.to_string())?;
+    let SpecModel::Sym(spec) = model else {
+        return Err("spec did not compile as Sym".to_owned());
     };
     let mut lib = altium_format::SchLib::new_blank_ad26().map_err(|e| e.to_string())?;
     let _ = lib.remove_component("Component_1");
@@ -4756,9 +4749,9 @@ fn build_schlib_from_spec_source(source_text: &str) -> Result<altium_format::Sch
 
 fn build_schdoc_from_spec_source(source_text: &str) -> Result<altium_format::SchDoc, String> {
     let ast = parse_spec(source_text).map_err(|e| e.to_string())?;
-    let model = compile_spec(&ast, SpecDomain::SchDoc).map_err(|e| e.to_string())?;
-    let SpecModel::SchDoc(spec) = model else {
-        return Err("spec did not compile as SchDoc".to_owned());
+    let model = compile_spec(&ast, SpecDomain::Sch).map_err(|e| e.to_string())?;
+    let SpecModel::Sch(spec) = model else {
+        return Err("spec did not compile as Sch".to_owned());
     };
     let mut doc = altium_format::SchDoc::new_blank_ad26();
     apply_spec_schdoc(&spec, &mut doc, &std::collections::HashMap::new()).map_err(|e| e.to_string())?;
@@ -4774,8 +4767,8 @@ enum SpecOpenMode {
 
 fn spec_open_mode_for_extension(ext: &str) -> SpecOpenMode {
     match ext {
-        "sym" | "schlib-spec" => SpecOpenMode::SchLibGallery,
-        "sch" | "schdoc-spec" => SpecOpenMode::SchDocPreview,
+        "sym" => SpecOpenMode::SchLibGallery,
+        "sch" => SpecOpenMode::SchDocPreview,
         _ => SpecOpenMode::SourceText,
     }
 }
@@ -4929,13 +4922,9 @@ mod tests {
     }
 
     #[test]
-    fn sym_extensions_open_in_library_viewer() {
+    fn sym_extension_opens_in_library_viewer() {
         assert_eq!(
             spec_open_mode_for_extension("sym"),
-            SpecOpenMode::SchLibGallery
-        );
-        assert_eq!(
-            spec_open_mode_for_extension("schlib-spec"),
             SpecOpenMode::SchLibGallery
         );
     }
@@ -4944,10 +4933,6 @@ mod tests {
     fn schematic_spec_extensions_open_in_preview_viewer() {
         assert_eq!(
             spec_open_mode_for_extension("sch"),
-            SpecOpenMode::SchDocPreview
-        );
-        assert_eq!(
-            spec_open_mode_for_extension("schdoc-spec"),
             SpecOpenMode::SchDocPreview
         );
         assert_eq!(

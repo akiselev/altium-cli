@@ -8,7 +8,7 @@ Rust workspace for reading, writing, and querying Altium Designer files.
 * **crates/altium-format-derive** Derive macros for serialization code generation
 * **crates/altium-format-types** Raw types types reverse engineered from Altium
 * **crates/altium-format**  Core library for Altium file parsing and manipulation
-* **crates/altium-format-spec**  Spec language compiler, executor, and reconciler
+* **crates/autopcb-spec**  Spec language compiler, executor, and reconciler
 * **crates/altium-cli**  Command-line tool for file inspection and manipulation
 
 ## Architecture
@@ -22,12 +22,12 @@ altium-format-derive (proc macros, no runtime deps)
      ↓
 altium-format (core library: parsing, querying, editing)
      ↓
-altium-format-spec (spec language: compiler, executor, reconciler)
+autopcb-spec (spec language: compiler, executor, reconciler)
      ↓
 altium-cli (binary: CLI interface, output formatting)
 ```
 
-**Publishing order:** types → derive → format → spec → cli.
+**Publishing order:** types → derive → format → autopcb-spec → cli.
 
 **Versioning:** Synchronized versions (all crates at same version for initial releases).
 
@@ -113,7 +113,7 @@ We MUST NEVER silently drop parsing or other errors or silently corrupt data. Ev
 # Error Handling
 
 * altium-format uses altium-format::AltiumFormatError
-* altium-format-spec uses altium-format-spec::SpecError
+* autopcb-spec uses autopcb-spec::SpecError
 * altium-cli uses anyhow
 
 **Error context is mandatory**: Every fallible call at a parsing boundary MUST use
@@ -351,7 +351,7 @@ When adding new tests:
 - When proptest finds a failure, keep/minimize the seed and commit/update regression files with the fix.
 - Use targeted test runs while developing:
   - `cargo test -p altium-format <test_name>`
-  - `cargo test -p altium-format-spec <test_name>`
+  - `cargo test -p autopcb-spec <test_name>`
   then run broader suites before finishing.
 
 

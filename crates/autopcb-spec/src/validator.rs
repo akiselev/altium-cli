@@ -135,7 +135,7 @@ pub fn validate_schdoc_spec(spec: &SchDocSpec) -> Result<Vec<SpecError>, Vec<Spe
     // The pin name/existence check is deferred to Phase 4 (resolver); here we
     // emit a warning for any net pin_ref whose pin designator we cannot verify
     // statically.  Since SchDocSpec has no pin inventory (that lives in
-    // SchLibSpec), every net pin reference that names a real component is a
+    // SymSpec), every net pin reference that names a real component is a
     // candidate warning.  We skip this check if we already errored on the
     // component reference (dangling refs) to avoid noise.
     for sheet in &spec.sheets {

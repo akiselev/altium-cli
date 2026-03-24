@@ -1,6 +1,6 @@
 > **Related docs**: [ops-design.md](ops-design.md) | [ops-lang-spec.md](ops-lang-spec.md) | [schlib-ops.md](schlib-ops.md) | [schdoc-ops.md](schdoc-ops.md) | [ops-e2e-gaps.md](ops-e2e-gaps.md) | [ops-lang-checklist.md](ops-lang-checklist.md)
 
-# altium-format-ops High-Level Operations Design
+# autopcb-spec High-Level Operations Design
 
 ## Architecture Overview
 
@@ -10,7 +10,7 @@ altium-format          Low-level crate. Exposes records, fields, document
                        "Here are the raw records, have at it."
        │
        ▼
-altium-format-ops      High-level operations. Composes records into
+autopcb-spec      High-level operations. Composes records into
 (domain operations)    meaningful actions. Owns specs, query lang,
                        record-chain orchestration.
                        "add_component(doc, spec) handles the 12-record chain."
@@ -110,7 +110,7 @@ about records, indices, and serialization. The ops crate provides the domain int
 | **PcbLib** | `add_footprint(spec)` | Per-footprint CFB storages, 13-byte PcbPrimitiveCommon headers, PcbPadCache (38 bytes), PcbPadStackData (596 bytes), 6 pad subrecords, UniqueID/WideStrings sidecars, V6→V7 layer mapping |
 | **IntLib** | `.symbols()` / `.footprints()` | CFB container extraction, embedded SchLib/PcbLib byte streams, LibCrossRef.txt |
 
-## Layer 2: Operations (altium-format-ops)
+## Layer 2: Operations (autopcb-spec)
 
 Operations are **functions**, not methods on objects. Each takes a document reference + a spec/selector.
 
@@ -183,9 +183,9 @@ encoding, and parameter ordering. The ops just construct correct in-memory recor
 #### Three-tier lowering pipeline
 
 ```
-HighOp (YAML/JSON)           altium-format-ops    User-facing spec
+HighOp (YAML/JSON)           autopcb-spec    User-facing spec
   ↓ lower_high_ops()
-ComposedOp                   altium-format-ops    Flat sequence, one op per record
+ComposedOp                   autopcb-spec    Flat sequence, one op per record
   ↓ lower_composed_to_schlib_low()
 SchLibLowOp                  altium-format        Crate-boundary types (no internal records)
   ↓ apply_schlib_low_ops()
@@ -320,7 +320,7 @@ record list, and (for mutations) calls `ops_recompute_header_weight()`.
 
 #### Execution boundaries
 
-- `altium-format-ops` lowers spec into `Vec<SchLibLowOp>` via pure mapping functions.
+- `autopcb-spec` lowers spec into `Vec<SchLibLowOp>` via pure mapping functions.
 - `altium-format` owns all record construction, default values, and legacy field handling.
 - No internal record types (`SchRecord`, `SchComponent`, etc.) cross the crate boundary.
 
@@ -486,7 +486,7 @@ Expression evaluator resolution order becomes:
 
 ### Clean crate split
 
-- `altium-format-ops`: high-level ops, query language, expression parsing/evaluation,
+- `autopcb-spec`: high-level ops, query language, expression parsing/evaluation,
   lowering, `opid` result-table orchestration.
 - `altium-format`: low-level execution and record mutation over crate-private types;
   returns typed `OpResult` payloads for the orchestrator.
@@ -976,7 +976,7 @@ the agent computes before generating the spec.
 ### Current (implemented)
 
 ```
-altium-format-ops/src/
+autopcb-spec/src/
   ops/
     mod.rs               apply_schdoc(), apply_schlib(), spec parsing
     model.rs             HighOp, ComposedOp, AddComponentOp, AddPinOp, ApplyReport
@@ -997,7 +997,7 @@ altium-format/src/
 ### Planned additions
 
 ```
-altium-format-ops/src/
+autopcb-spec/src/
   spec/                  (future: smart spec evaluation)
     mod.rs               SpecValue, deserialization, value classification
     expr.rs              Expression parser (grammar → AST)

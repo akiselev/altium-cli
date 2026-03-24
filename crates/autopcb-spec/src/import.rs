@@ -293,22 +293,19 @@ fn dfs(
 
 // ── Cross-domain validation ───────────────────────────────────────────────────
 
-/// Determine the spec domain from a file path's compound extension.
+/// Determine the spec domain from a file path's extension.
 ///
-/// `foo.schlib-spec` → SchLib, `bar.pcblib-spec` → PcbLib.
-/// `Path::extension()` returns only the last `.`-component, so for
-/// `foo.schlib-spec` it returns `"spec"`.  We therefore match on the
-/// full file name suffix.
+/// `foo.sym` → Sym, `bar.sch` → Sch, `baz.pcb` → Pcb, `qux.proj` → Proj.
 fn file_domain(path: &Path) -> FileDomain {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if name.ends_with(".schlib-spec") {
-        FileDomain::SchLib
-    } else if name.ends_with(".pcblib-spec") {
-        FileDomain::PcbLib
-    } else if name.ends_with(".prjpcb-spec") {
-        FileDomain::PrjPcb
-    } else if name.ends_with(".schdoc-spec") {
-        FileDomain::SchDoc
+    if name.ends_with(".sym") {
+        FileDomain::Sym
+    } else if name.ends_with(".sch") {
+        FileDomain::Sch
+    } else if name.ends_with(".pcb") {
+        FileDomain::Pcb
+    } else if name.ends_with(".proj") {
+        FileDomain::Proj
     } else {
         FileDomain::Unknown
     }
@@ -316,10 +313,10 @@ fn file_domain(path: &Path) -> FileDomain {
 
 #[derive(Debug, PartialEq)]
 enum FileDomain {
-    SchLib,
-    PcbLib,
-    PrjPcb,
-    SchDoc,
+    Sym,
+    Sch,
+    Pcb,
+    Proj,
     Unknown,
 }
 
@@ -374,7 +371,7 @@ mod tests {
     #[test]
     fn no_imports_returns_root() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let root_path = tmp.path().join("root.schlib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
         let ast = empty_spec();
@@ -390,13 +387,13 @@ mod tests {
     fn named_import_stored_under_alias() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let fp_path = tmp.path().join("pads.pcblib-spec");
+        let fp_path = tmp.path().join("pads.sym");
         std::fs::write(&fp_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.schlib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("pads.pcblib-spec", Some("fp"))]);
+        let root_ast = spec_with_imports(vec![import_decl("pads.sym", Some("fp"))]);
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
 
         assert_eq!(resolved.named_imports.len(), 1);
@@ -410,13 +407,13 @@ mod tests {
     fn bare_import_appears_in_bare_imports() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let passives_path = tmp.path().join("passives.schlib-spec");
+        let passives_path = tmp.path().join("passives.sym");
         std::fs::write(&passives_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.schlib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("passives.schlib-spec", None)]);
+        let root_ast = spec_with_imports(vec![import_decl("passives.sym", None)]);
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
 
         assert!(resolved.named_imports.is_empty());
@@ -429,13 +426,13 @@ mod tests {
     fn cycle_detection_error() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        // a.schlib-spec imports b.schlib-spec
-        // b.schlib-spec imports a.schlib-spec  → cycle
-        let a_path = tmp.path().join("a.schlib-spec");
-        let b_path = tmp.path().join("b.schlib-spec");
+        // a.sym imports b.sym
+        // b.sym imports a.sym  → cycle
+        let a_path = tmp.path().join("a.sym");
+        let b_path = tmp.path().join("b.sym");
 
-        std::fs::write(&a_path, r#"import "b.schlib-spec""#).unwrap();
-        std::fs::write(&b_path, r#"import "a.schlib-spec""#).unwrap();
+        std::fs::write(&a_path, r#"import "b.sym""#).unwrap();
+        std::fs::write(&b_path, r#"import "a.sym""#).unwrap();
 
         let a_source = std::fs::read_to_string(&a_path).unwrap();
         let a_ast = parse_spec(&a_source).unwrap();
@@ -455,17 +452,17 @@ mod tests {
     fn duplicate_alias_error() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let f1_path = tmp.path().join("f1.pcblib-spec");
-        let f2_path = tmp.path().join("f2.pcblib-spec");
+        let f1_path = tmp.path().join("f1.sym");
+        let f2_path = tmp.path().join("f2.sym");
         std::fs::write(&f1_path, "").unwrap();
         std::fs::write(&f2_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.schlib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
         let root_ast = spec_with_imports(vec![
-            import_decl("f1.pcblib-spec", Some("fp")),
-            import_decl("f2.pcblib-spec", Some("fp")), // duplicate alias
+            import_decl("f1.sym", Some("fp")),
+            import_decl("f2.sym", Some("fp")), // duplicate alias
         ]);
 
         let err = resolve_imports(&root_path, root_ast).unwrap_err();
@@ -476,16 +473,16 @@ mod tests {
     // ── Test: cross-domain imports are allowed ──────────────────────────────
 
     #[test]
-    fn pcblib_can_import_schlib() {
+    fn sym_can_import_sym() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let sch_path = tmp.path().join("comps.schlib-spec");
+        let sch_path = tmp.path().join("comps.sym");
         std::fs::write(&sch_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.pcblib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("comps.schlib-spec", None)]);
+        let root_ast = spec_with_imports(vec![import_decl("comps.sym", None)]);
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
         assert_eq!(resolved.bare_imports.len(), 1);
     }
@@ -498,17 +495,17 @@ mod tests {
 
         // Both files define component "R" — no longer an error because each
         // import targets a different output file.
-        let f1_path = tmp.path().join("f1.schlib-spec");
-        let f2_path = tmp.path().join("f2.schlib-spec");
+        let f1_path = tmp.path().join("f1.sym");
+        let f2_path = tmp.path().join("f2.sym");
         std::fs::write(&f1_path, "component R {}").unwrap();
         std::fs::write(&f2_path, "component R {}").unwrap();
 
-        let root_path = tmp.path().join("root.schlib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
         let root_ast = spec_with_imports(vec![
-            import_decl("f1.schlib-spec", None),
-            import_decl("f2.schlib-spec", None),
+            import_decl("f1.sym", None),
+            import_decl("f2.sym", None),
         ]);
 
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
@@ -518,46 +515,46 @@ mod tests {
     // ── Test: PrjPcb cross-domain rules ───────────────────────────────────────
 
     #[test]
-    fn prjpcb_can_import_schlib() {
+    fn proj_can_import_sym() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let sch_path = tmp.path().join("comps.schlib-spec");
+        let sch_path = tmp.path().join("comps.sym");
         std::fs::write(&sch_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.prjpcb-spec");
+        let root_path = tmp.path().join("root.proj");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("comps.schlib-spec", None)]);
+        let root_ast = spec_with_imports(vec![import_decl("comps.sym", None)]);
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
         assert_eq!(resolved.bare_imports.len(), 1);
     }
 
     #[test]
-    fn prjpcb_can_import_pcblib() {
+    fn proj_can_import_pcb() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let pcb_path = tmp.path().join("pads.pcblib-spec");
+        let pcb_path = tmp.path().join("pads.sym");
         std::fs::write(&pcb_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.prjpcb-spec");
+        let root_path = tmp.path().join("root.proj");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("pads.pcblib-spec", None)]);
+        let root_ast = spec_with_imports(vec![import_decl("pads.sym", None)]);
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
         assert_eq!(resolved.bare_imports.len(), 1);
     }
 
     #[test]
-    fn prjpcb_can_import_prjpcb() {
+    fn proj_can_import_proj() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let nested_path = tmp.path().join("other.prjpcb-spec");
+        let nested_path = tmp.path().join("other.proj");
         std::fs::write(&nested_path, "").unwrap();
 
-        let root_path = tmp.path().join("root.prjpcb-spec");
+        let root_path = tmp.path().join("root.proj");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("other.prjpcb-spec", None)]);
+        let root_ast = spec_with_imports(vec![import_decl("other.proj", None)]);
         let resolved = resolve_imports(&root_path, root_ast).unwrap();
         assert_eq!(resolved.bare_imports.len(), 1);
     }
@@ -567,10 +564,10 @@ mod tests {
     #[test]
     fn file_not_found_error() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let root_path = tmp.path().join("root.schlib-spec");
+        let root_path = tmp.path().join("root.sym");
         std::fs::write(&root_path, "").unwrap();
 
-        let root_ast = spec_with_imports(vec![import_decl("nonexistent.schlib-spec", None)]);
+        let root_ast = spec_with_imports(vec![import_decl("nonexistent.sym", None)]);
         let err = resolve_imports(&root_path, root_ast).unwrap_err();
         assert_eq!(err.code, SpecErrorCode::FileNotFound);
     }

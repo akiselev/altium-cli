@@ -11,15 +11,15 @@
 Show ECO without mutating the document.
 
 ```bash
-altium plan my-parts.schlib-spec
-altium plan my-parts.schlib-spec --target existing.SchLib
-altium plan my-parts.schlib-spec --json
+altium plan my-parts.sym
+altium plan my-parts.sym --target existing.SchLib
+altium plan my-parts.sym --json
 ```
 
 ```rust
 #[derive(clap::Args)]
 struct PlanArgs {
-    /// Path to the spec file (.schlib-spec or .pcblib-spec)
+    /// Path to the spec file (.sym or .sym)
     spec_file: PathBuf,
 
     /// Existing document to reconcile against (optional)
@@ -34,7 +34,7 @@ struct PlanArgs {
 
 **Behavior**:
 1. Read spec file
-2. Determine domain from extension (`.schlib-spec` or `.pcblib-spec`)
+2. Determine domain from extension (`.sym` or `.sym`)
 3. Load target document:
    - If `--target` given, use it
    - Otherwise, look for default output file (same base name + `.SchLib`/`.PcbLib`)
@@ -49,10 +49,10 @@ struct PlanArgs {
 Generate ECO and execute it.
 
 ```bash
-altium apply my-parts.schlib-spec
-altium apply my-parts.schlib-spec --target existing.SchLib
-altium apply my-parts.schlib-spec --output custom.SchLib
-altium apply my-parts.schlib-spec --report-json
+altium apply my-parts.sym
+altium apply my-parts.sym --target existing.SchLib
+altium apply my-parts.sym --output custom.SchLib
+altium apply my-parts.sym --report-json
 ```
 
 ```rust
@@ -95,7 +95,7 @@ Reverse-generate a spec file from an existing document.
 
 ```bash
 altium dump my-parts.SchLib
-altium dump my-parts.PcbLib --output footprints.pcblib-spec
+altium dump my-parts.PcbLib --output footprints.sym
 ```
 
 ```rust
@@ -114,7 +114,7 @@ struct DumpArgs {
 1. Load document
 2. Determine domain from extension
 3. Generate spec source
-4. Write to output path (default: same base name + `.schlib-spec`/`.pcblib-spec`)
+4. Write to output path (default: same base name + `.sym`/`.sym`)
 
 ## Domain Detection
 
@@ -143,8 +143,8 @@ For `apply`, the output file is determined by:
 1. `--output` flag (explicit override)
 2. `--target` flag (update in place)
 3. Default: spec file base name + domain extension
-   - `foo.schlib-spec` -> `foo.SchLib`
-   - `foo.pcblib-spec` -> `foo.PcbLib`
+   - `foo.sym` -> `foo.SchLib`
+   - `foo.sym` -> `foo.PcbLib`
 
 ## Error Handling
 
@@ -154,7 +154,7 @@ location and context:
 ```
 error[E_CROSS_EDGE_REFERENCE]: pin '$p2' (on $body.right) is not on
   the same edge as pin '3' (on $body.left)
-  --> my-parts.schlib-spec:12:5
+  --> my-parts.sym:12:5
    |
 12 |     pin 3 { on: $body.left, after: $p2, gap: 60mil }
    |                                    ^^^ cross-edge reference
@@ -177,7 +177,7 @@ altium dump ...       # NEW (reverse generation)
 ```
 
 Note: `altium apply` (spec) and `altium ops apply` (ops) are distinct commands.
-The spec `apply` operates on `.schlib-spec`/`.pcblib-spec` files. The ops
+The spec `apply` operates on `.sym`/`.sym` files. The ops
 `apply` operates on `.ops` files with the imperative syntax.
 
 ## Test Strategy

@@ -337,10 +337,7 @@ impl ShellApp {
                 {
                     IconId::Spec
                 } else if name.to_ascii_lowercase().ends_with(".spec")
-                    || name.to_ascii_lowercase().ends_with(".pcbdoc-spec")
-                    || name.to_ascii_lowercase().ends_with(".schdoc-spec")
-                    || name.to_ascii_lowercase().ends_with(".schlib-spec")
-                    || name.to_ascii_lowercase().ends_with(".prjpcb-spec")
+                    || name.to_ascii_lowercase().ends_with(".proj")
                 {
                     IconId::Spec
                 } else {

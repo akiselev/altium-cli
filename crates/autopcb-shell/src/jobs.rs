@@ -6,8 +6,8 @@ use std::thread;
 use std::time::Instant;
 
 use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
-use altium_format_spec::model::SchDocObjectSpec;
-use altium_format_spec::{dump_pcbdoc, dump_prjpcb, dump_schdoc, dump_schlib};
+use autopcb_spec::model::SchDocObjectSpec;
+use autopcb_spec::{dump_pcbdoc, dump_prjpcb, dump_schdoc, dump_schlib};
 use autopcb_graph_import_altium::{import_pcblib, import_schlib};
 use autopcb_graph_spec::save_workspace;
 use autopcb_ir::PcbIr;
@@ -287,19 +287,19 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
             } else if ext == "pcb" {
                 let source = std::fs::read_to_string(&board_path).map_err(|e| e.to_string())?;
                 let ast =
-                    altium_format_spec::parser::parse_spec(&source).map_err(|e| e.to_string())?;
+                    autopcb_spec::parser::parse_spec(&source).map_err(|e| e.to_string())?;
                 let model =
-                    altium_format_spec::compile_spec(&ast, altium_format_spec::SpecDomain::PcbDoc)
+                    autopcb_spec::compile_spec(&ast, autopcb_spec::SpecDomain::Pcb)
                         .map_err(|e| e.to_string())?;
                 match model {
-                    altium_format_spec::SpecModel::PcbDoc(_) => {
+                    autopcb_spec::SpecModel::Pcb(_) => {
                         let _ = tx.send(JobEvent::Artifact(
                             id,
                             JobArtifact::BoardSpecValidated { path: board_path },
                         ));
                         Ok("Native board spec validated".to_owned())
                     }
-                    _ => Err("native .pcb file did not compile as PcbDoc".to_owned()),
+                    _ => Err("native .pcb file did not compile as Pcb".to_owned()),
                 }
             } else {
                 Err(format!(
@@ -331,12 +331,12 @@ fn run_job(req: JobRequest, tx: Sender<JobEvent>, cancel: CancelHandle) {
             } else if ext == "sch" {
                 let source = std::fs::read_to_string(&schematic_path).map_err(|e| e.to_string())?;
                 let ast =
-                    altium_format_spec::parser::parse_spec(&source).map_err(|e| e.to_string())?;
+                    autopcb_spec::parser::parse_spec(&source).map_err(|e| e.to_string())?;
                 let model =
-                    altium_format_spec::compile_spec(&ast, altium_format_spec::SpecDomain::SchDoc)
+                    autopcb_spec::compile_spec(&ast, autopcb_spec::SpecDomain::Sch)
                         .map_err(|e| e.to_string())?;
                 match model {
-                    altium_format_spec::SpecModel::SchDoc(doc) => {
+                    autopcb_spec::SpecModel::Sch(doc) => {
                         let mut component_count = 0usize;
                         let mut net_label_count = 0usize;
                         for sheet in doc.sheets {

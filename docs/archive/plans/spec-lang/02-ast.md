@@ -6,8 +6,8 @@
 
 ## Design
 
-The spec AST represents the parsed structure of a `.schlib-spec` or
-`.pcblib-spec` file before type checking, scope resolution, or coordinate
+The spec AST represents the parsed structure of a `.sym` or
+`.sym` file before type checking, scope resolution, or coordinate
 computation. Every node carries a `Span` for error reporting.
 
 ## Top-Level
@@ -31,7 +31,7 @@ pub enum SpecItem {
 
 ```rust
 pub struct ImportDecl {
-    pub path: Spanned<String>,           // "standard-footprints.pcblib-spec"
+    pub path: Spanned<String>,           // "standard-footprints.sym"
     pub alias: Option<Spanned<String>>,  // as footprints
 }
 ```

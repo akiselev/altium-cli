@@ -111,7 +111,7 @@ altium-format (parsing, serialization)
      ↓
 altium-format-ir  ←── NEW ──── depends on altium-format + types
      ↓
-altium-format-spec (spec compiler uses IR for lookups)
+autopcb-spec (spec compiler uses IR for lookups)
      ↓
 altium-cli (CLI uses IR for inspect/placement/DRC commands)
 
@@ -124,7 +124,7 @@ solverang ← depends on altium-format-ir (for PcbIr → ConstraintSystem input)
 The IR crate depends on `altium-format` (for extraction) and
 `altium-format-types` (for shared enums like `V6Layer`, `PadShape`, etc.).
 It does NOT depend on `solverang` — the bridge from IR to solver types
-lives in `solverang-pcb` or `altium-format-spec`.
+lives in `solverang-pcb` or `autopcb-spec`.
 
 ### Why Not Just Extend the `api/` Module?
 
@@ -684,7 +684,7 @@ pub enum IrExtractionError {
 The IR is designed to be consumed by multiple downstream systems. Each consumer
 has a thin bridge layer that maps IR types to its own domain.
 
-### 7.1 Solverang Bridge (in `solverang-pcb` or `altium-format-spec`)
+### 7.1 Solverang Bridge (in `solverang-pcb` or `autopcb-spec`)
 
 ```rust
 /// Convert PcbIr into solverang ConstraintSystem with entities + constraints.

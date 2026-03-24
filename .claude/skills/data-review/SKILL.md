@@ -121,7 +121,7 @@ If the user specifies a scope, use it. Otherwise, audit all Rust source files in
 crates/altium-format/src/**/*.rs         (primary target — all parsing lives here)
 crates/altium-format-derive/src/**/*.rs  (codegen — verify generated patterns are safe)
 crates/altium-format-types/src/**/*.rs   (type definitions — verify completeness)
-crates/altium-format-ops/src/**/*.rs     (operations — verify they don't bypass parsing)
+crates/autopcb-spec/src/**/*.rs          (spec DSL — verify no parsing shortcuts)
 ```
 
 ### 2. Scan systematically

@@ -65,10 +65,10 @@ The query engine (altium-format-query) needs a PcbDoc entity adapter.
 
 ## 4c: `altium dump` for PcbDoc
 
-Generate `.pcbdoc-spec` source from an existing PcbDoc file.
+Generate `.pcb` source from an existing PcbDoc file.
 
 **Implementation:**
-- New function in `altium-format-spec/src/dump.rs`: `dump_pcbdoc()`
+- New function in `autopcb-spec/src/dump.rs`: `dump_pcbdoc()`
 - Iterate board collections and primitives
 - Generate spec syntax with auto-generated IDs as block-level names
 - Use `{type}_{index}` format for primitive names

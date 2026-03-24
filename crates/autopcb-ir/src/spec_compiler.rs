@@ -1,12 +1,12 @@
 //! Direct spec-to-IR compiler.
 //!
 //! Converts a [`PcbDocSpec`] into a [`PcbIr`] without touching `altium_format`.
-//! Only `altium_format_spec` and `altium_format_types` are used.
+//! Only `autopcb_spec` and `altium_format_types` are used.
 
 use std::collections::{BTreeMap, HashMap};
 
-use altium_format_spec::model::{
-    BoardLayerSpec, BoardSpec, PadGeometrySpec, PadSpec, PcbDocSpec, PcbLibSpec,
+use autopcb_spec::model::{
+    BoardLayerSpec, BoardSpec, PadGeometrySpec, PadSpec, PcbDocSpec, SymSpec,
 };
 use indexmap::IndexMap;
 use altium_format_types::PadShape;
@@ -30,14 +30,14 @@ use crate::types::{BoardSide, BoundingBoxMm, PointMm};
 
 /// Compile a [`PcbDocSpec`] directly to a [`PcbIr`].
 ///
-/// `footprint_libs` maps import aliases to compiled [`PcbLibSpec`]s. When a
+/// `footprint_libs` maps import aliases to compiled [`SymSpec`]s. When a
 /// component declares `footprint: $fp.LQFP100`, the compiler looks up
 /// `footprint_libs["fp"]` and resolves pads from the matching footprint.
 ///
 /// Returns [`IrCompileError::NoBoardsDefined`] when the spec contains no boards.
 pub fn spec_to_ir(
     spec: &PcbDocSpec,
-    footprint_libs: &HashMap<String, PcbLibSpec>,
+    footprint_libs: &HashMap<String, SymSpec>,
 ) -> Result<PcbIr, IrCompileError> {
     let board = spec.boards.first().ok_or(IrCompileError::NoBoardsDefined)?;
 
@@ -191,7 +191,7 @@ fn compile_components(
     net_lookup: &BTreeMap<String, NetId>,
     layer_lookup: &BTreeMap<String, LayerId>,
     layer_stack: &IrLayerStack,
-    footprint_libs: &HashMap<String, PcbLibSpec>,
+    footprint_libs: &HashMap<String, SymSpec>,
 ) -> Result<IdMap<ComponentId, IrComponent>, IrCompileError> {
     let mut components: IdMap<ComponentId, IrComponent> =
         IdMap::with_capacity(board.components.len());
@@ -218,7 +218,7 @@ fn compile_components(
 
         // Determine side from layer spec name.
         let side = match &comp_spec.layer {
-            Some(altium_format_spec::model::LayerSpec::NamedLayer(name))
+            Some(autopcb_spec::model::LayerSpec::Named(name))
                 if name.contains("Bottom") =>
             {
                 BoardSide::Bottom
@@ -228,7 +228,7 @@ fn compile_components(
 
         // Pad resolution priority:
         // 1. Explicit pads on the component spec (from PcbDoc import or inline spec)
-        // 2. Footprint ref → resolve from imported pcblib-spec
+        // 2. Footprint ref → resolve from imported .sym file
         // 3. No pads (stub component)
         let ir_pads = if !comp_spec.pads.is_empty() {
             // Path 1: Pads already inlined (PcbDoc import path). Positions are
@@ -243,7 +243,7 @@ fn compile_components(
                 &mut next_pad_id,
             )?
         } else if let Some(ref fp_ref) = comp_spec.footprint {
-            // Path 2: Resolve pads from imported pcblib-spec footprint.
+            // Path 2: Resolve pads from imported .sym file footprint.
             let lib = footprint_libs.get(&fp_ref.import_alias).ok_or_else(|| {
                 IrCompileError::UnknownFootprint(
                     fp_ref.import_alias.clone(),
@@ -298,7 +298,7 @@ fn compile_components(
     Ok(components)
 }
 
-/// Resolve pads from a pcblib-spec footprint. Pad positions in `PadSpec` are
+/// Resolve pads from a .sym footprint. Pad positions in `PadSpec` are
 /// footprint-relative; we convert to world coordinates using the component's
 /// position and rotation. Net assignments come from `pad_nets`.
 fn resolve_footprint_pads(
@@ -350,14 +350,10 @@ fn resolve_footprint_pads(
             all_copper_layers.to_vec()
         } else {
             match &pad.layer {
-                Some(altium_format_spec::model::LayerSpec::NamedLayer(n)) => {
+                Some(autopcb_spec::model::LayerSpec::Named(n)) => {
                     layer_lookup.get(n.as_str()).copied().into_iter().collect()
                 }
-                Some(altium_format_spec::model::LayerSpec::CopperPosition(_)) => Vec::new(),
-                Some(altium_format_spec::model::LayerSpec::Resolved(r)) => {
-                    let name = format!("{r:?}");
-                    layer_lookup.get(&name).copied().into_iter().collect()
-                }
+                Some(autopcb_spec::model::LayerSpec::CopperPosition(_)) => Vec::new(),
                 // Default: top layer (first copper layer).
                 None => all_copper_layers.first().copied().into_iter().collect(),
             }
@@ -436,11 +432,8 @@ fn compile_pads(
             all_copper_layers.to_vec()
         } else {
             let layer_name = match &pad_spec.layer {
-                altium_format_spec::model::LayerSpec::NamedLayer(n) => n.clone(),
-                altium_format_spec::model::LayerSpec::Resolved(r) => {
-                    format!("{r:?}")
-                }
-                altium_format_spec::model::LayerSpec::CopperPosition(_) => String::new(),
+                autopcb_spec::model::LayerSpec::Named(n) => n.clone(),
+                autopcb_spec::model::LayerSpec::CopperPosition(_) => String::new(),
             };
             layer_lookup
                 .get(&layer_name)
@@ -945,9 +938,8 @@ fn compile_board_geometry(board: &BoardSpec) -> Result<IrBoardGeometry, IrCompil
                 .map(|cp| PointMm::new(cp.x.to_mms(), cp.y.to_mms()))
                 .collect(),
             layer_name: kz.layer.as_ref().map(|l| match l {
-                altium_format_spec::model::LayerSpec::NamedLayer(n) => n.clone(),
-                altium_format_spec::model::LayerSpec::Resolved(r) => format!("{r:?}"),
-                altium_format_spec::model::LayerSpec::CopperPosition(n) => {
+                autopcb_spec::model::LayerSpec::Named(n) => n.clone(),
+                autopcb_spec::model::LayerSpec::CopperPosition(n) => {
                     format!("copper({n})")
                 }
             }),
@@ -969,7 +961,7 @@ fn compile_board_geometry(board: &BoardSpec) -> Result<IrBoardGeometry, IrCompil
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_spec::model::{
+    use autopcb_spec::model::{
         BoardLayerSpec, BoardSpec, PcbDocComponentSpec, PcbDocNetSpec, PcbDocRuleSpec, PcbDocSpec,
     };
     use altium_format_types::{Coord, CoordPoint};
@@ -1105,14 +1097,14 @@ mod tests {
     // ── Shape function → outline pipeline tests ─────────────────────────────
 
     fn parse_and_compile_pcbdoc(source: &str) -> PcbDocSpec {
-        use altium_format_spec::compiler::compile_spec;
-        use altium_format_spec::model::SpecDomain;
-        use altium_format_spec::parser::parse_spec;
+        use autopcb_spec::compiler::compile_spec;
+        use autopcb_spec::model::SpecDomain;
+        use autopcb_spec::parser::parse_spec;
 
         let file = parse_spec(source).expect("parse_spec should succeed");
-        match compile_spec(&file, SpecDomain::PcbDoc).expect("compile_spec should succeed") {
-            altium_format_spec::model::SpecModel::PcbDoc(spec) => spec,
-            _ => panic!("expected PcbDoc model"),
+        match compile_spec(&file, SpecDomain::Pcb).expect("compile_spec should succeed") {
+            autopcb_spec::model::SpecModel::Pcb(spec) => spec,
+            _ => panic!("expected Pcb model"),
         }
     }
 

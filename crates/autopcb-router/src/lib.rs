@@ -2,7 +2,7 @@
 //!
 //! Receives [`autopcb_ir::PcbIr`] (produced by the spec compiler) and
 //! [`config::RoutingConfig`], and returns a [`autopcb_routes::RouteSolution`]
-//! that is serialized to a `.routes` file and imported back into `pcbdoc-spec`.
+//! that is serialized to a `.routes` file and imported back into `.pcb` files.
 //!
 //! **Derived-state-only policy**: this crate defines NO board IR types. All
 //! geometry, component, net, pad, and rule types come from `autopcb-ir`. The
@@ -11,7 +11,7 @@
 //! `PcbIr` + `RoutingConfig` for each routing invocation and never persisted.
 //!
 //! **PcbDoc is never a direct input.** Everything flows through
-//! `pcbdoc-spec` → `PcbIr` → `autopcb-router`.
+//! `.pcb` → `PcbIr` → `autopcb-router`.
 
 #![allow(dead_code)]
 

@@ -3076,10 +3076,10 @@ mod tests {
 
     #[test]
     fn test_import_bare() {
-        let f = parse(r#"import "foo.pcblib-spec""#);
+        let f = parse(r#"import "foo.sym""#);
         assert_eq!(f.items.len(), 1);
         if let SpecItem::Import(imp) = &f.items[0].node {
-            assert_eq!(imp.path.node, "foo.pcblib-spec");
+            assert_eq!(imp.path.node, "foo.sym");
             assert!(imp.alias.is_none());
         } else {
             panic!("expected Import");
@@ -3088,9 +3088,9 @@ mod tests {
 
     #[test]
     fn test_import_with_alias() {
-        let f = parse(r#"import "standard-footprints.pcblib-spec" as footprints"#);
+        let f = parse(r#"import "standard-footprints.sym" as footprints"#);
         if let SpecItem::Import(imp) = &f.items[0].node {
-            assert_eq!(imp.path.node, "standard-footprints.pcblib-spec");
+            assert_eq!(imp.path.node, "standard-footprints.sym");
             assert_eq!(imp.alias.as_ref().unwrap().node, "footprints");
         } else {
             panic!("expected Import");
@@ -3597,7 +3597,7 @@ footprint BGA256 {
     #[test]
     fn test_example_1_passives() {
         let src = r#"
-// passives.schlib-spec
+// passives.sym
 let passive_pin = { electrical: passive, length: 25, side: outside }
 let two_pin_body = { from: (-20mil, -10mil), to: (20mil, 10mil), is_solid: true }
 
@@ -3673,7 +3673,7 @@ footprint BGA256 {
     #[test]
     fn test_example_4_multipart() {
         let src = r#"
-import "standard-footprints.pcblib-spec" as fp
+import "standard-footprints.sym" as fp
 
 component LM358 {
     designator: "U?"

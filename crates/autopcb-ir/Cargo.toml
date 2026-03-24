@@ -9,7 +9,7 @@ workspace = true
 
 [dependencies]
 altium-format = { version = "0.2.0", path = "../altium-format", optional = true }
-altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
+autopcb-spec = { version = "0.1.0", path = "../autopcb-spec" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 autopcb-routes = { version = "0.2.0", path = "../autopcb-routes" }
 indexmap = "2"

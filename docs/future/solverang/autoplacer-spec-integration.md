@@ -1,6 +1,6 @@
 # Autoplacer ↔ Spec Language Integration Design
 
-The autoplacer operates on `.pcbdoc-spec` files, not PcbDoc binaries directly.
+The autoplacer operates on `.pcb` files, not PcbDoc binaries directly.
 This document defines the spec syntax extensions and the autoplacer's workflow.
 
 
@@ -8,7 +8,7 @@ This document defines the spec syntax extensions and the autoplacer's workflow.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  USER writes partial .pcbdoc-spec                                │
+│  USER writes partial .pcb                                │
 │  (locked components, groups, constraints, autoplace directives) │
 └──────────────────────────────┬───────────────────────────────────┘
                                ▼
@@ -23,14 +23,14 @@ This document defines the spec syntax extensions and the autoplacer's workflow.
 └──────────────────────────────┬───────────────────────────────────┘
                                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  AUTOPLACER writes UPDATED .pcbdoc-spec                          │
+│  AUTOPLACER writes UPDATED .pcb                          │
 │  Replaces `autoplace: true` with explicit `at: (x, y)` + rotation│
 │  Preserves all user-written constraints and locked components    │
 │  Result is a complete, human-readable placement specification    │
 └──────────────────────────────┬───────────────────────────────────┘
                                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  `altium placement apply board.pcbdoc-spec`                      │
+│  `altium placement apply board.pcb`                      │
 │  Reconciler reads spec, writes component positions to PcbDoc     │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -178,7 +178,7 @@ place $power_supply {
 
 ## 3. Autoplacer Output Format
 
-The autoplacer rewrites the `.pcbdoc-spec` file, preserving structure and comments.
+The autoplacer rewrites the `.pcb` file, preserving structure and comments.
 
 ### 3.1 What Changes
 
@@ -369,7 +369,7 @@ Step 1: User writes minimal spec
    }
 
 Step 2: Run autoplacer
-   $ altium placement autoplace board.pcbdoc-spec
+   $ altium placement autoplace board.pcb
 
 Step 3: User reviews output spec, adjusts
    // "I don't like where R5 ended up, move it near U1"
@@ -380,14 +380,14 @@ Step 3: User reviews output spec, adjusts
    }
 
 Step 4: Re-run autoplacer (only re-places autoplace:true components)
-   $ altium placement autoplace board.pcbdoc-spec
+   $ altium placement autoplace board.pcb
 
 Step 5: User locks in final positions
    // Change autoplace comments to explicit positions
    // Remove `autoplace: true` to lock components
 
 Step 6: Apply to PcbDoc
-   $ altium placement apply board.pcbdoc-spec
+   $ altium placement apply board.pcb
 ```
 
 
@@ -395,23 +395,23 @@ Step 6: Apply to PcbDoc
 
 ```bash
 # Run autoplacer on spec file (writes updated spec)
-altium placement autoplace board.pcbdoc-spec
-altium placement autoplace board.pcbdoc-spec --target my-board.PcbDoc
-altium placement autoplace board.pcbdoc-spec --dry-run    # show plan only
-altium placement autoplace board.pcbdoc-spec --output board-placed.pcbdoc-spec
+altium placement autoplace board.pcb
+altium placement autoplace board.pcb --target my-board.PcbDoc
+altium placement autoplace board.pcb --dry-run    # show plan only
+altium placement autoplace board.pcb --output board-placed.pcb
 
 # Plan: show what would change without writing
-altium placement plan board.pcbdoc-spec
+altium placement plan board.pcb
 
 # Apply: write resolved spec positions to PcbDoc binary
-altium placement apply board.pcbdoc-spec
+altium placement apply board.pcb
 
 # Dump: extract current PcbDoc positions as spec file
 altium placement dump my-board.PcbDoc
-altium placement dump my-board.PcbDoc --output board.pcbdoc-spec
+altium placement dump my-board.PcbDoc --output board.pcb
 
 # DRC
-altium drc my-board.PcbDoc --rules board.pcbdoc-spec
+altium drc my-board.PcbDoc --rules board.pcb
 ```
 
 

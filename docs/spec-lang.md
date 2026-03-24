@@ -1,7 +1,7 @@
 # Altium Spec Language Specification
 
 Version: 0.3
-File extensions: `.schlib-spec`, `.pcblib-spec`, `.schdoc-spec`, `.prjpcb-spec`, `.pcbdoc-spec`
+File extensions: `.sym`, `.sym`, `.sch`, `.proj`, `.pcb`
 
 ## 1. Overview
 
@@ -38,36 +38,36 @@ file twice is a no-op.
 
 | Extension | Domain | Output file |
 |-----------|--------|-------------|
-| `.schlib-spec` | SchLib | `.schlib` (same base name) |
-| `.pcblib-spec` | PcbLib | `.pcblib` (same base name) |
-| `.schdoc-spec` | SchDoc | `.schdoc` (same base name) |
-| `.prjpcb-spec` | PrjPcb | `.prjpcb` (same base name) |
-| `.pcbdoc-spec` | PcbDoc | `.pcbdoc` (same base name) |
+| `.sym` | SchLib | `.schlib` (same base name) |
+| `.sym` | PcbLib | `.pcblib` (same base name) |
+| `.sch` | SchDoc | `.schdoc` (same base name) |
+| `.proj` | PrjPcb | `.prjpcb` (same base name) |
+| `.pcb` | PcbDoc | `.pcbdoc` (same base name) |
 
-Default output: `foo.schlib-spec` → `foo.SchLib`. Override with `--output`.
+Default output: `foo.sym` → `foo.SchLib`. Override with `--output`.
 
 ### 3.2 CLI Commands
 
 ```bash
 # Plan: show ECO without mutating
-altium plan my-parts.schlib-spec
-altium plan my-footprints.pcblib-spec
+altium plan my-parts.sym
+altium plan my-footprints.sym
 
 # Apply: generate ECO + execute
-altium apply my-parts.schlib-spec                     # creates/updates my-parts.SchLib
-altium apply my-parts.schlib-spec --output custom.SchLib
+altium apply my-parts.sym                     # creates/updates my-parts.SchLib
+altium apply my-parts.sym --output custom.SchLib
 
 # Plan/apply with an existing document (update mode)
-altium plan my-parts.schlib-spec --target existing.SchLib
-altium apply my-parts.schlib-spec --target existing.SchLib
+altium plan my-parts.sym --target existing.SchLib
+altium apply my-parts.sym --target existing.SchLib
 
 # Dump: reverse-generate a spec from an existing library
-altium dump my-parts.SchLib                            # outputs my-parts.schlib-spec
-altium dump my-parts.PcbLib --output footprints.pcblib-spec
+altium dump my-parts.SchLib                            # outputs my-parts.sym
+altium dump my-parts.PcbLib --output footprints.sym
 
 # JSON output
-altium plan my-parts.schlib-spec --json
-altium apply my-parts.schlib-spec --report-json
+altium plan my-parts.sym --json
+altium apply my-parts.sym --report-json
 ```
 
 When no `--target` is given, the tool looks for the output file (e.g., `my-parts.SchLib`).
@@ -81,7 +81,7 @@ declarations**:
 
 ```
 // Imports
-import "standard-footprints.pcblib-spec" as footprints
+import "standard-footprints.sym" as footprints
 
 // Shared templates
 let passive_pin = { electrical: passive, length: 25, side: outside }
@@ -675,8 +675,8 @@ schematic defines the netlist, the PCB libraries define footprints, and the boar
 places and routes everything.
 
 ```
-import "hydro.schdoc-spec" as sch
-import "hydro-passives.pcblib-spec" as passives
+import "hydro.sch" as sch
+import "hydro-passives.sym" as passives
 
 board "HydroController" {
     signal_layer_count: 4
@@ -800,7 +800,7 @@ defined in an imported PcbLib spec (analogous to how SchDoc components reference
 symbols from SchLib):
 
 ```
-import "footprints.pcblib-spec" as fp
+import "footprints.sym" as fp
 
 component U1 {
     footprint: $fp.QFP48          // reference to imported footprint
@@ -858,14 +858,14 @@ Spec files can import other spec files to:
 ### 6.1 Named Import (Namespace)
 
 ```
-import "standard-footprints.pcblib-spec" as footprints
+import "standard-footprints.sym" as footprints
 ```
 
 Brings the imported file's declarations under a namespace. Access via `$footprints.NAME`
 or `$footprints["Name With Spaces"]`:
 
 ```
-import "standard-footprints.pcblib-spec" as footprints
+import "standard-footprints.sym" as footprints
 
 component MCU32 {
     designator: "U?"
@@ -889,7 +889,7 @@ component MCU32 {
 ### 6.2 Bare Import (Merge)
 
 ```
-import "common-passives.schlib-spec"
+import "common-passives.sym"
 ```
 
 Merges the imported file's declarations into the current file's scope. Component and
@@ -898,14 +898,14 @@ footprint declarations from the imported file are treated as if written inline.
 This enables splitting a library into multiple source files:
 
 ```
-// all-parts.schlib-spec (the main spec)
-import "passives.schlib-spec"
-import "connectors.schlib-spec"
-import "ics.schlib-spec"
+// all-parts.sym (the main spec)
+import "passives.sym"
+import "connectors.sym"
+import "ics.sym"
 ```
 
 ```bash
-altium apply all-parts.schlib-spec    # creates/updates all-parts.SchLib
+altium apply all-parts.sym    # creates/updates all-parts.SchLib
 ```
 
 ### 6.3 Import Semantics
@@ -916,10 +916,10 @@ altium apply all-parts.schlib-spec    # creates/updates all-parts.SchLib
   (only entity declarations are merged). Use named import for templates.
 
 **Cross-domain import rules:**
-- `.schlib-spec` can import `.schlib-spec` (bare or named)
-- `.schlib-spec` can import `.pcblib-spec` (named only — for footprint refs)
-- `.pcblib-spec` can import `.pcblib-spec` (bare or named)
-- `.pcblib-spec` **cannot** import `.schlib-spec` (error)
+- `.sym` can import `.sym` (bare or named)
+- `.sym` can import `.sym` (named only — for footprint refs)
+- `.sym` can import `.sym` (bare or named)
+- `.sym` **cannot** import `.sym` (error)
 
 **Bare import collision**: If two bare imports define entities with the same
 identity key, this is a **hard error at plan/typecheck time** (not at parse
@@ -927,7 +927,7 @@ time, since identity keys are only known after all imports are resolved):
 
 ```
 error[E_DUPLICATE_ENTITY]: component 'R' defined in both
-  'passives.schlib-spec' (line 12) and 'connectors.schlib-spec' (line 8)
+  'passives.sym' (line 12) and 'connectors.sym' (line 8)
 ```
 
 There is no last-wins or first-wins behavior. Resolve by renaming the
@@ -938,10 +938,10 @@ Two imports with the same alias is a parse-time error:
 
 ```
 error[E_DUPLICATE_IMPORT_ALIAS]: import alias 'fp' already defined
-  --> my-parts.schlib-spec:2:1
+  --> my-parts.sym:2:1
   |
-  1 | import "footprints-a.pcblib-spec" as fp
-  2 | import "footprints-b.pcblib-spec" as fp
+  1 | import "footprints-a.sym" as fp
+  2 | import "footprints-b.sym" as fp
   |                                        ^^ duplicate alias
 ```
 
@@ -950,22 +950,22 @@ cycle is detected during import resolution:
 
 ```
 error[E_CIRCULAR_IMPORT]: circular import detected
-  a.schlib-spec → b.schlib-spec → a.schlib-spec
+  a.sym → b.sym → a.sym
 ```
 
 ### 6.4 Footprint Linking via Import
 
-When a component references a footprint from an imported pcblib-spec, the system
+When a component references a footprint from an imported `.sym` file, the system
 validates that the footprint exists and that the pin-to-pad map is consistent:
 
 ```
-import "footprints.pcblib-spec" as fp
+import "footprints.sym" as fp
 
 component R {
     pin 1 { ... }
     pin 2 { ... }
 
-    // Links to footprint "0603" defined in footprints.pcblib-spec
+    // Links to footprint "0603" defined in footprints.sym
     footprint $fp.R0603 {
         map { pin: 1, pad: 1 }
         map { pin: 2, pad: 2 }
@@ -980,13 +980,13 @@ component R {
 ```
 
 **Footprint validation**: When a component references a footprint from an
-imported pcblib-spec (`footprint $fp.DIP8 { ... }`), validation is against the
-spec definition — the referenced `.pcblib-spec` file must be importable and
+imported `.sym` file (`footprint $fp.DIP8 { ... }`), validation is against the
+spec definition — the referenced `.sym` file must be importable and
 must define the named footprint. The referenced PcbLib file does NOT need to
 exist on disk (validation is spec-to-spec, not spec-to-binary).
 
 When applying, the tool validates that:
-1. The referenced footprint exists in the pcblib-spec
+1. The referenced footprint exists in the imported `.sym` file
 2. All mapped pads exist in the footprint definition
 3. All mapped pins exist in the component
 4. No pad is mapped more than once (error: `E_DUPLICATE_MAP`)
@@ -1346,7 +1346,7 @@ transitively through spread or field access, this is an error:
 ```
 error[E_CIRCULAR_BINDING]: binding 'a' has circular reference
   through 'b' → 'a'
-  --> my-parts.schlib-spec:3:1
+  --> my-parts.sym:3:1
   |
   3 | let a = { ...b, x: 1 }
   |     ^ cycle starts here
@@ -1479,7 +1479,7 @@ The `altium plan` command generates a full ECO suitable for hardware development
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  ENGINEERING CHANGE ORDER                                          ║
 ║  Library: my-parts.SchLib                                          ║
-║  Spec:    my-parts.schlib-spec                                     ║
+║  Spec:    my-parts.sym                                     ║
 ║  Date:    2026-02-26 14:30:00 UTC                                  ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -1565,8 +1565,8 @@ struct PropChange {
 - Creating a baseline for version-controlled library specs
 
 ```bash
-altium dump my-parts.SchLib                    # → my-parts.schlib-spec
-altium dump my-parts.PcbLib --output fp.pcblib-spec
+altium dump my-parts.SchLib                    # → my-parts.sym
+altium dump my-parts.PcbLib --output fp.sym
 ```
 
 The generated spec includes:
@@ -1589,7 +1589,7 @@ has its own entry point to the shared LowOp execution layer.
 ### 14.1 Execution Path
 
 ```
-Spec file (.schlib-spec / .pcblib-spec)
+Spec file (.sym / .sym)
     ↓ parse_spec()
 SpecModel (semantic representation)
     ↓ reconcile(doc, spec_model)
@@ -1623,7 +1623,7 @@ reconciler — the mapping to LowOps is self-contained:
 | `Unchanged { ... }` | *(no-op)* |
 
 LowOps are the **public inter-crate contract** between `altium-format` and
-`altium-format-ops` — the existing `composed_to_schlib_low.rs` files already
+`autopcb-spec` — the existing `composed_to_schlib_low.rs` files already
 construct LowOp structs directly. The spec executor follows the same pattern.
 
 ### 14.2 Low-Level Ops Required for Reconciliation
@@ -1920,7 +1920,7 @@ declarations (pins, pads, graphics, etc.). Entity-specific declarations like
 ### Example 1: Basic Passive Library
 
 ```
-// passives.schlib-spec
+// passives.sym
 let passive_pin = { electrical: passive, length: 25, side: outside }
 let two_pin_body = { from: (-20mil, -10mil), to: (20mil, 10mil), is_solid: true }
 
@@ -1958,7 +1958,7 @@ component L {
 ### Example 2: QFP with Row Placement
 
 ```
-// qfp.pcblib-spec
+// qfp.sym
 let qfp_pad = { shape: rectangular, x_size: 1.5mm, y_size: 0.3mm, layer: "TopLayer", hole_size: 0 }
 
 footprint QFP32 {
@@ -1984,7 +1984,7 @@ footprint QFP32 {
 ### Example 3: BGA with Grid
 
 ```
-// bga.pcblib-spec
+// bga.sym
 footprint BGA256 {
     description: "256-ball BGA, 1mm pitch"
     height: 1.5mm
@@ -2005,8 +2005,8 @@ footprint BGA256 {
 ### Example 4: Multi-Part IC with Import
 
 ```
-// ics.schlib-spec
-import "standard-footprints.pcblib-spec" as fp
+// ics.sym
+import "standard-footprints.sym" as fp
 
 let input_pin = { electrical: input, length: 25, side: outside }
 let output_pin = { electrical: output, length: 25, side: outside }
@@ -2054,14 +2054,14 @@ component LM358 {
 ### Example 5: Composable Library Files
 
 ```
-// my-library.schlib-spec (main entry point)
-import "passives.schlib-spec"
-import "connectors.schlib-spec"
-import "ics.schlib-spec"
+// my-library.sym (main entry point)
+import "passives.sym"
+import "connectors.sym"
+import "ics.sym"
 ```
 
 ```bash
-altium apply my-library.schlib-spec  # creates/updates my-library.SchLib with all components
+altium apply my-library.sym  # creates/updates my-library.SchLib with all components
 ```
 
 

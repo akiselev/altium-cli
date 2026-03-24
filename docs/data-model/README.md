@@ -13,7 +13,7 @@ The goal is to define a modern canonical design graph that:
 Documents in this directory:
 
 - `current-state-and-goals.md`
-  - Summary of the current model gaps in `autopcb-ir`, `autopcb-shell`, and `altium-format-spec`
+  - Summary of the current model gaps in `autopcb-ir`, `autopcb-shell`, and `autopcb-spec`
   - Design goals for the replacement model
 - `kicad-comparison.md`
   - What KiCad's model gets right

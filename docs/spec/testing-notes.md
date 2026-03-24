@@ -1,6 +1,6 @@
 # Spec Language Testing Gap Analysis
 
-Status: as of 2026-02-27, covering `crates/altium-format-spec/` v0.2.0
+Status: as of 2026-02-27, covering `crates/autopcb-spec/` v0.2.0
 
 ## Current Coverage (258 unit tests)
 
@@ -17,7 +17,7 @@ Status: as of 2026-02-27, covering `crates/altium-format-spec/` v0.2.0
 | **Executor** | **0** | **Completely untested** |
 | AST/Model/Diagnostic | 0 | Data types only — acceptable |
 
-## Reusable Infrastructure from altium-format / altium-format-ops
+## Reusable Infrastructure from altium-format / autopcb-spec
 
 These exist and should be reused by spec tests:
 
@@ -60,8 +60,8 @@ fn spec_apply_schlib_validates() {
         }
     "#;
     let ast = parse_spec(source);
-    let model = compile_spec(&ast, SpecDomain::SchLib).unwrap();
-    let spec = match model { SpecModel::SchLib(s) => s, _ => panic!() };
+    let model = compile_spec(&ast, SpecDomain::Sym).unwrap();
+    let spec = match model { SpecModel::Sym(s) => s, _ => panic!() };
     let mut doc = SchLib::empty();
     apply_spec_schlib(&spec, &mut doc).unwrap();
     doc.validate_invariants().unwrap();
@@ -72,7 +72,7 @@ fn spec_apply_schlib_validates() {
 ## Gap 2: Zero Roundtrip Tests (spec → apply → save → reopen → validate)
 
 The `save_reopen_schlib` / `save_reopen_pcblib` harness exists in
-altium-format-ops but is never used by the spec crate. No test verifies that
+autopcb-spec but is never used by the spec crate. No test verifies that
 spec-generated documents survive save/reopen with semantic CFB equality.
 
 **Needed tests:**
@@ -88,8 +88,8 @@ fn spec_schlib_roundtrip() {
         component R { designator: "R?", pin 1 { at: (-30, 0), orientation: 0 } }
     "#;
     let ast = parse_spec(source);
-    let model = compile_spec(&ast, SpecDomain::SchLib).unwrap();
-    let spec = match model { SpecModel::SchLib(s) => s, _ => panic!() };
+    let model = compile_spec(&ast, SpecDomain::Sym).unwrap();
+    let spec = match model { SpecModel::Sym(s) => s, _ => panic!() };
     let mut doc = SchLib::empty();
     apply_spec_schlib(&spec, &mut doc).unwrap();
     // Uses the existing two-save-compare pattern with semantic CFB diff
@@ -117,15 +117,15 @@ fn spec_apply_is_idempotent() {
         component R { designator: "R?", pin 1 { at: (-30, 0), orientation: 0 } }
     "#;
     let ast = parse_spec(source);
-    let model = compile_spec(&ast, SpecDomain::SchLib).unwrap();
-    let spec = match model { SpecModel::SchLib(s) => s, _ => panic!() };
+    let model = compile_spec(&ast, SpecDomain::Sym).unwrap();
+    let spec = match model { SpecModel::Sym(s) => s, _ => panic!() };
 
     let mut doc = SchLib::empty();
     apply_spec_schlib(&spec, &mut doc).unwrap();
     doc.validate_invariants().unwrap();
 
     // Second application
-    let eco = reconcile_schlib(&spec, &mut doc, "test.SchLib".into(), "test.schlib-spec".into()).unwrap();
+    let eco = reconcile_schlib(&spec, &mut doc, "test.SchLib".into(), "test.sym".into()).unwrap();
     for change in &eco.changes {
         assert!(matches!(change, EntityChange::Unchanged { .. }),
             "expected all Unchanged after second apply, got: {change:?}");
@@ -159,8 +159,8 @@ fn dump_schlib_roundtrip_fixture() {
 
     // The dumped source must parse and compile cleanly
     let ast = parse_spec(&spec_source);
-    let model = compile_spec(&ast, SpecDomain::SchLib).unwrap();
-    let spec = match model { SpecModel::SchLib(s) => s, _ => panic!() };
+    let model = compile_spec(&ast, SpecDomain::Sym).unwrap();
+    let spec = match model { SpecModel::Sym(s) => s, _ => panic!() };
 
     // Apply to empty doc and validate
     let mut doc = SchLib::empty();
@@ -176,7 +176,7 @@ No proptests exist despite `proptest` being a dev-dependency in Cargo.toml.
 
 ### Proptest 5a: Random valid spec models → apply → validate invariants
 
-Generate random `SchLibSpec` / `PcbLibSpec` models (not source strings — build
+Generate random `SymSpec` / `SymSpec` models (not source strings — build
 the model directly), apply to empty documents, validate invariants. This
 catches executor bugs that produce invalid document structures.
 
@@ -253,7 +253,7 @@ proptest! {
 ### Proptest 5d: Parser fuzz (never panics)
 
 Similar to the existing `prop_parser_never_panics_on_random_text` in
-altium-format-ops parser. Arbitrary strings → `parse_spec()` must return
+autopcb-spec parser. Arbitrary strings → `parse_spec()` must return
 `Ok` or meaningful error, never panic.
 
 ```rust
@@ -294,8 +294,8 @@ proptest! {
 
         let dumped = dump_schlib(&doc);
         let ast = parse_spec(&dumped); // must not error
-        let model = compile_spec(&ast, SpecDomain::SchLib).unwrap();
-        let respec = match model { SpecModel::SchLib(s) => s, _ => panic!() };
+        let model = compile_spec(&ast, SpecDomain::Sym).unwrap();
+        let respec = match model { SpecModel::Sym(s) => s, _ => panic!() };
 
         let mut doc2 = SchLib::empty();
         apply_spec_schlib(&respec, &mut doc2).unwrap();
@@ -397,7 +397,7 @@ No test applies a spec to an existing fixture library from `data/schlib/` or
 Suggested structure:
 
 ```
-crates/altium-format-spec/
+crates/autopcb-spec/
   tests/
     integration.rs              # P0/P1: end-to-end parse → apply → validate
     roundtrip.rs                # P0: save → reopen → semantic diff

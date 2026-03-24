@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use altium_format::AltiumProject;
-use altium_format_spec::parser::parse_spec;
-use altium_format_spec::{SpecDomain, SpecModel, compile_spec};
+use autopcb_spec::parser::parse_spec;
+use autopcb_spec::{SpecDomain, SpecModel, compile_spec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,7 +195,7 @@ fn build_project_graph_from_prjpcb(
     let mut links = Vec::new();
     for spec in &spec_docs {
         match spec.domain.as_str() {
-            "pcbdoc" => {
+            "pcb" => {
                 for b in &boards {
                     links.push(ProjectEdge::SpecTargetsBoard {
                         spec: spec.path.clone(),
@@ -203,7 +203,7 @@ fn build_project_graph_from_prjpcb(
                     });
                 }
             }
-            "schdoc" => {
+            "sch" | "sym" => {
                 for s in &schematics {
                     links.push(ProjectEdge::SpecTargetsSchematic {
                         spec: spec.path.clone(),
@@ -211,7 +211,7 @@ fn build_project_graph_from_prjpcb(
                     });
                 }
             }
-            "prjpcb" => links.push(ProjectEdge::SpecTargetsProject {
+            "proj" | "wrk" => links.push(ProjectEdge::SpecTargetsProject {
                 spec: spec.path.clone(),
                 project: project_path.to_path_buf(),
             }),
@@ -238,11 +238,11 @@ fn build_project_graph_from_wrk(wrk_path: &Path) -> Result<ProjectGraphDelta, Pr
     let source = std::fs::read_to_string(wrk_path)
         .map_err(|e| ProjectGraphError::SpecParse(e.to_string()))?;
     let ast = parse_spec(&source).map_err(|e| ProjectGraphError::SpecParse(e.to_string()))?;
-    let model = compile_spec(&ast, SpecDomain::PrjPcb)
+    let model = compile_spec(&ast, SpecDomain::Proj)
         .map_err(|e| ProjectGraphError::SpecParse(e.to_string()))?;
-    let SpecModel::PrjPcb(spec) = model else {
+    let SpecModel::Proj(spec) = model else {
         return Err(ProjectGraphError::SpecParse(
-            "workspace file did not compile as PrjPcb model".to_owned(),
+            "workspace file did not compile as Proj model".to_owned(),
         ));
     };
 
@@ -367,16 +367,10 @@ fn discover_specs(root: &Path) -> Vec<SpecNode> {
                 "sch"
             } else if name.ends_with(".sym") {
                 "sym"
+            } else if name.ends_with(".proj") {
+                "proj"
             } else if name.ends_with(".wrk") {
                 "wrk"
-            } else if name.ends_with(".pcbdoc-spec") {
-                "pcbdoc"
-            } else if name.ends_with(".schdoc-spec") {
-                "schdoc"
-            } else if name.ends_with(".schlib-spec") {
-                "schlib"
-            } else if name.ends_with(".prjpcb-spec") {
-                "prjpcb"
             } else {
                 continue;
             };

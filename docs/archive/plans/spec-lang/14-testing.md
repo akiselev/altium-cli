@@ -132,11 +132,11 @@ crates/altium-format-ops/tests/
     spec_proptest.rs              # Property-based tests
 
 crates/altium-format-ops/tests/fixtures/
-    passives.schlib-spec          # Test fixture: simple passives
-    qfp.pcblib-spec               # Test fixture: QFP footprint
-    multi-part.schlib-spec        # Test fixture: multi-part IC
-    import-main.schlib-spec       # Test fixture: import chain
-    import-passives.schlib-spec   # Test fixture: imported file
+    passives.sym          # Test fixture: simple passives
+    qfp.sym               # Test fixture: QFP footprint
+    multi-part.sym        # Test fixture: multi-part IC
+    import-main.sym       # Test fixture: import chain
+    import-passives.sym   # Test fixture: imported file
 ```
 
 ## Feature Flag Gating

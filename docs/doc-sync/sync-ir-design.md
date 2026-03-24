@@ -130,7 +130,7 @@ Two fallible functions produce a `SyncSnapshot` from a compiled spec model. Proj
 fails hard on invalid input (dangling refs, duplicate designators) — the caller must
 run `validate_*_spec()` before projecting to catch structural errors early.
 
-Module: `crates/altium-format-spec/src/sync.rs`
+Module: `crates/autopcb-spec/src/sync.rs`
 
 ```rust
 pub fn project_schdoc_spec(spec: &SchDocSpec) -> Result<SyncSnapshot, SpecError>
@@ -239,7 +239,7 @@ nets:
 
 ## 5. Diff Algorithm
 
-Module: `crates/altium-format-spec/src/sync.rs`
+Module: `crates/autopcb-spec/src/sync.rs`
 
 ```rust
 pub fn diff_snapshots(source: &SyncSnapshot, target: &SyncSnapshot) -> Vec<SyncChange>
@@ -320,7 +320,7 @@ principle from `eco-validation-pipeline.md` §Change Ordering.
 
 A `SyncPolicy` determines which properties flow in which direction.
 
-Module: `crates/altium-format-spec/src/sync.rs`
+Module: `crates/autopcb-spec/src/sync.rs`
 
 ```rust
 pub enum SyncDirection {
@@ -382,7 +382,7 @@ component_location:  None    (PCB placement is board-designer's responsibility, 
 
 ## 7. Change Application
 
-Module: `crates/altium-format-spec/src/sync.rs`
+Module: `crates/autopcb-spec/src/sync.rs`
 
 ```rust
 pub fn apply_sync_changes_to_pcbdoc(
@@ -487,9 +487,9 @@ The storage format and conflict policy are deferred to Phase 3 design.
 ### Phase 1: Forward sync
 
 ```
-altium spec sync --forward myschematic.schdoc-spec myboard.pcbdoc-spec
-altium spec sync --forward --dry-run myschematic.schdoc-spec myboard.pcbdoc-spec
-altium spec sync --diff myschematic.schdoc-spec myboard.pcbdoc-spec
+altium spec sync --forward myschematic.sch myboard.pcb
+altium spec sync --forward --dry-run myschematic.sch myboard.pcb
+altium spec sync --diff myschematic.sch myboard.pcb
 ```
 
 Pipeline:
@@ -516,7 +516,7 @@ formatting in unchanged regions.
 ### Phase 2: Back-annotation (future)
 
 ```
-altium spec sync --back myschematic.schdoc-spec myboard.pcbdoc-spec
+altium spec sync --back myschematic.sch myboard.pcb
 ```
 
 Not implemented in Phase 1. The `filter_changes` infrastructure supports `Back`
@@ -525,7 +525,7 @@ direction as forward-compatible scaffolding.
 ### Phase 3: Bidirectional (future)
 
 ```
-altium spec sync --bidirectional myschematic.schdoc-spec myboard.pcbdoc-spec
+altium spec sync --bidirectional myschematic.sch myboard.pcb
 ```
 
 Requires a base snapshot for three-way merge. Storage format deferred to Phase 3 design.
@@ -574,12 +574,12 @@ The following are explicitly out of scope for the SyncSnapshot IR:
 
 Deliverables:
 
-1. `SyncSnapshot` struct and associated types in `altium-format-spec`.
+1. `SyncSnapshot` struct and associated types in `autopcb-spec`.
 2. `project_schdoc_spec(spec: &SchDocSpec) -> SyncSnapshot`.
 3. `project_pcbdoc_spec(spec: &PcbDocSpec) -> SyncSnapshot`.
 4. `diff_snapshots(source: &SyncSnapshot, target: &SyncSnapshot) -> Vec<SyncChange>`.
 5. `apply_sync_changes(changes: &[SyncChange], target: &mut PcbDocSpec, policy: &SyncPolicy)`.
-6. CLI command: `altium spec sync --forward <schdoc-spec> <pcbdoc-spec>`.
+6. CLI command: `altium spec sync --forward <.sch file> <.pcb file>`.
 7. ECO report output using existing `EngineeringChangeOrder` / `render_text()`.
 
 Scope limitations:
@@ -594,7 +594,7 @@ Deliverables:
 
 1. `apply_sync_changes` target extended to `SchDocSpec`.
 2. Designator rename: update all `PinRef` references when a component designator changes.
-3. CLI command: `altium spec sync --back <schdoc-spec> <pcbdoc-spec>`.
+3. CLI command: `altium spec sync --back <.sch file> <.pcb file>`.
 
 ### Phase 3: Pin/part swaps and bidirectional merge
 
@@ -605,7 +605,7 @@ Deliverables:
 3. Conflict detection and reporting.
 4. Pin swap detection: identify `UpdatePin` changes that constitute valid swap group
    operations, using `PinSpec.swap_group` from SchLib metadata.
-5. CLI command: `altium spec sync --bidirectional <schdoc-spec> <pcbdoc-spec>`.
+5. CLI command: `altium spec sync --bidirectional <.sch file> <.pcb file>`.
 
 ---
 

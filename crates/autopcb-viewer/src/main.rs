@@ -1,9 +1,9 @@
 //! AutoPCB Viewer — standalone binary for visualising PCB IR data.
 //!
-//! The viewer is spec-centric: it ONLY accepts `.pcbdoc-spec` files as input.
+//! The viewer is spec-centric: it ONLY accepts `.pcb` files as input.
 //! The underlying PcbDoc is loaded and mutated by the spec pipeline internally.
 //!
-//! Usage: autopcb-viewer <path-to-pcbdoc-spec> [--screenshot <output.png>] [--playback <iterations.json>] [--watch]
+//! Usage: autopcb-viewer <path-to-pcb> [--screenshot <output.png>] [--playback <iterations.json>] [--watch]
 
 mod app;
 mod colors;
@@ -17,11 +17,11 @@ use std::sync::{Arc, Mutex, mpsc};
 use autopcb_ir::PcbIr;
 use autopcb_placement::PlacementIterationSnapshot;
 
-/// Compile a `.pcbdoc-spec` file and produce a `PcbIr` with all spec mutations applied.
+/// Compile a `.pcb` file and produce a `PcbIr` with all spec mutations applied.
 pub(crate) fn load_spec_ir(spec_path: &std::path::Path) -> anyhow::Result<PcbIr> {
-    use altium_format_spec::parser::parse_spec;
-    use altium_format_spec::{
-        SpecDomain, SpecModel, compile_imported_pcblibs, compile_spec_with_resolved,
+    use autopcb_spec::parser::parse_spec;
+    use autopcb_spec::{
+        SpecDomain, SpecModel, compile_imported_syms, compile_spec_with_resolved,
         resolve_imports,
     };
     use autopcb_ir::load_ir_from_spec;
@@ -39,19 +39,19 @@ pub(crate) fn load_spec_ir(spec_path: &std::path::Path) -> anyhow::Result<PcbIr>
         .map_err(|e| anyhow::anyhow!("failed to resolve imports {}: {e:?}", spec_path.display()))?;
 
     let imported_footprints =
-        compile_imported_pcblibs(&resolved).map_err(|(path, e)| {
-            anyhow::anyhow!("failed to compile pcblib {}: {e:?}", path.display())
+        compile_imported_syms(&resolved).map_err(|(path, e)| {
+            anyhow::anyhow!("failed to compile sym lib {}: {e:?}", path.display())
         })?;
 
     let model =
-        compile_spec_with_resolved(&resolved, SpecDomain::PcbDoc, std::collections::HashMap::new())
+        compile_spec_with_resolved(&resolved, SpecDomain::Pcb, std::collections::HashMap::new())
             .map_err(|e| {
                 anyhow::anyhow!("failed to compile spec {}: {e:?}", spec_path.display())
             })?;
 
     let pcbdoc_spec = match model {
-        SpecModel::PcbDoc(s) => s,
-        _ => anyhow::bail!("spec file does not describe a PcbDoc"),
+        SpecModel::Pcb(s) => s,
+        _ => anyhow::bail!("spec file does not describe a Pcb"),
     };
 
     let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
@@ -67,7 +67,7 @@ fn main() -> anyhow::Result<()> {
         Some(p) => PathBuf::from(p),
         None => {
             eprintln!(
-                "Usage: autopcb-viewer <path-to-pcbdoc-spec> [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
+                "Usage: autopcb-viewer <path-to-pcb> [--screenshot <output.png>] [--playback <iterations.json>] [--watch]"
             );
             std::process::exit(1);
         }
@@ -100,9 +100,9 @@ fn main() -> anyhow::Result<()> {
 
     // The viewer only accepts spec files.
     let path_str = path.to_string_lossy();
-    if !path_str.ends_with(".pcbdoc-spec") {
+    if !path_str.ends_with(".pcb") {
         eprintln!(
-            "Error: autopcb-viewer requires a .pcbdoc-spec file as input.\n\
+            "Error: autopcb-viewer requires a .pcb file as input.\n\
              Got: {}",
             path.display()
         );

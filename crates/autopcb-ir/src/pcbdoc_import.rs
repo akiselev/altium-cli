@@ -7,7 +7,7 @@
 //! happens at compile time inside `spec_to_ir()`.
 
 use altium_format::api::{BoardContour, PcbDocBoard, RuleParams};
-use altium_format_spec::model::{
+use autopcb_spec::model::{
     BoardLayerSpec, BoardSpec, KeepoutSpec, LayerSpec, PadGeometrySpec, PcbDocClassSpec,
     PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec,
     PcbDocRuleSpec, PcbDocSpec,
@@ -97,7 +97,7 @@ fn import_keepouts(board: &PcbDocBoard) -> Vec<KeepoutSpec> {
             vertices: tessellate_contour_coords(&kz.outline),
             restrict_copper: true,
             restrict_components: false,
-            layer: Some(LayerSpec::NamedLayer(
+            layer: Some(LayerSpec::Named(
                 kz.layer.display_name().unwrap_or("Unknown").to_string(),
             )),
         })
@@ -202,7 +202,7 @@ fn import_components(board: &PcbDocBoard) -> Result<Vec<PcbDocComponentSpec>, Ir
                 comment: Some(comp.comment.clone()),
                 location: Some(comp.location),
                 rotation: Some(comp.rotation),
-                layer: Some(LayerSpec::NamedLayer(
+                layer: Some(LayerSpec::Named(
                     comp.layer.display_name().unwrap_or("Unknown").to_string(),
                 )),
                 parameters: comp
@@ -237,7 +237,7 @@ fn import_component_pads(
                 } else {
                     Some(pad.hole_size)
                 },
-                layer: LayerSpec::NamedLayer(
+                layer: LayerSpec::Named(
                     pad.layer.display_name().unwrap_or("Unknown").to_string(),
                 ),
                 net: pad.net.clone(),
@@ -279,7 +279,7 @@ fn import_polygons(board: &PcbDocBoard) -> Vec<PcbDocPolygonSpec> {
             annotation: None,
             name: p.name.clone(),
             net: p.net.clone(),
-            layer: Some(LayerSpec::NamedLayer(
+            layer: Some(LayerSpec::Named(
                 p.layer.display_name().unwrap_or("Unknown").to_string(),
             )),
             connect_style: Some(format!("{:?}", p.connect_style)),

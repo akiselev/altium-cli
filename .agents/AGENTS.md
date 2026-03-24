@@ -7,8 +7,8 @@ Rust workspace for reading, writing, and querying Altium Designer files.
 
 * **crates/altium-format-derive** Derive macros for serialization code generation
 * **crates/altium-format-types** Raw types types reverse engineered from Altium
-* **crates/altium-format-ops**  High level operations for manipulating Altium files (used by altium-cli)
 * **crates/altium-format**  Core library for Altium file parsing and manipulation
+* **crates/autopcb-spec**  Spec DSL compiler, executor, and reconciler
 * **crates/altium-cli**  Command-line tool for file inspection and manipulation
 
 ## Architecture
@@ -22,12 +22,12 @@ altium-format-derive (proc macros, no runtime deps)
      ↓
 altium-format (core library: parsing, querying, editing)
      ↓
-altium-format-ops (high level operations like summaries, add, edit, etc.)
+autopcb-spec (spec DSL: compiler, executor, reconciler)
      ↓
 altium-cli (binary: CLI interface, output formatting)
 ```
 
-**Publishing order:** derive → format → ops → cli (format depends on derive, ops depends on format, cli depends on ops).
+**Publishing order:** types → derive → format → spec → cli.
 
 **Versioning:** Synchronized versions (all crates at same version for initial releases).
 
@@ -102,7 +102,7 @@ The entire Altium file format is described via constants in `./AD26-dotnet/Altiu
 
 # Privacy
 
-The altium-format implementation details MUST BE KEPT PRIVATE TO THE CRATE. THEY ARE IMPLEMENTATION DETAILS THAT MUST NOT BE EXPOSED TO THE OPS CRATE.
+The altium-format implementation details MUST BE KEPT PRIVATE TO THE CRATE. THEY ARE IMPLEMENTATION DETAILS THAT MUST NOT BE EXPOSED TO DOWNSTREAM CRATES.
 
 We MUST NEVER silently drop parsing or other errors or silently corrupt data. Everything that is fallible, MUST RETURN A Result<T, AltiumFormatError>
 
@@ -110,7 +110,7 @@ We MUST NEVER silently drop parsing or other errors or silently corrupt data. Ev
 # Error Handling
 
 * altium-format uses altium-format::AltiumFormatError
-* altium-format-ops uses altium-format-ops::AltiumOpsError
+* autopcb-spec uses autopcb-spec::SpecError
 * altium-cli uses anyhow
 
 **Error context is mandatory**: Every fallible call at a parsing boundary MUST use
@@ -256,17 +256,13 @@ Test files for each document type can be found in data/<document type>/ but they
 Current testing layers in this repo:
 
 1. Unit tests in source modules (`#[cfg(test)]` blocks in `crates/altium-format/src/*`).
-2. Integration tests in `crates/altium-format-ops/tests/` with shared helpers in:
-   - `crates/altium-format-ops/tests/harness/mod.rs`
-3. Property tests (proptest):
+2. Property tests (proptest):
    - `crates/altium-format/src/schdoc/mod.rs`
    - `crates/altium-format/src/pcblib/mod.rs`
-   - `crates/altium-format-ops/tests/executor_proptest.rs`
-   - `crates/altium-format-ops/tests/executor_schdoc_proptest.rs`
-4. Regression seeds:
+   - `crates/altium-format/src/pcbdoc/mod.rs`
+   - `crates/altium-cli/src/main.rs`
+3. Regression seeds:
    - `crates/altium-format/proptest-regressions/*`
-   - `crates/altium-format-ops/proptest-regressions/*`
-   - `crates/altium-format-ops/tests/*.proptest-regressions`
 
 Agent rules for tests:
 
@@ -277,7 +273,7 @@ Agent rules for tests:
 - When proptest finds a failure, keep/minimize the seed and commit/update regression files with the fix.
 - Use targeted test runs while developing:
   - `cargo test -p altium-format <test_name>`
-  - `cargo test -p altium-format-ops <test_name>`
+  - `cargo test -p autopcb-spec <test_name>`
   then run broader suites before finishing.
 
 

@@ -4,7 +4,7 @@
 
 Implement a bidirectional synchronization system between SchDoc-spec and PcbDoc-spec files using a common `SyncSnapshot` intermediate representation. The system extends the spec language with Rust-style block annotations (`#[annotation(id = "...", ...)]`) for persistent identity using Altium-style 8-character short IDs. A multi-phase executor/compiler pipeline (Parse → Compile → Validate → Resolve → Project) resolves sparse specs against sane defaults and library lookups to produce the final IR. The sync system integrates with the existing autoplacer constraint types, which go beyond standard Altium ECO types to include edge placement, directional constraints, region containment, and fixed positions.
 
-Approach B (Modular) selected: new modules (`annotation.rs`, `sync.rs`, `resolver.rs`, `validator.rs`) within the `altium-format-spec` crate, keeping sync logic co-located with the spec model it projects from.
+Approach B (Modular) selected: new modules (`annotation.rs`, `sync.rs`, `resolver.rs`, `validator.rs`) within the `autopcb-spec` crate, keeping sync logic co-located with the spec model it projects from.
 
 ## Planning Context
 
@@ -83,7 +83,7 @@ Approach B (Modular) selected: new modules (`annotation.rs`, `sync.rs`, `resolve
 ### Architecture
 
 ```
-Spec Text (.schdoc-spec / .pcbdoc-spec)
+Spec Text (.sch / .pcb)
     │
     ▼ Phase 1: PARSE
   Tokens → AST (with BlockAnnotation nodes)
@@ -151,9 +151,9 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 1: Annotation Syntax — Lexer, Parser, AST
 
 **Files**:
-- `crates/altium-format-spec/src/lexer.rs`
-- `crates/altium-format-spec/src/parser.rs`
-- `crates/altium-format-spec/src/ast.rs`
+- `crates/autopcb-spec/src/lexer.rs`
+- `crates/autopcb-spec/src/parser.rs`
+- `crates/autopcb-spec/src/ast.rs`
 
 **Flags**: `needs-rationale`
 
@@ -176,7 +176,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect annotation syntax support
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/parser.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/parser.rs` (inline `#[cfg(test)]`)
 - **Test type**: example-based unit tests
 - **Backing**: user-specified (annotation syntax is new, no existing patterns)
 - **Scenarios**:
@@ -196,10 +196,10 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 2: Annotation Compilation & ID Generation
 
 **Files**:
-- `crates/altium-format-spec/src/annotation.rs` _(new)_
-- `crates/altium-format-spec/src/compiler.rs`
-- `crates/altium-format-spec/src/model.rs`
-- `crates/altium-format-spec/src/lib.rs`
+- `crates/autopcb-spec/src/annotation.rs` _(new)_
+- `crates/autopcb-spec/src/compiler.rs`
+- `crates/autopcb-spec/src/model.rs`
+- `crates/autopcb-spec/src/lib.rs`
 
 **Flags**: `needs-rationale`
 
@@ -222,7 +222,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect annotation compilation and ID generation
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/annotation.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/annotation.rs` (inline `#[cfg(test)]`)
 - **Test type**: property-based (proptest) for ID generation/validation, example-based for compilation
 - **Backing**: user-specified
 - **Scenarios**:
@@ -233,7 +233,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - **Note**: All proptest blocks must be gated with `#[cfg(feature = "proptest")]` per CLAUDE.md
 
 **Code Intent**:
-- Pre-implementation: check `crates/altium-format-spec/Cargo.toml` and `Cargo.lock` for existing `rand` dependency; match existing workspace version to avoid pin conflicts (see Decision Log "rand crate for ID generation").
+- Pre-implementation: check `crates/autopcb-spec/Cargo.toml` and `Cargo.lock` for existing `rand` dependency; match existing workspace version to avoid pin conflicts (see Decision Log "rand crate for ID generation").
 - New `annotation.rs`: `generate_short_id() -> String` using `rand` crate (verified version). `validate_short_id(&str) -> Result<(), String>`. `CompiledAnnotation` struct. Re-export in `lib.rs`.
 - `model.rs`: Add `annotation: Option<CompiledAnnotation>` to `ComponentSpec`, `FootprintSpec`, `SchDocComponentSpec`, `NetSpec`, `PowerSpec`, `PcbDocComponentSpec`, `PcbDocNetSpec`, `PcbDocPolygonSpec`, `PcbDocRuleSpec`, `PcbDocClassSpec`, `PcbDocDifferentialPairSpec`, `BoardSpec`, `SheetSpec`, `PlacementSpec`, `PlacementPlaceSpec`.
 - `compiler.rs`: Add `compile_annotation(ast_ann: &BlockAnnotation, seen_ids: &mut HashSet<String>) -> Result<CompiledAnnotation>`. Call from each `compile_*_decl()` function. `seen_ids: HashSet<String>` is constructed fresh per top-level compile call (one set per spec file — see Decision Log "seen_ids scope is per-file"). Do not share across file compilations.
@@ -245,8 +245,8 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 3: Annotation in Dump & Formatter
 
 **Files**:
-- `crates/altium-format-spec/src/dump.rs`
-- `crates/altium-format-spec/src/formatter.rs`
+- `crates/autopcb-spec/src/dump.rs`
+- `crates/autopcb-spec/src/formatter.rs`
 
 **Requirements**:
 - Dump functions emit `#[annotation(id = "...")]` before each block declaration
@@ -264,7 +264,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect annotation dump format support
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/dump.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/dump.rs` (inline `#[cfg(test)]`)
 - **Test type**: example-based, round-trip
 - **Backing**: user-specified
 - **Scenarios**:
@@ -283,8 +283,8 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 4: SyncSnapshot IR & Projection
 
 **Files**:
-- `crates/altium-format-spec/src/sync.rs` _(new)_
-- `crates/altium-format-spec/src/lib.rs`
+- `crates/autopcb-spec/src/sync.rs` _(new)_
+- `crates/autopcb-spec/src/lib.rs`
 
 **Flags**: `complex-algorithm`
 
@@ -315,7 +315,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect SyncSnapshot IR and projection
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/sync.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/sync.rs` (inline `#[cfg(test)]`)
 - **Test type**: property-based (proptest) for projection invariants, example-based for structure
 - **Backing**: user-specified
 - **Scenarios**:
@@ -336,7 +336,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 5: Diff Algorithm
 
 **Files**:
-- `crates/altium-format-spec/src/sync.rs`
+- `crates/autopcb-spec/src/sync.rs`
 
 **Flags**: `complex-algorithm`, `needs-rationale`
 
@@ -362,7 +362,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect diff algorithm implementation
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/sync.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/sync.rs` (inline `#[cfg(test)]`)
 - **Test type**: property-based (proptest)
 - **Backing**: user-specified
 - **Scenarios**:
@@ -382,7 +382,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 6: Change Application & CLI
 
 **Files**:
-- `crates/altium-format-spec/src/sync.rs`
+- `crates/autopcb-spec/src/sync.rs`
 - `crates/altium-cli/src/main.rs`
 
 **Flags**: `error-handling`
@@ -399,11 +399,11 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
   - AddPin/RemovePin/UpdatePin: diff MUST NOT generate these changes in Phase 1 (PcbDoc lacks pin connectivity). If somehow generated, apply returns hard error "pin-level sync not supported in Phase 1" — never silently drop connectivity changes
 - Changes applied in dependency order: removes before adds, containers before members (3-phase ordering; see Decision Log "3-phase ordering suffices")
 - All fallible operations use `.with_context(|| format!("applying sync change {:?} to PcbDoc spec", change))` per CLAUDE.md error context requirements
-- CLI subcommand: `altium spec sync --forward <schdoc-spec> <pcbdoc-spec>`
+- CLI subcommand: `altium spec sync --forward <sch-spec> <pcb-spec>`
   - Parse both specs, compile, project to SyncSnapshot, diff, apply, write back
   - `--dry-run`: print ECO report without writing
   - Output: ECO-style text report of changes applied
-- CLI subcommand: `altium spec sync --diff <schdoc-spec> <pcbdoc-spec>` (diff only, no apply)
+- CLI subcommand: `altium spec sync --diff <sch-spec> <pcb-spec>` (diff only, no apply)
 - Back-annotation apply (`apply_sync_changes_to_schdoc`) is NOT in Phase 1 scope — `--back` CLI flag deferred to Phase 2. `filter_changes` Back direction support is present as forward-compatible scaffolding only, not exercised in Phase 1
 
 **Acceptance Criteria**:
@@ -419,7 +419,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect newly implemented capabilities: annotation syntax, sync IR, diff algorithm, forward sync CLI
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/sync.rs` (inline `#[cfg(test)]`), `crates/altium-cli/src/main.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/sync.rs` (inline `#[cfg(test)]`), `crates/altium-cli/src/main.rs` (inline `#[cfg(test)]`)
 - **Test type**: example-based integration (spec text → parse → compile → project → diff → apply → verify)
 - **Backing**: user-specified
 - **Scenarios**:
@@ -441,9 +441,9 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 7: Validator & Resolver (Multi-Phase Pipeline)
 
 **Files**:
-- `crates/altium-format-spec/src/validator.rs` _(new)_
-- `crates/altium-format-spec/src/resolver.rs` _(new)_
-- `crates/altium-format-spec/src/lib.rs`
+- `crates/autopcb-spec/src/validator.rs` _(new)_
+- `crates/autopcb-spec/src/resolver.rs` _(new)_
+- `crates/autopcb-spec/src/lib.rs`
 - `crates/altium-cli/src/main.rs`
 
 **Flags**: `error-handling`
@@ -456,7 +456,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
   - Pin references to non-existent pins → `SpecError` with `Severity::Warning` (pins may come from library, not yet resolved; callers filter by severity — see Decision Log "SpecError gains Severity field")
 - `resolver.rs`: Phase 4 library resolution
   - `ResolvedSpec` struct: `footprint_map: HashMap<String, String>` (designator → footprint name)
-  - `resolve_spec(model: &SpecModel, libraries: &[SchLibSpec]) -> Result<ResolvedSpec>`
+  - `resolve_spec(model: &SpecModel, libraries: &[SymSpec]) -> Result<ResolvedSpec>`
   - For each SchDoc component with a symbol reference, look up the library to find footprint mappings
   - If library is referenced but not available, return hard error: "cannot resolve library 'X' referenced by component 'Y'" — no silent degradation
   - If component has no library reference (bare designator), footprint remains None (this is valid — not all components have library refs)
@@ -472,7 +472,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect validator and resolver capabilities
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/validator.rs`, `crates/altium-format-spec/src/resolver.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/validator.rs`, `crates/autopcb-spec/src/resolver.rs` (inline `#[cfg(test)]`)
 - **Test type**: example-based
 - **Backing**: user-specified
 - **Scenarios**:
@@ -483,7 +483,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 
 **Code Intent**:
 - New `validator.rs`: `validate_schdoc_spec(spec: &SchDocSpec) -> Result<Vec<SpecError>, Vec<SpecError>>` and `validate_pcbdoc_spec(spec: &PcbDocSpec) -> Result<Vec<SpecError>, Vec<SpecError>>`. Check designator uniqueness, net reference validity, annotation ID uniqueness. Returns `Result<Vec<SpecError>, Vec<SpecError>>`: `Ok(warnings)` carries non-fatal warnings (e.g., unresolved pin refs), `Err(errors)` carries hard errors. CLI prints `Ok(warnings)` to stderr before proceeding; converts `Err(errors)` to single `anyhow::Error` (see Decision Log "Validator return type carries warnings on success path").
-- New `resolver.rs`: `ResolvedSpec` struct. `resolve_schdoc_spec(model: &SchDocSpec, libraries: &[SchLibSpec]) -> Result<ResolvedSpec>`. Iterate components, look up symbol in libraries, extract footprint mappings.
+- New `resolver.rs`: `ResolvedSpec` struct. `resolve_schdoc_spec(model: &SchDocSpec, libraries: &[SymSpec]) -> Result<ResolvedSpec>`. Iterate components, look up symbol in libraries, extract footprint mappings.
 - `lib.rs`: Add `pub mod validator; pub mod resolver;`.
 - `main.rs`: In the `spec sync` CLI handler, after the compile step and before calling `project_schdoc_spec()`/`project_pcbdoc_spec()`, call `validate_schdoc_spec()`/`validate_pcbdoc_spec()`. On `Ok(warnings)`, print each warning to stderr. On `Err(errors)`, join errors into a single `anyhow::Error` with `.with_context()` at the Vec→anyhow boundary and return early (see Decision Log "Validator return type carries warnings on success path").
 
@@ -494,10 +494,10 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 ### Milestone 8: Constraint & Rule Extensions
 
 **Files**:
-- `crates/altium-format-spec/src/ast.rs`
-- `crates/altium-format-spec/src/parser.rs`
-- `crates/altium-format-spec/src/compiler.rs`
-- `crates/altium-format-spec/src/model.rs`
+- `crates/autopcb-spec/src/ast.rs`
+- `crates/autopcb-spec/src/parser.rs`
+- `crates/autopcb-spec/src/compiler.rs`
+- `crates/autopcb-spec/src/model.rs`
 
 **Flags**: `conformance`
 
@@ -519,7 +519,7 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 - Update STATUS.md to reflect constraint and rule extension capabilities
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/parser.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/parser.rs` (inline `#[cfg(test)]`)
 - **Test type**: example-based
 - **Backing**: user-specified
 - **Scenarios**:
@@ -545,8 +545,8 @@ Both produce `EntityChange`-style outputs but operate on different input types. 
 **Source**: `## Invisible Knowledge` section of this plan
 
 **Files**:
-- `crates/altium-format-spec/CLAUDE.md` (index updates)
-- `crates/altium-format-spec/README.md` (invisible knowledge)
+- `crates/autopcb-spec/CLAUDE.md` (index updates)
+- `crates/autopcb-spec/README.md` (invisible knowledge)
 - `docs/doc-sync/sync-ir-design.md` (update with implementation details)
 
 **Requirements**:

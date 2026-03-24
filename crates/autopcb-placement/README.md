@@ -47,8 +47,8 @@ live on `IrComponentPad`. This avoids requiring SchLib as a separate solver inpu
 PcbDoc already carries back-annotated swap groups from Altium's netlist import.
 
 **Swap overlay file (not inline schematic edit).** Pin/part swaps change net-to-pin
-mapping. `write_swap_overlay()` writes swaps to a separate `board-swaps.schdoc-spec`
-file imported by the main `.pcbdoc-spec`. The user can delete the import declaration
+mapping. `write_swap_overlay()` writes swaps to a separate `board-swaps.sch`
+file imported by the main `.pcb`. The user can delete the import declaration
 to undo all swaps atomically. Inline editing of the source spec would require tracking
 each changed net individually to reverse — and would conflate user-authored constraints
 with solver-generated net reassignments.

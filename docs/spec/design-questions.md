@@ -9,24 +9,24 @@ Three open design questions from the SchDoc extension work.
 
 **All imports are named references.** No bare imports. No composition/merge semantics.
 
-The original bare import model (merge multiple schlib-spec files into one SchLib output)
-adds complexity for marginal benefit. Since a SchDoc can import individual schlib-spec
+The original bare import model (merge multiple `.sym` files into one SchLib output)
+adds complexity for marginal benefit. Since a SchDoc can import individual `.sym`
 files directly, there's no need to pre-merge them into a single SchLib. Each spec file
 produces exactly one output file.
 
 ### Before (two import modes)
 
 ```
-import "passives.schlib-spec"              // bare: merge into my output
-import "footprints.pcblib-spec" as fp      // named: reference only
+import "passives.sym"              // bare: merge into my output
+import "footprints.sym" as fp      // named: reference only
 ```
 
 ### After (one import mode)
 
 ```
-import "passives.schlib-spec" as passives  // reference
-import "ics.schlib-spec" as ics            // reference
-import "footprints.pcblib-spec" as fp      // reference
+import "passives.sym" as passives  // reference
+import "ics.sym" as ics            // reference
+import "footprints.sym" as fp      // reference
 ```
 
 ### Rules
@@ -37,7 +37,7 @@ import "footprints.pcblib-spec" as fp      // reference
    nothing from imports goes into the output.
 4. **Both spec files and compiled Altium binaries can be imported:**
    ```
-   import "my-parts.schlib-spec" as lib        // spec source
+   import "my-parts.sym" as lib        // spec source
    import "vendor-parts.SchLib" as vendor       // compiled binary
    ```
 
@@ -45,31 +45,31 @@ import "footprints.pcblib-spec" as fp      // reference
 
 | From | Can import (named) | Purpose |
 |------|-------------------|---------|
-| `schlib-spec` | `.schlib-spec`, `.pcblib-spec`, `.SchLib`, `.PcbLib` | Reuse templates, footprint refs |
-| `pcblib-spec` | `.pcblib-spec`, `.PcbLib` | Reuse templates |
-| `schdoc-spec` | `.schlib-spec`, `.SchLib`, `.schdoc-spec` | Component defs, hierarchy refs |
-| `pcbdoc-spec` | `.schdoc-spec`, `.pcblib-spec`, `.SchDoc`, `.PcbLib` | Netlist + footprint defs |
+| `.sym` (component) | `.sym`, `.SchLib`, `.PcbLib` | Reuse templates, footprint refs |
+| `.sym` (footprint) | `.sym`, `.PcbLib` | Reuse templates |
+| `.sch` | `.sym`, `.SchLib`, `.sch` | Component defs, hierarchy refs |
+| `.pcb` | `.sch`, `.sym`, `.SchDoc`, `.PcbLib` | Netlist + footprint defs |
 
 ### What This Means for Existing SchLib Workflows
 
 Instead of:
 ```
-// old: main.schlib-spec merges passives + ics into one SchLib
-import "passives.schlib-spec"
-import "ics.schlib-spec"
+// old: main.sym merges passives + ics into one SchLib
+import "passives.sym"
+import "ics.sym"
 ```
 
 Users write separate spec files that each produce their own output:
 ```
-passives.schlib-spec  ->  passives.SchLib
-ics.schlib-spec       ->  ics.SchLib
+passives.sym  ->  passives.SchLib
+ics.sym       ->  ics.SchLib
 ```
 
 And SchDoc specs reference them individually:
 ```
-// board.schdoc-spec
-import "passives.schlib-spec" as passives
-import "ics.schlib-spec" as ics
+// board.sch
+import "passives.sym" as passives
+import "ics.sym" as ics
 
 R1 = place $passives.R_0603 { at: (1in, 1in), value: "10K" }
 U1 = place $ics.LM358 { at: (2in, 1in) }
@@ -224,7 +224,7 @@ The `net` block syntax is forward-compatible with autorouting:
 net VCC { $U1.8, $R1.1 }
 
 // Future V2: autorouted wires (same syntax, different compilation mode)
-// altium apply --route=auto power-supply.schdoc-spec
+// altium apply --route=auto power-supply.sch
 ```
 
 The routing mode is a tool flag, not a syntax change. Users who want routed
@@ -336,7 +336,7 @@ Each entity type uses a canonical seed format:
 | SchDoc port | `spec:{file}:port:{name}` | `spec:psu:port:DATA` |
 | SchDoc sheet symbol | `spec:{file}:sheetsym:{name}` | `spec:psu:sheetsym:Regulators` |
 
-The `{file}` is the spec filename stem (e.g., `psu` from `psu.schdoc-spec`).
+The `{file}` is the spec filename stem (e.g., `psu` from `psu.sch`).
 
 ### Collision Handling
 

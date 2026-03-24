@@ -44,7 +44,7 @@ An LLM agent knows EVERYTHING about design intent:
 │    4. Apply PCB design best practices                            │
 │    5. Generate precise constraints with real dimensions          │
 │                                                                  │
-│  Output: .pcbdoc-spec file with placement constraints           │
+│  Output: .pcb file with placement constraints           │
 └──────────────────────────┬──────────────────────────────────────┘
                            ↓
               ┌────────────────────────┐
@@ -258,7 +258,7 @@ The LLM can analyze the netlist to identify:
 
 ```markdown
 You are a PCB placement engineer. Given the following board data from
-altium-cli, generate a .pcbdoc-spec placement file.
+altium-cli, generate a .pcb placement file.
 
 ## Board Data
 {output of altium inspect --components}
@@ -279,7 +279,7 @@ altium-cli, generate a .pcbdoc-spec placement file.
 8. Use exact dimensions from datasheets where possible
 9. Cite your sources in comments
 
-Generate a complete .pcbdoc-spec file.
+Generate a complete .pcb file.
 ```
 
 
@@ -313,10 +313,10 @@ LLM-driven optimization outperforms single-shot approaches.
 altium placement generate my-board.PcbDoc
     --model claude-sonnet-4-6       # LLM to use
     --design-notes notes.md     # optional design requirements
-    --output board-layout.pcbdoc-spec
+    --output board-layout.pcb
 
 # Solve placement from spec
-altium placement solve board-layout.pcbdoc-spec
+altium placement solve board-layout.pcb
     --target my-board.PcbDoc
     --phases 0,1,2,3,4          # which phases to run
     --output placement-report.txt

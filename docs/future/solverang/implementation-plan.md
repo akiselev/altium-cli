@@ -194,7 +194,7 @@ automatically selects LM via `AutoSolver` for over-determined placement problems
 
 ### 3e: Spec Language Extensions
 
-- [ ] Parser: `placement { ... }` blocks in `.pcbdoc-spec`
+- [ ] Parser: `placement { ... }` blocks in `.pcb`
 - [ ] `place`, `left_of`, `right_of`, `above`, `below`, `separate`, `group`
 - [ ] `optimize { ratsnest, thermal }`
 - [ ] `clearance { all, connectors, edge }` shorthand

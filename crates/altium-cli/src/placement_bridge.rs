@@ -1,14 +1,14 @@
 //! Bridge: translates a [`PlacementSpec`] + [`PcbIr`] into solver [`UserConstraint`]s.
 //!
-//! This module lives in `altium-cli` because it depends on both `altium-format-spec`
+//! This module lives in `altium-cli` because it depends on both `autopcb-spec`
 //! (for the spec model types) and `autopcb-placement` (for the constraint types).
 //! Neither crate depends on the other, so the bridge must sit at a layer that imports both.
 
 use std::collections::HashSet;
 
 #[cfg(test)]
-use altium_format_spec::model::PlacementAutoplaceMode;
-use altium_format_spec::{PlacementConstraintSpec, PlacementSpec, UnplacedStrategy};
+use autopcb_spec::model::PlacementAutoplaceMode;
+use autopcb_spec::{PlacementConstraintSpec, PlacementSpec, UnplacedStrategy};
 use autopcb_ir::PcbIr;
 use autopcb_placement::{
     Direction, PlacementEdge, RectRegion, UserConstraint, named_region_from_board,
@@ -239,7 +239,7 @@ fn parse_edge(s: &str) -> Option<PlacementEdge> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_spec::{PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec};
+    use autopcb_spec::{PlacementClearanceSpec, PlacementOptimizeSpec, PlacementPlaceSpec};
     use altium_format_types::coord::{Coord, CoordPoint};
     use autopcb_ir::{
         BoardSide, BoundingBoxMm, ComponentId, FreeCopperGeometry, IdMap, IrBoardGeometry,

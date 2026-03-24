@@ -1,4 +1,4 @@
-//! Reverse generation: produce `.schlib-spec` or `.pcblib-spec` source from
+//! Reverse generation: produce `.sym`, `.sch`, `.pcb`, or `.proj` source from
 //! existing Altium library documents.
 //!
 //! Generated output uses absolute placement only (`at: (x, y)`, explicit
@@ -54,7 +54,7 @@ fn emit_annotation_line(out: &mut String, indent: &str, source_id: Option<&str>)
     }
 }
 
-/// Generate `.pcblib-spec` source from a PcbLib document.
+/// Generate `.sym` source (footprint blocks) from a PcbLib document.
 pub fn dump_pcblib(lib: &PcbLib) -> String {
     let mut out = String::new();
     for name in lib.footprint_names() {
@@ -71,7 +71,7 @@ pub fn dump_pcblib(lib: &PcbLib) -> String {
     out
 }
 
-/// Generate `.schlib-spec` source from a SchLib document.
+/// Generate `.sym` source (component blocks) from a SchLib document.
 pub fn dump_schlib(lib: &SchLib) -> Result<String, altium_format::AltiumFormatError> {
     let mut out = String::new();
     for comp in &lib.components()? {
@@ -81,52 +81,39 @@ pub fn dump_schlib(lib: &SchLib) -> Result<String, altium_format::AltiumFormatEr
     Ok(out)
 }
 
-/// Result of dumping an IntLib — produces separate SchLib and PcbLib spec text.
+/// Result of dumping an IntLib — produces a single `.sym` spec text containing
+/// both component and footprint blocks.
 pub struct IntLibDump {
-    /// `.schlib-spec` source for all embedded schematic symbols, or `None` if
-    /// the IntLib contains no SchLib data.
-    pub schlib_spec: Option<String>,
-    /// `.pcblib-spec` source for all embedded footprints, or `None` if the
-    /// IntLib contains no PcbLib data.
-    pub pcblib_spec: Option<String>,
+    /// `.sym` source combining all embedded schematic symbols and footprints,
+    /// or `None` if the IntLib contains neither.
+    pub sym_spec: Option<String>,
 }
 
-/// Dump an IntLib's embedded libraries as `.schlib-spec` and `.pcblib-spec`.
+/// Dump an IntLib's embedded libraries as a single `.sym` file.
 pub fn dump_intlib(lib: &IntLib) -> Result<IntLibDump, altium_format::AltiumFormatError> {
-    let schlib_spec = if lib.schlibs().is_empty() {
-        None
-    } else {
-        let mut out = String::new();
-        for schlib in lib.schlibs() {
-            for comp in &schlib.components()? {
-                dump_component(&mut out, comp);
-                out.push('\n');
-            }
-        }
-        Some(out)
-    };
+    let mut out = String::new();
 
-    let pcblib_spec = if lib.pcblibs().is_empty() {
-        None
-    } else {
-        let mut out = String::new();
-        for pcblib in lib.pcblibs() {
-            for name in pcblib.footprint_names() {
-                let fp = pcblib.footprint(name)?;
-                dump_footprint(&mut out, &fp);
-                out.push('\n');
-            }
+    for schlib in lib.schlibs() {
+        for comp in &schlib.components()? {
+            dump_component(&mut out, comp);
+            out.push('\n');
         }
-        Some(out)
-    };
+    }
 
-    Ok(IntLibDump {
-        schlib_spec,
-        pcblib_spec,
-    })
+    for pcblib in lib.pcblibs() {
+        for name in pcblib.footprint_names() {
+            let fp = pcblib.footprint(name)?;
+            dump_footprint(&mut out, &fp);
+            out.push('\n');
+        }
+    }
+
+    let sym_spec = if out.is_empty() { None } else { Some(out) };
+
+    Ok(IntLibDump { sym_spec })
 }
 
-/// Generate `.prjpcb-spec` source from a PrjPcb project.
+/// Generate `.proj` source from a PrjPcb project.
 ///
 /// Returns `Err` if the project cannot be parsed into its typed representation.
 pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError> {
@@ -345,7 +332,7 @@ pub fn dump_prjpcb(doc: &AltiumProject) -> Result<String, crate::eval::SpecError
     Ok(out)
 }
 
-/// Generate `.schdoc-spec` source from a SchDoc document.
+/// Generate `.sch` source from a SchDoc document.
 pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatError> {
     let sheet = doc.sheet()?;
     let mut out = String::new();

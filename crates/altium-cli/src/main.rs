@@ -8,11 +8,11 @@ use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
 };
 use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_schlib_component};
-use altium_format_spec::{
+use autopcb_spec::{
     FormatConfig, PcbDocSpec, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
     SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb,
-    apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_schlibs,
-    compile_imported_pcblibs, compile_spec_with_resolved, diff_snapshots, dump_intlib,
+    apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_syms,
+    compile_spec_with_resolved, diff_snapshots, dump_intlib,
     dump_pcbdoc, dump_pcblib, dump_placement_block, dump_prjpcb, dump_schdoc, dump_schlib,
     filter_changes, format_spec, project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc,
     reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb,
@@ -90,7 +90,7 @@ enum Commands {
     },
     /// Show ECO (engineering change order) without mutating the document
     Plan {
-        /// Path to the spec file (.schlib-spec, .pcblib-spec, or .prjpcb-spec)
+        /// Path to the spec file (.sym, .sch, .pcb, or .proj)
         spec_file: PathBuf,
         /// Existing document to reconcile against (optional)
         #[arg(long)]
@@ -104,7 +104,7 @@ enum Commands {
     },
     /// Apply a spec file to create or update an Altium document
     Apply {
-        /// Path to the spec file (.schlib-spec, .pcblib-spec, or .prjpcb-spec)
+        /// Path to the spec file (.sym, .sch, .pcb, or .proj)
         spec_file: PathBuf,
         /// Existing document to update (optional)
         #[arg(long)]
@@ -155,7 +155,7 @@ enum Commands {
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Placement solver commands for .pcbdoc-spec files
+    /// Placement solver commands for .pcb files
     Placement {
         #[command(subcommand)]
         sub: PlacementSubcommand,
@@ -165,7 +165,7 @@ enum Commands {
         #[command(subcommand)]
         sub: GraphSubcommand,
     },
-    /// Format spec files (.schlib-spec, .pcblib-spec, etc.)
+    /// Format spec files (.sym, .sch, .pcb, .proj)
     Format {
         /// Spec files to format (reads from stdin if none given)
         files: Vec<PathBuf>,
@@ -239,9 +239,9 @@ enum InspectSubcommand {
 
 #[derive(Subcommand)]
 enum PlacementSubcommand {
-    /// Solve placement constraints from a .pcbdoc-spec
+    /// Solve placement constraints from a .pcb file
     Solve {
-        /// Path to .pcbdoc-spec source file
+        /// Path to .pcb source file
         spec_file: PathBuf,
         /// Emit JSON report
         #[arg(long, default_value_t = false)]
@@ -256,9 +256,9 @@ enum PlacementSubcommand {
         #[arg(long, default_value_t = 250)]
         max_iters: usize,
     },
-    /// Auto-place components from a .pcbdoc-spec and rewrite it with solved positions
+    /// Auto-place components from a .pcb file and rewrite it with solved positions
     Autoplace {
-        /// Path to .pcbdoc-spec source file
+        /// Path to .pcb source file
         spec_file: PathBuf,
         /// Show plan without writing any files
         #[arg(long, default_value_t = false)]
@@ -283,7 +283,7 @@ enum PlacementSubcommand {
     },
     /// Show placement ECO plan (what would change)
     Plan {
-        /// Path to .pcbdoc-spec source file
+        /// Path to .pcb source file
         spec_file: PathBuf,
         /// Target .PcbDoc file
         #[arg(long)]
@@ -291,7 +291,7 @@ enum PlacementSubcommand {
     },
     /// Apply placement spec to PcbDoc
     Apply {
-        /// Path to .pcbdoc-spec source file
+        /// Path to .pcb source file
         spec_file: PathBuf,
         /// Target .PcbDoc file
         #[arg(long)]
@@ -328,9 +328,9 @@ enum GraphSubcommand {
 enum SpecSubcommand {
     /// Synchronize SchDoc-spec and PcbDoc-spec files
     Sync {
-        /// Path to the .schdoc-spec source file
+        /// Path to the .sch source file
         schdoc_spec: PathBuf,
-        /// Path to the .pcbdoc-spec target file
+        /// Path to the .pcb target file
         pcbdoc_spec: PathBuf,
         /// Forward sync: apply SchDoc changes to PcbDoc
         #[arg(long, conflicts_with = "diff")]
@@ -363,9 +363,9 @@ enum RoutingSubcommand {
         // Note: --drc for live DRC is not supported here because running DRC
         // requires a full PcbIr, which is not available from a .routes file alone.
     },
-    /// Solve routing from a .pcbdoc-spec file and write a .routes file
+    /// Solve routing from a .pcb file and write a .routes file
     Solve {
-        /// Path to .pcbdoc-spec file
+        /// Path to .pcb file
         spec_file: PathBuf,
         /// Output .routes file path (default: <spec_stem>.routes)
         #[arg(short, long)]
@@ -567,20 +567,20 @@ fn run_spec_sync(
 
     // ── Step 2: Parse and compile both specs ──────────────────────────────────
 
-    let schdoc_result = compile_and_resolve(&schdoc_source, schdoc_spec_path, &SpecDomain::SchDoc)?;
-    let pcbdoc_result = compile_and_resolve(&pcbdoc_source, pcbdoc_spec_path, &SpecDomain::PcbDoc)?;
+    let schdoc_result = compile_and_resolve(&schdoc_source, schdoc_spec_path, &SpecDomain::Sch)?;
+    let pcbdoc_result = compile_and_resolve(&pcbdoc_source, pcbdoc_spec_path, &SpecDomain::Pcb)?;
 
     let schdoc_spec = match schdoc_result.model {
-        altium_format_spec::model::SpecModel::SchDoc(spec) => spec,
+        autopcb_spec::model::SpecModel::Sch(spec) => spec,
         _ => anyhow::bail!(
-            "{} is not a valid .schdoc-spec file",
+            "{} is not a valid .sch file",
             schdoc_spec_path.display()
         ),
     };
     let pcbdoc_spec_model = match pcbdoc_result.model {
-        altium_format_spec::model::SpecModel::PcbDoc(spec) => spec,
+        autopcb_spec::model::SpecModel::Pcb(spec) => spec,
         _ => anyhow::bail!(
-            "{} is not a valid .pcbdoc-spec file",
+            "{} is not a valid .pcb file",
             pcbdoc_spec_path.display()
         ),
     };
@@ -707,7 +707,7 @@ fn run_spec_sync(
         pcbdoc_spec_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("pcbdoc-spec")
+            .unwrap_or("pcb")
     ));
 
     std::fs::write(&tmp_path, &new_source)
@@ -1063,13 +1063,12 @@ fn validate(path: &PathBuf) -> anyhow::Result<()> {
 
 fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("schlib-spec") => Ok(SpecDomain::SchLib),
-        Some("schdoc-spec") => Ok(SpecDomain::SchDoc),
-        Some("pcblib-spec") => Ok(SpecDomain::PcbLib),
-        Some("prjpcb-spec") => Ok(SpecDomain::PrjPcb),
-        Some("pcbdoc-spec") => Ok(SpecDomain::PcbDoc),
+        Some("sym") => Ok(SpecDomain::Sym),
+        Some("sch") => Ok(SpecDomain::Sch),
+        Some("pcb") => Ok(SpecDomain::Pcb),
+        Some("proj") => Ok(SpecDomain::Proj),
         Some(ext) => anyhow::bail!(
-            "unknown spec file extension .{ext} (supported: .schlib-spec, .schdoc-spec, .pcblib-spec, .prjpcb-spec, .pcbdoc-spec)"
+            "unknown spec file extension .{ext} (supported: .sym, .sch, .pcb, .proj)"
         ),
         None => anyhow::bail!("spec file has no extension: {}", path.display()),
     }
@@ -1082,11 +1081,10 @@ fn detect_document_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "schlib" => Ok(SpecDomain::SchLib),
-        "schdoc" => Ok(SpecDomain::SchDoc),
-        "pcblib" => Ok(SpecDomain::PcbLib),
-        "prjpcb" => Ok(SpecDomain::PrjPcb),
-        "pcbdoc" => Ok(SpecDomain::PcbDoc),
+        "schlib" | "pcblib" => Ok(SpecDomain::Sym),
+        "schdoc" => Ok(SpecDomain::Sch),
+        "prjpcb" => Ok(SpecDomain::Proj),
+        "pcbdoc" => Ok(SpecDomain::Pcb),
         _ => anyhow::bail!(
             "unknown document extension .{ext} (supported: .schlib, .schdoc, .pcblib, .prjpcb, .pcbdoc)"
         ),
@@ -1099,11 +1097,10 @@ fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf 
         .and_then(|s| s.to_str())
         .unwrap_or("output");
     let ext = match domain {
-        SpecDomain::SchLib => "SchLib",
-        SpecDomain::SchDoc => "SchDoc",
-        SpecDomain::PcbLib => "PcbLib",
-        SpecDomain::PrjPcb => "PrjPcb",
-        SpecDomain::PcbDoc => "PcbDoc",
+        SpecDomain::Sym => "SchLib",
+        SpecDomain::Sch => "SchDoc",
+        SpecDomain::Pcb => "PcbDoc",
+        SpecDomain::Proj => "PrjPcb",
     };
     spec_file.with_file_name(format!("{stem}.{ext}"))
 }
@@ -1111,11 +1108,10 @@ fn default_output_for_spec(spec_file: &PathBuf, domain: &SpecDomain) -> PathBuf 
 fn default_spec_for_document(doc: &PathBuf, domain: &SpecDomain) -> PathBuf {
     let stem = doc.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
     let ext = match domain {
-        SpecDomain::SchLib => "schlib-spec",
-        SpecDomain::SchDoc => "schdoc-spec",
-        SpecDomain::PcbLib => "pcblib-spec",
-        SpecDomain::PrjPcb => "prjpcb-spec",
-        SpecDomain::PcbDoc => "pcbdoc-spec",
+        SpecDomain::Sym => "sym",
+        SpecDomain::Sch => "sch",
+        SpecDomain::Pcb => "pcb",
+        SpecDomain::Proj => "proj",
     };
     doc.with_file_name(format!("{stem}.{ext}"))
 }
@@ -1130,8 +1126,8 @@ fn run_plan(
     all: bool,
 ) -> anyhow::Result<bool> {
     let domain = detect_spec_domain(spec_file)?;
-    if all && domain != SpecDomain::PrjPcb {
-        anyhow::bail!("--all is only valid for .prjpcb-spec files");
+    if all && domain != SpecDomain::Proj {
+        anyhow::bail!("--all is only valid for .proj files");
     }
 
     let source = std::fs::read_to_string(spec_file)
@@ -1182,16 +1178,16 @@ fn run_plan(
 
 /// Produce an ECO for a single compiled spec model.
 fn plan_for_model(
-    spec_model: &altium_format_spec::model::SpecModel,
+    spec_model: &autopcb_spec::model::SpecModel,
     target: Option<&PathBuf>,
     spec_file: &PathBuf,
     domain: &SpecDomain,
-) -> anyhow::Result<altium_format_spec::eco::EngineeringChangeOrder> {
+) -> anyhow::Result<autopcb_spec::eco::EngineeringChangeOrder> {
     let library_path = default_output_for_spec(spec_file, domain);
     let spec_path = spec_file.clone();
 
     let eco = match spec_model {
-        altium_format_spec::model::SpecModel::SchLib(spec_lib) => {
+        autopcb_spec::model::SpecModel::Sym(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 let doc = SchLib::open(&resolved_target).map_err(|e| {
@@ -1203,15 +1199,7 @@ fn plan_for_model(
                 reconcile_schlib_empty(spec_lib, library_path, spec_path)
             }
         }
-        altium_format_spec::model::SpecModel::PcbLib(spec_lib) => {
-            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
-            if resolved_target.exists() {
-                reconcile_pcblib(spec_lib, resolved_target, spec_path)
-            } else {
-                reconcile_pcblib_empty(spec_lib, library_path, spec_path)
-            }
-        }
-        altium_format_spec::model::SpecModel::PrjPcb(spec) => {
+        autopcb_spec::model::SpecModel::Proj(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 let doc = AltiumProject::open(&resolved_target).map_err(|e| {
@@ -1223,7 +1211,7 @@ fn plan_for_model(
                 reconcile_prjpcb_empty(spec, library_path, spec_path)
             }
         }
-        altium_format_spec::model::SpecModel::SchDoc(spec) => {
+        autopcb_spec::model::SpecModel::Sch(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 let doc = SchDoc::open(&resolved_target).map_err(|e| {
@@ -1235,7 +1223,7 @@ fn plan_for_model(
                 reconcile_schdoc_empty(spec, library_path, spec_path)
             }
         }
-        altium_format_spec::model::SpecModel::PcbDoc(spec) => {
+        autopcb_spec::model::SpecModel::Pcb(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if resolved_target.exists() {
                 let doc = PcbDoc::open(&resolved_target).map_err(|e| {
@@ -1262,8 +1250,8 @@ fn run_apply(
     all: bool,
 ) -> anyhow::Result<()> {
     let domain = detect_spec_domain(spec_file)?;
-    if all && domain != SpecDomain::PrjPcb {
-        anyhow::bail!("--all is only valid for .prjpcb-spec files");
+    if all && domain != SpecDomain::Proj {
+        anyhow::bail!("--all is only valid for .proj files");
     }
 
     let source = std::fs::read_to_string(spec_file)
@@ -1306,21 +1294,21 @@ fn run_apply(
 
 /// Apply a single compiled spec model to its target document.
 fn apply_for_model(
-    spec_model: &altium_format_spec::model::SpecModel,
+    spec_model: &autopcb_spec::model::SpecModel,
     target: Option<&PathBuf>,
     output: Option<&PathBuf>,
     spec_file: &PathBuf,
     domain: &SpecDomain,
     imported_components: &std::collections::HashMap<
         String,
-        altium_format_spec::model::ComponentSpec,
+        autopcb_spec::model::ComponentSpec,
     >,
     import_paths: &[PathBuf],
 ) -> anyhow::Result<()> {
     let library_path = default_output_for_spec(spec_file, domain);
 
     match spec_model {
-        altium_format_spec::model::SpecModel::SchLib(spec_lib) => {
+        autopcb_spec::model::SpecModel::Sym(spec_lib) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
                 SchLib::open(&resolved_target).map_err(|e| {
@@ -1341,25 +1329,7 @@ fn apply_for_model(
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
-        altium_format_spec::model::SpecModel::PcbLib(spec_lib) => {
-            let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
-            let mut lib = if resolved_target.exists() {
-                PcbLib::open(&resolved_target).map_err(|e| {
-                    anyhow::anyhow!("failed to open {}: {e}", resolved_target.display())
-                })?
-            } else {
-                PcbLib::new_blank_ad26()?
-            };
-
-            let out_path = output.cloned().unwrap_or(library_path);
-
-            apply_spec_pcblib(spec_lib, &mut lib)
-                .map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
-
-            lib.save(&out_path)?;
-            println!("Saved: {}", out_path.display());
-        }
-        altium_format_spec::model::SpecModel::PrjPcb(spec) => {
+        autopcb_spec::model::SpecModel::Proj(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
                 AltiumProject::open(&resolved_target).map_err(|e| {
@@ -1376,7 +1346,7 @@ fn apply_for_model(
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
-        altium_format_spec::model::SpecModel::SchDoc(spec) => {
+        autopcb_spec::model::SpecModel::Sch(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             let mut doc = if resolved_target.exists() {
                 SchDoc::open(&resolved_target).map_err(|e| {
@@ -1394,7 +1364,7 @@ fn apply_for_model(
             doc.save(&out_path)?;
             println!("Saved: {}", out_path.display());
         }
-        altium_format_spec::model::SpecModel::PcbDoc(spec) => {
+        autopcb_spec::model::SpecModel::Pcb(spec) => {
             let resolved_target = target.cloned().unwrap_or_else(|| library_path.clone());
             if !resolved_target.exists() {
                 anyhow::bail!(
@@ -1434,7 +1404,7 @@ fn apply_for_model(
 
 // ── footprint primitive instantiation ────────────────────────────────────────
 
-/// Discovers sibling `.schdoc-spec` files and builds a pad-to-net map.
+/// Discovers sibling `.sch` files and builds a pad-to-net map.
 ///
 /// The map keys are `(component_designator, pad_designator)` → `net_name`.
 /// Uses `project_schdoc_spec()` (with pin→pad resolution) to resolve pin names
@@ -1451,7 +1421,7 @@ fn build_pad_net_map(
         .filter(|p| {
             p.extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("schdoc-spec"))
+                .map(|e| e.eq_ignore_ascii_case("sch"))
                 .unwrap_or(false)
         })
         .collect();
@@ -1460,11 +1430,11 @@ fn build_pad_net_map(
         let source = std::fs::read_to_string(schdoc_path)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", schdoc_path.display()))?;
 
-        let domain = SpecDomain::SchDoc;
+        let domain = SpecDomain::Sch;
         let result = compile_and_resolve(&source, schdoc_path, &domain)?;
 
         let schdoc_spec = match result.model {
-            altium_format_spec::model::SpecModel::SchDoc(spec) => spec,
+            autopcb_spec::model::SpecModel::Sch(spec) => spec,
             _ => continue,
         };
 
@@ -1644,7 +1614,7 @@ fn inject_routes_into_pcbdoc(
     Ok(count)
 }
 
-/// For each imported `.pcblib-spec`, derive the corresponding `.PcbLib` binary
+/// For each imported `.sym`, derive the corresponding `.PcbLib` binary
 /// path, open it, and instantiate pads and graphics for every board component
 /// whose footprint matches a footprint in that library. Coordinates are
 /// transformed from footprint-local to board space using the component's
@@ -1656,7 +1626,7 @@ fn instantiate_footprint_primitives(
     pad_net_map: &std::collections::HashMap<(String, String), String>,
     imported_components: &std::collections::HashMap<
         String,
-        altium_format_spec::model::ComponentSpec,
+        autopcb_spec::model::ComponentSpec,
     >,
 ) -> anyhow::Result<()> {
     use altium_format_types::coord::{Coord, CoordPoint};
@@ -1666,7 +1636,7 @@ fn instantiate_footprint_primitives(
         .filter(|p| {
             p.extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("pcblib-spec"))
+                .map(|e| e.eq_ignore_ascii_case("sym"))
                 .unwrap_or(false)
         })
         .map(|p| p.with_extension("PcbLib"))
@@ -1693,7 +1663,7 @@ fn instantiate_footprint_primitives(
     for pcblib_path in &pcblib_paths {
         if !pcblib_path.exists() {
             eprintln!(
-                "Warning: imported pcblib-spec has no corresponding binary at {} — skipping primitive instantiation",
+                "Warning: imported .sym has no corresponding binary at {} — skipping primitive instantiation",
                 pcblib_path.display()
             );
             continue;
@@ -1962,7 +1932,7 @@ fn write_spec_merged(
 }
 
 fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
-    // IntLib produces two output files (schlib-spec + pcblib-spec), so it
+    // IntLib produces a single .sym output file, so it
     // bypasses the single-domain path.
     let ext = document
         .extension()
@@ -1979,33 +1949,39 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
         .unwrap_or_else(|| default_spec_for_document(document, &domain));
 
     match domain {
-        SpecDomain::SchLib => {
-            let lib = SchLib::open(document)
-                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
-            let spec_source = dump_schlib(&lib)
-                .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
-            write_spec_merged(&out_path, &spec_source, document)?;
+        SpecDomain::Sym => {
+            let ext = document
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if ext == "schlib" {
+                let lib = SchLib::open(document)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+                let spec_source = dump_schlib(&lib)
+                    .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
+                write_spec_merged(&out_path, &spec_source, document)?;
+            } else {
+                let lib = PcbLib::open(document)
+                    .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
+                let spec_source = dump_pcblib(&lib);
+                write_spec_merged(&out_path, &spec_source, document)?;
+            }
         }
-        SpecDomain::PcbLib => {
-            let lib = PcbLib::open(document)
-                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
-            let spec_source = dump_pcblib(&lib);
-            write_spec_merged(&out_path, &spec_source, document)?;
-        }
-        SpecDomain::SchDoc => {
+        SpecDomain::Sch => {
             let doc = SchDoc::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_schdoc(&doc)
                 .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
             write_spec_merged(&out_path, &spec_source, document)?;
         }
-        SpecDomain::PrjPcb => {
+        SpecDomain::Proj => {
             let doc = AltiumProject::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_prjpcb(&doc).map_err(|e| anyhow::anyhow!("dump failed: {e}"))?;
             write_spec_merged(&out_path, &spec_source, document)?;
         }
-        SpecDomain::PcbDoc => {
+        SpecDomain::Pcb => {
             let doc = PcbDoc::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
             let spec_source = dump_pcbdoc(&doc)
@@ -2040,18 +2016,10 @@ fn run_dump_intlib(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Resu
             .to_path_buf(),
     };
 
-    let mut wrote_any = false;
-    if let Some(schlib_spec) = &dump.schlib_spec {
-        let path = out_dir.join(format!("{stem}.schlib-spec"));
-        write_spec_merged(&path, schlib_spec, document)?;
-        wrote_any = true;
-    }
-    if let Some(pcblib_spec) = &dump.pcblib_spec {
-        let path = out_dir.join(format!("{stem}.pcblib-spec"));
-        write_spec_merged(&path, pcblib_spec, document)?;
-        wrote_any = true;
-    }
-    if !wrote_any {
+    if let Some(sym_spec) = &dump.sym_spec {
+        let path = out_dir.join(format!("{stem}.sym"));
+        write_spec_merged(&path, sym_spec, document)?;
+    } else {
         anyhow::bail!("{} contains no SchLib or PcbLib data", document.display());
     }
 
@@ -2061,17 +2029,17 @@ fn run_dump_intlib(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Resu
 // ── compile helper ────────────────────────────────────────────────────────────
 
 struct CompileResult {
-    model: altium_format_spec::model::SpecModel,
+    model: autopcb_spec::model::SpecModel,
     /// All import paths (bare + named) for --all processing.
     import_paths: Vec<PathBuf>,
     /// Compiled SchLib components from imports, keyed by lib_reference.
     /// Used by SchDoc apply to resolve pin positions.
     imported_components:
-        std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
-    /// Compiled PcbLib footprints from imports, keyed by import alias or canonical path.
+        std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
+    /// Compiled sym libraries from imports, keyed by import alias or canonical path.
     /// Used by routing/placement solve to resolve footprint definitions.
     imported_footprints:
-        std::collections::HashMap<String, altium_format_spec::model::PcbLibSpec>,
+        std::collections::HashMap<String, autopcb_spec::model::SymSpec>,
 }
 
 fn compile_and_resolve(
@@ -2079,7 +2047,7 @@ fn compile_and_resolve(
     spec_file: &PathBuf,
     domain: &SpecDomain,
 ) -> anyhow::Result<CompileResult> {
-    use altium_format_spec::parser::parse_spec;
+    use autopcb_spec::parser::parse_spec;
 
     let source_name = spec_file.display().to_string();
     let file =
@@ -2096,23 +2064,33 @@ fn compile_and_resolve(
 
     // Compile only the root file's own items, with named imports in scope.
     // Two callees need the imported-components map: compile_spec_with_resolved for symbol
-    // validation and apply_spec_schdoc for pin position resolution. Build it twice since
+    // validation and apply_spec_schdoc for pin position resolution. Build twice since
     // ComponentSpec does not implement Clone.
-    let imported_components_for_exec =
-        compile_imported_schlibs(&resolved).map_err(|(path, e)| {
-            let import_source = std::fs::read_to_string(&path).unwrap_or_default();
-            let import_name = path.display().to_string();
-            anyhow::anyhow!("{}", e.render(&import_name, &import_source))
-        })?;
-    let imported_components = compile_imported_schlibs(&resolved).map_err(|(path, e)| {
+    let sym_libs_for_exec = compile_imported_syms(&resolved).map_err(|(path, e)| {
         let import_source = std::fs::read_to_string(&path).unwrap_or_default();
         let import_name = path.display().to_string();
         anyhow::anyhow!("{}", e.render(&import_name, &import_source))
     })?;
+    let imported_components_for_exec: std::collections::HashMap<String, autopcb_spec::model::ComponentSpec> =
+        sym_libs_for_exec.into_iter()
+            .flat_map(|(_key, sym)| sym.components.into_iter())
+            .map(|c| (c.lib_reference.clone(), c))
+            .collect();
+
+    let sym_libs2 = compile_imported_syms(&resolved).map_err(|(path, e)| {
+        let import_source = std::fs::read_to_string(&path).unwrap_or_default();
+        let import_name = path.display().to_string();
+        anyhow::anyhow!("{}", e.render(&import_name, &import_source))
+    })?;
+    let imported_components: std::collections::HashMap<String, autopcb_spec::model::ComponentSpec> =
+        sym_libs2.into_iter()
+            .flat_map(|(_key, sym)| sym.components.into_iter())
+            .map(|c| (c.lib_reference.clone(), c))
+            .collect();
     let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
-    let imported_footprints = compile_imported_pcblibs(&resolved).map_err(|(path, e)| {
+    let imported_footprints = compile_imported_syms(&resolved).map_err(|(path, e)| {
         let import_source = std::fs::read_to_string(&path).unwrap_or_default();
         let import_name = path.display().to_string();
         anyhow::anyhow!("{}", e.render(&import_name, &import_source))
@@ -2676,9 +2654,9 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
         } => {
             let source = std::fs::read_to_string(&spec_file)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-            let compiled = compile_and_resolve(&source, &spec_file, &SpecDomain::PcbDoc)?;
+            let compiled = compile_and_resolve(&source, &spec_file, &SpecDomain::Pcb)?;
             let spec = match compiled.model {
-                altium_format_spec::model::SpecModel::PcbDoc(spec) => spec,
+                autopcb_spec::model::SpecModel::Pcb(spec) => spec,
                 _ => {
                     return Err(anyhow::anyhow!(
                         "expected PcbDoc model for {}",
@@ -2785,7 +2763,7 @@ pub fn autoplace_spec(
     dry_run: bool,
     output_path: Option<&std::path::Path>,
 ) -> anyhow::Result<AutoplaceReport> {
-    use altium_format_spec::model::SpecModel;
+    use autopcb_spec::model::SpecModel;
 
     let started = Instant::now();
     let spec_path_buf = spec_path.to_path_buf();
@@ -2799,9 +2777,9 @@ pub fn autoplace_spec(
     let source = std::fs::read_to_string(spec_path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_path.display()))?;
 
-    let compiled = compile_and_resolve(&source, &spec_path_buf, &SpecDomain::PcbDoc)?;
+    let compiled = compile_and_resolve(&source, &spec_path_buf, &SpecDomain::Pcb)?;
     let spec = match compiled.model {
-        SpecModel::PcbDoc(s) => s,
+        SpecModel::Pcb(s) => s,
         _ => anyhow::bail!("expected PcbDoc spec for {}", spec_path.display()),
     };
 
@@ -2985,9 +2963,9 @@ fn cmd_placement_plan(spec_file: &std::path::Path, target: &std::path::Path) -> 
     let spec_file_buf = spec_file.to_path_buf();
     let source = std::fs::read_to_string(spec_file)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::PcbDoc)?;
+    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::Pcb)?;
     let spec = match compiled.model {
-        altium_format_spec::model::SpecModel::PcbDoc(s) => s,
+        autopcb_spec::model::SpecModel::Pcb(s) => s,
         _ => anyhow::bail!("expected PcbDoc spec for {}", spec_file.display()),
     };
     let doc = PcbDoc::open(target)
@@ -3005,9 +2983,9 @@ fn cmd_placement_apply(
     let spec_file_buf = spec_file.to_path_buf();
     let source = std::fs::read_to_string(spec_file)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::PcbDoc)?;
+    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::Pcb)?;
     let spec = match compiled.model {
-        altium_format_spec::model::SpecModel::PcbDoc(s) => s,
+        autopcb_spec::model::SpecModel::Pcb(s) => s,
         _ => anyhow::bail!("expected PcbDoc spec for {}", spec_file.display()),
     };
     let mut doc = PcbDoc::open(target)
@@ -3370,15 +3348,15 @@ fn cmd_routing_solve(
     output: Option<&std::path::Path>,
     json: bool,
 ) -> anyhow::Result<()> {
-    use altium_format_spec::model::SpecModel;
+    use autopcb_spec::model::SpecModel;
 
     let source = std::fs::read_to_string(spec_file)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
     let spec_file_buf = spec_file.to_path_buf();
-    let result = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::PcbDoc)?;
+    let result = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::Pcb)?;
     let spec = match result.model {
-        SpecModel::PcbDoc(s) => s,
-        _ => anyhow::bail!("routing solve requires a .pcbdoc-spec file"),
+        SpecModel::Pcb(s) => s,
+        _ => anyhow::bail!("routing solve requires a .pcb file"),
     };
 
     let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
@@ -3423,14 +3401,14 @@ mod tests {
 
     #[test]
     fn placement_autoplace_enables_sa_by_default() {
-        let cli = Cli::try_parse_from(["altium", "placement", "autoplace", "board.pcbdoc-spec"])
+        let cli = Cli::try_parse_from(["altium", "placement", "autoplace", "board.pcb"])
             .expect("autoplace args should parse");
         match cli.command {
             Commands::Placement {
                 sub: PlacementSubcommand::Autoplace { sa, spec_file, .. },
             } => {
                 assert!(sa, "SA should be enabled by default");
-                assert_eq!(spec_file, PathBuf::from("board.pcbdoc-spec"));
+                assert_eq!(spec_file, PathBuf::from("board.pcb"));
             }
             _ => panic!("expected placement autoplace command"),
         }
@@ -3442,7 +3420,7 @@ mod tests {
             "altium",
             "placement",
             "autoplace",
-            "board.pcbdoc-spec",
+            "board.pcb",
             "--no-sa",
         ])
         .expect("autoplace args should parse");
@@ -3493,7 +3471,7 @@ mod tests {
     #[test]
     fn routing_solve_missing_spec_returns_error() {
         let result = cmd_routing_solve(
-            std::path::Path::new("nonexistent.pcbdoc-spec"),
+            std::path::Path::new("nonexistent.pcb"),
             None,
             false,
         );

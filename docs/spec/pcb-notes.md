@@ -34,9 +34,9 @@ never executed, and not accepted by `AddPadOp`**:
 serialization. The model types exist.
 
 **Files to modify:**
-- `crates/altium-format-ops/src/spec/reconciler.rs` — `pad_spec_to_add` only checks
+- `crates/autopcb-spec/src/reconciler.rs` — `pad_spec_to_add` only checks
   8 properties, missing these 7
-- `crates/altium-format-ops/src/spec/executor.rs` — doesn't pass them to AddPadOp
+- `crates/autopcb-spec/src/executor.rs` — doesn't pass them to AddPadOp
 - `crates/altium-format/src/pcb_ops_core.rs` — `AddPadOp` only has 8 fields
 
 ---
@@ -326,8 +326,8 @@ Connect the 7 pad properties already in the model through reconciler -> executor
 `AddPadOp`. Immediate value: users get mask/thermal relief control.
 
 Files:
-- `crates/altium-format-ops/src/spec/reconciler.rs` — add fields to `pad_spec_to_add`
-- `crates/altium-format-ops/src/spec/executor.rs` — pass fields to AddPadOp
+- `crates/autopcb-spec/src/reconciler.rs` — add fields to `pad_spec_to_add`
+- `crates/autopcb-spec/src/executor.rs` — pass fields to AddPadOp
 - `crates/altium-format/src/pcb_ops_core.rs` — add fields to `AddPadOp` struct
 
 ### Phase 2: Pin swap groups + IEEE symbols (effort: medium)
@@ -339,9 +339,9 @@ Requires format layer additions: swap IDs go in SchPin record + PinMiscData side
 Enables autorouter pin swapping and correct ERC symbol display.
 
 Files:
-- `crates/altium-format-ops/src/spec/model.rs` — add PinSpec fields
-- `crates/altium-format-ops/src/spec/compiler.rs` — compile new fields
-- `crates/altium-format-ops/src/spec/reconciler.rs` — diff new fields
+- `crates/autopcb-spec/src/model.rs` — add PinSpec fields
+- `crates/autopcb-spec/src/compiler.rs` — compile new fields
+- `crates/autopcb-spec/src/reconciler.rs` — diff new fields
 - `crates/altium-format/src/sch_ops_core.rs` — add fields to `PinOp`/`AddPinOp`
 - `crates/altium-format/src/schlib.rs` — serialize swap IDs and symbols
 

@@ -375,7 +375,7 @@ The solver naturally converges to the nearest grid point.
 ### Grammar Extension
 
 ```
-// my-design.schdoc-spec
+// my-design.sch
 
 schematic {
     target: "my-design.SchDoc"
@@ -624,7 +624,7 @@ I see this is an STM32F407 development board schematic:
 - Junction insertion at wire crossings
 
 ### Milestone 4: Spec Language + LLM Integration
-- `.schdoc-spec` parser extension
+- `.sch` parser extension
 - `schematic { ... }` block with groups, sequence, alignment
 - LLM prompt template for schematic analysis
 - Interactive iteration (solve → review → adjust)

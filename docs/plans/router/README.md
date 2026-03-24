@@ -6,13 +6,13 @@ This plan defines the implementation of a PCB autorouter as a set of workspace
 crates (`autopcb-router`, `autopcb-routes`) that integrate with the existing
 spec-centric pipeline. The router is a **pure algorithm library** — it receives
 `PcbIr` (produced by the spec compiler) and routing config (from the
-`routing { ... }` block in `pcbdoc-spec`), and produces a `RouteSolution` that
+`routing { ... }` block in a `.pcb` spec), and produces a `RouteSolution` that
 is serialized to a `.routes` file. The spec imports this file via
 `import "board.routes"`, and the spec compiler applies the routes when
 generating output.
 
 **PcbDoc is never touched directly by the router.** Everything flows through
-`pcbdoc-spec`.
+the `.pcb` spec.
 
 ## Planning Context
 
@@ -20,7 +20,7 @@ generating output.
 
 | Decision | Reasoning Chain |
 |----------|----------------|
-| Spec-centric architecture | User requires pcbdoc-spec as sole entry point → router must not reference PcbDoc → router receives PcbIr + config, returns solution → spec compiler owns all I/O |
+| Spec-centric architecture | User requires `.pcb` spec as sole entry point → router must not reference PcbDoc → router receives PcbIr + config, returns solution → spec compiler owns all I/O |
 | Separate `autopcb-routes` crate | Route solution format needed by both router (writes) and spec compiler (reads/imports) → shared dependency avoids circular deps → thin crate with serde types only |
 | Import-first (no spec rewriting) | Spec stays config-only → route file imported via `import "board.routes"` → avoids coupling router to spec rewriter → spec remains human-authored truth |
 | Binary + JSON route format | Binary for production (compact, fast load) → JSON for debugging (human-readable, diffable) → both via serde with bincode + serde_json |
@@ -54,7 +54,7 @@ generating output.
 |-------------|-------------|
 | Router reads PcbDoc directly | Violates spec-centric architecture. PcbDoc is an implementation detail of the spec pipeline. |
 | Router rewrites spec with solved routes | Routes are complex geometry (thousands of segments) — doesn't fit text-based spec language. Import-first is cleaner. |
-| Route solution types inside `autopcb-router` | Spec compiler needs to deserialize route files for import. Would create `altium-format-spec` → `autopcb-router` dependency. Thin `autopcb-routes` crate breaks the cycle. |
+| Route solution types inside `autopcb-router` | Spec compiler needs to deserialize route files for import. Would create `autopcb-spec` → `autopcb-router` dependency. Thin `autopcb-routes` crate breaks the cycle. |
 | Single canonical route + IR crate | Route solution types have different lifecycle (serialized artifacts) than IR types (in-memory extraction). Separate crate keeps concerns clean. |
 | Pure GPU routing | CPU-first is required — GPU is an acceleration layer, not a requirement. Most PCB boards (< 1000 nets) route in seconds on CPU. |
 | RL/diffusion routing | Massive training infrastructure cost. LLM + spec already encodes design knowledge declaratively. |
@@ -78,7 +78,7 @@ generating output.
 | Risk | Mitigation | Anchor |
 |------|-----------|--------|
 | PcbIr may lack routing-critical fields | Milestone 2 extends PcbIr with routing metadata before router work begins | crates/autopcb-ir/src/extract.rs |
-| Spec import resolver lacks `.routes` support | Import resolver extension point is well-defined — Milestone 9 adds `.routes` handling | crates/altium-format-spec/src/import.rs |
+| Spec import resolver lacks `.routes` support | Import resolver extension point is well-defined — Milestone 9 adds `.routes` handling | crates/autopcb-spec/src/import.rs |
 | PathFinder may not converge on complex boards | Max iteration cap + explicit unrouted-net reporting + congestion bottleneck data for diagnostics | N/A (new code) |
 | Route file format may need evolution | Version field in route file header + backward-compatible serde defaults | N/A (new code) |
 
@@ -87,7 +87,7 @@ generating output.
 ### Architecture
 
 ```
-pcbdoc-spec (source of truth)
+.pcb spec (source of truth)
   │
   ├── spec compiler ──→ PcbIr (board model in mm)
   │                       │
@@ -108,7 +108,7 @@ spec compiler apply ──→ PcbDoc output (tracks, vias from route solution)
 ### Data Flow
 
 ```
-pcbdoc-spec ──parse──→ PcbDocSpec
+.pcb spec ──parse──→ PcbDocSpec
                          │
                          ├── PlacementSpec (existing)
                          ├── RoutingSpec (new: autorouter config)
@@ -151,7 +151,7 @@ pcbdoc-spec ──parse──→ PcbDocSpec
 ### Why This Structure
 
 - **`autopcb-routes` is a thin format crate** because both `autopcb-router`
-  (producer) and `altium-format-spec` (consumer/importer) need the types.
+  (producer) and `autopcb-spec` (consumer/importer) need the types.
   Putting them in either crate creates a dependency cycle.
 - **Router is stateless** — `RoutingWorkspace` is built fresh from PcbIr + config
   for each invocation. No persistent state between runs. This enables
@@ -653,9 +653,9 @@ pcbdoc-spec ──parse──→ PcbDocSpec
 ### Milestone 9: Spec Integration + CLI
 
 **Files**:
-- `crates/altium-format-spec/src/import.rs` (extend for .routes)
-- `crates/altium-format-spec/src/compiler.rs` (routing block compilation)
-- `crates/altium-format-spec/src/model.rs` (RoutingSpec model types)
+- `crates/autopcb-spec/src/import.rs` (extend for .routes)
+- `crates/autopcb-spec/src/compiler.rs` (routing block compilation)
+- `crates/autopcb-spec/src/model.rs` (RoutingSpec model types)
 - `crates/altium-cli/src/main.rs` (routing CLI commands)
 
 **Flags**: `conformance`
@@ -670,11 +670,11 @@ pcbdoc-spec ──parse──→ PcbDocSpec
 **Acceptance Criteria**:
 - `routing { grid_resolution: 0.1mm, max_iterations: 50 }` parses successfully
 - `import "board.routes"` loads and deserializes a binary route file
-- `altium routing solve test.pcbdoc-spec` produces a `.routes` file
+- `altium routing solve test.pcb` produces a `.routes` file
 - `altium routing inspect board.routes` prints human-readable stats
 
 **Tests**:
-- **Test files**: `crates/altium-format-spec/src/compiler.rs` (inline `#[cfg(test)]`), `crates/altium-cli/src/main.rs` (inline `#[cfg(test)]`)
+- **Test files**: `crates/autopcb-spec/src/compiler.rs` (inline `#[cfg(test)]`), `crates/altium-cli/src/main.rs` (inline `#[cfg(test)]`)
 - **Test type**: unit (parser) + integration (CLI with synthetic spec)
 - **Backing**: default-derived
 - **Scenarios**:

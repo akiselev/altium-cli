@@ -148,8 +148,8 @@ Does NOT handle: anchor-based placement, imports.
 - `spec/dump.rs`
 
 **Deliverable**:
-- `altium plan foo.schlib-spec`
-- `altium apply foo.schlib-spec`
+- `altium plan foo.sym`
+- `altium apply foo.sym`
 - `altium dump foo.SchLib`
 
 **Tests**:
@@ -284,8 +284,8 @@ Does NOT handle: anchor-based placement, imports.
 
 **Deliverable**:
 - `altium dump foo.PcbLib`
-- `altium plan foo.pcblib-spec`
-- `altium apply foo.pcblib-spec`
+- `altium plan foo.sym`
+- `altium apply foo.sym`
 
 **Tests**:
 - Dump PcbLib with various pad/graphic types

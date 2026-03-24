@@ -7,7 +7,7 @@
 ## Purpose
 
 Read an existing `.SchLib` or `.PcbLib` file and generate a corresponding
-`.schlib-spec` or `.pcblib-spec` file. This enables bootstrapping spec-based
+`.sym` or `.sym` file. This enables bootstrapping spec-based
 management of existing libraries.
 
 ## Public API

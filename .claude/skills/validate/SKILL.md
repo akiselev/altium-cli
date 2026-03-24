@@ -100,7 +100,7 @@ cargo test --workspace --features proptest       # + proptests
 
 # Targeted runs during development
 cargo test -p altium-format <test_name>
-cargo test -p altium-format-ops <test_name> --features test-fixtures
+cargo test -p autopcb-spec <test_name> --features test-fixtures
 ```
 
 ### Gating New Tests
@@ -139,11 +139,9 @@ if !report.is_identical() {
 }
 ```
 
-### Integration Test Harness (`altium-format-ops/tests/harness/`)
+### Test Helpers (`altium-format::test_utils`)
 
 ```rust
-use harness::{schlib_fixture_path, pcblib_fixture_path, schdoc_fixture_path, pcbdoc_fixture_path};
-use harness::{save_reopen_schlib, save_reopen_schdoc, validate_pcbdoc};
 ```
 
 ### Test Fixture Repositories
@@ -164,8 +162,6 @@ Additional fixtures in `data/` root: `BlankSchlibComponent.SchLib`, `BlankPcbLib
 
 Located at:
 - `crates/altium-format/proptest-regressions/`
-- `crates/altium-format-ops/proptest-regressions/`
-- `crates/altium-format-ops/tests/*.proptest-regressions`
 
 When proptest finds a failure: minimize the seed, commit regression file with the fix.
 
@@ -176,5 +172,4 @@ altium get version <file>                        # Format version (.schlib/.pcbl
 altium render <file> [-o dir] [--name X] [--format svg|png] [--scale N]
 altium new schdoc <output>                       # Create blank SchDoc
 altium new schlib <output>                       # Create blank SchLib
-altium ops apply <file> --spec-file <ops> [-o path] [--dry-run] [--report-json]
 ```
