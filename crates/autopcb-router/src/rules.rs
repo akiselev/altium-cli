@@ -123,6 +123,9 @@ pub struct RoutingPolicy {
     /// Per-net cache: diff-pair config. `None` for regular nets.
     diff_pair_cache: HashMap<NetId, Option<DiffPairConfig>>,
 
+    /// Bidirectional map: each diff-pair net maps to its partner NetId.
+    diff_pair_partners: HashMap<NetId, NetId>,
+
     /// Map from NetId to net class name (from IR net definitions).
     net_class_map: HashMap<NetId, String>,
 
@@ -214,6 +217,31 @@ impl RoutingPolicy {
     /// Differential-pair config for `net_id`, or `None` for regular nets.
     pub fn diff_pair_config(&self, net_id: NetId) -> Option<DiffPairConfig> {
         self.diff_pair_cache.get(&net_id).copied().flatten()
+    }
+
+    /// Return the diff-pair partner for `net_id`, or `None` for single-ended nets.
+    pub fn diff_pair_partner(&self, net_id: NetId) -> Option<NetId> {
+        self.diff_pair_partners.get(&net_id).copied()
+    }
+
+    /// Returns true if `net_id` is the primary (lower raw ID) net in its diff pair.
+    /// Returns false for single-ended nets or for the secondary partner.
+    pub fn is_diff_pair_primary(&self, net_id: NetId) -> bool {
+        self.diff_pair_partners
+            .get(&net_id)
+            .map_or(false, |partner| net_id.raw() < partner.raw())
+    }
+
+    /// For a diff-pair primary net, returns the half-width of the combined pair
+    /// envelope in mm: (trace_width + gap + trace_width) / 2.0.
+    /// Returns `None` for non-diff-pair or secondary nets.
+    pub fn diff_pair_envelope_half_width(&self, net_id: NetId, layer: LayerId) -> Option<f64> {
+        if !self.is_diff_pair_primary(net_id) {
+            return None;
+        }
+        let config = self.diff_pair_config(net_id)?;
+        let width = self.trace_width(net_id, layer).preferred;
+        Some((width + config.gap + width) / 2.0)
     }
 }
 
@@ -382,6 +410,7 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
     });
 
     let mut diff_pair_cache: HashMap<NetId, Option<DiffPairConfig>> = HashMap::new();
+    let mut diff_pair_partners: HashMap<NetId, NetId> = HashMap::new();
     let mut net_class_map: HashMap<NetId, String> = HashMap::new();
     for (_ir_net_id, ir_net) in ir.nets.iter() {
         let routes_net_id = NetId(ir_net.id.raw());
@@ -391,6 +420,10 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
             None
         };
         diff_pair_cache.insert(routes_net_id, dp_cfg);
+        if let Some(partner_ir_id) = ir_net.diff_pair_partner {
+            let partner_routes_id = NetId(partner_ir_id.raw());
+            diff_pair_partners.insert(routes_net_id, partner_routes_id);
+        }
         if let Some(ref class) = ir_net.net_class {
             net_class_map.insert(routes_net_id, class.clone());
         }
@@ -415,6 +448,7 @@ pub fn build_policy(ir: &PcbIr, config: &RoutingConfig) -> Result<RoutingPolicy,
         default_via,
         default_corner_style,
         diff_pair_cache,
+        diff_pair_partners,
         net_class_map,
         class_clearance,
         class_width,
@@ -858,6 +892,201 @@ mod tests {
             policy.net_class(NetId(signal_net_id.raw())),
             None,
             "expected net_class to return None for Signal net"
+        );
+    }
+
+    /// diff_pair_partner() returns Some(partner) for both nets in a pair, None for single-ended.
+    #[test]
+    fn diff_pair_partner_lookup() {
+        let mut ir = empty_ir();
+
+        let net_a_ir_id = IrNetId::from(0);
+        let net_b_ir_id = IrNetId::from(1);
+        let net_c_ir_id = IrNetId::from(2);
+
+        ir.nets.push(IrNet {
+            id: net_a_ir_id,
+            name: "DP_P".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: Some(net_b_ir_id),
+        });
+        ir.nets.push(IrNet {
+            id: net_b_ir_id,
+            name: "DP_N".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: Some(net_a_ir_id),
+        });
+        ir.nets.push(IrNet {
+            id: net_c_ir_id,
+            name: "SIG".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
+        });
+
+        let policy = build_policy(&ir, &default_config()).expect("build_policy failed");
+
+        let net_a = NetId(net_a_ir_id.raw());
+        let net_b = NetId(net_b_ir_id.raw());
+        let net_c = NetId(net_c_ir_id.raw());
+
+        assert_eq!(
+            policy.diff_pair_partner(net_a),
+            Some(net_b),
+            "expected partner(net_a) == Some(net_b)"
+        );
+        assert_eq!(
+            policy.diff_pair_partner(net_b),
+            Some(net_a),
+            "expected partner(net_b) == Some(net_a)"
+        );
+        assert_eq!(
+            policy.diff_pair_partner(net_c),
+            None,
+            "expected partner(single-ended) == None"
+        );
+    }
+
+    /// is_diff_pair_primary() returns true for the lower-ID net, false for the higher-ID partner.
+    #[test]
+    fn diff_pair_primary_is_lower_id() {
+        let mut ir = empty_ir();
+
+        let net_0_ir_id = IrNetId::from(0);
+        let net_1_ir_id = IrNetId::from(1);
+        let net_2_ir_id = IrNetId::from(2);
+
+        ir.nets.push(IrNet {
+            id: net_0_ir_id,
+            name: "DP_P".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: Some(net_1_ir_id),
+        });
+        ir.nets.push(IrNet {
+            id: net_1_ir_id,
+            name: "DP_N".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: Some(net_0_ir_id),
+        });
+        ir.nets.push(IrNet {
+            id: net_2_ir_id,
+            name: "SIG".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
+        });
+
+        let policy = build_policy(&ir, &default_config()).expect("build_policy failed");
+
+        assert!(
+            policy.is_diff_pair_primary(NetId(0)),
+            "net 0 has lower ID than partner 1; should be primary"
+        );
+        assert!(
+            !policy.is_diff_pair_primary(NetId(1)),
+            "net 1 has higher ID than partner 0; should not be primary"
+        );
+        assert!(
+            !policy.is_diff_pair_primary(NetId(2)),
+            "single-ended net should not be primary"
+        );
+    }
+
+    /// diff_pair_envelope_half_width() returns (w + gap + w) / 2 for primary, None otherwise.
+    #[test]
+    fn diff_pair_envelope_half_width_computed() {
+        let mut ir = empty_ir();
+
+        make_rule(
+            &mut ir.rules,
+            RuleKind::DifferentialPairsRouting,
+            1,
+            IrRuleParams::DiffPairsRouting {
+                gap_mm: 0.15,
+                max_gap_mm: 0.5,
+                max_uncoupled_length_mm: 5.0,
+            },
+        );
+        // Width rule: preferred = 0.254 mm.
+        make_rule(
+            &mut ir.rules,
+            RuleKind::Width,
+            2,
+            IrRuleParams::Width {
+                min_mm: 0.1,
+                max_mm: 3.0,
+                preferred_mm: 0.254,
+            },
+        );
+
+        let net_0_ir_id = IrNetId::from(0);
+        let net_1_ir_id = IrNetId::from(1);
+        let net_2_ir_id = IrNetId::from(2);
+
+        ir.nets.push(IrNet {
+            id: net_0_ir_id,
+            name: "DP_P".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: Some(net_1_ir_id),
+        });
+        ir.nets.push(IrNet {
+            id: net_1_ir_id,
+            name: "DP_N".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: Some(net_0_ir_id),
+        });
+        ir.nets.push(IrNet {
+            id: net_2_ir_id,
+            name: "SIG".into(),
+            pins: vec![],
+            component_count: 0,
+            net_class: None,
+            diff_pair_partner: None,
+        });
+
+        let policy = build_policy(&ir, &default_config()).expect("build_policy failed");
+
+        let layer = LayerId(0);
+
+        // primary net (ID 0): (0.254 + 0.15 + 0.254) / 2.0 = 0.329
+        let expected = (0.254_f64 + 0.15 + 0.254) / 2.0;
+        let half_width = policy.diff_pair_envelope_half_width(NetId(0), layer);
+        assert!(
+            half_width.is_some(),
+            "expected Some for primary diff-pair net"
+        );
+        assert!(
+            (half_width.unwrap() - expected).abs() < 1e-9,
+            "expected envelope_half_width ≈ {expected:.6}, got {:?}",
+            half_width
+        );
+
+        // secondary net (ID 1): None
+        assert_eq!(
+            policy.diff_pair_envelope_half_width(NetId(1), layer),
+            None,
+            "expected None for secondary diff-pair net"
+        );
+
+        // single-ended net (ID 2): None
+        assert_eq!(
+            policy.diff_pair_envelope_half_width(NetId(2), layer),
+            None,
+            "expected None for single-ended net"
         );
     }
 }

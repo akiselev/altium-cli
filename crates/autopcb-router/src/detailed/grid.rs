@@ -276,6 +276,7 @@ fn successors(
     corridor: Option<&std::collections::HashSet<u32>>,
     congestion_grid: Option<&crate::global::congestion::GlobalRoutingGrid>,
     edge_history: Option<&EdgeHistoryMap>,
+    extra_inflate_cells: u32,
 ) -> Vec<(GridNode, OrderedFloat<f64>)> {
     let grid = &workspace.grid;
     let layer_count = workspace.layer_count;
@@ -336,6 +337,43 @@ fn successors(
         let neighbour = GridNode { x: nx, y: ny, layer: node.layer };
         if workspace.is_blocked(to_ir_layer(node.layer), nx, ny, Some(net_id)) {
             return;
+        }
+        // Fat centerline check: for diff-pair primary nets, ensure cells at
+        // ±offset perpendicular to the movement direction are also clear.
+        // This guarantees room for both physical traces after expansion.
+        if extra_inflate_cells > 0 {
+            let ir_layer = to_ir_layer(node.layer);
+            // Perpendicular to movement direction (dx, dy): (-dy, dx)
+            let (pdx, pdy) = (-(dy as i64), dx as i64);
+            let r = extra_inflate_cells as i64;
+            let mut fat_blocked = false;
+            for d in 1..=r {
+                let cx = nx as i64 + pdx * d;
+                let cy = ny as i64 + pdy * d;
+                if cx >= 0 && cy >= 0 && grid.in_bounds(cx as u32, cy as u32) {
+                    if workspace.is_blocked(ir_layer, cx as u32, cy as u32, Some(net_id)) {
+                        fat_blocked = true;
+                        break;
+                    }
+                } else {
+                    fat_blocked = true;
+                    break;
+                }
+                let cx = nx as i64 - pdx * d;
+                let cy = ny as i64 - pdy * d;
+                if cx >= 0 && cy >= 0 && grid.in_bounds(cx as u32, cy as u32) {
+                    if workspace.is_blocked(ir_layer, cx as u32, cy as u32, Some(net_id)) {
+                        fat_blocked = true;
+                        break;
+                    }
+                } else {
+                    fat_blocked = true;
+                    break;
+                }
+            }
+            if fat_blocked {
+                return;
+            }
         }
         let penalty = direction_penalty(dx, dy, preferred);
         let corridor_penalty = if let (Some(corridor), Some(cg)) = (corridor, congestion_grid) {
@@ -503,6 +541,12 @@ fn route_subnet_astar_inner(
 
     let min_via_cost = router.via_cost.cost(None);
 
+    // Diff-pair primary nets: for now, route with normal width and rely on
+    // centerline expansion + DRC to enforce gap. Fat inflation is too
+    // restrictive for dense connectors (USB-C at 0.5mm pitch). Future:
+    // enable inflation only when routing through open areas, not pad zones.
+    let extra_inflate_cells: u32 = 0;
+
     // Build the ordered list of ROI radii to attempt.
     // radius=None means full grid (no ROI restriction).
     let radii: Vec<Option<u32>> = if router.roi_initial_radius > 0 {
@@ -537,6 +581,7 @@ fn route_subnet_astar_inner(
                     corridor,
                     congestion_grid,
                     edge_history,
+                    extra_inflate_cells,
                 )
             },
             |node| OrderedFloat(heuristic(*node, goal, min_via_cost)),

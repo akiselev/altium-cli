@@ -160,7 +160,10 @@ pub fn route_board(
         "route_board_started"
     );
 
-    let solution = pathfinder::pathfinder_route(workspace, ir, config)?;
+    let mut solution = pathfinder::pathfinder_route(workspace, ir, config)?;
+
+    // Expand diff-pair centerlines into physical trace pairs.
+    high_speed::optimize_high_speed(workspace, &mut solution)?;
 
     tracing::info!(
         target: "autopcb_router",

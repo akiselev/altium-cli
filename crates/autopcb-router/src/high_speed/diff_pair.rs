@@ -14,7 +14,7 @@
 //! exist in the solution (from the detailed router). The optimizer adjusts its
 //! position to enforce the gap constraint.
 
-use autopcb_routes::{NetId, Point, RouteSolution, TraceSegment};
+use autopcb_routes::{NetId, Point, RouteSolution, RoutedNet, RoutedVia, TraceSegment};
 
 use crate::rules::DiffPairConfig;
 
@@ -146,13 +146,185 @@ impl DiffPairOptimizer {
 }
 
 // ---------------------------------------------------------------------------
+// CenterlineExpander
+// ---------------------------------------------------------------------------
+
+/// Expands a centerline path into two physical differential pair traces.
+///
+/// Given a primary net's segments (routed as a fat centerline with room
+/// for both traces), produces two `RoutedNet`s offset perpendicular to
+/// the centerline by ±(gap/2 + trace_width/2).
+pub struct CenterlineExpander;
+
+impl CenterlineExpander {
+    /// Expand a centerline into two physical differential pair traces.
+    ///
+    /// The primary net gets the `+offset` side, the partner gets `-offset`.
+    /// Both traces have `trace_width` width (not the fat centerline width).
+    pub fn expand_pair(
+        centerline_segments: &[TraceSegment],
+        centerline_vias: &[RoutedVia],
+        primary_net_id: NetId,
+        partner_net_id: NetId,
+        config: &DiffPairConfig,
+        trace_width: f64,
+    ) -> (RoutedNet, RoutedNet) {
+        let offset = config.gap / 2.0 + trace_width / 2.0;
+
+        let mut primary_segments = Vec::with_capacity(centerline_segments.len());
+        let mut partner_segments = Vec::with_capacity(centerline_segments.len());
+        let mut primary_vias = Vec::with_capacity(centerline_vias.len());
+        let mut partner_vias = Vec::with_capacity(centerline_vias.len());
+
+        for seg in centerline_segments {
+            let dx = seg.end.x - seg.start.x;
+            let dy = seg.end.y - seg.start.y;
+            let len = (dx * dx + dy * dy).sqrt();
+
+            if len < EPS {
+                // Zero-length segment: duplicate as-is for both nets
+                primary_segments.push(TraceSegment {
+                    net_id: primary_net_id,
+                    width_mm: trace_width,
+                    ..*seg
+                });
+                partner_segments.push(TraceSegment {
+                    net_id: partner_net_id,
+                    width_mm: trace_width,
+                    ..*seg
+                });
+                continue;
+            }
+
+            // Unit direction and perpendicular
+            let ux = dx / len;
+            let uy = dy / len;
+            let px = -uy; // perpendicular (left-rotate)
+            let py = ux;
+
+            // Primary: +offset perpendicular
+            primary_segments.push(TraceSegment {
+                net_id: primary_net_id,
+                layer: seg.layer,
+                start: Point {
+                    x: seg.start.x + px * offset,
+                    y: seg.start.y + py * offset,
+                },
+                end: Point {
+                    x: seg.end.x + px * offset,
+                    y: seg.end.y + py * offset,
+                },
+                width_mm: trace_width,
+            });
+
+            // Partner: -offset perpendicular
+            partner_segments.push(TraceSegment {
+                net_id: partner_net_id,
+                layer: seg.layer,
+                start: Point {
+                    x: seg.start.x - px * offset,
+                    y: seg.start.y - py * offset,
+                },
+                end: Point {
+                    x: seg.end.x - px * offset,
+                    y: seg.end.y - py * offset,
+                },
+                width_mm: trace_width,
+            });
+        }
+
+        // Expand vias: each centerline via becomes two vias
+        for via in centerline_vias {
+            // Use the direction from the nearest segment to determine offset direction.
+            // If no segments, offset in +x direction as fallback.
+            let (px, py) = nearest_perpendicular(centerline_segments, via.position);
+
+            primary_vias.push(RoutedVia {
+                net_id: primary_net_id,
+                position: Point {
+                    x: via.position.x + px * offset,
+                    y: via.position.y + py * offset,
+                },
+                ..*via
+            });
+            partner_vias.push(RoutedVia {
+                net_id: partner_net_id,
+                position: Point {
+                    x: via.position.x - px * offset,
+                    y: via.position.y - py * offset,
+                },
+                ..*via
+            });
+        }
+
+        let primary_length: f64 = primary_segments
+            .iter()
+            .map(|s| {
+                let dx = s.end.x - s.start.x;
+                let dy = s.end.y - s.start.y;
+                (dx * dx + dy * dy).sqrt()
+            })
+            .sum();
+
+        let partner_length: f64 = partner_segments
+            .iter()
+            .map(|s| {
+                let dx = s.end.x - s.start.x;
+                let dy = s.end.y - s.start.y;
+                (dx * dx + dy * dy).sqrt()
+            })
+            .sum();
+
+        (
+            RoutedNet {
+                net_id: primary_net_id,
+                segments: primary_segments,
+                vias: primary_vias,
+                routed_length_mm: primary_length,
+            },
+            RoutedNet {
+                net_id: partner_net_id,
+                segments: partner_segments,
+                vias: partner_vias,
+                routed_length_mm: partner_length,
+            },
+        )
+    }
+}
+
+/// Find the perpendicular direction of the nearest segment to a point.
+/// Returns (px, py) perpendicular unit vector, or (0, 1) as fallback.
+fn nearest_perpendicular(segments: &[TraceSegment], point: Point) -> (f64, f64) {
+    let mut best_dist = f64::INFINITY;
+    let mut best_perp = (0.0_f64, 1.0_f64);
+
+    for seg in segments {
+        let mid_x = (seg.start.x + seg.end.x) / 2.0;
+        let mid_y = (seg.start.y + seg.end.y) / 2.0;
+        let dist = (point.x - mid_x).powi(2) + (point.y - mid_y).powi(2);
+
+        if dist < best_dist {
+            best_dist = dist;
+            let dx = seg.end.x - seg.start.x;
+            let dy = seg.end.y - seg.start.y;
+            let len = (dx * dx + dy * dy).sqrt();
+            if len > EPS {
+                best_perp = (-dy / len, dx / len);
+            }
+        }
+    }
+
+    best_perp
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use autopcb_routes::{LayerId, NetId, Point, RoutedNet, RouteSolution, TraceSegment};
+    use autopcb_routes::{LayerId, NetId, Point, RoutedNet, RoutedVia, RouteSolution, TraceSegment};
 
     fn make_solution(
         net_a_segs: Vec<TraceSegment>,
@@ -309,5 +481,106 @@ mod tests {
             config.gap,
             actual_gap
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // CenterlineExpander tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn centerline_expand_horizontal() {
+        // Horizontal centerline segment from (0,0) to (10,0)
+        // gap=0.15, width=0.2
+        // offset = 0.15/2 + 0.2/2 = 0.175
+        // Primary at y=+0.175, Partner at y=-0.175
+        let config = DiffPairConfig { gap: 0.15, max_gap: 0.5, max_skew: 5.0 };
+        let seg = TraceSegment {
+            net_id: NetId(0),
+            layer: LayerId(0),
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point { x: 10.0, y: 0.0 },
+            width_mm: 0.5, // fat centerline width (ignored by expander)
+        };
+        let (p, n) =
+            CenterlineExpander::expand_pair(&[seg], &[], NetId(0), NetId(1), &config, 0.2);
+        assert_eq!(p.segments.len(), 1);
+        assert_eq!(n.segments.len(), 1);
+        assert!((p.segments[0].start.y - 0.175).abs() < 1e-6);
+        assert!((n.segments[0].start.y - (-0.175)).abs() < 1e-6);
+        assert!((p.segments[0].width_mm - 0.2).abs() < 1e-6);
+        assert_eq!(p.net_id, NetId(0));
+        assert_eq!(n.net_id, NetId(1));
+    }
+
+    #[test]
+    fn centerline_expand_vertical() {
+        // Vertical centerline segment from (5,0) to (5,10)
+        // Perpendicular is (-1, 0), so primary at x=5-0.175, partner at x=5+0.175
+        let config = DiffPairConfig { gap: 0.15, max_gap: 0.5, max_skew: 5.0 };
+        let seg = TraceSegment {
+            net_id: NetId(0),
+            layer: LayerId(0),
+            start: Point { x: 5.0, y: 0.0 },
+            end: Point { x: 5.0, y: 10.0 },
+            width_mm: 0.5,
+        };
+        let (p, n) =
+            CenterlineExpander::expand_pair(&[seg], &[], NetId(0), NetId(1), &config, 0.2);
+        let offset = 0.175;
+        // For vertical (dx=0, dy=10): ux=0, uy=1, px=-1, py=0
+        // Primary: x = 5 + (-1)*offset = 5 - 0.175 = 4.825
+        assert!(
+            (p.segments[0].start.x - (5.0 - offset)).abs() < 1e-6,
+            "p.x={}",
+            p.segments[0].start.x
+        );
+        assert!(
+            (n.segments[0].start.x - (5.0 + offset)).abs() < 1e-6,
+            "n.x={}",
+            n.segments[0].start.x
+        );
+    }
+
+    #[test]
+    fn centerline_expand_via_duplication() {
+        let config = DiffPairConfig { gap: 0.15, max_gap: 0.5, max_skew: 5.0 };
+        let seg = TraceSegment {
+            net_id: NetId(0),
+            layer: LayerId(0),
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point { x: 10.0, y: 0.0 },
+            width_mm: 0.5,
+        };
+        let via = RoutedVia {
+            net_id: NetId(0),
+            position: Point { x: 5.0, y: 0.0 },
+            from_layer: LayerId(0),
+            to_layer: LayerId(1),
+            drill_mm: 0.3,
+            annular_ring_mm: 0.1,
+        };
+        let (p, n) =
+            CenterlineExpander::expand_pair(&[seg], &[via], NetId(0), NetId(1), &config, 0.2);
+        assert_eq!(p.vias.len(), 1);
+        assert_eq!(n.vias.len(), 1);
+        assert!((p.vias[0].position.y - 0.175).abs() < 1e-6);
+        assert!((n.vias[0].position.y - (-0.175)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn centerline_expand_zero_length_segment() {
+        let config = DiffPairConfig { gap: 0.15, max_gap: 0.5, max_skew: 5.0 };
+        let seg = TraceSegment {
+            net_id: NetId(0),
+            layer: LayerId(0),
+            start: Point { x: 5.0, y: 5.0 },
+            end: Point { x: 5.0, y: 5.0 },
+            width_mm: 0.5,
+        };
+        let (p, n) =
+            CenterlineExpander::expand_pair(&[seg], &[], NetId(0), NetId(1), &config, 0.2);
+        assert_eq!(p.segments.len(), 1);
+        assert_eq!(n.segments.len(), 1);
+        // Both should be at the same point (no offset for zero-length)
     }
 }

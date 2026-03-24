@@ -190,6 +190,29 @@ pub fn pathfinder_route(
     let neckdown_map: NeckdownMap = build_neckdown_map(&workspace.escape_plan);
 
     // ------------------------------------------------------------------
+    // 3c. Identify secondary diff-pair nets (to be skipped during routing).
+    //     Secondary nets are derived from their primary partner's centerline
+    //     during post-route expansion — they should not compete for resources.
+    // ------------------------------------------------------------------
+    let secondary_nets: HashSet<NetId> = global_plan
+        .net_order
+        .iter()
+        .filter(|&&nid| {
+            workspace.policy.diff_pair_partner(nid).is_some()
+                && !workspace.policy.is_diff_pair_primary(nid)
+        })
+        .copied()
+        .collect();
+
+    if !secondary_nets.is_empty() {
+        tracing::info!(
+            target: "autopcb_router::pathfinder",
+            count = secondary_nets.len(),
+            "skipping secondary diff-pair nets (will be derived from primary)"
+        );
+    }
+
+    // ------------------------------------------------------------------
     // 4. Negotiation loop.
     // ------------------------------------------------------------------
     for _iteration in 0..config.max_iterations {
@@ -265,6 +288,10 @@ pub fn pathfinder_route(
         }
 
         for &net_id in &dynamic_order {
+            // Skip secondary diff-pair nets — they are derived from the primary.
+            if secondary_nets.contains(&net_id) {
+                continue;
+            }
             // Skip nets that already have a valid path (not ripped up).
             if solution_paths.contains_key(&net_id) {
                 continue;
