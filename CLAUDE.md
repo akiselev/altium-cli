@@ -8,7 +8,9 @@ Rust workspace for reading, writing, and querying Altium Designer files.
 * **crates/altium-format-derive** Derive macros for serialization code generation
 * **crates/altium-format-types** Raw types types reverse engineered from Altium
 * **crates/altium-format**  Core library for Altium file parsing and manipulation
-* **crates/autopcb-spec**  Spec language compiler, executor, and reconciler
+* **crates/altium-format-query**  Query interface over altium-format documents
+* **crates/altium-format-render-svg**  SVG rendering for Altium documents
+* **crates/altium-format-render-png**  PNG rendering for Altium documents
 * **crates/altium-cli**  Command-line tool for file inspection and manipulation
 
 ## Architecture
@@ -22,12 +24,15 @@ altium-format-derive (proc macros, no runtime deps)
      ↓
 altium-format (core library: parsing, querying, editing)
      ↓
-autopcb-spec (spec language: compiler, executor, reconciler)
+altium-format-query / altium-format-render-svg / altium-format-render-png
      ↓
 altium-cli (binary: CLI interface, output formatting)
 ```
 
-**Publishing order:** types → derive → format → autopcb-spec → cli.
+Note: `altium-cli` also depends on `autopcb-*` crates from `../autopcb/` via
+cross-repo path dependencies.
+
+**Publishing order:** types → derive → format → format-query/render-svg/render-png → cli.
 
 **Versioning:** Synchronized versions (all crates at same version for initial releases).
 
@@ -113,7 +118,6 @@ We MUST NEVER silently drop parsing or other errors or silently corrupt data. Ev
 # Error Handling
 
 * altium-format uses altium-format::AltiumFormatError
-* autopcb-spec uses autopcb-spec::SpecError
 * altium-cli uses anyhow
 
 **Error context is mandatory**: Every fallible call at a parsing boundary MUST use
@@ -351,7 +355,6 @@ When adding new tests:
 - When proptest finds a failure, keep/minimize the seed and commit/update regression files with the fix.
 - Use targeted test runs while developing:
   - `cargo test -p altium-format <test_name>`
-  - `cargo test -p autopcb-spec <test_name>`
   then run broader suites before finishing.
 
 

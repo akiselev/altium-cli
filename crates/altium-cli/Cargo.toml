@@ -24,17 +24,17 @@ workspace = true
 [dependencies]
 altium-format = { version = "0.2.0", path = "../altium-format" }
 altium-format-query = { version = "0.2.0", path = "../altium-format-query" }
-autopcb-spec = { version = "0.1.0", path = "../autopcb-spec", features = ["altium-apply"] }
+autopcb-spec = { version = "0.1.0", path = "../../../autopcb/crates/autopcb-spec", features = ["altium-apply"] }
 altium-format-render-svg = { version = "0.2.0", path = "../altium-format-render-svg" }
 altium-format-render-png = { version = "0.2.0", path = "../altium-format-render-png" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
-autopcb-graph = { version = "0.1.0", path = "../autopcb-graph" }
-autopcb-graph-spec = { version = "0.1.0", path = "../autopcb-graph-spec" }
-autopcb-graph-import-altium = { version = "0.1.0", path = "../autopcb-graph-import-altium" }
-autopcb-ir = { version = "0.2.0", path = "../autopcb-ir", features = ["serde", "pcbdoc-import"] }
-autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
-autopcb-router = { version = "0.1.0", path = "../autopcb-router" }
-autopcb-routes = { version = "0.2.0", path = "../autopcb-routes" }
+autopcb-graph = { version = "0.1.0", path = "../../../autopcb/crates/autopcb-graph" }
+autopcb-graph-spec = { version = "0.1.0", path = "../../../autopcb/crates/autopcb-graph-spec" }
+autopcb-graph-import-altium = { version = "0.1.0", path = "../../../autopcb/crates/autopcb-graph-import-altium" }
+autopcb-ir = { version = "0.2.0", path = "../../../autopcb/crates/autopcb-ir", features = ["serde", "pcbdoc-import"] }
+autopcb-placement = { version = "0.2.0", path = "../../../autopcb/crates/autopcb-placement" }
+autopcb-router = { version = "0.1.0", path = "../../../autopcb/crates/autopcb-router" }
+autopcb-routes = { version = "0.2.0", path = "../../../autopcb/crates/autopcb-routes" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 serde = { version = "1.0", features = ["derive"] }
