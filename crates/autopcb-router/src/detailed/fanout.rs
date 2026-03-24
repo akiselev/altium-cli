@@ -23,6 +23,7 @@ use autopcb_routes::{LayerId, NetId};
 use crate::config::EscapeConfig;
 use crate::obstacles::ObstacleMap;
 use crate::rules::RoutingPolicy;
+use crate::spatial::SpatialIndex;
 use crate::workspace::GridConfig;
 
 // ---------------------------------------------------------------------------
@@ -314,6 +315,7 @@ pub fn plan_stubs(
     obstacle_maps: &[ObstacleMap],
     policy: &RoutingPolicy,
     config: &EscapeConfig,
+    spatial_index: &SpatialIndex,
 ) -> Vec<BreakoutRoute> {
     if !config.enabled {
         return Vec::new();
@@ -352,9 +354,32 @@ pub fn plan_stubs(
                     if !grid.in_bounds(gcx, gcy) {
                         continue 'dir;
                     }
-                    // Cell must be free on the source layer.
+                    // Cell must be free on the source layer for this net.
+                    // Use same-net-aware blocking: if the cell is blocked only
+                    // by obstacles belonging to the same net (or by clearance
+                    // inflation with no R-tree entries), allow pass-through.
+                    // This is critical for dense connectors (USB-C at 0.5mm
+                    // pitch) where the pad's own clearance zone blocks all
+                    // escape directions in the raw bitmap.
                     if obstacle_maps[source_map_idx].is_blocked(gcx, gcy) {
-                        continue 'dir;
+                        let cell_mm = grid.to_mm(gcx, gcy);
+                        let r = grid.resolution_mm / 2.0;
+                        let candidates = spatial_index.query_rect([
+                            cell_mm.x - r,
+                            cell_mm.y - r,
+                            cell_mm.x + r,
+                            cell_mm.y + r,
+                        ]);
+                        // Allow pass-through if: no R-tree entries (clearance
+                        // inflation only) or all entries are same-net.
+                        let passable = candidates.is_empty()
+                            || candidates.iter().all(|obs| {
+                                obs.net_id()
+                                    .map_or(false, |obs_net| obs_net == net_id)
+                            });
+                        if !passable {
+                            continue 'dir;
+                        }
                     }
                     trace_cells.push((gcx, gcy));
 
@@ -578,13 +603,14 @@ pub fn plan_breakouts(
     layer_count: usize,
     policy: &RoutingPolicy,
     config: &EscapeConfig,
+    spatial_index: &SpatialIndex,
 ) -> BreakoutPlan {
     if !config.enabled {
         return BreakoutPlan::default();
     }
 
     // Tier 1: same-layer stubs (any layer count).
-    let stubs = plan_stubs(ir, grid, obstacle_maps, policy, config);
+    let stubs = plan_stubs(ir, grid, obstacle_maps, policy, config, spatial_index);
 
     // Tier 2: perimeter escapes (any layer count).
     let perimeter = plan_perimeter_escapes(ir, grid, obstacle_maps, policy, config, &stubs);
@@ -2120,7 +2146,8 @@ mod tests {
         let maps = make_obstacle_maps(&grid, 2);
         let config = EscapeConfig::default();
         let policy = make_policy(&ir);
-        let plan = plan_breakouts(&ir, &grid, &maps, 2, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let plan = plan_breakouts(&ir, &grid, &maps, 2, &policy, &config, &spatial);
         assert!(
             plan.routes.is_empty(),
             "empty board must produce empty breakout plan"
@@ -2181,7 +2208,8 @@ mod tests {
             neckdown_min_width_mm: 0.0,
         };
         let policy = make_policy(&ir);
-        let plan = plan_breakouts(&ir, &grid, &maps, 2, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let plan = plan_breakouts(&ir, &grid, &maps, 2, &policy, &config, &spatial);
 
         // Tier 3 (ViaEscape) must never appear on a 2-layer board.
         let has_via_escape = plan.routes.iter().any(|r| r.tier == BreakoutTier::ViaEscape);
@@ -2282,7 +2310,8 @@ mod tests {
 
         // plan_breakouts must run without error; on a 4-layer board it may
         // produce Tier 1, Tier 2, or Tier 3 routes depending on availability.
-        let plan = plan_breakouts(&ir, &grid, &maps, 4, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let plan = plan_breakouts(&ir, &grid, &maps, 4, &policy, &config, &spatial);
         assert!(
             !plan.routes.is_empty(),
             "4-layer board with dense pads must produce at least some breakout routes"

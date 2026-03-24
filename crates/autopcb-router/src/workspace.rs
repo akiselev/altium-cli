@@ -203,9 +203,8 @@ impl RoutingWorkspace {
             // If every obstacle touching this cell is same-net, allow pass-through.
             // Also allow pass-through when there are NO R-tree entries at all —
             // this means the cell is blocked only by clearance inflation (the
-            // bitmap inflates by clearance + via_radius, but R-tree entries only
-            // cover clearance). Without this, a dead-zone ring forms around pads
-            // that no net can route through, not even the pad's own net.
+            // bitmap inflation extends beyond R-tree entry bounds). Without this,
+            // a dead-zone ring forms around pads that no net can route through.
             if candidates.is_empty() {
                 return false;
             }
@@ -309,9 +308,13 @@ pub fn build_workspace(
     // pads currently use the same global clearance this is sufficient.
     let sentinel = NetId(u32::MAX);
     let clearance_mm = policy.clearance(sentinel, sentinel);
-    // Inflate obstacles by clearance + via radius so that a point-check at the
-    // via center correctly detects overlap with pads. Without this, the A*
-    // router treats vias as zero-width points during placement.
+    // Inflate obstacles by clearance only. Via clearance is checked separately
+    // at via-placement time in the A* successors function. The previous
+    // approach (clearance + via_radius) over-inflated pads by ~0.25mm, which
+    // at 0.5mm-pitch connectors (USB-C) blocked ALL routing channels between
+    // adjacent pads — 5-cell blocked radius on a 2-cell pitch leaves 0 free
+    // cells. With clearance-only inflation (1 cell instead of 2), pads have
+    // a 4-cell blocked radius, which allows perpendicular escape routing.
     let via_radius_mm = {
         let dummy_net = NetId(0);
         let dummy_layer = LayerId(0);
@@ -319,7 +322,9 @@ pub fn build_workspace(
         let v = candidates.first().copied().unwrap_or_default();
         v.drill_mm / 2.0 + v.annular_ring_mm
     };
-    let obstacle_inflate_mm = clearance_mm + via_radius_mm;
+    // Keep via_radius_mm computed for potential future use in via-placement checks.
+    let _ = via_radius_mm;
+    let obstacle_inflate_mm = clearance_mm;
     let inflate = grid.inflate_cells(obstacle_inflate_mm);
 
     // ------------------------------------------------------------------
@@ -341,8 +346,15 @@ pub fn build_workspace(
     // 5d. Pre-routed tracks and vias (locked)
     mark_pre_routed(ir, &grid, inflate, &mut obstacle_maps, &mut entries);
 
-    // 5e. Pad escape planning (must run after pads/keepouts are blocked,
-    //     before access points are computed so escapes are visible to AP logic)
+    // ------------------------------------------------------------------
+    // 5e. Build spatial index BEFORE escape planning so the escape planner
+    //     can use same-net pass-through checks (is_blocked with net_id).
+    // ------------------------------------------------------------------
+    let spatial_index = SpatialIndex::build(entries);
+
+    // 5f. Pad escape planning (must run after pads/keepouts are blocked,
+    //     before access points are computed so escapes are visible to AP logic).
+    //     Now has access to the spatial index for same-net-aware blocking.
     let escape_plan: BreakoutPlan = crate::detailed::fanout::plan_breakouts(
         ir,
         &grid,
@@ -350,13 +362,9 @@ pub fn build_workspace(
         layer_count,
         &policy,
         &config.escape,
+        &spatial_index,
     );
     crate::detailed::fanout::apply_breakouts(&escape_plan, &mut obstacle_maps, inflate);
-
-    // ------------------------------------------------------------------
-    // 6. Build spatial index
-    // ------------------------------------------------------------------
-    let spatial_index = SpatialIndex::build(entries);
 
     // ------------------------------------------------------------------
     // 7. Compute pad access points
@@ -466,9 +474,16 @@ fn mark_pads(
             let cx = pad.world_position.x;
             let cy = pad.world_position.y;
 
-            // Effective pad radius: half the max(size_x, size_y) + clearance.
-            let pad_radius = (pad.shape.size_x.max(pad.shape.size_y) / 2.0).max(0.0);
-            let inflated_radius = pad_radius + clearance_mm;
+            // Effective pad half-dimensions + clearance.
+            // Use the actual pad shape (rectangle) instead of treating every
+            // pad as a circle with radius=max(size_x, size_y)/2. The circle
+            // model massively over-blocks rectangular pads: a 0.3×1.14mm pad
+            // (USB-C) would create a 1.14mm-diameter circle, blocking 3.8×
+            // more area than needed in the narrow dimension.
+            let half_x = (pad.shape.size_x / 2.0).max(0.0);
+            let half_y = (pad.shape.size_y / 2.0).max(0.0);
+            let inflated_half_x = half_x + clearance_mm;
+            let inflated_half_y = half_y + clearance_mm;
 
             // Drill hole radius (for through-hole pads, blocks ALL copper layers).
             let drill_radius = if pad.is_through_hole && pad.hole_size_mm > 0.0 {
@@ -481,20 +496,24 @@ fn mark_pads(
             let (gcx, gcy) = grid.to_grid(pad.world_position);
 
             // Bitmap + R-tree: one entry per layer the pad occupies.
-            // For the pad copper area, block with copper radius on declared layers.
-            let copper_radius_cells =
-                (pad_radius / grid.resolution_mm).ceil() as u32 + inflate;
+            // Block a rectangle matching the actual pad shape + clearance.
+            let half_x_cells = (half_x / grid.resolution_mm).ceil() as u32 + inflate;
+            let half_y_cells = (half_y / grid.resolution_mm).ceil() as u32 + inflate;
+            let min_gx = gcx.saturating_sub(half_x_cells);
+            let min_gy = gcy.saturating_sub(half_y_cells);
+            let max_gx = gcx.saturating_add(half_x_cells);
+            let max_gy = gcy.saturating_add(half_y_cells);
 
             for &ir_layer in &pad.layer_set {
                 let idx = ir_layer.raw() as usize;
                 if idx < maps.len() {
-                    maps[idx].mark_circle_blocked(gcx, gcy, copper_radius_cells);
+                    maps[idx].mark_rect_blocked(min_gx, min_gy, max_gx, max_gy);
                 }
                 entries.push(ObstacleEntry::pad(
-                    cx - inflated_radius,
-                    cy - inflated_radius,
-                    cx + inflated_radius,
-                    cy + inflated_radius,
+                    cx - inflated_half_x,
+                    cy - inflated_half_y,
+                    cx + inflated_half_x,
+                    cy + inflated_half_y,
                     net_id,
                     ir_layer,
                 ));

@@ -894,6 +894,7 @@ mod tests {
                     source_library: None,
                     parameters: IndexMap::new(),
                     pads: vec![],
+                    pad_nets: IndexMap::new(),
                 },
             ],
             tracks: vec![],
@@ -1129,6 +1130,7 @@ net GND {}
                     source_library: None,
                     parameters: IndexMap::new(),
                     pads: vec![],
+                    pad_nets: IndexMap::new(),
                 });
                 b
             }],
