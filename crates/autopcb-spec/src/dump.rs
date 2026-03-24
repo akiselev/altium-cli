@@ -23,7 +23,6 @@ use altium_format_types::project::{
     FlattenMode,
 };
 use altium_format_types::{DielectricType, LayerStackStyle};
-use indexmap::IndexMap;
 use std::collections::HashSet;
 
 use crate::annotation::generate_short_id;

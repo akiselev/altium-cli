@@ -5,9 +5,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Instant;
 
-use altium_format::{AltiumProject, PcbDoc, PcbLib, SchDoc, SchLib};
+use altium_format::{AltiumProject, PcbDoc, SchDoc};
 use autopcb_spec::model::SchDocObjectSpec;
-use autopcb_spec::{dump_pcbdoc, dump_prjpcb, dump_schdoc, dump_schlib};
+use autopcb_spec::{dump_pcbdoc, dump_prjpcb, dump_schdoc};
 use autopcb_graph_import_altium::{import_pcblib, import_schlib};
 use autopcb_graph_spec::save_workspace;
 use autopcb_ir::PcbIr;

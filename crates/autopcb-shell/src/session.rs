@@ -8,7 +8,7 @@ use autopcb_graph::{AssetRef, GraphRootRef, ImportRef, ScopeRef, WorkspaceRef};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::AgentWorkspaceState;
-use egui_dock::{DockState, egui};
+use egui_dock::DockState;
 
 use crate::app::{PaletteMode, PanelVisibilityState, ShortcutOverrides};
 use crate::commands::StoredShortcut;

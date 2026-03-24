@@ -10,12 +10,12 @@ use altium_format_render_png::{
 use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_schlib_component};
 use autopcb_spec::{
     FormatConfig, PcbDocSpec, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
-    SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb,
+    SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_prjpcb,
     apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_syms,
     compile_spec_with_resolved, diff_snapshots, dump_intlib,
     dump_pcbdoc, dump_pcblib, dump_placement_block, dump_prjpcb, dump_schdoc, dump_schlib,
     filter_changes, format_spec, project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc,
-    reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb,
+    reconcile_pcbdoc_empty, reconcile_prjpcb,
     reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib,
     reconcile_schlib_empty, render_eco_report, resolve_imports, rewrite_pcbdoc_spec_with_changes,
     validate_pcbdoc_spec, validate_schdoc_spec,

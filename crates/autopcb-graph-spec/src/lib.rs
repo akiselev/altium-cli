@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use autopcb_graph::{DefinitionRef, DesignWorkspace, ScopeRef};
+use autopcb_graph::{DefinitionRef, DesignWorkspace};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
