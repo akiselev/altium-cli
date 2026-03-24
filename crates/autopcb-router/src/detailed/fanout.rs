@@ -997,6 +997,7 @@ mod tests {
     };
     use crate::config::RoutingConfig;
     use crate::rules::build_policy;
+    use crate::spatial::ObstacleEntry;
 
     fn make_grid(board_max: f64, resolution: f64) -> GridConfig {
         let width_cells = (board_max / resolution).ceil() as u32 + 1;
@@ -1738,6 +1739,31 @@ mod tests {
             }
         }
 
+        // Populate the spatial index with keepout obstacles so that the
+        // same-net pass-through check sees real non-same-net blockers (not
+        // just clearance-inflation bitmap marks which would be ignored with
+        // an empty spatial index).
+        let mut obstacles = Vec::new();
+        let r = grid.resolution_mm / 2.0;
+        for dx in -max_steps..=max_steps {
+            for dy in -max_steps..=max_steps {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = pgx as i64 + dx;
+                let ny = pgy as i64 + dy;
+                if nx >= 0 && ny >= 0 && grid.in_bounds(nx as u32, ny as u32) {
+                    let cell_mm = grid.to_mm(nx as u32, ny as u32);
+                    obstacles.push(ObstacleEntry::keepout(
+                        cell_mm.x - r, cell_mm.y - r,
+                        cell_mm.x + r, cell_mm.y + r,
+                        Some(LayerId(0)),
+                    ));
+                }
+            }
+        }
+        let spatial = SpatialIndex::build(obstacles);
+
         let config = EscapeConfig {
             enabled: true,
             min_escape_mm: 0.5,
@@ -1747,7 +1773,6 @@ mod tests {
             neckdown_min_width_mm: 0.0,
         };
         let policy = make_policy(&ir);
-        let spatial = SpatialIndex::build(vec![]);
         let routes = plan_stubs(&ir, &grid, &maps, &policy, &config, &spatial);
 
         assert!(
