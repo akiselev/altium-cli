@@ -31,7 +31,7 @@ altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 autopcb-graph = { version = "0.1.0", path = "../autopcb-graph" }
 autopcb-graph-spec = { version = "0.1.0", path = "../autopcb-graph-spec" }
 autopcb-graph-import-altium = { version = "0.1.0", path = "../autopcb-graph-import-altium" }
-autopcb-ir = { version = "0.2.0", path = "../autopcb-ir", features = ["serde"] }
+autopcb-ir = { version = "0.2.0", path = "../autopcb-ir", features = ["serde", "pcbdoc-import"] }
 autopcb-placement = { version = "0.2.0", path = "../autopcb-placement" }
 autopcb-router = { version = "0.1.0", path = "../autopcb-router" }
 autopcb-routes = { version = "0.2.0", path = "../autopcb-routes" }

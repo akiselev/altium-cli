@@ -12,7 +12,7 @@ use autopcb_routes::RouteSolution;
 
 use crate::component::IrComponent;
 use crate::copper::{IrTrack, IrVia};
-use crate::extract::PcbIr;
+use crate::ir::PcbIr;
 use crate::handles::{LayerId, NetId};
 use crate::spec_compiler::spec_to_ir;
 use crate::types::{BoundingBoxMm, PointMm};
@@ -20,15 +20,19 @@ use crate::IrError;
 
 /// Load a [`PcbIr`] from a compiled [`PcbDocSpec`].
 ///
+/// `footprint_libs` maps import aliases to compiled [`PcbLibSpec`]s for
+/// resolving `footprint: $fp.Name` references on components.
+///
 /// Pipeline:
 /// 1. Compile spec to IR via `spec_to_ir()`
 /// 2. Apply placement `at:` overrides
 /// 3. Load and merge routing solution if available
 pub fn load_ir_from_spec(
     spec: &PcbDocSpec,
+    footprint_libs: &std::collections::HashMap<String, altium_format_spec::model::PcbLibSpec>,
     spec_dir: &Path,
 ) -> crate::Result<PcbIr> {
-    let mut ir = spec_to_ir(spec).map_err(|e| {
+    let mut ir = spec_to_ir(spec, footprint_libs).map_err(|e| {
         IrError::ExtractionError(format!("spec compilation failed: {e}"))
     })?;
 

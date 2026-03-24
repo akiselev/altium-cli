@@ -3,9 +3,11 @@
 //! Converts a [`PcbDocSpec`] into a [`PcbIr`] without touching `altium_format`.
 //! Only `altium_format_spec` and `altium_format_types` are used.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use altium_format_spec::model::{BoardLayerSpec, BoardSpec, PadGeometrySpec, PcbDocSpec};
+use altium_format_spec::model::{
+    BoardLayerSpec, BoardSpec, PadGeometrySpec, PadSpec, PcbDocSpec, PcbLibSpec,
+};
 use indexmap::IndexMap;
 use altium_format_types::PadShape;
 use altium_format_types::pcb::{CornerStyle, NetTopology, RuleKind};
@@ -14,7 +16,7 @@ use crate::board::{IrBoardGeometry, IrKeepoutZone};
 use crate::compile_error::IrCompileError;
 use crate::component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
 use crate::copper::FreeCopperGeometry;
-use crate::extract::PcbIr;
+use crate::ir::PcbIr;
 use crate::geometry::{compute_component_bounds, local_to_world, world_to_local};
 use crate::handles::{ComponentId, IdMap, LayerId, NetId, PadId, RuleId};
 use crate::layer_stack::{IrCopperLayer, IrLayerStack};
@@ -28,13 +30,26 @@ use crate::types::{BoardSide, BoundingBoxMm, PointMm};
 
 /// Compile a [`PcbDocSpec`] directly to a [`PcbIr`].
 ///
+/// `footprint_libs` maps import aliases to compiled [`PcbLibSpec`]s. When a
+/// component declares `footprint: $fp.LQFP100`, the compiler looks up
+/// `footprint_libs["fp"]` and resolves pads from the matching footprint.
+///
 /// Returns [`IrCompileError::NoBoardsDefined`] when the spec contains no boards.
-pub fn spec_to_ir(spec: &PcbDocSpec) -> Result<PcbIr, IrCompileError> {
+pub fn spec_to_ir(
+    spec: &PcbDocSpec,
+    footprint_libs: &HashMap<String, PcbLibSpec>,
+) -> Result<PcbIr, IrCompileError> {
     let board = spec.boards.first().ok_or(IrCompileError::NoBoardsDefined)?;
 
     let (layer_stack, layer_lookup) = compile_layer_stack(board);
     let (nets, net_lookup) = compile_nets(board);
-    let mut components = compile_components(board, &net_lookup, &layer_lookup, &layer_stack)?;
+    let mut components = compile_components(
+        board,
+        &net_lookup,
+        &layer_lookup,
+        &layer_stack,
+        footprint_libs,
+    )?;
     let nets = backfill_net_pins(nets, &components);
     compute_component_bounds(&mut components);
     let rules = compile_rules(board, &layer_lookup)?;
@@ -176,6 +191,7 @@ fn compile_components(
     net_lookup: &BTreeMap<String, NetId>,
     layer_lookup: &BTreeMap<String, LayerId>,
     layer_stack: &IrLayerStack,
+    footprint_libs: &HashMap<String, PcbLibSpec>,
 ) -> Result<IdMap<ComponentId, IrComponent>, IrCompileError> {
     let mut components: IdMap<ComponentId, IrComponent> =
         IdMap::with_capacity(board.components.len());
@@ -210,21 +226,64 @@ fn compile_components(
             _ => BoardSide::Top,
         };
 
-        let ir_pads = compile_pads(
-            &comp_spec.pads,
-            position,
-            rotation,
-            net_lookup,
-            layer_lookup,
-            &all_copper_layers,
-            &mut next_pad_id,
-        )?;
+        // Pad resolution priority:
+        // 1. Explicit pads on the component spec (from PcbDoc import or inline spec)
+        // 2. Footprint ref → resolve from imported pcblib-spec
+        // 3. No pads (stub component)
+        let ir_pads = if !comp_spec.pads.is_empty() {
+            // Path 1: Pads already inlined (PcbDoc import path). Positions are
+            // world coordinates — compile_pads derives local from world.
+            compile_pads(
+                &comp_spec.pads,
+                position,
+                rotation,
+                net_lookup,
+                layer_lookup,
+                &all_copper_layers,
+                &mut next_pad_id,
+            )?
+        } else if let Some(ref fp_ref) = comp_spec.footprint {
+            // Path 2: Resolve pads from imported pcblib-spec footprint.
+            let lib = footprint_libs.get(&fp_ref.import_alias).ok_or_else(|| {
+                IrCompileError::UnknownFootprint(
+                    fp_ref.import_alias.clone(),
+                    fp_ref.name.clone(),
+                )
+            })?;
+            let fp = lib
+                .footprints
+                .iter()
+                .find(|f| f.display_name == fp_ref.name)
+                .ok_or_else(|| {
+                    IrCompileError::UnknownFootprint(
+                        fp_ref.import_alias.clone(),
+                        fp_ref.name.clone(),
+                    )
+                })?;
+            resolve_footprint_pads(
+                &fp.pads,
+                position,
+                rotation,
+                &comp_spec.pad_nets,
+                net_lookup,
+                layer_lookup,
+                &all_copper_layers,
+                &mut next_pad_id,
+            )?
+        } else {
+            // Path 3: No pads, no footprint ref — stub component.
+            Vec::new()
+        };
 
         let zero_bb = BoundingBoxMm::new(PointMm::new(0.0, 0.0), PointMm::new(0.0, 0.0));
         let comp_id = components.push(IrComponent {
             id: ComponentId::from(0),
             designator: comp_spec.designator.clone(),
-            pattern: comp_spec.pattern.clone().unwrap_or_default(),
+            pattern: comp_spec
+                .footprint
+                .as_ref()
+                .map(|f| f.name.clone())
+                .unwrap_or_default(),
             value: comp_spec.comment.clone().unwrap_or_default(),
             position,
             rotation,
@@ -237,6 +296,96 @@ fn compile_components(
     }
 
     Ok(components)
+}
+
+/// Resolve pads from a pcblib-spec footprint. Pad positions in `PadSpec` are
+/// footprint-relative; we convert to world coordinates using the component's
+/// position and rotation. Net assignments come from `pad_nets`.
+fn resolve_footprint_pads(
+    pad_specs: &[PadSpec],
+    comp_pos: PointMm,
+    rotation: f64,
+    pad_nets: &IndexMap<String, String>,
+    net_lookup: &BTreeMap<String, NetId>,
+    layer_lookup: &BTreeMap<String, LayerId>,
+    all_copper_layers: &[LayerId],
+    next_pad_id: &mut u32,
+) -> Result<Vec<IrComponentPad>, IrCompileError> {
+    let mut ir_pads = Vec::with_capacity(pad_specs.len());
+
+    for pad in pad_specs {
+        // PadSpec.at is footprint-relative (local coordinates).
+        let local_pos = PointMm::new(pad.at.x.to_mms(), pad.at.y.to_mms());
+        let world_pos = local_to_world(local_pos, comp_pos, rotation);
+
+        // Net from pad_nets map.
+        let net_id = match pad_nets.get(&pad.pad_name) {
+            None => None,
+            Some(net_name) => {
+                let id = net_lookup
+                    .get(net_name.as_str())
+                    .copied()
+                    .ok_or_else(|| IrCompileError::UnknownNet(net_name.clone()))?;
+                Some(id)
+            }
+        };
+
+        // Shape — PadSpec fields are optional, default to Round/0.
+        let shape = pad.shape.unwrap_or(PadShape::Round);
+        let shape_kind = match shape {
+            PadShape::Round | PadShape::Circle => PadShapeKind::Round,
+            PadShape::Rectangular | PadShape::RotatedRect => PadShapeKind::Rectangular,
+            PadShape::RoundRect | PadShape::RoundedRectangular => PadShapeKind::RoundRect,
+            PadShape::Octagonal => PadShapeKind::Octagonal,
+            _ => PadShapeKind::Other,
+        };
+        let size_x = pad.x_size.map(|c| c.to_mms()).unwrap_or(0.0);
+        let size_y = pad.y_size.map(|c| c.to_mms()).unwrap_or(0.0);
+        let pad_rotation = pad.rotation.unwrap_or(0.0);
+
+        let hole_size_mm = pad.hole_size.map(|h| h.to_mms()).unwrap_or(0.0);
+        let is_through_hole = hole_size_mm > 0.0;
+
+        let layer_set = if is_through_hole {
+            all_copper_layers.to_vec()
+        } else {
+            match &pad.layer {
+                Some(altium_format_spec::model::LayerSpec::NamedLayer(n)) => {
+                    layer_lookup.get(n.as_str()).copied().into_iter().collect()
+                }
+                Some(altium_format_spec::model::LayerSpec::CopperPosition(_)) => Vec::new(),
+                Some(altium_format_spec::model::LayerSpec::Resolved(r)) => {
+                    let name = format!("{r:?}");
+                    layer_lookup.get(&name).copied().into_iter().collect()
+                }
+                // Default: top layer (first copper layer).
+                None => all_copper_layers.first().copied().into_iter().collect(),
+            }
+        };
+
+        let pad_id = PadId::from(*next_pad_id);
+        *next_pad_id += 1;
+        ir_pads.push(IrComponentPad {
+            id: pad_id,
+            name: pad.pad_name.clone(),
+            local_position: local_pos,
+            world_position: world_pos,
+            net: net_id,
+            shape: PadShapeInfo {
+                kind: shape_kind,
+                size_x,
+                size_y,
+                rotation: pad_rotation,
+            },
+            is_through_hole,
+            hole_size_mm,
+            swap_id_pin: None,
+            swap_id_part: None,
+            layer_set,
+        });
+    }
+
+    Ok(ir_pads)
 }
 
 fn compile_pads(
@@ -886,15 +1035,14 @@ mod tests {
                 PcbDocComponentSpec {
                     annotation: None,
                     designator: "U1".to_string(),
-                    pattern: Some("SOT23".to_string()),
+                    footprint: None,
                     comment: Some("100nF".to_string()),
                     location: Some(cp(1000.0, 1000.0)),
                     rotation: Some(0.0),
                     layer: None,
-                    source_library: None,
                     parameters: IndexMap::new(),
-                    pads: vec![],
                     pad_nets: IndexMap::new(),
+                    pads: vec![],
                 },
             ],
             tracks: vec![],
@@ -931,7 +1079,7 @@ mod tests {
     #[test]
     fn minimal_spec_compiles_to_valid_ir() {
         let spec = minimal_spec();
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
 
         assert_eq!(ir.components.len(), 1);
         assert_eq!(ir.nets.len(), 2);
@@ -949,7 +1097,7 @@ mod tests {
             routing: None,
         };
         assert!(matches!(
-            spec_to_ir(&spec),
+            spec_to_ir(&spec, &std::collections::HashMap::new()),
             Err(IrCompileError::NoBoardsDefined)
         ));
     }
@@ -983,7 +1131,7 @@ net GND {}
         let outline = board.outline.as_ref().expect("outline should be Some");
         assert_eq!(outline.len(), 4, "rect() should produce 4 vertices");
 
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
         assert_eq!(ir.board.outline.len(), 4, "IR outline should have 4 points");
 
         let b = &ir.board.bounds;
@@ -1002,7 +1150,7 @@ net VCC {}
 net GND {}
 "#;
         let spec = parse_and_compile_pcbdoc(source);
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
         assert!(ir.board.outline.len() > 4, "rounded_rect should produce more than 4 vertices");
         let b = &ir.board.bounds;
         assert!((b.width() - 50.0).abs() < 0.01, "board width should be ~50mm");
@@ -1020,7 +1168,7 @@ net VCC {}
 net GND {}
 "#;
         let spec = parse_and_compile_pcbdoc(source);
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
         assert_eq!(ir.board.outline.len(), 4, "rect(from:,to:) should produce 4 vertices");
         let b = &ir.board.bounds;
         assert!((b.width() - 50.0).abs() < 0.01, "board width should be ~50mm");
@@ -1039,7 +1187,7 @@ net VCC {}
 net GND {}
 "#;
         let spec = parse_and_compile_pcbdoc(source);
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
         assert_eq!(ir.board.outline.len(), 4, "let binding shape should produce 4 vertices");
         let b = &ir.board.bounds;
         assert!((b.width() - 50.0).abs() < 0.01, "board width should be ~50mm");
@@ -1057,7 +1205,7 @@ net VCC {}
 net GND {}
 "#;
         let spec = parse_and_compile_pcbdoc(source);
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
         assert_eq!(ir.board.outline.len(), 72, "circle() should produce 72-vertex polygon approximation");
         let b = &ir.board.bounds;
         assert!((b.width() - 50.0).abs() < 0.1, "circle diameter (width) should be ~50mm, got {}", b.width());
@@ -1092,7 +1240,7 @@ net GND {}
             routing: None,
         };
 
-        let ir = spec_to_ir(&spec).expect("spec_to_ir should succeed");
+        let ir = spec_to_ir(&spec, &std::collections::HashMap::new()).expect("spec_to_ir should succeed");
         assert_eq!(ir.rules.len(), 1);
         let rule = &ir.rules[RuleId::from(0)];
         assert_eq!(
@@ -1122,15 +1270,14 @@ net GND {}
                 b.components.push(PcbDocComponentSpec {
                     annotation: None,
                     designator: "U1".to_string(),
-                    pattern: None,
+                    footprint: None,
                     comment: None,
                     location: None,
                     rotation: None,
                     layer: None,
-                    source_library: None,
                     parameters: IndexMap::new(),
-                    pads: vec![],
                     pad_nets: IndexMap::new(),
+                    pads: vec![],
                 });
                 b
             }],
@@ -1139,7 +1286,7 @@ net GND {}
             routing: None,
         };
         assert!(matches!(
-            spec_to_ir(&spec),
+            spec_to_ir(&spec, &std::collections::HashMap::new()),
             Err(IrCompileError::DuplicateDesignator(_))
         ));
     }

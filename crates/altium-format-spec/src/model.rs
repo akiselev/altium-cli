@@ -617,18 +617,27 @@ pub struct PcbDocNetSpec {
     pub visible: Option<bool>,
 }
 
+/// Typed reference to a footprint defined in an imported `.pcblib-spec` file.
+#[derive(Debug, Clone)]
+pub struct FootprintRef {
+    /// Import alias (e.g. "fp" from `import "device.pcblib-spec" as fp`)
+    pub import_alias: String,
+    /// Footprint name within the imported library (e.g. "LQFP100")
+    pub name: String,
+}
+
 #[derive(Clone)]
 pub struct PcbDocComponentSpec {
     pub annotation: Option<CompiledAnnotation>,
     pub designator: String,
-    pub pattern: Option<String>,
+    pub footprint: Option<FootprintRef>,
     pub comment: Option<String>,
     pub location: Option<CoordPoint>,
     pub rotation: Option<f64>,
     pub layer: Option<LayerSpec>,
-    pub source_library: Option<String>,
     /// BOM parameters keyed by name.
     pub parameters: indexmap::IndexMap<String, String>,
+    pub pad_nets: indexmap::IndexMap<String, String>,
     pub pads: Vec<PadGeometrySpec>,
 }
 

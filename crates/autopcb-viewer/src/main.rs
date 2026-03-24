@@ -20,7 +20,10 @@ use autopcb_placement::PlacementIterationSnapshot;
 /// Compile a `.pcbdoc-spec` file and produce a `PcbIr` with all spec mutations applied.
 pub(crate) fn load_spec_ir(spec_path: &std::path::Path) -> anyhow::Result<PcbIr> {
     use altium_format_spec::parser::parse_spec;
-    use altium_format_spec::{SpecDomain, SpecModel, compile_spec};
+    use altium_format_spec::{
+        SpecDomain, SpecModel, compile_imported_pcblibs, compile_spec_with_resolved,
+        resolve_imports,
+    };
     use autopcb_ir::load_ir_from_spec;
 
     let source = std::fs::read_to_string(spec_path)
@@ -29,8 +32,22 @@ pub(crate) fn load_spec_ir(spec_path: &std::path::Path) -> anyhow::Result<PcbIr>
     let ast = parse_spec(&source)
         .map_err(|e| anyhow::anyhow!("failed to parse spec {}: {e:?}", spec_path.display()))?;
 
-    let model = compile_spec(&ast, SpecDomain::PcbDoc)
-        .map_err(|e| anyhow::anyhow!("failed to compile spec {}: {e:?}", spec_path.display()))?;
+    let spec_path_canonical = spec_path
+        .canonicalize()
+        .unwrap_or_else(|_| spec_path.to_path_buf());
+    let resolved = resolve_imports(&spec_path_canonical, ast)
+        .map_err(|e| anyhow::anyhow!("failed to resolve imports {}: {e:?}", spec_path.display()))?;
+
+    let imported_footprints =
+        compile_imported_pcblibs(&resolved).map_err(|(path, e)| {
+            anyhow::anyhow!("failed to compile pcblib {}: {e:?}", path.display())
+        })?;
+
+    let model =
+        compile_spec_with_resolved(&resolved, SpecDomain::PcbDoc, std::collections::HashMap::new())
+            .map_err(|e| {
+                anyhow::anyhow!("failed to compile spec {}: {e:?}", spec_path.display())
+            })?;
 
     let pcbdoc_spec = match model {
         SpecModel::PcbDoc(s) => s,
@@ -38,7 +55,7 @@ pub(crate) fn load_spec_ir(spec_path: &std::path::Path) -> anyhow::Result<PcbIr>
     };
 
     let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
-    let ir = load_ir_from_spec(&pcbdoc_spec, spec_dir)
+    let ir = load_ir_from_spec(&pcbdoc_spec, &imported_footprints, spec_dir)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(ir)

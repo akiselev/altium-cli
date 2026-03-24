@@ -20,7 +20,8 @@ pub mod validator;
 // Public API re-exports
 pub use annotation::{CompiledAnnotation, generate_short_id, validate_short_id};
 pub use compiler::{
-    compile_imported_schlibs, compile_spec, compile_spec_with_imports, compile_spec_with_resolved,
+    compile_imported_pcblibs, compile_imported_schlibs, compile_spec, compile_spec_with_imports,
+    compile_spec_with_resolved,
 };
 pub use dump::{
     IntLibDump, dump_intlib, dump_pcbdoc, dump_pcblib, dump_placement_block, dump_prjpcb,
@@ -40,12 +41,12 @@ pub use executor::{
 pub use formatter::{FormatConfig, FormatResult, extract_top_level_trivia, format_spec};
 pub use import::{ResolvedSpec, resolve_imports};
 pub use model::{
-    AutoplaceConfig, BoardSpec, ComponentSpec, FootprintMapSpec, FootprintSpec, GraphicProperties,
-    GraphicSpec, GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec, PcbGraphicProperties,
-    PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinPadMap, PinSpec, PlacementClearanceSpec,
-    PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
-    PlacementRuleSpec, PlacementSpec, PrjPcbSpec, ProjectSpec, SchDocSpec, SchLibSpec, SpecDomain,
-    SpecModel, UnplacedStrategy,
+    AutoplaceConfig, BoardSpec, ComponentSpec, FootprintMapSpec, FootprintRef, FootprintSpec,
+    GraphicProperties, GraphicSpec, GraphicType, PadSpec, ParameterSpec, PartSpec, PcbDocSpec,
+    PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType, PcbLibSpec, PinPadMap, PinSpec,
+    PlacementClearanceSpec, PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec,
+    PlacementPlaceSpec, PlacementRuleSpec, PlacementSpec, PrjPcbSpec, ProjectSpec, SchDocSpec,
+    SchLibSpec, SpecDomain, SpecModel, UnplacedStrategy,
 };
 pub use reconciler::{
     reconcile_pcbdoc, reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty,

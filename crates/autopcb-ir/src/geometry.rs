@@ -1,8 +1,5 @@
 //! Shared geometry helpers used by both `extract.rs` and `spec_compiler.rs`.
 
-use altium_format::api::{BoardContour, ContourSegment};
-use altium_format_types::{Coord, CoordPoint};
-
 use crate::component::{IrComponent, IrComponentPad};
 use crate::handles::{ComponentId, IdMap};
 use crate::types::{BoundingBoxMm, PointMm};
@@ -12,7 +9,13 @@ use crate::types::{BoundingBoxMm, PointMm};
 /// Line segments pass through directly. Arc segments are sampled at ~1°
 /// intervals so that curved board outlines and keepout zones are faithfully
 /// represented as polygon vertices.
-pub(crate) fn tessellate_contour_to_coords(contour: &BoardContour) -> Vec<CoordPoint> {
+#[cfg(feature = "pcbdoc-import")]
+pub(crate) fn tessellate_contour_to_coords(
+    contour: &altium_format::api::BoardContour,
+) -> Vec<altium_format_types::CoordPoint> {
+    use altium_format::api::ContourSegment;
+    use altium_format_types::{Coord, CoordPoint};
+
     let mut points = Vec::new();
     for seg in &contour.segments {
         match seg {

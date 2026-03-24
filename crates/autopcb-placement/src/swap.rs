@@ -553,7 +553,7 @@ mod tests {
     use autopcb_ir::{
         FreeCopperGeometry, IrBoardGeometry, IrComponent, IrComponentPad, IrLayerStack, IrNet,
         IrNetPin,
-        extract::PcbIr,
+        PcbIr,
         handles::{ComponentId, IdMap, NetId, PadId},
     };
 

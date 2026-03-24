@@ -198,19 +198,19 @@ fn import_components(board: &PcbDocBoard) -> Result<Vec<PcbDocComponentSpec>, Ir
             Ok(PcbDocComponentSpec {
                 annotation: None,
                 designator: comp.designator.clone(),
-                pattern: Some(comp.pattern.clone()),
+                footprint: None,
                 comment: Some(comp.comment.clone()),
                 location: Some(comp.location),
                 rotation: Some(comp.rotation),
                 layer: Some(LayerSpec::NamedLayer(
                     comp.layer.display_name().unwrap_or("Unknown").to_string(),
                 )),
-                source_library: Some(comp.source_library.clone()),
                 parameters: comp
                     .parameters
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect(),
+                pad_nets: indexmap::IndexMap::new(),
                 pads,
             })
         })
@@ -590,9 +590,6 @@ fn merge_components(
     for spec_comp in spec {
         if let Some(mut imp) = imported_map.shift_remove(&spec_comp.designator) {
             // Merge: spec properties win, imported pads preserved when spec has none.
-            if let Some(ref v) = spec_comp.pattern {
-                imp.pattern = Some(v.clone());
-            }
             if let Some(ref v) = spec_comp.comment {
                 imp.comment = Some(v.clone());
             }
@@ -604,9 +601,6 @@ fn merge_components(
             }
             if let Some(ref v) = spec_comp.layer {
                 imp.layer = Some(v.clone());
-            }
-            if let Some(ref v) = spec_comp.source_library {
-                imp.source_library = Some(v.clone());
             }
             if !spec_comp.parameters.is_empty() {
                 for (k, v) in &spec_comp.parameters {

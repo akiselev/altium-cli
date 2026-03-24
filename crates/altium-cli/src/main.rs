@@ -12,13 +12,13 @@ use altium_format_spec::{
     FormatConfig, PcbDocSpec, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
     SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_pcblib, apply_spec_prjpcb,
     apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_schlibs,
-    compile_spec_with_resolved, diff_snapshots, dump_intlib, dump_pcbdoc, dump_pcblib,
-    dump_placement_block, dump_prjpcb, dump_schdoc, dump_schlib, filter_changes, format_spec,
-    project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc, reconcile_pcbdoc_empty,
-    reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb, reconcile_prjpcb_empty,
-    reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib, reconcile_schlib_empty,
-    render_eco_report, resolve_imports, rewrite_pcbdoc_spec_with_changes, validate_pcbdoc_spec,
-    validate_schdoc_spec,
+    compile_imported_pcblibs, compile_spec_with_resolved, diff_snapshots, dump_intlib,
+    dump_pcbdoc, dump_pcblib, dump_placement_block, dump_prjpcb, dump_schdoc, dump_schlib,
+    filter_changes, format_spec, project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc,
+    reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb,
+    reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib,
+    reconcile_schlib_empty, render_eco_report, resolve_imports, rewrite_pcbdoc_spec_with_changes,
+    validate_pcbdoc_spec, validate_schdoc_spec,
 };
 use autopcb_graph_import_altium::{import_pcblib, import_schlib};
 use autopcb_graph_spec::{create_workspace_bundle, save_workspace, validate_workspace};
@@ -239,13 +239,10 @@ enum InspectSubcommand {
 
 #[derive(Subcommand)]
 enum PlacementSubcommand {
-    /// Solve placement constraints from a .pcbdoc-spec against a target .PcbDoc
+    /// Solve placement constraints from a .pcbdoc-spec
     Solve {
         /// Path to .pcbdoc-spec source file
         spec_file: PathBuf,
-        /// Target .PcbDoc
-        #[arg(long)]
-        target: PathBuf,
         /// Emit JSON report
         #[arg(long, default_value_t = false)]
         json: bool,
@@ -263,9 +260,6 @@ enum PlacementSubcommand {
     Autoplace {
         /// Path to .pcbdoc-spec source file
         spec_file: PathBuf,
-        /// Target .PcbDoc (overrides `target:` in spec)
-        #[arg(long)]
-        target: Option<PathBuf>,
         /// Show plan without writing any files
         #[arg(long, default_value_t = false)]
         dry_run: bool,
@@ -373,9 +367,6 @@ enum RoutingSubcommand {
     Solve {
         /// Path to .pcbdoc-spec file
         spec_file: PathBuf,
-        /// Target .PcbDoc file (overrides target: in spec)
-        #[arg(long)]
-        target: Option<PathBuf>,
         /// Output .routes file path (default: <spec_stem>.routes)
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -1530,12 +1521,7 @@ fn transform_contour(
         .collect()
 }
 
-/// For each imported `.pcblib-spec`, derive the corresponding `.PcbLib` binary
-/// path, open it, and instantiate pads and graphics for every board component
-/// whose `pattern` matches a footprint in that library.
-///
-/// Coordinates are transformed from footprint-local to board space using the
-/// Load a .routes file and inject routed tracks/vias into a PcbDoc board.
+/// Load a `.routes` file and inject routed tracks/vias into a PcbDoc board.
 ///
 /// Returns the number of primitives injected (tracks + vias). Returns 0 if no
 /// routes file is configured or found.
@@ -1658,9 +1644,12 @@ fn inject_routes_into_pcbdoc(
     Ok(count)
 }
 
-/// component's placement position and rotation.  Existing component-owned
-/// primitives are removed before re-instantiation so that running `apply` twice
-/// is idempotent.
+/// For each imported `.pcblib-spec`, derive the corresponding `.PcbLib` binary
+/// path, open it, and instantiate pads and graphics for every board component
+/// whose footprint matches a footprint in that library. Coordinates are
+/// transformed from footprint-local to board space using the component's
+/// placement position and rotation. Existing component-owned primitives are
+/// removed before re-instantiation so that running `apply` twice is idempotent.
 fn instantiate_footprint_primitives(
     doc: &mut PcbDoc,
     import_paths: &[PathBuf],
@@ -2079,6 +2068,10 @@ struct CompileResult {
     /// Used by SchDoc apply to resolve pin positions.
     imported_components:
         std::collections::HashMap<String, altium_format_spec::model::ComponentSpec>,
+    /// Compiled PcbLib footprints from imports, keyed by import alias or canonical path.
+    /// Used by routing/placement solve to resolve footprint definitions.
+    imported_footprints:
+        std::collections::HashMap<String, altium_format_spec::model::PcbLibSpec>,
 }
 
 fn compile_and_resolve(
@@ -2119,6 +2112,12 @@ fn compile_and_resolve(
     let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
 
+    let imported_footprints = compile_imported_pcblibs(&resolved).map_err(|(path, e)| {
+        let import_source = std::fs::read_to_string(&path).unwrap_or_default();
+        let import_name = path.display().to_string();
+        anyhow::anyhow!("{}", e.render(&import_name, &import_source))
+    })?;
+
     // Collect all import paths for --all processing.
     let import_paths: Vec<PathBuf> = resolved
         .bare_imports
@@ -2131,6 +2130,7 @@ fn compile_and_resolve(
         model,
         import_paths,
         imported_components: imported_components_for_exec,
+        imported_footprints,
     })
 }
 
@@ -2516,7 +2516,7 @@ fn run_query(
 }
 
 fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result<()> {
-    use autopcb_ir::{import_pcbdoc, merge_pcbdoc_spec};
+    use autopcb_ir::import_pcbdoc;
     use autopcb_ir::spec_compiler::spec_to_ir;
 
     let doc = PcbDoc::open(path)
@@ -2525,7 +2525,7 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
         .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
     let imported_spec = import_pcbdoc(&board)
         .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
-    let ir = spec_to_ir(&imported_spec)
+    let ir = spec_to_ir(&imported_spec, &std::collections::HashMap::new())
         .map_err(|e| anyhow::anyhow!("spec compilation failed: {e:?}"))?;
 
     match sub {
@@ -2624,7 +2624,6 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
     match sub {
         PlacementSubcommand::Autoplace {
             spec_file,
-            target,
             dry_run,
             output,
             gamma_start,
@@ -2643,7 +2642,6 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
             }
             let report = autoplace_spec(
                 &spec_file,
-                target.as_deref(),
                 &cfg,
                 dry_run,
                 output.as_deref(),
@@ -2670,7 +2668,6 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
         }
         PlacementSubcommand::Solve {
             spec_file,
-            target,
             json,
             iterations_out,
             gamma_start,
@@ -2698,15 +2695,7 @@ fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
             })?;
 
             let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
-            // Import PcbDoc and merge with spec at the CLI level.
-            let doc = PcbDoc::open(&target)
-                .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-            let board = doc.board()
-                .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
-            let imported = autopcb_ir::import_pcbdoc(&board)
-                .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
-            let merged = autopcb_ir::merge_pcbdoc_spec(imported, &spec);
-            let ir = load_ir_from_spec(&merged, spec_dir)
+            let ir = load_ir_from_spec(&spec, &compiled.imported_footprints, spec_dir)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             let mut cfg = PlacementConfig {
@@ -2792,7 +2781,6 @@ pub struct AutoplaceReport {
 /// 7. Write the output (unless `dry_run`).
 pub fn autoplace_spec(
     spec_path: &std::path::Path,
-    pcbdoc_path: Option<&std::path::Path>,
     config: &PlacementConfig,
     dry_run: bool,
     output_path: Option<&std::path::Path>,
@@ -2804,7 +2792,6 @@ pub fn autoplace_spec(
     info!(
         target: "altium_cli::placement",
         spec_path = %spec_path.display(),
-        requested_target = pcbdoc_path.map(|p| p.display().to_string()),
         dry_run,
         has_output_override = output_path.is_some(),
         "autoplace_spec_started"
@@ -2825,33 +2812,11 @@ pub fn autoplace_spec(
         )
     })?;
 
-    // Resolve target PcbDoc path.
-    let target_path: std::path::PathBuf = if let Some(p) = pcbdoc_path {
-        p.to_path_buf()
-    } else if let Some(ref t) = spec.placement.as_ref().and_then(|p| p.target.clone()) {
-        // Resolve relative to spec file directory.
-        let base = spec_path.parent().unwrap_or(std::path::Path::new("."));
-        base.join(t)
-    } else {
-        anyhow::bail!(
-            "no target PcbDoc specified: pass --target or add `target: \"board.PcbDoc\"` to spec"
-        )
-    };
-
     let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
-    // Import PcbDoc and merge with spec at the CLI level.
-    let doc = PcbDoc::open(&target_path)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target_path.display()))?;
-    let board = doc.board()
-        .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
-    let imported = autopcb_ir::import_pcbdoc(&board)
-        .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
-    let merged = autopcb_ir::merge_pcbdoc_spec(imported, &spec);
-    let ir = load_ir_from_spec(&merged, spec_dir)
+    let ir = load_ir_from_spec(&spec, &compiled.imported_footprints, spec_dir)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     info!(
         target: "altium_cli::placement",
-        target_path = %target_path.display(),
         component_count = ir.components.len(),
         net_count = ir.nets.len(),
         "autoplace_ir_loaded"
@@ -3301,8 +3266,8 @@ fn run_routing(sub: RoutingSubcommand) -> anyhow::Result<()> {
         RoutingSubcommand::Inspect { path, verbose, json } => {
             cmd_routing_inspect(&path, verbose, json)
         }
-        RoutingSubcommand::Solve { spec_file, target, output, json } => {
-            cmd_routing_solve(&spec_file, target.as_deref(), output.as_deref(), json)
+        RoutingSubcommand::Solve { spec_file, output, json } => {
+            cmd_routing_solve(&spec_file, output.as_deref(), json)
         }
     }
 }
@@ -3402,7 +3367,6 @@ fn cmd_routing_inspect(path: &std::path::Path, verbose: bool, json: bool) -> any
 
 fn cmd_routing_solve(
     spec_file: &std::path::Path,
-    target: Option<&std::path::Path>,
     output: Option<&std::path::Path>,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -3418,19 +3382,7 @@ fn cmd_routing_solve(
     };
 
     let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
-    // If a target PcbDoc was given, import it and merge with the spec.
-    let final_spec = if let Some(target) = target {
-        let doc = PcbDoc::open(target)
-            .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-        let board = doc.board()
-            .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
-        let imported = autopcb_ir::import_pcbdoc(&board)
-            .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
-        autopcb_ir::merge_pcbdoc_spec(imported, &spec)
-    } else {
-        spec
-    };
-    let ir = load_ir_from_spec(&final_spec, spec_dir)
+    let ir = load_ir_from_spec(&spec, &result.imported_footprints, spec_dir)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = autopcb_router::RoutingConfig::default();
@@ -3542,7 +3494,6 @@ mod tests {
     fn routing_solve_missing_spec_returns_error() {
         let result = cmd_routing_solve(
             std::path::Path::new("nonexistent.pcbdoc-spec"),
-            None,
             None,
             false,
         );

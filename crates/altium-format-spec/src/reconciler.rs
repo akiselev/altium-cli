@@ -2013,12 +2013,12 @@ fn diff_pcbdoc_components(
     for spec in specs {
         if let Some(existing) = existing_map.get(spec.designator.as_str()) {
             let mut prop_changes = Vec::new();
-            if let Some(ref pattern) = spec.pattern {
-                if *pattern != existing.pattern {
+            if let Some(name) = spec.footprint.as_ref().map(|f| f.name.as_str()) {
+                if name != existing.pattern {
                     prop_changes.push(PropChange {
                         field: "pattern".to_string(),
                         old_value: existing.pattern.clone(),
-                        new_value: pattern.clone(),
+                        new_value: name.to_string(),
                     });
                 }
             }
@@ -2491,10 +2491,10 @@ fn pcbdoc_component_to_add(spec: &PcbDocComponentSpec) -> EntityChange {
         field: "designator".to_string(),
         value: spec.designator.clone(),
     }];
-    if let Some(ref pattern) = spec.pattern {
+    if let Some(name) = spec.footprint.as_ref().map(|f| f.name.as_str()) {
         props.push(PropValue {
             field: "pattern".to_string(),
-            value: pattern.clone(),
+            value: name.to_string(),
         });
     }
     if let Some(loc) = spec.location {

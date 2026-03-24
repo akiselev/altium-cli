@@ -103,6 +103,11 @@ pub enum ComponentItem {
     FootprintMap(FootprintMapDecl),
     Graphic(GraphicDecl),
     SwapGroup(SwapGroupDecl),
+    /// `pad_net PAD_NAME: "NET_NAME"` — PcbDoc-specific pad-to-net assignment.
+    PadNet {
+        pad_name: Spanned<String>,
+        net_name: Spanned<String>,
+    },
 }
 
 /// Target of a pin connection declaration: `pin X -> #NET` or `pin X -> nc`.

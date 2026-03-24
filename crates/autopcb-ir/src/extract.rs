@@ -21,23 +21,8 @@ use crate::region::{IrRegion, IrRegionKind};
 use crate::rule::{IrDesignRule, IrRuleParams, IrRuleScopePair};
 use crate::text::IrText;
 use crate::types::{BoardSide, BoundingBoxMm, PointMm};
+use crate::ir::PcbIr;
 use crate::{IrError, Result};
-
-/// The complete intermediate representation of a PcbDoc board.
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct PcbIr {
-    pub board: IrBoardGeometry,
-    pub layer_stack: IrLayerStack,
-    pub components: IdMap<ComponentId, IrComponent>,
-    pub nets: IdMap<NetId, IrNet>,
-    pub rules: IdMap<RuleId, IrDesignRule>,
-    pub free_copper: FreeCopperGeometry,
-    pub polygons: IdMap<PolygonId, IrPolygon>,
-    pub texts: IdMap<TextId, IrText>,
-    pub regions: IdMap<RegionId, IrRegion>,
-    pub component_bodies: IdMap<ComponentBodyId, IrComponentBody>,
-}
 
 impl PcbIr {
     /// Extract an IR from a parsed PcbDoc board.

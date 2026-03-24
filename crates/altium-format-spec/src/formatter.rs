@@ -610,6 +610,13 @@ impl<'a> Printer<'a> {
             ComponentItem::FootprintMap(fm) => self.fmt_footprint_map(fm),
             ComponentItem::Graphic(g) => self.fmt_graphic_decl(g),
             ComponentItem::SwapGroup(sg) => self.fmt_swap_group(sg),
+            ComponentItem::PadNet { pad_name, net_name } => {
+                self.push("pad_net ");
+                self.push(&pad_name.node);
+                self.push(": \"");
+                self.push(&escape_string(&net_name.node));
+                self.push("\"");
+            }
         }
     }
 

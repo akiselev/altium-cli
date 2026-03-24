@@ -255,8 +255,8 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
             .iter_mut()
             .find(|c| c.designator == spec.designator)
         {
-            if let Some(ref pattern) = spec.pattern {
-                existing.pattern = pattern.clone();
+            if let Some(name) = spec.footprint.as_ref().map(|f| f.name.clone()) {
+                existing.pattern = name;
             }
             if let Some(ref comment) = spec.comment {
                 existing.comment = comment.clone();
@@ -270,9 +270,6 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
             if let Some(ref layer) = spec.layer {
                 existing.layer = resolve_layer_spec(layer);
             }
-            if let Some(ref src) = spec.source_library {
-                existing.source_library = src.clone();
-            }
             // Merge parameters: spec values overlay existing ones.
             for (k, v) in &spec.parameters {
                 if let Some(existing_param) = existing.parameters.iter_mut().find(|(n, _)| n == k) {
@@ -285,7 +282,7 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
             board.components.push(api::PcbDocComponent {
                 id: spec.designator.clone(),
                 designator: spec.designator.clone(),
-                pattern: spec.pattern.clone().unwrap_or_default(),
+                pattern: spec.footprint.as_ref().map(|f| f.name.clone()).unwrap_or_default(),
                 comment: spec.comment.clone().unwrap_or_default(),
                 location: spec.location.unwrap_or_default(),
                 rotation: spec.rotation.unwrap_or(0.0),
@@ -294,7 +291,7 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
                     .as_ref()
                     .map(resolve_layer_spec)
                     .unwrap_or(LayerRef::from_v6(V6Layer::TopLayer)),
-                source_library: spec.source_library.clone().unwrap_or_default(),
+                source_library: String::new(),
                 source_lib_reference: String::new(),
                 source_unique_id: spec
                     .annotation

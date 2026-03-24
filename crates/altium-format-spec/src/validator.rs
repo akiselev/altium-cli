@@ -485,13 +485,13 @@ mod tests {
         crate::model::PcbDocComponentSpec {
             annotation: None,
             designator: designator.to_string(),
-            pattern: None,
+            footprint: None,
             comment: None,
             location: None,
             rotation: None,
             layer: None,
-            source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pad_nets: indexmap::IndexMap::new(),
             pads: Vec::new(),
         }
     }

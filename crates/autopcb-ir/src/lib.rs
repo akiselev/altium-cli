@@ -9,11 +9,14 @@ pub mod component;
 pub mod component_body;
 pub mod copper;
 pub mod dimension;
+#[cfg(feature = "pcbdoc-import")]
 pub mod extract;
 pub(crate) mod geometry;
 pub mod handles;
+pub mod ir;
 pub mod layer_stack;
 pub mod net;
+#[cfg(feature = "pcbdoc-import")]
 pub mod pcbdoc_import;
 pub mod polygon;
 pub mod region;
@@ -27,7 +30,7 @@ pub use board::{IrBoardGeometry, IrKeepoutZone};
 pub use component::{IrComponent, IrComponentPad, PadShapeInfo, PadShapeKind};
 pub use component_body::IrComponentBody;
 pub use copper::{FreeCopperGeometry, IrArc, IrFill, IrTrack, IrVia};
-pub use extract::PcbIr;
+pub use ir::PcbIr;
 pub use handles::{
     ComponentBodyId, ComponentId, DimensionId, IdMap, LayerId, NetId, PadId, PolygonId, RegionId,
     RuleId, TextId,
@@ -38,6 +41,7 @@ pub use polygon::IrPolygon;
 pub use region::{IrRegion, IrRegionKind};
 pub use compile_error::IrCompileError;
 pub use rule::{IrDesignRule, IrRuleParams, IrRuleScope, IrRuleScopePair};
+#[cfg(feature = "pcbdoc-import")]
 pub use pcbdoc_import::{import_pcbdoc, merge_pcbdoc_spec};
 pub use spec_bridge::load_ir_from_spec;
 pub use spec_compiler::spec_to_ir;

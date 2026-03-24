@@ -22,4 +22,6 @@ pub enum IrCompileError {
     UnsupportedPadShape(String),
     #[error("invalid value for property '{0}': '{1}'")]
     InvalidPropertyValue(String, String),
+    #[error("unknown footprint: ${0}.{1} not found in imported pcblib-specs")]
+    UnknownFootprint(String, String),
 }

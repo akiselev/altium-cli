@@ -355,8 +355,8 @@ pub fn project_pcbdoc_spec(spec: &PcbDocSpec) -> Result<SyncSnapshot, SpecError>
                 SyncComponent {
                     designator: comp.designator.clone(),
                     comment: comp.comment.clone(),
-                    footprint: comp.pattern.clone(),
-                    source_library: comp.source_library.clone(),
+                    footprint: comp.footprint.as_ref().map(|f| f.name.clone()),
+                    source_library: None,
                     parameters: comp.parameters.clone(),
                     pins: IndexMap::new(),
                     annotation_id,
@@ -818,10 +818,16 @@ pub fn apply_sync_changes_to_pcbdoc(
                             comp.comment = fc.new_value.clone();
                         }
                         "footprint" => {
-                            comp.pattern = fc.new_value.clone();
+                            comp.footprint = fc.new_value.clone().map(|name| {
+                                crate::model::FootprintRef {
+                                    import_alias: String::new(),
+                                    name,
+                                }
+                            });
                         }
                         "source_library" => {
-                            comp.source_library = fc.new_value.clone();
+                            // source_library is no longer tracked on PcbDocComponentSpec;
+                            // ignore this field change.
                         }
                         field if field.starts_with("parameter:") => {
                             let param_name = &field["parameter:".len()..];
@@ -892,13 +898,18 @@ pub fn apply_sync_changes_to_pcbdoc(
                     .push(crate::model::PcbDocComponentSpec {
                         annotation,
                         designator: designator.clone(),
-                        pattern: component.footprint.clone(),
+                        footprint: component.footprint.clone().map(|name| {
+                            crate::model::FootprintRef {
+                                import_alias: String::new(),
+                                name,
+                            }
+                        }),
                         comment: component.comment.clone(),
                         location: None,
                         rotation: None,
                         layer: None,
-                        source_library: component.source_library.clone(),
                         parameters: component.parameters.clone(),
+                        pad_nets: indexmap::IndexMap::new(),
                         pads: Vec::new(),
                     });
             }
@@ -1098,10 +1109,10 @@ fn collect_component_update_replacement(
                 overrides.insert("comment".to_string(), fc.new_value.clone());
             }
             "footprint" => {
-                overrides.insert("pattern".to_string(), fc.new_value.clone());
+                // footprint sync is not supported in text rewrite (import alias unknown)
             }
             "source_library" => {
-                overrides.insert("source_library".to_string(), fc.new_value.clone());
+                // source_library is no longer a spec property; ignore
             }
             field if field.starts_with("parameter:") => {
                 // Parameter sync is handled at the model level; the text rewriter
@@ -1247,14 +1258,8 @@ fn format_new_component(designator: &str, comp: &SyncComponent) -> String {
 
     let mut props: Vec<String> = Vec::new();
 
-    if let Some(pattern) = &comp.footprint {
-        props.push(format!("pattern: {}", quote_spec_string(pattern)));
-    }
     if let Some(comment) = &comp.comment {
         props.push(format!("comment: {}", quote_spec_string(comment)));
-    }
-    if let Some(lib) = &comp.source_library {
-        props.push(format!("source_library: {}", quote_spec_string(lib)));
     }
 
     let name_str = quote_spec_entity_name(designator);
@@ -1617,13 +1622,13 @@ mod tests {
             board.components.push(PcbDocComponentSpec {
                 annotation: None,
                 designator: des.to_string(),
-                pattern: Some("0402".to_string()),
+                footprint: None,
                 comment: Some(des.to_string()),
                 location: None,
                 rotation: None,
                 layer: None,
-                source_library: None,
                 parameters: IndexMap::new(),
+                pad_nets: indexmap::IndexMap::new(),
                 pads: Vec::new(),
             });
         }
@@ -1650,7 +1655,7 @@ mod tests {
         for des in ["R1", "C1", "U1"] {
             let comp = &snapshot.components[des];
             assert_eq!(comp.designator, des);
-            assert_eq!(comp.footprint.as_deref(), Some("0402"));
+            assert!(comp.footprint.is_none());
             assert!(comp.pins.is_empty(), "PcbDoc pins should be empty");
         }
 
@@ -1670,13 +1675,13 @@ mod tests {
             board.components.push(PcbDocComponentSpec {
                 annotation: None,
                 designator: "U1".to_string(),
-                pattern: None,
+                footprint: None,
                 comment: None,
                 location: None,
                 rotation: None,
                 layer: None,
-                source_library: None,
                 parameters: IndexMap::new(),
+                pad_nets: indexmap::IndexMap::new(),
                 pads: Vec::new(),
             });
         }
@@ -2238,7 +2243,7 @@ mod tests {
         let comp = &spec.boards[0].components[0];
         assert_eq!(comp.designator, "R1");
         assert_eq!(comp.comment.as_deref(), Some("100R"));
-        assert_eq!(comp.pattern.as_deref(), Some("0402"));
+        assert_eq!(comp.footprint.as_ref().map(|f| f.name.as_str()), Some("0402"));
         // Location/rotation/layer must be None (never set by sync).
         assert!(comp.location.is_none(), "location must not be set by sync");
         assert!(comp.rotation.is_none(), "rotation must not be set by sync");
@@ -2253,25 +2258,25 @@ mod tests {
         board.components.push(PcbDocComponentSpec {
             annotation: None,
             designator: "R1".to_string(),
-            pattern: Some("0402".to_string()),
+            footprint: None,
             comment: None,
             location: None,
             rotation: None,
             layer: None,
-            source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pad_nets: indexmap::IndexMap::new(),
             pads: Vec::new(),
         });
         board.components.push(PcbDocComponentSpec {
             annotation: None,
             designator: "C1".to_string(),
-            pattern: Some("0603".to_string()),
+            footprint: None,
             comment: None,
             location: None,
             rotation: None,
             layer: None,
-            source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pad_nets: indexmap::IndexMap::new(),
             pads: Vec::new(),
         });
 
@@ -2305,13 +2310,13 @@ mod tests {
         board.components.push(PcbDocComponentSpec {
             annotation: None,
             designator: "R1".to_string(),
-            pattern: Some("0402".to_string()),
+            footprint: None,
             comment: Some("original".to_string()),
             location: Some(fixed_location),
             rotation: Some(90.0),
             layer: None,
-            source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pad_nets: indexmap::IndexMap::new(),
             pads: Vec::new(),
         });
 
@@ -2342,7 +2347,7 @@ mod tests {
 
         let comp = &spec.boards[0].components[0];
         assert_eq!(comp.comment.as_deref(), Some("updated"));
-        assert_eq!(comp.pattern.as_deref(), Some("0603"));
+        assert_eq!(comp.footprint.as_ref().map(|f| f.name.as_str()), Some("0603"));
         // Location and rotation MUST NOT be modified.
         assert!(comp.location.is_some(), "location must be preserved");
         assert_eq!(comp.rotation, Some(90.0), "rotation must be preserved");
@@ -2599,13 +2604,13 @@ mod tests {
         board.components.push(PcbDocComponentSpec {
             annotation: None,
             designator: "C1".to_string(),
-            pattern: None,
+            footprint: None,
             comment: None,
             location: None,
             rotation: None,
             layer: None,
-            source_library: None,
             parameters: indexmap::IndexMap::new(),
+            pad_nets: indexmap::IndexMap::new(),
             pads: Vec::new(),
         });
         let mut spec = PcbDocSpec {
@@ -2868,18 +2873,19 @@ mod tests {
 
         let result = rewrite_pcbdoc_spec_with_changes(source, &changes).unwrap();
         assert!(
-            result.contains("pattern: \"QFN-48\""),
-            "rewritten spec should contain pattern: {:?}",
-            result
-        );
-        assert!(
             result.contains("comment: \"MCU\""),
             "rewritten spec should contain comment: {:?}",
             result
         );
         assert!(
-            result.contains("source_library: \"mcu\""),
-            "rewritten spec should contain source_library: {:?}",
+            result.contains("component U1"),
+            "rewritten spec should contain component U1: {:?}",
+            result
+        );
+        // footprint is not emitted in rewrite (no import alias available from sync IR)
+        assert!(
+            !result.contains("pattern:"),
+            "rewritten spec must not contain deprecated pattern: {:?}",
             result
         );
     }
@@ -3190,13 +3196,13 @@ mod proptests {
                 board.components.push(PcbDocComponentSpec {
                     annotation: None,
                     designator: des.clone(),
-                    pattern: None,
+                    footprint: None,
                     comment: None,
                     location: None,
                     rotation: None,
                     layer: None,
-                    source_library: None,
                     parameters: indexmap::IndexMap::new(),
+                    pad_nets: indexmap::IndexMap::new(),
                     pads: Vec::new(),
                 });
             }

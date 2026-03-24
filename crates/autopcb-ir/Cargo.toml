@@ -8,7 +8,7 @@ rust-version = "1.85"
 workspace = true
 
 [dependencies]
-altium-format = { version = "0.2.0", path = "../altium-format" }
+altium-format = { version = "0.2.0", path = "../altium-format", optional = true }
 altium-format-spec = { version = "0.2.0", path = "../altium-format-spec" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 autopcb-routes = { version = "0.2.0", path = "../autopcb-routes" }
@@ -18,4 +18,5 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 
 [features]
 test-fixtures = []
+pcbdoc-import = ["dep:altium-format"]
 serde = ["dep:serde", "altium-format-types/serde"]

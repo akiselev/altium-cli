@@ -28,11 +28,12 @@ use altium_format_types::{
 use crate::annotation::{CompiledAnnotation, compile_annotation};
 use crate::ast::{
     AliasDecl, BoardDecl, BoardItem, ClassDecl, ComponentDecl, ComponentItem, ConstraintDecl,
-    DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl, FootprintRef,
-    GraphicDecl, Object, ObjectItem, PadDecl, ParameterDecl, PartBlock, PartItem,
-    PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl, PlacementDecl,
-    PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem, RoutingDecl,
-    RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile, SpecItem,
+    DifferentialPairDecl, FootprintDecl, FootprintItem, FootprintMapDecl,
+    FootprintRef as AstFootprintRef, GraphicDecl, Object, ObjectItem, PadDecl, ParameterDecl,
+    PartBlock, PartItem, PcbDocPrimitiveDecl, PinDecl, PlaceDecl, PlacementConstraintDecl,
+    PlacementDecl, PlacementGroupDecl, PlacementItem, PolygonDecl, ProjectDecl, ProjectItem,
+    RoutingDecl, RuleDecl, SchDocObjectDecl, SchDocObjectItem, SheetDecl, SheetItem, SpecFile,
+    SpecItem,
 };
 use crate::eval::{EvalResult, ScopeStack, SpecError, SpecErrorCode, Value, eval_expr};
 use crate::model::{
@@ -42,15 +43,15 @@ use crate::model::{
     FootprintMapSpec, FootprintSpec, GraphicProperties, GraphicSpec, GraphicType,
     HarnessConnectorSpec, JunctionSpec, LayerSpec, LibraryUpdateSpec, NetLabelSpec, NetSpec,
     NoConnectSpec, NoteSpec, OutputGroupSpec, OutputSpec, PadSpec, ParamVariationSpec,
-    ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec, PcbDocComponentSpec,
-    PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec, PcbDocPrimitiveSpec,
-    PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec, PcbGraphicType, PinPadMap,
-    PinRef, PinSpec, PlacementAutoplaceMode, PlacementClearanceSpec, PlacementConstraintSpec,
-    PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec, PlacementRuleSpec,
-    PlacementSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec, ProbeSpec, ProjectSpec,
-    RoutingSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec, SchLibSpec, SheetEntrySpec,
-    SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain, SpecModel, SymbolRef,
-    UnplacedStrategy, VariantSpec, VariationSpec, WireSpec,
+    FootprintRef as ModelFootprintRef, ParameterSetSpec, ParameterSpec, PartSpec, PcbDocClassSpec,
+    PcbDocComponentSpec, PcbDocDifferentialPairSpec, PcbDocNetSpec, PcbDocPolygonSpec,
+    PcbDocPrimitiveSpec, PcbDocRuleSpec, PcbDocSpec, PcbGraphicProperties, PcbGraphicSpec,
+    PcbGraphicType, PinPadMap, PinRef, PinSpec, PlacementAutoplaceMode, PlacementClearanceSpec,
+    PlacementConstraintSpec, PlacementGroupSpec, PlacementOptimizeSpec, PlacementPlaceSpec,
+    PlacementRuleSpec, PlacementSpec, PortSpec, PowerObjectSpec, PowerSpec, PrjPcbSpec,
+    ProbeSpec, ProjectSpec, RoutingSpec, SchDocComponentSpec, SchDocObjectSpec, SchDocSpec,
+    SchLibSpec, SheetEntrySpec, SheetSpec, SheetSymbolSpec, SignalHarnessSpec, SpecDomain,
+    SpecModel, SymbolRef, UnplacedStrategy, VariantSpec, VariationSpec, WireSpec,
 };
 
 use crate::diagnostic::Spanned;
@@ -155,6 +156,48 @@ fn collect_schlib_components(
             for comp in schlib.components {
                 components.insert(comp.lib_reference.clone(), comp);
             }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Compile all PcbLib-domain imports and collect their footprints.
+///
+/// Returns a map keyed by import alias (for named imports) or canonical
+/// path string (for bare imports). Each value is the compiled `PcbLibSpec`
+/// containing all footprints defined in that library.
+pub fn compile_imported_pcblibs(
+    resolved: &crate::import::ResolvedSpec,
+) -> Result<HashMap<String, crate::model::PcbLibSpec>, (std::path::PathBuf, SpecError)> {
+    let mut libs = HashMap::new();
+
+    // Bare imports — key by canonical path
+    for (path, spec_file) in &resolved.bare_imports {
+        collect_pcblib(path, spec_file, &path.display().to_string(), &mut libs)
+            .map_err(|e| (path.clone(), e))?;
+    }
+
+    // Named imports — key by alias
+    for (alias, (path, spec_file)) in &resolved.named_imports {
+        collect_pcblib(path, spec_file, alias, &mut libs)
+            .map_err(|e| (path.clone(), e))?;
+    }
+
+    Ok(libs)
+}
+
+fn collect_pcblib(
+    path: &std::path::Path,
+    file: &SpecFile,
+    key: &str,
+    libs: &mut HashMap<String, crate::model::PcbLibSpec>,
+) -> Result<(), SpecError> {
+    let sub_resolved = crate::import::resolve_imports(path, file.clone())?;
+    let sub_model = compile_spec_with_resolved(&sub_resolved, SpecDomain::PcbLib, HashMap::new())?;
+    match sub_model {
+        SpecModel::PcbLib(pcblib) => {
+            libs.insert(key.to_string(), pcblib);
         }
         _ => {}
     }
@@ -528,6 +571,9 @@ impl SpecCompiler {
                 }
                 ComponentItem::PinConnection(_) => {
                     // Resolved at executor time; nothing to compile into the component spec yet.
+                }
+                ComponentItem::PadNet { .. } => {
+                    // PcbDoc-only: ignored when compiling a SchLib component.
                 }
             }
         }
@@ -1646,8 +1692,8 @@ impl SpecCompiler {
         decl: &FootprintMapDecl,
     ) -> Result<FootprintMapSpec, SpecError> {
         let model_name = match &decl.name.node {
-            FootprintRef::Name(n) => n.as_str(),
-            FootprintRef::DollarPath(dp) => {
+            AstFootprintRef::Name(n) => n.as_str(),
+            AstFootprintRef::DollarPath(dp) => {
                 // Resolve the dollar path to get the footprint name.
                 // For `$fp.QFP48` or `let x = fp["DFN-4"]; footprint $x`,
                 // evaluate the path to extract the model name string.
@@ -2138,6 +2184,26 @@ impl SpecCompiler {
         let annotation = self.compile_opt_annotation(decl.annotation.as_ref())?;
         let designator = decl.name.node.as_str();
 
+        // Hard errors for removed syntax.
+        for item in &decl.body {
+            if let ComponentItem::Property(p) = &item.node {
+                if p.key.node == "pattern" {
+                    return Err(SpecError::new(
+                        SpecErrorCode::NotSupported,
+                        "pattern: is no longer supported. Use footprint: $import_alias.FootprintName instead",
+                        Some(p.key.span),
+                    ));
+                }
+                if p.key.node == "source_library" {
+                    return Err(SpecError::new(
+                        SpecErrorCode::NotSupported,
+                        "source_library: is no longer supported",
+                        Some(p.key.span),
+                    ));
+                }
+            }
+        }
+
         // Collect properties from component body items.
         let props = collect_object_properties_from_items(
             decl.body.iter().filter_map(|item| match &item.node {
@@ -2147,7 +2213,6 @@ impl SpecCompiler {
             &self.scope,
         )?;
 
-        let pattern = get_string_opt(&props, "pattern");
         let comment = get_string_opt(&props, "comment");
         let location = props
             .get("at")
@@ -2155,18 +2220,54 @@ impl SpecCompiler {
             .transpose()?;
         let rotation = get_float_opt(&props, "rotation");
         let layer = get_enum_opt(&props, "layer", parse_layer_spec)?;
-        let source_library = get_string_opt(&props, "source_library");
+
+        // Compile footprint: $alias.Name property.
+        let footprint = if let Some(v) = props.get("footprint") {
+            match v {
+                Value::ImportRef { alias, name } => Some(ModelFootprintRef {
+                    import_alias: alias.clone(),
+                    name: name.clone(),
+                }),
+                other => {
+                    return Err(SpecError::new(
+                        SpecErrorCode::TypeMismatch,
+                        format!(
+                            "footprint must be an import reference (e.g., $fp.LQFP100), got {}",
+                            other.kind_name()
+                        ),
+                        None,
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
+        // Compile pad_net items into pad_nets map.
+        let mut pad_nets = indexmap::IndexMap::new();
+        for item in &decl.body {
+            if let ComponentItem::PadNet { pad_name, net_name } = &item.node {
+                if pad_nets.contains_key(&pad_name.node) {
+                    return Err(SpecError::new(
+                        SpecErrorCode::DuplicateEntity,
+                        format!("duplicate pad_net for pad '{}'", pad_name.node),
+                        Some(pad_name.span),
+                    ));
+                }
+                pad_nets.insert(pad_name.node.clone(), net_name.node.clone());
+            }
+        }
 
         Ok(PcbDocComponentSpec {
             annotation,
             designator,
-            pattern,
+            footprint,
             comment,
             location,
             rotation,
             layer,
-            source_library,
             parameters: indexmap::IndexMap::new(),
+            pad_nets,
             pads: Vec::new(),
         })
     }

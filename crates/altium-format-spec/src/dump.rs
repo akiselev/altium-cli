@@ -490,12 +490,12 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         };
         emit_annotation_line(out, "", sid);
         out.push_str(&format!(
-            "component {} {{ pattern: {}, at: {}, layer: {}, rotation: {} }}\n",
+            "component {} {{ at: {}, layer: {}, rotation: {} }} // pattern: {}\n",
             quote_entity_name(&comp.designator),
-            quote_string(&comp.pattern),
             comp.location,
             comp.layer,
-            comp.rotation
+            comp.rotation,
+            quote_string(&comp.pattern),
         ));
     }
     if !board.components.is_empty() {

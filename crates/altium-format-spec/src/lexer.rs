@@ -49,6 +49,7 @@ pub enum TokenKind {
     Group,
     Separate,
     Autoplace,
+    PadNet,
 
     // Shared keywords
     Let,
@@ -114,6 +115,7 @@ impl TokenKind {
                 | (Group, Group)
                 | (Separate, Separate)
                 | (Autoplace, Autoplace)
+                | (PadNet, PadNet)
                 | (Let, Let)
                 | (True, True)
                 | (False, False)
@@ -363,6 +365,7 @@ pub fn lex(input: &str) -> Result<(Vec<Token>, Vec<CommentToken>), ParseError> {
                         "group" => TokenKind::Group,
                         "separate" => TokenKind::Separate,
                         "autoplace" => TokenKind::Autoplace,
+                        "pad_net" => TokenKind::PadNet,
                         "let" => TokenKind::Let,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,

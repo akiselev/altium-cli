@@ -1614,7 +1614,8 @@ mod tests {
             neckdown_min_width_mm: 0.0,
         };
         let policy = make_policy(&ir);
-        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config, &spatial);
 
         assert_eq!(routes.len(), 1, "expected exactly one stub route");
         let route = &routes[0];
@@ -1696,7 +1697,8 @@ mod tests {
 
         let config = EscapeConfig::default();
         let policy = make_policy(&ir);
-        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config, &spatial);
 
         assert!(
             routes.is_empty(),
@@ -1745,7 +1747,8 @@ mod tests {
             neckdown_min_width_mm: 0.0,
         };
         let policy = make_policy(&ir);
-        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config, &spatial);
 
         assert!(
             routes.is_empty(),
@@ -1794,7 +1797,8 @@ mod tests {
             neckdown_min_width_mm: 0.0,
         };
         let policy = make_policy(&ir);
-        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config);
+        let spatial = SpatialIndex::build(vec![]);
+        let routes = plan_stubs(&ir, &grid, &maps, &policy, &config, &spatial);
 
         assert!(!routes.is_empty(), "single-layer board must still generate stubs");
         assert_eq!(

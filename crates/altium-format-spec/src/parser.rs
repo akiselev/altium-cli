@@ -752,6 +752,30 @@ impl<'a> SpecParser<'a> {
             ));
         }
 
+        // pad_net PAD_NAME: "NET_NAME"
+        if self.at(&TokenKind::PadNet) {
+            self.bump(); // consume `pad_net`
+            let pad_span = self.current_span();
+            let pad_entity = self.parse_entity_name()?;
+            let pad_name = Spanned::new(pad_entity.node.as_str(), pad_span);
+            self.expect(&TokenKind::Colon, "expected ':' after pad name in pad_net")?;
+            self.skip_newlines();
+            let net_span = self.current_span();
+            let net_str = match self.current_kind().clone() {
+                TokenKind::String(s) => {
+                    self.bump();
+                    s
+                }
+                _ => return Err(self.err("expected string literal for net name in pad_net")),
+            };
+            let net_name = Spanned::new(net_str, net_span);
+            let end = self.prev_span();
+            return Ok(Spanned::new(
+                ComponentItem::PadNet { pad_name, net_name },
+                start.merge(end),
+            ));
+        }
+
         // IDENT-led items: property, let binding, or graphic / bound entity
         if let TokenKind::Ident(name) = self.current_kind().clone() {
             let name_span = self.current_span();
@@ -832,7 +856,7 @@ impl<'a> SpecParser<'a> {
         }
 
         Err(self.err(
-            "expected component item (property, pin, parameter, alias, footprint, part, graphic, swap_group, pin connection, or let binding)",
+            "expected component item (property, pin, parameter, alias, footprint, part, graphic, swap_group, pin connection, pad_net, or let binding)",
         ))
     }
 
